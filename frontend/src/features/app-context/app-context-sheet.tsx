@@ -76,8 +76,17 @@
  *
  * ── Same MATERIAL as the two rails, different SHAPE ────────────────────
  *
- * It wears `.dc-lift dc-lift-panel`, which is the fill, the hairline colour
- * and the two-layer shadow the Improve rail and the notifications rail wear.
+ * It wears `.dc-lift dc-lift-panel`, which is the frosted fill, the hairline
+ * colour and the shadow list the Improve rail and the notifications rail wear
+ * — the lift's two layers plus the modal dim, which these panes cast outward
+ * rather than painting behind themselves (see `.dc-lift-panel` in app.css for
+ * why: a dim behind the panel lands inside its own backdrop-filter).
+ *
+ * This is the pane the dim treats least kindly, and it is worth knowing why:
+ * the rails dock to a screen edge, where what shows through the frost is page
+ * margin, while this one hangs in the middle of the content, where it is body
+ * text. Blurred text behind a menu reads as a smudge rather than as depth. If
+ * that ever needs fixing it is this surface's fill alpha, not the mechanism.
  * That is the whole of what it takes from them, and it is deliberate that it
  * is not more: `.dc-lift` rounds a DOCKED sheet — 1.75rem on the corners that
  * meet the page, square on the ones that run off the display — and at `sm`+
@@ -304,7 +313,7 @@ export function AppsSwitcherSheet(): ReactNode {
         id="apps-switcher-overlay"
         aria-hidden="true"
         {...(open && !adopted ? { 'data-open': '' } : {})}
-        className="fixed inset-0 z-40 bg-black/40"
+        className="fixed inset-0 z-40"
         onClick={close}
       >
       </div>

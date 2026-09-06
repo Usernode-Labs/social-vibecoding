@@ -1,28 +1,35 @@
 'use strict';
 
-// THE SHELL'S THREE FLOATING PANES ARE ONE SURFACE, AND IT IS OPAQUE.
+// THE SHELL'S THREE FLOATING PANES ARE ONE SURFACE, AND IT CASTS ITS OWN DIM.
 //
 // The bell's rail, the Improve rail and the app chip's menu are the three
-// things in the shell that present OVER A SCRIM. They had drifted into three
+// things in the shell that present over a scrim. They had drifted into three
 // different surfaces: the bell wore `.dc-lift dc-lift-session` (the dev
-// screen's glass), and the other two wore `bg-white dark:bg-zinc-900` with a
-// zinc hairline and Tailwind's `shadow-2xl` — the pre-lift panel look.
+// screen's glass), the other two wore `bg-white dark:bg-zinc-900` with a zinc
+// hairline and `shadow-2xl` — the pre-lift panel look.
 //
-// The glass was the actual bug. `.dc-lift-session` is 50% white over a 24px
-// backdrop blur, which reads as frost when the thing behind it is the page
-// wallpaper — the cream, the three washes, the star. Behind these three it is
-// not: each raises its own `bg-black/40` backdrop first, so the fill was
-// compositing over a page already dimmed 40%. The arithmetic is in the
-// `.dc-lift-panel` comment in app.css: #f4f2e4 → #929189 under the scrim →
-// #c8c8c4 under the pane. The brightest surface on the screen rendered a
-// fifth of the way to black, which is what "it looks dull" was.
+// The bell's glass looked DULL, and the cause was where the dim came from.
+// Each pane raised a sibling backdrop at z-40 carrying `bg-black/40` and sat
+// above it at z-50. `backdrop-filter` samples everything painted behind the
+// element, so the thing the glass was frosting was a page already dimmed 40%.
+// On the home ground: #f4f2e4 → #929189 under the backdrop → #cac7c3 under the
+// pane. Grey, on the surface meant to be the brightest thing on screen.
 //
-// So there is a third lift surface. `.dc-lift` still supplies the geometry —
-// the 1.75rem radius, the hairline, the two-layer shadow — and
-// `.dc-lift-panel` fills it with the opaque `--dc-sheet` instead of the
-// translucent `--dc-sheet-fill`. What this file pins is that the three panes
-// keep reading it, that it stays opaque, and that the dev screen's two glass
-// planes are untouched by it.
+// Making the pane opaque fixed that and cost the glass — three flat white
+// slabs. Both halves are wanted, so the dim moved ONTO the pane as an outer
+// box-shadow. An outer shadow is clipped to outside the border box, so it is
+// never part of the element's own backdrop: the pane frosts the UNDIMMED page
+// while the same declaration darkens everything around it. Measured at
+// (200,700) and (1100,650), 1280x860, light:
+//
+//   opaque + backdrop dim   page #948a84   pane #ffffff   (flat)
+//   glass  + no dim         page #f7e7dc   pane #fcf6ee   (not modal)
+//   glass  + backdrop dim   page #948a84   pane #cac7c3   (the dull one)
+//   glass  + cast dim       page #948a84   pane #fcf6ee   (both)
+//
+// What this file pins is that arrangement: the shared surface, the glass, the
+// scrim living on the pane rather than behind it, the backdrops staying as
+// transparent click targets, and the dev screen's own planes untouched.
 //
 // Run with: node --test tests/overlay-panes-lift.test.js
 
@@ -81,36 +88,81 @@ const rootClass = (src, id) => {
 
 // ── The surface ────────────────────────────────────────────────────────
 
-test('all three panes wear the lift and its opaque panel fill', () => {
+test('all three panes wear the lift and the one shared pane surface', () => {
   for (const { id, src } of PANES) {
     const cls = rootClass(src, id);
     assert.match(cls, /\bdc-lift\b/, `#${id} takes the lift's geometry`);
-    assert.match(cls, /\bdc-lift-panel\b/, `#${id} takes the opaque panel fill`);
+    assert.match(cls, /\bdc-lift-panel\b/, `#${id} takes the shared pane surface`);
     assert.doesNotMatch(cls, /\bdc-lift-session\b/,
-      `#${id} must not wear the dev screen's glass — it is over a scrim`);
+      `#${id} reads .dc-lift-panel, which is that glass PLUS the cast dim`);
   }
 });
 
-test('the panel fill is opaque, and has no backdrop-filter to be opaque about', () => {
+test('the pane surface is GLASS, the same the dev screen wears', () => {
   const panel = rule('.dc-lift-panel');
-  assert.match(panel, /background-color: var\(--dc-sheet\)/,
-    'the panel takes the opaque surface token, not --dc-sheet-fill');
-  assert.doesNotMatch(panel, /--dc-sheet-fill|rgba\(/,
-    'nothing translucent may creep back into this rule');
-  // An opaque fill has nothing behind it to blur, so the filter would cost a
-  // compositing layer on three always-mounted elements and buy no pixels.
-  assert.doesNotMatch(panel, /backdrop-filter/,
-    'an opaque surface must not pay for a blur it cannot show');
+  assert.match(panel, /background-color: var\(--dc-sheet-fill\)/,
+    'the translucent fill, not the opaque --dc-sheet');
+  assert.match(panel, /backdrop-filter: var\(--dc-frost\)/, 'and it frosts');
+  // Safari has shipped this prefixed for years; dropping it turns the glass
+  // into an unblurred wash there, which is worse than either end state.
+  assert.match(panel, /-webkit-backdrop-filter: var\(--dc-frost\)/);
 });
 
-test('the panes are opaque BECAUSE each one raises a scrim', () => {
-  // This is the whole argument for a third surface rather than a fourth
-  // token. If a pane ever loses its backdrop it is over the wallpaper like
-  // the dev screen, and glass becomes the right answer for it again.
-  for (const { src, overlay } of PANES) {
-    const m = new RegExp(`id="${overlay}"[\\s\\S]{0,400}?bg-black/40`).exec(src);
-    assert.ok(m, `#${overlay} must still dim the page behind its pane`);
+test('the dim is cast BY the pane, so it is not in the pane\'s own backdrop', () => {
+  // The whole fix in one declaration. An outer box-shadow paints only outside
+  // the border box, so it darkens the page without ever reaching the area the
+  // backdrop-filter samples. 100vmax covers the viewport from wherever the
+  // pane is docked — which is why this works for a right rail, a bottom sheet
+  // and a centred dropdown without any of them knowing its own geometry.
+  const open = rule('.dc-lift-panel[data-open]');
+  assert.match(open, /box-shadow: var\(--dc-lift-shadow\), 0 0 0 100vmax var\(--pane-scrim\)/);
+  for (const tok of ['--pane-scrim:', '--dc-lift-shadow:']) {
+    const decls = APP_CSS.match(new RegExp(`${tok}[^;]+;`, 'g')) || [];
+    assert.ok(decls.length >= 2, `${tok} must be declared in both themes`);
   }
+  // The lift reads the same token the panes append to, so the two copies of
+  // its two layers cannot drift apart.
+  assert.match(rule('.dc-lift'), /box-shadow: var\(--dc-lift-shadow\)/);
+});
+
+test('the closed state keeps the same shadow COUNT, so the dim fades', () => {
+  // box-shadow interpolates componentwise; a list that changes length snaps.
+  // Closed carries the scrim as `transparent` rather than dropping the layer.
+  const shut = rule('.dc-lift-panel');
+  assert.match(shut, /box-shadow: var\(--dc-lift-shadow\), 0 0 0 100vmax transparent/);
+  const count = (s) => (s.match(/box-shadow:[^;]+;/)[0].match(/0 0 0 100vmax/g) || []).length;
+  assert.equal(count(shut), count(rule('.dc-lift-panel[data-open]')));
+  // And each pane's transition has to carry box-shadow, or the dim snaps on at
+  // the start of the open and off at the start of the close.
+  for (const cls of ['.nav-sheet-transition', '.improve-panel-transition',
+    '.app-context-transition']) {
+    assert.match(rule(cls), /transition:[^;]*box-shadow/, `${cls} fades its dim`);
+  }
+});
+
+test('the backdrops stay, transparent — they are the click target', () => {
+  // They own pointer-events and dismiss-on-click, which the shadow does not
+  // take over. What they no longer do is paint, because painting is what put
+  // the dim inside the pane's backdrop.
+  for (const { id, src: file, overlay } of PANES) {
+    const m = new RegExp(`id="${overlay}"[\\s\\S]{0,400}?className="([^"]*)"`).exec(file);
+    assert.ok(m, `#${overlay} must still be rendered`);
+    assert.match(m[1], /fixed inset-0 z-40/, `#${overlay} still covers the page`);
+    assert.doesNotMatch(m[1], /bg-black/,
+      `#${overlay} must not paint the dim — #${id} casts it instead`);
+    assert.match(file, new RegExp(`id="${overlay}"[\\s\\S]{0,400}?onClick=\\{close\\}|`
+      + `id="${overlay}"[\\s\\S]{0,400}?onClick=`), 'and still dismisses on click');
+  }
+});
+
+test('without backdrop-filter the pane goes opaque and the dim survives', () => {
+  // The scrim is a shadow, not a filter, so only the fill falls back — the
+  // same admission `.dc-lift-session` already makes: the effect is the blur.
+  const at = APP_CSS.indexOf('@supports not ((backdrop-filter', APP_CSS.indexOf('.dc-lift-panel {'));
+  assert.ok(at > 0, 'the panel needs its own no-filter fallback');
+  const block = APP_CSS.slice(at, APP_CSS.indexOf('\n}\n', at));
+  assert.match(block, /\.dc-lift-panel \{ background-color: var\(--dc-sheet\); \}/);
+  assert.doesNotMatch(block, /box-shadow/, 'the dim is not part of the fallback');
 });
 
 test('the dev screen keeps its glass — this change does not reach it', () => {

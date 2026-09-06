@@ -184,6 +184,13 @@
   --app-sheet-line: rgba(0, 0, 0, 0.1);
   --app-sheet-shadow-near: rgba(24, 39, 75, 0.12);
   --app-sheet-shadow-far: rgba(24, 39, 75, 0.08);
+  /* The lift's two layers as one value — see `.dc-lift`. */
+  --dc-lift-shadow:
+    0 6px 12px -6px var(--app-sheet-shadow-near),
+    0 8px 24px -4px var(--app-sheet-shadow-far);
+  /* The modal dim, cast BY the pane rather than painted behind it. Same 40%
+     black the overlays used to carry as `bg-black/40`; see `.dc-lift-panel`. */
+  --pane-scrim: rgba(0, 0, 0, 0.4);
   --state-blocked: #dc2626;
   --state-blocked-bg: rgba(239, 68, 68, 0.12);
   --state-blocked-fill: rgba(239, 68, 68, 0.32);
@@ -1178,6 +1185,10 @@ html.un-kb .platform-safe-sheet {
   --app-sheet-line: rgba(255, 255, 255, 0.12);
   --app-sheet-shadow-near: rgba(0, 0, 0, 0.55);
   --app-sheet-shadow-far: rgba(0, 0, 0, 0.4);
+  --dc-lift-shadow:
+    0 6px 12px -6px var(--app-sheet-shadow-near),
+    0 8px 24px -4px var(--app-sheet-shadow-far);
+  --pane-scrim: rgba(0, 0, 0, 0.4);
   --state-attention-bg: rgba(245, 158, 11, 0.18);
   --state-blocked: #f87171;
   --state-blocked-bg: rgba(239, 68, 68, 0.18);
@@ -7335,9 +7346,11 @@ span.gc-vote-btn-icon { cursor: default; }
 .dc-lift {
   border-radius: 1.75rem 1.75rem 0 0;
   border-top: 1px solid var(--app-sheet-line);
-  box-shadow:
-    0 6px 12px -6px var(--app-sheet-shadow-near),
-    0 8px 24px -4px var(--app-sheet-shadow-far);
+  /* NAMED, because the panes have to RESTATE it. box-shadow does not cascade
+     additively: `.dc-lift-panel` appends the scrim as a third layer and must
+     therefore repeat the two the lift draws. A token is what keeps the second
+     copy from drifting from this one. */
+  box-shadow: var(--dc-lift-shadow);
   /* BOTH LAYERS ARE POSITIONED, and that is what puts the session sheet
      ON the strip rather than under it. Positioned siblings paint after
      unpositioned ones and among themselves in tree order, so with only
@@ -7387,42 +7400,68 @@ span.gc-vote-btn-icon { cursor: default; }
   .dc-lift-session { background-color: var(--dc-sheet); }
 }
 
-/* ── THE THIRD SURFACE: a lift that presents OVER A SCRIM ──────────────
-   `.dc-lift-panel` is the same lift, opaque. It is what the shell's three
-   floating panes wear — the notifications rail, the Improve rail and the
-   app chip's menu — and the only thing it changes is the fill.
+/* ── THE THIRD SURFACE: a lift that CASTS its own scrim ────────────────
+   `.dc-lift-panel` is the same glass the dev screen's session sheet wears —
+   `--dc-sheet-fill` over `--dc-frost` — on the shell's three floating panes:
+   the notifications rail, the Improve rail and the app chip's menu. What is
+   different is not the surface. It is where the modal dim comes from.
 
-   GLASS NEEDS SOMETHING WORTH SEEING THROUGH, AND A SCRIM IS NOT IT. The
-   two planes above sit on the page wallpaper: the cream, the three washes
-   and the star are behind them, so 50% white over a 24px blur reads as
-   frosted glass laid on a coloured ground. These three do not. Every one
-   of them raises a `bg-black/40` backdrop first (#notifications-sheet-overlay,
-   #improve-overlay, #apps-switcher-overlay), so what `--dc-sheet-fill` was
-   compositing over was a wallpaper already dimmed by 40% black — and half
-   of a dimmed page, blurred flat, is not glass. It is grey.
+   THE DIM USED TO BE PAINTED BEHIND THE PANE, AND THAT IS WHAT MADE IT DULL.
+   Each pane raised a sibling backdrop at `z-40` carrying `bg-black/40`, and
+   the pane sat above it at `z-50`. `backdrop-filter` samples everything
+   painted behind the element, so the thing this glass was frosting was a page
+   already dimmed 40% — and half of a dimmed page, blurred flat, is grey.
+   Measured on the home ground: #f4f2e4 goes to #929189 under the backdrop and
+   the pane composited to #cac7c3, a fifth of the way to black on the surface
+   meant to be the brightest thing on screen.
 
-   The arithmetic, because the fix is the arithmetic: the home ground is
-   #f4f2e4, the scrim takes it to #929189, and 50% white over that lands the
-   pane at #c8c8c4. The brightest surface on the screen was rendering a fifth
-   of the way to black. In dark it goes the other way for the same reason —
-   72% of #1c1c1e over a dimmed #0b0d1b is #16161a, below the sheet value it
-   is meant to be.
+   Making the pane opaque fixed the dullness and cost the glass — three flat
+   white slabs. Both halves are wanted: the page dimmed, the pane frosted over
+   what is actually behind it.
 
-   That is not a value to tune, either: the scrim is uniform and covers the
-   whole viewport, so nothing legible is behind the pane to reveal. Every
-   alpha under 1 buys a share of the dim and returns nothing for it.
+   SO THE SCRIM IS AN OUTER BOX-SHADOW ON THE PANE. An outer shadow is clipped
+   to outside the border box, so it is never part of the element's own
+   backdrop: the pane frosts the UNDIMMED page while the same declaration
+   darkens everything around it. Measured, all three at (200,700) and
+   (1100,650) in a 1280x860 light viewport:
 
-   So the panes take `--dc-sheet` — the same opaque value `.dc-lift-session`
-   itself falls back to where `backdrop-filter` is unsupported (the block
-   above). No filter here, and nothing for the `@supports` guard to catch:
-   an opaque fill has no backdrop to blur, so this surface renders the same
-   everywhere.
+     opaque + backdrop dim   page #948a84   pane #ffffff   (flat)
+     glass  + no dim         page #f7e7dc   pane #fcf6ee   (not modal)
+     glass  + backdrop dim   page #948a84   pane #cac7c3   (the dull one)
+     glass  + THIS           page #948a84   pane #fcf6ee   (both)
 
-   The ladder is unaffected. It is a relationship between the strip and the
-   session sheet on the dev screen, and neither of those is a pane over a
-   scrim. */
+   `100vmax` covers the viewport from wherever the pane is docked, at any
+   aspect ratio, which is what makes this work for a right rail, a bottom
+   sheet and a centred dropdown without any of them knowing its own geometry —
+   the reason this is a shadow and not a clip-path hole in the backdrop.
+
+   The backdrop ELEMENTS stay, transparent: they are the click-to-dismiss
+   target and they own `pointer-events`, which is the half of their job this
+   does not take over.
+
+   IT PAINTS AT THE PANE'S OWN z-50, one layer above the `z-40` the backdrops
+   sit at, so the header (`z-10`) is inside the dim exactly as it was — see
+   "THE HEADER IS INSIDE THE DIM" below, which this does not change.
+
+   Two shadow lists, both three layers long, because box-shadow interpolates
+   componentwise and a list that changes LENGTH snaps instead of fading. The
+   closed state carries the scrim as `transparent` so the dim fades with the
+   slide rather than popping off at the start of it. */
 .dc-lift-panel {
-  background-color: var(--dc-sheet);
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+  box-shadow: var(--dc-lift-shadow), 0 0 0 100vmax transparent;
+}
+.dc-lift-panel[data-open] {
+  box-shadow: var(--dc-lift-shadow), 0 0 0 100vmax var(--pane-scrim);
+}
+/* NO BLUR, NO GLASS — the same fallback the two planes above take, and for
+   the same reason: without the filter the alphas leave the page sitting
+   unblurred behind body text. The scrim is unaffected; it is a shadow, not a
+   filter, so the dim still reads and only the pane goes opaque. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dc-lift-panel { background-color: var(--dc-sheet); }
 }
 
 /* THE OVERLAP MUST BE A FULL RADIUS, and it has to come from whatever is
@@ -8805,8 +8844,12 @@ a.drawer-ver--fork:hover {
 #improve-panel[data-open] {
   transform: translateX(0);
 }
+/* `box-shadow` rides along with the slide because the modal dim is one of this
+   element's shadow layers now (see `.dc-lift-panel`). Without it here the dim
+   would snap on at the start of the open and off at the start of the close,
+   which is the exact complaint the kit-adopted backdrop note records. */
 .improve-panel-transition {
-  transition: transform 200ms ease-out;
+  transition: transform 200ms ease-out, box-shadow 200ms ease-out;
 }
 #improve-overlay {
   opacity: 0;
@@ -8996,8 +9039,12 @@ a.drawer-ver--fork:hover {
    than folded into the `max-width: 639px` block because the kit-adopted path
    reads it too — `.platform-sheet-adopted` sets `transition: none`, which has
    to have something to turn off. */
+/* `box-shadow` rides along with the slide because the modal dim is one of this
+   element's shadow layers now (see `.dc-lift-panel`). Without it here the dim
+   would snap on at the start of the open and off at the start of the close,
+   which is the exact complaint the kit-adopted backdrop note records. */
 .app-context-transition {
-  transition: transform 200ms ease-out;
+  transition: transform 200ms ease-out, box-shadow 200ms ease-out;
 }
 #apps-switcher-overlay {
   opacity: 0;
@@ -9087,8 +9134,12 @@ a.drawer-ver--fork:hover {
 #messages-sheet[data-open] {
   transform: translateX(0);
 }
+/* `box-shadow` rides along with the slide because the modal dim is one of this
+   element's shadow layers now (see `.dc-lift-panel`). Without it here the dim
+   would snap on at the start of the open and off at the start of the close,
+   which is the exact complaint the kit-adopted backdrop note records. */
 .nav-sheet-transition {
-  transition: transform 200ms ease-out;
+  transition: transform 200ms ease-out, box-shadow 200ms ease-out;
 }
 #notifications-sheet-overlay,
 #messages-sheet-overlay {

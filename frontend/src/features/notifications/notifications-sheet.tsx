@@ -300,7 +300,7 @@ export function NotificationsSheetView() {
         id="notifications-sheet-overlay"
         aria-hidden="true"
         {...(open && !adopted ? { 'data-open': '' } : {})}
-        className="fixed inset-0 z-40 bg-black/40"
+        className="fixed inset-0 z-40"
         onClick={() => NotificationsSheet.close()}
       >
       </div>
@@ -314,13 +314,19 @@ export function NotificationsSheetView() {
       >
       {/*
           THE SHEET RISES ON THE LIFT a dev session does — the same radius,
-          hairline and two-layer shadow — but on `.dc-lift-panel` rather than
-          the session's `.dc-lift-session`, because this one presents over its
-          own `bg-black/40` scrim and that one presents over the wallpaper.
-          Glass wants something worth seeing through; a uniformly dimmed page
-          is not it, and 50% white over it rendered the pane at #c8c8c4 when it
-          should have been the brightest surface on the screen. The app.css
-          block for `.dc-lift-panel` carries the arithmetic.
+          hairline and two-layer shadow — on `.dc-lift-panel`, which is that
+          glass plus a third shadow layer: the modal dim, cast OUTWARD by this
+          element instead of painted behind it.
+
+          That inversion is the whole of why the sheet stopped looking dull.
+          The dim used to live on #notifications-sheet-overlay at `z-40`, under
+          the sheet at `z-50` — and `backdrop-filter` samples whatever is
+          painted behind, so the glass was frosting an already-dimmed page and
+          composited to #cac7c3. An OUTER box-shadow is clipped to outside the
+          border box, so it never enters this element's own backdrop: the sheet
+          frosts the undimmed page while the same declaration darkens
+          everything around it. The overlay is still there and still dismisses
+          on click; it just paints nothing now.
 
           On top of that surface: a title row of its own — the name, Mark all
           read as a small pill (only on Unread, the tab whose list it empties),
