@@ -127,7 +127,11 @@ const CAPTURE_CPUS = process.env.CAPTURE_CPUS || '4';
 // image's own defaults so the platform's timeout arithmetic (below) and the
 // container's agree by construction.
 const TEST_CONCURRENCY = process.env.TEST_CONCURRENCY || '8';
-const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
+// 25000 → 40000, moved with the container's own default and with
+// ASSERT_ACTIVE_MAX_MS in capture/capture.js: a check's wall clock has to
+// contain the navigation, the settle and the (now rolling) assert poll, or a
+// slow-but-correct screen is reported as unfinished instead of judged.
+const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '40000';
 // 470s → 490s, moved together with MAX_DECLARED_TESTS 480 → 500 in
 // services/app-manifest.js — the two are one decision, and the note on that
 // constant says so. A full 500-check suite is ~244s of ideal work at the

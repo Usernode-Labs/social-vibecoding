@@ -40,6 +40,7 @@ const assert = require('node:assert/strict');
 const {
   runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf,
   hashGroupCap, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, assertMaxMs,
+  assertActiveMaxMs,
 } = require('../capture/capture');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -434,6 +435,13 @@ function makeEventPage({ onGoto, onHash } = {}) {
         fn({ type: () => 'error', text: () => text, location: () => ({ url: 'app.js', lineNumber: 1 }) });
       }
     },
+    // A sign of life that is NOT a console error: the request lifecycle, which
+    // is what a page still assembling itself emits. Bumps the activity clock
+    // without adding anything to the frame's consoleErrors, so a test can say
+    // "still working" without also saying "and broken".
+    emitActivity() {
+      for (const fn of handlers.get('response') || []) fn({});
+    },
     async setViewport() {},
     async goto(u) {
       page.gotos.push(u);
@@ -810,9 +818,14 @@ test('pool bounds come from env with sane defaults and a hard ceiling', () => {
   assert.equal(poolSize({ TEST_CONCURRENCY: '500' }), 16,
     'a ceiling, because each page is ~50-80 MiB of renderer and an OOM-kill '
     + 'loses the whole run rather than one check');
-  assert.equal(testTimeoutMs({}), 25000);
+  // 25000 → 40000, moved with ASSERT_ACTIVE_MAX_MS: a check's wall clock has
+  // to contain the navigation, the settle and the assert poll, and the poll
+  // now rolls forward while the page is still emitting. Left at 25s it would
+  // have reported "did not finish within 25s" in place of the assertion the
+  // wider window exists to reach.
+  assert.equal(testTimeoutMs({}), 40000);
   assert.equal(testTimeoutMs({ TEST_TIMEOUT_MS: '900' }), 900);
-  assert.equal(testTimeoutMs({ TEST_TIMEOUT_MS: '-1' }), 25000);
+  assert.equal(testTimeoutMs({ TEST_TIMEOUT_MS: '-1' }), 40000);
   // 470000 since #1417, moved with MAX_DECLARED_TESTS 430 → 480 and the
   // platform-side default in services/visuals.js; 520000 with 480 → 530;
   // 560000 with 530 → 560. The three are asserted
@@ -836,4 +849,94 @@ test('the suite deadline leaves headroom inside the container run timeout', () =
     'the suite budget must expire before the container is killed');
   assert.ok(runTimeout - testsDeadlineMs({}) >= 120000,
     'and with enough room left for the media pass that runs before it');
+});
+
+// ── The assert window rolls forward while the page is still emitting ──
+//
+// A flat ceiling measured from the end of the settle gave a route assembled
+// by a fetch the same 5s as a static one, so a slow-but-correct screen failed
+// on the clock and the report could not tell that apart from broken markup.
+// These four pin the shape of the replacement: the wait is spent on evidence
+// of life, a silent page is judged exactly as fast as it always was, and a
+// page that never stops talking is still bounded.
+
+test('the active assertion ceiling comes from env, and never undercuts the quiet one', () => {
+  assert.equal(assertActiveMaxMs({}), 12000, 'the default hard cap');
+  assert.equal(assertActiveMaxMs({ TEST_ASSERT_ACTIVE_MAX_MS: '9000' }), 9000);
+  assert.equal(assertActiveMaxMs({ TEST_ASSERT_ACTIVE_MAX_MS: 'lots' }), 12000,
+    'garbage falls back');
+  // The floor is the point: a hard cap below the quiet ceiling would mean a
+  // page showing signs of life got LESS time than a silent one.
+  assert.equal(assertActiveMaxMs({ TEST_ASSERT_ACTIVE_MAX_MS: '100' }), 5000,
+    'the quiet ceiling is a floor for the active one');
+  assert.equal(
+    assertActiveMaxMs({ TEST_ASSERT_ACTIVE_MAX_MS: '100', TEST_ASSERT_MAX_MS: '50' }), 100,
+    'both moved together, the active one wins on its own terms');
+});
+
+test('a screen still fetching is waited for past the quiet ceiling', async () => {
+  const read = collect();
+  let appearAt = Infinity;
+  let beat = null;
+  const page = makeEventPage({
+    onGoto: (p) => {
+      appearAt = Date.now() + 700;
+      // Still assembling: a response every 100ms, no console output at all.
+      beat = setInterval(() => p.emitActivity(), 100);
+      setTimeout(() => { clearInterval(beat); beat = null; }, 800);
+    },
+  });
+  page.$ = async () => (Date.now() >= appearAt ? {} : null);
+  try {
+    await runTestGroup({ newPage: async () => page },
+      [{ index: 0, name: 'slow', path: '/p', url: 'http://s/p', expectSelector: '#late' }],
+      { settleQuietMs: 50, settleMaxMs: 100, assertMaxMs: 200, assertActiveMaxMs: 4000, assertPollMs: 25 });
+  } finally {
+    if (beat) clearInterval(beat);
+  }
+  const { frames } = read();
+  assert.equal(frames[0].status, 'pass',
+    'the element arrived at 700ms, well past the 200ms quiet ceiling');
+  assert.deepEqual(frames[0].consoleErrors, [],
+    'and it got there without the page having to report an error to earn the time');
+});
+
+test('a quiet screen is still judged at the quiet ceiling, not at the hard cap', async () => {
+  // The correction must not make a broken screen slower to report: silence
+  // with an unmet assertion is a verdict, and it is due on the old schedule.
+  const read = collect();
+  const page = makeEventPage();
+  page.$ = async () => null;
+  const started = Date.now();
+  await runTestGroup({ newPage: async () => page },
+    [{ index: 0, name: 'never', path: '/p', url: 'http://s/p', expectSelector: '#never' }],
+    { settleQuietMs: 50, settleMaxMs: 100, assertMaxMs: 200, assertActiveMaxMs: 5000, assertPollMs: 25 });
+  const elapsed = Date.now() - started;
+  const { frames } = read();
+  assert.equal(frames[0].status, 'fail');
+  assert.match(frames[0].failureReason, /Expected element "#never" was not found/);
+  assert.ok(elapsed < 1500,
+    `a silent page pays the quiet ceiling, not the 5000ms cap (took ${elapsed}ms)`);
+});
+
+test('a page that never stops emitting is still bounded by the hard cap', async () => {
+  const read = collect();
+  let beat = null;
+  const page = makeEventPage({
+    onGoto: (p) => { beat = setInterval(() => p.emitActivity(), 40); },
+  });
+  page.$ = async () => null;
+  const started = Date.now();
+  try {
+    await runTestGroup({ newPage: async () => page },
+      [{ index: 0, name: 'chatty', path: '/p', url: 'http://s/p', expectSelector: '#never' }],
+      { settleQuietMs: 50, settleMaxMs: 100, assertMaxMs: 200, assertActiveMaxMs: 600, assertPollMs: 25 });
+  } finally {
+    if (beat) clearInterval(beat);
+  }
+  const elapsed = Date.now() - started;
+  const { frames } = read();
+  assert.equal(frames[0].status, 'fail', 'a rolling window is a cap, not a licence');
+  assert.ok(elapsed < 2500,
+    `the 600ms hard cap binds however chatty the page is (took ${elapsed}ms)`);
 });

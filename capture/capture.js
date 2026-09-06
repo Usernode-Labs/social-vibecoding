@@ -227,9 +227,52 @@ function settleMaxMs(env) {
 const ASSERT_POLL_MS = 100;
 const ASSERT_MAX_MS = 5000;
 
+// ── The ceiling rolls forward while the page is still emitting ──
+//
+// ASSERT_MAX_MS above is a ceiling on SILENCE, not on the check. Measured
+// from the end of the settle it gave every route the same 5s regardless of
+// what it was doing, and a route that legitimately needs longer — one whose
+// screen is assembled by a fetch, or by a `?shot=` script that drives real
+// interactions — failed on the clock rather than on its markup. That failure
+// is indistinguishable in the report from a broken screen, and it is not
+// reproducible: the same commit passes on the next run. Eight distinct
+// data-driven checks in this repo's own suite failed exactly once each across
+// five consecutive runs of unrelated diffs, which is the shape of a budget
+// that is marginal rather than of eight regressions.
+//
+// Waiting longer for EVERY failing cohort is the wrong correction: a screen
+// that is genuinely broken is not going to render, and making the suite pay
+// for it is how a green run gets slower. So the wait is spent on evidence
+// instead. The activity clock the settle already keeps — bumped by console
+// output, page errors and the request lifecycle — is now read during the
+// assert poll too, and the ceiling is measured from the LAST SIGN OF LIFE
+// rather than from the start:
+//
+//   * a page still fetching, erroring or logging keeps earning another
+//     ASSERT_MAX_MS from each signal, up to the hard cap below;
+//   * a page that has gone quiet with its assertion unmet is judged at
+//     exactly the old 5s — a broken screen fails no slower than before.
+//
+// 12s caps the rolling window. It covers this repo's longest honest script
+// (`?shot=anon-back` drives two open/close cycles of the app viewer, and its
+// close leg alone rides history.back() → popstate → a 600ms unwind guard)
+// plus the fetch in front of it, while keeping a chatty-but-broken screen's
+// worst case well inside the per-check TEST_TIMEOUT_MS. It is a CAP, not a
+// wait: the happy path still passes on the first probe and pays nothing.
+const ASSERT_ACTIVE_MAX_MS = 12000;
+
 function assertMaxMs(env) {
   const raw = parseInt((env || {}).TEST_ASSERT_MAX_MS, 10);
   return (Number.isFinite(raw) && raw >= 0) ? raw : ASSERT_MAX_MS;
+}
+
+// The hard cap on the rolling window. Never below the quiet ceiling it
+// extends — a smaller value would mean "a page showing signs of life gets
+// LESS time than a silent one", which is the opposite of the point.
+function assertActiveMaxMs(env) {
+  const raw = parseInt((env || {}).TEST_ASSERT_ACTIVE_MAX_MS, 10);
+  const active = (Number.isFinite(raw) && raw >= 0) ? raw : ASSERT_ACTIVE_MAX_MS;
+  return Math.max(active, assertMaxMs(env));
 }
 
 // An activity clock a page's listeners bump. Created per group and shared by
@@ -287,9 +330,18 @@ function poolSize(env) {
 // group deadline separately bounds every phase together, so one wedged page
 // cannot eat the whole run's budget. A check that blows this is reported as an
 // ordinary failed frame and the pool moves on.
+//
+// 25000 → 40000, moved with ASSERT_ACTIVE_MAX_MS. This bound has to sit above
+// everything that happens INSIDE one check or it converts the phases below it
+// into a timeout: a navigation, then a settle of up to SETTLE_MAX_MS, then an
+// assert poll that now rolls forward to ASSERT_ACTIVE_MAX_MS. Leaving it at 25s
+// while the assert window grew to 12s would have bought a wider window and then
+// spent the gain reporting "did not finish within 25s" — which says nothing
+// about the screen — in place of the failed assertion it replaced. Pinned
+// against SETTLE_MAX_MS + ASSERT_ACTIVE_MAX_MS in tests/checks-budget.test.js.
 function testTimeoutMs(env) {
   const raw = parseInt((env || {}).TEST_TIMEOUT_MS, 10);
-  return (Number.isFinite(raw) && raw > 0) ? raw : 25000;
+  return (Number.isFinite(raw) && raw > 0) ? raw : 40000;
 }
 
 // Whole-suite deadline. On expiry the pool stops dispatching and abandons
@@ -1120,6 +1172,10 @@ async function runTestGroup(browser, group, opts) {
   const quietMs = Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : SETTLE_QUIET_MS;
   const maxMs = Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : SETTLE_MAX_MS;
   const assertMax = Number.isFinite(o.assertMaxMs) ? o.assertMaxMs : ASSERT_MAX_MS;
+  const assertActiveMax = Math.max(
+    Number.isFinite(o.assertActiveMaxMs) ? o.assertActiveMaxMs : ASSERT_ACTIVE_MAX_MS,
+    assertMax
+  );
   const assertPoll = Number.isFinite(o.assertPollMs) && o.assertPollMs > 0
     ? o.assertPollMs : ASSERT_POLL_MS;
   const consoleErrors = [];
@@ -1248,7 +1304,12 @@ async function runTestGroup(browser, group, opts) {
       // fallback below can re-run them on a reloaded document.
       const presence = new Map();
       if (!loadFailure) {
-        const assertDeadlineAt = Date.now() + assertMax;
+        // The ceiling is measured from the last sign of life, not from here —
+        // see ASSERT_ACTIVE_MAX_MS. `activity.lastAt` only moves forward, so
+        // the deadline is monotonic and a page that never emits again is
+        // judged at exactly `assertMax` past this point, as it always was.
+        const assertStartedAt = Date.now();
+        const assertHardStopAt = assertStartedAt + assertActiveMax;
         let pending = cohort.tests;
         for (;;) {
           const still = [];
@@ -1258,8 +1319,11 @@ async function runTestGroup(browser, group, opts) {
             if (reason) still.push(t);
           }
           pending = still;
-          const leftMs = assertDeadlineAt - Date.now();
-          if (!pending.length || leftMs <= 0) break;
+          if (!pending.length) break;
+          const lastSignalAt = Math.max(assertStartedAt, activity ? activity.lastAt : 0);
+          const deadlineAt = Math.min(lastSignalAt + assertMax, assertHardStopAt);
+          const leftMs = deadlineAt - Date.now();
+          if (leftMs <= 0) break;
           await sleep(Math.min(assertPoll, leftMs));
         }
       }
@@ -1362,16 +1426,22 @@ const GROUP_EXTRA_CHECK_MS = 1000;
 // Extra allowance for each hash cohort past the first. A cohort costs a hash
 // write plus one settle, not a navigation — but a settle can run to
 // SETTLE_MAX_MS, and a cohort with failing checks polls its assertions up to
-// ASSERT_MAX_MS more, so the budget has to grow with cohort count or a full
-// six-cohort group with one broken screen per cohort would be timed out for
-// doing exactly what it was told to.
+// ASSERT_ACTIVE_MAX_MS more, so the budget has to grow with cohort count or a
+// full six-cohort group with one broken screen per cohort would be timed out
+// for doing exactly what it was told to.
 //
 // It also has to cover the cold-load fallback (#1146), which is a real
 // navigation plus a second settle — otherwise a group of genuinely-failing
 // cohorts would be reported as "did not finish" rather than as the failures
 // it found, which is the less useful of the two answers. Only cohorts whose
 // assertions did not hold pay it, so a green suite never reaches this ceiling.
-const GROUP_EXTRA_COHORT_MS = 13000;
+//
+// Two passes of (settle + assert), which is what the fallback makes it:
+// 2 × (SETTLE_MAX_MS + ASSERT_ACTIVE_MAX_MS) = 2 × (1500 + 12000) = 27000.
+// It tracked the quiet ceiling before the assert window learned to roll
+// forward (2 × (1500 + 5000) = 13000); pinned against the constants in
+// tests/capture-pool.test.js so the two cannot drift apart silently.
+const GROUP_EXTRA_COHORT_MS = 27000;
 
 // Run the whole declared suite through a bounded worker pool, each group in
 // its own browser context. Two layers of batching:
@@ -1413,7 +1483,7 @@ async function runTests(browser, tests, opts) {
   const list = Array.isArray(tests) ? tests : [];
   const o = opts || {};
   const concurrency = Math.max(1, Number(o.concurrency) || 8);
-  const perTestMs = Number(o.testTimeoutMs) > 0 ? Number(o.testTimeoutMs) : 25000;
+  const perTestMs = Number(o.testTimeoutMs) > 0 ? Number(o.testTimeoutMs) : 40000;
   const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 560000;
   const now = typeof o.now === 'function' ? o.now : () => Date.now();
 
@@ -1428,6 +1498,8 @@ async function runTests(browser, tests, opts) {
     settleQuietMs: Number.isFinite(o.settleQuietMs) ? o.settleQuietMs : settleQuietMs(env),
     settleMaxMs: Number.isFinite(o.settleMaxMs) ? o.settleMaxMs : settleMaxMs(env),
     assertMaxMs: Number.isFinite(o.assertMaxMs) ? o.assertMaxMs : assertMaxMs(env),
+    assertActiveMaxMs: Number.isFinite(o.assertActiveMaxMs)
+      ? o.assertActiveMaxMs : assertActiveMaxMs(env),
     assertPollMs: Number.isFinite(o.assertPollMs) ? o.assertPollMs : ASSERT_POLL_MS,
     // Carried so the cohort fallback reads the same env the grouping did.
     env,
@@ -1578,4 +1650,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, settleQuietMs, settleMaxMs, assertMaxMs, assertActiveMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
