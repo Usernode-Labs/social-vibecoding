@@ -892,6 +892,12 @@
       "expectText": "Nothing featured right now"
     },
     {
+      "name": "Adding from Discover lands in Your apps with no reload, and removing takes it out again (#1567)",
+      "path": "/?shot=discover-add",
+      "expectSelector": "body[data-shot-add=\"round-trip\"] #home-apps-section #app-list",
+      "expectText": "Your apps"
+    },
+    {
       "name": "The launcher grid shows two rows by default, with a way to the rest",
       "path": "/?demo=1",
       "expectSelector": "#home-body #home-apps-section #home-apps-more:not(.hidden) button",
@@ -1216,6 +1222,18 @@
       "name": "Waitlist country picker carries the whole ISO list (#1527)",
       "path": "/?shot=anon#waitlist",
       "expectSelector": "#waitlist-country option[value=\"UY\"]",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist countries are one flat list, so Switzerland is a top-level option (#1527)",
+      "path": "/?shot=anon#waitlist",
+      "expectSelector": "#waitlist-country > option[value=\"CH\"]",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist countries start at A, with Aland Islands sorted as an A (#1527)",
+      "path": "/?shot=anon#waitlist",
+      "expectSelector": "#waitlist-country > option:nth-child(3)[value=\"AX\"]",
       "allowConsoleErrors": true
     },
     {

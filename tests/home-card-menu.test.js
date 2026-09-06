@@ -500,6 +500,21 @@ test('menu: member toggle sends the explicit desired value, not !is_favorited (#
   );
 });
 
+test('menu: the favorite entry IS toggleAdded now, so the menu paints like the rails (#1567)', () => {
+  // Two implementations of one write is how the menu and the Discover rails
+  // came to disagree about how fast "Your apps" updates. This one delegates,
+  // so the optimistic flip, the immediate repaint and the revert-on-failure
+  // are the same code from every entry point.
+  const Home = makeHome({ id: ME });
+  const calls = [];
+  Home.toggleAdded = (slug, desired) => { calls.push([slug, desired]); };
+  Home._menuToggleFavorite(baseApp({ slug: 'plain' }), true);
+  Home._menuToggleFavorite(baseApp({ slug: 'mine', is_collaborator: true }), false);
+  // The !is_favorited fallback for a legacy caller that passes no value.
+  Home._menuToggleFavorite(baseApp({ slug: 'starred', is_favorited: true }));
+  assert.deepEqual(calls, [['plain', true], ['mine', false], ['starred', false]]);
+});
+
 // ── App details ───────────────────────────────────────────────────
 //
 // The menu's way to the app's own page — the SAME destination a row in
