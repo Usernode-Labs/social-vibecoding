@@ -1997,15 +1997,35 @@
       "expectText": "[Mock] Did the notifications change land yet?"
     },
     {
-      "name": "The Messages screen draws a real head over its conversation list",
+      "name": "The Messages screen draws its title over the conversation list, on the frosted strip",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout .messages-list-pane .messages-list-toolbar .messages-list-title h2",
-      "expectText": "Direct and group conversations"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.dc-lift.dc-lift-strip .messages-list-pane .messages-list-toolbar .messages-list-title h2",
+      "expectText": "Messages"
     },
     {
       "name": "...and a styled empty pane where the conversation goes",
       "path": "/?demo=1#messages",
       "expectSelector": "#messages-screen:not(.hidden) .messages-layout .messages-thread-pane.messages-no-selection"
+    },
+    {
+      "name": "A conversation row carries the name, the time and the unread count on the language's two lines",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-conversation-row .messages-row-line .messages-row-name + .messages-row-time-unread"
+    },
+    {
+      "name": "A direct conversation is a bubble transcript on the frosted sheet, with your own turn tinted on the right",
+      "path": "/?demo=1#messages/910001",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct .messages-message-bubble.messages-message-self .messages-bubble-wrap .messages-bubble"
+    },
+    {
+      "name": "...and the sheet carries the conversation's own title row",
+      "path": "/?demo=1#messages/910001",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift-session .messages-thread-header .messages-thread-name + .messages-thread-sub"
+    },
+    {
+      "name": "A group conversation is a named-row transcript",
+      "path": "/?demo=1#messages/910002",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-message:not(.messages-message-bubble) .messages-message-head time"
     },
     {
       "name": "The notifications strip reads Unread, Messages, All — and opens on Unread",
