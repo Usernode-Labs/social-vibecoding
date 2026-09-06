@@ -3044,6 +3044,47 @@ const AppView = {
   //   act      — the click handler; omitted on a purely informational row
   _cardMenus: Object.create(null),
   _cardMenuSeq: 0,
+  // The action pills a card's one-line band could not fit, per menu key
+  // (card/dev-card.tsx's `useFoldedActions` publishes them after layout).
+  // Read by _cardMenuItems, which lists them ABOVE the card's own ⋯ rows:
+  // a folded pill is still the card's most immediate action, only moved.
+  _foldedCardActions: Object.create(null),
+  _setFoldedCardActions(key, specs) {
+    if (!key) return;
+    const list = Array.isArray(specs) ? specs.filter((a) => a && a.act && a.act.fn) : [];
+    if (list.length) AppView._foldedCardActions[key] = list;
+    else delete AppView._foldedCardActions[key];
+  },
+  // A folded ActionSpec as a ⋯ descriptor: same label, same tooltip, same
+  // call (`AppView[fn](...args)`), with a glyph picked by what the call does.
+  _foldedMenuItem(a) {
+    const fn = a.act.fn;
+    const icon = fn === 'markIssueInProgress' ? 'progress'
+      : fn === 'clearIssueClaim' ? 'clear'
+        : fn === 'exploreProposalInDevChat' ? 'explore'
+          : fn === '_setSessionShared' ? (a.act.args && a.act.args[1] ? 'visible' : 'hide')
+            : fn === 'promoteImportedSession' ? 'merge'
+              : fn === 'createPrForIssue' || fn === 'startFromAutoSession' || fn === 'goToAutoSessionClone' ? 'generate'
+                : 'default';
+    return {
+      label: a.label,
+      icon,
+      title: a.title || null,
+      disabled: !!a.disabled,
+      act: () => {
+        const f = AppView[fn];
+        if (typeof f === 'function') f.apply(AppView, a.act.args || []);
+      },
+    };
+  },
+  // Everything the ⋯ under `key` lists right now: the folded pills first,
+  // then the registered descriptors.
+  _cardMenuItems(key) {
+    const list = AppView._cardMenus[key] || [];
+    const folded = AppView._foldedCardActions[key] || [];
+    if (!folded.length) return list;
+    return folded.map((a) => AppView._foldedMenuItem(a)).concat(list);
+  },
   // The presented menu's dismissal hooks, or null. Body-mounted like
   // .attr-popover so a kanban column's overflow-x:auto can't clip it.
   _openCardMenu: null,
@@ -3202,7 +3243,7 @@ const AppView = {
 
   _toggleCardMenu(trigger) {
     const key = trigger.dataset.cardMenu;
-    const items = AppView._cardMenus[key];
+    const items = AppView._cardMenuItems(key);
     // Re-clicking the open trigger closes it (the popover idiom).
     const wasOpen = AppView._openCardMenu && AppView._openCardMenu.key === key;
     AppView._closeCardMenu();
@@ -3239,8 +3280,8 @@ const AppView = {
       // the menu opened: a repaint re-registers under the same key, and the
       // menu now survives repaints (see _reanchorCardMenu), so a captured
       // closure could act on a row the board has already replaced.
-      const live = AppView._cardMenus[key] || items;
-      const it = live[parseInt(btn.dataset.menuIdx, 10)];
+      const live = AppView._cardMenuItems(key);
+      const it = (live.length ? live : items)[parseInt(btn.dataset.menuIdx, 10)];
       AppView._closeCardMenu();
       if (it && it.act) {
         // Mark the dispatch so a popover this row opens isn't dismissed by
@@ -3321,7 +3362,7 @@ const AppView = {
     if (!trigger) { AppView._closeCardMenu(); return; }
     open.trigger = trigger;
     trigger.setAttribute('aria-expanded', 'true');
-    AppView._fillCardMenu(open.el, AppView._cardMenus[open.key] || []);
+    AppView._fillCardMenu(open.el, AppView._cardMenuItems(open.key));
     AppView._positionCardMenu(open.el, trigger);
   },
 
@@ -5768,9 +5809,20 @@ const AppView = {
     const kInReview = filtering
       ? buckets.inReview.filter((x) => AppView._devCardMatches(x.kind, x.item, f))
       : buckets.inReview;
-    const kDone = filtering
+    // Done AGES OUT: unfiltered, the column shows what landed in the last
+    // seven days (never fewer than the newest three, so a quiet fortnight
+    // does not empty it) and a "Show all N" footer for the rest. A settled
+    // change is a record, not something to do, and a column of forty of
+    // them was the busiest thing on the board. Filtering and "Show all"
+    // both lift the cut; the header count keeps the true total either way.
+    const doneAll = filtering
       ? buckets.done.filter((m) => AppView._devCardMatches('merged', m, f))
       : buckets.done;
+    const doneCut = !filtering && !AppView._doneShowAll
+      ? AppView._recentDone(doneAll)
+      : doneAll;
+    const kDone = doneCut;
+    const doneHidden = doneAll.length - doneCut.length;
 
     // "More open issues on GitHub" — the Issues column inherits the list
     // footer's link when the repo has more open issues than the fetch
@@ -5794,7 +5846,9 @@ const AppView = {
     // only in the degenerate case where the total exceeds the loaded rows
     // yet the server reports no more pages.
     let doneFooter = null;
-    if (filtering) {
+    if (doneHidden > 0) {
+      doneFooter = { kind: 'showAll', n: doneAll.length };
+    } else if (filtering) {
       // #482: while filtered, the server total and the "+N more" hint would
       // both misstate what's visible — the header shows the matching loaded
       // count instead, and "Load more" stays reachable (uncounted) so older
@@ -5854,6 +5908,27 @@ const AppView = {
     // built: the archived toggle counts as content even with no cards.
     if (!cols[1].rows.length) cols[1].empty = emptyNote;
     return { activeTab: AppView._activeKanbanTab(), cols, loading: !AppView._devDataReady };
+  },
+
+  // The Done column's age cut (see _kanbanView). Session state: a board that
+  // was asked to show everything keeps showing everything across repaints,
+  // and forgets on the next page load.
+  _doneShowAll: false,
+  DONE_RECENT_DAYS: 7,
+  DONE_RECENT_MIN: 3,
+  _recentDone(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    const cutoff = Date.now() - AppView.DONE_RECENT_DAYS * 86400000;
+    const ts = (v) => {
+      const t = Date.parse(v || '');
+      return Number.isFinite(t) ? t : 0;
+    };
+    const fresh = list.filter((m) => Math.max(ts(m.created_at), ts(m.last_message_at)) >= cutoff);
+    return fresh.length >= AppView.DONE_RECENT_MIN ? fresh : list.slice(0, AppView.DONE_RECENT_MIN);
+  },
+  showAllDone() {
+    AppView._doneShowAll = true;
+    AppView._repaintCards();
   },
 
   // #814: the mobile tab strip is card/dev-kanban.tsx's markup now — one
@@ -7010,7 +7085,7 @@ const AppView = {
       attrs,
       icon: AppView._devCardIcon(
         isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'),
-        mine && !isMerged ? { title: 'This is your PR. Open its session.' } : undefined),
+        mine && !isMerged ? { title: 'This is your PR. Its session is under ⋯.' } : undefined),
       title,
       meta,
       pill,

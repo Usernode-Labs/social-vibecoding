@@ -661,6 +661,39 @@
       "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta + .dev-card-badges.dev-card-status + .gc-card-actions"
     },
     {
+      "name": "Dev board, round three: the vote is one button beside the state bar, with a picker",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-inreview .gc-vote-item .dev-card-status > .dev-status-pill-block + .dev-vote-btn[data-vote-btn][aria-haspopup=\"menu\"]",
+      "expectText": "Vote"
+    },
+    {
+      "name": "Dev board, round three: Preview is a labelled pill at the end of the action band",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item .gc-card-actions > .gc-vote-btn-preview:last-child:not(.gc-vote-btn-icon)",
+      "expectText": "Preview"
+    },
+    {
+      "name": "Dev board, round three: every card wears a tone-keyed left edge, and a glyph where the tile was",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item.dev-card-dense[data-edge] > .flex-1 > .dev-card-head > .dev-card-icon.rounded-lg + .dev-card-head-main"
+    },
+    {
+      "name": "Dev board, round three: the card's facts read as one line under the bar",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item .dev-card-status > .dev-card-band-break + .dev-badge"
+    },
+    {
+      "name": "Dev board, round three: a second action pill can fold into ⋯ (one-line band)",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-col-issues [data-issue-row] .gc-card-actions > .gc-vote-btn[data-act=\"markIssueInProgress\"][data-fold]",
+      "expectText": "Claim this issue"
+    },
+    {
+      "name": "Activity, round three: each entry is a sheet, its reply box ends in the send disc",
+      "path": "/?demo=1#app/usernode-2d5619/activity",
+      "expectSelector": "#dev-feed .dev-feed-entry > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
+    },
+    {
       "name": "Dev board: an issue card with no pills drops its status band instead of reserving an empty row (#1139)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body [data-issue-row=\"900013\"] .dev-card-meta + .dev-card-badges.dev-card-status[data-empty=\"1\"] + .gc-card-actions"

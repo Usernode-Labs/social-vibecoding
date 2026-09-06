@@ -206,7 +206,7 @@ function SignupEmail({ email }: { email: string }) {
       id="more-signup-email"
       className={`text-xs text-zinc-500 dark:text-zinc-400 break-words${email ? '' : ' hidden'}`}
     >
-      Registered with{' '}
+      {'Registered with '}
       <span className="font-medium text-zinc-700 dark:text-zinc-200">{email}</span>
     </p>
   );
