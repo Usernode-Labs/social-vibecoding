@@ -28,7 +28,7 @@ import type { ReactNode } from 'react';
 import { useNarrowViewport } from '../../../lib/use-narrow';
 import { useStoreState } from '../../../lib/use-store-state';
 import { devKanbanStore } from './cards-store';
-import { FooterView } from './dev-feed';
+import { FooterView } from './footer';
 import { ListRowView } from './list-rows';
 import type { KanbanColView, ListRow } from './model';
 import { CardSkeleton, CountSkeleton } from './skeleton';

@@ -253,8 +253,8 @@ test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () 
     /id="dev-body"[\s\S]{0,200}dangerouslySetInnerHTML=\{bodyInitial\}/,
     '#dev-body is filled from a per-mount constant {__html} object'
   );
-  assert.match(FRAME, /const DEV_BODY_FEED_INITIAL = \{ __html:/,
-    'the feed form is a module constant');
+  assert.match(FRAME, /const DEV_BODY_WORKSHOP_INITIAL = \{ __html:/,
+    'the Workshop form is a module constant');
   assert.match(FRAME, /const DEV_BODY_KANBAN_INITIAL = \{ __html: skeletonKanbanHtml\(\) \}/,
     'and so is the kanban form — evaluated once, never per render');
   assert.match(FRAME, /const chosen = useRef<\{ __html: string \} \| null>\(null\);/,
@@ -262,21 +262,21 @@ test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () 
 
   // Constant means constant: both are module-level consts with no
   // interpolation, so React writes each once and never looks inside again.
-  const feed = /^const DEV_BODY_FEED_INITIAL = (.*);$/m.exec(FRAME);
+  const feed = /^const DEV_BODY_WORKSHOP_INITIAL = (.*);$/m.exec(FRAME);
   const kanban = /^const DEV_BODY_KANBAN_INITIAL = (.*);$/m.exec(FRAME);
   assert.ok(feed && kanban, 'both forms are module-level constants');
-  for (const [name, decl] of [['feed', feed[1]], ['kanban', kanban[1]]]) {
+  for (const [name, decl] of [['workshop', feed[1]], ['kanban', kanban[1]]]) {
     assert.ok(!decl.includes('${'), `${name}: no interpolation — the string never changes`);
   }
-  // Byte-for-byte what the template put there, on the feed side.
-  assert.ok(feed[1].includes('<div id="dev-feed">'), 'the feed form still ships #dev-feed');
+  // The list form ships the Workshop's host, as the feed form shipped #dev-feed.
+  assert.ok(feed[1].includes('<div id="dev-workshop">'), 'the Workshop form ships #dev-workshop');
   // The placeholder is a SKELETON, not the word "Loading…". Eleven characters
   // of grey in the corner of an empty screen is not a state a reader notices,
   // and the blank beside it reads as an empty board rather than a pending one.
   // Both forms are built by card/skeleton.tsx so the strings here and the
   // components the board paints a moment later cannot drift apart.
   assert.ok(feed[1].includes('skeletonListHtml('),
-    'the feed rows come from the shared builder');
+    'the Workshop rows come from the shared builder');
   assert.ok(kanban[1].includes('skeletonKanbanHtml('),
     'and the columns from the same file');
   // On the DECLARATIONS, not the file: two comments here name the string
@@ -413,7 +413,7 @@ test('the view toggle is real React state, and the className writer is gone', ()
   // Activity rows already carried and the one dapp.json's checks select on.
   assert.match(VIEW_TABS, /aria-current=\{active === 'board' \? 'page' : 'false'\}/,
     'the Board segment reports whether it is the one you are on');
-  assert.match(VIEW_TABS, /data-context-row="activity"/,
+  assert.match(VIEW_TABS, /data-context-row="workshop"/,
     'each view still names itself with data-context-row');
   assert.ok(!PANEL.includes('data-view-segment') && !FRAME.includes('data-view-segment'),
     'the retired sub-strip left no data-view-segment behind');
@@ -423,8 +423,8 @@ test('the view toggle is real React state, and the className writer is gone', ()
   // button because it is not a hash (on the self-hosted row it goes home).
   assert.match(VIEW_TABS, /href=\{slug \? `#app\/\$\{slug\}\/board` : '#'\}/,
     'the Board segment is an anchor at the board route');
-  assert.match(VIEW_TABS, /href=\{slug \? `#app\/\$\{slug\}\/activity` : '#'\}/,
-    'and Activity at the activity route');
+  assert.match(VIEW_TABS, /href=\{slug \? `#app\/\$\{slug\}\/workshop` : '#'\}/,
+    'and the Workshop at the workshop route');
   // Seeded from the module before the first paint, so ?view=kanban does not
   // flash list first.
   assert.match(MOUNT, /publishViewMode\(options\.viewMode\);/, 'the store is seeded at mount');
@@ -465,7 +465,7 @@ test('no Dev-board id leaked into the prerendered shell', () => {
   // need an ADDED_IDS entry — and the region would render before its data,
   // which is a hydration mismatch.
   for (const id of [
-    'dev-forum-scroll', 'dev-body', 'dev-feed', 'gc-merged', 'dev-plus-menu',
+    'dev-forum-scroll', 'dev-body', 'dev-workshop', 'dev-feed', 'gc-merged', 'dev-plus-menu',
     'dev-plus-btn', 'dev-chat-card', 'dev-locked-notice', 'dev-section',
     'dev-chat-body', 'dev-chat-back', 'dc-secrets-state',
   ]) {

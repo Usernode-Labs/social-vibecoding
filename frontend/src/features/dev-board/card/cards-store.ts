@@ -3,10 +3,10 @@
  *
  * app-view.js computes and publishes; the components render. Three stores:
  *
- * - `devFeedStore` — the list feed (`#dev-feed`): the stream's entries and
- *   the pager footer. It used to carry a pinned own-sessions block above
- *   them; the board's Underway column is where an own session is reached
- *   from now (see AppView._inProgressRows).
+ * - `devWorkshopStore` — the Workshop (`#dev-workshop`): the Dev screen's
+ *   lander, which replaced the Activity feed. Its themes, the vote strip,
+ *   the since-last-visit strip and the discussion row are one publish
+ *   (see AppView._workshopView).
  * - `devKanbanStore` — the board (`#dev-kanban-board`): the four columns
  *   plus the mobile tab strip's active key.
  * - `cardNowStore` / `aiEnabledStore` — the two cross-cutting facts that
@@ -22,19 +22,26 @@
  */
 
 import { createStore } from '../../../lib/plain-store.js';
-import type { DevFeedView, DevKanbanView } from './model';
+import type { DevKanbanView, DevWorkshopView } from './model';
 
 // `loading: true` is the honest initial value for both: nothing has been
 // fetched when the module loads. It is also why every view model app-view.js
 // publishes carries the key EXPLICITLY — `set` merges a patch, so a model that
 // omitted it would inherit whatever was published last and strand the surface
 // on its placeholders.
-export const devFeedStore = createStore<DevFeedView>({
+export const EMPTY_WORKSHOP_VIEW: DevWorkshopView = {
   loading: true,
   emptyNote: null,
-  entries: [],
-  footer: null,
-});
+  votes: { count: 0, rows: [] },
+  since: null,
+  welcome: null,
+  discussion: null,
+  themes: [],
+  meta: { source: null, generatedAt: null, stale: false, pending: false, filtered: false },
+  autoExpand: null,
+};
+
+export const devWorkshopStore = createStore<DevWorkshopView>(EMPTY_WORKSHOP_VIEW);
 
 export const devKanbanStore = createStore<DevKanbanView>({
   activeTab: 'issues',

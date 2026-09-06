@@ -694,9 +694,9 @@
       "expectText": "Claim this issue"
     },
     {
-      "name": "Activity, round three: each entry is a sheet, its reply box ends in the send disc",
-      "path": "/?demo=1#app/usernode-2d5619/activity",
-      "expectSelector": "#dev-feed .dev-feed-entry > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
+      "name": "A Workshop row unfolds into the Activity sheet: the card, its thread, the send disc",
+      "path": "/?demo=1&shot=feed-comments#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
     },
     {
       "name": "Dev board: an issue card with no pills drops its status band instead of reserving an empty row (#1139)",
@@ -1026,7 +1026,7 @@
       "name": "Issue cards keep ONE primary action; the claim moves into the ⋯ menu",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Create proposal",
-      "expectSelector": "#dev-kanban-col-issues .gc-vote-item [data-card-menu], #dev-feed .gc-vote-item [data-card-menu]"
+      "expectSelector": "#dev-kanban-col-issues .gc-vote-item [data-card-menu], #dev-workshop .gc-vote-item [data-card-menu]"
     },
     {
       "name": "Session/proposal cards render reverse #N issue chips",
@@ -1420,9 +1420,9 @@
       "expectText": "Submitted features"
     },
     {
-      "name": "Dev tab defaults to kanban board on wide screens",
+      "name": "The Dev tab lands on the Workshop on every width",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban"
+      "expectSelector": "#dev-body #dev-workshop"
     },
     {
       "name": "Proposal view shows the How-voting-works help button",
@@ -1517,9 +1517,9 @@
       "expectSelector": "#platform-header #improve-btn:not(.hidden)"
     },
     {
-      "name": "The Improve panel offers the three views in order (#1443)",
+      "name": "The Improve panel offers the three views in order: App, Workshop, Board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-views [data-context-row=\"app\"] ~ [data-context-row=\"board\"] ~ [data-context-row=\"activity\"]"
+      "expectSelector": "#improve-views [data-context-row=\"app\"] ~ [data-context-row=\"workshop\"] ~ [data-context-row=\"board\"]"
     },
     {
       "name": "The app-context sheet carries the + New change action (Streamlined Concept)",
@@ -1613,14 +1613,14 @@
       "expectText": "Board"
     },
     {
-      "name": "A ?view=feed deep link resolves onto the feed",
+      "name": "A retired ?view=feed deep link resolves onto the Workshop",
       "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-feed"
+      "expectSelector": "#dev-body #dev-workshop"
     },
     {
-      "name": "A retired ?view=list link still resolves onto the Feed",
+      "name": "A retired ?view=list link still resolves onto the Workshop",
       "path": "/?demo=1&view=list#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-feed"
+      "expectSelector": "#dev-body #dev-workshop"
     },
     {
       "name": "Kanban survives as the resolved mode on a ?view=kanban deep link",
@@ -1628,9 +1628,9 @@
       "expectSelector": "#dev-body #dev-kanban-board"
     },
     {
-      "name": "The Feed renders activity rows into #dev-feed",
-      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-feed"
+      "name": "The Workshop renders its themes into #dev-workshop, the first one open with its items as folded rows under stage lanes",
+      "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-themes [data-ws-theme] .dev-ws-theme-body [data-ws-lane] button.dev-ws-row[aria-expanded]"
     },
     {
       "name": "#app/<slug>/board is the card area as a kanban",
@@ -1638,24 +1638,36 @@
       "expectSelector": "#dev-body #dev-kanban-board"
     },
     {
-      "name": "#app/<slug>/activity is the same cards as the recency stream, not the general chat",
-      "path": "/?demo=1#app/usernode-2d5619/activity",
-      "expectSelector": "#dev-body #dev-feed"
+      "name": "#app/<slug>/workshop is the card area grouped by theme, not the general chat",
+      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop"
     },
     {
-      "name": "Activity carries the board's search and filter bar, not just the +",
-      "path": "/?demo=1#app/usernode-2d5619/activity",
+      "name": "The Workshop carries the board's search and filter bar, not just the +",
+      "path": "/?demo=1#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-actions #dev-kanban-filterbar #dev-kanban-search"
     },
     {
-      "name": "An Activity row has an auto-growing reply box and send arrow (#1584)",
-      "path": "/?demo=1#app/usernode-2d5619/activity",
-      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button[aria-label=\"Send reply\"]:disabled"
+      "name": "An unfolded Workshop row has an auto-growing reply box and send arrow (#1584)",
+      "path": "/?demo=1&shot=feed-comments#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button[aria-label=\"Send reply\"]:disabled"
     },
     {
-      "name": "The view strip marks Activity as the one you are on",
-      "path": "/?demo=1#app/usernode-2d5619/activity",
-      "expectSelector": "#improve-views [data-context-row=\"activity\"][aria-current=\"page\"]"
+      "name": "A demo theme names the mock rows, with its people count and its counts",
+      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-theme=\"demo-voting\"] .dev-ws-theme-people ~ .dev-ws-theme-counts .dev-ws-cnt",
+      "expectText": "[Mock] Voting"
+    },
+    {
+      "name": "The Workshop pins the proposals waiting on the viewer's vote above the themes",
+      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-votes] .gc-vote-item[data-unvoted]",
+      "expectText": "Needs your vote"
+    },
+    {
+      "name": "The view strip marks Workshop as the one you are on",
+      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "expectSelector": "#improve-views [data-context-row=\"workshop\"][aria-current=\"page\"]"
     },
     {
       "name": "The view strip marks Board as the one you are on",
@@ -1674,14 +1686,14 @@
       "expectText": "General discussion"
     },
     {
-      "name": "...and the Feed carries the same discussion as an activity row instead",
-      "path": "/?demo=1#app/usernode-2d5619/activity",
-      "expectSelector": "#dev-body #dev-feed [data-discussion-row]"
+      "name": "...and the Workshop carries the same discussion as a row of its own instead",
+      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-discussion-row]"
     },
     {
-      "name": "The Feed does not draw the discussion card too — one fact, one shape per view",
-      "path": "/?demo=1#app/usernode-2d5619/activity",
-      "expectSelector": "#dev-forum-scroll:not(:has(#dev-chat-card)) #dev-feed"
+      "name": "The Workshop does not draw the discussion card too — one fact, one shape per view",
+      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-forum-scroll:not(:has(#dev-chat-card)) #dev-workshop"
     },
     {
       "name": "Kanban cards show the assignee initial-avatar",
@@ -2478,7 +2490,7 @@
       "expectSelector": "header#platform-header.un-safe-top-extend"
     },
     {
-      "name": "Dev feed renders under the kit adoption (demo)",
+      "name": "The Dev card area renders under the kit adoption (demo)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-forum-scroll"
     },
@@ -3104,13 +3116,13 @@
       "expectSelector": "#board-filters-modal #board-filters-priority"
     },
     {
-      "name": "On the Feed the + button stays right-aligned with its menu anchored on-screen",
-      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "name": "On the Workshop the + button stays right-aligned with its menu anchored on-screen",
+      "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-actions > div.ml-auto > #dev-plus-btn"
     },
     {
-      "name": "Activity shows the filter bar beside the +, not the + alone",
-      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
+      "name": "The Workshop shows the filter bar beside the +, not the + alone",
+      "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-actions > #dev-kanban-filterbar:not(:empty) + div > #dev-plus-btn"
     },
     {
@@ -3124,14 +3136,14 @@
       "expectSelector": "#notifications-sheet:not(:has([data-group-toggle]))"
     },
     {
-      "name": "The Dev feed renders as a de-carded stream",
-      "path": "/?demo=1&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-feed .dev-feed-entry > .gc-vote-item"
+      "name": "An unfolded Workshop row is a card on a sheet",
+      "path": "/?demo=1&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-workshop .dev-feed-entry > .gc-vote-item"
     },
     {
-      "name": "Feed issue rows show recent comments with relative ages (#1585)",
-      "path": "/?demo=1&shot=feed-comments&view=feed#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-feed .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time"
+      "name": "An unfolded issue row shows recent comments with relative ages (#1585)",
+      "path": "/?demo=1&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time"
     },
     {
       "name": "The page ground carries the reskin's grey, not the old white (#1400)",

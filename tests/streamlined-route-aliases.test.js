@@ -1,8 +1,9 @@
-// /app/<slug>/board and /app/<slug>/activity are clean names for the existing dev
-// vocabulary, not new screens — and they are aliases onto the SAME one: both
-// resolve to the forum card area, and what tells them apart is the layout it
-// is drawn in. Board is the kanban of work in flight; Activity is the same
-// cards newest-first.
+// /app/<slug>/board and /app/<slug>/workshop are clean names for the existing
+// dev vocabulary, not new screens — and they are aliases onto the SAME one:
+// both resolve to the forum card area, and what tells them apart is the
+// layout it is drawn in. Board is the kanban of work in flight; the Workshop
+// is the same cards grouped by theme. /app/<slug>/activity, the retired
+// Activity feed's address, lands on the Workshop.
 //
 // That is a change of meaning for `activity`, which named the app's general
 // chat for one round. The chat keeps `dev/chat`, the address it always had.
@@ -36,14 +37,14 @@ test('restoreFromHash rewrites the aliases onto the dev vocabulary', () => {
   const fn = body("if (parts[0] === 'app' && parts[1]) {", 3600);
   // Both aliases are the CARD AREA — `parts[3] = null`, the forum — and each
   // carries the layout the destination is named for.
-  assert.match(fn, /tab === 'activity'.*parts\[3\] = null; boardView = 'feed'/s,
-    'activity parses as the card area, drawn as the recency stream');
+  assert.match(fn, /tab === 'workshop' \|\| tab === 'activity'.*parts\[3\] = null; boardView = 'workshop'/s,
+    'workshop (and the retired activity) parse as the card area, drawn as the Workshop');
   assert.match(fn, /tab === 'board'.*parts\[3\] = null; boardView = 'kanban'/s,
     'board parses as the card area, drawn as the kanban');
   // Both rewrites must land BEFORE the dev-section switch reads parts[3],
   // or the aliases would fall through to the plain App tab.
   assert.ok(
-    fn.indexOf("tab === 'activity'") < fn.indexOf("const sec = parts[3]"),
+    fn.indexOf("tab === 'workshop'") < fn.indexOf("const sec = parts[3]"),
     'the rewrites precede the dev-section parse');
 });
 
@@ -69,7 +70,7 @@ test('the clean serializer names the card area for the layout it is drawn in', (
   const fn = body('_appUrl(slug, tab, ref, subTab, options) {', 1800);
   assert.match(fn, /norm\.subTab === 'chat'[\s\S]{0,120}suffix = '\/dev\/chat'/,
     'the general chat writes its own address, not /activity');
-  assert.match(fn, /AppView\._getViewMode\(\) === 'feed'[\s\S]{0,160}feed \? 'activity' : 'board'/,
+  assert.match(fn, /AppView\._getViewMode\(\) === 'kanban'[\s\S]{0,160}kanban \? 'board' : 'workshop'/,
     'and the card area writes whichever of the two names its layout gives it');
 });
 
@@ -79,6 +80,6 @@ test('updateHash treats the two aliases and the canonical form as one screen', (
   // go back FROM, which is also why the retired Kanban|Feed strip pushed no
   // entry. What this pins is that neither alias can produce a spurious push
   // against the canonical `dev` form updateHash computes.
-  assert.match(fn, /segs\[2\] === 'activity' \|\| segs\[2\] === 'board'[\s\S]{0,160}splice\(2, 1, 'dev'\)/,
-    'both aliases normalize to dev for screen identity');
+  assert.match(fn, /segs\[2\] === 'workshop' \|\| segs\[2\] === 'activity' \|\| segs\[2\] === 'board'[\s\S]{0,160}splice\(2, 1, 'dev'\)/,
+    'every alias normalizes to dev for screen identity');
 });
