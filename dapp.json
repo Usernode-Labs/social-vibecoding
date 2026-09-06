@@ -2860,6 +2860,18 @@
       "expectText": "a reset link is on its way"
     },
     {
+      "name": "An invite link opens the code step with its own address, not an empty field (#1548)",
+      "path": "/?shot=signup-code-sent#signup/demo%40example.invalid",
+      "expectSelector": "#auth-login-screen:not(.hidden) #otp-view:not(.hidden) #otp-step-code:not(.hidden) #otp-email-echo",
+      "expectText": "demo@example.invalid"
+    },
+    {
+      "name": "An invite link says the code is sent and holds the resend for its cooldown (#1548)",
+      "path": "/?shot=signup-code-sent#signup/demo%40example.invalid",
+      "expectSelector": "#otp-step-code:not(.hidden) #btn-otp-resend[disabled]",
+      "expectText": "We sent you a code. It expires in 10 minutes."
+    },
+    {
       "name": "Back from a dev session is the header's own arrow, a real link at the Board (#1036, Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/board\"]"

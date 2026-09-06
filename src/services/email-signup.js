@@ -54,14 +54,42 @@ async function cleanupExpiredState(pool) {
   await mail.pruneDeliveries(pool);
 }
 
+// The mail layer suppresses a second `otp` message to the same address inside
+// RULES.otp.minGapMs (src/services/mail/rate-limit.js). Minting a fresh code
+// in that window used to delete the working one and then mail nothing, so a
+// double-tap left the recipient holding a code the server had already thrown
+// away. Inside the gap we keep the code that was actually delivered instead:
+// still unused, still unexpired, so the mail already in their inbox works.
+const OTP_REUSE_WINDOW_SECONDS = 60;
+
 async function requestCode(pool, config, rawEmail) {
   const email = normalizeEmail(rawEmail);
   if (!email) throw new EmailSignupError('invalid_email', 'Enter a valid email address.');
 
-  await pool.query(
-    'DELETE FROM mobile_otp_codes WHERE email = $1 AND consumed_at IS NULL',
-    [email]
-  );
+  const reused = await withTransaction(pool, async (client) => {
+    const { rows } = await client.query(
+      `SELECT id,
+              (attempts = 0
+               AND expires_at > NOW()
+               AND created_at > NOW() - INTERVAL '${OTP_REUSE_WINDOW_SECONDS} seconds')
+                AS reusable
+         FROM mobile_otp_codes
+        WHERE email = $1 AND consumed_at IS NULL
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+          FOR UPDATE`,
+      [email]
+    );
+    if (rows[0] && rows[0].reusable) return true;
+    // Outside the window, expired, or already guessed at: replace it.
+    await client.query(
+      'DELETE FROM mobile_otp_codes WHERE email = $1 AND consumed_at IS NULL',
+      [email]
+    );
+    return false;
+  });
+  if (reused) return email;
+
   await cleanupExpiredState(pool);
 
   const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');

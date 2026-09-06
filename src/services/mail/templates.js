@@ -113,13 +113,21 @@ function waitlistJoined(payload) {
   return { subject: "You're on the Usernode waitlist 🎉", text, html };
 }
 
+// Waitlist release. The no-account link carries the released address, and
+// opening it asks for a sign-in code straight away, so say so: the recipient
+// should be expecting a second email rather than hunting for a button. The
+// 10-minute figure must match OTP_TTL_MS in src/services/email-signup.js.
+const RELEASE_CODE_NOTE = 'Opening the link emails you a 6-digit code to sign in with. '
+  + 'The code expires in 10 minutes, and you can ask for a new one at any time.';
+
 function waitlistReleased(payload) {
   const url = payload.url;
   const text = payload.hasAccount
     ? "Good news, you're off the Usernode waitlist and your account now has platform access.\n\n"
       + `Sign in to get started: ${url}`
     : "Good news, you're off the Usernode waitlist.\n\n"
-      + `Create your account with this email address to get started: ${url}`;
+      + `Create your account with this email address to get started: ${url}\n\n`
+      + RELEASE_CODE_NOTE;
   return {
     subject: 'Your Usernode access is ready',
     text,
@@ -130,6 +138,7 @@ function waitlistReleased(payload) {
       + p(payload.hasAccount
         ? `Sign in to get started: ${link(url)}`
         : `Create your account with this email address to get started: ${link(url)}`)
+      + (payload.hasAccount ? '' : p(RELEASE_CODE_NOTE))
     ),
   };
 }

@@ -408,7 +408,13 @@ async function sendWaitlistReleaseMail(config, email, { hasAccount = false } = {
   await send(config, {
     kind: 'waitlist_released',
     to: email,
-    url: `${PRODUCTION_ORIGIN}/#${hasAccount ? 'login' : 'signup'}`,
+    // No account yet: carry the released address in the link so the signup
+    // screen can prefill it and send the code without a second step. Segment
+    // style (like #reset-password/<token>) because AuthScreens.routeFromHash
+    // splits hash routes on '/' and a ?email= query would never parse.
+    url: hasAccount
+      ? `${PRODUCTION_ORIGIN}/#login`
+      : `${PRODUCTION_ORIGIN}/#signup/${encodeURIComponent(email)}`,
     hasAccount,
   });
 }
