@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { ArrowUpTrayIcon, PaperClipIcon, SendIcon } from '@/components/ui/icons';
+import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon } from '@/components/ui/icons';
 import * as api from './api';
 import { draftFor, notifyTyping, replyFor, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
 import type { MessageAttachment, SharedObjectReference } from './types';
@@ -143,6 +143,10 @@ export function MessageComposer() {
 
   return (
     <div className={`messages-composer platform-safe-bar ${dragging ? 'messages-composer-dragging' : ''}`} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={(event) => { if (event.currentTarget === event.target) setDragging(false); }} onDrop={(event) => { event.preventDefault(); setDragging(false); void addFiles([...event.dataTransfer.files]); }}>
+      {/* The white card. The bar around it is what carries the home-indicator
+          inset (`platform-safe-bar`), so the card keeps its own padding on a
+          notched phone instead of growing a tall blank foot. */}
+      <div className="messages-composer-card">
       {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">Replying to @{reply.sender.username}</span><p className="truncate">{reply.content || 'Attachment'}</p></div><button type="button" onClick={() => setReply(conversationId, null)} aria-label="Cancel reply">×</button></div> : null}
       {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{objectLabel(object)}</span><button type="button" onClick={() => setObject(null)} aria-label="Remove shared item">×</button></div> : null}
       {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={`Remove ${item.name}`}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">Uploading {uploading}…</span> : null}</div> : null}
@@ -152,10 +156,11 @@ export function MessageComposer() {
         <button type="button" className="messages-composer-action" onClick={() => fileRef.current?.click()} disabled={attachments.length + uploading >= MAX_ATTACHMENTS} aria-label="Attach files" title="Attach files"><PaperClipIcon aria-hidden="true" /></button>
         <button type="button" className="messages-composer-action" onClick={() => window.UsernodeReact?.dialogs?.messagesShare?.open()} aria-label="Share Usernode item" title="Share item"><ArrowUpTrayIcon aria-hidden="true" /></button>
         <textarea ref={inputRef} value={value} onChange={(event) => updateValue(event.target.value)} onPaste={(event) => { const files = [...event.clipboardData.files]; if (files.length) { event.preventDefault(); void addFiles(files); } }} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void submit(); } else if (event.key === 'Escape' && reply) setReply(conversationId, null); }} onBlur={() => notifyTyping(false)} rows={1} maxLength={8000} placeholder="Message…" aria-label="Message" className="messages-composer-input" />
-        <button type="button" onClick={() => void submit()} disabled={sending || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message">{sending ? '…' : <SendIcon aria-hidden="true" />}</button>
+        <button type="button" onClick={() => void submit()} disabled={sending || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label="Send message">{sending ? '…' : <ArrowUpIcon aria-hidden="true" />}</button>
       </div>
       {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
       <div className="mt-1 px-1 flex justify-end"><span className={`text-[10px] ${value.length > 7600 ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{value.length ? `${value.length}/8000` : ''}</span></div>
+      </div>
       {dragging ? <div className="messages-drop-overlay">Drop files to attach</div> : null}
     </div>
   );
