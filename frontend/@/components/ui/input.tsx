@@ -136,6 +136,14 @@ const inputVariants = cva('', {
       // features/group-chat/composer.tsx.
       composer:
         'resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100',
+      // The Discussion and topic-thread composers' field inside the card
+      // (features/group-chat/composer.tsx): no box of its own, at reading size.
+      // A field that is a ROW of a white card (settings, sign-in): the card
+      // is the box, so the field draws none and reads at 17px.
+      card:
+        'border-0 bg-transparent px-0 py-1 text-[17px] text-zinc-900 dark:text-zinc-100',
+      composerCard:
+        'resize-none overflow-y-auto border-0 bg-transparent px-1 py-2 text-[17px] leading-[22px] text-zinc-900 dark:text-zinc-100',
       composerTight:
         'resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm text-zinc-900 dark:text-zinc-100',
       // The Activity feed's inline reply field. It sits directly on the page
