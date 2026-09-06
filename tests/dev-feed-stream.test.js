@@ -116,8 +116,8 @@ test('a landed change is a plain card: its bar and its edge say Merged', () => {
   // "merged" a second and third time next to a bar that reads "✓ Merged"
   // and a card edge keyed green by that same bar (card/dev-card.tsx edgeFor).
   assert.doesNotMatch(CSS, /\[data-completed\]\s*\{/, 'no completed-row paint in the feed');
-  assert.match(CSS, /div\.dev-card-dense\[data-edge="ok"\]\s*\{[^}]*--dev-edge:\s*var\(--state-ok\)/,
-    'the green edge is the card\'s own');
+  assert.match(CSS, /div:is\(\.dev-card-dense, \.dev-card-topic\)\[data-edge="ok"\]\s*\{[^}]*--dev-edge:\s*var\(--state-ok\)/,
+    'the green edge is the card\'s own — on the board card and the topic card alike');
 });
 
 test('inline comments load lazily, per row, off the existing endpoint', () => {
