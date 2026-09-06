@@ -153,7 +153,7 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
     >
       <span
         aria-hidden="true"
-        className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-[14px] font-bold"
+        className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-xs font-semibold"
         style={{ backgroundColor: swatchFor(view.who.replace(/^@/, '')) }}
       >
         {view.who.replace(/^@/, '').charAt(0).toUpperCase() || '?'}
@@ -169,7 +169,7 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
             The spaces ride inside the neighbouring strings rather than as
             whitespace-only children — see the note on <Meta> for why.
         */}
-        <div className="text-[15px] text-zinc-500 dark:text-zinc-400 truncate">
+        <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
           {/* The same mark the message's own save button carries — solid
               here, because everything in this section is saved by
               definition — so the two ends of the gesture read as one
@@ -180,11 +180,11 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
           <span>{view.appName}</span>
           <span>{` · ${view.time}`}</span>
         </div>
-        <div className="text-[17px] leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{view.text}</div>
+        <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{view.text}</div>
       </button>
       <button
         data-saved-unsave={view.messageId}
-        className="shrink-0 h-8 px-3 rounded-full bg-zinc-100 text-[14px] font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+        className="shrink-0 h-8 px-3 rounded-full bg-zinc-100 text-xs font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
         onClick={(e) => {
           e.stopPropagation();
           controller()?._unsave(view.messageId);
@@ -230,7 +230,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
     >
       <span
         aria-hidden="true"
-        className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-[14px] font-bold"
+        className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-xs font-semibold"
         style={{ backgroundColor: swatchFor(view.who.replace(/^@/, '')) }}
       >
         {view.who.replace(/^@/, '').charAt(0).toUpperCase() || '?'}
@@ -240,12 +240,12 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
           The spaces ride inside the neighbouring strings rather than as
           whitespace-only children — see the note on <Meta> for why.
       */}
-      <div className="text-[17px] leading-snug text-zinc-900 dark:text-zinc-100">
+      <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100">
         <span className="font-bold">{view.who}</span>
         {` ${view.verb} `}
         <span className="font-bold">{view.appName}</span>
       </div>
-      <div className="text-[15px] text-zinc-500 dark:text-zinc-400">
+      <div className="text-xs text-zinc-500 dark:text-zinc-400">
         <span aria-hidden="true">{view.icon}</span>
         {` ${view.time}`}
       </div>
@@ -266,7 +266,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
         <button
           data-invite-decline={view.appId}
           data-invite-kind={view.kind}
-          className="rounded-full bg-zinc-100 px-5 py-2.5 text-[15px] font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+          className="rounded-full bg-zinc-100 px-5 py-2.5 text-sm font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
           onClick={(e) => {
             e.stopPropagation();
             controller()?._declineInvite(view.appId, view.kind);
@@ -313,7 +313,7 @@ export function NotificationsPinnedSections(): ReactNode {
       */}
       <div id="notifications-saved" className="shrink-0 overflow-y-auto max-h-64">
         {saved.length ? (
-          <div className="px-4 pt-4 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500">
+          <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
             Saved
           </div>
         ) : null}
@@ -328,7 +328,7 @@ export function NotificationsPinnedSections(): ReactNode {
       */}
       <div id="notifications-invites" className="shrink-0 overflow-y-auto max-h-48">
         {invites.length ? (
-          <div className="px-4 pt-4 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500">
+          <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
             Invites
           </div>
         ) : null}
