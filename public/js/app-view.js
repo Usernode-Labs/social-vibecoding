@@ -8072,6 +8072,80 @@ const AppView = {
   // the platform-variables box — and a two-field shape renders both, in the
   // wrong order, with nothing to catch it.
 
+  // Where a proposal's head branch lives — the client-side twin of
+  // services/proposal-update.js `branchHomeOf`, answered from the same
+  // columns the row carries (`imported_pr_head_repo`, `branch_name`):
+  //
+  //   'app_repo'  — a branch in the app's own repository. A native session's
+  //                 `dev/…` branch, or the `usernode/from-…` mirror the
+  //                 connector writes for a submitted fork branch (task 153).
+  //                 The platform can write it, so it syncs with main itself.
+  //   'user_fork' — a branch in the author's own fork, which the platform
+  //                 only tracks. Nobody but the author can bring it up to
+  //                 date, and the conflict copy has to say so.
+  _headHome(pr) {
+    if (!pr || pr.source !== 'imported') return 'app_repo';
+    const norm = (v) => {
+      const m = /(?:github\.com[/:])?([^/\s]+)\/([^/\s#?]+?)(?:\.git)?\/?$/i.exec(String(v || '').trim());
+      return m ? `${m[1]}/${m[2]}`.toLowerCase() : null;
+    };
+    const head = norm(pr.imported_pr_head_repo);
+    const app = norm(pr.repo_url || (AppView.appData && AppView.appData.repo_url));
+    if (head && app) return head === app ? 'app_repo' : 'user_fork';
+    return /^usernode\/(?:from|patch)-/.test(String(pr.branch_name || '')) ? 'app_repo' : 'user_fork';
+  },
+
+  // The sentence that says who brings a conflicted proposal up to date, and
+  // how. It depends on where the head lives, not on the state that asked:
+  //
+  //   native     — the author's dev-chat has a "Sync with main" button, and
+  //                that is the way out;
+  //   mirror     — an imported row whose head the PLATFORM wrote. Its author
+  //                has no dev-chat for it; the branch is revised where it was
+  //                written and submitted again as an update to this proposal.
+  //                The platform retries the sync itself on the next attempt,
+  //                so `retrying` is only said when no attempt has failed yet;
+  //   user_fork  — the platform cannot write there at all, so the only way
+  //                out is the author's own push, which the proposal follows.
+  //
+  // Returns the row's `parts` (NoteRow text runs) and, for the pill detail,
+  // the same sentence as plain text.
+  _conflictRemedy(pr, mode) {
+    const creator = pr.username || 'the proposal’s creator';
+    const home = AppView._headHome(pr);
+    let parts;
+    if (pr.source !== 'imported') {
+      parts = mode === 'failed'
+        ? [{ b: creator }, ' needs to resolve it: run "Sync with main" from the session\'s dev-chat.']
+        : mode === 'conflict'
+          ? ['Automatic resolution may not run for this proposal. ', { b: creator },
+            ' needs to finish the merge: open the session\'s dev-chat and run "Sync with main".']
+          : [{ b: creator }, ' needs to bring it up to date: open the session’s dev-chat and run "Sync with main".'];
+    } else if (home === 'app_repo') {
+      parts = mode === 'failed'
+        ? [{ b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Usernode keeps this branch itself, so the merge is retried once the update lands.']
+        : ['Usernode keeps this branch itself and will try to resolve it automatically at the next merge attempt. If that fails, ',
+          { b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it and submit it again as an update to this proposal.'];
+    } else {
+      parts = ['This branch lives in ', { b: creator }, '’s own fork, which Usernode cannot write to, so it cannot sync it itself. ',
+        { b: creator }, ' needs to merge main into the branch and push it; the proposal follows the push.'];
+    }
+    // The pill's plain-text detail. A native row keeps the sentence the pill
+    // has always carried; an imported one gets the note's sentence, since
+    // that is the first time the pill has had anything true to say about it.
+    const nativeDetail = {
+      failed: 'The proposal’s owner needs to resolve it manually from their dev session.',
+      conflict: 'Its creator needs to finish the merge from their dev session ("Sync with main").',
+      predicted: 'Its creator needs to sync with main and resolve the conflicts from their dev session ("Sync with main").',
+    };
+    return {
+      parts,
+      text: pr.source !== 'imported'
+        ? nativeDetail[mode]
+        : parts.map((x) => (typeof x === 'string' ? x : x.b)).join(''),
+    };
+  },
+
   // #361: expanded merge-conflict detail. Lists the conflicting file paths
   // and when the snapshot was last checked, plus the standing guidance to
   // run "Sync with main" from the session's dev-chat.
@@ -8089,7 +8163,6 @@ const AppView = {
     if (mcs !== 'failed' && mcs !== 'conflict') return null;
     if (pr.resolving) return null;
     const files = Array.isArray(pr.conflict_files) ? pr.conflict_files : [];
-    const creator = pr.username || 'the proposal’s creator';
     // The file list sits directly under the sentence that introduces it —
     // see `NoteRow` on why the rows are one ordered array.
     const rows = [];
@@ -8106,10 +8179,7 @@ const AppView = {
     rows.push({
       t: 'line',
       weight: 'foot',
-      parts: mcs === 'failed'
-        ? [{ b: creator }, ' needs to resolve it: run "Sync with main" from the session\'s dev-chat.']
-        : ['Automatic resolution may not run for this proposal. ', { b: creator },
-          ' needs to finish the merge: open the session\'s dev-chat and run "Sync with main".'],
+      parts: AppView._conflictRemedy(pr, mcs === 'failed' ? 'failed' : 'conflict').parts,
     });
     return {
       key: 'conflict',
@@ -8139,7 +8209,6 @@ const AppView = {
     const mcs = pr.merge_conflict_state;
     if (mcs === 'failed' || mcs === 'conflict' || pr.resolving) return null;
 
-    const creator = pr.username || 'the proposal’s creator';
     const rows = [{
       t: 'line',
       parts: ['Main has moved on since this was written, and the two changes touch the same lines. It cannot merge until somebody reconciles them.'],
@@ -8165,7 +8234,7 @@ const AppView = {
     }
     rows.push({
       t: 'line', weight: 'foot',
-      parts: [{ b: creator }, ' needs to bring it up to date: open the session’s dev-chat and run "Sync with main".'],
+      parts: AppView._conflictRemedy(pr, 'predicted').parts,
     });
     return {
       key: 'mergeability',
@@ -11558,13 +11627,13 @@ const AppView = {
       out.push({
         key: 'conflict_failed',
         label: 'Conflict resolution failed',
-        detail: 'The last automatic conflict resolution failed. The proposal’s owner needs to resolve it manually from their dev session.',
+        detail: `The last automatic conflict resolution failed. ${AppView._conflictRemedy(p, 'failed').text}`,
       });
     } else if (p.merge_conflict_state === 'conflict') {
       out.push({
         key: 'merge_conflict',
         label: 'Merge conflict',
-        detail: 'A merge was attempted but this proposal conflicts with main. Its creator needs to finish the merge from their dev session ("Sync with main").',
+        detail: `A merge was attempted but this proposal conflicts with main. ${AppView._conflictRemedy(p, 'conflict').text}`,
       });
     }
     // #1442 — GitHub's PREDICTION that this proposal no longer merges, made
@@ -11580,12 +11649,13 @@ const AppView = {
       const n = fresh.files.length;
       const shown = fresh.files.slice(0, 6);
       const more = n > shown.length ? ` and ${n - shown.length} more` : '';
+      const remedy = AppView._conflictRemedy(p, 'predicted').text;
       out.push({
         key: 'mergeability_conflict',
         label: n ? `Conflicts with main · ${n}` : 'Conflicts with main',
         detail: n
-          ? `This proposal no longer merges into main on its own. Its creator needs to sync with main and resolve the conflicts from their dev session ("Sync with main"). Changed on both sides: ${shown.join(', ')}${more}.${fresh.filesComplete === false ? ' That list is a sample, not the whole set.' : ''}`
-          : 'This proposal no longer merges into main on its own. Its creator needs to sync with main and resolve the conflicts from their dev session ("Sync with main").',
+          ? `This proposal no longer merges into main on its own. ${remedy} Changed on both sides: ${shown.join(', ')}${more}.${fresh.filesComplete === false ? ' That list is a sample, not the whole set.' : ''}`
+          : `This proposal no longer merges into main on its own. ${remedy}`,
       });
     }
     // Checks: the real merge gate.
