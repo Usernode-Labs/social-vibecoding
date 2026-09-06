@@ -315,7 +315,7 @@ export function WaitlistScreen() {
     <main
       ref={rootRef}
       id="auth-waitlist-screen"
-      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
+      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll"
     >
       {mounted ? (
         <>

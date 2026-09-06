@@ -3159,6 +3159,68 @@
       "name": "A route with no production version renders an empty tile, not one lone tile",
       "path": "/#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "#dc-pr-card .usn-visual-empty"
+    },
+    {
+      "name": "The Dev board sits on the frosted strip, the same lift the dev session and Messages use",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#app-content > .dc-lift.dc-lift-strip #dev-forum-scroll"
+    },
+    {
+      "name": "An issue page opens as a sheet over the board strip, with its thread inside",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "#dev-topic-thread > .dev-thread.dc-lift.dc-lift-session #gc-thread-messages"
+    },
+    {
+      "name": "The issue thread's composer is a card with a paper-clip glyph and a round Send",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "#gc-thread-form.gc-composer-card > .gc-composer-glyph ~ textarea ~ .gc-send[aria-label=\"Send\"]"
+    },
+    {
+      "name": "App Discussion is a sheet over the board strip, and its composer is the same card",
+      "path": "/?demo=1#app/usernode-2d5619/dev/chat",
+      "expectSelector": "#dev-chat-body > .dc-lift.dc-lift-session #gc-form.gc-composer-card .gc-send"
+    },
+    {
+      "name": "Settings is a frosted strip with each section as a sheet inside it",
+      "path": "/#settings/api-key",
+      "expectSelector": "#settings-screen.dc-lift.dc-lift-strip #settings-section-content.settings-sheet.dc-lift.dc-lift-session [data-settings-section=\"api-key\"]"
+    },
+    {
+      "name": "Settings' Log out is a danger-tinted pill under the sections",
+      "path": "/#settings/about",
+      "expectSelector": "#settings-footer #settings-logout.rounded-full",
+      "expectText": "Log out"
+    },
+    {
+      "name": "The notifications sheet is a lifted sheet whose title row carries a close disc, over a chip rail",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet.dc-lift.dc-lift-session[data-open] #notifications-sheet-close"
+    },
+    {
+      "name": "Unread notification rows read source, bold subject, muted preview",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] .notifications-row .text-\\[15px\\] + .text-\\[17px\\].font-bold"
+    },
+    {
+      "name": "The sign-in screen stands on the wallpaper as a card form with a filled Log in pill",
+      "path": "/?shot=anon#login",
+      "expectSelector": "#auth-login-screen:not(.hidden) #login-form .rounded-2xl #login-username",
+      "expectText": "Log in",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Forgot password and the email-code sign-in are pill buttons under the card, not links",
+      "path": "/?shot=anon#login",
+      "expectSelector": "#auth-login-screen:not(.hidden) #forgot-link-wrap #forgot-password-link.rounded-full",
+      "expectText": "Forgot password",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "The Log in button is the filled accent pill, and the email-code sign-in is a pill too",
+      "path": "/?shot=anon#login",
+      "expectSelector": "#auth-login-screen:not(.hidden) #otp-link-wrap #otp-link.rounded-full",
+      "expectText": "Sign in with an email code",
+      "allowConsoleErrors": true
     }
   ],
   "governance": {
