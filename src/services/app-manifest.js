@@ -126,7 +126,13 @@ const MANIFEST_FILENAME = 'dapp.json';
 // jump buys 48 slots — about two years at the rate the last three moves
 // happened. Deleting checks to make room is the thing the failing test
 // explicitly refuses, so the ceiling is the only lever.
-const MAX_DECLARED_TESTS = 560;
+//
+// Raised again, 560 → 580, by a proposal in flight at the same time (this
+// one, which declares two checks of its own): same coupled move, 580 checks
+// at ~3.9s over a pool of 8 is ~283s of ideal work, so TESTS_DEADLINE_MS goes
+// 560s → 570s to keep the 2x margin (clears it by ~4s), and RUN_TIMEOUT_MS
+// 680s → 690s to stay the required 120s above it.
+const MAX_DECLARED_TESTS = 580;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first

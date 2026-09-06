@@ -607,10 +607,10 @@ test('Underway: nothing to show → empty string', () => {
   assert.equal(rowsHtml(AppView._inProgressRows([])), '');
 });
 
-test('the feed pins no own-sessions block above its stream', () => {
-  // The removal itself, so it cannot quietly come back: Activity shows what
-  // happened on the app, and the Improve panel and the Underway column are
-  // where the viewer's own changes are reached from.
+test('the Workshop pins no own-sessions block above its themes', () => {
+  // The removal itself, so it cannot quietly come back: the Workshop shows
+  // what the app's work is about, and the Improve panel and the Underway
+  // lane are where the viewer's own changes are reached from.
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
   );
@@ -618,9 +618,9 @@ test('the feed pins no own-sessions block above its stream', () => {
   // and why, and that history is the useful half of them.
   const strip = (t) => t.replace(/^\s*\/\/.*$/gm, '');
   assert.ok(!/_mySessionsRows\s*\(/.test(strip(src)), '_mySessionsRows is gone');
-  const at = src.indexOf('  _feedView()');
+  const at = src.indexOf('  _workshopView()');
   const feedView = strip(src.slice(at, src.indexOf('\n  },', at)));
-  assert.ok(!/\bblock\b/.test(feedView), 'and the feed view model publishes no block');
+  assert.ok(!/\bblock\b/.test(feedView), 'and the Workshop view model publishes no block');
 });
 
 // ── #1038: the "working…" tag is driven by live state, not by the row ────

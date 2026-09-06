@@ -1100,6 +1100,13 @@
       "fingerprint": "ffdbcfbaa56765b4a618",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET headless_status = $4, headless_outcome = COALESCE($5, headless_outcome), headless_step = NULL, headless_turn_id = NULL, last_activity_"
+    },
+    {
+      "source": "src/services/workshop-themes.js",
+      "kind": "structural-template",
+      "fingerprint": "17795a362cf7406554bd",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.linked_issues, cs.status, cs.created_at, u.username, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.s"
     }
   ]
 }

@@ -109,8 +109,8 @@ test('the serializer covers clean app, board, topic, and chromeless URLs', () =>
   const { App } = loadApp({ search: '?token=abc&shot=one' });
   assert.equal(App._appUrl('notes-9206f8', 'app'),
     '/app/notes-9206f8?token=abc&shot=one');
-  assert.equal(App._appUrl('notes-9206f8', 'dev', null, 'forum', { boardView: 'feed' }),
-    '/app/notes-9206f8/activity?token=abc&shot=one');
+  assert.equal(App._appUrl('notes-9206f8', 'dev', null, 'forum', { boardView: 'workshop' }),
+    '/app/notes-9206f8/workshop?token=abc&shot=one');
   assert.equal(App._appUrl('notes-9206f8', 'dev', { kind: 'proposal', id: 42 }, 'topic'),
     '/app/notes-9206f8/dev/proposals/42?token=abc&shot=one');
   assert.equal(App._appUrl('notes-9206f8', 'app', null, null, {
