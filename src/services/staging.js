@@ -418,6 +418,13 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       cpus: docker.STAGING_CPUS,
       labels: {
         [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
+        // Which commit is actually inside this preview. `resolvedRevision` is
+        // `git rev-parse HEAD` in the clone that was just built, so the label
+        // can no more describe a different commit than the fingerprint above
+        // can describe a different env. stagingNeedsRebuild() compares it to
+        // the head the checks are about to be stamped with — see the note on
+        // LABEL_BUILD_COMMIT for why a preview's commit moves under it.
+        [stagingEnv.LABEL_BUILD_COMMIT]: resolvedRevision,
       },
     });
     timings.healthMs = Date.now() - healthStartedAt;

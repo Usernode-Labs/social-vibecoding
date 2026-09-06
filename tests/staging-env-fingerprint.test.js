@@ -219,6 +219,31 @@ test('LABEL_ENV_FP is the namespaced label name the sweeper reads', () => {
   assert.equal(LABEL_ENV_FP, 'usernode.env.fp');
 });
 
+test('LABEL_BUILD_COMMIT is the namespaced label the staleness check reads', () => {
+  assert.equal(stagingEnv.LABEL_BUILD_COMMIT, 'usernode.build.commit');
+});
+
+// The commit half of the same stamp. The env digest answers "which platform
+// assembled this preview"; this answers "which commit of the app is inside
+// it", and staging-recovery.stagingNeedsRebuild() compares it against the
+// head the checks are about to be stamped with. It must be the revision the
+// build RESOLVED — `git rev-parse HEAD` in the clone that was built — not the
+// commit the caller asked for, which can be the string 'latest'.
+test('the staging build stamps the resolved commit alongside the env fingerprint', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'services', 'staging.js'), 'utf8'
+  );
+  const start = src.indexOf('const deployed = await applicationRuntime.deploy(config, {');
+  assert.notStrictEqual(start, -1, 'staging runtime deploy call not found');
+  const call = src.slice(start, src.indexOf('});', start));
+  assert.match(call, /LABEL_BUILD_COMMIT\]:\s*resolvedRevision/,
+    'the label carries the revision the clone actually resolved to');
+  // And that revision comes from the clone, so the label can never describe a
+  // commit other than the one that was built.
+  assert.match(src, /const resolvedRevision = [^\n]*revisionOut/,
+    'resolvedRevision is still derived from git rev-parse in the clone');
+});
+
 // ── #816: the preview container's resourcing is STATED, not inherited ────
 //
 // The label assertions above prove the build stamps the env it injected.

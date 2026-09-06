@@ -69,6 +69,34 @@ const FINGERPRINT_VERSION = 'v1';
 // '{{.Label "…"}}'` / `docker inspect` read back.
 const LABEL_ENV_FP = 'usernode.env.fp';
 
+// The COMMIT half of the same idea. `usernode.env.fp` answers "which platform
+// assembled this preview"; this answers "which commit of the app is inside
+// it" — the full SHA `git rev-parse HEAD` returned in the clone that was
+// built, stamped by staging.buildAndDeployStagingInner.
+//
+// It exists because a preview's commit moves UNDER a live proposal. A clean
+// platform sync (services/sync-main.js) merges main into the branch, pushes,
+// advances the reviewed revision and carries the green verdict forward
+// WITHOUT rebuilding — "a clean merge is pure git", so nothing the author
+// wrote changed. But the tree did: it now holds everything main added,
+// including whatever `dapp.json` checks main added. visuals.captureForSession
+// reads the declared suite from the BRANCH TIP (services/visuals.js
+// sessionGitRef) and runs it against whatever container is up, so the next
+// re-run — a sweeper pass, a manual "Re-run checks", a promote kick — judged
+// a fresh manifest against pre-sync code and failed every check main had
+// introduced since. Every open proposal on this platform's own board went red
+// that way, and re-running could not clear it: the re-check reused the same
+// stale container.
+//
+// A commit label makes that visible to stagingNeedsRebuild() exactly as the
+// env digest made stale env visible, so the preview is rebuilt at the head
+// the checks are about to stamp. It also fixes the reviewer-facing half of
+// the same gap: Preview opened pre-sync code while claiming to show the
+// revision under review.
+//
+// A public SHA, so nothing about the label's readability matters here.
+const LABEL_BUILD_COMMIT = 'usernode.build.commit';
+
 // Keys whose NAME is part of the fingerprint but whose VALUE is not. See the
 // header: this is what keeps one digest valid for every app.
 const VALUE_EXEMPT = new Set(['USERNODE_APP_ID']);
@@ -151,6 +179,7 @@ module.exports = {
   expectedStagingFingerprint,
   FINGERPRINT_VERSION,
   LABEL_ENV_FP,
+  LABEL_BUILD_COMMIT,
   VALUE_EXEMPT,
   INHERITED_KEYS,
   _resetExpected,

@@ -12,6 +12,8 @@
 
 const log = require('./logger');
 
+const COMMIT_SHA_RE = /^[0-9a-f]{40}$/i;
+
 const DEFAULT_CHECKS_STALE_MS = 10 * 60 * 1000;
 
 function checksStaleMs() {
@@ -91,9 +93,39 @@ async function findStuckCheckSessions({
   return { rows: rows.filter(isStuckCheckRecoveryScope) };
 }
 
+// Which commit this session's preview is SUPPOSED to be running — the head a
+// checks run would judge and stamp its verdict with, which is exactly what
+// visuals.captureForSession hands storeChecks.
+//
+// EACH SHAPE NAMES THE COMMIT ITS OWN REBUILD WOULD PRODUCE, so the
+// comparison and its remedy can never disagree — a mismatch that rebuilding
+// cannot resolve is a rebuild loop, not a heal.
+//
+//   - An imported row is pinned to `imported_pr_head_sha`: rebuildSessionStaging
+//     builds that SHA deliberately (#866, "the SHA the votes and checks
+//     describe", never the compare's tip), so it is the authority here too.
+//   - A native row uses `checks_commit_sha`, the platform's own claim about
+//     the commit under test. Every path that moves a native head — sync-main's
+//     kickChecksForSyncedHead, rebuildSessionStaging itself — writes it through
+//     visuals.setChecksPending BEFORE the build it precedes, so it names the
+//     branch tip the rebuild will resolve to. `reviewed_head_sha` and a CLI
+//     handoff's `handoff_head_sha` back it up when no run has stamped one yet.
+//
+// Null when no commit can be named — a fresh draft, or a row stamped
+// 'latest' by a branch build. Unknown must NOT read as stale: the caller
+// leaves the preview alone rather than rebuilding on a guess.
+function expectedPreviewCommit(session) {
+  if (!session) return null;
+  const candidates = session.source === 'imported'
+    ? [session.imported_pr_head_sha, session.checks_commit_sha]
+    : [session.checks_commit_sha, session.reviewed_head_sha, session.handoff_head_sha];
+  const sha = candidates.find((c) => typeof c === 'string' && COMMIT_SHA_RE.test(c));
+  return sha ? sha.toLowerCase() : null;
+}
+
 // Does a session need its staging preview (re)built?
 //
-// THREE failure shapes leave a card without a working preview:
+// FOUR failure shapes leave a card without a working preview:
 //   1. staging_url IS NULL — GC reclaimed it (or it was GC'd before
 //      promotion). The Preview button is hidden (gated on staging_url).
 //   2. staging_url is set but the staging container is gone — the
@@ -110,14 +142,27 @@ async function findStuckCheckSessions({
 //      app's login screen. Detected by comparing the `usernode.env.fp` label
 //      stamped at build time (services/staging-env.js) against the digest the
 //      platform would produce today.
-// All three are healable by a rebuild. We deliberately do NOT rebuild on a
+//   4. The container is running with current env, but holds the wrong
+//      COMMIT — the branch moved under it. A clean platform sync merges main
+//      into the branch, pushes, advances the reviewed revision and carries
+//      the green verdict forward without rebuilding, because nothing the
+//      AUTHOR wrote changed. The tree still did, and the declared check suite
+//      visuals.captureForSession runs is read from the branch tip — so the
+//      next re-run (sweeper, "Re-run checks", promote kick) judged main's
+//      newest checks against pre-sync code and failed every one of them, and
+//      re-running could not clear it because the re-check reused the same
+//      container. Detected by comparing the `usernode.build.commit` label
+//      stamped at build time against expectedPreviewCommit() above.
+// All four are healable by a rebuild. We deliberately do NOT rebuild on a
 // merely-unhealthy-but-running container (that's a 502, an app bug, not
 // a missing preview) to avoid churn.
 //
-// `config` is optional. Without it the staleness comparison is skipped and
-// the verdict is liveness-only — the pre-#851 behaviour. Every real caller
-// passes one; the fallback keeps the function usable from a context that has
-// no config and makes the added parameter non-breaking.
+// `config` is optional. Without it the ENV comparison is skipped and the
+// verdict is liveness-only — the pre-#851 behaviour. Every real caller passes
+// one; the fallback keeps the function usable from a context that has no
+// config and makes the added parameter non-breaking. The COMMIT comparison
+// needs no config (it compares the session row against the container) and so
+// is not gated on one.
 async function stagingNeedsRebuild(session, { config = null } = {}) {
   if (!session.staging_url) return true;
   if (session.staging_runtime_kind === 'kubernetes') {
@@ -143,9 +188,25 @@ async function stagingNeedsRebuild(session, { config = null } = {}) {
   // Covers 'not_found' (shape 2 — the container is gone) as well as
   // exited/dead/created.
   if (state.status !== 'running') return true;
-  if (!config) return false;
 
   const stagingEnv = require('./staging-env');
+
+  // Shape 4 — the branch moved under the preview. Checked before the env
+  // digest so a commit-stale preview is reported as such even from a caller
+  // with no config.
+  const wantCommit = expectedPreviewCommit(session);
+  if (wantCommit) {
+    const builtCommit = String(state.labels[stagingEnv.LABEL_BUILD_COMMIT] || '').toLowerCase();
+    if (builtCommit !== wantCommit) {
+      log.info('staging-recovery', 'Preview holds a different commit — rebuild needed', {
+        sessionId: session.id, want: wantCommit, built: builtCommit || null,
+      });
+      return true;
+    }
+  }
+
+  if (!config) return false;
+
   const expected = stagingEnv.expectedStagingFingerprint(config);
   const actual = state.labels[stagingEnv.LABEL_ENV_FP] || null;
   if (actual === expected) return false;
@@ -744,6 +805,7 @@ module.exports = {
   isStuckCheckRecoveryScope,
   findStuckCheckSessions,
   stagingNeedsRebuild,
+  expectedPreviewCommit,
   rebuildSessionStaging,
   recheckSessionChecks,
   // Exported for tests + so the client-facing wording has one owner.
