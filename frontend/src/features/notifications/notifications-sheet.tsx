@@ -415,17 +415,20 @@ export function NotificationsSheetView() {
           follows for every row that routes).
       */}
       {/*
-          "Mark all read", under the tab whose list it empties.
+          "Mark all read" lives in the title row above (see the comment on
+          the sheet root), as a small pill between the name and the close
+          disc.
 
-          It used to sit at the far right of the tab row, in tab-sized ink on
+          It once sat at the far right of the tab row, in tab-sized ink on
           the same baseline as All / Unread / Messages, which made a control
-          that CHANGES data look like a fourth place to go. Here it is
-          unmistakably an action on the list below it — and it exists only on
-          Unread, because "mark all read" while looking at All or at Messages
-          is an offer to act on rows you are not being shown.
-
-          Rendered even with nothing unread (disabled), so the strip does not
-          reflow the first time you clear the list.
+          that CHANGES data look like a fourth place to go; then under the
+          rail as a text button. The title-row pill keeps the point of both
+          moves — it shares no baseline and no shape with the chips, so it
+          cannot be read as a tab — and it still exists only on Unread,
+          because "mark all read" while looking at All or at Messages is an
+          offer to act on rows you are not being shown. It is rendered even
+          with nothing unread (disabled), so the row does not reflow the
+          first time you clear the list.
       */}
       {tab === 'messages' ? (
         <button

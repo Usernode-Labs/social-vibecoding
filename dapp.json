@@ -1834,9 +1834,9 @@
       "expectSelector": "#home-search-input"
     },
     {
-      "name": "Mark-all-read sits under the Unread tab, not beside it",
+      "name": "Mark all read is a pill in the sheet's title row, between the name and the close disc — not a fourth tab in the rail",
       "path": "/",
-      "expectSelector": "#notifications-screen-tabs ~ * #notifications-screen-mark-all"
+      "expectSelector": "#notifications-sheet h2 + #notifications-screen-mark-all + #notifications-sheet-close"
     },
     {
       "name": "Saved messages pin to the top of the notifications sheet (#1280)",
