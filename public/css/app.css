@@ -10403,8 +10403,13 @@ body.is-offline [data-offline-disabled] {
   text-overflow: ellipsis;
 }
 
-/* ── The Dev FEED reads as a feed (#1367 follow-up) ─────────────
-   Everything here is scoped to #dev-feed on purpose. The row renderers
+/* ── The Workshop's unfolded rows are the Activity feed's entries ────
+   The Activity feed retired in favour of the Workshop (the Dev screen's
+   lander, features/dev-board/workshop/workshop.tsx); its entry — the card,
+   the replies under it and the reply box, as one sheet — is what a Workshop
+   row unfolds into, so the rules below moved host (#dev-feed became
+   #dev-workshop) and nothing else.
+   Everything here is scoped to #dev-workshop on purpose. The row renderers
    (_renderIssueRow, _renderProposalCard, _renderMergedCard, …) are SHARED
    with the kanban columns, where a bordered tile is exactly right — a
    column of cards is what a board is. Scoping by ancestor is what lets one
@@ -10439,7 +10444,7 @@ body.is-offline [data-offline-disabled] {
    a 3px left edge as the feed's "the stream crossed a line" marker; its bar
    says "✓ Merged" and its edge is green (the card's own `[data-edge="ok"]`),
    which is the same fact said once instead of three times. */
-#dev-feed .dev-feed-entry {
+#dev-workshop .dev-feed-entry {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
@@ -10448,9 +10453,9 @@ body.is-offline [data-offline-disabled] {
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  #dev-feed .dev-feed-entry { background-color: var(--dc-sheet); }
+  #dev-workshop .dev-feed-entry { background-color: var(--dc-sheet); }
 }
-#dev-feed .dev-feed-entry + .dev-feed-entry {
+#dev-workshop .dev-feed-entry + .dev-feed-entry {
   margin-top: 4px;
 }
 /* A reading column. The stream is one column of cards each with a thread
@@ -10458,19 +10463,19 @@ body.is-offline [data-offline-disabled] {
    too wide to read in one saccade, and the board strip beside them was
    empty. The strip's own padding closes to 4px at the sides so the sheets
    sit almost edge to edge on a phone, as the Messages list does. */
-#dev-feed { max-width: 760px; margin: 0 auto; }
-#dev-body:has(> #dev-feed) { padding: 8px 4px 12px; }
+#dev-workshop { max-width: 760px; margin: 0 auto; }
+#dev-body:has(> #dev-workshop) { padding: 8px 4px 12px; }
 
 /* ── Inline comments ───────────────────────────────────────────
    The tail of a thread, indented under the row it belongs to, with no box
    of its own — the indent and the muted type are the whole treatment. A
    bordered comment card inside a de-carded row would put the chrome back
    one level down. */
-#dev-feed .dev-feed-comments:empty { display: none; }
-#dev-feed .dev-feed-comments {
+#dev-workshop .dev-feed-comments:empty { display: none; }
+#dev-workshop .dev-feed-comments {
   padding: 0 0.75rem 0.5rem 22px;
 }
-#dev-feed .dev-feed-comment {
+#dev-workshop .dev-feed-comment {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
@@ -10479,55 +10484,55 @@ body.is-offline [data-offline-disabled] {
   color: rgb(82 82 91); /* zinc-600 */
   padding: 0.15rem 0;
 }
-.dark #dev-feed .dev-feed-comment { color: rgb(212 212 216); /* zinc-300 */ }
-#dev-feed .dev-feed-comment-main {
+.dark #dev-workshop .dev-feed-comment { color: rgb(212 212 216); /* zinc-300 */ }
+#dev-workshop .dev-feed-comment-main {
   flex: 1;
   min-width: 0;
 }
-#dev-feed .dev-feed-comment-author {
+#dev-workshop .dev-feed-comment-author {
   font-weight: 500;
   color: rgb(63 63 70); /* zinc-700 */
 }
-.dark #dev-feed .dev-feed-comment-author { color: rgb(228 228 231); }
+.dark #dev-workshop .dev-feed-comment-author { color: rgb(228 228 231); }
 /* The body sits INLINE after the author, like a chat line. Its markdown
    arrives as block elements, so they are flattened back to inline here —
    a paragraph per comment would otherwise put the text on its own line and
    undo the compactness that makes this worth showing inline at all. */
-#dev-feed .dev-feed-comment-body { display: inline; }
-#dev-feed .dev-feed-comment-body > * { display: inline; margin: 0; }
-#dev-feed .dev-feed-comment-time {
+#dev-workshop .dev-feed-comment-body { display: inline; }
+#dev-workshop .dev-feed-comment-body > * { display: inline; margin: 0; }
+#dev-workshop .dev-feed-comment-time {
   flex-shrink: 0;
   margin-left: auto;
   font-size: 0.6875rem;
   color: rgb(161 161 170); /* zinc-400 */
 }
-.dark #dev-feed .dev-feed-comment-time { color: rgb(113 113 122); /* zinc-500 */ }
-#dev-feed .dev-feed-comment-more {
+.dark #dev-workshop .dev-feed-comment-time { color: rgb(113 113 122); /* zinc-500 */ }
+#dev-workshop .dev-feed-comment-more {
   font-size: 0.6875rem;
   color: rgb(161 161 170); /* zinc-400 */
   padding: 0.15rem 0;
 }
 
 /* ── The Activity feed's inline discussion ─────────────────────────────
-   Indented to the same 22px as #dev-feed .dev-feed-comments above it, so
+   Indented to the same 22px as #dev-workshop .dev-feed-comments above it, so
    the GitHub preview and the app's own thread read as one comment area under
    the row rather than as two separate blocks at different depths. The reply
    box is the last line of it, at the same indent as the bubbles — the
    viewer's reply joins the conversation it sits under. On a phone the
    thread takes the sheet's full width. */
-#dev-feed .dev-feed-thread {
+#dev-workshop .dev-feed-thread {
   margin: 6px 6px 0 22px;
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 @media (max-width: 639px) {
-  #dev-feed .dev-feed-thread { margin-left: 0; margin-right: 0; }
-  #dev-feed .dev-feed-comments { padding-left: 0; padding-right: 0; }
+  #dev-workshop .dev-feed-thread { margin-left: 0; margin-right: 0; }
+  #dev-workshop .dev-feed-comments { padding-left: 0; padding-right: 0; }
 }
 /* "N earlier replies", first in the thread and aligned with the bubbles
    (22px avatar + 8px gap), so it reads as the top of the conversation. */
-#dev-feed .dev-feed-earlier { padding-left: 30px; }
+#dev-workshop .dev-feed-earlier { padding-left: 30px; }
 /* One reply, as a bubble — the Messages row at the feed's scale (see
    card/feed-thread.tsx MessageLine). The bubble is the card's white on the
    sheet; the viewer's own take the accent tint, as their sent messages do. */
@@ -10574,8 +10579,8 @@ body.is-offline [data-offline-disabled] {
    (36px, filled accent, up-arrow), the pair every composer on the platform
    now shares. The field's own utilities (input.tsx `activityReply`) draw a
    bordered r16 box; this is the widget-language reading of the same field,
-   and `#dev-feed` scopes it to the one place it is read this way. */
-#dev-feed .dev-feed-thread textarea {
+   and `#dev-workshop` scopes it to the one place it is read this way. */
+#dev-workshop .dev-feed-thread textarea {
   min-height: 36px;
   padding: 8px 14px;
   border-radius: 18px;
@@ -10595,7 +10600,7 @@ body.is-offline [data-offline-disabled] {
 .dev-feed-send:hover:not(:disabled) { background: var(--accent-light); }
 /* Nothing loaded and no box to draw (a viewer who cannot post) — collapse
    rather than leaving a gap under every row. */
-#dev-feed .dev-feed-thread:empty {
+#dev-workshop .dev-feed-thread:empty {
   display: none;
 }
 
@@ -10709,9 +10714,13 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 :is(.dev-card-dense, .dev-card-topic) .dev-status-pill-vote .gc-vote-count-dot-core { background: var(--accent); }
 
 /* ── The vote button ──
-   One 30px r14 button beside the bar: a neutral well until the viewer has
-   voted, the accent filled for Yes, the blocked tint for No, and a caret
-   in every state because the vote can always be changed. */
+   One 30px r14 button beside the bar, and the accent FILLED until the viewer
+   has voted: it is the one thing on a promoted card a member is meant to do,
+   and as a neutral well it read as one more chip. The same fill the + and
+   Improve buttons wear, on the board, the Workshop and the proposal page
+   alike. A cast Yes recedes to the accent tint (done, not to-do), No wears
+   the blocked tint, and a caret rides every state because the vote can
+   always be changed. */
 .dev-vote-btn {
   flex: none;
   display: inline-flex;
@@ -10721,8 +10730,8 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   padding: 0 8px 0 11px;
   border: 0;
   border-radius: 14px;
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
+  background: var(--accent);
+  color: var(--accent-ink);
   font: inherit;
   font-size: 12.5px;
   font-weight: 600;
@@ -10733,9 +10742,8 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 }
 .dev-vote-btn svg { width: 14px; height: 14px; }
 .dev-vote-btn .dev-vote-caret { width: 12px; height: 12px; opacity: 0.7; }
-.dev-vote-btn:hover { background: var(--accent-tint); color: var(--accent); }
-.dev-vote-btn-yes, .dev-vote-btn-yes:hover { background: var(--accent); color: var(--accent-ink); }
-.dev-vote-btn-yes:hover { background: var(--accent-light); }
+.dev-vote-btn:hover { background: var(--accent-light); }
+.dev-vote-btn-yes, .dev-vote-btn-yes:hover { background: var(--accent-tint); color: var(--accent); }
 .dev-vote-btn-no, .dev-vote-btn-no:hover { background: var(--state-blocked-bg); color: var(--state-blocked); }
 /* The picker: body-mounted and fixed, like .dev-card-menu, because the
    kanban columns scroll sideways and would clip it. */
@@ -11194,3 +11202,135 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @media (max-width: 639px) {
   #dev-topic-thread .gc-msg > .min-w-0 { max-width: 100%; }
 }
+/* ── The Workshop ──────────────────────────────────────────────────
+   features/dev-board/workshop/workshop.tsx. The lander's own chrome:
+   the strips above the themes, the theme cards, the folded rows inside
+   them. An UNFOLDED row is `.dev-feed-entry` and takes the sheet rules
+   above unchanged; what follows is only what surrounds it. Colours come
+   from the same tokens the session sheet and the cards read, so the
+   Workshop is the board's language and not a second one. */
+.dev-ws { display: flex; flex-direction: column; gap: 10px; }
+.dev-ws-eyebrow {
+  font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text-muted);
+}
+.dev-ws-strip {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+  border-radius: 22px;
+  padding: 12px 14px;
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+  display: flex; flex-direction: column; gap: 8px;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dev-ws-strip, .dev-ws-theme { background-color: var(--dc-sheet); }
+}
+.dev-ws-strip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.dev-ws-strip-text { margin: 0; font-size: 14px; color: var(--text-primary); }
+.dev-ws-pill {
+  display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+}
+.dev-ws-pill-warn { background: var(--state-attention-bg); color: var(--state-attention); }
+.dev-ws-pill-good { background: var(--state-ok-bg); color: var(--state-ok); }
+.dev-ws-link {
+  background: none; border: 0; padding: 0; font: inherit; font-size: inherit;
+  color: var(--accent); cursor: pointer; text-decoration: none;
+}
+.dev-ws-link:hover { text-decoration: underline; }
+
+.dev-ws-sort { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 0; flex-wrap: wrap; }
+.dev-ws-sort-opts { display: flex; gap: 4px; }
+.dev-ws-chip {
+  height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--app-sheet-line);
+  background: var(--dc-sheet); color: var(--text-muted); font: inherit; font-size: 12px; cursor: pointer;
+}
+.dev-ws-chip[aria-pressed="true"] { background: var(--text-primary); color: var(--dc-sheet); border-color: var(--text-primary); }
+
+.dev-ws-themes { display: flex; flex-direction: column; gap: 8px; }
+.dev-ws-theme {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+  border-radius: 22px;
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+  overflow: hidden;
+}
+.dev-ws-theme-head {
+  cursor: pointer; padding: 14px 14px 12px;
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: start;
+}
+.dev-ws-theme-head:hover { background: var(--state-neutral-bg); }
+.dev-ws-theme-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.dev-ws-theme-name { font-size: 17px; font-weight: 600; letter-spacing: -.01em; color: var(--text-primary); text-wrap: balance; }
+.dev-ws-theme-people { text-align: right; color: var(--text-muted); font-size: 12px; line-height: 1.2; }
+.dev-ws-theme-people b { display: block; font-size: 20px; font-weight: 600; color: var(--text-primary); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.dev-ws-theme-say { grid-column: 1 / -1; margin: 2px 0 0; font-size: 14px; color: var(--text-primary); }
+.dev-ws-theme-counts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.dev-ws-cnt {
+  display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border-radius: 8px;
+  background: var(--state-neutral-bg); font-size: 12px; color: var(--text-muted);
+}
+.dev-ws-cnt b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+.dev-ws-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--state-neutral); flex-shrink: 0; }
+.dev-ws-cnt-underway .dev-ws-dot, .dev-ws-lane-underway .dev-ws-dot { background: var(--accent); }
+.dev-ws-cnt-review .dev-ws-dot, .dev-ws-lane-review .dev-ws-dot { background: var(--state-attention); }
+.dev-ws-cnt-shipped .dev-ws-dot, .dev-ws-lane-shipped .dev-ws-dot { background: var(--state-ok); }
+.dev-ws-cnt-fresh { background: var(--accent-tint); color: var(--accent); }
+.dev-ws-cnt-fresh b { color: var(--accent); }
+.dev-ws-theme-foot { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 13px; color: var(--text-muted); position: relative; }
+.dev-ws-chev { width: 16px; height: 16px; color: var(--text-muted); flex-shrink: 0; transition: transform .18s ease; }
+.dev-ws-theme-open > .dev-ws-theme-head .dev-ws-chev, .dev-ws-row-open > .dev-ws-chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .dev-ws-chev { transition: none; } }
+
+.dev-ws-faces-wrap { position: relative; display: inline-flex; }
+.dev-ws-faces { display: flex; border: 0; background: transparent; padding: 2px; margin: -2px; border-radius: 999px; cursor: pointer; }
+.dev-ws-faces:hover, .dev-ws-faces[aria-expanded="true"] { background: var(--state-neutral-bg); }
+.dev-ws-faces:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dev-ws-face {
+  width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--dc-sheet);
+  display: grid; place-items: center; font-size: 10px; font-weight: 700; color: #fff; margin-left: -6px;
+}
+.dev-ws-face:first-child { margin-left: 0; }
+.dev-ws-face-more { background: var(--bg-tertiary); color: var(--text-muted); font-size: 9px; }
+.dev-ws-roster {
+  position: absolute; left: 0; top: 30px; z-index: 6; min-width: 160px;
+  background: var(--dc-sheet); border: 1px solid var(--app-sheet-line); border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.12); padding: 6px 10px; display: flex; flex-direction: column; gap: 2px;
+}
+.dev-ws-roster-row { font-size: 13px; color: var(--text-primary); white-space: nowrap; }
+
+.dev-ws-theme-body { border-top: 1px solid var(--app-sheet-line); padding: 10px 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.dev-ws-lane-title {
+  margin: 0 0 4px; padding: 0 4px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--text-muted); display: flex; gap: 6px; align-items: center;
+}
+.dev-ws-rowwrap { margin-bottom: 4px; }
+.dev-ws-row {
+  width: 100%; text-align: left; display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px; border-radius: 12px; border: 0; background: var(--state-neutral-bg);
+  color: var(--text-primary); font: inherit; cursor: pointer;
+}
+.dev-ws-row:hover { background: var(--bg-tertiary); }
+.dev-ws-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dev-ws-row > .dev-card-icon { flex-shrink: 0; }
+.dev-ws-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.dev-ws-row-title { font-size: 14px; line-height: 1.3; }
+.dev-ws-row-meta { display: flex; gap: 8px; font-size: 12px; color: var(--text-muted); min-width: 0; }
+.dev-ws-row-meta > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dev-ws-row-pill { color: var(--text-primary); }
+.dev-ws-row-chat { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+.dev-ws-new {
+  margin-left: 6px; font-size: 10px; font-weight: 700; color: var(--accent); background: var(--accent-tint);
+  padding: 1px 5px; border-radius: 6px; vertical-align: middle;
+}
+.dev-ws-rowwrap-open > .dev-ws-row { border-radius: 12px 12px 0 0; }
+.dev-ws-rowwrap-open > .dev-feed-entry { border-radius: 0 0 22px 22px; margin-top: 2px; }
+.dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
+.dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
+.dev-ws-theme-more { font-size: 13px; color: var(--text-muted); padding: 4px 10px 0; }
+/* The vote strip's rows carry the card's Vote button at their trailing
+   edge, before the chevron. */
+.dev-ws-row-trailing { display: inline-flex; align-items: center; flex-shrink: 0; }
+.dev-ws-foot-note { font-size: 12px; color: var(--text-muted); text-align: center; padding: 6px 0 2px; }

@@ -6231,6 +6231,25 @@ CREATE TABLE IF NOT EXISTS app_report_snapshots (
 CREATE INDEX IF NOT EXISTS idx_app_report_snapshots_app
   ON app_report_snapshots (app_id, locked_at DESC);
 
+-- Workshop themes cache (the Dev screen's lander). One row per app, shared
+-- by every viewer — the input is built from shared-visibility data only,
+-- exactly like app_report_ai above. themes_json is the model's grouping:
+-- [{ id, name, description, saying, items: ['issue:12', 'session:34', …] }]
+-- with STABLE ids (the previous themes are fed back into each run so a
+-- theme keeps its id across regenerations). input_hash fingerprints the
+-- board the grouping was made from; a stale row is served as is while a
+-- regeneration runs behind the request. `source` is 'ai' for every cached
+-- row — the no-model category grouping is computed per request and never
+-- written here, so a key arriving later takes over cleanly.
+CREATE TABLE IF NOT EXISTS app_workshop_themes (
+  app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  input_hash    VARCHAR(64) NOT NULL,
+  themes_json   JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source        VARCHAR(16) NOT NULL DEFAULT 'ai',
+  model         VARCHAR(64),
+  generated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,
 -- retention, and realtime audiences are all platform-user concerns.
