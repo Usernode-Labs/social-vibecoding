@@ -108,23 +108,33 @@ function authorOf(card: DevCardModel): string | null {
 }
 
 /**
- * One folded row. A `<button>` on purpose: it is a disclosure, and the
- * delegated card-open handler must not see a `data-issue-row` on it.
+ * One folded row: a disclosure, and one that carries NO `data-issue-row`,
+ * so the delegated card-open handler never mistakes it for a card.
+ *
+ * A `div` with the button role rather than a `<button>`, because the vote
+ * strip's rows carry the card's Vote button INSIDE them (`trailing`), and
+ * a button cannot contain a button. The trailing control stops its clicks
+ * from reaching the row; Enter and Space on the row itself toggle it.
  */
 function FoldedRow({
-  row, open, onToggle,
-}: { row: CardRow; open: boolean; onToggle: () => void }): ReactNode {
+  row, open, onToggle, trailing,
+}: { row: CardRow; open: boolean; onToggle: () => void; trailing?: ReactNode }): ReactNode {
   const c = row.card;
   const n = numberOf(c);
   const by = authorOf(c);
   const pill = c.pill?.state.label || null;
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       className={open ? 'dev-ws-row dev-ws-row-open' : 'dev-ws-row'}
       aria-expanded={open}
       data-ws-row={row.key}
       onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); }
+      }}
     >
       {c.icon ? <CardIcon spec={{ ...c.icon, small: true }} /> : null}
       <span className="dev-ws-row-main">
@@ -139,8 +149,9 @@ function FoldedRow({
         </span>
       </span>
       {c.chatCount ? <span className="dev-ws-row-chat" title={`${c.chatCount} replies`}>{`💬 ${c.chatCount}`}</span> : null}
+      {trailing ? <span className="dev-ws-row-trailing" onClick={(e) => e.stopPropagation()}>{trailing}</span> : null}
       <ChevronRightIcon className="dev-ws-chev" aria-hidden="true" />
-    </button>
+    </div>
   );
 }
 
@@ -214,8 +225,7 @@ function voteSpecs(card: DevCardModel): { yes: ActionSpec; no: ActionSpec } | nu
 
 /**
  * A row in the vote strip: the folded row with the card's own Vote button
- * beside it — a sibling, not a child, because the row is a button itself.
- * Unfolds like any other row.
+ * inside it, at the trailing edge. Unfolds like any other row.
  */
 function VoteRow({
   row, slug, canPost, open, onToggle,
@@ -223,10 +233,12 @@ function VoteRow({
   const specs = voteSpecs(row.card);
   return (
     <div className={open ? 'dev-ws-rowwrap dev-ws-rowwrap-open' : 'dev-ws-rowwrap'}>
-      <div className="dev-ws-vote-line">
-        <FoldedRow row={row} open={open} onToggle={onToggle} />
-        {specs ? <VoteButton yes={specs.yes} no={specs.no} /> : null}
-      </div>
+      <FoldedRow
+        row={row}
+        open={open}
+        onToggle={onToggle}
+        trailing={specs ? <VoteButton yes={specs.yes} no={specs.no} /> : null}
+      />
       {open ? <UnfoldedRow row={row} slug={slug} canPost={canPost} onCollapse={onToggle} /> : null}
     </div>
   );

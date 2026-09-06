@@ -11320,8 +11320,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
 .dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
 .dev-ws-theme-more { font-size: 13px; color: var(--text-muted); padding: 4px 10px 0; }
-/* The vote strip's rows: the folded row with the card's Vote button beside
-   it, a sibling of the row rather than inside it (a button in a button). */
-.dev-ws-vote-line { display: flex; align-items: center; gap: 8px; }
-.dev-ws-vote-line > .dev-ws-row { flex: 1 1 auto; min-width: 0; }
+/* The vote strip's rows carry the card's Vote button at their trailing
+   edge, before the chevron. */
+.dev-ws-row-trailing { display: inline-flex; align-items: center; flex-shrink: 0; }
 .dev-ws-foot-note { font-size: 12px; color: var(--text-muted); text-align: center; padding: 6px 0 2px; }

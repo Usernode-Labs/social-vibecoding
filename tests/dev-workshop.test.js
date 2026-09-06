@@ -325,9 +325,11 @@ test('the Workshop renders its strips, its themes and its folded rows', () => {
   assert.match(html, /data-ws-votes=""/, 'the vote strip');
   assert.match(html, /Needs your vote/);
   // Short rows, not cards: the folded row with the card's own Vote button
-  // beside it (a sibling — the row is a button itself).
-  assert.match(html, /<div class="dev-ws-vote-line"><button type="button" class="dev-ws-row" aria-expanded="false" data-ws-row="vote:proposal:34"[\s\S]*?<\/button><button [^>]*class="dev-vote-btn"/,
-    'a vote row is the folded row plus the vote button');
+  // INSIDE it, at the trailing edge — which is why the row is a div with the
+  // button role and not a <button>.
+  assert.match(html, /<div role="button" tabindex="0" class="dev-ws-row" aria-expanded="false" data-ws-row="vote:proposal:34"[\s\S]*?<span class="dev-ws-row-trailing"><button [^>]*class="dev-vote-btn"/,
+    'a vote row is the folded row with the vote button inside it');
+  assert.ok(!/<button[^>]*>[^<]*<button/.test(html), 'and no button nests in a button');
   assert.ok(!/data-ws-votes[\s\S]*?gc-vote-item/.test(html.slice(0, html.indexOf('data-ws-welcome'))),
     'and no full card in the strip');
   // "Open on Board" sits at the bottom of the theme, not under a lane.
@@ -340,8 +342,8 @@ test('the Workshop renders its strips, its themes and its folded rows', () => {
   // The first theme opens by default, and its rows are folded disclosures
   // that carry NO card-open hook — the delegated #dev-body handler must not
   // see one on the row.
-  assert.match(html, /<button type="button" class="dev-ws-row" aria-expanded="false" data-ws-row="issue:12"/);
-  assert.ok(!/<button[^>]*data-issue-row/.test(html), 'the folded row is not an issue-row hook');
+  assert.match(html, /<div role="button" tabindex="0" class="dev-ws-row" aria-expanded="false" data-ws-row="issue:12"/);
+  assert.ok(!/<div role="button"[^>]*data-issue-row/.test(html), 'the folded row is not an issue-row hook');
   assert.match(html, /data-ws-lane="review"/);
   assert.match(html, /data-ws-lane="shipped"/);
   assert.ok(!html.includes('dev-feed-entry'), 'nothing is unfolded on a plain paint');
@@ -401,7 +403,7 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   const lands = byName(/lands on the Workshop on every width/);
   assert.ok(lands && lands.expectSelector.includes('#dev-workshop'));
   const themesCheck = byName(/renders its themes into #dev-workshop/);
-  assert.ok(themesCheck && /button\.dev-ws-row\[aria-expanded\]/.test(themesCheck.expectSelector));
+  assert.ok(themesCheck && /\.dev-ws-row\[role="button"\]\[aria-expanded\]/.test(themesCheck.expectSelector));
   const demo = byName(/A demo theme names the mock rows/);
   assert.ok(demo && demo.expectSelector.includes('[data-ws-theme="demo-voting"]'));
   const votes = byName(/pins the proposals waiting on the viewer's vote/);

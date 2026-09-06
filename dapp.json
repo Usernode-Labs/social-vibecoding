@@ -1630,7 +1630,7 @@
     {
       "name": "The Workshop renders its themes into #dev-workshop, the first one open with its items as folded rows under stage lanes",
       "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-themes [data-ws-theme] .dev-ws-theme-body [data-ws-lane] button.dev-ws-row[aria-expanded]"
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-themes [data-ws-theme] .dev-ws-theme-body [data-ws-lane] .dev-ws-row[role=\"button\"][aria-expanded]"
     },
     {
       "name": "#app/<slug>/board is the card area as a kanban",
@@ -1661,7 +1661,7 @@
     {
       "name": "The Workshop pins the proposals waiting on the viewer's vote above the themes",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-votes] [data-ws-lane=\"votes\"] .dev-ws-vote-line > button.dev-ws-row + button.dev-vote-btn",
+      "expectSelector": "#dev-workshop [data-ws-votes] [data-ws-lane=\"votes\"] .dev-ws-row[role=\"button\"] > .dev-ws-row-trailing > button.dev-vote-btn",
       "expectText": "Needs your vote"
     },
     {
