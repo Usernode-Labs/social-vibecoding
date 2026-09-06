@@ -30,11 +30,19 @@ function callAppView(fn: string): void {
   if (av && typeof av[fn] === 'function') av[fn]();
 }
 
-/** The trailing pager / truncation affordance, shared with the kanban columns. */
+/**
+ * The trailing pager / truncation affordance, shared with the kanban columns.
+ * The buttons dispatch by name: showMoreFeed, showAllDone, loadMoreMerged.
+ */
 export function FooterView({ f }: { f: FooterSpec }): ReactNode {
   if (f.kind === 'showMore') {
     return (
       <button className="gc-vote-btn" onClick={() => callAppView('showMoreFeed')}>{`Show ${f.n} more`}</button>
+    );
+  }
+  if (f.kind === 'showAll') {
+    return (
+      <button className="gc-vote-btn" onClick={() => callAppView('showAllDone')}>{`Show all ${f.n}`}</button>
     );
   }
   if (f.kind === 'loadMerged') {
