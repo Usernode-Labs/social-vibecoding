@@ -440,6 +440,14 @@ export function LandingScreen() {
   }, [st]);
 
   /**
+   * The whole `?shot=anon-back` script's time budget, held well under the
+   * check runner's 25s per-check timeout so the run always ends in a verdict
+   * rather than in an abandonment. 18s leaves seven for the page load and the
+   * runner's own polling either side of it.
+   */
+  const ANON_BACK_BUDGET_MS = 18000;
+
+  /**
    * Screenshot-state deep link `?shot=anon-back` (#1028): scripts the guest
    * back path end to end — open an app, back out, open again, back out —
    * because the regression it pins only appears from the SECOND open onward,
@@ -460,9 +468,26 @@ export function LandingScreen() {
     const viewer = byId('app-viewer');
     if (!viewer) return;
     const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+    // ONE OVERALL DEADLINE, because the per-step caps MULTIPLY and nobody had
+    // added them up. Two cycles of 5000 + 5000 + 8000 plus the 2000 the tile
+    // gets before the loop is 38.4 SECONDS of worst case, against a check
+    // runner that abandons a check at 25 (TEST_TIMEOUT_MS, capture/capture.js).
+    // So on any preview slow enough to spend those budgets — which is what a
+    // pool of eight hammering one container produces — this check could not
+    // report at all, and it failed as "did not finish within 25s" rather than
+    // as anything anyone could act on.
+    //
+    // The caps below stay as they are: each one is a real statement about how
+    // long its own step may honestly take, and the close leg genuinely needs
+    // seconds (history.back() → popstate → the 600ms unwind guard). What is
+    // added is a ceiling on their SUM, so the script always returns in time to
+    // be judged. Spending it means the page really was too slow, and the
+    // assertion then fails on the missing marker — a fact — instead of on a
+    // timeout, which says nothing about the guest back path at all.
+    const deadline = Date.now() + ANON_BACK_BUDGET_MS;
     const until = async (pred: () => boolean, budgetMs: number) => {
-      const started = Date.now();
-      while (!pred() && Date.now() - started < budgetMs) await wait(30);
+      const stop = Math.min(Date.now() + budgetMs, deadline);
+      while (!pred() && Date.now() < stop) await wait(30);
       return pred();
     };
     const isOpen = () => !viewer.classList.contains('hidden');
