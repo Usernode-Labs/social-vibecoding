@@ -62,6 +62,9 @@ function workshopThemesRoutes(config) {
         generatedAt: result.generatedAt,
         stale: result.stale,
         pending: result.pending,
+        // The last generation failure's message, when the grouping shown is
+        // the fallback because of it — so the page can say so.
+        lastError: result.lastError || null,
       });
     } catch (err) {
       log.error('workshop-themes', 'GET failed', { message: err.message });
