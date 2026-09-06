@@ -179,16 +179,39 @@ async function backfillPlatformPushParent(pool, sessionId, sha, firstParentSha) 
 // This lives in the service—not the HTTP route—so resume auto-sync and conflict
 // resolution get identical semantics while runSyncMain's cross-surface
 // operation claim is still held.
+// Is this imported row's head a branch the PLATFORM wrote — the connector's
+// mirror (`usernode/from-…`) or an applied patch (`usernode/patch-…`)?
+// services/proposal-update.js owns that question (`branchHomeOf`); it is
+// required lazily because it reaches back into this module's neighbours.
+function isImportedMirror(session) {
+  if (!session || session.source !== 'imported') return false;
+  // eslint-disable-next-line global-require
+  const { branchHomeOf } = require('./proposal-update');
+  return branchHomeOf(session) === 'app_repo';
+}
+
 async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) {
-  if (!session || session.source === 'imported') return false;
+  if (!session) return false;
+  // An IMPORTED row pins its votes and checks to `imported_pr_head_sha`, and
+  // the pr-import sweeper reads any head it does not recognise as an author
+  // push: tally cleared, "was updated on GitHub" posted. For a head in the
+  // author's own fork that is the truth — the platform never writes there,
+  // so nothing else can have moved it. The connector's mirror is the other
+  // case (task 153): its head is a `usernode/from-…` branch the platform
+  // wrote and just synced, so the sync commit is carried exactly as it is
+  // for a native row — the pin is simply the other column, and the sweeper
+  // then finds the head where it expects it and leaves the tally alone.
+  const importedMirror = isImportedMirror(session);
+  if (session.source === 'imported' && !importedMirror) return false;
   if (!['clean', 'resolved'].includes(result?.syncResult)
       || !result.pushOk || typeof result.sha !== 'string'
       || !COMMIT_SHA_RE.test(result.sha)) return false;
   const { config = null, dstep = null } = opts;
   const nextSha = result.sha.toLowerCase();
   const priorChecksSha = session.checks_commit_sha || session.handoff_head_sha || null;
-  const priorReviewedSha = session.reviewed_head_sha
-    ? session.reviewed_head_sha.toLowerCase()
+  const pinColumn = importedMirror ? 'imported_pr_head_sha' : 'reviewed_head_sha';
+  const priorReviewedSha = session[pinColumn]
+    ? String(session[pinColumn]).toLowerCase()
     : null;
   const carryChecks = result.syncResult === 'clean';
 
@@ -249,32 +272,37 @@ async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) 
     return false;
   }
 
+  // $6 is the imported-mirror licence: an imported row is advanced ONLY when
+  // the caller established above that its head is the platform's own branch,
+  // and then it is the import pin that moves, never the native one.
   const { rows = [] } = await pool.query(
     `WITH advanced AS (
        UPDATE chat_sessions
           SET checks_commit_sha = CASE WHEN $5::boolean THEN $1 ELSE checks_commit_sha END,
-              reviewed_head_sha = $1,
+              reviewed_head_sha = CASE WHEN $6::boolean THEN reviewed_head_sha ELSE $1 END,
+              imported_pr_head_sha = CASE WHEN $6::boolean THEN $1 ELSE imported_pr_head_sha END,
               last_activity_at = NOW()
-        WHERE id = $2 AND COALESCE(source, '') <> 'imported'
+        WHERE id = $2 AND (COALESCE(source, '') <> 'imported' OR $6::boolean)
           AND status IN ('active', 'promoted', 'merging')
-          AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
+          AND (CASE WHEN $6::boolean THEN imported_pr_head_sha ELSE reviewed_head_sha END)
+              IS NOT DISTINCT FROM $3::varchar
           AND checks_commit_sha IS NOT DISTINCT FROM $4::varchar
-        RETURNING id, reviewed_head_sha, checks_commit_sha
+        RETURNING id, reviewed_head_sha, imported_pr_head_sha, checks_commit_sha
      ), moved_votes AS (
        UPDATE pr_votes SET head_sha = $1
         WHERE session_id IN (SELECT id FROM advanced)
           AND head_sha IS NOT DISTINCT FROM $3::varchar
         RETURNING 1
      )
-     SELECT reviewed_head_sha, checks_commit_sha,
+     SELECT reviewed_head_sha, imported_pr_head_sha, checks_commit_sha,
             (SELECT COUNT(*)::int FROM moved_votes) AS votes_moved
        FROM advanced`,
-    [nextSha, session.id, priorReviewedSha, priorChecksSha, carryChecks]
+    [nextSha, session.id, priorReviewedSha, priorChecksSha, carryChecks, importedMirror]
   );
   if (!rows.length) return false;
 
   const votesMoved = parseInt(rows[0]?.votes_moved, 10) || 0;
-  session.reviewed_head_sha = nextSha;
+  session[pinColumn] = nextSha;
   if (carryChecks) session.checks_commit_sha = nextSha;
 
   log.info('sync-main', 'Proposal review advanced after platform sync', {
