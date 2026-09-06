@@ -52,12 +52,12 @@ import { publishViewMode } from './view-mode-store';
 import {
   aiEnabledStore,
   cardNowStore,
-  devFeedStore,
   devKanbanStore,
+  devWorkshopStore,
 } from './card/cards-store';
-import { DevFeed } from './card/dev-feed';
 import { DevKanban } from './card/dev-kanban';
-import type { DevFeedView, DevKanbanView } from './card/model';
+import type { DevKanbanView, DevWorkshopView } from './card/model';
+import { DevWorkshop } from './workshop/workshop';
 import { TopicHead } from './topic/topic-head';
 import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
 import { AutoSessionModal } from './modals/auto-session-modal';
@@ -99,8 +99,8 @@ export interface DevBoardBridge {
   publishKanbanFilters(patch: Partial<KanbanFiltersState>): void;
   mountVotingHelp(host: Element | null, props: VotingHelpProps): void;
   mountSessionShell(host: Element | null): void;
-  mountFeed(host: Element | null): void;
-  publishFeed(view: DevFeedView): void;
+  mountWorkshop(host: Element | null): void;
+  publishWorkshop(view: DevWorkshopView): void;
   mountKanban(host: Element | null): void;
   publishKanban(view: DevKanbanView): void;
   mountTopicHead(host: Element | null): void;
@@ -146,13 +146,13 @@ kanbanFiltersStore.setFlush(flushSync);
 /**
  * And every card surface: each publish replaces what used to be an
  * `innerHTML` assignment whose caller's NEXT LINES read the fresh DOM —
- * `_rerenderFeed` wires the comment observer and fills the kudos hosts,
+ * `_rerenderWorkshop` wires the comment observer and fills the kudos hosts,
  * `_repaintKanbanBoard` re-binds drag and re-anchors an open ⋯ menu, and
  * `_renderTopicHead` binds the transcript toggle it just painted around
  * the card. cardNowStore ticks inside no such read, but flushing it keeps
  * a countdown label and its expiry refetch on the same beat.
  */
-devFeedStore.setFlush(flushSync);
+devWorkshopStore.setFlush(flushSync);
 devKanbanStore.setFlush(flushSync);
 cardNowStore.setFlush(flushSync);
 // The topic head's too, and it is load-bearing three times:
@@ -268,12 +268,12 @@ export const devBoardBridge: DevBoardBridge = {
   // every repaint. The stores flush synchronously (below) because the
   // repaint paths read the fresh DOM on their next lines — `Kudos.attach`,
   // `_wireFeedComments`, `_initKanbanDrag`, `_reanchorCardMenu`.
-  mountFeed(host) {
-    mountLegacyPortal(host, createElement(DevFeed));
+  mountWorkshop(host) {
+    mountLegacyPortal(host, createElement(DevWorkshop));
   },
 
-  publishFeed(view) {
-    devFeedStore.set(view);
+  publishWorkshop(view) {
+    devWorkshopStore.set(view);
   },
 
   mountKanban(host) {

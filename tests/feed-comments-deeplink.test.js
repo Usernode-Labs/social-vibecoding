@@ -44,9 +44,9 @@ test('the check points at the deep link, not at the bare feed', () => {
   const check = DAPP.tests.find((t) => (t.name || '').includes('#1585'));
   assert.ok(check, "the #1585 feed-comments check still exists");
   assert.match(check.path, /shot=feed-comments/,
-    'the bare /?demo=1&view=feed route cannot show a filled comment slot — '
+    'the bare /?demo=1&view=workshop route cannot show a filled comment slot — '
     + 'that is what made this check depend on the app\'s activity that hour');
-  assert.match(check.path, /view=feed/, 'and it is still the feed, not the kanban');
+  assert.match(check.path, /view=workshop/, 'and it is the Workshop, not the kanban');
   assert.match(check.expectSelector, /\.dev-feed-comment-time/,
     'the assertion itself is unchanged: a comment with a relative age');
 });
@@ -59,8 +59,13 @@ test('it fills the slot directly rather than racing the observer', () => {
     'it calls the product\'s own fill, through the same cache and endpoint');
   assert.match(body, /scrollIntoView/,
     'and scrolls, because a before/after capture has to SHOW the row');
-  assert.match(body, /#dev-feed \.dev-feed-comments\[data-comments-for\]/,
+  assert.match(body, /#dev-workshop \.dev-feed-comments\[data-comments-for\]/,
     'it looks for the slot the check looks for');
+  // The Workshop keeps its rows folded, and the slot lives inside an unfolded
+  // one, so the deep link also asks the view model to unfold the first issue
+  // row (see _workshopView's autoExpand).
+  assert.match(body, /AppView\._workshopShot = 'feed-comments'/,
+    'it names itself to the view model, which unfolds a row for it');
 });
 
 test('it stops: on arrival, on a route change, on a real gesture, and on a cap', () => {
