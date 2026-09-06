@@ -28,8 +28,20 @@ const MAIL = fs.readFileSync(path.join(ROOT, 'src/services/mail/index.js'), 'utf
 test('the release mail carries no fragment for a rewriter to drop', () => {
   const fn = MAIL.slice(MAIL.indexOf('async function sendWaitlistReleaseMail'));
   const body = fn.slice(0, fn.indexOf('\n}'));
-  assert.match(body, /\/\?\$\{hasAccount \? 'login' : 'signup'\}=1/);
+  // #1548 split the one ternary into two arms so the no-account link can
+  // carry an invite token. Both are still QUERIES, which is what this test
+  // is actually about: a fragment is client-side only, so a link rewriter
+  // rebuilding the URL drops it, which is the bug #1545 fixed here.
+  assert.ok(body.includes('/?login=1'), 'the existing-account arm is a query');
+  assert.ok(body.includes('/?signup=1'), 'the no-account arm is a query');
   assert.doesNotMatch(body, /\/#\$\{/, 'the fragment spelling is gone from this mail');
+  // Comments stripped: the reasoning at that site necessarily quotes the
+  // fragment shape it rejects, and a scan over the body would flag its own
+  // explanation.
+  const code = body
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+  assert.doesNotMatch(code, /#signup/, 'no fragment spelling survives in the code');
 });
 
 test('the other mails are untouched: their fragments carry a token', () => {
