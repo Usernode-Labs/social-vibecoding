@@ -886,6 +886,12 @@
       "expectText": "Nothing featured right now"
     },
     {
+      "name": "Adding from Discover lands in Your apps with no reload, and removing takes it out again (#1567)",
+      "path": "/?shot=discover-add",
+      "expectSelector": "body[data-shot-add=\"round-trip\"] #home-apps-section #app-list",
+      "expectText": "Your apps"
+    },
+    {
       "name": "The launcher grid shows two rows by default, with a way to the rest",
       "path": "/?demo=1",
       "expectSelector": "#home-body #home-apps-section #home-apps-more:not(.hidden) button",
