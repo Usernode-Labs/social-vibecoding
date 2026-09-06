@@ -25,7 +25,9 @@
   const SCREEN_IDS = {
     landing: 'auth-landing-screen',
     login: 'auth-login-screen',
-    signup: 'auth-login-screen', // sub-view of the login screen
+    // Sub-view of the login screen. #signup/<address> carries a url-encoded
+    // email address from the waitlist-release email.
+    signup: 'auth-login-screen',
     register: 'auth-register-screen',
     waiting: 'auth-waiting-screen',
     // Stage-1 waitlist survey, #waitlist — its own screen rather than a
@@ -192,7 +194,9 @@
       // already up (e.g. login ↔ signup share one screen).
       if (route === 'landing') AuthScreens._landingOnShow();
       if (route === 'login') AuthScreens._loginOnShow(false);
-      if (route === 'signup') AuthScreens._loginOnShow(true);
+      // seg is the url-encoded email address from a waitlist-release link
+      // (#signup/<address>); the login island prefills it and asks for a code.
+      if (route === 'signup') AuthScreens._loginOnShow(true, seg);
       if (route === 'reset-password') AuthScreens._resetOnShow(seg);
       if (route === 'register') AuthScreens._registerOnShow(seg);
       if (route === 'waiting') AuthScreens._waitingOnShow();

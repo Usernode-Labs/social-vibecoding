@@ -185,8 +185,37 @@ test('sendWaitlistReleaseMail passes kind:"waitlist_released" and a signup/login
   await sendWaitlistReleaseMail(cfg, 'a@b.invalid', { hasAccount: false });
   await sendWaitlistReleaseMail(cfg, 'a@b.invalid', { hasAccount: true });
   assert.equal(seen[0].kind, 'waitlist_released');
-  assert.match(seen[0].url, /#signup$/, 'no account yet → the link lands on account creation');
+  // #1548: the released address rides in the link so the signup screen can
+  // prefill it and ask for a code without a second step. Segment style, like
+  // #more/<token> — AuthScreens.routeFromHash splits hash routes on '/'.
+  assert.match(
+    seen[0].url,
+    /#signup\/[^/]+$/,
+    'no account yet → the link lands on account creation, carrying the address',
+  );
   assert.match(seen[1].url, /#login$/, 'existing account → the link lands on sign-in');
+});
+
+test('the release link round-trips an address that needs encoding', async () => {
+  const seen = [];
+  const cfg = { topochainMailTransport: { send: async (m) => { seen.push(m); } } };
+  // '+' is legal in a local part and would decode back as a space if the
+  // address were interpolated raw.
+  await sendWaitlistReleaseMail(cfg, 'a+tag@b.invalid', { hasAccount: false });
+  const seg = seen[0].url.split('#signup/')[1];
+  assert.ok(seg, 'the link carries a segment');
+  assert.equal(seg.includes('+'), false, 'encoded, not interpolated raw');
+  assert.equal(decodeURIComponent(seg), 'a+tag@b.invalid');
+});
+
+test('an existing account gets no address in its link', async () => {
+  const seen = [];
+  const cfg = { topochainMailTransport: { send: async (m) => { seen.push(m); } } };
+  await sendWaitlistReleaseMail(cfg, 'a@b.invalid', { hasAccount: true });
+  // They sign in with a password they already have; there is no code to send
+  // and no field to prefill, so the address has no business in the URL.
+  assert.equal(seen[0].url.includes('a@b.invalid'), false);
+  assert.equal(seen[0].url.includes('a%40b.invalid'), false);
 });
 
 // ─── the always-success contract survives a broken transport ────────────

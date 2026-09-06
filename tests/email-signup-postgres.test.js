@@ -338,3 +338,97 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
     }
   });
 });
+
+// #1548 made the invite link request a code by itself, which turns an
+// ordinary reload into a second request for the same address. The mail
+// layer already refuses to SEND inside RULES.otp.minGapMs, so before this
+// rule the reload silently replaced the live code with one nobody could
+// read — the recipient's email held a code the server had already thrown
+// away. Reusing the outstanding code inside the same window is what makes
+// the auto-send safe to repeat.
+test('a repeat code request inside the min gap reuses the outstanding code', async (t) => {
+  await withDatabase(t, async (pool) => {
+    const poolPath = require.resolve('../src/db/pool');
+    const authPath = require.resolve('../src/routes/auth');
+    const mail = require('../src/services/mail');
+    const originalPool = require.cache[poolPath];
+    const originalSend = mail.sendOtpMail;
+    const originalPrune = mail.pruneDeliveries;
+    const sent = [];
+    require.cache[poolPath] = {
+      exports: { getPool: () => pool },
+      loaded: true,
+      id: poolPath,
+      filename: poolPath,
+      paths: originalPool ? originalPool.paths : [],
+    };
+    mail.sendOtpMail = async (_config, _email, value) => { sent.push(value); };
+    mail.pruneDeliveries = async () => {};
+    delete require.cache[authPath];
+
+    const { authRoutes } = require('../src/routes/auth');
+    const app = express();
+    app.use(express.json());
+    app.use(cookieParser());
+    app.use(authRoutes({}));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const request = () => fetch(`${base}/api/auth/otp/request`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'invited@example.com' }),
+    });
+    const liveRow = async () => (await pool.query(
+      `SELECT id, code_hash FROM mobile_otp_codes
+        WHERE email = 'invited@example.com' AND consumed_at IS NULL`,
+    )).rows;
+
+    try {
+      assert.equal((await request()).status, 200);
+      const first = await liveRow();
+      assert.equal(first.length, 1);
+      assert.equal(sent.length, 1);
+
+      // The reload. Same 200 (the endpoint never tells a caller whether an
+      // address exists), but the row and the code behind it must survive.
+      assert.equal((await request()).status, 200);
+      const second = await liveRow();
+      assert.equal(second.length, 1);
+      assert.equal(second[0].id, first[0].id, 'the outstanding code must be reused');
+      assert.equal(second[0].code_hash, first[0].code_hash);
+      assert.equal(sent.length, 1, 'a reused code must not be re-sent');
+
+      // A wrong guess ends the reuse: whoever is typing has seen the code
+      // fail, so the next request has to be a genuinely new one.
+      await pool.query(
+        `UPDATE mobile_otp_codes SET attempts = 1 WHERE id = $1`, [first[0].id],
+      );
+      assert.equal((await request()).status, 200);
+      const third = await liveRow();
+      assert.equal(third.length, 1);
+      assert.notEqual(third[0].id, first[0].id, 'a guessed-at code must be replaced');
+      assert.equal(sent.length, 2);
+
+      // And so does age. Past the window the code is replaced even though it
+      // is unexpired and untouched, so "send a new code" means what it says.
+      await pool.query(
+        `UPDATE mobile_otp_codes
+            SET created_at = NOW() - INTERVAL '2 minutes' WHERE id = $1`,
+        [third[0].id],
+      );
+      assert.equal((await request()).status, 200);
+      const fourth = await liveRow();
+      assert.equal(fourth.length, 1);
+      assert.notEqual(fourth[0].id, third[0].id, 'an aged code must be replaced');
+      assert.equal(sent.length, 3);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      mail.sendOtpMail = originalSend;
+      mail.pruneDeliveries = originalPrune;
+      if (originalPool) require.cache[poolPath] = originalPool;
+      else delete require.cache[poolPath];
+      delete require.cache[authPath];
+    }
+  });
+});

@@ -605,9 +605,17 @@ const App = {
     // signed-in user who has platform access — which every capture and
     // proposal-check session is — so without this the screen is reachable
     // by a real recipient and by nothing that photographs or checks it.
+    // `signup-code-sent` (#1548) is the signup screen a second after a
+    // waitlist-release link opens it: the code step, the confirmation, and
+    // the resend held for its cooldown. The address rides in the fragment
+    // (`/?shot=signup-code-sent#signup/<url-encoded address>`), and like
+    // `waitlist-more` it needs the anonymous boot, because restoreFromHash
+    // drops an auth route for the signed-in session every capture and
+    // proposal check runs as. login.tsx paints it and sends nothing.
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
+        shot !== 'signup-code-sent' &&
         shot !== 'password-recovery' && shot !== 'password-recovery-sent') {
       return false;
     }

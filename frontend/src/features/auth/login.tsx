@@ -118,6 +118,91 @@ const AUTHFIELD = { box: 'auth', hint: 'muted', ring: 'seamless' } as const;
 const ERROR = 'text-red-400 text-sm';
 const STATUS = 'text-sm text-zinc-500 dark:text-zinc-400';
 
+/**
+ * ── Arriving from a waitlist-release email (#1548) ─────────────────────
+ *
+ * The release mail links to `#signup/<url-encoded address>`, and the router
+ * hands that segment to `loginOnShow`. The screen prefills the field and asks
+ * for a code straight away, because the old behaviour was a page that said "we
+ * emailed you a code" next to a button that had not been pressed yet.
+ *
+ * The server suppresses a second code to the same address inside
+ * `RULES.otp.minGapMs` (src/services/mail/rate-limit.js) and hands back the one
+ * it already sent, so asking again inside that window mails nothing. Hold the
+ * buttons for the same 60 seconds and say when they come back, rather than
+ * letting somebody press a button that provably does nothing.
+ */
+const RESEND_COOLDOWN_MS = 60 * 1000;
+
+/**
+ * Per-tab record of the automatic send, so a reload of the invite link (or a
+ * trip to #login and back) does not fire a second request. sessionStorage
+ * rather than a ref: the reload is the case that has a ref back to `false`.
+ * Shape: `{ email, sentAt }` — `sentAt` also restores the cooldown across the
+ * reload, since the server's own gap survived it.
+ */
+const AUTO_SEND_KEY = 'usernode.signup.otp.v1';
+
+/**
+ * The standing confirmation on the code step. It stays put (unlike the
+ * transient "Sending code..." status) because the whole point of arriving
+ * here is knowing a code is on its way. The 10-minute figure must match
+ * OTP_TTL_MS in src/services/email-signup.js.
+ */
+const CODE_SENT_MSG = 'We sent you a code. It expires in 10 minutes.';
+
+/** The resend button while it is held. Whole class literals, both arms. */
+const QUIET_BUTTON_WAITING =
+  'w-full text-sm text-zinc-400 dark:text-zinc-600 cursor-not-allowed';
+
+type AutoSendRecord = { email: string; sentAt: number };
+
+function readAutoSend(): AutoSendRecord | null {
+  try {
+    const raw = sessionStorage.getItem(AUTO_SEND_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as AutoSendRecord;
+    if (!parsed || typeof parsed.email !== 'string' || typeof parsed.sentAt !== 'number') {
+      return null;
+    }
+    return parsed;
+  } catch {
+    // Private mode, or a value some other tab wrote. Treat it as absent.
+    return null;
+  }
+}
+
+function writeAutoSend(email: string) {
+  try {
+    sessionStorage.setItem(AUTO_SEND_KEY, JSON.stringify({ email, sentAt: Date.now() }));
+  } catch {
+    // Storage refused: the send still happened, we just cannot remember it.
+  }
+}
+
+/** The `?shot=` screenshot state on this document, or null. */
+function currentShot(): string | null {
+  try {
+    return new URLSearchParams(location.search).get('shot');
+  } catch {
+    return null;
+  }
+}
+
+/** The `#signup/<address>` segment, or null if it is not an address. */
+function inviteFromSegment(seg?: string | null): string | null {
+  if (!seg) return null;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(seg);
+  } catch {
+    // A stray '%' in the fragment. Nothing to prefill.
+    return null;
+  }
+  const email = decoded.trim().toLowerCase();
+  return email.includes('@') && email.length <= 255 ? email : null;
+}
+
 const EXPIRED_MSG =
   'This reset link is invalid or has expired. Go back to login and request a new one from "Forgot password?".';
 
@@ -161,6 +246,12 @@ export function LoginScreen() {
   const [otpError, setOtpError] = useState<string | null>(null);
   const [otpStatus, setOtpStatus] = useState<string | null>(null);
   const [otpEmailEcho, setOtpEmailEcho] = useState('');
+  // The address a waitlist-release link carried, and the moment the resend
+  // buttons come back. Both start empty, so the first render is still exactly
+  // the markup the hand-written shell shipped.
+  const [inviteEmail, setInviteEmail] = useState<string | null>(null);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [cooldownNow, setCooldownNow] = useState(0);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [walletStatus, setWalletStatus] = useState('');
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
@@ -180,6 +271,16 @@ export function LoginScreen() {
     resetToken: null as string | null,
     otpEmail: null as string | null,
   }).current;
+
+  /**
+   * Whole seconds left on the resend cooldown, 0 when there is none. Derived
+   * rather than stored so the two buttons and their labels cannot disagree,
+   * and 0 on the very first render, which is what keeps that render identical
+   * to the markup the hand-written shell shipped.
+   */
+  const cooldownLeft = cooldownUntil
+    ? Math.max(0, Math.ceil((cooldownUntil - cooldownNow) / 1000))
+    : 0;
 
   // The probe resolves long after its own render, and it needs the view that is
   // showing THEN. Assigned during render so it is never a frame stale.
@@ -313,7 +414,7 @@ export function LoginScreen() {
   }, [st]);
 
   const loginOnShow = useCallback(
-    (openSignup?: boolean) => {
+    (openSignup?: boolean, seg?: string | null) => {
       // Reset to the requested base view every time the route changes — login
       // ↔ signup share the screen element.
       if (openSignup) showOtpView();
@@ -323,12 +424,7 @@ export function LoginScreen() {
       // path so the shot is deterministic regardless of wallet state
       // (issue #1158). Same idiom as ?shot=waitlist-joined; display-only,
       // no writes, so it works in every environment.
-      let shot: string | null = null;
-      try {
-        shot = new URLSearchParams(location.search).get('shot');
-      } catch {
-        shot = null;
-      }
+      const shot = currentShot();
       if (!openSignup && (shot === 'password-recovery' || shot === 'password-recovery-sent')) {
         showRecovery();
         setRecoveryPath('email');
@@ -337,6 +433,38 @@ export function LoginScreen() {
         // checks. Display-only, no writes, works in every environment.
         setEmailResetStatus(shot === 'password-recovery-sent' ? SENT_MSG : null);
       }
+      if (openSignup) {
+        // #signup/<address> from a waitlist-release email. Prefill by ref
+        // (the field is uncontrolled); the send itself is in the effect
+        // below, so it is not fired from inside a router callback.
+        const invited = inviteFromSegment(seg);
+        if (invited && otpEmailInput.current) otpEmailInput.current.value = invited;
+        // Two ways to already be past the send, and both paint the code step
+        // HERE rather than from an effect: showOtpView() above has just reset
+        // this screen to the email step, and the router calls this hook again
+        // on a re-entry that leaves `inviteEmail` unchanged — so an effect
+        // keyed on the address would not run a second time to undo it.
+        //
+        //  - `signup-code-sent` (#1548), the screenshot state. Sends nothing:
+        //    the shot has to be deterministic, and staging mail is log-only,
+        //    so a real request would prove nothing anyway.
+        //  - a reload of the invite link, or a trip out to #login and back.
+        //    The code from the first visit is still the live one.
+        const prior = invited ? readAutoSend() : null;
+        const alreadySent = shot === 'signup-code-sent'
+          ? Date.now()
+          : (prior && prior.email === invited ? prior.sentAt : 0);
+        if (alreadySent) {
+          const shown = invited || '';
+          st.otpEmail = shown;
+          setOtpEmailEcho(shown);
+          otpShowStep('code');
+          setOtpStatus(CODE_SENT_MSG);
+          const until = alreadySent + RESEND_COOLDOWN_MS;
+          setCooldownUntil(until > Date.now() ? until : 0);
+        }
+        setInviteEmail(invited);
+      }
       // Wallet detection runs once, the first time the screen appears (needs
       // the native bridge; quietly does nothing on desktop web).
       if (!st.walletDetectRan) {
@@ -344,7 +472,7 @@ export function LoginScreen() {
         void walletDetect();
       }
     },
-    [showLoginBaseView, showOtpView, showRecovery, st, walletDetect],
+    [otpShowStep, showLoginBaseView, showOtpView, showRecovery, st, walletDetect],
   );
 
   // ── Password login ───────────────────────────────────────────────────
@@ -378,14 +506,22 @@ export function LoginScreen() {
   // Steps: request a code → verify into a narrow HttpOnly signup cookie →
   // choose a password. Password setup atomically creates the web session.
 
-  const otpRequestCode = useCallback(async () => {
+  /**
+   * `explicitEmail` is the invite address, for the automatic send and the
+   * resend: both know the address already, and the resend fires from a step
+   * where the email field is not the thing on screen.
+   */
+  const otpRequestCode = useCallback(async (explicitEmail?: string) => {
     setOtpError(null);
-    const email = (otpEmailInput.current?.value || '').trim().toLowerCase();
+    const email = (explicitEmail || otpEmailInput.current?.value || '').trim().toLowerCase();
     if (!email || !email.includes('@')) {
       setOtpError('Enter a valid email address');
       return;
     }
     if (blockedOffline(setOtpError)) return;
+    // Whichever step we end on, the email field should carry the address —
+    // a rejected send drops back here and retyping it would be busywork.
+    if (otpEmailInput.current) otpEmailInput.current.value = email;
     setOtpStatus('Sending code...');
     try {
       const res = await fetch('/api/auth/otp/request', {
@@ -397,6 +533,27 @@ export function LoginScreen() {
       const data = await res.json();
       setOtpStatus(null);
       if (!res.ok || !data.ok) {
+        // Throttled. A code was sent recently and is still the live one, so
+        // the code step is where they should be; hold the resend for as long
+        // as the limiter says, and fall back to our own gap if it says
+        // nothing. Note otpShowStep clears the error, so it goes first.
+        if (res.status === 429) {
+          st.otpEmail = email;
+          setOtpEmailEcho(email);
+          otpShowStep('code');
+          setOtpError(data.error || 'Too many requests. Wait a moment and try again.');
+          const retryAfter = Number(res.headers.get('Retry-After'));
+          setCooldownUntil(
+            Date.now() +
+              (Number.isFinite(retryAfter) && retryAfter > 0
+                ? Math.min(retryAfter, 900) * 1000
+                : RESEND_COOLDOWN_MS),
+          );
+          return;
+        }
+        // Refused (an address the server will not accept, and anything else):
+        // the email step, with the address still in the field.
+        otpShowStep('email');
         setOtpError(data.error || 'Could not send a code');
         return;
       }
@@ -404,18 +561,27 @@ export function LoginScreen() {
       setOtpEmailEcho(email);
       if (otpCode.current) otpCode.current.value = '';
       otpShowStep('code');
+      // A standing confirmation, not a flash: somebody who arrived from an
+      // invite link never pressed anything, so the screen has to say what it
+      // just did on their behalf.
+      setOtpStatus(CODE_SENT_MSG);
+      setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
     } catch {
       setOtpStatus(null);
+      otpShowStep('email');
       setOtpError('Network error');
     }
   }, [otpShowStep, st]);
 
   const onOtpResend = useCallback(async () => {
+    // Held for the server's own gap: inside it the request mails nothing and
+    // the button would just be lying. The label counts it down.
+    if (cooldownUntil > Date.now()) return;
     // Same request, from the code step — jump back visually so the user sees
     // the send happen, then land back on the code entry.
     if (otpEmailInput.current) otpEmailInput.current.value = st.otpEmail || '';
-    await otpRequestCode();
-  }, [otpRequestCode, st]);
+    await otpRequestCode(st.otpEmail || undefined);
+  }, [cooldownUntil, otpRequestCode, st]);
 
   const onOtpVerify = useCallback(async () => {
     setOtpError(null);
@@ -450,6 +616,9 @@ export function LoginScreen() {
         return;
       }
       otpShowStep('password');
+      // Past the code: nothing left to resend, and setOtpStatus(null) above
+      // has already taken the "we sent you a code" confirmation down.
+      setCooldownUntil(0);
     } catch {
       setOtpStatus(null);
       setOtpError('Network error');
@@ -688,6 +857,43 @@ export function LoginScreen() {
     }
   }, [st]);
 
+  // ── The invite link's automatic send (#1548) ─────────────────────────
+
+  /**
+   * One second of clock while a cooldown is running, and not a tick more —
+   * the interval only exists between `setCooldownUntil` and the moment it
+   * lapses, and unmounting clears it.
+   */
+  useEffect(() => {
+    if (!cooldownUntil) return undefined;
+    setCooldownNow(Date.now());
+    const id = window.setInterval(() => {
+      const now = Date.now();
+      setCooldownNow(now);
+      if (now >= cooldownUntil) setCooldownUntil(0);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [cooldownUntil]);
+
+  /**
+   * Arriving on `#signup/<address>` sends the code once. In an effect rather
+   * than in `loginOnShow` so the request is not fired from inside the
+   * router's callback, and keyed on the address so revisiting the same link
+   * in the same tab is a no-op.
+   */
+  useEffect(() => {
+    if (!inviteEmail) return;
+    // The screenshot state paints this screen instead of sending.
+    if (currentShot() === 'signup-code-sent') return;
+    // Already sent for this address in this tab. Deliberately re-read rather
+    // than remembered in a ref: a reload is exactly the case a ref forgets,
+    // and loginOnShow has already painted the code step from the same record.
+    const prior = readAutoSend();
+    if (prior && prior.email === inviteEmail) return;
+    writeAutoSend(inviteEmail);
+    void otpRequestCode(inviteEmail);
+  }, [inviteEmail, otpRequestCode]);
+
   // ── The seam back into public/js/** ──────────────────────────────────
   //
   // `AuthScreens.show()` looks these up by name at call time, so patching them
@@ -697,7 +903,8 @@ export function LoginScreen() {
   live.current = { loginOnShow, resetOnShow, showLoginBaseView, showOtpView };
   useAuthScreensPatch({
     _wireLogin: () => {},
-    _loginOnShow: (openSignup?: boolean) => live.current.loginOnShow(openSignup),
+    _loginOnShow: (openSignup?: boolean, seg?: string | null) =>
+      live.current.loginOnShow(openSignup, seg),
     _resetOnShow: (token?: string) => live.current.resetOnShow(token),
     _showLoginBaseView: () => live.current.showLoginBaseView(),
     _showOtpView: () => live.current.showOtpView(),
@@ -927,9 +1134,15 @@ export function LoginScreen() {
                 type="button"
                 data-offline-disabled=""
                 {...SOLID}
-                onClick={otpRequestCode}
+                disabledStyle={cooldownLeft ? 'dim' : 'off'}
+                disabled={cooldownLeft > 0}
+                onClick={() => {
+                  // Wrapped: otpRequestCode's first argument is an address
+                  // now, and a click handler would hand it a MouseEvent.
+                  void otpRequestCode();
+                }}
               >
-                Email me a code
+                {cooldownLeft ? `Email me a code in ${cooldownLeft}s` : 'Email me a code'}
               </Button>
             </div>
             <div id="otp-step-code" className={hiddenFirst(otpStep !== 'code', 'space-y-3')}>
@@ -969,10 +1182,11 @@ export function LoginScreen() {
                 id="btn-otp-resend"
                 type="button"
                 data-offline-disabled=""
-                className={QUIET_BUTTON}
+                className={cooldownLeft ? QUIET_BUTTON_WAITING : QUIET_BUTTON}
+                disabled={cooldownLeft > 0}
                 onClick={onOtpResend}
               >
-                Send a new code
+                {cooldownLeft ? `Send a new code in ${cooldownLeft}s` : 'Send a new code'}
               </button>
             </div>
             <div id="otp-step-password" className={hiddenFirst(otpStep !== 'password', 'space-y-3')}>

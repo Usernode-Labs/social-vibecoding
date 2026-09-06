@@ -411,11 +411,33 @@ test('the password-reset mail carries the reset link and no secrets beyond it', 
   assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
 });
 
+test('the release mail promises the code only on the arm that sends one (#1548)', () => {
+  // Following the no-account link asks for a code straight away, so the copy
+  // has to say so: the recipient is about to get a second email, and without
+  // this line they read the code request as something going wrong.
+  const fresh = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/#signup/a%40b.invalid', hasAccount: false,
+  });
+  assert.match(fresh.text, /emails you a 6-digit code/);
+  // The figure must track OTP_TTL_MS, so pin it rather than the sentence.
+  assert.match(fresh.text, /expires in 10 minutes/);
+  assert.match(fresh.html, /emails you a 6-digit code/);
+
+  // Somebody who already has an account is sent to #login and never asked
+  // for a code, so promising one there would be a plain lie.
+  const returning = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/#login', hasAccount: true,
+  });
+  assert.doesNotMatch(returning.text, /6-digit code/);
+  assert.doesNotMatch(returning.html, /6-digit code/);
+});
+
 test('every kind renders subject, text and html with no leaked undefined', () => {
   const payloads = {
     otp: { code: '123456' },
     waitlist_joined: { url: 'https://x.invalid/#more/aa', confirmUrl: 'https://x.invalid/c/aa' },
-    waitlist_released: { url: 'https://x.invalid/#login', hasAccount: true },
+    // The no-account arm, because that is the one that grew copy in #1548.
+    waitlist_released: { url: 'https://x.invalid/#signup/a%40b.invalid', hasAccount: false },
     password_reset: { url: 'https://x.invalid/#reset-password?token=aa' },
     admin_test: {
       provider: 'gmail', from: 'Usernode <no-reply@x.invalid>',
