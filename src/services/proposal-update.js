@@ -63,11 +63,11 @@ const SHA_RE = /^[0-9a-f]{40}$/i;
 //
 // This used to read `source === 'imported' ? 'user_fork' : 'app_repo'`, on the
 // reasoning that the source column had always said which. It does not, and
-// #1196 is what that cost: a connector submission whose cross-fork pull
-// request GitHub refuses falls to the MIRROR rung in
-// services/external-agent-head.js, which copies the agent's verified fork
-// branch into a `usernode/from-…` branch in the APP repository, opens a
-// same-repo pull request from the bot, and imports THAT. The row is
+// #1196 is what that cost: a connector submission runs the MIRROR rung in
+// services/external-agent-head.js (the last rung then, the first one since
+// task 153), which copies the agent's verified fork branch into a
+// `usernode/from-…` branch in the APP repository, opens a same-repo pull
+// request from the bot, and imports THAT. The row is
 // `source='imported'` and its head is a branch the author cannot push to.
 // get_proposal told the agent to push to a fork branch that does not exist,
 // and submit_work — reading the same helper — dispatched to `advanceForkHead`,
