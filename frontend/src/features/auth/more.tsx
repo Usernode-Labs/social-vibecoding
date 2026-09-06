@@ -84,7 +84,6 @@ interface MoreAnswers {
   loss?: { had?: string; product?: string; kind?: string[]; story?: string };
   handles?: { farcaster?: string; discord?: string; telegram?: string; other?: string };
   verified?: Record<string, string>;
-  admit_together?: boolean;
   followed_claim?: boolean;
 }
 
@@ -277,7 +276,6 @@ export function MoreScreen() {
   const discord = useRef<HTMLInputElement>(null);
   const telegram = useRef<HTMLInputElement>(null);
   const other = useRef<HTMLInputElement>(null);
-  const admitTogether = useRef<HTMLInputElement>(null);
   const followed = useRef<HTMLInputElement>(null);
 
   // The token from `#more/<token>`.
@@ -346,7 +344,6 @@ export function MoreScreen() {
       setInviteCount(payload.invite?.count || 0);
       setInviteEmails(Array.isArray(payload.invite?.emails) ? payload.invite.emails : []);
 
-      if (admitTogether.current) admitTogether.current.checked = !!a.admit_together;
       if (followed.current) followed.current.checked = !!a.followed_claim;
 
       setMsg(connectMsg());
@@ -479,7 +476,6 @@ export function MoreScreen() {
             discord: discord.current?.value.trim() || undefined,
             telegram: telegram.current?.value.trim() || undefined,
             other_handle: other.current?.value.trim() || undefined,
-            admit_together: !!admitTogether.current?.checked,
             followed_claim: !!followed.current?.checked,
           }),
         });
@@ -924,15 +920,6 @@ export function MoreScreen() {
                 </>
               ) : null}
             </div>
-            <label className="mt-3 flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-300 cursor-pointer">
-              <input
-                ref={admitTogether}
-                id="more-admit-together"
-                type="checkbox"
-                className="mt-0.5 size-4 shrink-0 rounded accent-violet-600"
-              />
-              Only let me in when at least one person from my link gets in too
-            </label>
           </div>
           <div className="border-t border-zinc-200 dark:border-zinc-800 pt-5">
             <Button

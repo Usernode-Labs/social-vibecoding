@@ -259,6 +259,12 @@ const RETIRED_IDS = {
   // worked.
   'more-invites': 'Typed-address invite rows retired for the share link (#more-invite-url); they sent nothing.',
   'more-invite-add': 'The "add another" button for the retired invite rows.',
+  // ── The buddy checkbox promised something nothing delivered (#1534) ──
+  // "Only let me in when at least one person from my link gets in too"
+  // was stored on the answers blob and read by no admission path, so it
+  // held nobody back and let nobody in. The invite link beside it, and
+  // the copy saying we try to admit people together, are untouched.
+  'more-admit-together': 'The "only let me in when someone from my link gets in too" checkbox. Nothing read the flag, so the promise it made was never kept; the field is dropped on input the way #more-invites was.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
