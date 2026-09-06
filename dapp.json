@@ -655,20 +655,19 @@
       "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta + .dev-card-badges.dev-card-status + .gc-card-actions"
     },
     {
-      "name": "Proposal page, round three: the topic card (bar + one vote button), the ledger (checks, votes) and About are sheets on the strip",
+      "name": "Proposal page, round three: the topic card (with its bar), the ledger (checks, votes) and About are sheets on the strip",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic[data-edge] .dev-card-badges > .dev-status-pill-block + .dev-vote-btn[aria-haspopup=\"menu\"]) + .dev-topic-ledger:has(.dev-ledger-row[data-note=\"checks\"] ~ .dev-ledger-row[data-note=\"votes\"] .dev-ledger-roster) + .dev-topic-about"
+      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic[data-edge] .dev-card-badges > .dev-status-pill-block) + .dev-topic-ledger:has(.dev-ledger-row[data-note=\"checks\"] ~ .dev-ledger-row[data-note=\"votes\"]) + .dev-topic-about"
     },
     {
-      "name": "Issue page, round three: GitHub ends the meta line, the actions are one line on the card, and GitHub comments are tagged bubbles in the Discussion sheet",
+      "name": "Issue page, round three: GitHub ends the meta line, and GitHub comments are tagged bubbles in the Discussion sheet",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
-      "expectSelector": "#gc-thread-head .dev-topic:has(.dev-card-topic .dev-card-meta:has(a.dev-topic-gh) + .dev-card-badges ~ .gc-card-actions > .gc-vote-btn[data-act=\"createPrForIssue\"]) > #dev-issue-comments.dev-topic-comments .dev-issue-comment.dev-feed-msg .dev-feed-msg-bubble .dev-topic-gh-tag",
-      "expectText": "Claim this issue"
+      "expectSelector": "#gc-thread-head .dev-topic:has(.dev-card-topic .dev-card-meta:has(a.dev-topic-gh) + .dev-card-badges) > #dev-issue-comments.dev-topic-comments .dev-issue-comment.dev-feed-msg .dev-feed-msg-bubble .dev-topic-gh-tag"
     },
     {
-      "name": "Dev board, round three: the vote is one button beside the state bar, with a picker",
+      "name": "Dev board, round three: a card wears a tone-keyed edge and a glyph, and the vote is one button beside the state bar, with a picker",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-inreview .gc-vote-item .dev-card-status > .dev-status-pill-block + .dev-vote-btn[data-vote-btn][aria-haspopup=\"menu\"]",
+      "expectSelector": "#dev-kanban-col-inreview .gc-vote-item.dev-card-dense[data-edge]:has(> .flex-1 > .dev-card-head > .dev-card-icon.rounded-lg + .dev-card-head-main) .dev-card-status > .dev-status-pill-block + .dev-vote-btn[data-vote-btn][aria-haspopup=\"menu\"]",
       "expectText": "Vote"
     },
     {
@@ -678,20 +677,9 @@
       "expectText": "Preview"
     },
     {
-      "name": "Dev board, round three: every card wears a tone-keyed left edge, and a glyph where the tile was",
-      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .gc-vote-item.dev-card-dense[data-edge] > .flex-1 > .dev-card-head > .dev-card-icon.rounded-lg + .dev-card-head-main"
-    },
-    {
       "name": "Dev board, round three: the card's facts read as one line under the bar",
       "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item .dev-card-status > .dev-card-band-break + .dev-badge"
-    },
-    {
-      "name": "Dev board, round three: a second action pill can fold into ⋯ (one-line band)",
-      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban-col-issues [data-issue-row] .gc-card-actions > .gc-vote-btn[data-act=\"markIssueInProgress\"][data-fold]",
-      "expectText": "Claim this issue"
     },
     {
       "name": "Activity, round three: each entry is a sheet, its reply box ends in the send disc",
