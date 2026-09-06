@@ -1249,6 +1249,13 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "Waitlist confirmed state names the registered address",
+      "path": "/?shot=waitlist-confirmed",
+      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-confirmed-email:not(.hidden)",
+      "expectText": "Registered with",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Stage-2 survey says where a pending signup stands",
       "path": "/?shot=waitlist-more#more/deaddeaddeaddeaddeaddeaddeaddeaddeaddeaddeaddead",
       "expectSelector": "#more-form #more-status-pill",
@@ -1260,6 +1267,13 @@
       "path": "/?shot=waitlist-more#more/cafecafecafecafecafecafecafecafecafecafecafecafe",
       "expectSelector": "#more-form #more-status-pill",
       "expectText": "You're in",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Stage-2 survey names the address the signup was made with",
+      "path": "/?shot=waitlist-more#more/beefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeefbeef",
+      "expectSelector": "#more-form #more-signup-email",
+      "expectText": "staging-demo-waitlist-confirmed@example.invalid",
       "allowConsoleErrors": true
     },
     {

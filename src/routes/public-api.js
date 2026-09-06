@@ -347,6 +347,14 @@ function publicApiRoutes(config) {
         // reads nothing else should not have to know the block's shape.
         admitted: status.admitted,
         status,
+        // Which address this signup was made with (#1537). Not a disclosure:
+        // the 48-hex token in the path is only obtainable by joining with this
+        // address or by receiving the join mail at it, so a caller holding it
+        // already knows the answer — and an unknown token still 404s above
+        // without echoing anything back. Deliberately NOT on the ?view=status
+        // short-circuit: that branch is the confirmation poll, it repeats on a
+        // timer, and it has no reader for this.
+        email: row.email,
         answers,
         oauth: {
           github: !!(config.waitlistGithubClientId && config.waitlistGithubClientSecret),
