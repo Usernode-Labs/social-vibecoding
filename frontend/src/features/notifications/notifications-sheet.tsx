@@ -49,6 +49,31 @@
  * sheet the question does not arise: it presents over the current screen and
  * dismisses back to it. See ./notifications-sheet-controller.js.
  *
+ * ── The type is the Improve rail's, not a scale of its own ────────────
+ *
+ * This sheet shipped with a bespoke iOS-ish ramp — 13/14/15/17/20/22px — while
+ * the Improve rail beside it, the surface a viewer most often sees this one
+ * next to, runs Tailwind's `text-xs` / `text-sm`. Opened together the bell
+ * read a size larger throughout, which is what "the font is way too big" was.
+ *
+ * Every size here now maps to the role the Improve panel gives it, so the two
+ * rails read as one product:
+ *
+ *     sheet title   22px bold   → text-sm font-semibold   (its h2)
+ *     row subject   17px bold   → text-sm font-semibold   (session-row's title)
+ *     row meta      15px        → text-xs                 (its metadata)
+ *     section label 15px        → text-xs font-medium     (SECTION_LABEL_CLASS)
+ *     tab / action  15px semi   → text-sm font-semibold   (its quick actions)
+ *     small pill    14px semi   → text-xs font-semibold
+ *     count badge   13px bold   → text-[11px] font-semibold (session-row's pill)
+ *
+ * What did NOT change is the row's leading tile, still `h-11 w-11` where the
+ * Improve rail's is `h-8 w-8`. That is a dimension rather than a type size,
+ * and the avatar chip is load-bearing here in a way it is not there — a
+ * conversation row is a PERSON speaking and the swatch is how you tell whose.
+ * If the rows still read heavier than Improve's, that tile is the next lever,
+ * and it is a deliberate separate decision.
+ *
  * ── Ownership ──────────────────────────────────────────────────────────
  *
  * Fully React-owned. The root is an overlay, not a screen root, so it is not
@@ -130,7 +155,7 @@ function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
     return (
       <span
         aria-hidden="true"
-        className="w-11 h-11 shrink-0 rounded-xl text-white flex items-center justify-center text-[17px] font-bold"
+        className="w-11 h-11 shrink-0 rounded-xl text-white flex items-center justify-center text-sm font-semibold"
         style={{ backgroundColor: swatchFor(who) }}
       >
         {initial}
@@ -138,7 +163,7 @@ function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
     );
   }
   return (
-    <IconTile size="sm" aria-hidden="true" className="text-[20px]">
+    <IconTile size="sm" aria-hidden="true" className="text-base">
       {view.icon || initial}
     </IconTile>
   );
@@ -146,7 +171,7 @@ function AvatarChip({ view }: { view: ScreenRowView }): ReactNode {
 
 function SectionHead({ children }: { children: ReactNode }): ReactNode {
   return (
-    <div className="px-4 pt-4 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500">
+    <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
       {children}
     </div>
   );
@@ -175,14 +200,14 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
             entirely its own label) renders on the SUBJECT's line instead: a
             heading over nothing is worse than either line alone. */}
         {view.segments.length ? (
-          <span className="block text-[15px] text-zinc-500 dark:text-zinc-400 truncate">
+          <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">
             {view.label}
           </span>
         ) : null}
         {/* WHICH ONE — the PR's title, the conversation, the message. The
             row's own content, and the only line whose text differs between
             two notifications of the same kind, so it carries the strong ink. */}
-        <span className="block text-[17px] font-bold text-zinc-900 dark:text-zinc-100 truncate">
+        <span className="block text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">
           {view.segments.length ? view.segments.map((segment, index) => (
             // eslint-disable-next-line react/no-array-index-key
             <span
@@ -203,7 +228,7 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
             rowView in ./notifications.js. `by` is absent on a system row
             (nobody did it) and on the two key rows (the name there is the
             subject). */}
-        <span className="block text-[15px] text-zinc-500 truncate">
+        <span className="block text-xs text-zinc-500 truncate">
           {[view.appLine, view.by ? `by @${view.by}` : null, view.time]
             .filter(Boolean).join(' · ')}
         </span>
@@ -216,7 +241,7 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
       */}
       {view.count && view.count > 1 ? (
         <span
-          className={'shrink-0 min-w-[1.5rem] px-2 h-6 rounded-full text-[13px] font-bold '
+          className={'shrink-0 min-w-[1.5rem] px-2 h-6 rounded-full text-[11px] font-semibold '
             + 'flex items-center justify-center '
             + (view.unread
               ? 'bg-violet-600 text-white'
@@ -287,7 +312,7 @@ export function NotificationsSheetView() {
   // The chip rail (see @/components/ui/chip.tsx for the idiom): selection
   // is the language's solid inversion, not an underline or the accent.
   const tabCls = (active: boolean) =>
-    'shrink-0 whitespace-nowrap h-9 px-4 rounded-full text-[15px] font-semibold transition-colors '
+    'shrink-0 whitespace-nowrap h-9 px-4 rounded-full text-sm font-semibold transition-colors '
     + (active
       ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
       : 'bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800');
@@ -333,14 +358,14 @@ export function NotificationsSheetView() {
           and the close disc. The tabs under it are the chip rail.
       */}
       <div className="flex items-center gap-2 px-4 pt-4 pb-1 shrink-0">
-        <h2 className="flex-1 min-w-0 truncate text-[22px] font-bold text-zinc-900 dark:text-zinc-100">
+        <h2 className="flex-1 min-w-0 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">
           Notifications
         </h2>
         {tab === 'unread' ? (
           <button
             id="notifications-screen-mark-all"
             type="button"
-            className={'inline-flex items-center h-8 px-3 rounded-full text-[14px] font-semibold '
+            className={'inline-flex items-center h-8 px-3 rounded-full text-xs font-semibold '
               + 'bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 '
               + 'disabled:opacity-40 disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800 un-touch-target'}
             disabled={!unread.length}
@@ -449,7 +474,7 @@ export function NotificationsSheetView() {
           type="button"
           className={'notifications-row w-full text-left px-4 py-3.5 '
             + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4 '
-            + 'text-[17px] font-bold text-violet-700 dark:text-violet-400'}
+            + 'text-sm font-semibold text-violet-700 dark:text-violet-400'}
           onClick={(event) => {
             event.stopPropagation();
             NotificationsSheet.close();
@@ -484,7 +509,7 @@ export function NotificationsSheetView() {
         </>
       ) : null}
       {!rows.length ? (
-        <p className="px-4 py-8 text-[15px] text-zinc-500 text-center">
+        <p className="px-4 py-8 text-sm text-zinc-500 text-center">
           {tab === 'unread' ? 'You’re all caught up.' : 'Nothing here yet. You’ll get pinged here.'}
         </p>
       ) : null}
@@ -517,7 +542,7 @@ export function NotificationsSheetView() {
           <button
             id="notifications-see-older-messages"
             type="button"
-            className="w-full text-center text-[15px] font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
+            className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
             disabled={snap.loadingOlderMessages}
             onClick={() => controller()?.loadOlderMessages()}
           >
@@ -529,7 +554,7 @@ export function NotificationsSheetView() {
           <button
             id="notifications-see-older"
             type="button"
-            className="w-full text-center text-[15px] font-semibold text-violet-700 dark:text-violet-400 hover:underline"
+            className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline"
             onClick={() => setTab('all')}
           >
             See older notifications
@@ -540,7 +565,7 @@ export function NotificationsSheetView() {
           <button
             id="notifications-load-older"
             type="button"
-            className="w-full text-center text-[15px] font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
+            className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
             disabled={snap.loadingMore}
             onClick={() => controller()?.loadOlder()}
           >
