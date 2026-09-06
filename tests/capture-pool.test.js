@@ -940,3 +940,47 @@ test('a page that never stops emitting is still bounded by the hard cap', async 
   assert.ok(elapsed < 2500,
     `the 600ms hard cap binds however chatty the page is (took ${elapsed}ms)`);
 });
+
+test('the assert poll never eats the budget the group needs to report', async () => {
+  // The regression this guards, seen live on PR #1710's own check run.
+  //
+  // TEST_TIMEOUT_MS reaches the container from the PLATFORM's visuals.js, not
+  // from the image, so a container built from a branch runs that branch's
+  // ASSERT_ACTIVE_MAX_MS against the DEPLOYED platform's per-check clock. On
+  // #1710 that was a 12s rolling window inside a 25s budget, and `anon-back`
+  // — a chatty route, so the window kept rolling — stopped reporting
+  // "Expected element was not found" and started reporting "did not finish
+  // within 25s". The second message says nothing about the screen, so the
+  // change had made that check strictly worse than the flat ceiling it
+  // replaced.
+  //
+  // The poll is optional; the verdict is not. Whatever the two bounds are,
+  // the assertion failure must still be what comes out.
+  const read = collect();
+  let beat = null;
+  const page = makeEventPage({
+    onGoto: (p) => { beat = setInterval(() => p.emitActivity(), 30); },
+  });
+  page.$ = async () => null;
+  try {
+    await runTests({ newPage: async () => page },
+      [{ index: 0, name: 'chatty', path: '/p', url: 'http://s/p', expectSelector: '#never' }],
+      {
+        concurrency: 1,
+        // A per-check budget SHORTER than the rolling window it is handed,
+        // which is exactly the deployment skew above.
+        testTimeoutMs: 900,
+        settleQuietMs: 50, settleMaxMs: 100,
+        assertMaxMs: 200, assertActiveMaxMs: 30000, assertPollMs: 25,
+      });
+  } finally {
+    if (beat) clearInterval(beat);
+  }
+  const { frames } = read();
+  assert.equal(frames.length, 1);
+  assert.equal(frames[0].status, 'fail');
+  assert.match(frames[0].failureReason, /Expected element "#never" was not found/,
+    'the verdict is about the screen, not about the clock');
+  assert.doesNotMatch(frames[0].failureReason, /did not finish/,
+    'the optional wait must never be what causes the timeout');
+});

@@ -261,6 +261,25 @@ const ASSERT_MAX_MS = 5000;
 // wait: the happy path still passes on the first probe and pays nothing.
 const ASSERT_ACTIVE_MAX_MS = 12000;
 
+// How much of a group's budget the assert poll must leave behind so the
+// group can still REPORT.
+//
+// The rolling window above is an optional wait; emitting the frames is not.
+// A poll that runs until the group's deadline converts every one of its
+// checks from "Expected element was not found" — a fact about the screen —
+// into "did not finish within Ns", which says nothing at all. That is
+// strictly worse than the flat ceiling this replaced, so the wait is clamped
+// to the group's own deadline minus this reserve and the verdict always gets
+// written.
+//
+// This is not a belt-and-braces guard, it is load-bearing: TEST_TIMEOUT_MS
+// reaches the container from the PLATFORM's services/visuals.js, not from the
+// image, so a container built from a branch can be handed the deployed
+// platform's per-check clock while running the branch's own
+// ASSERT_ACTIVE_MAX_MS. The two are only guaranteed to agree after the branch
+// is deployed, and the window must be safe in the meantime.
+const ASSERT_REPORT_RESERVE_MS = 2000;
+
 function assertMaxMs(env) {
   const raw = parseInt((env || {}).TEST_ASSERT_MAX_MS, 10);
   return (Number.isFinite(raw) && raw >= 0) ? raw : ASSERT_MAX_MS;
@@ -1179,6 +1198,10 @@ async function runTestGroup(browser, group, opts) {
   );
   const assertPoll = Number.isFinite(o.assertPollMs) && o.assertPollMs > 0
     ? o.assertPollMs : ASSERT_POLL_MS;
+  // The absolute instant this group is abandoned, when the pool imposed one.
+  // Infinity for a direct call (the tests, and any caller not running through
+  // runTests), which keeps the rolling window's own cap the only bound.
+  const groupDeadlineAt = Number.isFinite(o.groupDeadlineAt) ? o.groupDeadlineAt : Infinity;
   const consoleErrors = [];
   const pushErr = (errKind, message, source) => {
     if (consoleErrors.length >= MAX_CONSOLE_ERRORS) return;
@@ -1310,7 +1333,13 @@ async function runTestGroup(browser, group, opts) {
         // the deadline is monotonic and a page that never emits again is
         // judged at exactly `assertMax` past this point, as it always was.
         const assertStartedAt = Date.now();
-        const assertHardStopAt = assertStartedAt + assertActiveMax;
+        // Never poll past the point where the group can still report — see
+        // ASSERT_REPORT_RESERVE_MS. `groupDeadlineAt` is absolute, so this
+        // accounts for time the navigation and settle already spent.
+        const assertHardStopAt = Math.min(
+          assertStartedAt + assertActiveMax,
+          groupDeadlineAt - ASSERT_REPORT_RESERVE_MS
+        );
         let pending = cohort.tests;
         for (;;) {
           const still = [];
@@ -1514,6 +1543,7 @@ async function runTests(browser, tests, opts) {
     const groupBudgetMs = perTestMs
       + GROUP_EXTRA_CHECK_MS * (group.length - 1)
       + GROUP_EXTRA_COHORT_MS * Math.max(0, cohortCount - 1);
+    const groupDeadlineAt = Date.now() + groupBudgetMs;
     let timer = null;
     const timeout = new Promise((resolve) => {
       timer = setTimeout(() => resolve('timeout'), groupBudgetMs);
@@ -1523,7 +1553,7 @@ async function runTests(browser, tests, opts) {
     try {
       outcome = await Promise.race([
         Promise.resolve()
-          .then(() => runTestGroup(browser, group, settleOpts))
+          .then(() => runTestGroup(browser, group, { ...settleOpts, groupDeadlineAt }))
           .then(() => 'done', (err) => `error:${(err && err.message) || err}`),
         timeout,
       ]);
