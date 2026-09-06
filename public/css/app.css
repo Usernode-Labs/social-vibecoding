@@ -7205,23 +7205,25 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 
 /* ── The bell's sheet on the ladder ─────────────────────────────────────
-   #notifications-sheet wears `.dc-lift-session` (features/notifications/
-   notifications-sheet.tsx). The geometry rules further down keep their
-   dock and slide; this only restates the corners and the hairline the
-   lift gives it, since those rules set a smaller radius and a bare
-   border-width after the lift's own. The rows separate with the grouped
-   list's inset hairline. */
+   #notifications-sheet wears `.dc-lift dc-lift-panel` (features/notifications/
+   notifications-sheet.tsx) — the opaque lift, the surface the Improve rail
+   and the app menu wear too; see `.dc-lift-panel` for why these three are
+   opaque where the dev screen's two planes are glass. The geometry rules
+   further down keep their dock and slide; this only restates the desktop
+   corner and the hairline, since the lift's own `1.75rem 1.75rem 0 0` is
+   the shape of a sheet docked to the FLOOR and this one docks to the right.
+   The rows separate with the grouped list's inset hairline.
+
+   The mobile pair of corners used to be restated here too, with
+   `!important`, to beat a `1rem` in the `max-width: 639px` block below. That
+   block says 1.75rem now — as do the Improve rail's and the app menu's, so
+   the three bottom sheets agree by reading the same number rather than by an
+   override reaching over one of them. */
 #notifications-sheet { border-color: var(--app-sheet-line); }
 @media (min-width: 640px) {
   #notifications-sheet {
-    border-radius: 1.75rem 0 0 0 !important;
+    border-radius: 1.75rem 0 0 0;
     border-left: 1px solid var(--app-sheet-line);
-  }
-}
-@media (max-width: 639px) {
-  #notifications-sheet {
-    border-top-left-radius: 1.75rem !important;
-    border-top-right-radius: 1.75rem !important;
   }
 }
 .notifications-row { position: relative; }
@@ -7383,6 +7385,44 @@ span.gc-vote-btn-icon { cursor: default; }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dc-lift-strip { background-color: var(--dc-strip); }
   .dc-lift-session { background-color: var(--dc-sheet); }
+}
+
+/* ── THE THIRD SURFACE: a lift that presents OVER A SCRIM ──────────────
+   `.dc-lift-panel` is the same lift, opaque. It is what the shell's three
+   floating panes wear — the notifications rail, the Improve rail and the
+   app chip's menu — and the only thing it changes is the fill.
+
+   GLASS NEEDS SOMETHING WORTH SEEING THROUGH, AND A SCRIM IS NOT IT. The
+   two planes above sit on the page wallpaper: the cream, the three washes
+   and the star are behind them, so 50% white over a 24px blur reads as
+   frosted glass laid on a coloured ground. These three do not. Every one
+   of them raises a `bg-black/40` backdrop first (#notifications-sheet-overlay,
+   #improve-overlay, #apps-switcher-overlay), so what `--dc-sheet-fill` was
+   compositing over was a wallpaper already dimmed by 40% black — and half
+   of a dimmed page, blurred flat, is not glass. It is grey.
+
+   The arithmetic, because the fix is the arithmetic: the home ground is
+   #f4f2e4, the scrim takes it to #929189, and 50% white over that lands the
+   pane at #c8c8c4. The brightest surface on the screen was rendering a fifth
+   of the way to black. In dark it goes the other way for the same reason —
+   72% of #1c1c1e over a dimmed #0b0d1b is #16161a, below the sheet value it
+   is meant to be.
+
+   That is not a value to tune, either: the scrim is uniform and covers the
+   whole viewport, so nothing legible is behind the pane to reveal. Every
+   alpha under 1 buys a share of the dim and returns nothing for it.
+
+   So the panes take `--dc-sheet` — the same opaque value `.dc-lift-session`
+   itself falls back to where `backdrop-filter` is unsupported (the block
+   above). No filter here, and nothing for the `@supports` guard to catch:
+   an opaque fill has no backdrop to blur, so this surface renders the same
+   everywhere.
+
+   The ladder is unaffected. It is a relationship between the strip and the
+   session sheet on the dev screen, and neither of those is a pane over a
+   scrim. */
+.dc-lift-panel {
+  background-color: var(--dc-sheet);
 }
 
 /* THE OVERLAP MUST BE A FULL RADIUS, and it has to come from whatever is
@@ -8733,6 +8773,24 @@ a.drawer-ver--fork:hover {
    `bottom: 0` still takes it to the floor; only where it STARTS moved back.
    Below `sm` the block further down resets `top` for the bottom sheet, and
    `.platform-sheet-adopted` neutralises inset entirely on the kit path. */
+/* THE RAIL'S OWN CORNER AND HAIRLINE, which is the whole of what this panel
+   took from the bell's when both went onto `.dc-lift dc-lift-panel`. The two
+   are the same object at two names — a right-edge rail, floor to ceiling,
+   over a scrim — so the shape statement is the one #notifications-sheet
+   already makes further up ("The bell's sheet on the ladder"): ONE corner is
+   rounded, the top-left, because it is the only corner of this panel that is
+   a corner of anything. The top-right, bottom-right and bottom-left all sit
+   on an edge of the display.
+
+   `.dc-lift` ships `1.75rem 1.75rem 0 0`, which is right for a sheet docked
+   to the FLOOR and wrong for one docked to the right, so the desktop shape is
+   restated here rather than inherited; the `max-width: 639px` block below
+   puts the pair of top corners back for the bottom sheet.
+
+   The hairline is `--app-sheet-line` for all four sides, not the zinc pair
+   this wore before. Only the left edge is drawn (`border-left-width`, and
+   `.dc-lift`'s own `border-top`), but naming the colour once keeps the two
+   drawn edges from having to agree by coincidence. */
 #improve-panel {
   top: 0;
   right: 0;
@@ -8740,6 +8798,8 @@ a.drawer-ver--fork:hover {
   width: 20rem;
   max-width: 85vw;
   border-left-width: 1px;
+  border-color: var(--app-sheet-line);
+  border-radius: 1.75rem 0 0 0;
   transform: translateX(100%);
 }
 #improve-panel[data-open] {
@@ -8806,8 +8866,8 @@ a.drawer-ver--fork:hover {
     max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem);
     border-left-width: 0;
     border-top-width: 1px;
-    border-top-left-radius: 1rem;
-    border-top-right-radius: 1rem;
+    border-top-left-radius: 1.75rem;
+    border-top-right-radius: 1.75rem;
     transform: translateY(100%);
   }
   #improve-panel[data-open] {
@@ -8982,8 +9042,8 @@ a.drawer-ver--fork:hover {
        sheet to 80% of the viewport, so the page behind it stays visible. */
     max-height: min(80dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem));
     border-top-width: 1px;
-    border-top-left-radius: 1rem;
-    border-top-right-radius: 1rem;
+    border-top-left-radius: 1.75rem;
+    border-top-right-radius: 1.75rem;
     transform: translateY(100%);
   }
   #apps-switcher-sheet[data-open] {
@@ -9061,8 +9121,8 @@ a.drawer-ver--fork:hover {
     height: min(66dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem));
     border-left-width: 0;
     border-top-width: 1px;
-    border-top-left-radius: 1rem;
-    border-top-right-radius: 1rem;
+    border-top-left-radius: 1.75rem;
+    border-top-right-radius: 1.75rem;
     transform: translateY(100%);
   }
   #notifications-sheet[data-open],

@@ -32,6 +32,20 @@
  * its own drag-to-dismiss and `.platform-sheet-adopted` neutralises the fixed
  * chrome — the same contract the work drawer runs under.
  *
+ * ── The surface is the shell's pane, not a panel of its own ────────────
+ *
+ * `.dc-lift dc-lift-panel`, which is what the notifications rail and the app
+ * chip's menu wear too. It replaced `bg-white dark:bg-zinc-900` with a zinc
+ * hairline and Tailwind's `shadow-2xl` — the pre-lift look, which left this
+ * rail and the bell's rail sitting side by side in the same corner of the
+ * screen as two different objects. The lift supplies all three of fill,
+ * hairline and shadow, so there is nothing here to keep in step by hand.
+ *
+ * The one thing this file states rather than inherits is the SHAPE, in
+ * app.css: `.dc-lift` rounds the two corners of a sheet docked to the floor,
+ * and this is docked to the right, so at `sm`+ only the top-left is rounded.
+ * Below `sm` it is a floor-docked bottom sheet and takes both.
+ *
  * ── First render is the prerender ──────────────────────────────────────
  *
  * The store's initial value is the closed, empty, target-less panel, so the SSG
@@ -321,7 +335,7 @@ export function ImprovePanel() {
         aria-label={target === 'platform' ? 'Improve the platform' : 'Improve this app'}
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
-        className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl improve-panel-transition"
+        className="fixed z-50 flex flex-col dc-lift dc-lift-panel improve-panel-transition"
       >
         {/*
             ONE LINE. It was a stacked title-over-subtitle pair with `py-3`,

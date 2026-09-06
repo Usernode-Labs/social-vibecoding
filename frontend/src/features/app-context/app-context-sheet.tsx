@@ -74,6 +74,23 @@
  * presentation — the markup is one panel and the CSS decides where it is,
  * which is why the desktop change is a media query and not a branch.
  *
+ * ── Same MATERIAL as the two rails, different SHAPE ────────────────────
+ *
+ * It wears `.dc-lift dc-lift-panel`, which is the fill, the hairline colour
+ * and the two-layer shadow the Improve rail and the notifications rail wear.
+ * That is the whole of what it takes from them, and it is deliberate that it
+ * is not more: `.dc-lift` rounds a DOCKED sheet — 1.75rem on the corners that
+ * meet the page, square on the ones that run off the display — and at `sm`+
+ * this thing docks to nothing. It hangs off the chip, so all four of its
+ * corners are real and it keeps the kit's own 12px menu radius
+ * (`--un-radius-card`) and the `--brand-line` hairline that ties it to the
+ * chip's ring. Below `sm` it IS floor-docked, and there it takes the pane's
+ * 1.75rem top corners like the other two.
+ *
+ * What this replaced was `bg-white dark:bg-zinc-900` with a zinc hairline and
+ * `shadow-2xl` — a heavier, greyer drop than the lift's, and the last of the
+ * pre-lift panel look in the shell's floating surfaces.
+ *
  * First render is the prerender: closed, no apps, no app-scoped rows.
  */
 
@@ -297,7 +314,7 @@ export function AppsSwitcherSheet(): ReactNode {
         aria-label="Menu"
         aria-hidden={open ? undefined : 'true'}
         {...(open ? { 'data-open': '' } : {})}
-        className="fixed z-50 flex flex-col bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-700 shadow-2xl app-context-transition"
+        className="fixed z-50 flex flex-col dc-lift dc-lift-panel app-context-transition"
       >
         {/* The Apps label's row. `pt-4 pb-1` is SECTION's own padding, applied
             here because the row holds two controls beside the label — so the
