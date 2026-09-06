@@ -141,28 +141,45 @@ test('the closed state keeps the same shadow COUNT, so the dim fades', () => {
 });
 
 test('a CLOSED pane is not painted, because the scrim layer is 100vmax', () => {
-  // A performance rule, not a cosmetic one. All three panes are always mounted
-  // — a closed rail is translated off-screen, not unmounted — and a 100vmax
-  // shadow is rasterised even when its colour is `transparent`. Measured in
-  // Chromium at 1280x860 over 60 forced style-recalc + paint cycles:
+  // A performance rule. All three panes are always mounted — a closed rail is
+  // translated off-screen, not unmounted — and a 100vmax shadow is rasterised
+  // even when its colour is `transparent`. Measured in Chromium at 1280x860
+  // over 60 forced style-recalc + paint cycles:
   //
-  //   100vmax painted while closed   frame median 48.6ms   p95 84.8ms
-  //   visibility: hidden while closed          16.7ms          16.9ms
-  //   no scrim layer at all                    18.8ms          33.2ms
+  //   painted while closed          frame median 51.9ms   p95 72.7ms
+  //   opacity: 0 while closed                 16.7ms          35.2ms
+  //   visibility: hidden while closed         16.7ms          17.1ms
   //
-  // 2.5x the frame cost on EVERY screen in the shell, which is enough to make
-  // timing-dependent checks fail on a slow container. Deleting this rule puts
-  // that back and nothing else would notice.
+  // 3x the frame cost on EVERY screen, which is enough to make
+  // timing-dependent checks fail on a slow container.
   const shut = rule('.dc-lift-panel:not([data-open])');
-  assert.match(shut, /visibility: hidden/, 'a closed pane skips paint entirely');
-  // The delay is what keeps the slide-out visible: hidden lands AFTER the
-  // 200ms transition, and opening carries no delay so it shows all the way in.
-  assert.match(shut, /transition:[^;]*visibility 0s linear 200ms/,
-    'and it hides only once the pane has finished sliding out');
+  assert.match(shut, /opacity: 0/, 'a closed pane suppresses its paint');
+  // The delay is what keeps the slide-out visible: opacity drops AFTER the
+  // 200ms transition, and opening carries no delay so it paints all the way in.
+  assert.match(shut, /transition:[^;]*opacity 0s linear 200ms/,
+    'and only once the pane has finished sliding out');
   assert.match(shut, /transition:[^;]*transform 200ms/,
     'restating the transition here must not drop the slide');
-  assert.match(shut, /transition:[^;]*box-shadow 200ms/,
-    'nor the dim fade');
+  assert.match(shut, /transition:[^;]*box-shadow 200ms/, 'nor the dim fade');
+});
+
+test('...and it does NOT use visibility, which would hide the panes\' TEXT', () => {
+  // The regression this replaced. `visibility: hidden` is marginally faster and
+  // removes the subtree from `innerText` — and dapp.json reads text out of
+  // these panes on routes where they are CLOSED. "Improve panel leads with
+  // Give feedback" asserts that string on `/`, where #improve-panel is shut.
+  // Any future check of the same shape would have gone the same way.
+  const shut = rule('.dc-lift-panel:not([data-open])');
+  assert.doesNotMatch(shut, /visibility:\s*hidden/,
+    'a closed pane must stay in innerText — see the declared checks that read it');
+
+  // The contract, stated against the real thing: the built shell ships that
+  // string inside the closed panel, so nothing may make it unreadable.
+  const shell = read('public/index.html');
+  const at = shell.indexOf('id="improve-panel"');
+  assert.ok(at > 0, 'the built shell carries the always-mounted Improve panel');
+  assert.ok(shell.indexOf('Give feedback', at) > at,
+    'and "Give feedback" inside it, which a declared check reads on `/`');
 });
 
 test('the backdrops stay, transparent — they are the click target', () => {
