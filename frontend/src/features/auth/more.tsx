@@ -109,6 +109,11 @@ interface MorePayload {
   /** Also published at the top level of the payload; this is the same value. */
   admitted?: boolean;
   status?: MoreStatus;
+  /**
+   * The address this signup was made with (#1537). Present on the full read
+   * only; the `?view=status` poll does not carry it.
+   */
+  email?: string;
   answers?: MoreAnswers;
   oauth?: Record<string, boolean>;
   /** Public profile URLs for "Follow along". A network with none is absent. */
@@ -185,6 +190,28 @@ function StatusPill({ status }: { status: MoreStatus | null }) {
   );
 }
 
+/**
+ * Which address this signup was made with (#1537). Same contract as the pill
+ * above it: always in the markup, empty and `hidden` in the prerender, filled
+ * by the load effect — contents rendered before the fetch would be a hydration
+ * mismatch, and a mismatch console.errors, which fails proposal checks.
+ *
+ * Plain text, never a `mailto:` anchor. The address here is a fact being read
+ * back, not a control, and a tappable one on a phone opens a mail composer
+ * nobody asked for.
+ */
+function SignupEmail({ email }: { email: string }) {
+  return (
+    <p
+      id="more-signup-email"
+      className={`text-xs text-zinc-500 dark:text-zinc-400 break-words${email ? '' : ' hidden'}`}
+    >
+      Registered with{' '}
+      <span className="font-medium text-zinc-700 dark:text-zinc-200">{email}</span>
+    </p>
+  );
+}
+
 export function MoreScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.more, false);
@@ -221,6 +248,14 @@ export function MoreScreen() {
    * fails proposal checks.
    */
   const [queue, setQueue] = useState<MoreStatus | null>(null);
+  /**
+   * The address behind this token, for the same reason the pill is here: this
+   * screen is where the mailed confirm link lands, so it is the "you're on the
+   * list" surface a returning visitor actually sees, and until now it named
+   * every fact about the signup except which address it was made with (#1537).
+   * Empty is the prerendered state and renders nothing.
+   */
+  const [signupEmail, setSignupEmail] = useState('');
   const [inviteUrl, setInviteUrl] = useState('');
   const [inviteCount, setInviteCount] = useState(0);
   const [inviteEmails, setInviteEmails] = useState<string[]>([]);
@@ -299,6 +334,7 @@ export function MoreScreen() {
       setConnect({ verified: a.verified || {}, oauth: payload.oauth || {} });
       setFollow(payload.follow || {});
       setQueue(payload.status || null);
+      setSignupEmail(payload.email || '');
 
       if (madeUrl.current) madeUrl.current.value = a.made_url || '';
       if (madeNote.current) madeNote.current.value = a.made_note || '';
@@ -554,7 +590,11 @@ export function MoreScreen() {
           className={hiddenFirst(status !== 'ready' || saved, 'mt-6 space-y-8')}
           onSubmit={onSubmit}
         >
-          <StatusPill status={queue} />
+          {/* Where this signup stands, and which address it was made with. */}
+          <div className="space-y-1.5">
+            <StatusPill status={queue} />
+            <SignupEmail email={signupEmail} />
+          </div>
           {/* 4 · Something you've made — relocated from the join form, where
               it used to be required. Joining takes an email now; this is one
               of the things that helps you move up instead. */}

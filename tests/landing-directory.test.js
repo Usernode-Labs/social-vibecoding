@@ -142,7 +142,7 @@ test('the stage-1 survey lives on its own #waitlist screen', () => {
   for (const id of ['waitlist-form', 'waitlist-email',
     'waitlist-country', 'waitlist-discovery-chips', 'waitlist-submit',
     'waitlist-msg', 'waitlist-joined', 'waitlist-more-offer',
-    'waitlist-more-link', 'waitlist-queued']) {
+    'waitlist-more-link', 'waitlist-queued', 'waitlist-confirmed-email']) {
     assert.match(interior, new RegExp(`id="${id}"`), `${id} is on the screen`);
   }
   // Back goes to the landing page via the shared delegated handler.
@@ -228,7 +228,55 @@ test('the anonymous screens are reachable to shots via ?shot=anon', () => {
   // nothing is offered until the address is confirmed.
   assert.match(shot[0], /shotConfirmed\)\s*\{[\s\S]*?setOffer\(true\)/);
   assert.doesNotMatch(shot[0], /setMoreToken/);
+  // #1537: both settled states name the address the signup was made with, so
+  // the shot has to carry one — a stand-in literal, since a shot has no join
+  // behind it to read a real address from. Still no request of any kind.
+  assert.match(shot[0], /setSentTo\('you@example\.com'\)/);
   assert.match(tsx1, /id="waitlist-more-offer"[\s\S]{0,200}hiddenFirst\(\s*!offer/);
+});
+
+test('both "you\'re on the list" surfaces name the registered address (#1537)', () => {
+  // The join flow. The address is already client-side — the confirm step's
+  // hint echoes it — so the panel reads the same `sentTo`, and no request was
+  // added to say something the page already knew.
+  const tsx = read(WAITLIST_TSX);
+  const panel = tsx.match(/id="waitlist-confirmed-email"[\s\S]{0,400}?<\/p>/);
+  assert.ok(panel, '#waitlist-confirmed-email exists');
+  assert.match(panel[0], /\{sentTo\}/);
+  assert.match(panel[0], /Registered with/);
+  // Hidden rather than conditionally rendered: the id is part of the shell's
+  // inventory, and an empty "Registered with" reads as a bug.
+  assert.match(panel[0], /hiddenFirst\(\s*!sentTo/);
+  // Never a mailto: — the address is a fact being read back, not a control.
+  assert.doesNotMatch(panel[0], /mailto:/);
+  // Inside the settled panel, not floating beside it.
+  const confirmed = tsx.match(/id="waitlist-confirmed"[\s\S]*?id="waitlist-more-offer"/);
+  assert.ok(confirmed, 'the confirmed panel exists');
+  assert.match(confirmed[0], /id="waitlist-confirmed-email"/);
+  // Stored lower-cased, matching what the server normalizes, so this surface
+  // and the stage-2 one cannot disagree about the same address.
+  assert.match(tsx, /setSentTo\(emailVal\.toLowerCase\(\)\)/);
+
+  // The stage-2 screen, which is where the mailed confirm link lands and so
+  // is what a RETURNING visitor sees. It has no memory of the join, so the
+  // address comes off the payload — filled in the load applier, never during
+  // render, because contents before the fetch are a hydration mismatch.
+  const more = read('frontend/src/features/auth/more.tsx');
+  assert.match(more, /email\?: string;/);
+  assert.match(more, /setSignupEmail\(payload\.email \|\| ''\)/);
+  assert.match(more, /const \[signupEmail, setSignupEmail\] = useState\(''\)/);
+  const line = more.match(/id="more-signup-email"[\s\S]{0,400}?<\/p>/);
+  assert.ok(line, '#more-signup-email exists');
+  assert.match(line[0], /\{email\}/);
+  assert.match(line[0], /Registered with/);
+  assert.match(line[0], /email \? '' : ' hidden'/);
+  assert.doesNotMatch(line[0], /mailto:/);
+  // Beside the queue pill, inside the form both dapp.json checks select on.
+  const block = more.match(/<form\s+id="more-form"[\s\S]*?Question 1 of 4/);
+  assert.ok(block, 'the stage-2 form exists');
+  const pillAt = block[0].indexOf('<StatusPill');
+  const emailAt = block[0].indexOf('<SignupEmail');
+  assert.ok(pillAt > -1 && emailAt > pillAt, 'the address sits under the pill');
 });
 
 test('the stage-1 submit handler cannot be later than the first render', () => {
