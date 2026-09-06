@@ -108,10 +108,15 @@ export function WaitlistScreen() {
   const [discovery, setDiscovery] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   /**
-   * The address the code went to, echoed back in the confirm step. Empty at
-   * first render, and the copy below resolves to its one-address-less sentence
-   * when
-   * it is — the prerendered document has no address to name.
+   * The address the code went to, echoed back in the confirm step AND in the
+   * settled `#waitlist-confirmed` panel — "which address did I use?" is the
+   * question that panel used to leave open (#1537). Empty at first render, and
+   * both readers resolve to their address-less form when it is: the prerendered
+   * document has no address to name.
+   *
+   * Stored lower-cased, matching what the server normalizes and stores, so the
+   * two surfaces that name the address agree with each other and with the
+   * stage-2 screen at `#more/<token>`.
    */
   const [sentTo, setSentTo] = useState('');
   /**
@@ -154,6 +159,11 @@ export function WaitlistScreen() {
     if (shotJoined || shotConfirmed) {
       setMsg(null);
       setJoined(true);
+      // A stand-in address, so both settled states paint the line that names
+      // it. Deliberately a literal and not a fetch: these branches only ever
+      // set state, because a shot has no join behind it to read an address
+      // from.
+      setSentTo('you@example.com');
     }
     if (shotConfirmed) {
       setConfirmed(true);
@@ -214,7 +224,10 @@ export function WaitlistScreen() {
           // link for anyone who stops here).
           setMsg(null);
           setJoined(true);
-          setSentTo(emailVal);
+          // Lower-cased to match the stored form: the server normalizes before
+          // it writes, so echoing back what was typed would disagree with the
+          // address the stage-2 screen names.
+          setSentTo(emailVal.toLowerCase());
           // Six digits is the whole of what is left to do, so put the caret
           // there. On a REAL join only: the `?shot=` states have to paint a
           // settled state for the declared checks, and a focus ring is not one.
@@ -531,6 +544,25 @@ export function WaitlistScreen() {
             </p>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
               We&rsquo;re opening access in small groups. We&rsquo;ll email you when yours comes up.
+            </p>
+            {/*
+                Which address that mail goes to (#1537). Always in the markup and
+                hidden until there is an address to name: the prerendered
+                document has none, and the id is part of the shell's inventory,
+                so rendering the node conditionally would take it out of the
+                document entirely. An empty "Registered with" reads as a bug,
+                hence `hidden` rather than an empty line. `break-words` so a long
+                address wraps instead of widening the card on a phone.
+            */}
+            <p
+              id="waitlist-confirmed-email"
+              className={hiddenFirst(
+                !sentTo,
+                'mt-2 text-sm text-zinc-500 dark:text-zinc-400 break-words',
+              )}
+            >
+              Registered with{' '}
+              <span className="font-medium text-zinc-700 dark:text-zinc-200">{sentTo}</span>
             </p>
           </div>
           <div
