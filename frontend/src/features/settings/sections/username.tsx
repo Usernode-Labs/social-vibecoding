@@ -31,28 +31,38 @@ export function UsernameSection() {
           Your @handle is how you sign in and the address of your public builder page.
         </SectionHeading>
 
-        <div className="space-y-2">
+        <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
           {/* Filled by Settings._syncUsername() from the session user. */}
-          <div className="flex items-center gap-2 text-sm text-zinc-500 dark:text-zinc-400">
-            <span>Current:</span>
-            <span id="cu-current" className="font-medium text-zinc-800 dark:text-zinc-200">—</span>
+          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex items-center gap-2 text-[17px]">
+            <span className="text-zinc-500 dark:text-zinc-400">Current</span>
+            <span id="cu-current" className="ml-auto font-medium text-zinc-900 dark:text-zinc-100">—</span>
           </div>
-          <Input
-            id="cu-new"
-            type="text"
-            autoComplete="off"
-            autoCapitalize="off"
-            spellCheck={false}
-            placeholder="New username"
-          />
-          <PasswordInput
-            id="cu-password"
-            autoComplete="current-password"
-            placeholder="Current password"
-          />
+          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
+            <Input
+              id="cu-new"
+              type="text"
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              placeholder="New username"
+              box="card"
+              ring="bare"
+              hint="dim"
+            />
+          </div>
+          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
+            <PasswordInput
+              id="cu-password"
+              autoComplete="current-password"
+              placeholder="Current password"
+              box="card"
+              ring="bare"
+              hint="dim"
+            />
+          </div>
         </div>
 
-        <Button id="cu-save" layout="stacked">
+        <Button id="cu-save" layout="stacked" variant="pillAccent" size="pillLg" className="mt-3">
           Change username
         </Button>
 
