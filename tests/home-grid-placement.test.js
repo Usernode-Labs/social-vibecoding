@@ -1466,3 +1466,63 @@ test('render() and load() are the only publishers of the grid model', () => {
   assert.match(code.slice(load, load + 400), /if \(Home\._dragActive\) \{\s*Home\._reloadPending = true;\s*return;/);
   assert.match(code.slice(render, render + 300), /if \(Home\._dragActive\) \{\s*Home\._reloadPending = true;\s*return;/);
 });
+
+
+// ── #1567: an add that lands below the fold opens the grid ────────────
+//
+// The default grid shows two rows. An app added from a Discover rail that
+// gets placed past that bound would be added to a section that visibly does
+// not change, which is the reload complaint again in a smaller form — so
+// the paint that follows an add reveals it.
+
+const revealHome = () => {
+  const h = makeHome({ width: 390 });
+  installListEl(h);
+  h.Home._apps = ['a', 'b', 'far'].map(app);
+  h.Home._layouts = {
+    4: [
+      { type: 'app', slug: 'a', col: 0, row: 0 },
+      { type: 'app', slug: 'b', col: 0, row: 1 },
+      { type: 'app', slug: 'far', col: 0, row: 5 },
+    ],
+  };
+  h.Home._layoutFetchedAt = Date.now();
+  return h;
+};
+
+test('a tile added past the visible rows expands the grid so it can be seen', () => {
+  const { Home, gridStore } = revealHome();
+  Home.render();
+  assert.equal(Home._appsExpanded, false, 'collapsed to start with');
+  assert.equal(
+    gridStore.get().items.some((it) => it.app.slug === 'far'), false,
+    'and row 5 is held back',
+  );
+
+  Home._revealSlug = 'far';
+  Home.render();
+  assert.equal(Home._appsExpanded, true, 'the add opened it');
+  assert.equal(
+    gridStore.get().items.some((it) => it.app.slug === 'far'), true,
+    'so the app the viewer just added is actually on screen',
+  );
+});
+
+test('a tile that lands inside the visible rows leaves the grid collapsed', () => {
+  const { Home, gridStore } = revealHome();
+  Home._revealSlug = 'a';
+  Home.render();
+  assert.equal(Home._appsExpanded, false,
+    'nothing was hidden from this viewer, so nothing needs revealing');
+  assert.equal(gridStore.get().items.some((it) => it.app.slug === 'far'), false);
+});
+
+test('the reveal is one-shot: the next paint does not re-open the grid', () => {
+  const { Home } = revealHome();
+  Home._revealSlug = 'far';
+  Home.render();
+  assert.equal(Home._revealSlug, null, 'cleared by the paint it described');
+  Home._appsExpanded = false;
+  Home.render();
+  assert.equal(Home._appsExpanded, false);
+});

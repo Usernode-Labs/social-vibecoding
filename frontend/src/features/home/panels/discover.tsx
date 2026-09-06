@@ -35,6 +35,10 @@
  * it attaches listeners and writes no markup, which is what keeps one owner
  * for the subtree. Per LANE, not per block: a lane whose cards were never
  * wired looks identical in a screenshot while every tap in it is dead.
+ *
+ * It is also IDEMPOTENT (#1567), which the effect below now depends on: the
+ * badge really does flip between renders since an add repaints in place, and
+ * React hands back the same card elements it kept.
  */
 
 import { useEffect, useRef } from 'react';
@@ -148,6 +152,13 @@ function Lane({ tiles, extraClass }: { tiles: DiscoverTileView[]; extraClass?: s
   // Re-bind whenever the tiles change identity — a slug added or removed
   // replaces the element the handler was on. Home owns every callback; this
   // owns only WHEN the binding happens.
+  //
+  // The `added` half of the key is no longer hypothetical: #1567 repaints the
+  // rail the moment the badge is tapped, so this effect re-runs over cards
+  // React KEPT (they are keyed by slug). Re-binding them would give one badge
+  // two click handlers and make a single tap toggle twice; _wireDiscoveryCards
+  // skips what it has already wired, so the second sweep only ever picks up
+  // genuinely new cards.
   useEffect(() => {
     const el = laneRef.current;
     if (el) home()?._wireDiscoveryCards?.(el);
