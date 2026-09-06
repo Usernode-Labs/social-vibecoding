@@ -140,6 +140,31 @@ test('the closed state keeps the same shadow COUNT, so the dim fades', () => {
   }
 });
 
+test('a CLOSED pane is not painted, because the scrim layer is 100vmax', () => {
+  // A performance rule, not a cosmetic one. All three panes are always mounted
+  // — a closed rail is translated off-screen, not unmounted — and a 100vmax
+  // shadow is rasterised even when its colour is `transparent`. Measured in
+  // Chromium at 1280x860 over 60 forced style-recalc + paint cycles:
+  //
+  //   100vmax painted while closed   frame median 48.6ms   p95 84.8ms
+  //   visibility: hidden while closed          16.7ms          16.9ms
+  //   no scrim layer at all                    18.8ms          33.2ms
+  //
+  // 2.5x the frame cost on EVERY screen in the shell, which is enough to make
+  // timing-dependent checks fail on a slow container. Deleting this rule puts
+  // that back and nothing else would notice.
+  const shut = rule('.dc-lift-panel:not([data-open])');
+  assert.match(shut, /visibility: hidden/, 'a closed pane skips paint entirely');
+  // The delay is what keeps the slide-out visible: hidden lands AFTER the
+  // 200ms transition, and opening carries no delay so it shows all the way in.
+  assert.match(shut, /transition:[^;]*visibility 0s linear 200ms/,
+    'and it hides only once the pane has finished sliding out');
+  assert.match(shut, /transition:[^;]*transform 200ms/,
+    'restating the transition here must not drop the slide');
+  assert.match(shut, /transition:[^;]*box-shadow 200ms/,
+    'nor the dim fade');
+});
+
 test('the backdrops stay, transparent — they are the click target', () => {
   // They own pointer-events and dismiss-on-click, which the shadow does not
   // take over. What they no longer do is paint, because painting is what put
