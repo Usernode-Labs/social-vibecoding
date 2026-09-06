@@ -3278,7 +3278,7 @@
     {
       "name": "Unread notification rows read source, bold subject, muted preview",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-sheet[data-open] .notifications-row .text-\\[15px\\] + .text-\\[17px\\].font-bold"
+      "expectSelector": "#notifications-sheet[data-open] .notifications-row .text-xs + .text-sm.font-semibold"
     },
     {
       "name": "The sign-in screen stands on the wallpaper as a card form with a filled Log in pill",
