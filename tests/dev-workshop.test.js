@@ -324,6 +324,15 @@ test('the Workshop renders its strips, its themes and its folded rows', () => {
   const html = workshopHtml(AppView);
   assert.match(html, /data-ws-votes=""/, 'the vote strip');
   assert.match(html, /Needs your vote/);
+  // Short rows, not cards: the folded row with the card's own Vote button
+  // beside it (a sibling — the row is a button itself).
+  assert.match(html, /<div class="dev-ws-vote-line"><button type="button" class="dev-ws-row" aria-expanded="false" data-ws-row="vote:proposal:34"[\s\S]*?<\/button><button [^>]*class="dev-vote-btn"/,
+    'a vote row is the folded row plus the vote button');
+  assert.ok(!/data-ws-votes[\s\S]*?gc-vote-item/.test(html.slice(0, html.indexOf('data-ws-welcome'))),
+    'and no full card in the strip');
+  // "Open on Board" sits at the bottom of the theme, not under a lane.
+  assert.match(html, /<div class="dev-ws-theme-more">[\s\S]*?Open on Board ›/);
+  assert.ok(!/dev-ws-more[\s\S]{0,80}Open on Board/.test(html), 'no lane carries its own');
   assert.match(html, /data-ws-welcome=""/, 'a first visit: the welcome');
   assert.match(html, /data-discussion-row="1"/, 'the discussion row');
   assert.match(html, /data-ws-theme="t"/, 'the theme');
@@ -396,7 +405,7 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   const demo = byName(/A demo theme names the mock rows/);
   assert.ok(demo && demo.expectSelector.includes('[data-ws-theme="demo-voting"]'));
   const votes = byName(/pins the proposals waiting on the viewer's vote/);
-  assert.ok(votes && votes.expectSelector.includes('[data-ws-votes]'));
+  assert.ok(votes && /\[data-ws-votes\][\s\S]*button\.dev-vote-btn/.test(votes.expectSelector));
   const unfolded = byName(/A Workshop row unfolds into the Activity sheet/);
   assert.ok(unfolded && /shot=feed-comments/.test(unfolded.path), 'the unfolded-row checks ride the capture deep link');
   const strip = byName(/three views in order: App, Workshop, Board/);

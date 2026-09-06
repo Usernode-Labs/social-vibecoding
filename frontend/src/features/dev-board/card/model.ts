@@ -330,8 +330,11 @@ export interface DevWorkshopView {
   discussion: ListRow | null;
   themes: WorkshopTheme[];
   meta: {
-    /** 'ai' from the model, 'category' from the voted category, null while unknown. */
-    source: 'ai' | 'category' | null;
+    /**
+     * 'ai' from the model, 'category' from the voted category, 'demo' for
+     * staging's obviously-fake grouping, null while unknown.
+     */
+    source: 'ai' | 'category' | 'demo' | null;
     generatedAt: string | null;
     /** The grouping predates the board's current state; a refresh is behind it. */
     stale: boolean;

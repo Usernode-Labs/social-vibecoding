@@ -54,6 +54,8 @@ const MIN_INTERVAL_MS = Math.max(
   60 * 1000
 );
 
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
 const clip = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
 const day = (v) => {
   const t = Date.parse(v || '');
@@ -342,6 +344,39 @@ function fallbackThemes(input) {
   return themes;
 }
 
+// ── Staging's grouping ────────────────────────────────────────────────
+//
+// A staging preview has a copy of production's board and, usually, no
+// model — so the category fallback would show a reviewer one flat group,
+// which is exactly the Workshop's failure mode and nothing of its shape.
+// Staging gets an OBVIOUSLY FAKE grouping instead: the real items dealt
+// round-robin into a few "Staging demo" themes with placeholder sayings, so
+// every part of the view (several themes, every lane, the roster, the
+// counts) is exercised against real cards. Computed per request, never
+// cached, and never in production: this is a demo of the surface, not a
+// grouping anyone should read as meaning something.
+const STAGING_THEME_NAMES = [
+  'Staging demo: getting in',
+  'Staging demo: the app on a phone',
+  'Staging demo: voting and review',
+  'Staging demo: look and feel',
+];
+
+function stagingDemoGrouping(input) {
+  const items = (input && input.items) || [];
+  if (!items.length) return [];
+  const n = Math.min(STAGING_THEME_NAMES.length, Math.max(1, Math.ceil(items.length / 4)));
+  const themes = STAGING_THEME_NAMES.slice(0, n).map((name, i) => ({
+    id: `staging-demo-${i + 1}`,
+    name,
+    description: 'A staging-only grouping of real board items, dealt out to show the Workshop\'s shape.',
+    saying: 'Staging demo: what people are asking for in this theme would be summarised here by the model.',
+    items: [],
+  }));
+  items.forEach((it, i) => { themes[i % n].items.push(it.key); });
+  return themes;
+}
+
 function shapeRow(r) {
   if (!r) return null;
   return {
@@ -456,6 +491,12 @@ async function getThemes({ pool, app, waitForGeneration = false }) {
       stale: true, pending, itemCount: input.items.length,
     };
   }
+  if (IS_STAGING && !llm.isEnabled()) {
+    return {
+      themes: stagingDemoGrouping(input), source: 'demo', generatedAt: null,
+      stale: true, pending: false, itemCount: input.items.length,
+    };
+  }
   return {
     themes: fallbackThemes(input), source: 'category', generatedAt: null,
     stale: true, pending, itemCount: input.items.length,
@@ -463,7 +504,7 @@ async function getThemes({ pool, app, waitForGeneration = false }) {
 }
 
 module.exports = {
-  buildThemeInput, fingerprint, fallbackThemes, assignIds, slugify, excerpt,
+  buildThemeInput, fingerprint, fallbackThemes, stagingDemoGrouping, assignIds, slugify, excerpt,
   getCached, getThemes, regenerate,
   MIN_INTERVAL_MS,
   _inFlightForTests: inFlight,

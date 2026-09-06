@@ -138,6 +138,16 @@ test('fallbackThemes groups by voted category, biggest first, uncategorised last
   ]);
 });
 
+test('stagingDemoGrouping deals real items into a few obviously-fake themes', () => {
+  const items = Array.from({ length: 10 }, (_, i) => ({ key: `issue:${i}` }));
+  const themes = svc.stagingDemoGrouping({ items });
+  assert.equal(themes.length, 3, 'about four items per theme, capped at four themes');
+  for (const t of themes) assert.match(t.name, /^Staging demo/);
+  assert.deepEqual(themes.flatMap((t) => t.items).sort(), items.map((i) => i.key).sort(), 'every item, once');
+  assert.deepEqual(themes.map((t) => t.id), ['staging-demo-1', 'staging-demo-2', 'staging-demo-3']);
+  assert.deepEqual(svc.stagingDemoGrouping({ items: [] }), []);
+});
+
 // ── the LLM layer ────────────────────────────────────────────────────
 
 test('sanitizeWorkshopThemes drops unknown keys, duplicates, empty themes, and caps', () => {

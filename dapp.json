@@ -1661,7 +1661,7 @@
     {
       "name": "The Workshop pins the proposals waiting on the viewer's vote above the themes",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-votes] .gc-vote-item[data-unvoted]",
+      "expectSelector": "#dev-workshop [data-ws-votes] [data-ws-lane=\"votes\"] .dev-ws-vote-line > button.dev-ws-row + button.dev-vote-btn",
       "expectText": "Needs your vote"
     },
     {

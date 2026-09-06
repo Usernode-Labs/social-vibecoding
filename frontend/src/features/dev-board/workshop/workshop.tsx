@@ -45,7 +45,8 @@ import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../../lib/use-store-state';
 import { devWorkshopStore } from '../card/cards-store';
-import { CardIcon, DevCard } from '../card/dev-card';
+import { CardIcon, DevCard, VoteButton } from '../card/dev-card';
+import type { ActionSpec } from '../card/model';
 import { FeedThread } from '../card/feed-thread';
 import type { DevCardModel, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
@@ -199,14 +200,34 @@ function Lane({
           </div>
         );
       })}
-      {lane.more ? (
-        <div className="dev-ws-more">
-          {`+${lane.more} more · `}
-          <button type="button" className="dev-ws-link" onClick={() => callAppView('openBoardForTheme', themeId)}>
-            Open on Board ›
-          </button>
-        </div>
-      ) : null}
+      {lane.more ? <div className="dev-ws-more">{`+${lane.more} more in this lane`}</div> : null}
+    </div>
+  );
+}
+
+/** The card's Yes/No vote specs, when it carries a vote (the dense card's rule). */
+function voteSpecs(card: DevCardModel): { yes: ActionSpec; no: ActionSpec } | null {
+  const yes = card.actions.find((a) => /\bgc-vote-btn-yes\b/.test(a.cls || ''));
+  const no = card.actions.find((a) => /\bgc-vote-btn-no\b/.test(a.cls || ''));
+  return yes && no ? { yes, no } : null;
+}
+
+/**
+ * A row in the vote strip: the folded row with the card's own Vote button
+ * beside it — a sibling, not a child, because the row is a button itself.
+ * Unfolds like any other row.
+ */
+function VoteRow({
+  row, slug, canPost, open, onToggle,
+}: { row: CardRow; slug: string; canPost: boolean; open: boolean; onToggle: () => void }): ReactNode {
+  const specs = voteSpecs(row.card);
+  return (
+    <div className={open ? 'dev-ws-rowwrap dev-ws-rowwrap-open' : 'dev-ws-rowwrap'}>
+      <div className="dev-ws-vote-line">
+        <FoldedRow row={row} open={open} onToggle={onToggle} />
+        {specs ? <VoteButton yes={specs.yes} no={specs.no} /> : null}
+      </div>
+      {open ? <UnfoldedRow row={row} slug={slug} canPost={canPost} onCollapse={onToggle} /> : null}
     </div>
   );
 }
@@ -266,6 +287,7 @@ function ThemeCard({
   if (building) bits.push(`${building} underway`);
   if (reviewing) bits.push(`${reviewing} in review`);
   const quietDays = theme.lastActive ? Math.floor((Date.now() - theme.lastActive) / 86400000) : null;
+  const hidden = theme.lanes.reduce((n, l) => n + l.more, 0);
   const foot = bits.length
     ? `${theme.people.length} involved · ${bits.join(' · ')}`
     : (quietDays != null && quietDays > 14
@@ -311,6 +333,15 @@ function ThemeCard({
               themeId={theme.id}
             />
           ))}
+          {/* The whole theme on the Board, at the bottom of the theme rather
+              than under whichever lane happened to overflow: the filter it
+              applies is the theme's, not a lane's. */}
+          <div className="dev-ws-theme-more">
+            {hidden ? <span>{`+${hidden} not shown · `}</span> : null}
+            <button type="button" className="dev-ws-link" onClick={() => callAppView('openBoardForTheme', theme.id)}>
+              Open on Board ›
+            </button>
+          </div>
         </div>
       ) : null}
     </article>
@@ -406,8 +437,17 @@ export function DevWorkshop(): ReactNode {
             <span className="dev-ws-eyebrow">Needs your vote</span>
             <span className="dev-ws-pill dev-ws-pill-warn">{`${v.votes.count} ${v.votes.count === 1 ? 'proposal' : 'proposals'}`}</span>
           </div>
-          <div className="dev-ws-strip-cards">
-            {v.votes.rows.map((row) => (row.t === 'card' ? <DevCard key={row.key} model={row.card} /> : null))}
+          <div className="dev-ws-lane" data-ws-lane="votes">
+            {v.votes.rows.map((row) => (row.t === 'card' ? (
+              <VoteRow
+                key={row.key}
+                row={row}
+                slug={slug}
+                canPost={canPost}
+                open={openRows.votes === row.key}
+                onToggle={() => toggleRow('votes', row.key)}
+              />
+            ) : null))}
           </div>
           {v.votes.count > v.votes.rows.length ? (
             <button type="button" className="dev-ws-link self-start" onClick={() => callAppView('openBoardNeedingVote')}>
@@ -480,6 +520,7 @@ export function DevWorkshop(): ReactNode {
             <span className="dev-ws-eyebrow">
               {`${themes.filter((t) => !t.ungrouped).length} themes`}
               {v.meta.source === 'category' ? ' · grouped by category until themes are drafted' : ''}
+              {v.meta.source === 'demo' ? ' · staging demo grouping' : ''}
               {v.meta.pending ? ' · regrouping…' : ''}
             </span>
             <div className="dev-ws-sort-opts" role="group" aria-label="Order themes">
@@ -513,7 +554,9 @@ export function DevWorkshop(): ReactNode {
           <div className="dev-ws-foot-note">
             {v.meta.source === 'ai'
               ? 'Themes are drafted from the board and refreshed as it changes.'
-              : 'Themes are drafted once an AI model is available; until then items are grouped by their voted category.'}
+              : (v.meta.source === 'demo'
+                ? 'Staging demo grouping: in production the themes are drafted by the model from the board.'
+                : 'Themes are drafted once an AI model is available; until then items are grouped by their voted category.')}
           </div>
         </>
       ) : null}
