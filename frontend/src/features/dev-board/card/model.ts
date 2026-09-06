@@ -265,6 +265,8 @@ export type ListRow =
 /** A list surface's trailing affordance. */
 export type FooterSpec =
   | { kind: 'showMore'; n: number }
+  /** The Done column's age cut: "Show all N" lifts it for the session. */
+  | { kind: 'showAll'; n: number }
   | { kind: 'loadMerged'; loading: boolean; n?: number | null }
   | { kind: 'github'; href: string }
   | { kind: 'moreCompleted'; n: number };

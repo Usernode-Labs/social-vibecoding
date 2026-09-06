@@ -10264,32 +10264,42 @@ body.is-offline [data-offline-disabled] {
    on the #eaeaea page ground left the rows reading as bare text.
 
    So the utilities the row already carries — `rounded-2xl bg-white
-   dark:bg-zinc-900 px-3.5 py-3 hover:bg-zinc-50` — now draw it, unopposed,
-   and the only thing left here is the gap between cards. 0.5rem is
-   `space-y-2`, the same gap the block above uses. */
-#dev-feed .dev-feed-entry + .dev-feed-entry {
-  margin-top: 0.5rem;
-}
+   dark:bg-zinc-900 px-3.5 py-3 hover:bg-zinc-50` — now draw it, unopposed.
 
-/* A LANDED CHANGE still reads differently — it is a marker that the stream
-   crossed a line, not another thing to read — but as a tinted CARD now
-   rather than a full-bleed band. The emerald edge stays and follows the
-   card's corner; the padding compensates for its 3px so the content of a
-   merged row still lines up with the row above it. */
-#dev-feed .dev-feed-entry > .gc-vote-item[data-completed] {
-  background: rgb(236 253 245); /* emerald-50 */
-  border-left: 3px solid rgb(16 185 129); /* emerald-500 */
-  padding-left: calc(0.875rem - 3px); /* px-3.5, less the edge */
+   ── Each entry is a SHEET ───────────────────────────────────────────────
+   The card, the replies under it and the reply box are one thing, and they
+   read as one thing now: the entry wears the session sheet's plane (the
+   same 50% white frost the Settings and Messages panes lift on) with the
+   card inside it. Before this the bubbles and the box lay directly on the
+   strip, and where one item's thread ended and the next item's card began
+   was the hardest line on the screen to see. 4px between sheets — the
+   sheets carry the separation, the gap only has to admit there are two.
+
+   A LANDED CHANGE is a plain card too. It used to wear an emerald wash and
+   a 3px left edge as the feed's "the stream crossed a line" marker; its bar
+   says "✓ Merged" and its edge is green (the card's own `[data-edge="ok"]`),
+   which is the same fact said once instead of three times. */
+#dev-feed .dev-feed-entry {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+  border-radius: 26px;
+  padding: 10px 10px 12px;
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
-.dark #dev-feed .dev-feed-entry > .gc-vote-item[data-completed] {
-  background: rgba(6, 78, 59, 0.28); /* emerald-900 at low alpha */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  #dev-feed .dev-feed-entry { background-color: var(--dc-sheet); }
 }
-#dev-feed .dev-feed-entry > .gc-vote-item[data-completed]:hover {
-  background: rgb(209 250 229); /* emerald-100 */
+#dev-feed .dev-feed-entry + .dev-feed-entry {
+  margin-top: 4px;
 }
-.dark #dev-feed .dev-feed-entry > .gc-vote-item[data-completed]:hover {
-  background: rgba(6, 78, 59, 0.42);
-}
+/* A reading column. The stream is one column of cards each with a thread
+   under it; past ~760px a card's meta line and its bubbles were sentences
+   too wide to read in one saccade, and the board strip beside them was
+   empty. The strip's own padding closes to 4px at the sides so the sheets
+   sit almost edge to edge on a phone, as the Messages list does. */
+#dev-feed { max-width: 760px; margin: 0 auto; }
+#dev-body:has(> #dev-feed) { padding: 8px 4px 12px; }
 
 /* ── Inline comments ───────────────────────────────────────────
    The tail of a thread, indented under the row it belongs to, with no box
@@ -10298,7 +10308,7 @@ body.is-offline [data-offline-disabled] {
    one level down. */
 #dev-feed .dev-feed-comments:empty { display: none; }
 #dev-feed .dev-feed-comments {
-  padding: 0 0.75rem 0.5rem 2.75rem;
+  padding: 0 0.75rem 0.5rem 22px;
 }
 #dev-feed .dev-feed-comment {
   display: flex;
@@ -10339,19 +10349,356 @@ body.is-offline [data-offline-disabled] {
 }
 
 /* ── The Activity feed's inline discussion ─────────────────────────────
-   Indented to the same 2.75rem as #dev-feed .dev-feed-comments above it, so
+   Indented to the same 22px as #dev-feed .dev-feed-comments above it, so
    the GitHub preview and the app's own thread read as one comment area under
    the row rather than as two separate blocks at different depths. The reply
-   box is the last line of it. */
+   box is the last line of it, at the same indent as the bubbles — the
+   viewer's reply joins the conversation it sits under. On a phone the
+   thread takes the sheet's full width. */
 #dev-feed .dev-feed-thread {
-  margin-left: 2.75rem;
-  margin-top: 0.25rem;
+  margin: 6px 6px 0 22px;
   display: flex;
   flex-direction: column;
-  gap: 0.25rem;
+  gap: 6px;
 }
+@media (max-width: 639px) {
+  #dev-feed .dev-feed-thread { margin-left: 0; margin-right: 0; }
+  #dev-feed .dev-feed-comments { padding-left: 0; padding-right: 0; }
+}
+/* "N earlier replies", first in the thread and aligned with the bubbles
+   (22px avatar + 8px gap), so it reads as the top of the conversation. */
+#dev-feed .dev-feed-earlier { padding-left: 30px; }
+/* One reply, as a bubble — the Messages row at the feed's scale (see
+   card/feed-thread.tsx MessageLine). The bubble is the card's white on the
+   sheet; the viewer's own take the accent tint, as their sent messages do. */
+.dev-feed-msg {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.dev-feed-msg-avatar {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin-top: 4px;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.dev-feed-msg-bubble {
+  min-width: 0;
+  max-width: 85%;
+  padding: 7px 12px 8px;
+  border-radius: 16px;
+  background: var(--bg-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.dev-feed-msg-mine .dev-feed-msg-bubble { background: var(--accent-tint); }
+.dev-feed-msg-head {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin-bottom: 1px;
+}
+.dev-feed-msg-author { font-weight: 600; color: var(--text-primary); white-space: nowrap; }
+.dev-feed-msg-time { color: var(--text-muted); white-space: nowrap; }
+.dev-feed-msg-text { color: var(--text-primary); }
+/* The reply box: a 36px white pill field and the dev session's send disc
+   (36px, filled accent, up-arrow), the pair every composer on the platform
+   now shares. The field's own utilities (input.tsx `activityReply`) draw a
+   bordered r16 box; this is the widget-language reading of the same field,
+   and `#dev-feed` scopes it to the one place it is read this way. */
+#dev-feed .dev-feed-thread textarea {
+  min-height: 36px;
+  padding: 8px 14px;
+  border-radius: 18px;
+  border-color: transparent;
+  font-size: 13px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+.dev-feed-send {
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  transition: background 150ms;
+}
+.dev-feed-send svg { width: 18px; height: 18px; stroke-width: 2.4; }
+.dev-feed-send:hover:not(:disabled) { background: var(--accent-light); }
 /* Nothing loaded and no box to draw (a viewer who cannot post) — collapse
    rather than leaving a gap under every row. */
 #dev-feed .dev-feed-thread:empty {
   display: none;
 }
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THE BOARD CARD, ROUND THREE — the dense card, on every board surface.
+
+   Three ink levers, chosen against a survey of the alternatives: a GLYPH
+   where there was a tinted tile, TWO type sizes (14px title, 12.5px for
+   everything else) where there were five, and the metadata CHIPS as one
+   muted text line where there were four filled boxes. Plus the two things
+   that came out of the same sessions: the vote pair as ONE button beside
+   the state bar, and a coloured left EDGE keyed to the bar's tone. What
+   stays: the four bands, their order, every id and hook a declared check
+   walks, and the reserve-and-clip contract on the action band — it is
+   one line still, but a pill that does not fit now folds into ⋯ instead
+   of vanishing (card/dev-card.tsx useFoldedActions).
+
+   `div.dev-card-dense`, not `.dev-card-dense`: the card's own geometry
+   rides in as Tailwind utilities (`rounded-2xl px-3.5 py-3`) and
+   tailwind.css loads last, so an equal-specificity class here would lose.
+   ═══════════════════════════════════════════════════════════════════════ */
+div.dev-card-dense {
+  /* Concentric with its controls: card r22, bar r14, pills r10/r999. */
+  border-radius: 22px;
+  padding: 14px 14px 12px;
+  padding-left: calc(14px + var(--dev-edge-w));
+  /* The edge is an inset shadow, so it follows the corner arc and takes no
+     layout — the padding above is what keeps the content off it. A third
+     strength at 4px was the pair chosen: enough colour to find the red one
+     in a column without reading, not enough to tint the card. */
+  --dev-edge-w: 4px;
+  --dev-edge: transparent;
+  box-shadow:
+    inset var(--dev-edge-w) 0 0 color-mix(in srgb, var(--dev-edge) 33%, transparent),
+    0 1px 2px rgba(0, 0, 0, 0.06);
+  align-items: stretch;
+}
+/* The key: the bar's tone, and the card's TYPE where it has no bar
+   (card/dev-card.tsx edgeFor). */
+div.dev-card-dense[data-edge="vote"]      { --dev-edge: var(--accent); }
+div.dev-card-dense[data-edge="progress"]  { --dev-edge: var(--state-progress); }
+div.dev-card-dense[data-edge="attention"] { --dev-edge: var(--state-attention); }
+div.dev-card-dense[data-edge="blocked"]   { --dev-edge: var(--state-blocked); }
+div.dev-card-dense[data-edge="ok"]        { --dev-edge: var(--state-ok); }
+div.dev-card-dense[data-edge="neutral"]   { --dev-edge: var(--state-neutral); }
+
+/* ── Glyph, not tile ──
+   The 36px tinted square becomes an 18px glyph in the type's colour. The
+   tint utilities stay on the element (they carry the glyph's colour); only
+   the box and the fill go. Top-aligned against a two-line title. */
+.dev-card-dense .dev-card-head { gap: 8px; align-items: flex-start; }
+.dev-card-dense .dev-card-head > .dev-card-icon {
+  width: 22px;
+  height: 22px;
+  background: transparent;
+  border-radius: 0;
+}
+.dev-card-dense .dev-card-head > .dev-card-icon > svg { width: 18px; height: 18px; }
+
+/* ── Two type sizes ──
+   14px title, 12.5px for the meta line, the bar, the facts, the pills. The
+   reserved heights follow: 2 x 1.35 x 14 = 37.8 for the title's two lines,
+   1.4 x 12.5 = 17.5 for the one-line meta. */
+.dev-card-dense .dev-card-title { font-size: 14px; }
+.dev-card-dense .dev-card-title-clamp { min-height: 37.8px; }
+.dev-card-dense .dev-card-meta { font-size: 12.5px; min-height: 17.5px; max-height: 17.5px; }
+
+/* ── The status band: the bar row, then the facts as one line ──
+   Two rows at most — the bar with the vote button beside it, then the
+   facts — and the clip cap follows: 30 + 4 + 18. A card with only facts is
+   one row; a card with nothing keeps the #1139 data-empty rule. */
+.dev-card-dense .dev-card-badges { margin-top: 8px; gap: 4px 6px; }
+.dev-card-dense .dev-card-badges.dev-card-status {
+  min-height: 0;
+  max-height: 52px;
+}
+.dev-card-band-break { flex-basis: 100%; height: 0; }
+/* The bar: 30px, r14, no outline (the wash is the surface), and its label
+   at the second type size. `flex-basis: 0`, not auto: the band WRAPS, and a
+   wrapping flex line breaks on each item's hypothetical size — with basis
+   auto the bar's basis was its full label ("Resolving conflicts…"), which
+   pushed the vote button onto a second, clipped row in a kanban column.
+   From 0 it grows into what the button leaves, and the label ellipsises. */
+.dev-card-dense .dev-status-pill-block {
+  flex: 1 1 0;
+  min-width: 5rem;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 14px;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+/* The label ellipsises as a BLOCK: `text-overflow` acts on a block
+   container's inline content, not on a flex container's items, so the
+   capsule's flex label clipped "Conflict resolution failed" mid-letter. */
+.dev-card-dense .dev-status-pill-block .gc-vote-count-label {
+  display: block;
+  line-height: 30px;
+}
+/* An open vote is the accent, not the pipeline's violet: blue while the
+   group is deciding, the accent fill sweeping under the label as Yes votes
+   arrive. The tier's `progress` tone still names the state; only the
+   surface changes. */
+.dev-card-dense .dev-status-pill-block.dev-status-pill-vote { background: var(--accent-tint); }
+.dev-card-dense .dev-status-pill-vote .gc-vote-fill-yes {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.dev-card-dense .dev-status-pill-vote .gc-vote-count-dot-ping,
+.dev-card-dense .dev-status-pill-vote .gc-vote-count-dot-core { background: var(--accent); }
+
+/* ── The vote button ──
+   One 30px r14 button beside the bar: a neutral well until the viewer has
+   voted, the accent filled for Yes, the blocked tint for No, and a caret
+   in every state because the vote can always be changed. */
+.dev-vote-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 8px 0 11px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 150ms, color 150ms;
+}
+.dev-vote-btn svg { width: 14px; height: 14px; }
+.dev-vote-btn .dev-vote-caret { width: 12px; height: 12px; opacity: 0.7; }
+.dev-vote-btn:hover { background: var(--accent-tint); color: var(--accent); }
+.dev-vote-btn-yes, .dev-vote-btn-yes:hover { background: var(--accent); color: var(--accent-ink); }
+.dev-vote-btn-yes:hover { background: var(--accent-light); }
+.dev-vote-btn-no, .dev-vote-btn-no:hover { background: var(--state-blocked-bg); color: var(--state-blocked); }
+/* The picker: body-mounted and fixed, like .dev-card-menu, because the
+   kanban columns scroll sideways and would clip it. */
+.dev-vote-pop {
+  position: fixed;
+  z-index: 2000;
+  min-width: 168px;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dev-vote-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.dev-vote-opt svg { width: 15px; height: 15px; }
+.dev-vote-opt .dev-vote-n {
+  margin-left: auto;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.dev-vote-opt:hover { background: var(--bg-tertiary); }
+.dev-vote-opt[aria-checked="true"] { background: var(--accent-tint); color: var(--accent); }
+.dev-vote-opt-no[aria-checked="true"] { background: var(--state-blocked-bg); color: var(--state-blocked); }
+
+/* ── The facts, as one line ──
+   Linked issue · priority · assignee · category · 💬 N — the chips' own
+   markup and hooks (button.attr-chip[data-attr-field], the issue chip, the
+   chat badge), drawn as muted text with a dot between. The mono issue
+   number keeps its family at 12px. */
+.dev-card-dense .dev-card-status > .dev-badge {
+  height: auto;
+  padding: 0;
+  gap: 4px;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+.dev-card-dense .dev-card-status > .dev-badge.font-mono { font-size: 12px; }
+.dev-card-dense .dev-card-status > .dev-badge + .dev-badge::before {
+  content: "·";
+  margin-right: 2px;
+  opacity: 0.6;
+}
+.dev-card-dense .dev-card-status > button.dev-badge:hover { color: var(--accent); }
+.dev-card-dense .dev-card-status > .dev-badge .attr-avatar { width: 14px; height: 14px; }
+
+/* ── The action band: one line, folding into ⋯ ──
+   28px pills at the second type size and the labelled Preview pill at the
+   right end. The band still wraps and clips at one row (the reserve-and-clip
+   contract); what changed is that a pill the row cannot fit is now marked
+   `data-folded` by card/dev-card.tsx and listed in the ⋯ menu, and `order`
+   sends it to the clipped row AFTER the Preview pill so the preview keeps
+   the visible row's right end. It stays rendered rather than hidden — see
+   useFoldedActions for why. A band with nothing in it takes no space (the
+   settled close-issue row), where it used to hold an empty row open. */
+.dev-card-dense .gc-card-actions {
+  min-height: 28px;
+  max-height: 28px;
+  margin-top: 8px;
+  gap: 6px;
+  overflow: hidden;
+}
+.dev-card-dense .gc-card-actions > [data-folded] { order: 1; }
+.dev-card-dense .gc-card-actions:empty { display: none; }
+.dev-card-dense .gc-card-actions > .gc-vote-btn {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.dev-card-dense .gc-card-actions > .gc-vote-btn-preview {
+  margin-left: auto;
+  gap: 5px;
+  padding: 0 10px 0 9px;
+  color: var(--accent);
+  background: var(--accent-tint);
+  border-color: transparent;
+}
+.dev-card-dense .gc-card-actions > .gc-vote-btn-preview:hover { background: var(--accent-tint); border-color: var(--accent-light); }
+.dev-card-dense .gc-card-actions > .gc-vote-btn-preview svg { width: 16px; height: 16px; }
+/* The two badge states of the preview, in the band at the same height. */
+.dev-card-dense .gc-card-actions > .gc-checks-running-badge,
+.dev-card-dense .gc-card-actions > .gc-conflict-badge {
+  margin-left: auto;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+/* ── The rail: ⋯ as a 28px well in the corner ── */
+.dev-card-dense .dev-card-rail > .dev-card-menu-btn {
+  width: 28px;
+  height: 28px;
+  margin: -2px -4px 0 0;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+}
+.dev-card-dense .dev-card-rail > .dev-card-menu-btn:hover { background: var(--accent-tint); color: var(--accent); }
+.dev-card-dense .dev-card-rail > .dev-card-menu-btn svg { width: 16px; height: 16px; }
+
+/* Cards with 22px corners want a little more air between them than the
+   column's space-y-2 gives. */
+#dev-kanban .dev-kanban-col > .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 10px; }
