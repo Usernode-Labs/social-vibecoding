@@ -301,8 +301,10 @@ function testTimeoutMs(env) {
 function testsDeadlineMs(env) {
   // 420000 → 470000 (#1417), moved with MAX_DECLARED_TESTS 430 → 480 and the
   // platform-side TESTS_DEADLINE_MS; then 470000 → 520000 with the 480 → 530
-  // ceiling bump, and 520000 → 570000 with 530 → 580. The two defaults are
-  // asserted equal by
+  // ceiling bump; then 520000 → 560000 with 530 → 560, when the manifest
+  // reached 512 and left 18 of the 20 required slots; then 560000 → 570000
+  // with 560 → 580, a proposal in flight at the same time. The two defaults
+  // are asserted equal by
   // tests/checks-budget.test.js precisely so a container running without the
   // env var cannot silently apply a shorter budget than the platform planned
   // — which would cut a full manifest's tail while the platform reported the

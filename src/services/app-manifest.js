@@ -111,12 +111,27 @@ const MANIFEST_FILENAME = 'dapp.json';
 // deadline has passed 480s this time RUN_TIMEOUT_MS moves too, 600s → 640s,
 // to stay the required 120s above it.
 //
-// Raised 530 → 580 when the manifest reached 512 and crossed the 20-slot
-// floor a third time (18 left), red on main again and so on every proposal
-// after it — this one included, which declares two. Same coupled move:
-// 580 checks at ~3.9s over a pool of 8 is ~283s of ideal work, so
-// TESTS_DEADLINE_MS goes 520s → 570s to keep the 2x margin (clears it by
-// ~4s), and RUN_TIMEOUT_MS 640s → 690s to stay the required 120s above it.
+// Raised 530 → 560 when the manifest reached 512 and crossed the 20-slot floor
+// again (18 left) — the same event as the line above, for the third time, and
+// again it made the unit suite red on main itself and so on every proposal
+// after it. #1699 added the two checks that crossed it.
+//
+// Same arithmetic, same coupled move: 560 checks at ~3.9s over a pool of 8 is
+// ~273s of ideal work, so TESTS_DEADLINE_MS goes 520s → 560s to keep the 2x
+// margin (clears it by 14s, where the last move cleared by 3), and
+// RUN_TIMEOUT_MS goes 640s → 680s to stay the required 120s above it.
+//
+// The step is 30 rather than the 50 last time on purpose: 560 is what the
+// budget test's 2x rule allows without the deadline crossing 600s, and the
+// jump buys 48 slots — about two years at the rate the last three moves
+// happened. Deleting checks to make room is the thing the failing test
+// explicitly refuses, so the ceiling is the only lever.
+//
+// Raised again, 560 → 580, by a proposal in flight at the same time (this
+// one, which declares two checks of its own): same coupled move, 580 checks
+// at ~3.9s over a pool of 8 is ~283s of ideal work, so TESTS_DEADLINE_MS goes
+// 560s → 570s to keep the 2x margin (clears it by ~4s), and RUN_TIMEOUT_MS
+// 680s → 690s to stay the required 120s above it.
 const MAX_DECLARED_TESTS = 580;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js

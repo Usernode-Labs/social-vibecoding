@@ -113,8 +113,11 @@ const CONTENT_TYPES = {
 // crossed 480s, and this one has to stay 120s above it (pinned by
 // tests/checks-budget.test.js and tests/capture-pool.test.js).
 //
-// 640s → 690s with 530 → 580: the deadline moved to 570s, and 120s above it
-// is exactly 690s.
+// 640s → 680s with 530 → 560 (#1699 crossed 512): the deadline moved to
+// 560s, and 120s above it is 680s.
+//
+// 680s → 690s with 560 → 580 (a proposal in flight at the same time): the
+// deadline moved to 570s, and 120s above it is exactly 690s.
 const RUN_TIMEOUT_MS = 690 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 
@@ -143,9 +146,16 @@ const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
 // full suite, so 520s keeps the 2x margin with ~3s to spare. This crossed the
 // 480s line the note above warned about, so RUN_TIMEOUT_MS moved with it.
 //
-// 520s → 570s with MAX_DECLARED_TESTS 530 → 580: ~283s of ideal work for a
-// full suite, so 570s keeps the 2x margin with ~4s to spare. RUN_TIMEOUT_MS
-// moved with it again.
+// 520s → 560s with MAX_DECLARED_TESTS 530 → 560, when the manifest reached 512
+// and left 18 of the 20 slots the headroom rule requires. ~273s of ideal work
+// for a full suite, so 560s keeps the 2x margin by 14s — more room than the
+// last move left, deliberately, because the previous two both had to be redone
+// within a few hundred checks. RUN_TIMEOUT_MS moves 640s → 680s with it, the
+// required 120s clear and no more, as every one of these moves has done.
+//
+// 560s → 570s with MAX_DECLARED_TESTS 560 → 580, a proposal in flight at the
+// same time: ~283s of ideal work for a full suite, so 570s keeps the 2x
+// margin with ~4s to spare. RUN_TIMEOUT_MS moves 680s → 690s with it again.
 const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '570000';
 
 // Mint a 15-minute capture identity token for a seeded capture identity
