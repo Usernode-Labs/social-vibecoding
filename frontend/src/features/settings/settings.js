@@ -87,6 +87,31 @@
   // declared check that says Advanced starts closed.
   const NAV_EXPANDED_KEY = 'settings_nav_expanded_groups_v1';
 
+  // ── Post-logout landing (#1524) ───────────────────────────────────────
+  //
+  // Signing out always ends on the PUBLIC LANDING page, on every surface.
+  // `/` with no fragment is the only address that boots the anonymous shell
+  // there: App.restoreFromHash treats any other hash (or any `/app/<slug>`
+  // path) as a remembered deep link and answers with the bare sign-in form.
+  // A bare '/' rather than App._rootUrl() so a leftover `?shot=` / `?signup=`
+  // query cannot survive the sign-out either.
+  const LANDING_URL = '/';
+
+  // A native sign-out whose terminal step fails leaves this document alive
+  // with server authority already revoked, so it navigates to the landing
+  // page like every other surface. The advisory that used to be toasted here
+  // would be destroyed by that navigation, so it is handed to the anonymous
+  // boot instead: App.enterAnonymous reads this key once and toasts it.
+  const LOGOUT_NOTICE_KEY = 'sv:logout_notice';
+  const NATIVE_SHUTDOWN_NOTICE =
+    'Signed out. Close and reopen the app to finish shutting down Usernode.';
+
+  // A successful native logout replaces the WebView, so nothing below it in
+  // this document normally runs. This bounded net covers the case where the
+  // replacement does not arrive: rather than leave a signed-out user looking
+  // at the Settings screen forever, land them on the landing page.
+  const NATIVE_LOGOUT_SAFETY_MS = 5000;
+
   const Settings = {
     // Planted by ./mount.ts, never imported: this file is a classic IIFE that
     // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
@@ -3241,24 +3266,63 @@
       // Same reasoning for the offline session snapshot (#1021): it is the
       // record that says "this device is signed in", so leaving it behind
       // would let the next offline boot paint the signed-in shell for an
-      // account that just logged out.
-      try { window.App?.clearSessionSnapshot?.(); } catch (_) {}
+      // account that just logged out. _dropCachedSession is the wider sweep
+      // (#1524): it also clears the shell snapshot and the remembered Improve
+      // target, which main.tsx re-applies UNCONDITIONALLY at boot, before the
+      // session is known — so leaving them behind paints the previous
+      // session's header title and Improve button on the landing page.
+      try { window.App?._dropCachedSession?.(); } catch (_) {}
 
-      // This must remain the final statement on the native path: successful
-      // native logout replaces the WebView, so the old document has no
-      // timeout or navigation continuation.
+      // Normalise the address BEFORE the terminal native call (#1524). A
+      // native sign-out replaces the WebView but the platform keeps whatever
+      // URL it was on, so a logout from `#settings` (or from `/app/<slug>`)
+      // leaves an address that restoreFromHash reads as a remembered deep
+      // link and answers with the sign-in form on the next restore. This runs
+      // after the revocation above on purpose: a logout that FAILED must
+      // leave the address still describing the screen the user is looking at.
+      //
+      // replaceState is safe on both counts that matter here. NATIVE-BRIDGE.md's
+      // trust model binds the privileged capability to the executing JS realm,
+      // and a same-document History API change retains it; and replaceState
+      // fires neither popstate nor hashchange, so no router runs off it.
+      try { window.history?.replaceState?.(null, '', LANDING_URL); } catch (_) {}
+
+      // Back into a signed-in document restored whole from the BFCache would
+      // otherwise repaint the signed-in shell from memory (#1524). One-shot:
+      // this document is on its way out either way.
+      try {
+        window.addEventListener('pageshow', (event) => {
+          if (event && event.persisted) window.location.replace(LANDING_URL);
+        }, { once: true });
+      } catch (_) {}
+
+      // This must remain the final call on the native path: successful native
+      // logout replaces the WebView, so the old document normally runs no
+      // continuation work at all. The ONE relaxation (#1524) is navigation to
+      // the landing page, on both outcomes below. It cannot re-admit anyone:
+      // App.user is gone, so NativeChrome._webParticipantId() is null and
+      // establishCurrentSession() returns without asking the bridge for
+      // anything. Nothing else may be added here.
       if (preflight.nativeTerminal) {
-        // A rejection leaves this old document closed and server authority
-        // revoked. Do not navigate or reopen admission; the deliberately
-        // simple rare-failure recovery is an app restart/update.
-        return NativeChrome.commitNativeLogout().catch((error) => {
-          if (window.PlatformUI && PlatformUI.toast) {
-            PlatformUI.toast(
-              'Signed out. Close and reopen the app to finish shutting down Usernode.',
-              { error: true }
-            );
-          }
+        return NativeChrome.commitNativeLogout().then((result) => {
+          // The WebView should already be gone. If it is not, land this
+          // document on the public landing page rather than leave a
+          // signed-out user on the Settings screen.
+          const timer = setTimeout(() => {
+            window.location.replace(LANDING_URL);
+          }, NATIVE_LOGOUT_SAFETY_MS);
+          if (timer && typeof timer.unref === 'function') timer.unref();
+          return result;
+        }, (error) => {
+          // A rejection leaves the native realm closed and server authority
+          // revoked, but this document alive and signed out. Carry the
+          // advisory across the navigation (the toast itself would not
+          // survive it) and go to the landing page like every other surface.
+          try {
+            window.sessionStorage?.setItem?.(LOGOUT_NOTICE_KEY, NATIVE_SHUTDOWN_NOTICE);
+          } catch (_) {}
           console.warn('[settings] local native shutdown failed:', error);
+          window.location.replace(LANDING_URL);
           return false;
         });
       }
@@ -3268,8 +3332,9 @@
       // the anonymous shell on the landing screen — the public app
       // directory a guest normally sees — instead of the bare sign-in
       // form (#1159); the landing header's Sign in CTA keeps re-login one
-      // tap away.
-      window.location.href = '/';
+      // tap away. REPLACE, not assign (#1524): a pushed entry lets Back
+      // restore the signed-in document from the BFCache.
+      window.location.replace(LANDING_URL);
     },
 
     // Ask the active service worker to drop its API cache; resolves on ack
