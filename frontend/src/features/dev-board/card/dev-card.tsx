@@ -738,10 +738,10 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
 
   const dense = m.dense;
   // The vote pair leaves the action band for the status band, as one button
-  // beside the bar. The detail head keeps its two pills: it has the width.
+  // beside the bar — on the board card and on the topic head alike.
   const allActions = m.actions || [];
-  const yesSpec = dense ? allActions.find((a) => isVoteSpec(a, 'yes')) : undefined;
-  const noSpec = dense ? allActions.find((a) => isVoteSpec(a, 'no')) : undefined;
+  const yesSpec = allActions.find((a) => isVoteSpec(a, 'yes'));
+  const noSpec = allActions.find((a) => isVoteSpec(a, 'no'));
   const voteBtn = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
   const bandActions = voteBtn ? allActions.filter((a) => a !== yesSpec && a !== noSpec) : allActions;
   const chips = (m.badges || []).filter(Boolean);
@@ -760,7 +760,7 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
   // full-width break separates the bar row from them. Only when both exist:
   // an empty band must stay empty, and a bare facts line needs no break.
   const factsVisible = linked.length > 0 || kept.length > 0 || (m.chatCount || 0) > 0;
-  const brk = dense && (m.pill || voteBtn) && factsVisible
+  const brk = (m.pill || voteBtn) && factsVisible
     ? <span className="dev-card-band-break" aria-hidden="true"></span>
     : null;
   const badgeRow = (
@@ -782,10 +782,10 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
   // (the builders still hand it over as `rail.preview`; the model did not
   // move). The detail head's arrives as `actionPreview`, already labelled.
   const previewSpec = m.actionPreview
-    || (dense && m.rail.preview ? { ...m.rail.preview, iconOnly: false } : null);
+    || (m.rail.preview ? { ...m.rail.preview, iconOnly: false } : null);
   const bandPreview = previewSpec ? <Preview spec={previewSpec} /> : null;
   const hasActions = primary.length > 0 || !!bandPreview;
-  const folded = useFoldedActions(dense ? primary : [], m.rail.menuKey || '', !!bandPreview);
+  const folded = useFoldedActions(primary, m.rail.menuKey || '', !!bandPreview);
   const actionRow = hasActions ? (
     <div className="gc-card-actions" ref={folded.ref}>
       {primary.map((a, i) => (
@@ -794,8 +794,8 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
       {bandPreview}
     </div>
   ) : (dense ? <div className="gc-card-actions"></div> : null);
-  const rail: RailSpec = dense ? { ...m.rail, preview: null } : m.rail;
-  const edge = dense ? edgeFor(m) : undefined;
+  const rail: RailSpec = { ...m.rail, preview: null };
+  const edge = edgeFor(m);
 
   // The meta line, ' · '-joined. Dense reserves the band even when empty;
   // the detail head collapses it, exactly as `_cardContentHtml` did.
@@ -809,7 +809,7 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
     : null;
 
   return (
-    <div className={dense ? `${m.cls} dev-card-dense` : m.cls} data-edge={edge} {...attrs}>
+    <div className={`${m.cls} ${dense ? 'dev-card-dense' : 'dev-card-topic'}`} data-edge={edge} {...attrs}>
       <div className="flex-1 min-w-0">
         <div className="dev-card-head">
           {m.icon ? <CardIcon spec={m.icon} /> : null}

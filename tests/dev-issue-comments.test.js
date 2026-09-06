@@ -48,14 +48,19 @@ test('a comment carries its author, its bot tag and its date', () => {
       comment({ key: '2', author: 'github-actions[bot]', bot: true, date: '' }),
     ],
   });
-  assert.match(html, /<div class="text-\[0\.9375rem\] text-zinc-500 dark:text-zinc-500 px-1">Discussion<\/div>/);
+  // The sheet heading (round three): the same uppercase label every topic
+  // sheet wears, and the one "Discussion" the page draws.
+  assert.match(html, /<div class="dev-topic-h">Discussion<\/div>/);
   assert.equal((html.match(/class="dev-issue-comment/g) || []).length, 2);
-  assert.match(html, /<span class="text-xs font-medium text-zinc-700 dark:text-zinc-200">evan<\/span>/);
+  // A comment is a bubble: the swatch avatar outside, the author first in
+  // the bubble's head, then the GitHub tag that says whose thread this is.
+  assert.match(html, /<span class="dev-feed-msg-author">evan<\/span>(<span[^>]*>bot<\/span>)?<span class="dev-topic-gh-tag">GitHub<\/span>/);
+  assert.match(html, /class="dev-feed-msg-avatar" aria-hidden="true" style="background-color:#[0-9a-f]{6}">E</);
   // The bot tag is a quiet word beside the name, not a different row.
   assert.equal((html.match(/>bot</g) || []).length, 1);
   assert.match(html, /github-actions\[bot\]<\/span><span class="text-\[0\.9375rem\] text-sky-700 dark:text-sky-400">bot<\/span>/);
   // A row with no timestamp omits the date rather than drawing an empty span.
-  assert.equal((html.match(/text-\[10px\]/g) || []).length, 1);
+  assert.equal((html.match(/dev-feed-msg-time/g) || []).length, 1);
   assert.match(html, /2026-03-04/);
 });
 
