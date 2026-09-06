@@ -400,6 +400,13 @@ function stagingMockGovernance() {
 // The generic thread is deterministic in the issue number, so a preview and
 // a declared check see the same two rows on every run; only the ages are
 // clock-relative, which is the thing those rows exist to exercise.
+// Is `number` one of stagingMockIssues' own rows? The repo URL only shapes
+// each row's htmlUrl, so any base answers the membership question.
+function isStagingMockIssueNumber(number) {
+  const n = Number(number);
+  return stagingMockIssues('https://github.com/example/app').some((i) => i.number === n);
+}
+
 function stagingMockIssueComments(number) {
   const n = Number(number);
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
@@ -1751,6 +1758,22 @@ function issueRoutes(config) {
         }
         const mocks = stagingMockIssueComments(number);
         const clipped = github.clipIssueComments(mocks);
+        return res.json({ comments: clipped.comments, truncated: clipped.truncated });
+      }
+
+      // Staging demo mode (?demo=1) on one of the MOCK rows: the page is on
+      // fixtures by choice — the list route appends these rows for it — so
+      // the thread is the fixture too, served without the live round trip.
+      // No real issue has these numbers, so the live fetch can only come
+      // back empty and fall through to the same mocks; what it costs is
+      // time. From a preview container whose outbound fetch hangs, that is
+      // the whole ISSUES_FETCH_TIMEOUT_MS, and the check runner polls a
+      // presence assertion for five seconds after the page settles
+      // (capture/capture.js ASSERT_MAX_MS) — which is exactly how the
+      // declared issue-page check found no comment bubbles on staging while
+      // passing locally, where GitHub is off and the mocks are immediate.
+      if (IS_STAGING && req.query.demo === '1' && isStagingMockIssueNumber(number)) {
+        const clipped = github.clipIssueComments(stagingMockIssueComments(number));
         return res.json({ comments: clipped.comments, truncated: clipped.truncated });
       }
 
