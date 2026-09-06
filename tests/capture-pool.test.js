@@ -828,11 +828,11 @@ test('pool bounds come from env with sane defaults and a hard ceiling', () => {
   assert.equal(testTimeoutMs({ TEST_TIMEOUT_MS: '-1' }), 40000);
   // 470000 since #1417, moved with MAX_DECLARED_TESTS 430 → 480 and the
   // platform-side default in services/visuals.js; 520000 with 480 → 530;
-  // 560000 with 530 → 560. The three are asserted
+  // 560000 with 530 → 560; 570000 with 560 → 580. The three are asserted
   // equal to each other elsewhere (tests/checks-budget.test.js); this one
   // pins that the container's own fallback is the raised value, so a run
   // without the env var does not quietly apply the old shorter budget.
-  assert.equal(testsDeadlineMs({}), 560000);
+  assert.equal(testsDeadlineMs({}), 570000);
   assert.equal(testsDeadlineMs({ TESTS_DEADLINE_MS: '1000' }), 1000);
 });
 
