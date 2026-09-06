@@ -312,7 +312,8 @@ test('archiveSession: sweeper archive announces the actor-less form', async () =
 
     assert.equal(spies.sendSystemMessage.length, 1);
     // pr_title null → label falls back to the bare PR number.
-    assert.equal(spies.sendSystemMessage[0].content, 'PR #99 was withdrawn (no vote activity)');
+    assert.equal(spies.sendSystemMessage[0].content,
+      'PR #99 went quiet and was set aside. It can always come back as a new proposal');
     assert.equal(spies.sendSystemMessage[0].msgType, 'system');
   } finally {
     restore();
