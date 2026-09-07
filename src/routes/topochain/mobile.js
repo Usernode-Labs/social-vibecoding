@@ -40,6 +40,9 @@
 //      `activity_kind` here, carrying the challenge's `kind` value.
 'use strict';
 
+const { loadOnboarding, visibleChallenges, challengeCategory } =
+  require('../../services/topochain/challenge-onboarding');
+
 const { Router } = require('express');
 const bcrypt = require('bcrypt');
 const { clientIp } = require('../../services/client-ip');
@@ -657,15 +660,12 @@ async function fetchOwnChallengeActivities(pool, userId, challengeIds) {
 // the endpoint's own three challenge-level filters instead of returning
 // every challenge unconditionally).
 async function fetchSeasonEventChallengeItems(pool, seasonEventId, opts) {
-  const { includeCompletedChallenges, onlyEnabledChallenges, challengeCategory } = opts;
+  const { includeCompletedChallenges, onlyEnabledChallenges, challengeCategory: categoryFilter,
+    onboarding } = opts;
   const conds = ['c.season_event_id = $1'];
   const params = [seasonEventId];
   if (onlyEnabledChallenges) conds.push('c.enabled = TRUE');
   if (!includeCompletedChallenges) conds.push('c.completed = FALSE');
-  if (challengeCategory) {
-    params.push(challengeCategory);
-    conds.push(`UPPER(ct.category) = UPPER($${params.length})`);
-  }
 
   const { rows } = await pool.query(
     `SELECT ${MOBILE_CHALLENGE_COLUMNS}
@@ -676,7 +676,13 @@ async function fetchSeasonEventChallengeItems(pool, seasonEventId, opts) {
       ORDER BY c.display_order ASC, c.id ASC`,
     params
   );
-  return rows.filter((r) => r.t_id != null).map(buildSeasonChallengeItem);
+  return visibleChallenges(rows.filter((r) => r.t_id != null), onboarding)
+    .map((r) => {
+      const item = buildSeasonChallengeItem(r);
+      item.category = challengeCategory(item.challenge_id, item.category, onboarding);
+      return item;
+    })
+    .filter((item) => !categoryFilter || item.category.toUpperCase() === categoryFilter.toUpperCase());
 }
 
 // One season's `events[]` (each carrying its own `challenges[]` when
@@ -686,6 +692,7 @@ async function fetchSeasonEventsWithChallenges(pool, seasonId, opts) {
   const {
     seasonEventIdParam, onlyActiveEvents, onlyCurrentEvents, includeInternalEvents,
     includeChallenges, includeCompletedChallenges, onlyEnabledChallenges, challengeCategory,
+    onboarding,
   } = opts;
 
   const conds = ['season_id = $1'];
@@ -719,7 +726,7 @@ async function fetchSeasonEventsWithChallenges(pool, seasonId, opts) {
       // sequential keeps the query count obvious (matches this file's own
       // /me/breakdown precedent for the same shape of nested loop).
       eventObj.challenges = await fetchSeasonEventChallengeItems(pool, ev.id, {
-        includeCompletedChallenges, onlyEnabledChallenges, challengeCategory,
+        includeCompletedChallenges, onlyEnabledChallenges, challengeCategory, onboarding,
       });
     }
     events.push(eventObj);
@@ -1225,6 +1232,7 @@ function topochainMobileRoutes(config) {
       const onlyScheduled = parseBoolDefaultFalse(req.query.only_scheduled);
 
       let rows;
+      let resolvedSeasonId = null;
       if (seasonEventId) {
         const { rows: evRows } = await pool.query('SELECT id FROM season_events WHERE id = $1', [seasonEventId]);
         if (!evRows.length) {
@@ -1259,9 +1267,13 @@ function topochainMobileRoutes(config) {
           if (!currentRows.length) return ok(res, { data: [] });
           seasonId = Number(currentRows[0].id);
         }
+        resolvedSeasonId = seasonId;
         rows = await fetchChallengesForSeason(pool, seasonId);
       }
 
+      const onboarding = await loadOnboarding(pool, req.user.id,
+        { seasonId: resolvedSeasonId, eventId: seasonEventId });
+      rows = visibleChallenges(rows, onboarding);
       const ids = rows.map((r) => Number(r.id));
       const activityRows = ids.length ? await fetchOwnChallengeActivities(pool, req.user.id, ids) : [];
       const activitiesByChallenge = new Map();
@@ -1286,6 +1298,11 @@ function topochainMobileRoutes(config) {
         });
       });
 
+      for (const item of items) {
+        item.category = challengeCategory(item.id, item.category, onboarding);
+        if (onboarding?.progress.has(item.id)) item.progress = onboarding.progress.get(item.id);
+      }
+
       // active_only (SPEC: "keeps enabled and not-completed challenges").
       if (activeOnly) items = items.filter((it) => it.enabled && !it.completed);
       // only_scheduled (SPEC: "keeps challenges whose window contains
@@ -1302,7 +1319,7 @@ function topochainMobileRoutes(config) {
         });
       }
 
-      return ok(res, { data: items });
+      return ok(res, { data: items, ...(onboarding ? { onboarding: onboarding.summary } : {}) });
     } catch (err) {
       log.error('topochain-mobile', 'GET /challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
@@ -1366,11 +1383,14 @@ function topochainMobileRoutes(config) {
 
       const data = [];
       for (const season of seasonRows) {
+        const onboarding = includeChallenges
+          ? await loadOnboarding(pool, req.user.id, { seasonId: season.id }) : null;
         // eslint-disable-next-line no-await-in-loop -- fixture-scale lists
         // (same precedent as /me/breakdown's global scope above).
         const events = await fetchSeasonEventsWithChallenges(pool, season.id, {
           seasonEventIdParam, onlyActiveEvents, onlyCurrentEvents, includeInternalEvents,
           includeChallenges, includeCompletedChallenges, onlyEnabledChallenges, challengeCategory,
+          onboarding,
         });
         const seasonObj = {
           season_id: Number(season.id),
@@ -1380,6 +1400,7 @@ function topochainMobileRoutes(config) {
           ends_at: iso(season.ends_at),
           is_active: season.is_active,
           events,
+          ...(onboarding ? { onboarding: onboarding.summary } : {}),
         };
         if (includeChallenges) {
           // "season_challenges ... same shape, from the season-type
