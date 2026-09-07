@@ -1333,12 +1333,26 @@ async function runTestGroup(browser, group, opts) {
         // the deadline is monotonic and a page that never emits again is
         // judged at exactly `assertMax` past this point, as it always was.
         const assertStartedAt = Date.now();
-        // Never poll past the point where the group can still report — see
-        // ASSERT_REPORT_RESERVE_MS. `groupDeadlineAt` is absolute, so this
-        // accounts for time the navigation and settle already spent.
-        const assertHardStopAt = Math.min(
-          assertStartedAt + assertActiveMax,
-          groupDeadlineAt - ASSERT_REPORT_RESERVE_MS
+        // The group deadline bounds the EXTENSION, never the baseline.
+        //
+        // The first version of this clamp was `min(start + assertActiveMax,
+        // groupDeadlineAt - reserve)`, which is wrong in the one regime that
+        // matters. `groupDeadlineAt` is absolute, so a slow navigation has
+        // already spent part of it before the poll begins; on a contended
+        // preview that subtraction can land BELOW the flat ceiling this
+        // change replaced, and the cohort is then judged on its first probe
+        // with no polling at all. Checks that passed at four seconds before
+        // this change started failing — which is the precise harm the clamp
+        // was added to prevent, arriving from the other side.
+        //
+        // So `assertMax` from the start is a FLOOR. Below it the behaviour is
+        // exactly what it was before this change, group overrun and all: that
+        // is the status quo, and the status quo is by definition not a
+        // regression. Above it the deadline still applies, so the new
+        // extension can never be what turns a verdict into a timeout.
+        const assertHardStopAt = Math.max(
+          assertStartedAt + assertMax,
+          Math.min(assertStartedAt + assertActiveMax, groupDeadlineAt - ASSERT_REPORT_RESERVE_MS)
         );
         let pending = cohort.tests;
         for (;;) {

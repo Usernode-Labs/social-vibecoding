@@ -984,3 +984,36 @@ test('the assert poll never eats the budget the group needs to report', async ()
   assert.doesNotMatch(frames[0].failureReason, /did not finish/,
     'the optional wait must never be what causes the timeout');
 });
+
+test('a group whose navigation ate the budget still polls its baseline window', async () => {
+  // The regression the first clamp introduced, seen live on PR #1710's own
+  // run: seven checks that had been passing began failing on their first
+  // probe. `groupDeadlineAt` is absolute, so a slow navigation spends part of
+  // it before the poll starts; `min(start + active, deadline - reserve)` then
+  // lands BELOW the flat ceiling this change replaced, and the cohort gets
+  // less polling than it had before the change — or none at all.
+  //
+  // The numbers put the element in exactly the disputed window. The group's
+  // budget is 3000ms, so `deadline - reserve` is ~1000ms in: the OLD clamp
+  // stops polling there. The baseline floor is `assertMax` (2000ms) from the
+  // poll's own start, ~2100ms in. An element that arrives at ~1400ms is
+  // therefore invisible to the old clamp and visible to the floor, while the
+  // group as a whole finishes well inside its 3000ms and never times out.
+  const read = collect();
+  let appearAt = Infinity;
+  const page = makeEventPage({ onGoto: () => { appearAt = Date.now() + 1400; } });
+  page.$ = async () => (Date.now() >= appearAt ? {} : null);
+  await runTests({ newPage: async () => page },
+    [{ index: 0, name: 'late', path: '/p', url: 'http://s/p', expectSelector: '#late' }],
+    {
+      concurrency: 1,
+      testTimeoutMs: 3000,
+      settleQuietMs: 20, settleMaxMs: 50,
+      assertMaxMs: 2000, assertActiveMaxMs: 30000, assertPollMs: 25,
+    });
+  const { frames } = read();
+  assert.equal(frames[0].status, 'pass',
+    'the baseline window survives a deadline the navigation already spent');
+  assert.doesNotMatch(String(frames[0].failureReason || ''), /did not finish/,
+    'and the group still reported rather than timing out');
+});
