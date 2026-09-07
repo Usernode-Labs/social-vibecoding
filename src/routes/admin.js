@@ -1,3 +1,4 @@
+const appAllowance = require('../services/app-allowance');
 const { Router } = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
@@ -302,7 +303,7 @@ function adminRoutes(config) {
   router.get('/api/admin/users', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.created_at,
+        `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.app_quota_requested_at, u.created_at,
                 u.daily_limit_cents, u.usernode_pubkey,
                 EXISTS (
                   SELECT 1 FROM user_social_identities identity
@@ -391,11 +392,11 @@ function adminRoutes(config) {
   router.put('/api/admin/users/app-quota', requireAdminWrite, async (req, res) => {
     const { quota } = req.body || {};
     const n = Number(quota);
-    if (!Number.isInteger(n) || n < 0) {
-      return res.status(400).json({ error: 'quota must be a non-negative integer' });
+    if (typeof quota !== 'number' || !Number.isInteger(n) || n < 0 || n > 2147483647) {
+      return res.status(400).json({ error: 'quota must be a non-negative integer up to 2147483647' });
     }
     try {
-      await pool.query('UPDATE users SET app_quota = $1', [n]);
+      await appAllowance.setQuota(pool, { quota: n, actorId: req.user.id });
       log.info('admin', 'App quota set for all users', { quota: n, by: req.user.username });
       res.json({ ok: true, quota: n });
     } catch (err) {
@@ -409,30 +410,56 @@ function adminRoutes(config) {
   // daily-limit handler below. Quota 0 means the user cannot create apps;
   // admins bypass enforcement regardless (their quota is cosmetic).
   router.put('/api/admin/users/:id/app-quota', requireAdminWrite, async (req, res) => {
-    const userId = parseInt(req.params.id, 10);
-    if (!Number.isFinite(userId)) {
+    const userId = Number(req.params.id);
+    if (!Number.isInteger(userId) || userId <= 0 || userId > 2147483647) {
       return res.status(400).json({ error: 'Invalid user id' });
     }
     const { quota } = req.body || {};
     const n = Number(quota);
-    if (!Number.isInteger(n) || n < 0) {
-      return res.status(400).json({ error: 'quota must be a non-negative integer' });
+    if (typeof quota !== 'number' || !Number.isInteger(n) || n < 0 || n > 2147483647) {
+      return res.status(400).json({ error: 'quota must be a non-negative integer up to 2147483647' });
     }
     try {
-      const { rows } = await pool.query(
-        `UPDATE users SET app_quota = $1 WHERE id = $2
-         RETURNING id, username, app_quota`,
-        [n, userId]
-      );
+      const rows = await appAllowance.setQuota(pool, { userId, quota: n, actorId: req.user.id });
       if (!rows.length) return res.status(404).json({ error: 'User not found' });
       log.info('admin', 'App quota updated', {
         id: rows[0].id, username: rows[0].username,
-        appQuota: rows[0].app_quota, by: req.user.username,
+        appQuota: n, by: req.user.username,
       });
-      res.json({ ok: true, app_quota: rows[0].app_quota });
+      res.json({ ok: true, app_quota: n });
     } catch (err) {
       log.error('admin', 'App quota update failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/admin/users/:id/app-quota-request/approve', requireAdminWrite, async (req, res) => {
+    const userId = Number(req.params.id);
+    if (!Number.isInteger(userId) || userId <= 0 || userId > 2147483647) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    try {
+      const granted = await appAllowance.grantRequest(pool, { userId, actorId: req.user.id });
+      if (!granted) return res.status(409).json({ error: 'This request has already been reviewed or its allowance cannot be increased. Refresh the user list.' });
+      log.info('admin', 'App allowance request granted', { userId, quota: granted.app_quota, by: req.user.username });
+      res.json({ ok: true, app_quota: granted.app_quota });
+    } catch (err) {
+      log.error('admin', 'App allowance request approval failed', { message: err.message });
+      res.status(500).json({ error: 'Could not approve the request. Please try again.' });
+    }
+  });
+
+  router.delete('/api/admin/users/:id/app-quota-request', requireAdminWrite, async (req, res) => {
+    const userId = Number(req.params.id);
+    if (!Number.isInteger(userId) || userId <= 0 || userId > 2147483647) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    try {
+      await appAllowance.declineRequest(pool, { userId, actorId: req.user.id });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('admin', 'App allowance request decline failed', { message: err.message });
+      res.status(500).json({ error: 'Could not decline the request. Please try again.' });
     }
   });
 

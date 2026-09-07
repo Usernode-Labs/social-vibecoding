@@ -2404,9 +2404,10 @@ const AppView = {
   async _renderTopicSubView(content, ref) {
     AppView._devTopic = { kind: ref.kind, id: ref.id };
     // The roster is cached per proposal (see `_loadVoteRoster`, and why it
-    // has to be). Arriving here is a fresh read, so drop the entry and let
-    // the paint below load it once.
-    delete AppView._voteRoster[ref.id];
+    // has to be). Arriving here is a fresh read, so mark the entry stale and
+    // let the paint below re-read it once — returning to a topic shows the
+    // roster it had while the new one loads, rather than a loading line.
+    AppView._invalidateVoteRoster(ref.id);
     // Arriving at a SESSION topic opens its shared transcript. The
     // "Read chat" pill on the shared-session card used to set
     // _transcriptOpen on its way here; that pill is gone (the card is
@@ -4055,7 +4056,7 @@ const AppView = {
       // refetch landed: two paints per event, the first one blank. Voters
       // watched the tally flicker on a timer while nothing about it changed.
       // The roster now stays on screen until a vote actually moves it.
-      if (kind === 'vote' && AppView._devTopic) delete AppView._voteRoster[AppView._devTopic.id];
+      if (kind === 'vote' && AppView._devTopic) AppView._invalidateVoteRoster(AppView._devTopic.id);
       // _refreshTopicOnDemandRow between the two: _loadDevData refreshes the
       // lists, and a topic the lists do not hold would otherwise repaint
       // from a snapshot frozen when the page opened. It no-ops for every
@@ -8686,17 +8687,33 @@ const AppView = {
     const donePhases = Array.isArray(img.phases) ? img.phases.filter((ph) => ph && typeof ph.name === 'string') : [];
     const detail = typeof img.detail === 'string' && img.detail.trim() ? img.detail.trim().slice(0, 160) : null;
     const hasCounter = Number.isInteger(img.index) && Number.isInteger(img.total) && img.total > 0;
-    // The phase row: the finished ones (with their times), the running one,
-    // and, when the list is the known lifecycle, the ones still ahead.
+    // The phase row, from the phases the runtime ACTUALLY reported.
+    //
+    // It used to be derived from a hard-coded buildpack lifecycle whenever
+    // every reported name was one of that lifecycle's — which an EMPTY list
+    // satisfies vacuously. So a runtime that reports no phases at all got the
+    // whole lifecycle drawn as pending, and the topic page showed "analyze
+    // detect restore build export" on a build where none of those was
+    // running: this deployment builds previews with docker, which reports a
+    // STEP COUNTER and no phases. A row is drawn now only from names that
+    // were reported, plus the running one; the lifecycle is consulted solely
+    // to order them and to say which of ITS phases are still ahead, and only
+    // when at least one reported name belongs to it.
     const known = ['prepare', 'analyze', 'detect', 'restore', 'build', 'export'];
     const names = donePhases.map((ph) => ph.name);
     if (phase && !names.includes(phase) && phase !== 'completion') names.push(phase);
-    const lifecycle = names.every((n) => known.includes(n));
-    const order = lifecycle ? known.filter((n) => names.includes(n) || known.indexOf(n) > known.indexOf(names[names.length - 1] || 'prepare')) : names;
+    const lifecycle = names.length > 0 && names.every((n) => known.includes(n));
+    const lastKnown = lifecycle ? known.indexOf(names[names.length - 1]) : -1;
+    const order = lifecycle
+      ? known.filter((n) => names.includes(n) || known.indexOf(n) > lastKnown)
+      : names;
     const phases = order.map((name) => {
       const rec = donePhases.find((ph) => ph.name === name);
       return { name, ms: rec && Number.isFinite(rec.ms) ? rec.ms : null, state: rec ? 'done' : (name === phase ? 'now' : 'todo') };
     });
+    // A step counter is a fraction, so it draws as a bar the way the checks
+    // and the unit suite do, rather than as a row of names it does not have.
+    const bar = hasCounter ? { ran: img.index, expected: img.total } : null;
     let doing = null;
     if (hasCounter) {
       doing = `step ${img.index} of ${img.total}${phase ? ` in ${phase}` : ''}${detail ? `: ${detail}` : ''}`;
@@ -8706,7 +8723,7 @@ const AppView = {
     } else if (detail) {
       doing = detail;
     }
-    return { phase, phases, detail, doing, index: hasCounter ? img.index : null, total: hasCounter ? img.total : null };
+    return { phase, phases, bar, detail, doing, index: hasCounter ? img.index : null, total: hasCounter ? img.total : null };
   },
 
   // The repo unit suite (`npm test`) runs in its own container alongside the
@@ -9504,10 +9521,36 @@ const AppView = {
   // per topic; `castVote` clears the entry when the tally actually changes.
   _voteRoster: Object.create(null),
   _voteRosterInFlight: new Set(),
+  // Rosters that need re-reading but are still worth showing meanwhile.
+  //
+  // Invalidating used to mean DELETING the cached view, so the next paint
+  // rendered `{ phase: 'loading' }` — "Loading votes…" — and the real roster
+  // came back a fetch later. Two paints, the first one blank. That is the
+  // flicker, and the reason it kept happening after the refresh kinds were
+  // narrowed is that `vote_update` is broadcast for about two dozen things
+  // that are not a vote: a rename, a title heal, a sync, a conflict
+  // resolution, a merge, fleet maintenance. Every one of them dropped the
+  // roster out from under a reader.
+  //
+  // So an invalidation now marks the entry stale and leaves it on screen.
+  // The re-read happens underneath and swaps the value in when it lands;
+  // "Loading votes…" is reserved for a roster that has genuinely never been
+  // loaded. A stale roster is at worst a few hundred milliseconds behind,
+  // which is strictly better than a blank one.
+  _voteRosterStale: new Set(),
+
+  _invalidateVoteRoster(sessionId) {
+    if (sessionId == null) return;
+    const id = Number(sessionId);
+    if (AppView._voteRoster[sessionId]) AppView._voteRosterStale.add(id);
+    else delete AppView._voteRoster[sessionId];
+  },
 
   async _loadVoteRoster(sessionId) {
     if (AppView._voteRosterInFlight.has(sessionId)) return;
-    if (AppView._voteRoster[sessionId]) return;
+    const stale = AppView._voteRosterStale.has(Number(sessionId));
+    if (AppView._voteRoster[sessionId] && !stale) return;
+    AppView._voteRosterStale.delete(Number(sessionId));
     AppView._voteRosterInFlight.add(sessionId);
     const publish = (view) => {
       AppView._voteRosterInFlight.delete(sessionId);
