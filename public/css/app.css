@@ -2652,10 +2652,37 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    gesture rule above, pinned by tests/home-vertical-scroll-only.test.js), so
    the overhang is clipped by the feed rather than widening it.
 
+   BOTH AXES, AND THE SECOND ONE IS NOT OPTIONAL (#1762). This rule said
    `touch-action: pan-x` for the same reason the switcher's app rail carries
-   it: without it a diagonal drag that starts here is claimed by the vertical
-   feed and the rail never moves. A VERTICAL drag still reaches the page —
-   the browser only takes the axis this element declares. */
+   it — without it a diagonal drag that starts here can be claimed by the
+   vertical feed and the rail never moves — under a comment claiming that "a
+   VERTICAL drag still reaches the page, the browser only takes the axis this
+   element declares". That claim is simply false, and it cost the whole
+   screen: `touch-action` is not a preference about which axis this element
+   would like, it is the complete set of gestures the browser may run for a
+   touch that STARTS here, intersected down the ancestor chain. `pan-x`
+   therefore DENIES vertical panning; it does not hand it to the feed. Two
+   rails of ~13rem cards bleeding to both screen edges is most of the
+   Discover block, so on a phone that was a band you could not scroll the
+   page from at all — put a finger on a card, drag up, and nothing moved, not
+   even the rubber band. (`.un-sheet:has(#improve-panel)` a thousand lines up
+   has to opt vertical panning back IN for its scroller for exactly this
+   reason, and states the rule correctly.)
+
+   `pan-x pan-y` is what `html, body` already declares, so this is the page's
+   own value rather than a new one: both axes are legal for a touch starting
+   here and the browser's axis lock picks the one the drag is going in — a
+   mostly-horizontal drag scrolls the rail, a mostly-vertical one scrolls the
+   feed. What that costs is the narrow case the `pan-x` was written for: a
+   genuinely diagonal drag that is slightly more vertical now scrolls the
+   feed instead of the rail. That is the trade every horizontal rail on the
+   web makes, and it is the right side of it — failing to scroll the rail
+   costs one retry, failing to scroll the page costs the screen.
+
+   It also has to stay `pan-y` for the drag-to-add gesture (#1763): the kit
+   arms a lift on a long press with a movement slop, so a scroll that starts
+   here cancels the press rather than competing with it — but only if the
+   scroll is allowed to start. */
 .home-discover-rail {
   display: flex;
   gap: 0.625rem;
@@ -2663,7 +2690,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   overflow-y: hidden;
   scroll-snap-type: x proximity;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-x;
+  touch-action: pan-x pan-y;
   scrollbar-width: none;
   margin-inline: -0.75rem;
   padding-inline: 0.75rem;
@@ -10998,7 +11025,50 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-vote .dev-ledger-dot { background: var(--accent-tint); color: var(--accent); }
 .dev-ledger-progress .dev-ledger-dot { background: var(--state-progress-bg); color: var(--state-progress); }
 .dev-ledger-mute .dev-ledger-dot { background: var(--state-neutral-bg); color: var(--state-neutral); }
-.dev-ledger-k { font-weight: 600; white-space: nowrap; }
+/* The label track is a fixed 118px, so `nowrap` sent anything longer than
+   about two short words straight across the gap and into the value column —
+   "Conflicts with main" overlapped its own sentence. Labels wrap now; they
+   are two or three words, so this costs a second line only in the cases
+   that were previously broken. */
+.dev-ledger-k { font-weight: 600; white-space: normal; overflow-wrap: break-word; }
+
+/* ── The path checkboxes ────────────────────────────────────────────────
+   1 / 2 / 3 says the steps are ORDERED. It does not say they are a GATE,
+   and a reader can take the panel as a menu and pick the step that looks
+   nearest. A checklist says it without a word: a squared, ringed box per
+   step, holding its number while it is outstanding and a tick once it is
+   cleared. It replaced a rail drawn between the dots, which read as a line
+   behind the numbers rather than as a connection, and which had to derive
+   its geometry from the dot size and the row padding to land at all.
+
+   The tone still colours the box, so the blocking step stays the loud one. */
+.dev-ledger-row[data-step] .dev-ledger-dot {
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+  font-size: 10.5px;
+}
+.dev-ledger-row[data-step][data-step-done] .dev-ledger-dot {
+  background: var(--state-ok-bg);
+  color: var(--state-ok);
+  font-size: 11px;
+}
+
+.dev-check-flaky {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--state-attention-bg);
+  color: var(--state-attention);
+}
+
+.dev-ledger-path-note {
+  margin: -4px 0 8px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
 .dev-ledger-k small {
   display: block;
   font-size: 12px;

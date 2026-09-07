@@ -3822,8 +3822,15 @@ const AppView = {
                 label: node.textContent.replace(/\s+/g, ' ').trim(),
               };
             }
+            // #1615: the TITLE, by name. This read `querySelector('span')`,
+            // which was the title only by accident of source order — the row
+            // now has a glyph and a text-column wrapper, and either one
+            // arriving first would have labelled the sheet row wrongly or
+            // emptied it. `[data-plus-title]` is what board-frame.tsx marks.
+            const titleEl = node.querySelector('[data-plus-title]')
+              || node.querySelector('span');
             return {
-              label: (node.querySelector('span')?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+              label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
               handler: () => node.click(),
             };
           }),
@@ -7953,10 +7960,17 @@ const AppView = {
         sub: box.sub || null,
         progress: box.progress || null,
         text: labels[box.key] ? [strip(box.heading)] : [],
-        foot: [], list: null, actions: box.action ? [box.action] : [],
+        foot: [], actions: box.action ? [box.action] : [],
       };
+      // A box's `rows` are ONE ORDERED ARRAY on purpose — _mergeabilityNote
+      // puts its file list directly under the sentence that introduces it.
+      // Bucketing lines into `foot` and lists into a separate `list` threw
+      // that order away and the renderer put every list last, so on #1496
+      // "Changed on both sides:" was followed by three unrelated sentences
+      // before the files appeared. `foot` carries both now, in order: a
+      // text run array is a line, `{ list }` is a list.
       for (const r of box.rows || []) {
-        if (r.t === 'list') row.list = (row.list || []).concat(r.items || []);
+        if (r.t === 'list') row.foot.push({ list: r.items || [] });
         else if (!row.text.length) row.text = r.parts;
         else row.foot.push(r.parts);
       }
@@ -7971,6 +7985,11 @@ const AppView = {
           : `${total} passed`,
         text: [strip(v.heading)],
         foot: [v.advisoryNote, v.checkedNote, v.baseNote, v.fixNote].filter(Boolean).map((n) => [n]),
+        // Kept apart as well as flattened: when this row is demoted to a
+        // later step (_topicLedgerPath) the fix note has to go, because
+        // "pushing a fix re-runs the checks" is an instruction, and the
+        // step above it is the one with something to do.
+        notes: { advisory: v.advisoryNote, checked: v.checkedNote, base: v.baseNote },
         fails: v.failures, passes: v.passes,
         actions: v.action ? [v.action] : [],
       };
@@ -7998,6 +8017,7 @@ const AppView = {
         sub: r.key === 'behind' && Number.isFinite(n)
           ? `${n} commit${n === 1 ? '' : 's'}`
           : (count || null),
+        count: Number.isFinite(n) ? n : null,
         text: [r.detail], foot: [],
       });
     }
@@ -8024,6 +8044,137 @@ const AppView = {
         label: labels[n.key] || 'Note', text: n.parts, foot: [],
       });
     }
+    const path = AppView._topicLedgerPath(pr, rows);
+    // The caption under the heading. Numbering says the steps are ordered;
+    // this says they are a gate — every one of them has to clear, and how
+    // many are still outstanding.
+    const steps = path.filter((r) => r.step);
+    d.pathSteps = steps.length || null;
+    d.pathLeft = steps.length ? steps.filter((r) => !r.stepDone).length : null;
+    return path;
+  },
+
+  // ── The path a blocked proposal takes ────────────────────────────────
+  // The rows above are one per SUBSYSTEM, each built by a builder that
+  // cannot see the others. That is how #1496 came to say "Syncing
+  // automatically, then it retries the merge" three lines under "It cannot
+  // merge until somebody reconciles them": both sentences are true — the
+  // sync runs and then fails on the conflict — and neither knew the other
+  // was on the page. Six sentences described one situation and two of them
+  // named different people to act.
+  //
+  // This pass rewrites those rows as ONE ORDERED PATH: sync, then checks,
+  // then the vote. Each step is numbered, and its `sub` says who acts and
+  // when, so "what happens next" is read rather than inferred. Conflict and
+  // behind-main collapse into a single sync step, because they are one
+  // fact: the branch is behind, and catching it up needs a person when the
+  // two sides touched the same lines.
+  //
+  // It runs ONLY when there is a sync step. With no sync pending the four
+  // boxes never contradicted each other, and numbering "Checks" as step 1
+  // of 1 would say less than "Checks" does.
+  //
+  // Row KEYS are never touched here. A row's key is its `data-note`, and
+  // dapp.json's declared checks address rows by it.
+  _topicLedgerPath(pr, rows) {
+    const at = (k) => rows.findIndex((r) => r.key === k);
+    const iConflict = Math.max(at('mergeability'), at('conflict'));
+    const iBehind = at('behind');
+    if (iConflict < 0 && iBehind < 0) return rows;
+
+    const fresh = (AppView._freshnessOf && AppView._freshnessOf(pr)) || {};
+    const behindRow = iBehind >= 0 ? rows[iBehind] : null;
+    const behindN = behindRow && Number.isFinite(behindRow.count)
+      ? behindRow.count
+      : (parseInt(pr && pr.behind_main, 10) || 0);
+    const conflictFiles = iConflict >= 0
+      ? (Array.isArray(pr && pr.conflict_files) && pr.conflict_files.length
+        ? pr.conflict_files
+        : (Array.isArray(fresh.files) ? fresh.files : []))
+      : [];
+    const creator = (pr && pr.username) || 'its author';
+
+    // ── Step 1: one row for "get this branch onto current main" ─────────
+    const sync = iConflict >= 0 ? rows[iConflict] : behindRow;
+    const manual = iConflict >= 0;
+    const moved = behindN > 0
+      ? `Main has moved ${behindN} commit${behindN === 1 ? '' : 's'} ahead`
+      : 'Main has moved ahead';
+    sync.label = 'Sync with main';
+    sync.tone = manual ? 'bad' : 'warn';
+    sync.sub = manual ? `${creator}, now` : 'automatic, now';
+    sync.text = manual
+      ? [conflictFiles.length
+        ? `${moved}, and ${conflictFiles.length} file${conflictFiles.length === 1 ? '' : 's'} changed on both sides, so the automatic sync cannot finish this one.`
+        : `${moved} and the two changes touch the same lines, so the automatic sync cannot finish this one.`]
+      : [`${moved}. The platform is syncing this proposal onto it, then it retries the merge.`];
+    // The remedy sentence is the only foot line worth keeping from the box:
+    // it names the person and the exact action. The rest restated the row's
+    // own text. The file list keeps its lead-in and sits under it.
+    const remedy = manual
+      ? (AppView._conflictRemedy(pr, pr && pr.merge_conflict_state === 'failed' ? 'failed'
+        : (pr && pr.merge_conflict_state === 'conflict' ? 'conflict' : 'predicted')).parts)
+      : null;
+    // The file list does NOT survive into the step. It was the bulkiest
+    // thing on the panel and the least actionable: both-sides-changed is an
+    // upper bound on the conflict rather than the conflict (two edits at
+    // opposite ends of one file land in it and merge fine), and it does not
+    // change the one move available — run the sync and let git name the real
+    // overlaps. The COUNT stays, in the sentence, where it says how big the
+    // job is without pretending to say which files it is.
+    sync.foot = [];
+    if (remedy) sync.foot.push(remedy);
+    if (manual && iBehind >= 0) rows.splice(iBehind, 1);
+
+    // ── Step 2: checks, which are not the blocker while step 1 stands ───
+    const checks = rows[at('checks')];
+    if (checks) {
+      checks.label = 'Re-run checks';
+      checks.sub = 'automatic, after 1';
+      // A verdict measured against a base main has left behind describes
+      // code that would no longer merge. Saying "Merge is blocked until
+      // they pass" in the present tense made a five-day-old run read as
+      // the live state of the branch.
+      // A failing verdict is demoted only when it cannot be trusted or
+      // re-run until step 1 happens: a MANUAL sync (nobody can re-run them
+      // over a branch that will not merge) or a base main has already left
+      // behind. A proposal that is merely a few commits behind keeps its
+      // failing verdict at full weight — the platform will sync it by
+      // itself, and the failing check is the author's actual next move. A
+      // PASSING verdict is never rewritten either way: "nothing to do here"
+      // over a green run throws away the one piece of good news on the page.
+      const stale = manual || !!(checks.attrs && checks.attrs['data-checks-base']);
+      if (stale && checks.tone === 'bad') {
+        checks.tone = 'mute';
+        checks.text = ['They start themselves once the branch is up to date. Nothing to do here.'];
+        const n = checks.notes || {};
+        checks.foot = [n.advisory, n.base, n.checked].filter(Boolean).map((x) => [x]);
+      }
+    }
+
+    // ── Step 3: the vote, which cannot finish before the checks do ──────
+    const votes = rows[at('votes')];
+    if (votes) votes.sub = `the group, after ${checks ? 2 : 1}`;
+
+    // The path rows are numbered in PATH order, not in the order the
+    // builders happened to append them: `d.blocks` puts the checks box
+    // first, and behind-main is only added afterwards from blockReasons, so
+    // reading positions off the array numbered a behind-main proposal
+    // "checks 1, sync 2" — the reverse of what has to happen. Lift them out
+    // and put them back as a block, in order, where the first of them sat.
+    const path = [sync, checks, votes].filter(Boolean);
+    const at0 = Math.min(...path.map((r) => rows.indexOf(r)));
+    for (const r of path) rows.splice(rows.indexOf(r), 1);
+    rows.splice(at0, 0, ...path);
+    // A step is CLEARED when its own row already reads ok: checks that
+    // passed, a vote that reached the threshold. The sync step is never
+    // cleared, because it is only on the path while it is pending. Two
+    // states are what makes the boxes worth drawing as boxes — a checklist
+    // where nothing can ever be ticked is just a list.
+    path.forEach((r, i) => {
+      r.step = i + 1;
+      r.stepDone = r !== sync && r.tone === 'ok';
+    });
     return rows;
   },
 
@@ -8881,6 +9032,25 @@ const AppView = {
   // weight: a BLOCKING failure is why the merge is stuck, an ADVISORY failure
   // is a check that has never been seen passing (it reports, it does not
   // block), and a pass is context. Ordered by that weight, and the passes —
+  // A flake rate worth printing. Below the floor a check reads as reliable
+  // and the chip would be noise on every row; the server has already
+  // withheld a rate for a check with too few observations to judge.
+  FLAKE_CHIP_FLOOR: 0.05,
+  _checkReason(r) {
+    const base = (r && r.failureReason) ? String(r.failureReason).slice(0, 500) : null;
+    const runs = r && Number(r.runs);
+    const fails = r && Number(r.fails);
+    if (!Number.isFinite(runs) || runs < 2 || !Number.isFinite(fails) || fails < 1) return base;
+    const lead = `Failed ${fails} of ${runs} runs on this build.`;
+    return base ? `${lead} ${base}` : lead;
+  },
+
+  _flakePercent(rate) {
+    const n = Number(rate);
+    if (!Number.isFinite(n) || n < AppView.FLAKE_CHIP_FLOOR) return null;
+    return Math.min(99, Math.round(n * 100));
+  },
+
   // the bulk — fold away so the block opens on what someone has to act on.
   _checksVerdictView(pr) {
     if (!pr) return null;
@@ -8895,7 +9065,18 @@ const AppView = {
       advisory: !(r && r.status === 'pass') && !!(r && r.advisory),
       name: String((r && r.name) || 'test'),
       path: (r && r.path) ? String(r.path) : null,
-      reason: (r && r.failureReason) ? String(r.failureReason).slice(0, 500) : null,
+      // The share of this check's recorded runs that failed, as a percent,
+      // or null when it has never failed or has too little history to say.
+      // A check that gates a merge while failing one run in six is the one
+      // nobody could see before; the chip is the whole point of recording
+      // pass_count and fail_count.
+      flaky: AppView._flakePercent(r && r.flakeRate),
+      // A check dispatched several times in one run (its first appearance)
+      // that disagreed with itself is the loudest flake signal there is,
+      // and unlike the lifetime rate it needs no history to read. It leads
+      // the reason, because "it failed" and "it failed once out of three"
+      // call for different next moves.
+      reason: AppView._checkReason(r),
       errors: (Array.isArray(r && r.consoleErrors) ? r.consoleErrors : []).map((e) => ({
         kind: (e && e.kind) ? String(e.kind) : 'console',
         message: String((e && e.message) || '').slice(0, 500),
@@ -12100,7 +12281,10 @@ const AppView = {
       const remedy = AppView._conflictRemedy(p, 'predicted').text;
       out.push({
         key: 'mergeability_conflict',
-        label: n ? `Conflicts with main · ${n}` : 'Conflicts with main',
+        // The unit is part of the count. "Conflicts with main · 10" sat on
+        // the same card as "Behind main · 118" in the same grammar, one
+        // counting FILES and the other COMMITS, and read as 10 commits.
+        label: n ? `Conflicts with main · ${n} file${n === 1 ? '' : 's'}` : 'Conflicts with main',
         detail: n
           ? `This proposal no longer merges into main on its own. ${remedy} Changed on both sides: ${shown.join(', ')}${more}.${fresh.filesComplete === false ? ' That list is a sample, not the whole set.' : ''}`
           : `This proposal no longer merges into main on its own. ${remedy}`,

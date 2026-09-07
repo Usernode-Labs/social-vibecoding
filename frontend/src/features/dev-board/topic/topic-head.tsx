@@ -114,6 +114,11 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
         {` ${r.name} `}
         {r.path ? <span className="opacity-60 font-mono">{r.path}</span> : null}
         {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70">advisory</span> : null}
+        {r.flaky ? (
+          <span className="dev-check-flaky" title={`Failed about ${r.flaky}% of its recorded runs`}>
+            {`flaky · ${r.flaky}%`}
+          </span>
+        ) : null}
       </li>
       {!r.pass ? (
         <>
@@ -303,10 +308,28 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
   return (
     <section className="dev-topic-sheet dev-topic-ledger" data-topic-sheet="ledger">
       <h4 className="dev-topic-h">Where it stands</h4>
+      {d.pathSteps && d.pathSteps > 1 ? (
+        <p className="dev-ledger-path-note">
+          {`${NUMBER_WORD[d.pathSteps] || d.pathSteps} steps to a merge. `}
+          {d.pathLeft === d.pathSteps
+            ? 'All of them have to clear.'
+            : `${NUMBER_WORD[d.pathLeft || 0] || d.pathLeft} still to clear.`}
+        </p>
+      ) : null}
       <div className="dev-ledger">
         {d.ledger.map((r) => (
-          <div key={r.key} className={`dev-ledger-row dev-ledger-${r.tone}`} data-note={r.key} {...(r.attrs || {})}>
-            <span className="dev-ledger-dot" aria-hidden="true">{r.spinner ? <Spinner /> : LEDGER_GLYPH[r.tone]}</span>
+          <div
+            key={r.key}
+            className={`dev-ledger-row dev-ledger-${r.tone}`}
+            data-note={r.key}
+            {...(r.step ? { 'data-step': String(r.step) } : {})}
+            {...(r.stepDone ? { 'data-step-done': '' } : {})}
+            {...(r.attrs || {})}
+          >
+            <span className="dev-ledger-dot" aria-hidden="true">
+              {r.spinner ? <Spinner />
+                : (r.step ? (r.stepDone ? '✓' : String(r.step)) : LEDGER_GLYPH[r.tone])}
+            </span>
             <span className="dev-ledger-k">
               {r.label}
               {r.sub ? <small>{r.sub}</small> : null}
@@ -315,13 +338,15 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
               {r.text.length ? <span className="dev-ledger-text"><Runs parts={r.text} /></span> : null}
               {r.progress ? <Progress p={r.progress} /> : null}
               {r.roster ? <Roster r={r.roster} /> : null}
-              {(r.foot || []).map((f, i) => <span key={i} className="dev-ledger-foot"><Runs parts={f} /></span>)}
-              {(r.warnFoot || []).map((f, i) => (
-                <span key={`w${i}`} className="dev-ledger-foot dev-ledger-foot-warn text-amber-800 dark:text-amber-400"><Runs parts={f} /></span>
-              ))}
-              {r.list && r.list.length ? (
-                <ul className="dev-ledger-list">
-                  {r.list.map((it, j) => (
+              {/* One ordered sequence: a line, or the list its previous line
+                  introduced. Rendering every list after every line put the
+                  conflicting files three sentences below "Changed on both
+                  sides:" — see LedgerRow.foot in model.ts. */}
+              {(r.foot || []).map((f, i) => (Array.isArray(f) ? (
+                <span key={i} className="dev-ledger-foot"><Runs parts={f} /></span>
+              ) : (
+                <ul key={i} className="dev-ledger-list">
+                  {f.list.map((it, j) => (
                     <li key={j} className={(it.kind || it.mono) ? 'font-mono' : undefined}>
                       {it.kind ? <span className="opacity-70">{`[${it.kind}] `}</span> : null}
                       {it.code ? <code className="font-mono">{it.code}</code> : null}
@@ -330,7 +355,10 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
                     </li>
                   ))}
                 </ul>
-              ) : null}
+              )))}
+              {(r.warnFoot || []).map((f, i) => (
+                <span key={`w${i}`} className="dev-ledger-foot dev-ledger-foot-warn text-amber-800 dark:text-amber-400"><Runs parts={f} /></span>
+              ))}
               {r.fails && r.fails.length ? (
                 <ul className="dev-ledger-fails">
                   {r.fails.map((c) => <CheckRowView key={c.key} r={c} />)}
@@ -371,6 +399,9 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
     </section>
   );
 }
+
+/** Small counts read better as words in a sentence. */
+const NUMBER_WORD: Record<number, string> = { 1: 'One', 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five' };
 
 const LEDGER_GLYPH: Record<string, string> = {
   bad: '✕', warn: '!', ok: '✓', vote: '✓', mute: '·', progress: '◐',
