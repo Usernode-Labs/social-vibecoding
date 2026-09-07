@@ -609,7 +609,7 @@ export function WaitlistScreen() {
               maxLength={255}
               placeholder="you@example.com"
               autoComplete="email"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
             />
           </div>
           <div>
@@ -622,10 +622,24 @@ export function WaitlistScreen() {
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
               We&rsquo;re building early groups across different regions.
             </p>
+            {/*
+                #1529: the focused state COLOURS the border rather than making
+                it transparent.
+
+                Every field on both waitlist screens used
+                `focus:ring-2 focus:border-transparent`, which draws the
+                indicator entirely with a box-shadow ring and removes the
+                resting border to make room for it. iOS Safari does not paint
+                box-shadow on a natively-styled control, so on a phone the
+                border vanished on tap and nothing replaced it — the outline
+                "disappearing when clicked" that was reported. The ring still
+                draws everywhere it is supported; the border colour is what
+                guarantees a visible focus on the surfaces that ignore it.
+            */}
             <select
               ref={country}
               id="waitlist-country"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
             >
               <option value="">
                 Select a country&hellip;
@@ -737,7 +751,7 @@ export function WaitlistScreen() {
               autoComplete="email"
               className={hiddenFirst(
                 !codeOnly,
-                'w-full mb-2 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent',
+                'w-full mb-2 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500',
               )}
             />
             <div className="flex gap-2">
@@ -750,7 +764,7 @@ export function WaitlistScreen() {
                 maxLength={32}
                 placeholder="000000"
                 onChange={onCodeInput}
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
               <Button
                 id="waitlist-code-submit"
