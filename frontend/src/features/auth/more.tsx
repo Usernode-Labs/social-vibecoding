@@ -71,6 +71,7 @@ import {
   MultiChipRow,
   msgClass,
   options as optionList,
+  markSurveyAnswered,
   toggleChip,
   waitlistOptions,
   WaitlistOptions,
@@ -553,6 +554,10 @@ export function MoreScreen() {
           // used to write would only be a second, quieter copy of it.
           setMsg(null);
           setSaved(true);
+          // #1535: the waitlist screen's offer card outlives a trip here and
+          // back, so tell it these questions have been answered — otherwise it
+          // keeps inviting you to answer them.
+          markSurveyAnswered(value);
         } else {
           setMsg({
             text: (data && data.error) || 'Something went wrong. Try again.',
