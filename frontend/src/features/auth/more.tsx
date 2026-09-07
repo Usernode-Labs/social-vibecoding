@@ -76,6 +76,27 @@ import {
   WaitlistOptions,
 } from './waitlist-shared';
 
+/**
+ * Did this submission actually say anything? (#1539)
+ *
+ * Every field on the form is optional and the endpoint accepts an empty body,
+ * so pressing Save with nothing filled in used to store nothing and answer
+ * with the same confirmation panel a full set of answers gets.
+ *
+ * "Something" is deliberately broad: a chip, a select, a handle, a tick on
+ * "I followed along" — any one of them is an answer. The three shapes a field
+ * can take (an `undefined`-or-string, an array of chips, the follow boolean)
+ * are all handled here rather than at each call site, so a question added
+ * later is covered by construction.
+ */
+export function hasAnyAnswer(payload: Record<string, unknown>): boolean {
+  return Object.values(payload).some((v) => {
+    if (Array.isArray(v)) return v.length > 0;
+    if (typeof v === 'boolean') return v;
+    return typeof v === 'string' && v.trim() !== '';
+  });
+}
+
 /** `GET /api/public/waitlist/more/<token>`. Every field is optional. */
 interface MoreAnswers {
   made_url?: string;
@@ -455,29 +476,45 @@ export function MoreScreen() {
       e.preventDefault();
       const value = token.current;
       const normalizedMadeUrl = normalizeMadeUrlInput();
+      const answers = {
+        made_url: normalizedMadeUrl || undefined,
+        made_note: madeNote.current?.value.trim() || undefined,
+        group_name: groupName.current?.value.trim() || undefined,
+        group_size: groupSize.current?.value || undefined,
+        group_role: groupRole.current?.value || undefined,
+        group_tools: tools,
+        group_need: groupNeed.current?.value.trim() || undefined,
+        had_loss: lossHad || undefined,
+        loss_product: lossProduct.current?.value.trim() || undefined,
+        loss_kind: lossKinds,
+        loss_story: lossStory.current?.value.trim() || undefined,
+        farcaster: farcaster.current?.value.trim() || undefined,
+        discord: discord.current?.value.trim() || undefined,
+        telegram: telegram.current?.value.trim() || undefined,
+        other_handle: other.current?.value.trim() || undefined,
+        followed_claim: !!followed.current?.checked,
+      };
+
+      // #1539: an empty save was accepted, and answered with the same "thanks"
+      // panel as a full one — so the one thing this form exists to collect
+      // could be skipped by pressing the button, and nothing said so.
+      //
+      // The guard is on SUBMIT rather than a disabled button: every field here
+      // is uncontrolled by design (see the header comment), so a live-disabled
+      // control would mean putting all sixteen of them into React state to
+      // answer a question that only matters once. Every question stays
+      // optional — this asks for one of them, not for any particular one.
+      if (!hasAnyAnswer(answers)) {
+        setMsg({ text: 'Answer at least one question before saving.', tone: 'warn' });
+        return;
+      }
+
       setSaving(true);
       try {
         const res = await fetch('/api/public/waitlist/more/' + encodeURIComponent(value || ''), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            made_url: normalizedMadeUrl || undefined,
-            made_note: madeNote.current?.value.trim() || undefined,
-            group_name: groupName.current?.value.trim() || undefined,
-            group_size: groupSize.current?.value || undefined,
-            group_role: groupRole.current?.value || undefined,
-            group_tools: tools,
-            group_need: groupNeed.current?.value.trim() || undefined,
-            had_loss: lossHad || undefined,
-            loss_product: lossProduct.current?.value.trim() || undefined,
-            loss_kind: lossKinds,
-            loss_story: lossStory.current?.value.trim() || undefined,
-            farcaster: farcaster.current?.value.trim() || undefined,
-            discord: discord.current?.value.trim() || undefined,
-            telegram: telegram.current?.value.trim() || undefined,
-            other_handle: other.current?.value.trim() || undefined,
-            followed_claim: !!followed.current?.checked,
-          }),
+          body: JSON.stringify(answers),
         });
         const data = await res.json().catch(() => null);
         if (res.ok) {
