@@ -114,11 +114,27 @@ async function findStuckCheckSessions({
 // merely-unhealthy-but-running container (that's a 502, an app bug, not
 // a missing preview) to avoid churn.
 //
+//   4. The preview is of ANOTHER COMMIT than the head the caller is about to
+//      test. A clean platform sync of main carries the checks verdict forward
+//      (sync-main.advanceReviewAfterPlatformSync, carryChecks) and builds
+//      nothing, so the preview stays at the pre-sync commit while the branch
+//      tip — and the dapp.json the capture reads from it — moves on. A
+//      "Re-run checks" then ran the new head's checks against the old build
+//      and reported failures that were not the proposal's (#1710 collected
+//      seven that way). Detected by comparing `staging_commit_sha`, stamped
+//      at build time from the clone's HEAD, against `headSha`.
+// All four are healable by a rebuild. We deliberately do NOT rebuild on a
+// merely-unhealthy-but-running container (that's a 502, an app bug, not
+// a missing preview) to avoid churn.
+//
 // `config` is optional. Without it the staleness comparison is skipped and
 // the verdict is liveness-only — the pre-#851 behaviour. Every real caller
 // passes one; the fallback keeps the function usable from a context that has
-// no config and makes the added parameter non-breaking.
-async function stagingNeedsRebuild(session, { config = null } = {}) {
+// no config and makes the added parameter non-breaking. `headSha` is likewise
+// optional: without it (or without a recorded build commit — previews built
+// before the column existed) the commit comparison is skipped, so a caller
+// that only wants liveness, and every pre-existing preview, behave as before.
+async function stagingNeedsRebuild(session, { config = null, headSha = null } = {}) {
   if (!session.staging_url) return true;
   if (session.staging_runtime_kind === 'kubernetes') {
     if (!session.staging_runtime_name) return true;
@@ -127,9 +143,11 @@ async function stagingNeedsRebuild(session, { config = null } = {}) {
       appRuntime: 'kubernetes',
       kubernetes: { appNamespace: process.env.APP_NAMESPACE || 'social-apps' },
     };
-    return (await applicationRuntime.status(config, {
+    const status = await applicationRuntime.status(config, {
       runtimeKind: 'kubernetes', runtimeName: session.staging_runtime_name,
-    })) !== 'running';
+    });
+    if (status !== 'running') return true;
+    return previewIsOfAnotherCommit(session, headSha);
   }
   if (!session.staging_container_id) return true;
   const docker = require('./docker');
@@ -143,6 +161,7 @@ async function stagingNeedsRebuild(session, { config = null } = {}) {
   // Covers 'not_found' (shape 2 — the container is gone) as well as
   // exited/dead/created.
   if (state.status !== 'running') return true;
+  if (previewIsOfAnotherCommit(session, headSha)) return true;
   if (!config) return false;
 
   const stagingEnv = require('./staging-env');
@@ -154,6 +173,30 @@ async function stagingNeedsRebuild(session, { config = null } = {}) {
     sessionId: session.id, expected, actual,
   });
   return true;
+}
+
+// Shape 4 above. Only a KNOWN mismatch counts: a missing build commit (a
+// preview from before the column) or a missing head is "cannot tell", which
+// keeps the old answer rather than sweeping every legacy preview at once.
+function previewIsOfAnotherCommit(session, headSha) {
+  const built = typeof session.staging_commit_sha === 'string' ? session.staging_commit_sha.trim().toLowerCase() : '';
+  const head = typeof headSha === 'string' ? headSha.trim().toLowerCase() : '';
+  if (!built || !head || built === head) return false;
+  log.info('staging-recovery', 'Preview is of another commit than the head — rebuild needed', {
+    sessionId: session.id, built, head,
+  });
+  return true;
+}
+
+// The commit a recheck is about to judge, from the row's own pins: the
+// imported head for an imported row, otherwise the checks pin (which a clean
+// sync carries forward to the sync commit — exactly the case where the
+// preview is a commit behind). No GitHub read: the pin is what the votes and
+// the verdict describe, and a recheck is asked to judge that.
+function recheckHeadSha(session) {
+  if (!session) return null;
+  if (session.source === 'imported') return session.imported_pr_head_sha || null;
+  return session.checks_commit_sha || session.handoff_head_sha || session.reviewed_head_sha || null;
 }
 
 // Recovery's own `reason` strings name the CODE PATH; visuals.CHECK_TRIGGERS
@@ -712,7 +755,9 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
       }));
     visuals.notifyChecksPending(session.id, session.checks_commit_sha || null, 'building', checkTriggerForReason(reason));
   }
-  if (await stagingNeedsRebuild(session, { config })) {
+  // The head this run is about to judge rides along, so a preview that is
+  // still of the pre-sync commit is rebuilt rather than tested against.
+  if (await stagingNeedsRebuild(session, { config, headSha: recheckHeadSha(session) })) {
     // rebuildSessionStaging owns the capture (see above) and the no-op
     // short-circuits (missing owner/repo or bot token → 'skipped').
     return rebuildSessionStaging({ config, pool, session, reason });
@@ -744,6 +789,8 @@ module.exports = {
   isStuckCheckRecoveryScope,
   findStuckCheckSessions,
   stagingNeedsRebuild,
+  previewIsOfAnotherCommit,
+  recheckHeadSha,
   rebuildSessionStaging,
   recheckSessionChecks,
   // Exported for tests + so the client-facing wording has one owner.

@@ -219,7 +219,7 @@ test('#816 staging previews get explicit, env-overridable resourcing', () => {
     // checks run now drives up to eight pages CONCURRENTLY at this one
     // preview, so a one-core ceiling makes every check look slow enough to
     // trip its own timeout.
-    assert.equal(docker.STAGING_CPUS, '2', 'two cores, for a parallel checks run');
+    assert.equal(docker.STAGING_CPUS, '4', 'four cores, for eight concurrent capture pages');
     assert.equal(docker.STAGING_MEMORY, '256m', 'memory was never the constraint');
   } finally {
     restore();
