@@ -1689,6 +1689,29 @@ test('an incoming add does not let a deferred reload race its own POST', async (
   assert.equal(Home._rerenderPending, false);
 });
 
+test('?shot=discover-drag is re-applied when the lane\'s cards actually arrive', () => {
+  // The state needs A CARD to lift, and a Discover lane has none at mount:
+  // its tiles come with their own fetch. The lane called the shot handler
+  // from a mount-only effect, which therefore always ran too early, and the
+  // only other caller is the GRID's post-commit effect — which does not
+  // re-commit when a panel's data lands. So the state painted only when the
+  // cards happened to beat the mount, which is a race the declared check
+  // lost outright once curation changed how the lanes fill.
+  //
+  // The call belongs in the effect that already runs on every tile change.
+  const src = read('frontend/src/features/home/panels/discover.tsx');
+  const tilesEffect = src.slice(
+    src.indexOf('_wireDiscoveryCards?.(el)'),
+    src.indexOf('.join(\',\')]);', src.indexOf('_wireDiscoveryCards?.(el)')));
+  assert.match(tilesEffect, /_maybeShowShotIncoming\?\.\(\)/,
+    'the tile-change effect re-applies it, so the cards can arrive late');
+
+  // And the mount-only effect keeps its own call: it is what paints the
+  // state when the tiles were already there, and the handler is repeatable
+  // by design. Two callers in this file, not one.
+  assert.equal((src.match(/_maybeShowShotIncoming\?\.\(\)/g) || []).length, 2);
+});
+
 test('?shot=discover-drag enters the incoming state, not a lookalike of it', () => {
   // Same shape as the ?shot=home-grid assertion above and for the same
   // reason: a gesture is not navigable, so the deep link is the only thing a
