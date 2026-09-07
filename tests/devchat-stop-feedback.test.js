@@ -109,8 +109,13 @@ function makeHarness() {
   // of reaching past the real _armStoppingLadder to mutate rows by hand.
   const timers = new Map();
   let nextTimerId = 1;
+  // Keep Date.now on the same controlled clock as the manually fired timers.
+  // Even 1ms of wall time between entering Stop and arming its ladder would
+  // otherwise change the recorded delays and prevent fireRung finding them.
+  const now = 1735689600000;
   const sandbox = {
     console,
+    Date: class extends Date { static now() { return now; } },
     setInterval: () => 0,
     clearInterval: () => {},
     setTimeout: (fn, ms) => {
@@ -159,7 +164,7 @@ function makeHarness() {
   // The send button's state, straight off the model `_setStreamingUI`
   // publishes — `kind` IS the branch it used to paint.
   const send = () => composer.state().send;
-  return { DevChat, sandbox, document, getEl, timers, composer, send };
+  return { DevChat, sandbox, document, getEl, timers, composer, send, now };
 }
 
 // #937: run the escalation rung scheduled for `ms` (15000 = "taking longer
@@ -620,10 +625,10 @@ test('a tab joining a long-pending stop lands on the stuck rung immediately', ()
   // seeding the clock from the server is what stops a refreshed tab from
   // restarting a calm "Stopping…" that would never escalate — which is
   // exactly what the reporter would have seen on reload.
-  const { DevChat, timers } = makeHarness();
+  const { DevChat, timers, now } = makeHarness();
   arriveMidTurn(DevChat);
 
-  DevChat._enterStoppingState({ stopRequestedAt: Date.now() - 90000 });
+  DevChat._enterStoppingState({ stopRequestedAt: now - 90000 });
 
   const row = DevChat.messages.find((m) => m._stopping);
   assert.equal(row.content, 'Still stopping. The agent isn’t responding.');
@@ -631,22 +636,18 @@ test('a tab joining a long-pending stop lands on the stuck rung immediately', ()
   assert.deepEqual(armedDelays(timers), [], 'nothing left to wait for');
 });
 
-test('a tab joining a fresh stop still waits out both rungs', () => {
-  const { DevChat, timers } = makeHarness();
+test('a tab joining a recent stop waits the remaining time for both rungs', () => {
+  const { DevChat, timers, now } = makeHarness();
   arriveMidTurn(DevChat);
 
   // A stop started by someone else (the harness user is `evan`).
-  DevChat._enterStoppingState({ by: 'dana', stopRequestedAt: Date.now() });
+  DevChat._enterStoppingState({ by: 'dana', stopRequestedAt: now - 5000 });
 
   const row = DevChat.messages.find((m) => m._stopping);
   assert.equal(row.content, '@dana is stopping the agent…');
   assert.ok(!row._forceOffered, 'no premature escape hatch');
-  const delays = armedDelays(timers);
-  assert.equal(delays.length, 2);
-  assert.ok(delays[0] >= 14990 && delays[0] <= 15000,
-    'the slow rung accounts for only the clock time spent entering the state');
-  assert.ok(delays[1] >= 39990 && delays[1] <= 40000,
-    'the stuck rung accounts for only the clock time spent entering the state');
+  assert.deepEqual(armedDelays(timers), [10000, 35000],
+    'both rungs account for the five seconds already elapsed');
 });
 
 test('a later server timestamp re-arms the ladder on the already-showing row', () => {
@@ -654,13 +655,13 @@ test('a later server timestamp re-arms the ladder on the already-showing row', (
   // server's stamp is authoritative and arrives on the echoed `stopping`.
   // Both tabs must converge on one clock, or they escalate at different
   // moments and disagree about whether Force stop is available.
-  const { DevChat, timers } = makeHarness();
+  const { DevChat, timers, now } = makeHarness();
   arriveMidTurn(DevChat);
 
   DevChat._enterStoppingState();
   assert.deepEqual(armedDelays(timers), [15000, 40000]);
 
-  DevChat._enterStoppingState({ stopRequestedAt: Date.now() - 45000 });
+  DevChat._enterStoppingState({ stopRequestedAt: now - 45000 });
 
   const row = DevChat.messages.find((m) => m._stopping);
   assert.equal(row._forceOffered, true);
