@@ -104,9 +104,13 @@ export function appPillsFor(app) {
     });
   }
   if (openPrs > 0) {
+    // #1570: "2 to vote" left the noun out, so the chip read as a count of
+    // something unnamed — and the explanation was in a `title`, which a phone
+    // never shows. Naming the changes in the label itself is the whole fix;
+    // the tip stays as the longer form for a pointer that hovers.
     chipDefs.push({
       cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-400',
-      label: `${openPrs} to vote`,
+      label: `${openPrs} change${openPrs === 1 ? '' : 's'} to vote on`,
       tip: `${openPrs} change${openPrs === 1 ? '' : 's'} awaiting community votes`,
     });
   }

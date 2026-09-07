@@ -640,7 +640,7 @@ test('rowView: status pills and the status word ride the row', () => {
   // and app-card.js's appPillsFor answers for every app surface at once.
   const pills = AppCard.appPillsFor(row.app);
   assert.deepEqual(Array.from(pills.chips, (c) => c.label),
-    ['Missing secrets', '2 to vote', '1 issue']);
+    ['Missing secrets', '2 changes to vote on', '1 issue']);
   assert.equal(pills.vis.label, 'Private');
 });
 

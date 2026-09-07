@@ -196,16 +196,26 @@ test('renderAppPillsHtml: always display-only spans, ordered, self-trimming', ()
   const html = Home.renderAppPillsHtml(app);
   assert.doesNotMatch(html, /<button/, 'no buttons — pills are informational');
   assert.match(html, /Missing secrets/);
-  assert.match(html, /2 to vote/);
+  assert.match(html, /2 changes to vote on/);
   assert.match(html, /1 in dev/);
   assert.match(html, /3 issues/);
   assert.match(html, /Private</, 'privacy chip last');
-  const order = ['Missing secrets', '2 to vote', '1 in dev', '3 issues', 'Private']
+  const order = ['Missing secrets', '2 changes to vote on', '1 in dev', '3 issues', 'Private']
     .map((s) => html.indexOf(s));
   assert.ok(order.every((idx, i) => idx !== -1 && (i === 0 || idx > order[i - 1])),
     'urgency-first ordering preserved');
   // Nothing to flag → empty string, so callers can self-trim.
   assert.equal(Home.renderAppPillsHtml(baseApp()), '');
+});
+
+test('#1570: the vote chip names what is being voted on, and pluralises', () => {
+  const Home = makeHome({ id: ME });
+  // "2 to vote" was a count of something unnamed, and the explanation lived
+  // in a `title` a phone never shows.
+  assert.match(Home.renderAppPillsHtml(baseApp({ open_prs: 1 })), /1 change to vote on/);
+  assert.match(Home.renderAppPillsHtml(baseApp({ open_prs: 4 })), /4 changes to vote on/);
+  // Still informational, not a control.
+  assert.doesNotMatch(Home.renderAppPillsHtml(baseApp({ open_prs: 1 })), /<button/);
 });
 
 test('menu header: always carries the app’s FULL pill set, inert', () => {
@@ -215,7 +225,7 @@ test('menu header: always carries the app’s FULL pill set, inert', () => {
   }));
   assert.match(html, /card-menu-pills/, 'pills block present');
   assert.match(html, /Missing secrets/);
-  assert.match(html, /2 to vote/);
+  assert.match(html, /2 changes to vote on/);
   assert.match(html, /1 issue/);
   assert.match(html, /Private</);
   assert.doesNotMatch(html, /<button/, 'header pills are display-only');
@@ -308,7 +318,7 @@ test('card: no pills/chips of any kind on the card face', () => {
     missingSecrets: ['STRIPE_SECRET_KEY'], view_visibility: 'private',
   }));
   assert.match(header, /Missing secrets/);
-  assert.match(header, /2 to vote/);
+  assert.match(header, /2 changes to vote on/);
   assert.match(header, /1 in dev/);
   assert.match(header, /3 issues/);
   assert.match(header, /Private</);
