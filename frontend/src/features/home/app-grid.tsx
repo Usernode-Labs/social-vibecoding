@@ -296,6 +296,13 @@ export function AppGrid() {
     if (el) { N?._maybeOpenShotMenu?.(el); }
     N?._searchReveal?.sync?.();
     if (el) N?._maybeShowShotGrid?.(el);
+    // Its sibling for the drag that starts in a Discover rail (#1763). Called
+    // from HERE as well as from the lane's own effect for the reason the grid
+    // shot is called from here at all: #app-list renders a className, so every
+    // commit takes `un-reordering` back off it, and the overlay a shot painted
+    // before this commit is no longer a rendering of a lift. It finds the rail
+    // itself — a repaint of the grid is not one of the panels.
+    N?._maybeShowShotIncoming?.();
   });
 
   return (
