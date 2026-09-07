@@ -31,6 +31,8 @@ import { Input } from '@/components/ui/input';
 
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { AppAllowance, useAppAllowance } from './app-allowance';
+import { invalidateAppAllowance } from './app-allowance-store.js';
 import { CreateProgress } from './create-progress';
 import {
   creationProgressStore,
@@ -58,9 +60,11 @@ export function ForkAppDialog() {
   const [busy, setBusy] = useState(false);
   const [forked, setForked] = useState<{ slug: string; name: string } | null>(null);
   const progress = useStoreState(creationProgressStore);
+  const { blocked: quotaBlocksCreation } = useAppAllowance();
 
   const dialog = useDialog<ForkSource>('fork', {
     onOpen: (payload) => {
+      void invalidateAppAllowance();
       const src = payload || null;
       sourceRef.current = src;
       setSourceName(src?.name || '');
@@ -119,6 +123,7 @@ export function ForkAppDialog() {
         body: JSON.stringify({ name }),
       });
       const data = await res.json().catch(() => ({}));
+      void invalidateAppAllowance();
       if (!res.ok) {
         setError(data.error || 'Fork failed.');
         return;
@@ -207,6 +212,7 @@ export function ForkAppDialog() {
           </span>
           stands up your own independent copy: its own repo, database, and web address.
         </p>
+        <AppAllowance />
         <form id="fork-form" className="space-y-4" onSubmit={submit}>
           <div>
             <label
@@ -276,7 +282,8 @@ export function ForkAppDialog() {
               type="submit"
               id="fork-submit"
               layout="flex"
-              disabled={busy}
+              disabled={busy || quotaBlocksCreation}
+              disabledStyle="block"
             >
               {busy ? 'Forking…' : 'Fork'}
             </Button>

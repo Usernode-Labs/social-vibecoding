@@ -66,6 +66,18 @@ const ROW = {
   appName: 'Notes', appSlug: 'notes', sourceUsername: 'ada',
 };
 
+test('allowance notifications explain the change, request or review outcome', async () => {
+  const changed = await lines({ kind: 'app_quota_changed', detail: '2:4', appName: null });
+  assert.equal(changed.label, 'App allowance changed');
+  assert.equal(changed.subject, '2 → 4 app slots');
+  assert.match(changed.meta, /^Account/);
+  const requested = await lines({ kind: 'app_quota_requested', appName: null });
+  assert.equal(requested.subject, '@ada');
+  assert.match(requested.meta, /^Admin/);
+  const declined = await lines({ kind: 'app_quota_request_declined', appName: null });
+  assert.equal(declined.subject, 'Your app allowance is unchanged.');
+});
+
 /** The row's two copy lines, as plain strings. */
 async function lines(n) {
   const view = (await load())({ ...ROW, ...n });
@@ -248,4 +260,3 @@ test('the three lines are visually ranked, not three of the same thing', () => {
   // beside them says the word too.
   assert.equal((body.match(/truncate"/g) || []).length, 3, 'all three truncate');
 });
-
