@@ -2316,6 +2316,11 @@ async function submitUpdate(deps, params, proposalId) {
     headSha: result.headSha || null,
     previousHeadSha: result.previousHeadSha || null,
     votesCleared: Number(result.votesCleared) || 0,
+    // When the tally resets: 'now' (this call), 'on_sync' (the next
+    // pr-import sweep advances a mirrored head — the count is votesAtRisk),
+    // or 'none'. Without this, a 0 on the mirror path read as "votes kept".
+    votesClearing: result.votesClearing || (Number(result.votesCleared) > 0 ? 'now' : 'none'),
+    votesAtRisk: Number.isInteger(result.votesAtRisk) ? result.votesAtRisk : (Number(result.votesCleared) || 0),
     checksRerun: result.checksRerun === true,
     previewRebuilding: result.previewRebuilding === true,
     // #1071. A paused session takes the commit but deliberately does NOT

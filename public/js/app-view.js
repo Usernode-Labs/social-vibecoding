@@ -3919,6 +3919,96 @@ const AppView = {
   // covers missed pushes (disconnect, laptop waking from sleep). Called
   // after every dev-data load, so the interval self-clears on the load
   // that finds nothing in progress.
+  // ── Live patches from WS events (no refetch) ─────────────────────────
+  //
+  // The checks_ready / behind_main / freshness / sync_status events already
+  // carry the fields the ledger reads; until now the topic page threw the
+  // payload away and refetched five endpoints to learn what it had just been
+  // told. Each helper finds the proposal's row in the cached lists, writes
+  // the same keys the row would carry after a refetch, and repaints the head
+  // from the cache. A row the lists do not hold (a topic opened from beyond
+  // the cached pages) falls back to the refetch path.
+  _topicRowFor(sessionId) {
+    const id = Number(sessionId);
+    if (!Number.isFinite(id)) return null;
+    return (AppView._proposals || []).find((p) => p && Number(p.id) === id)
+      || (AppView._merged || []).find((p) => p && Number(p.id) === id)
+      || (AppView._topicProposal && Number(AppView._topicProposal.id) === id ? AppView._topicProposal : null)
+      || null;
+  },
+  _repaintTopicIfShowing(sessionId) {
+    const t = AppView._devTopic;
+    if (!t || t.kind !== 'proposal' || Number(t.id) !== Number(sessionId)) return;
+    if (typeof App === 'undefined' || App.currentTab !== 'dev' || App.currentSubTab !== 'topic') return;
+    AppView._renderTopicHead();
+  },
+  patchTopicProposal(sessionId, patch) {
+    const row = AppView._topicRowFor(sessionId);
+    if (!row || !patch) return false;
+    for (const [k, v] of Object.entries(patch)) {
+      if (v !== undefined) row[k] = v;
+    }
+    AppView._repaintTopicIfShowing(sessionId);
+    return true;
+  },
+  // checks_ready with checkState 'pending' carries phase/trigger/progress —
+  // patch and repaint. A final verdict carries no test_results, so that one
+  // still refetches, but through the 'checks' kind, which keeps the roster.
+  applyChecksEvent(data) {
+    if (!data || data.sessionId == null) return;
+    const state = data.checkState || null;
+    if (state === 'pending') {
+      const patched = AppView.patchTopicProposal(data.sessionId, {
+        check_state: 'pending',
+        check_phase: data.checkPhase === undefined ? undefined : (data.checkPhase || null),
+        check_trigger: data.checkTrigger === undefined ? undefined : (data.checkTrigger || null),
+        checks_commit_sha: data.commitSha === undefined ? undefined : (data.commitSha || null),
+        checks_progress: data.progress === undefined ? undefined : (data.progress || null),
+        // A run that just started: the row's checked_at is when it started.
+        ...(data.progress ? {} : { checks_checked_at: new Date().toISOString() }),
+      });
+      if (patched) return;
+      // A progress tick for a row this page does not hold (another app's
+      // run, a topic beyond the cached pages) is nothing to refetch for:
+      // the numbers belong to a row that is not on screen, and a refetch a
+      // second for the length of someone else's run was the churn this
+      // replaces. The run's start and verdict events still fall through.
+      if (data.progress && typeof data.progress === 'object') return;
+    }
+    AppView.refreshDevData('checks');
+  },
+  // Mirrors DevChat.applyBehindMainUpdate for the topic page's own row.
+  applyBehindMainEvent(sessionId, behindMain) {
+    if (typeof behindMain !== 'number') return;
+    AppView.patchTopicProposal(sessionId, { behind_main: behindMain });
+  },
+  // Mirrors DevChat.applyFreshnessUpdate: the `freshness` block AND the flat
+  // columns, because _freshnessOf accepts either shape.
+  applyFreshnessEvent(data) {
+    if (!data || data.sessionId == null) return;
+    const f = (data.freshness && typeof data.freshness === 'object') ? data.freshness : {};
+    const patch = { freshness: f };
+    if (typeof data.behindMain === 'number') patch.behind_main = data.behindMain;
+    if (f.behindBy !== undefined) patch.freshness_behind_by = f.behindBy;
+    if (f.aheadBy !== undefined) patch.freshness_ahead_by = f.aheadBy;
+    if (f.checkedAt !== undefined) patch.freshness_checked_at = f.checkedAt;
+    if (f.error !== undefined) patch.freshness_error = f.error;
+    if (f.mainSha !== undefined) patch.freshness_main_sha = f.mainSha;
+    if (f.mergeBaseSha !== undefined) patch.freshness_merge_base_sha = f.mergeBaseSha;
+    if (f.mergeability !== undefined) patch.mergeability = f.mergeability;
+    if (f.mergeabilityFiles !== undefined) patch.mergeability_files = f.mergeabilityFiles;
+    if (f.mergeabilityFilesComplete !== undefined) patch.mergeability_files_complete = f.mergeabilityFilesComplete;
+    AppView.patchTopicProposal(data.sessionId, patch);
+  },
+  // sync_status: 'running' marks the row as resolving (the conflict note
+  // stands down while an attempt is live); 'done'/'failed' clears it and the
+  // persisted state lands on the next refetch, which DevChat already triggers.
+  applySyncStatusEvent(data) {
+    if (!data || data.sessionId == null) return;
+    const running = data.state === 'running' || data.state === 'started';
+    AppView.patchTopicProposal(data.sessionId, { resolving: running });
+  },
+
   _checksPollHandle: null,
   _syncChecksPoll(proposals) {
     const inProgress = Array.isArray(proposals) && proposals.some((pr) =>
@@ -3941,6 +4031,7 @@ const AppView = {
         return;
       }
       if (document.hidden) return;
+      // 'checks-poll' is not 'vote': the roster survives the tick.
       AppView.refreshDevData('checks-poll');
     }, 20000);
   },
@@ -3957,7 +4048,14 @@ const AppView = {
       // cache entry is dropped HERE rather than in `_renderTopicHead`,
       // which repaints far more often than the data changes — a vote
       // arriving over the WS is a refresh, a repaint is not.
-      if (AppView._devTopic) delete AppView._voteRoster[AppView._devTopic.id];
+      // Only a VOTE invalidates the roster. Every other refresh (a checks
+      // phase event, the 20s checks poll, a sync-status change) used to
+      // delete it too, so the head republished with `roster: {phase:
+      // 'loading'}` — "Loading votes…" — and then again when the roster
+      // refetch landed: two paints per event, the first one blank. Voters
+      // watched the tally flicker on a timer while nothing about it changed.
+      // The roster now stays on screen until a vote actually moves it.
+      if (kind === 'vote' && AppView._devTopic) delete AppView._voteRoster[AppView._devTopic.id];
       // _refreshTopicOnDemandRow between the two: _loadDevData refreshes the
       // lists, and a topic the lists do not hold would otherwise repaint
       // from a snapshot frozen when the page opened. It no-ops for every
@@ -7772,6 +7870,8 @@ const AppView = {
       const row = {
         key: box.key, tone: toneOf(box.tone), spinner: !!box.spinner,
         label: labels[box.key] || strip(box.heading),
+        sub: box.sub || null,
+        progress: box.progress || null,
         text: labels[box.key] ? [strip(box.heading)] : [],
         foot: [], list: null, actions: box.action ? [box.action] : [],
       };
@@ -8396,6 +8496,67 @@ const AppView = {
   // skipped — plus the legacy console fallback. Each is one note box; the
   // pass/fail verdict has its own shape (_checksVerdictView below), because
   // its rows nest and its passing rows fold away.
+  // The run's live counts as the three shapes the UI needs: a bar (ran /
+  // passed / failed / expected), a one-line `sub` for under the label, and a
+  // sentence for the note. Null until the first frame has been recorded.
+  _checksProgressView(pr) {
+    const p = pr && pr.checks_progress;
+    if (!p || typeof p !== 'object') return null;
+    const n = (v) => (Number.isInteger(v) && v >= 0 ? v : 0);
+    const ran = n(p.ran); const passed = n(p.passed); const failed = n(p.failed);
+    const expected = Number.isInteger(p.expected) && p.expected > 0 ? p.expected : null;
+    const unit = AppView._unitSuiteProgressView(p.unit);
+    if (!ran && !expected && !unit) return null;
+    const of = expected ? ` of ${expected}` : '';
+    const bits = [`${ran}${of} run`, `${passed} passed`];
+    if (failed) bits.push(`${failed} failed`);
+    let sub = (ran || expected) ? bits.join(' · ') : '';
+    // A colon, not a dash: the count is a label and this is its value (#1389).
+    const sentence = !(ran || expected) ? ''
+      : expected
+        ? `${ran} of ${expected} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`
+        : `${ran} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`;
+    if (unit && !sub) sub = unit.sub;
+    return {
+      bar: { ran, passed, failed, expected, done: !!p.done, unit: unit ? unit.bar : null },
+      sub, sentence, unit,
+    };
+  },
+
+  // The repo unit suite (`npm test`) runs in its own container alongside the
+  // browser checks and reports the same way: a phase before any test has
+  // run (cloning, installing), then TAP counts. The counts are the runner's
+  // own approximation until its summary block lands, so the copy says "so
+  // far" and never claims a verdict; the verdict is the exit code, later.
+  _unitSuiteProgressView(u) {
+    if (!u || typeof u !== 'object') return null;
+    const n = (v) => (Number.isInteger(v) && v >= 0 ? v : 0);
+    const ran = n(u.ran); const passed = n(u.passed); const failed = n(u.failed); const skipped = n(u.skipped);
+    const expected = Number.isInteger(u.expected) && u.expected > 0 ? u.expected : null;
+    const phase = typeof u.phase === 'string' ? u.phase : 'running';
+    const done = !!u.done;
+    let sub;
+    let sentence;
+    if (done) {
+      const ok = u.exitOk !== false;
+      sub = ok ? `npm test finished: ${passed} passed` : `npm test finished: ${failed} failed`;
+      sentence = ok
+        ? `The repo unit suite (npm test) finished: ${passed} passed${skipped ? `, ${skipped} skipped` : ''}.`
+        : `The repo unit suite (npm test) finished with failures: ${failed} failed, ${passed} passed.`;
+    } else if (phase === 'cloning' || phase === 'installing') {
+      const what = phase === 'cloning' ? 'cloning the branch' : 'installing dependencies';
+      sub = `npm test: ${what}`;
+      sentence = `The repo unit suite (npm test) is ${what}.`;
+    } else {
+      const of = expected ? ` of ~${expected}` : '';
+      const bits = [`npm test: ${ran}${of} run`, `${passed} passed`];
+      if (failed) bits.push(`${failed} failed`);
+      sub = bits.join(' · ');
+      sentence = `The repo unit suite (npm test) has run ${ran}${of} tests so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`;
+    }
+    return { bar: { phase, ran, passed, failed, skipped, expected, done }, sub, sentence };
+  },
+
   _checksStatusNotes(pr) {
     if (!pr) return [];
     const state = pr.check_state;
@@ -8448,9 +8609,22 @@ const AppView = {
       const why = AppView._checksTriggerCopy(pr.check_trigger);
       if (why) rows.push({ t: 'line', parts: [why], weight: 'foot' });
       if (stale) rows.push({ t: 'line', parts: ['If this has been running for a while, the platform re-runs the checks automatically, or re-run them now.'], weight: 'foot' });
+      // Live progress, when the run has reported any. `progress` is drawn as
+      // a bar by the ledger row; `sub` is the same fact as text under the
+      // label. Neither exists before the first frame, so a build-phase run
+      // reads exactly as it did.
+      const progress = AppView._checksProgressView(pr);
+      if (progress) {
+        const lines = [];
+        if (progress.sentence) lines.push({ t: 'line', parts: [progress.sentence] });
+        if (progress.unit) lines.push({ t: 'line', parts: [progress.unit.sentence] });
+        rows.splice(1, 0, ...lines);
+      }
       return [{
         key: 'checks', tone: 'neutral', spinner: true,
         heading: phase.title, rows, action: stale ? recheck : null,
+        progress: progress ? progress.bar : null,
+        sub: progress ? progress.sub : null,
       }];
     }
 
@@ -11834,8 +12008,12 @@ const AppView = {
     // vote states — neutral, with a spinner while genuinely in flight.
     if (isCode && (p.check_state === 'pending'
       || (!p.check_state && p.status === 'promoted' && !p.console_check_state))) {
+      // The live counts ride the label when the run has any: a board of
+      // cards should say how far each run is, not just that it is running.
+      const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
+      const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
       return { ...base, tier: 2, key: 'checks_running',
-        label: p.check_state === 'pending' ? 'Checks running…' : 'Checks starting…',
+        label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
         tone: 'neutral', spinner: true, reasons, advisory: 0,
         title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.' };
     }
@@ -12162,7 +12340,9 @@ const AppView = {
     // 'pending' (or anything else): tests are still running. #405: grey
     // (gc-checks-running-badge), not amber, so a not-yet-started check is
     // visibly distinct from the amber in-flight merge stages.
-    return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…</span>`;
+    const live = state === 'pending' ? AppView._checksProgressView(pr) : null;
+    const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
+    return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…${count}</span>`;
   },
 
   // #195/#270: before/after visual tiles for a session's stored capture

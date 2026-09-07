@@ -70,7 +70,7 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId) {
             cs.mergeability_files_complete, cs.freshness_main_sha,
             cs.freshness_merge_base_sha, cs.freshness_behind_by,
             cs.freshness_ahead_by, cs.freshness_checked_at,
-            cs.freshness_error, cs.check_phase, cs.check_trigger,
+            cs.freshness_error, cs.check_phase, cs.check_trigger, cs.checks_progress,
             cs.platform_env_state, cs.platform_env_detail,
             cs.check_error_detail, cs.requires_explicit_approval,
             (SELECT jsonb_object_agg(

@@ -2232,6 +2232,12 @@ const App = {
     // events are scoped per-session and don't need a session-list
     // refetch.
     if (data.action === 'behind_main' && typeof data.behindMain === 'number') {
+      // The topic page's "Behind main" pill read this number from its last
+      // refetch and went stale while the dev-chat banner updated live; both
+      // surfaces now take the same patch.
+      if (typeof AppView !== 'undefined' && AppView.applyBehindMainEvent) {
+        AppView.applyBehindMainEvent(data.sessionId, data.behindMain);
+      }
       if (typeof DevChat !== 'undefined' && DevChat.applyBehindMainUpdate) {
         DevChat.applyBehindMainUpdate(data.sessionId, data.behindMain);
       }
@@ -2243,6 +2249,7 @@ const App = {
     // together — a proposal reading "0 behind" for eight commits was the
     // failure the issue reported.
     if (data.action === 'freshness') {
+      if (typeof AppView !== 'undefined' && AppView.applyFreshnessEvent) AppView.applyFreshnessEvent(data);
       if (typeof DevChat !== 'undefined' && DevChat.applyFreshnessUpdate) {
         DevChat.applyFreshnessUpdate(data);
       }
@@ -2252,6 +2259,7 @@ const App = {
     // banner's spinner/phase text and terminal feedback. Scoped
     // per-session like behind_main — no list refetch needed.
     if (data.action === 'sync_status') {
+      if (typeof AppView !== 'undefined' && AppView.applySyncStatusEvent) AppView.applySyncStatusEvent(data);
       if (typeof DevChat !== 'undefined' && DevChat.applySyncStatusUpdate) {
         DevChat.applySyncStatusUpdate(data);
       }
@@ -2281,17 +2289,30 @@ const App = {
     // dev session the viewer happens to have focused — refresh the vote
     // panel + home strip globally before the currentSession early-return.
     if (data.event === 'checks_ready') {
+      // A run in flight reports once a second, to everyone, for as long as
+      // it runs (`progress` on a 'pending' event). Those ticks are for the
+      // row that is showing: they patch it in place and touch no fetch. The
+      // start-of-run and verdict events (no `progress`) keep the refreshes
+      // below, which is what the board and the home strip advance on.
+      const progressTick = data.checkState === 'pending' && data.progress && typeof data.progress === 'object';
       if (App.currentTab === 'dev' && App.currentSubTab !== 'sessions') {
-        AppView.refreshDevData('session');
+        // The event carries checkState / checkPhase / checkTrigger and, for
+        // a run in flight, `progress`. Patch the cached row and repaint from
+        // it; a final verdict (which needs test_results the event does not
+        // carry) refetches — through a kind that keeps the vote roster.
+        if (typeof AppView !== 'undefined' && AppView.applyChecksEvent) AppView.applyChecksEvent(data);
+        else if (!progressTick) AppView.refreshDevData('session');
       }
-      // The Underway board refresh above is intentionally skipped while the
-      // owner is inside a session. Refresh that focused row directly so its
-      // header advances Draft -> Checks running -> Checks passed/failed
-      // without waiting for a vote/version event or a manual reload.
-      if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
-        DevChat.refreshCurrentSessionStatus(data.sessionId);
+      if (!progressTick) {
+        // The Underway board refresh above is intentionally skipped while the
+        // owner is inside a session. Refresh that focused row directly so its
+        // header advances Draft -> Checks running -> Checks passed/failed
+        // without waiting for a vote/version event or a manual reload.
+        if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
+          DevChat.refreshCurrentSessionStatus(data.sessionId);
+        }
+        App.refreshHomeProposals();
       }
-      App.refreshHomeProposals();
     }
     // #439: an on-demand preview rebuild (Preview-click → ensure-staging)
     // can complete for a session that isn't the focused dev-chat one (e.g. a

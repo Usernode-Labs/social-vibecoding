@@ -40,6 +40,7 @@ import type {
   TextRun,
   TopicBody,
   TranscriptSection,
+  LedgerProgress,
 } from './model';
 
 function call(fn: string, ...args: unknown[]): void {
@@ -164,6 +165,52 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
   );
 }
 
+/**
+ * The checks row's bar while a run is in flight. Three segments over one
+ * track — passed, failed, remaining — sized against the declared count when
+ * it is known and against `ran` when it is not. The numbers are also in the
+ * row's `sub`, so the bar carries no information a screen reader cannot get
+ * from the text; it is marked decorative for that reason.
+ */
+function Bar({ ran, passed, failed, expected, attr, value, indeterminate }: {
+  ran: number; passed: number; failed: number; expected: number | null;
+  attr: string; value: string; indeterminate?: boolean;
+}): ReactNode {
+  const total = expected && expected > 0 ? expected : Math.max(ran, 1);
+  const pct = (n: number) => `${Math.max(0, Math.min(100, (n / total) * 100))}%`;
+  const cls = `dev-ledger-progress${indeterminate ? ' dev-ledger-progress-busy' : ''}`;
+  return (
+    <span className={cls} aria-hidden="true" {...{ [attr]: value }}>
+      <span className="dev-ledger-progress-pass" style={{ width: pct(passed) }} />
+      <span className="dev-ledger-progress-fail" style={{ width: pct(failed) }} />
+    </span>
+  );
+}
+
+function Progress({ p }: { p: LedgerProgress }): ReactNode {
+  const hasChecks = p.ran > 0 || (p.expected != null && p.expected > 0);
+  const u = p.unit || null;
+  return (
+    <>
+      {hasChecks ? (
+        <Bar ran={p.ran} passed={p.passed} failed={p.failed} expected={p.expected}
+          attr="data-checks-progress" value={`${p.ran}/${p.expected ?? '?'}`} />
+      ) : null}
+      {u ? (
+        <span className="dev-ledger-progress-unit" data-unit-phase={u.phase}>
+          {/* Before the first TAP line there is nothing to size: the track
+              pulses instead of sitting empty. Without a last-run total the
+              bar sizes against `ran`, so it reads as "full so far". */}
+          <Bar ran={u.ran} passed={u.passed} failed={u.failed} expected={u.expected}
+            attr="data-unit-progress" value={`${u.ran}/${u.expected ?? '?'}`}
+            indeterminate={!u.done && u.ran === 0} />
+          <small className="dev-ledger-progress-unit-k">npm test</small>
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 function Roster({ r }: { r: RosterView }): ReactNode {
   if (r.phase === 'hidden') return null;
   return (
@@ -201,6 +248,7 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
             </span>
             <span className="dev-ledger-v">
               {r.text.length ? <span className="dev-ledger-text"><Runs parts={r.text} /></span> : null}
+              {r.progress ? <Progress p={r.progress} /> : null}
               {r.roster ? <Roster r={r.roster} /> : null}
               {(r.foot || []).map((f, i) => <span key={i} className="dev-ledger-foot"><Runs parts={f} /></span>)}
               {(r.warnFoot || []).map((f, i) => (
