@@ -56,7 +56,7 @@ function makeAppView(over) {
     },
     fetch: o.fetch || (async () => ({ ok: true, json: async () => ({}) })),
     alert: () => {},
-    setTimeout, clearTimeout, setInterval, clearInterval,
+    setTimeout: o.setTimeout || setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener: () => {},
     localStorage: {
       getItem: (k) => (k in store ? store[k] : null),
@@ -349,6 +349,102 @@ test('the Workshop renders its strips, its themes and its folded rows', () => {
   assert.ok(!html.includes('dev-feed-entry'), 'nothing is unfolded on a plain paint');
   assert.match(html, /aria-pressed="true">By people</, 'the default order is by people');
 });
+
+test('the footnote says what is actually happening to the category grouping', () => {
+  // The first cut said "once an AI model is available" while the model was
+  // mid-draft — on exactly the first visit after a deploy. Four states now.
+  const AppView = makeAppView();
+  seed(AppView);
+  const cat = (extra) => ({
+    slug: 'demo-app', source: 'category', generatedAt: null, stale: true, pending: false, lastError: null,
+    at: Date.now(), themes: [{ id: 'c', name: 'Uncategorised', description: '', saying: '', items: ['issue:12', 'issue:13', 'session:34', 'session:78'] }],
+    ...extra,
+  });
+  AppView._workshopThemes = cat({ pending: true });
+  let html = workshopHtml(AppView);
+  assert.match(html, /drafting themes…/, 'pending on the category grouping says so in the eyebrow');
+  assert.match(html, /Themes are being drafted from the board now\./);
+  assert.ok(!html.includes('regrouping…'), 'and does not claim a regroup of themes that do not exist yet');
+
+  AppView._workshopThemes = cat({ lastError: 'boom' });
+  html = workshopHtml(AppView);
+  assert.match(html, /The last attempt to draft themes failed \(boom\)\./);
+
+  AppView._workshopThemes = cat({});
+  html = workshopHtml(AppView);
+  assert.match(html, /No AI model is configured, so items are grouped by their voted category\./);
+  assert.ok(!html.includes('drafted once an AI model is available'), 'the misleading copy is gone');
+
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }]);
+  AppView._workshopThemes.pending = true;
+  html = workshopHtml(AppView);
+  assert.match(html, /regrouping…/, 'pending on real themes is a regroup');
+});
+
+test('the theme poll follows a widening schedule that outlasts a full draft, then stops', async () => {
+  // Haiku takes tens of seconds on a full board; four polls six seconds apart
+  // gave up first and left the category grouping in place until the next
+  // navigation.
+  const total = AppView_pollTotal();
+  assert.ok(total >= 120000, `the schedule must cover well over a minute, got ${total}ms`);
+  assert.ok(total <= 5 * 60000, 'and stop within a few minutes');
+  assert.match(APP_VIEW_SRC, /n < AppView\.WORKSHOP_POLL_MS\.length/, 'the poll count is the schedule length');
+  assert.match(APP_VIEW_SRC, /AppView\.WORKSHOP_POLL_MS\[n\]/, 'and each wait reads its slot');
+
+  const timers = [];
+  let calls = 0;
+  const AppView = makeAppView({
+    fetch: async () => { calls++; return { ok: true, json: async () => ({ themes: [], source: 'category', pending: true, lastError: 'boom' }) }; },
+    // Capture the scheduled waits instead of sleeping through them.
+    setTimeout: (_fn, ms) => { timers.push(ms); return 0; },
+  });
+  AppView._getViewMode = () => 'kanban';
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(calls, 1);
+  assert.equal(AppView._workshopThemes.lastError, 'boom', 'the failure reason is carried');
+  assert.deepEqual(timers, [AppView.WORKSHOP_POLL_MS[0]]);
+  AppView._workshopThemes = null;
+  await AppView._loadWorkshopThemes('demo-app', AppView.WORKSHOP_POLL_MS.length);
+  assert.equal(calls, 2);
+  assert.deepEqual(timers, [AppView.WORKSHOP_POLL_MS[0]], 'past the schedule, no further poll');
+});
+
+test('a board reload during a draft joins the running poll chain instead of starting another', async () => {
+  // Every WS-driven _loadDevFeed lands at attempt 0. While a draft is pending
+  // and a re-fetch is already scheduled, that call must not fetch again or
+  // schedule a second chain — the themes endpoint rebuilds the server's
+  // input on every GET, which is what the per-slug throttle exists to bound.
+  const timers = [];
+  let calls = 0;
+  let nextId = 1;
+  const AppView = makeAppView({
+    fetch: async () => { calls++; return { ok: true, json: async () => ({ themes: [], source: 'category', pending: true }) }; },
+    setTimeout: (_fn, ms) => { timers.push(ms); return nextId++; },
+  });
+  AppView._getViewMode = () => 'kanban';
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(calls, 1);
+  assert.equal(timers.length, 1);
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(calls, 1, 'the reloads did not fetch again');
+  assert.equal(timers.length, 1, 'and scheduled nothing');
+  // The chain itself advances: the scheduled step clears the timer first.
+  AppView._workshopPollTimer = null;
+  await AppView._loadWorkshopThemes('demo-app', 1);
+  assert.equal(calls, 2);
+  assert.deepEqual(timers, [AppView.WORKSHOP_POLL_MS[0], AppView.WORKSHOP_POLL_MS[1]]);
+  // A different app is never held back by this one's chain.
+  AppView._workshopThemes = { ...AppView._workshopThemes, slug: 'other-app' };
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(calls, 3);
+});
+
+function AppView_pollTotal() {
+  const m = APP_VIEW_SRC.match(/WORKSHOP_POLL_MS:\s*\[([^\]]+)\]/);
+  assert.ok(m, 'WORKSHOP_POLL_MS is a literal array');
+  return m[1].split(',').map((x) => parseInt(x.trim(), 10)).reduce((a, b) => a + b, 0);
+}
 
 test('an unfolded row is the Activity entry: the sheet, the card, the slot, the thread', () => {
   // The component unfolds from state, so pin the markup at the source: the
