@@ -1241,9 +1241,9 @@
       "expectSelector": ".un-popover[data-surface=\"opaque\"]"
     },
     {
-      "name": "Home card actions menu opens as an action sheet on touch (#929)",
+      "name": "Home card actions stay anchored to the tile on touch (#1616)",
       "path": "/?demo=1&shot=card-menu&un-platform=ios",
-      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
+      "expectSelector": ".un-popover .card-menu-header .card-menu-title"
     },
     {
       "name": "Dev \"+\" menu opens as an action sheet on touch (#929)",

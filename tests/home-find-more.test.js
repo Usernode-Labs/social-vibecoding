@@ -425,10 +425,10 @@ test('renderAppCard: an already-added app renders the ✓ state', () => {
   assert.match(html, /Remove mine from Your apps|Remove Some App from Your apps/);
 });
 
-test('renderAppCard: home mode is unchanged (default, menu badge)', () => {
+test('renderAppCard: home mode leaves the icon free of menu badges (#1616)', () => {
   const Home = makeHome();
   const html = Home.renderAppCard(app({ slug: 'mine', is_collaborator: true }));
-  assert.match(html, /card-menu-btn/);
+  assert.doesNotMatch(html, /card-menu-btn/);
   assert.doesNotMatch(html, /card-add-btn/);
 });
 
