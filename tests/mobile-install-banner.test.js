@@ -277,6 +277,53 @@ test('installOffer: only http(s) destinations are offered', () => {
   }
 });
 
+// ── A beta is not "the app" (#1515) ─────────────────────────────────
+
+const TESTFLIGHT_URL = 'https://testflight.apple.com/join/abc123';
+
+test('#1515: a TestFlight invite is not offered as the app', () => {
+  // `update_url` is one field feeding two consumers. The native update gate
+  // is right to follow a TestFlight link: it is talking to somebody who
+  // already installed that build. This strip is talking to a stranger, and
+  // "join a beta, install TestFlight, accept an invite" is a different offer
+  // from the one a button marked Get appears to make.
+  //
+  // Since #1513 the answer is the home-screen install rather than an empty
+  // strip, which is the better one: the stranger still gets a real way to
+  // install, and it is the path that works on this platform today.
+  const { installOffer } = loadTsx('frontend/src/features/mobile-install/detect.ts');
+  assert.deepEqual(
+    installOffer(env({ urls: { ios: TESTFLIGHT_URL, android: null } })),
+    { kind: 'a2hs', os: 'ios' },
+    'an iPhone visitor is offered the home screen rather than a beta');
+  // The other OS is unaffected: the two listings are independent.
+  assert.deepEqual(
+    installOffer(env({ ua: ANDROID, urls: { ios: TESTFLIGHT_URL, android: PLAY_URL } })),
+    { kind: 'store', os: 'android', url: PLAY_URL });
+});
+
+test('#1515: a real App Store listing is still offered', () => {
+  // The suppression must be narrow. This is the state the request is waiting
+  // for, and it has to keep working the day it arrives.
+  const { installOffer } = loadTsx('frontend/src/features/mobile-install/detect.ts');
+  assert.deepEqual(
+    installOffer(env({ urls: { ios: IOS_URL, android: null } })),
+    { kind: 'store', os: 'ios', url: IOS_URL });
+});
+
+test('#1515: isBetaInvite tests the HOST, and nothing else', () => {
+  const { isBetaInvite } = loadTsx('frontend/src/features/mobile-install/detect.ts');
+  assert.equal(isBetaInvite(TESTFLIGHT_URL), true);
+  assert.equal(isBetaInvite('https://TestFlight.Apple.Com/join/x'), true, 'case-insensitive');
+  // An unrecognised host is somebody's real listing on a domain this has not
+  // heard of. Refusing it would hide a working offer, so it is not refused.
+  assert.equal(isBetaInvite(IOS_URL), false);
+  assert.equal(isBetaInvite(PLAY_URL), false);
+  assert.equal(isBetaInvite('https://apps.example.invalid/beta/testflight'), false,
+    'the word in a path is not the host');
+  assert.equal(isBetaInvite('not a url'), false);
+});
+
 // ── storeLabel(): what the strip calls the destination ──────────────
 
 test('storeLabel: a TestFlight invite is not called the App Store', () => {
