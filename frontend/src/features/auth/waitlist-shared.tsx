@@ -9,7 +9,7 @@
  * document, shared by whichever screen asks first.
  */
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
 /** `GET /api/public/waitlist/options`. Every field is optional by design. */
 export interface WaitlistOptions {
@@ -169,4 +169,42 @@ export function msgClass(tone: MsgTone | null): string {
   if (tone === 'error') return 'text-sm mt-3 text-red-700 dark:text-red-400';
   if (tone === 'warn') return 'text-sm mt-3 text-amber-800 dark:text-amber-400';
   return 'text-sm mt-3 text-emerald-700 dark:text-emerald-400';
+}
+
+/**
+ * Which stage-2 tokens have been answered during THIS page session (#1535).
+ *
+ * The two screens are siblings, and the offer card on the waitlist screen
+ * outlives a trip to the survey and back: confirm, follow "Answer them now",
+ * save, press back, and the same card is still inviting you to answer
+ * questions you just answered. It has no way to know, because the answers are
+ * the other screen's business.
+ *
+ * So the survey publishes the fact here and the offer card subscribes. A page
+ * session is the right lifetime: it is exactly as long as the stale card can
+ * survive. A returning visit re-reads the survey from the server anyway, and
+ * the offer card is only raised by confirming in-session.
+ *
+ * The server snapshot is `false` on purpose — the prerendered document knows
+ * of no answered token, so the first render must be the "Answer them now"
+ * one or hydration mismatches (AGENTS.md).
+ */
+const answeredTokens = new Set<string>();
+const answeredListeners = new Set<() => void>();
+
+export function markSurveyAnswered(token: string | null | undefined): void {
+  if (!token || answeredTokens.has(token)) return;
+  answeredTokens.add(token);
+  answeredListeners.forEach((notify) => notify());
+}
+
+export function useSurveyAnswered(token: string | null): boolean {
+  return useSyncExternalStore(
+    useCallback((notify: () => void) => {
+      answeredListeners.add(notify);
+      return () => { answeredListeners.delete(notify); };
+    }, []),
+    () => !!token && answeredTokens.has(token),
+    () => false,
+  );
 }
