@@ -579,6 +579,17 @@ app.use(topicAttributeRoutes(config));
 app.use(boardOrderRoutes(config));
 app.use(reportAiRoutes(config));
 app.use(workshopThemesRoutes(config));
+// The Workshop's placement stage runs when a card arrives on or leaves a
+// board — which every route and service announces through ws.pushSessionUpdate
+// / pushIssueUpdate — on whichever instance handled the change (the row's
+// lease keeps two from racing). Registered here, not under the leader, for
+// that reason; the daily re-draft is the leader's sweep below.
+{
+  const workshopThemes = require('./src/services/workshop-themes');
+  if (typeof ws.onBoardChange === 'function') {
+    ws.onBoardChange((info) => workshopThemes.noteBoardChange(getPool(config), info));
+  }
+}
 app.use(reportSnapshotRoutes(config));
 // Home-screen panels (#911): the challenges card's data + its per-user
 // show/hide. Me-scoped reads, so it sits behind authMiddleware like the
@@ -1016,6 +1027,11 @@ async function becomeLeader() {
   // period, and hard-purges archived CC volumes once their retention
   // window elapses. Day-scale, so it polls on its own slow interval.
   startStalePrSweeper(config);
+
+  // The Workshop's theme sweep: every app opened in the last week gets its
+  // board re-checked hourly, and its themes re-drafted once a day when
+  // anything changed, or sooner when a tenth of the board did.
+  startWorkshopThemeSweeper(config);
 
   // #907: release local coding-agent leases whose machine stopped
   // heartbeating, and fail the turn they were holding.
@@ -4919,6 +4935,38 @@ function startStalePrSweeper(config) {
   }, config.staleSweepIntervalMs).unref();
 }
 
+let workshopThemeSweeperHandle = null;
+
+// The Workshop's theme sweep (services/workshop-themes.js sweep): the daily
+// re-draft's clock, and the backstop for cards that arrived without a
+// broadcast (an issue filed directly on GitHub). Leader-only, like the
+// other sweepers: two instances re-drafting the same app is two model
+// calls for one grouping. WORKSHOP_THEMES_SWEEP_INTERVAL_MS=0 disables it;
+// the change hook and the GET backstop still place cards.
+function startWorkshopThemeSweeper(config) {
+  if (workshopThemeSweeperHandle) return;
+  if (!(config.workshopSweepIntervalMs > 0)) {
+    log.info('server', 'Workshop theme sweeper disabled');
+    return;
+  }
+  const pool = getPool(config);
+  const workshopThemes = require('./src/services/workshop-themes');
+  log.info('server', 'Workshop theme sweeper started', { intervalMs: config.workshopSweepIntervalMs });
+  let running = false;
+  workshopThemeSweeperHandle = setInterval(async () => {
+    if (lifecycle.isShuttingDown() || running) return;
+    running = true;
+    try {
+      const out = await workshopThemes.sweep({ pool, isShuttingDown: () => lifecycle.isShuttingDown() });
+      if (out && out.apps) log.info('workshop-themes', 'sweep done', out);
+    } catch (err) {
+      log.warn('server', 'Workshop theme sweep failed', { err: err.message });
+    } finally {
+      running = false;
+    }
+  }, config.workshopSweepIntervalMs).unref();
+}
+
 // Graceful shutdown: mark drain state so new chats/app-creates/builds get
 // 503'd, wait up to DRAIN_TIMEOUT_MS for in-flight HTTP handlers to
 // finish flushing DB writes, then exit.
@@ -5003,6 +5051,10 @@ async function cleanup() {
   if (stalePrSweeperHandle) {
     clearInterval(stalePrSweeperHandle);
     stalePrSweeperHandle = null;
+  }
+  if (workshopThemeSweeperHandle) {
+    clearInterval(workshopThemeSweeperHandle);
+    workshopThemeSweeperHandle = null;
   }
   if (governanceApplyTickerHandle) {
     clearInterval(governanceApplyTickerHandle);

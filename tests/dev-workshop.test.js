@@ -4,8 +4,10 @@
 //
 //   * The view model (`AppView._workshopView`) groups the SAME cards the
 //     Board draws by the server's themes, keyed the way the server keys them,
-//     and never loses a card: one the themes do not name lands under "Not yet
-//     grouped", and one they name but the board no longer has is not drawn.
+//     and never loses a card: one the server has not placed yet lands under
+//     "Being placed" (marked on the row), one its placer declined under "Not
+//     yet grouped", one they name but the board no longer has is not drawn,
+//     and the viewer's own private session is placed by the issue it links.
 //   * The two strips: proposals waiting on THIS viewer's vote are pinned
 //     whatever the filters say; "since your last visit" is computed against
 //     a baseline read once per page session, and a first visit gets the
@@ -108,9 +110,10 @@ function seed(AppView) {
   AppView._devDataReady = true;
 }
 
-const themes = (list) => ({
-  slug: 'demo-app', source: 'ai', generatedAt: '2026-09-06T00:00:00Z', stale: false, pending: false,
-  at: Date.now(), themes: list,
+const themes = (list, extra) => ({
+  slug: 'demo-app', source: 'ai', generatedAt: '2026-09-06T00:00:00Z', discoveredAt: '2026-09-06T00:00:00Z',
+  stale: false, pending: false, pendingStage: null, lastError: null, coverage: null, unplaced: [],
+  at: Date.now(), themes: list, ...(extra || {}),
 });
 
 // ── item keys ────────────────────────────────────────────────────────
@@ -141,8 +144,8 @@ test('cards land in their theme, by lane, and nothing is lost', () => {
   assert.equal(v.slug, 'demo-app');
   assert.equal(v.canPost, true);
   const names = v.themes.map((t) => t.name);
-  assert.deepEqual(names, ['Theming', 'Not yet grouped'],
-    'a theme whose every card is gone is not drawn; the unnamed issue goes to the remainder');
+  assert.deepEqual(names, ['Theming', 'Being placed'],
+    'a theme whose every card is gone is not drawn; the card the server has not placed yet is on its way');
   const theming = v.themes[0];
   assert.equal(theming.saying, 'Dark mode should stick.');
   const lane = (t, k) => t.lanes.find((l) => l.key === k);
@@ -153,9 +156,50 @@ test('cards land in their theme, by lane, and nothing is lost', () => {
   assert.deepEqual(plain(theming.people), ['alice', 'carol'], 'alice filed and shipped, carol proposed');
   const rest = v.themes[1];
   assert.equal(rest.ungrouped, true);
+  assert.equal(rest.placing, 1);
   assert.deepEqual(plain(lane(rest, 'open').rows.map((r) => r.key)), ['issue:13']);
+  assert.equal(lane(rest, 'open').rows[0].placing, true, 'the row says so');
+  assert.equal(v.meta.placing, 1);
   // Lanes are in stage order, review first.
   assert.deepEqual(plain(theming.lanes.map((l) => l.key)), ['review', 'underway', 'open', 'shipped']);
+
+  // The server's placer declined it: not on its way, not yet grouped.
+  AppView._workshopThemes.unplaced = ['issue:13'];
+  const declined = AppView._workshopView();
+  assert.deepEqual(declined.themes.map((t) => t.name), ['Theming', 'Not yet grouped']);
+  assert.equal(declined.themes[1].placing, 0);
+  assert.equal(lane(declined.themes[1], 'open').rows[0].placing, undefined);
+  assert.match(declined.themes[1].description, /count towards the next re-draft/);
+});
+
+test('the viewer\'s own private session is placed by the issue it links; without one it waits, unmarked', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._mySessions = [
+    { id: 57, session_title: 'Fixing dark mode', status: 'active', linked_issues: ['12'], created_at: at(1), last_activity_at: at(0) },
+    { id: 58, session_title: 'Something else', status: 'active', linked_issues: [], created_at: at(1), last_activity_at: at(0) },
+  ];
+  AppView._workshopThemes = themes([{ id: 'theming', name: 'Theming', items: ['issue:12', 'session:34', 'session:78', 'issue:13'] }]);
+  const v = AppView._workshopView();
+  const lane = (t, k) => t.lanes.find((l) => l.key === k);
+  assert.deepEqual(v.themes.map((t) => t.name), ['Theming', 'Not yet grouped']);
+  assert.deepEqual(plain(lane(v.themes[0], 'underway').rows.map((r) => r.key)), ['my-session:57'],
+    'the linked session sits with its issue, though the server never saw it');
+  assert.deepEqual(plain(lane(v.themes[1], 'underway').rows.map((r) => r.key)), ['my-session:58']);
+  assert.equal(lane(v.themes[1], 'underway').rows[0].placing, undefined, 'a private session is never "being placed": the server cannot see it');
+  assert.equal(v.themes[1].placing, 0);
+});
+
+test('a failed themes fetch is no themes, not themes that cover nothing', async () => {
+  const AppView = makeAppView({ fetch: async () => { throw new Error('offline'); } });
+  seed(AppView);
+  AppView._getViewMode = () => 'kanban';
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(AppView._workshopThemes.failed, true);
+  assert.equal(AppView._workshopThemeData(), null);
+  const v = AppView._workshopView();
+  assert.deepEqual(plain(v.themes.map((t) => t.name)), ['Everything on the board']);
+  assert.equal(v.meta.source, null);
 });
 
 test('before the themes arrive, everything sits under one group rather than a false "not yet grouped"', () => {
@@ -293,6 +337,9 @@ test('the theme filter narrows by membership, and widens when it cannot be appli
   assert.equal(AppView._devCardMatches('issue', AppView._ghIssues[0], f), true);
   assert.equal(AppView._devCardMatches('issue', AppView._ghIssues[1], f), false);
   assert.equal(AppView._devCardMatches('proposal', AppView._proposals[0], f), false);
+  assert.equal(AppView._devCardMatches('proposal', { id: 99, linked_issues: ['12'], status: 'promoted' }, f), true,
+    'a card the themes do not name is in the theme of the issue it links, as on the Workshop');
+  assert.equal(AppView._devCardMatches('proposal', { id: 98, linked_issues: [] }, f), false);
   AppView._workshopThemes = null;
   assert.equal(AppView._devCardMatches('issue', AppView._ghIssues[1], f), true,
     'no themes loaded → the filter cannot hide anything');
@@ -375,10 +422,51 @@ test('the footnote says what is actually happening to the category grouping', ()
   assert.match(html, /No AI model is configured, so items are grouped by their voted category\./);
   assert.ok(!html.includes('drafted once an AI model is available'), 'the misleading copy is gone');
 
-  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }]);
-  AppView._workshopThemes.pending = true;
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }],
+    { pending: true, pendingStage: 'placement', coverage: { total: 4, placed: 1, unplaced: 0, pending: 3 } });
   html = workshopHtml(AppView);
-  assert.match(html, /regrouping…/, 'pending on real themes is a regroup');
+  assert.match(html, /placing new cards…/, 'pending placement on real themes says so');
+  assert.match(html, /Themes were drafted \d+[hd] ago and are re-drafted daily, or sooner when a tenth of the board changes\. 3 new cards are being placed\./);
+  assert.match(html, /<div class="dev-ws-theme-name">Being placed<\/div>/);
+  // The row's marker: the pseudo-theme is folded on a plain paint, so the
+  // marker is pinned at the source, on the folded row.
+  assert.match(WORKSHOP, /\{row\.placing \? <span className="dev-ws-placing"[^>]*>placing…<\/span> : null\}/);
+  assert.match(CSS, /\.dev-ws-placing \{/);
+
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }],
+    { pending: true, pendingStage: 'discovery', unplaced: ['issue:13', 'session:34', 'session:78'], coverage: { total: 4, placed: 1, unplaced: 3, pending: 0 }, lastError: 'placement: boom' });
+  html = workshopHtml(AppView);
+  assert.match(html, /re-drafting themes…/, 'a pending discovery on real themes is a re-draft');
+  assert.match(html, /3 cards did not fit a theme and wait for the next draft\. The last attempt failed \(placement: boom\); it is retried shortly\./);
+  assert.match(html, /<div class="dev-ws-theme-name">Not yet grouped<\/div>/);
+  assert.ok(!html.includes('dev-ws-placing'), 'declined cards wear no marker');
+});
+
+test('a workshop_update over the WS re-fetches past the throttle, for the open app only', async () => {
+  let calls = 0;
+  const AppView = makeAppView({
+    fetch: async () => { calls++; return { ok: true, json: async () => ({ themes: [], source: 'ai', pending: false, coverage: { total: 0, placed: 0, unplaced: 0, pending: 0 }, unplaced: [] }) }; },
+  });
+  AppView._getViewMode = () => 'kanban';
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(calls, 1);
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(calls, 1, 'a fresh answer is not re-fetched inside the throttle');
+  AppView.applyWorkshopUpdate({ appSlug: 'other-app', stage: 'placement' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(calls, 1, 'another app\'s grouping is not this page\'s');
+  AppView.applyWorkshopUpdate({ appSlug: 'demo-app', stage: 'placement' });
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(calls, 2, 'the server wrote a grouping: fetch it now');
+  assert.deepEqual(plain(AppView._workshopThemes.coverage), { total: 0, placed: 0, unplaced: 0, pending: 0 });
+  // And the WS dispatch reaches it.
+  const APP_SRC = read('public/js/app.js');
+  assert.match(APP_SRC, /case 'workshop_update':\s*App\.handleWorkshopUpdate\(data\);/);
+  assert.match(APP_SRC, /AppView\.applyWorkshopUpdate\(data\)/);
+  const WS_SRC = read('src/services/ws.js');
+  assert.match(WS_SRC, /function pushWorkshopUpdate\(data\) \{\s*broadcastGlobalScoped\(\{ type: 'workshop_update'/);
+  assert.match(WS_SRC, /function pushSessionUpdate\(data\) \{[\s\S]*?noteBoardChange\(data\);\s*\}/, 'a session change reaches the board listeners');
+  assert.match(WS_SRC, /function pushIssueUpdate\(data\) \{[\s\S]*?noteBoardChange\(data\);\s*\}/, 'and so does an issue change');
 });
 
 test('the theme poll follows a widening schedule that outlasts a full draft, then stops', async () => {

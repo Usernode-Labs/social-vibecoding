@@ -60,11 +60,20 @@ function workshopThemesRoutes(config) {
         themes,
         source: result.source,
         generatedAt: result.generatedAt,
+        // When the theme definitions were last drafted (the placements
+        // move on their own between drafts).
+        discoveredAt: result.discoveredAt || null,
         stale: result.stale,
         pending: result.pending,
-        // The last generation failure's message, when the grouping shown is
-        // the fallback because of it — so the page can say so.
+        // Which stage is running or was just started: 'discovery' (the
+        // definitions) or 'placement' (new cards into them).
+        pendingStage: result.pendingStage || null,
+        // The last failed stage's message, so the page can say so.
         lastError: result.lastError || null,
+        // How much of the board the themes hold: placed, declined by the
+        // placer (`unplaced`, also named by key), and not yet placed.
+        coverage: result.coverage || null,
+        unplaced: Array.isArray(result.unplaced) ? result.unplaced : [],
       });
     } catch (err) {
       log.error('workshop-themes', 'GET failed', { message: err.message });

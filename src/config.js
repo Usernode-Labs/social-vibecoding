@@ -503,6 +503,9 @@ function load() {
     // How often the stale-PR / archived-GC sweeper runs. These actions
     // are day-scale, so it polls infrequently. Default 1h.
     staleSweepIntervalMs: parseInt(process.env.STALE_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
+    // The Workshop theme sweep (services/workshop-themes.js): re-checks every
+    // app opened in the last week, re-drafting themes at most daily.
+    workshopSweepIntervalMs: parseInt(process.env.WORKSHOP_THEMES_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
     // #1010: how often the FAST governance-apply ticker runs. The hourly
     // sweeper above also applies window-elapsed governance proposals, but an
     // hour of dead air after a close proposal's countdown reaches zero is
