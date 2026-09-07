@@ -6,6 +6,10 @@ CREATE TABLE IF NOT EXISTS users (
   is_admin        BOOLEAN DEFAULT FALSE,
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
+-- #1583: account-wide, durable first-feedback acknowledgement. Historical
+-- feedback was not recorded per user; existing accounts start tracking at
+-- rollout. Written only after GitHub has accepted a feedback issue.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS first_feedback_at TIMESTAMPTZ;
 -- #30: optional user-provided Anthropic API key. `anthropic_key_enc`
 -- holds the encrypted payload (v1:<iv>:<tag>:<ct>, base64). We also
 -- keep the last 4 chars unencrypted purely so the UI can show
