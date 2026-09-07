@@ -300,10 +300,11 @@ test('a failed navigation fails every check that shared the URL', async () => {
 });
 
 test('a hung group fails all its unreported checks on the scaled deadline', async () => {
-  // The group deadline is testTimeoutMs + 1s per extra check (assertions
-  // are cheap but not free). Two checks share the slow URL, so the budget
-  // here is 120 + 1000 = 1120ms — the 2s hang must be cut off at that
-  // deadline, and BOTH slow-URL checks must get a "did not finish" frame.
+  // The group deadline is testTimeoutMs for the checks, testTimeoutMs again
+  // for the group's one navigation, and 1s per extra check (assertions are
+  // cheap but not free). Two checks share the slow URL, so the budget here is
+  // 120 + 120 + 1000 = 1240ms — the 2s hang must be cut off at that deadline,
+  // and BOTH slow-URL checks must get a "did not finish" frame.
   const read = collect();
   const browser = makeBrowser({ delays: { 'http://staging/slow': 2000 } });
   const tests = [
@@ -947,4 +948,33 @@ test('the suite deadline leaves headroom inside the container run timeout', () =
     'the suite budget must expire before the container is killed');
   assert.ok(runTimeout - testsDeadlineMs({}) >= 120000,
     'and with enough room left for the media pass that runs before it');
+});
+
+test('a group budgets its one navigation, so a lone check can outlast NAV_TIMEOUT_MS', () => {
+  // The bug this pins: `perTestMs` is the PER-CHECK wall clock, but the group
+  // budget spent it on the cold load, the settle AND the first check's
+  // assertion together. Only checks PAST the first bought more time, so a
+  // group of one — 146 of this repo's 236 declared routes — had to fit a
+  // navigation into a budget that allowed nothing for it, while the runner's
+  // own comment calls the navigation the expensive part and each extra check
+  // milliseconds.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'capture/capture.js'), 'utf8');
+  const formula = src.slice(src.indexOf('const groupBudgetMs = perTestMs'));
+  assert.match(formula.slice(0, 240), /\+ navBudgetMs/,
+    'the navigation every group performs has its own term');
+  assert.match(src, /const navBudgetMs = Number\(o\.navBudgetMs\) > 0 \? Number\(o\.navBudgetMs\) : perTestMs;/,
+    'defaulted to perTestMs so it scales with the knob callers already tune');
+
+  // The property that makes a slow load REPORTABLE. NAV_TIMEOUT_MS bounds the
+  // navigation; while it exceeded the group's whole budget the group race
+  // always resolved first, so a page that was merely slow came back as "did
+  // not finish within 25s" — which cannot tell a load that never landed from
+  // an assertion that failed. A lone group's ceiling must now clear it.
+  const navTimeout = Number(/const NAV_TIMEOUT_MS = (\d+);/.exec(src)[1]);
+  const perTest = testTimeoutMs({});
+  const loneGroupBudget = perTest + perTest; // one check, one cohort
+  assert.ok(loneGroupBudget > navTimeout,
+    `a single-check group gets ${loneGroupBudget}ms, which must exceed NAV_TIMEOUT_MS ${navTimeout}ms`);
 });
