@@ -3180,7 +3180,7 @@
     },
     {
       "name": "Browse draws the first-letter fallback tile for a seeded app (#1120)",
-      "path": "/#apps",
+      "path": "/?sort=recommended&shot=browse-more#apps",
       "expectSelector": "#browse-list .browse-row .app-icon-tile[data-icon=\"letter\"]",
       "expectText": "Staging demo app — letter tile"
     },

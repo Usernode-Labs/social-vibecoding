@@ -265,7 +265,7 @@ test('demo/broken classification and clearing a review do not need a running dep
       assert.equal((await review(server, { status })).status, 200);
       const update = queries.find((q) => /^UPDATE apps/.test(q.sql));
       assert.deepEqual(update.params, [11, status]);
-      assert.match(update.sql, /WHEN \$2 = 'unreviewed' THEN NULL/);
+      assert.match(update.sql, /WHEN \$2::text = 'unreviewed' THEN NULL/);
     }
   } finally { server.close(); }
 });

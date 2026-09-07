@@ -913,9 +913,9 @@ function adminRoutes(config) {
         }
       }
       await client.query(
-        `UPDATE apps SET directory_review_status = $2,
-           directory_reviewed_at = CASE WHEN $2 = 'unreviewed' THEN NULL ELSE NOW() END,
-           directory_reviewed_sha = CASE WHEN $2 = 'unreviewed' THEN NULL ELSE main_sha END
+        `UPDATE apps SET directory_review_status = $2::text,
+           directory_reviewed_at = CASE WHEN $2::text = 'unreviewed' THEN NULL ELSE NOW() END,
+           directory_reviewed_sha = CASE WHEN $2::text = 'unreviewed' THEN NULL ELSE main_sha END
          WHERE id = $1`, [app.id, status]
       );
       await client.query('COMMIT');

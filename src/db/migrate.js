@@ -5618,19 +5618,11 @@ async function seedStagingHomeLayout(pool, config) {
   }
 }
 
-// Home screen's "Find more apps" row + the #admin/featured-apps section.
-// `featured_apps` is created by this change, so it does not exist in the
-// production database a staging clone starts from — the row, the browse
-// screen's featured-first ordering and the admin list would all render
-// empty in every PR preview.
-//
-// Candidate order: the demo apps seedStagingYourApps creates first (named
-// "Staging demo …", so an obviously-fake row leads the preview), then any
-// real cloned public app as a fallback — that second source is what keeps
-// the row populated when the fixture seed above couldn't run (it needs
-// prod-cloned users, which a fresh local DB doesn't have). Either way the
-// row renders on a plain `/` visit with no ?demo=1; the request-time demo
-// tiles in routes/apps.js demoIconApps cover the ?demo=1 path.
+// Home screen's Discover row + the #admin/featured-apps section. Append the
+// synthetic apps created by seedStagingYourApps, even when the clone already
+// has a featured list: those real apps may not have working reviews yet.
+// Preserve their ordering and review state. Only the synthetic fixtures are
+// certified here, and ON CONFLICT keeps their positions on subsequent boots.
 //
 // Chess Arena is deliberately NOT a candidate: seedStagingYourApps
 // favorites it for every capture identity, so leaving it out exercises the
@@ -5642,7 +5634,6 @@ async function seedStagingHomeLayout(pool, config) {
 async function seedStagingFeaturedApps(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
-  const FEATURED_SEED_COUNT = 3;
   try {
     // #1523: explicitly synthetic fixtures for captures and the reversible
     // Discover-add check. Never certify a production-cloned app as tested.
@@ -5656,38 +5647,22 @@ async function seedStagingFeaturedApps(pool) {
          AND created_by = (SELECT id FROM users WHERE username = 'staging-demo-user')
          AND directory_review_status = 'unreviewed'`
     );
-    // Bail if an earlier boot (or an admin, on a long-lived preview)
-    // already curated the list — re-seeding would fight their ordering.
-    const { rows: existing } = await pool.query('SELECT 1 FROM featured_apps LIMIT 1');
-    if (existing.length) {
-      log.info('db', 'Staging featured-apps already populated — seed skipped');
-      return;
-    }
     const { rows: candidates } = await pool.query(
-      `SELECT id FROM (
-         SELECT id, 0 AS tier, id AS tiebreak FROM apps
-          WHERE slug IN ('staging-demo-puzzle-chain', 'staging-demo-word-garden',
-                         'staging-demo-pixel-racer')
-         UNION ALL
-         SELECT id, 1 AS tier, id AS tiebreak FROM apps
-          WHERE NOT self_hosted
-            AND view_visibility = 'public'
-            AND status = 'running'
-            AND slug NOT IN ('staging-demo-chess-arena', 'staging-demo-puzzle-chain',
-                             'staging-demo-word-garden', 'staging-demo-pixel-racer')
-       ) c
-       ORDER BY tier ASC, tiebreak ASC
-       LIMIT $1`,
-      [FEATURED_SEED_COUNT]
+      `SELECT id FROM apps
+        WHERE slug IN ('staging-demo-puzzle-chain', 'staging-demo-word-garden',
+                       'staging-demo-pixel-racer')
+          AND created_by = (SELECT id FROM users WHERE username = 'staging-demo-user')
+          AND directory_review_status = 'working'
+        ORDER BY id ASC`
     );
-    for (let i = 0; i < candidates.length; i += 1) {
+    for (const candidate of candidates) {
       // ON CONFLICT keeps this idempotent across the per-push container
       // rebuilds that re-run this whole file.
       await pool.query(
         `INSERT INTO featured_apps (app_id, sort_order, created_by)
-         VALUES ($1, $2, NULL)
+         SELECT $1, COALESCE(MAX(sort_order), -1) + 1, NULL FROM featured_apps
          ON CONFLICT (app_id) DO NOTHING`,
-        [candidates[i].id, i]
+        [candidate.id]
       );
     }
     log.info('db', 'Staging featured-apps fixtures seeded', { rows: candidates.length });
