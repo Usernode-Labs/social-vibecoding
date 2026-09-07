@@ -444,12 +444,6 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   if (/text\/event-stream/i.test(acceptHeader || '')) return 'bypass';
   if (/^\/api\/sessions\/[^/]+\/events$/.test(p)) return 'bypass';
 
-  if (mode === 'navigate') {
-    if (NO_FALLBACK_PAGES.includes(p)) return 'bypass';
-    if (NO_FALLBACK_PREFIXES.some((pre) => p.startsWith(pre))) return 'bypass';
-    return 'navigate';
-  }
-
   // Local-dev mock namespace and short-lived credentials.
   if (p.startsWith('/__mock/')) return 'bypass';
   if (p === '/api/iframe-token') return 'bypass';
@@ -477,6 +471,16 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // Auth endpoints are online-only — EXCEPT /api/auth/me, which is cached
   // so the SPA's boot check succeeds offline for a logged-in user.
   if (p.startsWith('/api/auth/') && p !== '/api/auth/me') return 'bypass';
+
+  // Online-only rules must run before this fallback. OAuth Connect and
+  // callback URLs are document navigations too: serving index.html after
+  // 200ms replaces their redirect with the app, even while the network
+  // request creates an unfinished OAuth state (#1543).
+  if (mode === 'navigate') {
+    if (NO_FALLBACK_PAGES.includes(p)) return 'bypass';
+    if (NO_FALLBACK_PREFIXES.some((pre) => p.startsWith(pre))) return 'bypass';
+    return 'navigate';
+  }
 
   // A native foreground push is an explicit freshness signal. Its feed read
   // must reach the network: returning the ordinary offline API-cache fallback
