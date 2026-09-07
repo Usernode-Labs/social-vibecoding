@@ -30,10 +30,27 @@ export interface InstallEnv {
   urls: StoreUrls | null;
 }
 
-export interface InstallOffer {
-  os: MobileOs;
-  url: string;
-}
+/**
+ * What the strip should offer this visitor.
+ *
+ * Two kinds, because there are two ways onto a phone's home screen and only
+ * one of them needs anybody to have published anything (#1513):
+ *
+ *   `store` — a real listing exists for this OS. Unchanged behaviour: the
+ *             strip links out to it.
+ *   `a2hs`  — no listing does, so the offer is the PWA the platform already
+ *             ships. `public/manifest.webmanifest` and the service worker
+ *             have been there all along; nothing about "add to home screen"
+ *             was waiting on an App Store review.
+ *
+ * Before this, no listing meant no offer at all: `installOffer` returned null
+ * and the strip stayed inert markup. That was right when the strip could only
+ * say "get the app on the App Store", and wrong once you notice the app is
+ * already installable.
+ */
+export type InstallOffer =
+  | { kind: 'store'; os: MobileOs; url: string }
+  | { kind: 'a2hs'; os: MobileOs };
 
 /**
  * The fallback name of each platform's store, when the URL says nothing more.
@@ -126,7 +143,24 @@ export function installOffer(env: InstallEnv): InstallOffer | null {
   // visitor must not be shown a control that goes nowhere while only the iOS
   // listing exists.
   const url = safeStoreUrl(env.urls[os]);
-  if (!url) return null;
+  // #1513: no listing for THIS OS is not "nothing to offer" any more. The
+  // platform is an installable PWA on both, so the fallback is the home-screen
+  // install rather than an empty strip.
+  if (!url) return { kind: 'a2hs', os };
 
-  return { os, url };
+  return { kind: 'store', os, url };
 }
+
+/**
+ * How you add this to a home screen, per OS.
+ *
+ * Instructions rather than a prompt, deliberately. iOS Safari exposes no
+ * install API at all — Share, then Add to Home Screen, is the only path there
+ * is — and Android's `beforeinstallprompt` fires only when Chrome decides it
+ * should, so a control wired to it is a control that is sometimes missing.
+ * Telling somebody where the menu item is works on both, every time.
+ */
+export const A2HS_STEPS: Record<MobileOs, string> = {
+  ios: 'Tap Share, then Add to Home Screen.',
+  android: 'Open the browser menu, then Add to Home screen.',
+};
