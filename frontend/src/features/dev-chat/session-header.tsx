@@ -175,14 +175,17 @@ function ModeSwitch({ busy }: { busy: boolean }): ReactNode {
     return () => ro?.disconnect();
   }, [seeing, busy, previewUrl]);
 
-  // No preview yet — the chip alone, exactly as the strip drew it before.
+  // #1594: with no preview to switch to, Building is status, not an action.
+  // Keep it compact and neutral; the accent-filled controls remain clickable.
   if (!previewUrl) {
     if (!busy) return null;
     return (
       <span
         id="dc-mode-chip"
-        className="text-xs font-semibold px-2.5 py-1 rounded-full bg-violet-600 text-white shrink-0"
+        role="status"
+        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-zinc-100 text-xs font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300 shrink-0 cursor-default"
       >
+        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" aria-hidden="true" />
         Building
       </span>
     );
