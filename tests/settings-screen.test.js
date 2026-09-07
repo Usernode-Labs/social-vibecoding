@@ -1735,17 +1735,19 @@ test('sign-out closes once, then uses terminal protocol 2 or web navigation',
     'web-session deletion follows the closed native boundary');
   assert.match(logout, /if \(preflight\.nativeTerminal\)/);
   assert.match(logout, /return NativeChrome\.commitNativeLogout\(\)/);
-  // #1708 moved every sign-out onto the public landing page and changed HOW
-  // it gets there: `location.replace(LANDING_URL)`, not `location.href = …`.
-  // The destination is the same (`LANDING_URL` is '/'), so the difference is
-  // entirely the history entry — `href` leaves one, and Back through it puts
-  // a signed-out browser on the signed-in document it just tore down. Assert
-  // the call that is actually there, and assert the one that must not come
-  // back, because a silent revert to `href` would still land on the right
-  // page and pass a destination-only check.
+  // #1524 turned the web path's `location.href = '/'` into a REPLACE onto the
+  // landing page, on both branches: an entry pushed by an assignment lets Back
+  // restore the signed-in document straight out of the BFCache. #1708 later
+  // confirmed every sign-out still goes through that same replace onto the
+  // public landing page. Assert the constant too, so the destination cannot
+  // drift off the landing page while the navigation still reads correct, and
+  // assert the calls that must not come back, because a silent revert to
+  // `href`/`assign` would still land on the right page and pass a
+  // destination-only check.
+  assert.match(settingsJs, /const LANDING_URL = '\/';/);
   assert.match(logout, /window\.location\.replace\(LANDING_URL\)/);
-  assert.doesNotMatch(logout, /window\.location\.href\s*=/,
-    'a sign-out must not leave a history entry back into the signed-in document');
+  assert.doesNotMatch(logout, /window\.location\.(href|assign)\b/,
+    'a pushed entry would let Back restore the signed-in document (#1524)');
   assert.doesNotMatch(settingsJs,
     /_confirmDegradedSignOut|_bestEffortNativeLogout|NATIVE_SIGNOUT_NOTICE_KEY/,
     'legacy split/fallback logout machinery is removed, not maintained');

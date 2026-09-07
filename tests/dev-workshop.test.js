@@ -416,3 +416,27 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
     assert.ok(!/#dev-feed\b/.test(t.expectSelector || ''), `${t.name}: no check selects the retired #dev-feed`);
   }
 });
+
+// A check that names ONE card's text cannot ride the lander's route.
+// ThemeCard draws its lanes only while it is unfolded, and DevWorkshop
+// unfolds exactly the first theme, so at most a quarter of the board's cards
+// are in the DOM here. Which quarter is not fixed either: the staging demo
+// grouping deals the real items round-robin into four themes
+// (services/workshop-themes.js) and sortThemes puts whichever of them has the
+// most distinct people first, both of which move as the board moves.
+//
+// So such a check passes or fails by the hour rather than by the diff. #1704
+// moved thirty-seven board-card checks onto #app/<slug>/board for exactly
+// this reason and left five behind; two of them ("Shared demo session renders
+// in the In progress area" and "Shared session cards show the owner
+// subtitle") passed on #1704 and #1709 and were red on #1623 and #1710 with
+// the same manifest. The Board's In-progress column renders every card, which
+// is what all five names describe.
+test('no declared check asserts a card\'s text at the lander\'s own route', () => {
+  const lander = /^\/\?demo=1#app\/[\w-]+\/(dev|workshop)$/;
+  const offenders = dapp.tests
+    .filter((t) => lander.test(t.path) && t.expectText && !t.expectSelector)
+    .map((t) => `${t.name} (${t.path})`);
+  assert.deepEqual(offenders, [],
+    'these assert one card\'s text where only the first theme\'s rows render — address the Board route');
+});
