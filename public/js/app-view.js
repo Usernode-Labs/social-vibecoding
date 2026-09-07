@@ -9025,6 +9025,25 @@ const AppView = {
   // weight: a BLOCKING failure is why the merge is stuck, an ADVISORY failure
   // is a check that has never been seen passing (it reports, it does not
   // block), and a pass is context. Ordered by that weight, and the passes —
+  // A flake rate worth printing. Below the floor a check reads as reliable
+  // and the chip would be noise on every row; the server has already
+  // withheld a rate for a check with too few observations to judge.
+  FLAKE_CHIP_FLOOR: 0.05,
+  _checkReason(r) {
+    const base = (r && r.failureReason) ? String(r.failureReason).slice(0, 500) : null;
+    const runs = r && Number(r.runs);
+    const fails = r && Number(r.fails);
+    if (!Number.isFinite(runs) || runs < 2 || !Number.isFinite(fails) || fails < 1) return base;
+    const lead = `Failed ${fails} of ${runs} runs on this build.`;
+    return base ? `${lead} ${base}` : lead;
+  },
+
+  _flakePercent(rate) {
+    const n = Number(rate);
+    if (!Number.isFinite(n) || n < AppView.FLAKE_CHIP_FLOOR) return null;
+    return Math.min(99, Math.round(n * 100));
+  },
+
   // the bulk — fold away so the block opens on what someone has to act on.
   _checksVerdictView(pr) {
     if (!pr) return null;
@@ -9039,7 +9058,18 @@ const AppView = {
       advisory: !(r && r.status === 'pass') && !!(r && r.advisory),
       name: String((r && r.name) || 'test'),
       path: (r && r.path) ? String(r.path) : null,
-      reason: (r && r.failureReason) ? String(r.failureReason).slice(0, 500) : null,
+      // The share of this check's recorded runs that failed, as a percent,
+      // or null when it has never failed or has too little history to say.
+      // A check that gates a merge while failing one run in six is the one
+      // nobody could see before; the chip is the whole point of recording
+      // pass_count and fail_count.
+      flaky: AppView._flakePercent(r && r.flakeRate),
+      // A check dispatched several times in one run (its first appearance)
+      // that disagreed with itself is the loudest flake signal there is,
+      // and unlike the lifetime rate it needs no history to read. It leads
+      // the reason, because "it failed" and "it failed once out of three"
+      // call for different next moves.
+      reason: AppView._checkReason(r),
       errors: (Array.isArray(r && r.consoleErrors) ? r.consoleErrors : []).map((e) => ({
         kind: (e && e.kind) ? String(e.kind) : 'console',
         message: String((e && e.message) || '').slice(0, 500),
