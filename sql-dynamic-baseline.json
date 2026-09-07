@@ -1104,7 +1104,7 @@
     {
       "source": "src/services/workshop-themes.js",
       "kind": "structural-template",
-      "fingerprint": "17795a362cf7406554bd",
+      "fingerprint": "2e26921bc2eaf7ee6d9c",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.linked_issues, cs.status, cs.created_at, u.username, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.s"
     }
