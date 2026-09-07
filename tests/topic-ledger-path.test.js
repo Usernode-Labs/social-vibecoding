@@ -172,35 +172,44 @@ test('with nothing to sync the ledger is left exactly as it was', () => {
   assert.equal(find(rows, 'checks').label, 'Checks');
 });
 
-test('the path is drawn as a pipeline, not just as three numbers', () => {
-  // Numbering says the steps are ORDERED. The rail between the dots and the
-  // caption over them say they are a GATE: all of them have to clear.
+test('the path is drawn as a checklist, and a cleared step is ticked', () => {
+  // Numbering says the steps are ORDERED. A box per step says they are a
+  // GATE, and it only earns the shape because the boxes have two states:
+  // checks that passed and a vote that reached the threshold are cleared
+  // while the sync is still outstanding.
   const AppView = makeAppView();
-  const d = AppView._proposalDetailsView(CONFLICTED);
-  assert.equal(d.pathSteps, 3, 'the caption knows how many steps there are');
-  const steps = d.ledger.filter((r) => r.step);
-  // plain(): the rows come from the vm sandbox, so their arrays carry that
-  // realm's Array prototype and deepStrictEqual compares prototypes too.
-  assert.deepEqual(plain(steps.map((r) => !!r.stepLast)), [false, false, true],
-    'only the last step closes the rail');
+  const blocked = AppView._proposalDetailsView(CONFLICTED);
+  assert.equal(blocked.pathSteps, 3);
+  assert.equal(blocked.pathLeft, 3, 'nothing is cleared yet');
+  assert.deepEqual(plain(blocked.ledger.filter((r) => r.step).map((r) => !!r.stepDone)),
+    [false, false, false]);
 
-  // With no path there is no caption and no rail to draw.
+  const nearlyThere = AppView._proposalDetailsView({
+    ...CONFLICTED,
+    check_state: 'passing',
+    test_results: [{ name: 'Repo unit suite (npm test) passes', status: 'pass' }],
+    yes_count: 2, no_count: 0, votes_required: 1,
+  });
+  assert.deepEqual(plain(nearlyThere.ledger.filter((r) => r.step).map((r) => !!r.stepDone)),
+    [false, true, true], 'the sync is never ticked — it is on the path only while it is pending');
+  assert.equal(nearlyThere.pathLeft, 1, 'and the caption says how many are left');
+
+  // With no path there is no checklist at all.
   const clean = AppView._proposalDetailsView({
     ...CONFLICTED,
     freshness: { mergeability: 'clean', behindBy: 0, mergeabilityFiles: [] },
   });
   assert.equal(clean.pathSteps, null);
-  assert.equal(clean.ledger.filter((r) => r.stepLast).length, 0);
+  assert.equal(clean.pathLeft, null);
 });
 
-test('the rail is drawn behind the dots and open at both ends', () => {
+test('a step box is a box, and a cleared one is not still coloured by the blocker', () => {
   const css = read('public/css/app.css');
-  assert.match(css, /\.dev-ledger-row\[data-step\] \.dev-ledger-dot \{ position: relative; z-index: 1; \}/,
-    'the dots occlude the rail rather than sitting beside it');
-  assert.match(css, /\.dev-ledger-row\[data-step="1"\]::before \{ content: none; \}/,
-    'nothing precedes step 1');
-  assert.match(css, /\.dev-ledger-row\[data-step-last\]::after \{ content: none; \}/,
-    'and nothing follows the last');
+  assert.match(css, /\.dev-ledger-row\[data-step\] \.dev-ledger-dot \{[^}]*border-radius: 5px;/,
+    'squared off, so it reads as a checkbox rather than a status dot');
+  assert.match(css, /\.dev-ledger-row\[data-step\]\[data-step-done\] \.dev-ledger-dot \{[^}]*--state-ok/,
+    'a ticked box takes the ok tone, not the row it sits in');
+  assert.doesNotMatch(css, /The path rail/, 'the rail it replaced is gone, geometry and all');
 });
 
 test('the row keys the declared checks select on are untouched', () => {

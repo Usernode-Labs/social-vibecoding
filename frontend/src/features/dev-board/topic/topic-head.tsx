@@ -305,7 +305,10 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
       <h4 className="dev-topic-h">Where it stands</h4>
       {d.pathSteps && d.pathSteps > 1 ? (
         <p className="dev-ledger-path-note">
-          {`${NUMBER_WORD[d.pathSteps] || d.pathSteps} steps to a merge. All of them have to clear.`}
+          {`${NUMBER_WORD[d.pathSteps] || d.pathSteps} steps to a merge. `}
+          {d.pathLeft === d.pathSteps
+            ? 'All of them have to clear.'
+            : `${NUMBER_WORD[d.pathLeft || 0] || d.pathLeft} still to clear.`}
         </p>
       ) : null}
       <div className="dev-ledger">
@@ -315,11 +318,12 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
             className={`dev-ledger-row dev-ledger-${r.tone}`}
             data-note={r.key}
             {...(r.step ? { 'data-step': String(r.step) } : {})}
-            {...(r.stepLast ? { 'data-step-last': '' } : {})}
+            {...(r.stepDone ? { 'data-step-done': '' } : {})}
             {...(r.attrs || {})}
           >
             <span className="dev-ledger-dot" aria-hidden="true">
-              {r.spinner ? <Spinner /> : (r.step ? String(r.step) : LEDGER_GLYPH[r.tone])}
+              {r.spinner ? <Spinner />
+                : (r.step ? (r.stepDone ? '✓' : String(r.step)) : LEDGER_GLYPH[r.tone])}
             </span>
             <span className="dev-ledger-k">
               {r.label}
@@ -392,7 +396,7 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
 }
 
 /** Small counts read better as words in a sentence. */
-const NUMBER_WORD: Record<number, string> = { 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five' };
+const NUMBER_WORD: Record<number, string> = { 1: 'One', 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five' };
 
 const LEDGER_GLYPH: Record<string, string> = {
   bad: '✕', warn: '!', ok: '✓', vote: '✓', mute: '·', progress: '◐',

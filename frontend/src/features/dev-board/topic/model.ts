@@ -179,8 +179,12 @@ export interface LedgerRow {
    * glyph.
    */
   step?: number | null;
-  /** True on the last step, so the rail stops there instead of running on. */
-  stepLast?: boolean;
+  /**
+   * True once this step is CLEARED — its checkbox draws a tick instead of
+   * its number. Only checks and votes can reach it; the sync step is on the
+   * path only while it is outstanding.
+   */
+  stepDone?: boolean;
   label: string;
   /**
    * The small line under the label. Two jobs: a count ("1 of 463 failing"),
@@ -224,6 +228,8 @@ export interface ProposalDetails {
    * them has to clear before the proposal merges.
    */
   pathSteps?: number | null;
+  /** How many of those steps are still outstanding, for the same caption. */
+  pathLeft?: number | null;
   /** The circular "?" beside the meta line. */
   help: boolean;
   /** A prose note under the meta line. */

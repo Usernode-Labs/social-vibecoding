@@ -8039,8 +8039,11 @@ const AppView = {
     }
     const path = AppView._topicLedgerPath(pr, rows);
     // The caption under the heading. Numbering says the steps are ordered;
-    // this says they are a gate — every one of them has to clear.
-    d.pathSteps = path.filter((r) => r.step).length || null;
+    // this says they are a gate — every one of them has to clear, and how
+    // many are still outstanding.
+    const steps = path.filter((r) => r.step);
+    d.pathSteps = steps.length || null;
+    d.pathLeft = steps.length ? steps.filter((r) => !r.stepDone).length : null;
     return path;
   },
 
@@ -8156,11 +8159,14 @@ const AppView = {
     const at0 = Math.min(...path.map((r) => rows.indexOf(r)));
     for (const r of path) rows.splice(rows.indexOf(r), 1);
     rows.splice(at0, 0, ...path);
+    // A step is CLEARED when its own row already reads ok: checks that
+    // passed, a vote that reached the threshold. The sync step is never
+    // cleared, because it is only on the path while it is pending. Two
+    // states are what makes the boxes worth drawing as boxes — a checklist
+    // where nothing can ever be ticked is just a list.
     path.forEach((r, i) => {
       r.step = i + 1;
-      // The rail between the dots is drawn per row, so the last one has to
-      // know not to draw its lower half into empty space.
-      if (i === path.length - 1) r.stepLast = true;
+      r.stepDone = r !== sync && r.tone === 'ok';
     });
     return rows;
   },
