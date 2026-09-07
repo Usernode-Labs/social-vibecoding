@@ -730,7 +730,10 @@ function demoStatus(app, parsed, targetKind) {
     demo: true,
     repo: { owner, repo },
     github: { linked: true, login, available: true },
-    connectors: { count: 1 },
+    // Zero, so the fixture shows the hand-off step's connector note — the
+    // one line a first-time user most needs to review — rather than the
+    // "you already have N" hint a connected account gets instead.
+    connectors: { count: 0 },
     fork: {
       state: 'ready',
       owner: login,

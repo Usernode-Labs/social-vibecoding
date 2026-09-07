@@ -4324,6 +4324,24 @@ body:has(#platform-header.hidden) #app-frame-host {
   line-height: 1.4;
 }
 
+/* The connector prerequisite on the hand-off step: set off from the
+   step's detail so it reads as "before you paste", with the one link
+   the person has to follow. */
+.dc-flow-step-note {
+  font-size: 12px;
+  color: var(--text-primary);
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--accent-tint);
+  line-height: 1.4;
+}
+.dc-flow-step-note a,
+.dc-flow-card-hint a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .dc-flow-step-done .dc-flow-step-mark {
   background: #059669;
   border-color: #059669;
@@ -11097,6 +11115,29 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-build-step small { margin-left: 0.25rem; font-size: 11px; opacity: 0.8; }
 .dev-ledger-build-step.is-now { color: var(--text-primary); font-weight: 600; animation: dev-ledger-progress-pulse 1.4s ease-in-out infinite; }
 .dev-ledger-build-step.is-todo { opacity: 0.55; }
+/* Inside the image step: the buildpack lifecycle phases on their own row,
+   indented, with the running phase's last log line under them in mono. */
+.dev-ledger-build-phases {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.125rem 0.625rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid color-mix(in srgb, currentColor 18%, transparent);
+  font-size: 11px;
+}
+.dev-ledger-build-phase small { margin-left: 0.2rem; opacity: 0.8; }
+.dev-ledger-build-phase.is-now { color: var(--text-primary); font-weight: 600; }
+.dev-ledger-build-phase.is-todo { opacity: 0.55; }
+.dev-ledger-build-detail {
+  flex-basis: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
 @media (prefers-reduced-motion: reduce) {
   .dev-ledger-build-step.is-now { animation: none; }
 }

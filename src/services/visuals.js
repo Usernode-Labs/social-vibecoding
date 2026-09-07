@@ -2527,7 +2527,9 @@ function buildProgressFromTimings(timings) {
     if (Number.isFinite(ms)) steps.push({ key, ms: Math.round(ms), ...(extra || {}) });
   };
   push('source_fetch', timings.sourceFetchMs);
-  push('image_build', timings.imageBuildMs);
+  push('image_build', timings.imageBuildMs, Array.isArray(timings.imagePhases) && timings.imagePhases.length
+    ? { phases: timings.imagePhases.map((ph) => ({ name: String(ph.name), ms: Number.isFinite(ph.ms) ? Math.round(ph.ms) : null })) }
+    : null);
   push('clone', timings.cloneMs, timings.cloneVia ? { via: timings.cloneVia } : null);
   push('health', timings.healthMs);
   if (!steps.length) return null;

@@ -2262,6 +2262,82 @@ test('the work order presents every submit shape, in order of preference', async
   assert.match(order, /connector traffic goes out through Claude's own infrastructure/);
 });
 
+test('the work order tells an agent with no Usernode tools what that means and how to finish', async () => {
+  // The connector is per Claude / ChatGPT account, so a second account has
+  // none — and the old step 6 treated a missing connector as an unexplained
+  // state with a single remedy (hand it back). Now it names the cause,
+  // points at the page with the connect steps, and tailors the finish to
+  // who started the hand-off.
+  const assistant = fullOrder();
+  // Next to the first thing the connector is needed for: the rules pointer.
+  assert.match(assistant, /If this session has NO Usernode tools, the connector was never added to\n {2}the Claude or ChatGPT account you are running in/);
+  assert.match(assistant, /the excerpt below is enough to build with/);
+  assert.match(assistant, /^ {4}https:\/\/usernode\.example\/#settings\/connectors$/m,
+    'the settings URL is on its own indented line, like a command');
+  // And under WHEN YOU ARE DONE.
+  assert.match(assistant, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Usernode\n {3}connector was never added to the Claude or ChatGPT account this session\n {3}runs in/);
+  assert.match(assistant, /a second account does not inherit the\n {3}first one's/);
+  assert.match(assistant, /Push the branch anyway; the work is not lost/);
+  assert.match(assistant, /retry `submit_work` as in step 2/);
+  // Started by a chat assistant: hand it back, patch included.
+  assert.match(assistant, /Otherwise hand it back: print the branch name you pushed/);
+  assert.match(assistant, /save the patch from step 4 to a `\.patch` file/);
+  assert.match(assistant, /If they started from the Usernode tab instead/);
+  assert.doesNotMatch(assistant, /Otherwise finish from Usernode/);
+  // The URL appears in both places.
+  assert.equal(assistant.split('https://usernode.example/#settings/connectors').length - 1, 2);
+
+  // Started from the browser walkthrough: that tab's Submit button finishes.
+  const walkthrough = fullOrder({ startedFromWalkthrough: true });
+  assert.match(walkthrough, /Otherwise finish from Usernode: the walkthrough that produced this\n {3}work order checks for the pushed branch/);
+  assert.match(walkthrough, /its Submit button opens the proposal/);
+  assert.doesNotMatch(walkthrough, /Otherwise hand it back/);
+
+  // No origin, no URL — the page is still named.
+  const noOrigin = fullOrder({ webPath: '' });
+  assert.doesNotMatch(noOrigin, /#settings\/connectors/);
+  assert.match(noOrigin, /Settings → Connectors,\n {3}which has the connector URL/);
+});
+
+test('the update work order says the same for a missing connector, in its own terms', async () => {
+  const update = fullOrder({
+    targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' },
+  });
+  assert.match(update, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Usernode\n {3}connector was never added/);
+  assert.match(update, /^ {4}https:\/\/usernode\.example\/#settings\/connectors$/m);
+  assert.match(update, /Otherwise hand it back: print the branch name you pushed and the\n {3}proposal id/);
+  assert.doesNotMatch(update, /save the patch/, 'an update never sends a patch — that opens a second proposal');
+  const fromTab = fullOrder({
+    targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' },
+    startedFromWalkthrough: true,
+  });
+  assert.match(fromTab, /its Submit button applies the update/);
+  assert.doesNotMatch(fromTab, /Otherwise hand it back/);
+});
+
+test('renderPreparedTask derives "started from the walkthrough" from client_id', async () => {
+  // The browser flow stamps `usernode-web:<agent>` into client_id
+  // (routes/dev-flow.js); that is the only record of where a job came from.
+  const row = {
+    id: 77, fork_owner: 'someuser', fork_repo: 'recipe-box',
+    branch_name: 'usernode/x', base_sha: BASE_SHA, issue_number: null, brief: 'x',
+  };
+  const common = {
+    app: APP, owner: 'usernode-bot', repo: 'recipe-box',
+    origin: 'https://usernode.example', clientName: null,
+    forkStatus: 'ready', reused: true,
+  };
+  const fromTab = svc.renderPreparedTask({
+    ...common, task: { ...row, client_id: 'usernode-web:claude-code' }, clientId: 'usernode-web:claude-code',
+  });
+  assert.match(fromTab.workOrder, /Otherwise finish from Usernode/);
+  const fromChat = svc.renderPreparedTask({
+    ...common, task: { ...row, client_id: 'claude-ai-abc' }, clientId: 'claude-ai-abc',
+  });
+  assert.match(fromChat.workOrder, /Otherwise hand it back/);
+  assert.match(fromChat.workOrder, /https:\/\/usernode\.example\/#settings\/connectors/);
+});
+
 test('the work order contains no triple-backtick fence and indents every command', async () => {
   // The host wraps the whole work order in a fence; an inner fence closes
   // it early. One production paste reached Claude Code with every fence

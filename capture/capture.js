@@ -232,6 +232,35 @@ function assertMaxMs(env) {
   return (Number.isFinite(raw) && raw >= 0) ? raw : ASSERT_MAX_MS;
 }
 
+// …and the window ROLLS while the page is still fetching.
+//
+// The fixed window above answers "is this screen mid-render", which is a
+// question about time. It cannot answer "is the data this check selects on
+// still on the wire", which is a question about the page. Three of this
+// repo's own checks fail intermittently on exactly that: the bell badge, the
+// launch cover and the imported-preview pill all select on state that only
+// exists once an authenticated fetch has resolved, and all three sit on the
+// shared `?demo=1` document where eight concurrent pages contend for one
+// preview. Their element is not missing; it has not arrived.
+//
+// So a cohort that still has failing checks AND has seen network traffic
+// since its last probe gets another window. Two bounds, and both were
+// learned the hard way when this was first attempted (#1710):
+//
+//   * a FLOOR at the fixed window. The clamp below must never hand a
+//     contended cohort less than the 5s it had before this existed, which
+//     is what the first attempt did.
+//   * a CEILING at the group's own deadline, less a reserve for writing the
+//     frames. Without it the rolling window outlived the group budget and
+//     manufactured "did not finish within 25s" for checks that were merely
+//     slow — a worse failure than the one it set out to fix.
+//
+// Only REQUEST activity rolls the window, deliberately: a page spewing
+// console errors is not a page still loading, and letting it extend would
+// turn every genuinely broken screen into a full-budget wait. A screen with
+// a truly missing element makes no requests, so it still fails in 5s.
+const ASSERT_REPORT_RESERVE_MS = 2000;
+
 // An activity clock a page's listeners bump. Created per group and shared by
 // every cohort's settle, so a late error from cohort 1 still holds cohort 2's
 // window open — the page is one document either way.
@@ -1123,6 +1152,12 @@ async function runTestGroup(browser, group, opts) {
   const assertMax = Number.isFinite(o.assertMaxMs) ? o.assertMaxMs : ASSERT_MAX_MS;
   const assertPoll = Number.isFinite(o.assertPollMs) && o.assertPollMs > 0
     ? o.assertPollMs : ASSERT_POLL_MS;
+  // The group's own ceiling (see ASSERT_REPORT_RESERVE_MS). Absent — the
+  // unit-test fakes, and any caller that does not budget its groups — the
+  // rolling window is bounded by the floor alone, exactly as before.
+  const groupCeilingAt = Number.isFinite(o.groupDeadlineAt)
+    ? o.groupDeadlineAt - ASSERT_REPORT_RESERVE_MS
+    : Infinity;
   const consoleErrors = [];
   const pushErr = (errKind, message, source) => {
     if (consoleErrors.length >= MAX_CONSOLE_ERRORS) return;
@@ -1160,6 +1195,8 @@ async function runTestGroup(browser, group, opts) {
     // The settle's activity clock. Every signal that the document is still
     // doing something bumps it; `waitForQuiet` returns once nothing has.
     const activity = makeActivityClock();
+    // Request lifecycle only — the clock that rolls the assert window.
+    const netActivity = makeActivityClock();
     const on = (event, handler) => {
       try { page.on(event, handler); } catch { /* fake pages may not emit it */ }
     };
@@ -1183,7 +1220,7 @@ async function runTestGroup(browser, group, opts) {
     // silent its console is. This is what keeps a lazily-hydrating sub-route
     // from being judged before it renders.
     for (const ev of ['request', 'response', 'requestfinished', 'requestfailed']) {
-      on(ev, () => activity.bump());
+      on(ev, () => { activity.bump(); netActivity.bump(); });
     }
 
     try {
@@ -1249,7 +1286,11 @@ async function runTestGroup(browser, group, opts) {
       // fallback below can re-run them on a reloaded document.
       const presence = new Map();
       if (!loadFailure) {
-        const assertDeadlineAt = Date.now() + assertMax;
+        // The fixed window is the FLOOR; network traffic rolls it forward,
+        // never past the group's ceiling. See ASSERT_REPORT_RESERVE_MS.
+        const floorAt = Date.now() + assertMax;
+        let assertDeadlineAt = floorAt;
+        let seenNetAt = netActivity.lastAt;
         let pending = cohort.tests;
         for (;;) {
           const still = [];
@@ -1259,8 +1300,16 @@ async function runTestGroup(browser, group, opts) {
             if (reason) still.push(t);
           }
           pending = still;
+          if (!pending.length) break;
+          if (netActivity.lastAt > seenNetAt) {
+            seenNetAt = netActivity.lastAt;
+            assertDeadlineAt = Math.max(
+              floorAt,
+              Math.min(Date.now() + assertMax, groupCeilingAt)
+            );
+          }
           const leftMs = assertDeadlineAt - Date.now();
-          if (!pending.length || leftMs <= 0) break;
+          if (leftMs <= 0) break;
           await sleep(Math.min(assertPoll, leftMs));
         }
       }
@@ -1449,9 +1498,12 @@ async function runTests(browser, tests, opts) {
     });
     let outcome;
     try {
+      // The group's own ceiling, so a rolling assert window can never
+      // outlive the budget this race enforces (see ASSERT_REPORT_RESERVE_MS).
+      const groupOpts = { ...settleOpts, groupDeadlineAt: now() + groupBudgetMs };
       outcome = await Promise.race([
         Promise.resolve()
-          .then(() => runTestGroup(browser, group, settleOpts))
+          .then(() => runTestGroup(browser, group, groupOpts))
           .then(() => 'done', (err) => `error:${(err && err.message) || err}`),
         timeout,
       ]);
