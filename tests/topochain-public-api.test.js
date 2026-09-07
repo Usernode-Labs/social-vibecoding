@@ -265,6 +265,7 @@ function computeStandingsRows(seasonId) {
 function makeMockPool() {
   async function query(rawSql, params = []) {
     const sql = collapse(rawSql);
+    if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
 
     // standings.js shared aggregate (used by /leaderboard/global, the
     // 'season'/'all_time' branch of fetchEventLeaderboardRows, and the
