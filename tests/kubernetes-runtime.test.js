@@ -79,11 +79,38 @@ test('kpack runs the shell generator during build when the checked-out app decla
   ]);
 });
 
+test('kpack selects a declared build script but preserves shell ordering and legacy apps', async (t) => {
+  const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), 'usernode-kpack-build-script-'));
+  t.after(() => fs.rmSync(sourceDir, { recursive: true, force: true }));
+  let created;
+  kubernetes._setClientsForTest({ custom: {
+    async createNamespacedCustomObject(request) { created = request; },
+    async getNamespacedCustomObject() {
+      return { status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: 'ghcr.io/example/demo@sha256:built' } };
+    },
+  } });
+  for (const [scripts, expected] of [
+    [{ start: 'node server.js', build: 'npm run build:css' }, 'build'],
+    [{ build: 'other', 'ensure:shell': 'node ensure.js' }, 'ensure:shell'],
+    [{ start: 'node server.js' }, undefined],
+    [{ build: true }, undefined],
+    [{ 'build:css': 'tailwindcss' }, undefined],
+  ]) {
+    fs.writeFileSync(path.join(sourceDir, 'package.json'), JSON.stringify({ scripts }));
+    await kubernetes.createBuild(config(), {
+      app: { id: 11, slug: 'demo', repo_url: 'https://github.com/example/demo' },
+      revision: 'd'.repeat(40), environment: 'production', sourceDir,
+    });
+    assert.equal(created.body.spec.env.find((v) => v.name === 'BP_NODE_RUN_SCRIPTS')?.value, expected);
+  }
+});
+
 test('a terminal failed kpack Build is deleted before the failure returns', async () => {
   let deleted;
+  let created;
   kubernetes._setClientsForTest({
     custom: {
-      async createNamespacedCustomObject() {},
+      async createNamespacedCustomObject(request) { created = request; },
       async getNamespacedCustomObject() {
         return { status: { conditions: [{ type: 'Succeeded', status: 'False', message: 'npm failed' }] } };
       },
@@ -95,9 +122,33 @@ test('a terminal failed kpack Build is deleted before the failure returns', asyn
     app: { id: 7, slug: 'demo', repo_url: 'https://github.com/example/demo' },
     revision: 'c'.repeat(40), environment: 'production',
   }), /npm failed/);
-  assert.equal(deleted.name, `sv-7-${'c'.repeat(12)}`);
+  assert.equal(deleted.name, created.body.metadata.name);
+  assert.match(deleted.name, /^sv-7-c{12}-[a-f0-9]{12}$/);
   assert.equal(deleted.namespace, 'social-builds');
   assert.equal(deleted.propagationPolicy, 'Background');
+});
+
+test('changing the builder or Node version rebuilds the same Git revision', async () => {
+  const builds = [];
+  kubernetes._setClientsForTest({ custom: {
+    async createNamespacedCustomObject({ body }) { builds.push(body); },
+    async getNamespacedCustomObject() {
+      return { status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: 'ghcr.io/example/demo@sha256:built' } };
+    },
+  } });
+  const options = {
+    app: { id: 7, slug: 'demo', repo_url: 'https://github.com/example/demo' },
+    revision: 'e'.repeat(40), environment: 'production',
+  };
+  const cfg = config();
+  await kubernetes.createBuild(cfg, options);
+  await kubernetes.createBuild(cfg, options);
+  await kubernetes.createBuild({ ...cfg, kubernetes: { ...cfg.kubernetes, builderImage: 'builder.example/image@sha256:new' } }, options);
+  await kubernetes.createBuild({ ...cfg, kubernetes: { ...cfg.kubernetes, nodeVersion: '22.1.0' } }, options);
+  assert.equal(builds[0].metadata.name, builds[1].metadata.name);
+  assert.deepEqual(builds[0].spec.tags, builds[1].spec.tags);
+  assert.equal(new Set([builds[0], builds[2], builds[3]].map(b => b.metadata.name)).size, 3);
+  assert.equal(new Set([builds[0], builds[2], builds[3]].map(b => b.spec.tags[0])).size, 3);
 });
 
 test('failed-build sweep removes only terminal failed managed Builds', async () => {
