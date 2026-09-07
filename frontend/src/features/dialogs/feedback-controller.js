@@ -139,8 +139,7 @@ export function init() {
       clearTimeout(closeTimer);
       firstFeedback = moment;
       pendingFirstFeedback = null;
-      feedbackText.disabled = true;
-      feedbackTitle.disabled = true;
+      setComposerLocked(true);
       feedbackBtn.disabled = true;
       const hasBoard = typeof moment.appSlug === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(moment.appSlug);
       firstFix.disabled = !hasBoard || !moment.canFix || !Number.isSafeInteger(moment.issueNumber) || moment.issueNumber <= 0;
@@ -886,7 +885,7 @@ export function init() {
           if (moment && Number(moment.userId) === Number(App.user?.id)) {
             const open = !document.getElementById('feedback-modal').classList.contains('hidden');
             if (!open) App.openFeedbackModal({ firstFeedback: moment });
-            else if (feedbackText.disabled) showFirstFeedback(moment, 'Your saved feedback has been sent.');
+            else if (feedbackText.readOnly) showFirstFeedback(moment, 'Your saved feedback has been sent.');
             else pendingFirstFeedback = moment; // Keep the draft being typed intact.
           }
         },
@@ -1098,18 +1097,21 @@ export function init() {
     // that used to be this function's first line belongs to useStaticModal
     // now: by the time this runs the island has already revealed the root
     // and lifted the card into the kit shell.
+    // `setComposerLocked(false)` runs FIRST, ahead of the queued-success
+    // return: that path locks again through the same helper, so no open can
+    // leave behind a composer nobody can type into. It also resets a
+    // "Submitted" lock from a prior session, so a returning user can file
+    // again without reloading.
     Feedback._open = (opts = {}) => {
       presentation += 1;
       clearTimeout(closeTimer);
       firstFeedback = null;
       firstSuccess?.classList.add('hidden');
       feedbackForm?.classList.remove('hidden');
+      setComposerLocked(false);
       // Opening a queued success must not consume a failed outbox draft or
       // start screenshot/title probes behind the confirmation.
       if (opts.firstFeedback && showFirstFeedback(opts.firstFeedback, 'Your saved feedback has been sent.')) return;
-      // Reset any "Submitted" lock from a prior session so a returning
-      // user can file another piece of feedback without reloading.
-      setComposerLocked(false);
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
       // #1603: a refusal from a previous open never greets the next one.
