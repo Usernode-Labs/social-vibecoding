@@ -68,7 +68,7 @@ test('a dismissal that lands mid-capture does not clear the draft', () => {
   const reset = controller.slice(controller.indexOf('Feedback._reset = () => {'));
   assert.match(reset, /if \(!captureInFlight\) \{/,
     '_reset must keep the draft while a capture round trip is open');
-  const guarded = reset.slice(reset.indexOf('if (!captureInFlight) {'), reset.indexOf('feedbackText.disabled = false'));
+  const guarded = reset.slice(reset.indexOf('if (!captureInFlight) {'), reset.indexOf('setComposerLocked(false)'));
   for (const kept of ["feedbackText.value = ''", "feedbackTitle.value = ''", "feedbackStatus.classList.add('hidden')"]) {
     assert.ok(guarded.includes(kept), `${kept} belongs inside the captureInFlight guard`);
   }
@@ -132,7 +132,7 @@ test('the stash is handed back on the next open, and announced at boot', () => {
   // the same "live text always wins" rule.
   assert.ok(rescue > open.indexOf('FeedbackQueue.takeFailed()'),
     'the outbox hand-back keeps its place; the capture rescue follows it');
-  assert.match(open, /if \(!feedbackText\.disabled && !feedbackText\.value\.trim\(\)\) \{/);
+  assert.match(open, /if \(!feedbackText\.readOnly && !feedbackText\.value\.trim\(\)\) \{/);
   assert.match(open, /feedbackText\.value = rescued\.description;/);
   // Read once, so a rescue the user ignored does not keep reappearing.
   assert.match(open, /const rescued = readCaptureDraft\(\);\n\s*if \(rescued\) \{\n\s*clearCaptureDraft\(\);/);
