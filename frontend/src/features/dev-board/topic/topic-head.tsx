@@ -172,14 +172,42 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
  * row's `sub`, so the bar carries no information a screen reader cannot get
  * from the text; it is marked decorative for that reason.
  */
-function Progress({ p }: { p: LedgerProgress }): ReactNode {
-  const total = p.expected && p.expected > 0 ? p.expected : Math.max(p.ran, 1);
+function Bar({ ran, passed, failed, expected, attr, value, indeterminate }: {
+  ran: number; passed: number; failed: number; expected: number | null;
+  attr: string; value: string; indeterminate?: boolean;
+}): ReactNode {
+  const total = expected && expected > 0 ? expected : Math.max(ran, 1);
   const pct = (n: number) => `${Math.max(0, Math.min(100, (n / total) * 100))}%`;
+  const cls = `dev-ledger-progress${indeterminate ? ' dev-ledger-progress-busy' : ''}`;
   return (
-    <span className="dev-ledger-progress" aria-hidden="true" data-checks-progress={`${p.ran}/${p.expected ?? '?'}`}>
-      <span className="dev-ledger-progress-pass" style={{ width: pct(p.passed) }} />
-      <span className="dev-ledger-progress-fail" style={{ width: pct(p.failed) }} />
+    <span className={cls} aria-hidden="true" {...{ [attr]: value }}>
+      <span className="dev-ledger-progress-pass" style={{ width: pct(passed) }} />
+      <span className="dev-ledger-progress-fail" style={{ width: pct(failed) }} />
     </span>
+  );
+}
+
+function Progress({ p }: { p: LedgerProgress }): ReactNode {
+  const hasChecks = p.ran > 0 || (p.expected != null && p.expected > 0);
+  const u = p.unit || null;
+  return (
+    <>
+      {hasChecks ? (
+        <Bar ran={p.ran} passed={p.passed} failed={p.failed} expected={p.expected}
+          attr="data-checks-progress" value={`${p.ran}/${p.expected ?? '?'}`} />
+      ) : null}
+      {u ? (
+        <span className="dev-ledger-progress-unit" data-unit-phase={u.phase}>
+          {/* Before the first TAP line there is nothing to size: the track
+              pulses instead of sitting empty. Without a last-run total the
+              bar sizes against `ran`, so it reads as "full so far". */}
+          <Bar ran={u.ran} passed={u.passed} failed={u.failed} expected={u.expected}
+            attr="data-unit-progress" value={`${u.ran}/${u.expected ?? '?'}`}
+            indeterminate={!u.done && u.ran === 0} />
+          <small className="dev-ledger-progress-unit-k">npm test</small>
+        </span>
+      ) : null}
+    </>
   );
 }
 

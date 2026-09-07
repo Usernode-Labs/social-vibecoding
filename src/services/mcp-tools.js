@@ -506,9 +506,11 @@ function shapeChecks(session) {
     trigger: session.check_trigger || null,
     checkedAt: isoOrNull(session.checks_checked_at),
     // A run in flight, as far as it has got: `{ ran, passed, failed,
-    // expected, done, updatedAt }`, written as the capture container's frames
-    // stream in and cleared with the verdict. Null outside a run — and null
-    // during the build phase, before the first check has run.
+    // expected, done, updatedAt, unit }`, written as the capture container's
+    // frames stream in and cleared with the verdict. `unit` is the repo
+    // unit suite (`npm test`) run alongside: `{ phase, ran, passed, failed,
+    // skipped, expected, done }`. Null outside a run — and null during the
+    // build phase, before the first check has run.
     progress: (session.checks_progress && typeof session.checks_progress === 'object')
       ? session.checks_progress : null,
     // The commit this verdict describes, and whether that is still the head.

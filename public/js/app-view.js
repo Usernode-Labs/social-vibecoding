@@ -3968,6 +3968,12 @@ const AppView = {
         ...(data.progress ? {} : { checks_checked_at: new Date().toISOString() }),
       });
       if (patched) return;
+      // A progress tick for a row this page does not hold (another app's
+      // run, a topic beyond the cached pages) is nothing to refetch for:
+      // the numbers belong to a row that is not on screen, and a refetch a
+      // second for the length of someone else's run was the churn this
+      // replaces. The run's start and verdict events still fall through.
+      if (data.progress && typeof data.progress === 'object') return;
     }
     AppView.refreshDevData('checks');
   },
@@ -8499,16 +8505,56 @@ const AppView = {
     const n = (v) => (Number.isInteger(v) && v >= 0 ? v : 0);
     const ran = n(p.ran); const passed = n(p.passed); const failed = n(p.failed);
     const expected = Number.isInteger(p.expected) && p.expected > 0 ? p.expected : null;
-    if (!ran && !expected) return null;
+    const unit = AppView._unitSuiteProgressView(p.unit);
+    if (!ran && !expected && !unit) return null;
     const of = expected ? ` of ${expected}` : '';
     const bits = [`${ran}${of} run`, `${passed} passed`];
     if (failed) bits.push(`${failed} failed`);
-    const sub = bits.join(' · ');
+    let sub = (ran || expected) ? bits.join(' · ') : '';
     // A colon, not a dash: the count is a label and this is its value (#1389).
-    const sentence = expected
-      ? `${ran} of ${expected} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`
-      : `${ran} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`;
-    return { bar: { ran, passed, failed, expected, done: !!p.done }, sub, sentence };
+    const sentence = !(ran || expected) ? ''
+      : expected
+        ? `${ran} of ${expected} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`
+        : `${ran} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`;
+    if (unit && !sub) sub = unit.sub;
+    return {
+      bar: { ran, passed, failed, expected, done: !!p.done, unit: unit ? unit.bar : null },
+      sub, sentence, unit,
+    };
+  },
+
+  // The repo unit suite (`npm test`) runs in its own container alongside the
+  // browser checks and reports the same way: a phase before any test has
+  // run (cloning, installing), then TAP counts. The counts are the runner's
+  // own approximation until its summary block lands, so the copy says "so
+  // far" and never claims a verdict; the verdict is the exit code, later.
+  _unitSuiteProgressView(u) {
+    if (!u || typeof u !== 'object') return null;
+    const n = (v) => (Number.isInteger(v) && v >= 0 ? v : 0);
+    const ran = n(u.ran); const passed = n(u.passed); const failed = n(u.failed); const skipped = n(u.skipped);
+    const expected = Number.isInteger(u.expected) && u.expected > 0 ? u.expected : null;
+    const phase = typeof u.phase === 'string' ? u.phase : 'running';
+    const done = !!u.done;
+    let sub;
+    let sentence;
+    if (done) {
+      const ok = u.exitOk !== false;
+      sub = ok ? `npm test finished: ${passed} passed` : `npm test finished: ${failed} failed`;
+      sentence = ok
+        ? `The repo unit suite (npm test) finished: ${passed} passed${skipped ? `, ${skipped} skipped` : ''}.`
+        : `The repo unit suite (npm test) finished with failures: ${failed} failed, ${passed} passed.`;
+    } else if (phase === 'cloning' || phase === 'installing') {
+      const what = phase === 'cloning' ? 'cloning the branch' : 'installing dependencies';
+      sub = `npm test: ${what}`;
+      sentence = `The repo unit suite (npm test) is ${what}.`;
+    } else {
+      const of = expected ? ` of ~${expected}` : '';
+      const bits = [`npm test: ${ran}${of} run`, `${passed} passed`];
+      if (failed) bits.push(`${failed} failed`);
+      sub = bits.join(' · ');
+      sentence = `The repo unit suite (npm test) has run ${ran}${of} tests so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`;
+    }
+    return { bar: { phase, ran, passed, failed, skipped, expected, done }, sub, sentence };
   },
 
   _checksStatusNotes(pr) {
@@ -8569,7 +8615,10 @@ const AppView = {
       // reads exactly as it did.
       const progress = AppView._checksProgressView(pr);
       if (progress) {
-        rows.splice(1, 0, { t: 'line', parts: [progress.sentence] });
+        const lines = [];
+        if (progress.sentence) lines.push({ t: 'line', parts: [progress.sentence] });
+        if (progress.unit) lines.push({ t: 'line', parts: [progress.unit.sentence] });
+        rows.splice(1, 0, ...lines);
       }
       return [{
         key: 'checks', tone: 'neutral', spinner: true,
@@ -11959,8 +12008,12 @@ const AppView = {
     // vote states — neutral, with a spinner while genuinely in flight.
     if (isCode && (p.check_state === 'pending'
       || (!p.check_state && p.status === 'promoted' && !p.console_check_state))) {
+      // The live counts ride the label when the run has any: a board of
+      // cards should say how far each run is, not just that it is running.
+      const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
+      const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
       return { ...base, tier: 2, key: 'checks_running',
-        label: p.check_state === 'pending' ? 'Checks running…' : 'Checks starting…',
+        label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
         tone: 'neutral', spinner: true, reasons, advisory: 0,
         title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.' };
     }
@@ -12287,7 +12340,9 @@ const AppView = {
     // 'pending' (or anything else): tests are still running. #405: grey
     // (gc-checks-running-badge), not amber, so a not-yet-started check is
     // visibly distinct from the amber in-flight merge stages.
-    return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…</span>`;
+    const live = state === 'pending' ? AppView._checksProgressView(pr) : null;
+    const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
+    return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…${count}</span>`;
   },
 
   // #195/#270: before/after visual tiles for a session's stored capture

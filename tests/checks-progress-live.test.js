@@ -160,7 +160,100 @@ test('the capture run feeds one observer to BOTH transports, throttled, with the
   const src = read('src/services/visuals.js');
   assert.match(src, /runCaptureJob\(config, \{\n\s+onStdoutLine: progressObserver,/);
   assert.match(src, /runOneShot\(`usernode-capture-\$\{session\.id\}`, \{\n\s+onStdoutLine: progressObserver,/);
-  assert.match(src, /if \(snap\.done \|\| gap >= CHECKS_PROGRESS_MIN_GAP_MS\)/, 'done always flushes; otherwise one snapshot per gap');
+  assert.match(src, /if \(urgent \|\| gap >= minGapMs\)/, 'done always flushes; otherwise one snapshot per gap');
+  assert.match(src, /onProgress: progress\.observeUnit,/, 'the unit suite reports into the same state');
+  assert.match(src, /const unitOutcome = await unitSuitePromise;\n\s+closeProgress\(\);/, 'closed before the verdict is written');
+  assert.match(src, /\} catch \(err\) \{\n\s+closeProgress\(\);\n\s+traceStep\('capture_error'/, 'and on the error path');
+});
+
+// ── 2b. the unit suite (npm test) reports the same way ──────────────────
+
+const unitSuite = require('../src/services/unit-suite');
+
+test('the unit-suite tracker walks cloning → installing → running → done and reads TAP', () => {
+  const t = unitSuite.makeUnitSuiteTracker(6);
+  assert.equal(t.snapshot().phase, 'cloning');
+  assert.equal(t.feed('Cloning into ...'), false, 'noise does not advance');
+  assert.equal(t.feed(unitSuite.CLONED_SENTINEL), true);
+  assert.equal(t.snapshot().phase, 'installing');
+  assert.equal(t.feed(unitSuite.SETUP_DONE_SENTINEL), true);
+  assert.equal(t.snapshot().phase, 'running');
+  t.feed('TAP version 13');
+  t.feed('# Subtest: top');
+  t.feed('    ok 1 - sub1');
+  t.feed('    not ok 2 - sub2');
+  t.feed('not ok 1 - top');
+  t.feed('ok 2 - skipped one # SKIP');
+  let snap = t.snapshot();
+  assert.deepEqual(
+    { ran: snap.ran, passed: snap.passed, failed: snap.failed, skipped: snap.skipped, expected: snap.expected, done: snap.done },
+    { ran: 4, passed: 1, failed: 2, skipped: 1, expected: 6, done: false },
+    'nested and parent lines both count until the summary corrects them'
+  );
+  // The summary block replaces the running approximation.
+  for (const l of ['# tests 6', '# suites 1', '# pass 4', '# fail 1', '# cancelled 1', '# skipped 0', '# todo 0']) t.feed(l);
+  snap = t.snapshot();
+  assert.deepEqual({ ran: snap.ran, passed: snap.passed, failed: snap.failed, expected: snap.expected }, { ran: 6, passed: 4, failed: 2, expected: 6 });
+  assert.deepEqual(snap.summary, { tests: 6, pass: 4, fail: 1, cancelled: 1, skipped: 0, todo: 0 });
+  const fin = t.finish(false);
+  assert.equal(fin.phase, 'done');
+  assert.equal(fin.done, true);
+  assert.equal(fin.exitOk, false);
+  // No denominator when the app has never completed a run.
+  assert.equal(unitSuite.makeUnitSuiteTracker(null).snapshot().expected, null);
+});
+
+test('a TAP line before the setup sentinel still means the suite is running', () => {
+  const t = unitSuite.makeUnitSuiteTracker();
+  t.feed('ok 1 - early');
+  assert.equal(t.snapshot().phase, 'running');
+});
+
+test('the suite size is remembered on the apps row and read back as the next denominator', async () => {
+  const calls = [];
+  const pool = { query: async (sql, params) => { calls.push([sql, params]); return { rows: [{ unit_suite_last_tests: 10863 }] }; } };
+  assert.equal(await unitSuite.loadExpectedTests(pool, 7), 10863);
+  assert.match(calls[0][0], /SELECT unit_suite_last_tests FROM apps WHERE id = \$1/);
+  assert.equal(await unitSuite.storeExpectedTests(pool, 7, 10870), true);
+  assert.match(calls[1][0], /UPDATE apps SET unit_suite_last_tests = \$2 WHERE id = \$1/);
+  assert.deepEqual(calls[1][1], [7, 10870]);
+  assert.equal(await unitSuite.storeExpectedTests(pool, 7, 0), false, 'never stores an empty suite');
+  const broken = { query: async () => { throw new Error('down'); } };
+  assert.equal(await unitSuite.loadExpectedTests(broken, 7), null, 'a lookup failure is "unknown", never a throw');
+  assert.match(read('src/db/schema.sql'), /ALTER TABLE apps\s+ADD COLUMN IF NOT EXISTS unit_suite_last_tests INTEGER;/);
+});
+
+test('maybeRunUnitSuite observes its container and reports once more at the end', () => {
+  const src = read('src/services/unit-suite.js');
+  assert.match(src, /docker\.runOneShot\(`usernode-unit-suite-\$\{sessionId\}`, \{\n\s+onStdoutLine: observe,/);
+  assert.match(src, /const finalSnap = tracker\.finish\(passed\);\n\s+report\(finalSnap\);/);
+  assert.match(src, /echo "\$\{CLONED_SENTINEL\}"\nif \[ -f package-lock\.json \]/, 'the cloned marker precedes npm ci');
+  assert.match(src, /\.\.\.\(summary \? \{ summary \} : \{\}\),/, 'the TAP summary rides the row');
+});
+
+test('the run state merges both containers into one snapshot, throttles, and is silent once closed', async () => {
+  const flushed = [];
+  const state = visuals.makeChecksProgressState({ expected: 3, flush: (s) => flushed.push(s), minGapMs: 30 });
+  state.observeUnit({ phase: 'installing', ran: 0, passed: 0, failed: 0, expected: null, done: false });
+  assert.equal(flushed.length, 1, 'the first observation flushes at once');
+  assert.equal(flushed[0].unit.phase, 'installing');
+  assert.deepEqual([flushed[0].ran, flushed[0].expected], [0, 3]);
+  state.observeCapture(`__USERNODE_TEST__ index=0 status=pass loadStatus=200`);
+  state.observeUnit({ phase: 'running', ran: 40, passed: 40, failed: 0, expected: 100, done: false });
+  assert.equal(flushed.length, 1, 'inside the gap: coalesced');
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(flushed.length, 2, 'one timer flush carries both');
+  assert.equal(flushed[1].ran, 1);
+  assert.equal(flushed[1].unit.ran, 40);
+  state.observeUnit({ phase: 'done', ran: 100, passed: 100, failed: 0, expected: 100, done: true, exitOk: true });
+  assert.equal(flushed.length, 3, 'a done from either side flushes immediately');
+  state.observeCapture(`__USERNODE_TEST__ index=1 status=fail loadStatus=200`);
+  state.close();
+  await new Promise((r) => setTimeout(r, 60));
+  assert.equal(flushed.length, 3, 'close drops the pending timer');
+  state.observeCapture(`__USERNODE_TESTS_DONE__ ran=2 expected=3 deadline=0`);
+  state.observeUnit({ phase: 'running', ran: 1, passed: 1, failed: 0, expected: null, done: false });
+  assert.equal(flushed.length, 3, 'nothing after close, even a done sentinel');
 });
 
 // ── 3. the topic page: patch, don't refetch; keep the roster ────────────
@@ -242,6 +335,21 @@ test('a pending checks_ready patches the cached row and repaints WITHOUT refetch
   assert.equal(loads, 0, 'and did not refetch five endpoints to learn what it was just told');
 });
 
+test('a progress tick for a row the page does not hold refetches nothing', () => {
+  const AppView = makeAppView();
+  AppView._proposals = [];
+  AppView._merged = [];
+  AppView._topicProposal = null;
+  let refetched = 0;
+  AppView.refreshDevData = () => { refetched += 1; };
+  AppView.applyChecksEvent({ sessionId: 424242, checkState: 'pending', checkPhase: 'testing', progress: { ran: 3, passed: 3, failed: 0, expected: 9 } });
+  assert.equal(refetched, 0, 'someone else\'s run is not a reason to refetch five endpoints a second');
+  AppView.applyChecksEvent({ sessionId: 424242, checkState: 'pending', checkPhase: 'building' });
+  assert.equal(refetched, 1, 'a run starting (no progress) still falls through to the refetch');
+  AppView.applyChecksEvent({ sessionId: 424242, checkState: 'passing' });
+  assert.equal(refetched, 2, 'and so does a verdict');
+});
+
 test('a final verdict still refetches, but through a kind that keeps the roster', () => {
   const AppView = makeAppView();
   AppView._devTopic = { kind: 'proposal', id: 9 };
@@ -281,7 +389,7 @@ test('the checks ledger row carries progress and a sub line while pending', () =
   // strict deepEqual treats as a mismatch; compare the plain data.
   const plain = (o) => JSON.parse(JSON.stringify(o));
   const view = AppView._checksProgressView({ checks_progress: { ran: 12, passed: 11, failed: 1, expected: 523 } });
-  assert.deepEqual(plain(view.bar), { ran: 12, passed: 11, failed: 1, expected: 523, done: false });
+  assert.deepEqual(plain(view.bar), { ran: 12, passed: 11, failed: 1, expected: 523, done: false, unit: null });
   assert.equal(view.sub, '12 of 523 run · 11 passed · 1 failed');
   assert.match(view.sentence, /12 of 523 checks have run so far: 11 passed, 1 failed\./);
   assert.equal(AppView._checksProgressView({ checks_progress: null }), null, 'nothing before the first frame');
@@ -291,8 +399,48 @@ test('the checks ledger row carries progress and a sub line while pending', () =
     checks_progress: { ran: 2, passed: 2, failed: 0, expected: 10 },
   });
   assert.equal(notes.length, 1);
-  assert.deepEqual(plain(notes[0].progress), { ran: 2, passed: 2, failed: 0, expected: 10, done: false });
+  assert.deepEqual(plain(notes[0].progress), { ran: 2, passed: 2, failed: 0, expected: 10, done: false, unit: null });
   assert.equal(notes[0].sub, '2 of 10 run · 2 passed');
+});
+
+test('the unit suite (npm test) gets its own line, bar and phase copy', () => {
+  const AppView = makeAppView();
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  // Build phase for the browser checks, but the suite is already cloning:
+  // the row has something to say, and the sub line is the suite's.
+  const early = AppView._checksProgressView({ checks_progress: { ran: 0, passed: 0, failed: 0, expected: 0, unit: { phase: 'installing', ran: 0, passed: 0, failed: 0, expected: null } } });
+  assert.equal(early.sentence, '');
+  assert.equal(early.sub, 'npm test: installing dependencies');
+  assert.equal(early.unit.sentence, 'The repo unit suite (npm test) is installing dependencies.');
+  assert.equal(early.bar.unit.phase, 'installing');
+  const mid = AppView._checksProgressView({ checks_progress: { ran: 12, passed: 12, failed: 0, expected: 523, unit: { phase: 'running', ran: 4120, passed: 4118, failed: 2, expected: 10863 } } });
+  assert.equal(mid.sub, '12 of 523 run · 12 passed', 'the checks own the sub line when they have run');
+  assert.equal(mid.unit.sub, 'npm test: 4120 of ~10863 run · 4118 passed · 2 failed');
+  assert.match(mid.unit.sentence, /has run 4120 of ~10863 tests so far: 4118 passed, 2 failed\./);
+  assert.deepEqual(plain(mid.bar.unit), { phase: 'running', ran: 4120, passed: 4118, failed: 2, skipped: 0, expected: 10863, done: false });
+  const done = AppView._unitSuiteProgressView({ phase: 'done', done: true, exitOk: false, ran: 10863, passed: 10861, failed: 2, expected: 10863 });
+  assert.equal(done.sub, 'npm test finished: 2 failed');
+  assert.match(done.sentence, /finished with failures: 2 failed, 10861 passed\./);
+  const ok = AppView._unitSuiteProgressView({ phase: 'done', done: true, exitOk: true, ran: 10, passed: 9, skipped: 1, failed: 0, expected: 10 });
+  assert.equal(ok.sentence, 'The repo unit suite (npm test) finished: 9 passed, 1 skipped.');
+  const notes = AppView._checksStatusNotes({
+    check_state: 'pending', check_phase: 'testing', checks_checked_at: new Date().toISOString(),
+    checks_progress: { ran: 2, passed: 2, failed: 0, expected: 10, unit: { phase: 'running', ran: 5, passed: 5, failed: 0, expected: null } },
+  });
+  const lines = notes[0].rows.map((r) => r.parts[0]);
+  assert.equal(lines[1], '2 of 10 checks have run so far: 2 passed.');
+  assert.equal(lines[2], 'The repo unit suite (npm test) has run 5 tests so far: 5 passed.');
+  assert.equal(notes[0].progress.unit.ran, 5);
+});
+
+test('the board card and the running badge carry the live count', () => {
+  const AppView = makeAppView();
+  const badge = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 12, passed: 12, failed: 0, expected: 523 } });
+  assert.match(badge, /Checks running…\s12\/523</);
+  const quiet = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: null });
+  assert.match(quiet, /Checks running…</, 'no count before the first frame');
+  const src = APP_VIEW_SRC;
+  assert.match(src, /label: p\.check_state === 'pending' \? `Checks running…\$\{count\}` : 'Checks starting…',/);
 });
 
 test('app.js hands the events to the topic page before DevChat\'s early returns', () => {
@@ -300,6 +448,10 @@ test('app.js hands the events to the topic page before DevChat\'s early returns'
   const block = src.slice(src.indexOf("if (data.event === 'checks_ready') {"), src.indexOf("if (data.event === 'staging_ready')"));
   assert.match(block, /AppView\.applyChecksEvent\(data\)/);
   assert.match(block, /refreshCurrentSessionStatus\(data\.sessionId\)/, 'the focused-session refresh (pinned elsewhere) stays');
+  // A progress tick (once a second, to every client, for the run's length)
+  // must not fan out into fetches: only the start and verdict events do.
+  assert.match(block, /const progressTick = data\.checkState === 'pending' && data\.progress && typeof data\.progress === 'object';/);
+  assert.match(block, /if \(!progressTick\) \{\n\s+\/\/[^\n]*\n(\s+\/\/[^\n]*\n)*\s+\/\/[^\n]*\n\s+if \(typeof DevChat !== 'undefined' && DevChat\.refreshCurrentSessionStatus\)[\s\S]*?App\.refreshHomeProposals\(\);\n\s+\}/);
   const upd = src.slice(src.indexOf('handleSessionUpdate(data) {'), src.indexOf("if (data.action === 'sync_status')") + 400);
   assert.match(upd, /AppView\.applyBehindMainEvent\(data\.sessionId, data\.behindMain\)[\s\S]*DevChat\.applyBehindMainUpdate/);
   assert.match(upd, /AppView\.applyFreshnessEvent\(data\)[\s\S]*DevChat\.applyFreshnessUpdate/);
@@ -310,9 +462,17 @@ test('the ledger island draws the bar and the row model declares it', () => {
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   const model = read('frontend/src/features/dev-board/topic/model.ts');
   assert.match(model, /progress\?: LedgerProgress \| null;/);
-  assert.match(tsx, /className="dev-ledger-progress" aria-hidden="true"/, 'decorative: the numbers live in the sub text');
+  assert.match(tsx, /className=\{cls\} aria-hidden="true"/, 'decorative: the numbers live in the sub text');
+  assert.match(tsx, /const cls = `dev-ledger-progress\$\{indeterminate \? ' dev-ledger-progress-busy' : ''\}`;/);
   assert.match(tsx, /\{r\.progress \? <Progress p=\{r\.progress\} \/> : null\}/);
   assert.match(read('public/css/app.css'), /\.dev-ledger-progress-pass/);
+  // The unit suite's own track, labelled, pulsing before its first test.
+  assert.match(model, /unit\?: LedgerUnitProgress \| null;/);
+  assert.match(tsx, /className="dev-ledger-progress-unit" data-unit-phase=\{u\.phase\}/);
+  assert.match(tsx, /attr="data-unit-progress" value=\{`\$\{u\.ran\}\/\$\{u\.expected \?\? '\?'\}`\}/);
+  assert.match(tsx, /indeterminate=\{!u\.done && u\.ran === 0\}/);
+  assert.match(read('public/css/app.css'), /\.dev-ledger-progress-busy \{[^}]*animation:/);
+  assert.match(read('public/css/app.css'), /prefers-reduced-motion: reduce\) \{\n\s+\.dev-ledger-progress-busy \{ animation: none; \}/);
 });
 
 // ── 4. the connector says how current it is ────────────────────────────
