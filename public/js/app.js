@@ -1231,7 +1231,7 @@ const App = {
     if (shot !== 'feedback' && shot !== 'feedback-spent'
         && shot !== 'feedback-offline' && shot !== 'feedback-queued'
         && shot !== 'feedback-capture-failed'
-        && shot !== 'feedback-required') return;
+        && shot !== 'feedback-required' && shot !== 'feedback-first') return;
     const spent = shot === 'feedback-spent';
     // #1054: the two offline variants. `feedback-offline` is the dialog as a
     // disconnected user meets it (the hint, and Submit reading "Save for
@@ -1280,6 +1280,7 @@ const App = {
         },
       }]);
     }
+    if (shot === 'feedback-first') window.FeedbackQueue?.seedDisplayOnly?.([]);
     if (offline) {
       try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
     }
@@ -1323,6 +1324,16 @@ const App = {
           Kudos.Budget.refresh = () => Promise.resolve();
         }
         App.openFeedbackModal();
+        if (shot === 'feedback-first') {
+          let firstTries = App.IMPROVE_SHOT_TRIES;
+          const showFirst = () => {
+            const success = document.getElementById('feedback-first-success');
+            if (success && !success.classList.contains('hidden')) return;
+            App._simulateFirstFeedback?.();
+            if (--firstTries > 0) setTimeout(showFirst, App.IMPROVE_SHOT_INTERVAL_MS);
+          };
+          setTimeout(showFirst, 50);
+        }
         if (captureFailed) {
           const text = document.getElementById('feedback-text');
           // Assigned, not typed: dispatching `input` would start the live
@@ -1441,6 +1452,75 @@ const App = {
   // both answer with the new build.
   shellUpdate: null,
 
+  // A stale document discovered by the FIRST /api/version answer is a cold
+  // boot from the shell cache, not a tab that has been open across a deploy.
+  // Once its complete replacement is prefetched, switch to it automatically
+  // if doing so cannot discard input. The per-SHA session latch is the second
+  // guard: if a browser somehow serves the old document again, it gets the
+  // visible reload offer instead of entering a reload loop.
+  _shellAutoReloadSha: null,
+  _shellReloadStarted: null,
+  SHELL_AUTO_RELOAD_KEY: 'usernode-shell-auto-reload',
+
+  _hasUnsavedShellInput() {
+    let controls = [];
+    try {
+      controls = document.querySelectorAll('input, textarea, select, [contenteditable="true"]');
+    } catch { return true; }
+    for (const control of controls) {
+      if (!control || control.disabled) continue;
+      if (control.isContentEditable) {
+        if (String(control.textContent || '').trim()) return true;
+        continue;
+      }
+      const tag = String(control.tagName || '').toUpperCase();
+      const type = String(control.type || '').toLowerCase();
+      if (tag === 'INPUT' && ['button', 'submit', 'reset', 'hidden', 'image'].includes(type)) {
+        continue;
+      }
+      if (tag === 'INPUT' && type === 'file') {
+        if (control.files && control.files.length) return true;
+        continue;
+      }
+      if (tag === 'INPUT' && (type === 'checkbox' || type === 'radio')) {
+        if (!!control.checked !== !!control.defaultChecked) return true;
+        continue;
+      }
+      if (tag === 'SELECT') {
+        if (Array.from(control.options || [])
+          .some((option) => !!option.selected !== !!option.defaultSelected)) return true;
+        continue;
+      }
+      if (String(control.value || '') !== String(control.defaultValue || '')) return true;
+    }
+    return false;
+  },
+
+  _reloadPrefetchedShellIfSafe(sha, { force = false } = {}) {
+    if (!sha || App._shellReloadStarted) return false;
+    if (!force && App._shellAutoReloadSha !== sha) return false;
+    if (!force && App._hasUnsavedShellInput()) {
+      App._shellAutoReloadSha = null;
+      return false;
+    }
+    if (!force) {
+      try {
+        if (sessionStorage.getItem(App.SHELL_AUTO_RELOAD_KEY) === sha) {
+          App._shellAutoReloadSha = null;
+          return false;
+        }
+        sessionStorage.setItem(App.SHELL_AUTO_RELOAD_KEY, sha);
+      } catch {
+        // Without a cross-reload latch we cannot prove this will not loop.
+        App._shellAutoReloadSha = null;
+        return false;
+      }
+    }
+    App._shellReloadStarted = sha;
+    location.reload();
+    return true;
+  },
+
   /**
    * Ask the worker for the build at `sha`, once.
    *
@@ -1479,6 +1559,7 @@ const App = {
       // Repaint from the last answer rather than re-polling: the pill is the
       // only thing this changes, and /api/version is already on a 10s timer.
       if (App._lastVersionInfo) App.renderPlatformVersionPill(App._lastVersionInfo);
+      if (state === 'ready') App._reloadPrefetchedShellIfSafe(sha);
     };
 
     const controller = navigator.serviceWorker && navigator.serviceWorker.controller;
@@ -1496,9 +1577,9 @@ const App = {
     try {
       const channel = new MessageChannel();
       channel.port1.onmessage = (event) => {
-        settle(event.data && event.data.ok ? 'ready' : 'failed');
+        settle(event.data && event.data.ok && event.data.sha === sha ? 'ready' : 'failed');
       };
-      controller.postMessage({ type: 'prefetch-shell' }, [channel.port2]);
+      controller.postMessage({ type: 'prefetch-shell', sha }, [channel.port2]);
     } catch {
       settle('failed');
       return promise;
@@ -1527,8 +1608,15 @@ const App = {
       const res = await fetch('/api/version');
       if (!res.ok) return;
       const info = await res.json();
+      const firstVersionAnswer = !App._lastVersionInfo;
       if (!App.loadedPlatformSha && info.sha && info.sha !== 'dev') {
         App.loadedPlatformSha = info.sha;
+      }
+      if (firstVersionAnswer
+          && info.sha && info.sha !== 'dev'
+          && App.loadedPlatformSha && info.sha !== App.loadedPlatformSha
+          && !(info.deployProgress && info.deployProgress.deploying)) {
+        App._shellAutoReloadSha = info.sha;
       }
       App._lastVersionInfo = info;
       // `?shot=platform-updating` / `-ready` pin the row to a state no real
@@ -1588,7 +1676,7 @@ const App = {
     ]).then(([, movedOnSha]) => {
       if (!movedOnSha) return undefined;
       return App._ensureShellPrefetch(movedOnSha).then(() => {
-        location.reload();
+        App._reloadPrefetchedShellIfSafe(movedOnSha, { force: true });
         return new Promise(() => {});
       });
     });
@@ -1889,6 +1977,7 @@ const App = {
             App.resyncCurrentView();
             break;
           case 'app_status':
+            window.UsernodeReact?.appAllowance?.invalidate?.();
             App.handleAppStatusUpdate(data);
             break;
           case 'session_update':
@@ -1937,6 +2026,9 @@ const App = {
             if (typeof DevChat !== 'undefined' && DevChat.applyDraftsUpdate) {
               DevChat.applyDraftsUpdate(data.sessionId);
             }
+            break;
+          case 'app_allowance_changed':
+            window.UsernodeReact?.appAllowance?.invalidate?.();
             break;
           case 'notification_new':
             if (window.Notifications) Notifications.handleIncoming(data.notification);

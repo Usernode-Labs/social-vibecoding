@@ -5,6 +5,8 @@
 
 import { type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
+
 import { useStoreState } from '../../lib/use-store-state';
 import { DevChatBanners } from './banners';
 import { DevComposer } from './composer';
@@ -101,6 +103,25 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
       <div id="dc-banners" className="contents"><DevChatBanners /></div>
       <div className="dc-session-body flex-1 flex min-h-0 dc-lift dc-lift-session">
         <div id="dc-tab-chat" className="dc-chat-pane flex-1 flex flex-col min-h-0">
+          {s.returnHint ? (
+            <aside
+              id="dc-return-hint" aria-label="Returning to dev chat"
+              className="mx-3 mt-3 mb-1 flex flex-wrap items-center gap-3 rounded-xl bg-violet-500/10 p-3 text-sm text-zinc-700 dark:text-zinc-200 shrink-0"
+            >
+              <div className="flex-1 min-w-[12rem]">
+                <p className="font-semibold">You can come back later</p>
+                <p className="mt-1">
+                  You can leave this page and return anytime. Open <strong>Improve</strong> in
+                  the top bar to check your session’s status or find your chat again.
+                </p>
+              </div>
+              <Button
+                id="dc-return-hint-dismiss" type="button" size="sm" layout="shrink"
+                variant="neutral" ink="muted" className="min-h-[44px]"
+                onClick={() => window.DevChat?.dismissReturnHint()}
+              >Got it</Button>
+            </aside>
+          ) : null}
           {/* #1348: the launchpad is PINNED TO THE TOP of the chat area. It
               stood in the composer's place at the bottom (#1281), which is
               where you look to type — but a launchpad is not a composer: it

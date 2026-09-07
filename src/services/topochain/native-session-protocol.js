@@ -105,7 +105,7 @@ async function loadExchange(client, ticketHash, { lock = false } = {}) {
     ? await client.query(
       `SELECT a.attempt_id, a.protocol, a.user_id, a.web_session_incarnation_id,
               a.desired_runtime, a.network_id, a.chain_id, a.request_digest,
-              a.state AS attempt_state,
+              a.state AS attempt_state, a.walletless_supported,
               t.id AS ticket_id, t.ticket_hash, t.exchange_challenge,
               t.state AS ticket_state, t.issued_at, t.expires_at
          FROM native_session_tickets t
@@ -117,7 +117,7 @@ async function loadExchange(client, ticketHash, { lock = false } = {}) {
     : await client.query(
       `SELECT a.attempt_id, a.protocol, a.user_id, a.web_session_incarnation_id,
               a.desired_runtime, a.network_id, a.chain_id, a.request_digest,
-              a.state AS attempt_state,
+              a.state AS attempt_state, a.walletless_supported,
               t.id AS ticket_id, t.ticket_hash, t.exchange_challenge,
               t.state AS ticket_state, t.issued_at, t.expires_at
          FROM native_session_tickets t
@@ -127,6 +127,30 @@ async function loadExchange(client, ticketHash, { lock = false } = {}) {
     );
   const { rows } = result;
   return rows[0] || null;
+}
+
+// The already-built Android/iOS 0.4.0+1252 release accepts account:null.
+// Public build metadata selects a response shape, never authentication authority.
+// Older releases and missing/malformed metadata retain the wallet-required fallback.
+// TODO(remove-build-1250-compat): Once the minimum supported app accepts
+// walletless credentials, remove this release gate, handoff headers, attempt
+// column and wallet-required issuance/replay branches together.
+function supportsWalletlessCredentials({ appVersion, buildNumber }) {
+  if (typeof appVersion !== 'string' || appVersion.trim() !== appVersion
+      || appVersion.length > 32
+      || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(appVersion)
+      || typeof buildNumber !== 'string' || buildNumber.trim() !== buildNumber
+      || !/^[1-9][0-9]{0,9}$/.test(buildNumber)) return false;
+
+  // Compare semantic version first, then build within that version. A normal
+  // version bump remains compatible even if its build counter starts over.
+  const release = [...appVersion.split('.').map(Number), Number(buildNumber)];
+  if (!release.every(Number.isSafeInteger)) return false;
+  const minimum = [0, 4, 0, 1252];
+  for (let i = 0; i < minimum.length; i += 1) {
+    if (release[i] !== minimum[i]) return release[i] > minimum[i];
+  }
+  return true;
 }
 
 async function replayExchange(client, { row, request, keys, exchangeDigest, config }) {
@@ -167,11 +191,11 @@ async function replayExchange(client, { row, request, keys, exchangeDigest, conf
     protocolError(409, 'native_session_installation_conflict', 'The installation key generation is already bound to different keys.');
   }
 
-  // TODO(native-walletless-compat): Negotiate walletless credential support
-  // before restoring issuance AND replay. Build 1250 rejects account:null
-  // during native installation and retires its WebView to a blank screen.
-  // Previously issued envelopes must fail at exchange too, before installation.
-  if (credential.account_id == null) {
+  // Use the latest authenticated handoff, including after an app upgrade or
+  // downgrade. Refreshing a handoff also refreshes its decoder compatibility.
+  // TODO(remove-build-1250-compat): Remove only this shape refusal once all
+  // supported mobile builds accept walletless credentials; retain replay checks.
+  if (credential.account_id == null && row.walletless_supported !== true) {
     protocolError(409, 'native_session_wallet_required', 'This native session needs a wallet. Web access is still available.');
   }
 
@@ -184,17 +208,18 @@ async function replayExchange(client, { row, request, keys, exchangeDigest, conf
   });
 }
 
-async function provisionWallet(client, userId) {
+async function provisionWallet(client, userId, { allowWalletless = false } = {}) {
   const { rows: seasonRows } = await client.query(
     `SELECT id FROM seasons
       WHERE internal = FALSE AND is_active = TRUE
         AND starts_at <= NOW() AND ends_at >= NOW()
       ORDER BY starts_at DESC, id DESC LIMIT 1`
   );
-  // TODO(native-walletless-compat): Keep the pre-walletless error contract
-  // until supported clients explicitly opt in. An HTTP exchange failure is
-  // recoverable on build 1250; an account:null credential is not.
+  // An HTTP exchange failure is recoverable on build 1250; account:null is not.
+  // TODO(remove-build-1250-compat): Once 1250-era decoders are unsupported,
+  // return null unconditionally in both unavailable-wallet branches below.
   if (!seasonRows.length) {
+    if (allowWalletless === true) return null;
     protocolError(422, 'native_session_no_active_season', 'No active season is available.');
   }
   const seasonId = Number(seasonRows[0].id);
@@ -221,6 +246,7 @@ async function provisionWallet(client, userId) {
       [seasonId]
     );
     if (!availableRows.length) {
+      if (allowWalletless === true) return null;
       protocolError(409, 'native_session_wallet_pool_exhausted', 'No on-chain accounts are available for the current season.');
     }
     account = availableRows[0];
@@ -301,7 +327,7 @@ class NativeSessionProtocol {
     return network;
   }
 
-  async createHandoff({ sessionToken, body }) {
+  async createHandoff({ sessionToken, body, appVersion, buildNumber }) {
     const parsed = ticketRequestSchema.safeParse(body);
     if (!parsed.success) {
       protocolError(422, 'invalid_native_session_handoff_request', 'The native session handoff request is invalid.');
@@ -373,6 +399,13 @@ class NativeSessionProtocol {
         protocolError(409, 'native_session_attempt_revoked', 'The native session attempt is no longer valid.');
       }
 
+      // The attempt lock also serializes decoder changes with issuance/replay.
+      // Refresh this even for an exchanged attempt when the app build changes.
+      await client.query(
+        `UPDATE native_session_attempts SET walletless_supported = $2
+          WHERE attempt_id = $1`,
+        [request.attemptId, supportsWalletlessCredentials({ appVersion, buildNumber })]
+      );
       const handoffToken = makeOpaque('nsh_');
       const expiresAt = new Date(now.getTime() + HANDOFF_TTL_MS);
       await client.query(
@@ -614,7 +647,9 @@ class NativeSessionProtocol {
         protocolError(409, 'native_session_installation_conflict', 'The installation key generation is already bound to different keys.');
       }
 
-      const account = await provisionWallet(client, row.user_id);
+      const account = await provisionWallet(client, row.user_id, {
+        allowWalletless: row.walletless_supported === true,
+      });
       const bearerToken = crypto.randomBytes(40).toString('hex');
       const bearerHash = sha256Hex(bearerToken);
       const bearerExpiresAt = new Date(now.getTime() + CREDENTIAL_TTL_MS);
@@ -702,5 +737,6 @@ module.exports = {
   exactAttempt,
   exactInstallation,
   provisionWallet,
+  supportsWalletlessCredentials,
   buildCredentialPlaintext,
 };

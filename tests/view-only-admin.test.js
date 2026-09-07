@@ -53,9 +53,9 @@ function defaultHandler(sql, params = []) {
   }
   // GET /api/admin/users list.
   if (/FROM users u/.test(sql)) return { rows: scenario.userList || [] };
-  // Per-user app-quota write.
-  if (/UPDATE users SET app_quota = \$1 WHERE id = \$2/.test(sql)) {
-    return { rows: [{ id: params[1], username: 'target', app_quota: params[0] }] };
+  // Per-user app-quota edit locks and reads the current value before writing.
+  if (/SELECT id, username, app_quota FROM users/.test(sql)) {
+    return { rows: [{ id: params[0], username: 'target', app_quota: 2 }] };
   }
   // Role-setter: existing-row lookup inside the demotion/transaction path.
   if (/SELECT id, is_admin, admin_readonly FROM users WHERE id = \$1/.test(sql)) {

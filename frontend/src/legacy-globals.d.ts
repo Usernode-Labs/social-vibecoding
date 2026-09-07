@@ -233,6 +233,7 @@ declare global {
     /** features/dev-chat/dev-chat.js — sanitized Markdown renderer. */
     DevChat?: {
       renderMarkdown(text: string, opts?: { breaks?: boolean; images?: boolean }): string;
+      dismissReturnHint(): void;
       [key: string]: unknown;
     };
     /** The inline head-blocking theme module in src/head.html. */

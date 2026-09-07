@@ -308,9 +308,14 @@ test('refreshDevData keeps the vote roster for every kind except a vote', () => 
     AppView.refreshDevData(kind);
     assert.ok(AppView._voteRoster[9], `'${kind}' must not blank the tally to "Loading votes…"`);
   }
-  AppView._voteRoster[9] = { phase: 'ready' };
+  // A vote is the one refresh that revalidates the roster — but revalidating
+  // no longer means blanking it. #1715 narrowed WHICH refreshes invalidate;
+  // this keeps the roster visible through the one that still does.
+  const ready = { phase: 'ready' };
+  AppView._voteRoster[9] = ready;
   AppView.refreshDevData('vote');
-  assert.equal(AppView._voteRoster[9], undefined, 'a vote is the one refresh that revalidates the roster');
+  assert.equal(AppView._voteRoster[9], ready, 'the tally stays on screen while it is re-read');
+  assert.equal(AppView._voteRosterStale.has(9), true, 'and is marked for a re-read');
   assert.equal(loads, 4, 'the data still refreshes on every kind');
 });
 
@@ -505,6 +510,52 @@ test('the build steps render as a line and a step row, live and finished', () =>
   assert.match(tsx, /className="dev-ledger-progress-build" data-build-step=\{now \? now\.key : 'done'\}/);
   assert.match(read('frontend/src/features/dev-board/topic/model.ts'), /build\?: LedgerBuildStep\[\] \| null;/);
   assert.match(read('public/css/app.css'), /\.dev-ledger-build-step\.is-now \{/);
+});
+
+test('a roster already on screen is never replaced by a loading line', async () => {
+  // vote_update is broadcast for about two dozen things that are not a vote
+  // — a rename, a title heal, a sync, a conflict resolution, a merge, fleet
+  // maintenance — and every one of them used to DELETE the cached roster, so
+  // the row painted "Loading votes…" and then the roster a fetch later. The
+  // entry is marked stale and left on screen now; the re-read swaps it in.
+  const AppView = makeAppView();
+  AppView._renderTopicHead = () => {};
+  const loaded = { phase: 'ready', headline: '1 of 3', yes: '@ana', no: '—' };
+  AppView._voteRoster[42] = loaded;
+
+  AppView._invalidateVoteRoster(42);
+  assert.equal(AppView._voteRoster[42], loaded, 'the roster stays on screen while it is re-read');
+  assert.equal(AppView._voteRosterStale.has(42), true);
+  // Which is what the row reads: the cached view, never the loading shape.
+  assert.equal((AppView._voteRoster[42] || { phase: 'loading' }).phase, 'ready');
+
+  // Stale means the loader does NOT take its cache-hit early return.
+  await AppView._loadVoteRoster(42);
+  assert.notEqual(AppView._voteRoster[42], loaded, 're-read, and swapped in when it landed');
+  assert.equal(AppView._voteRosterStale.has(42), false, 'the mark is cleared by the re-read');
+  assert.equal(AppView._voteRosterInFlight.has(42), false);
+
+  // A second load with nothing stale is the early return, so a repaint loop
+  // cannot turn into a fetch loop (which is why the cache exists at all).
+  const afterFirst = AppView._voteRoster[42];
+  await AppView._loadVoteRoster(42);
+  assert.equal(AppView._voteRoster[42], afterFirst, 'a fresh entry is not re-fetched');
+
+  // A roster that has NEVER loaded has nothing to keep: it still shows the
+  // loading line, and is not marked stale.
+  AppView._invalidateVoteRoster(99);
+  assert.equal(AppView._voteRoster[99], undefined);
+  assert.equal(AppView._voteRosterStale.has(99), false);
+  assert.equal((AppView._voteRoster[99] || { phase: 'loading' }).phase, 'loading');
+  AppView._invalidateVoteRoster(null);
+
+  const src = APP_VIEW_SRC;
+  assert.match(src, /if \(kind === 'vote' && AppView\._devTopic\) AppView\._invalidateVoteRoster\(AppView\._devTopic\.id\);/);
+  assert.match(src, /AppView\._invalidateVoteRoster\(ref\.id\);/, 'arriving at a topic re-reads rather than blanking');
+  // The only remaining delete is inside the helper, for an entry that was
+  // never loaded and so has nothing worth keeping.
+  assert.equal((src.match(/delete AppView\._voteRoster\[/g) || []).length, 1);
+  assert.match(src, /else delete AppView\._voteRoster\[sessionId\];/);
 });
 
 test('a pending run says what a pending sync will do to it', () => {

@@ -165,20 +165,53 @@ function reportBuildStep(config, session, step, timings, startedAt, image = null
 // on at most once a second (a build prints many lines a second), with the
 // trailing one always delivered.
 const IMAGE_PROGRESS_MIN_GAP_MS = 1000;
-function makeImageProgressReporter(config, session, timings, startedAt) {
+// How many of the image build's own steps the finished record keeps, and how
+// much of each instruction it keeps. A Dockerfile build reports ~36 steps;
+// listing all of them would bury the one that cost the time, which is the
+// whole reason for recording them.
+const IMAGE_SLOW_STEPS_KEPT = 4;
+const IMAGE_STEP_LABEL_MAX = 32;
+
+// One instruction, as a label: `RUN npm ci --no-audit --loglevel=error`
+// carries nothing after the verb and its first argument that helps identify
+// which step this was.
+function imageStepLabel(detail, index) {
+  const text = String(detail == null ? '' : detail).replace(/\s+/g, ' ').trim();
+  if (!text) return `step ${index}`;
+  return text.length > IMAGE_STEP_LABEL_MAX ? `${text.slice(0, IMAGE_STEP_LABEL_MAX - 1)}…` : text;
+}
+
+function makeImageProgressReporter(config, session, timings, startedAt, now = () => Date.now()) {
   let last = null;
   let lastAt = 0;
   let timer = null;
+  // Per-step wall clock, for a runtime that reports a step COUNTER rather
+  // than named phases (docker). A step's cost is the gap between its line
+  // and the next one's, so each step is closed when the next begins and the
+  // final one when the build ends. This is what turns "image build: 3m 4s"
+  // into which instruction spent it.
+  const stepTimes = [];
+  let openStep = null;
+  const closeStep = (at) => {
+    if (!openStep) return;
+    stepTimes.push({ name: openStep.label, ms: Math.max(0, at - openStep.startedAt) });
+    openStep = null;
+  };
   const flush = () => {
     timer = null;
-    lastAt = Date.now();
+    lastAt = now();
     reportBuildStep(config, session, 'image_build', timings, startedAt, last);
   };
   return {
     report(image) {
       if (!image || typeof image !== 'object') return;
+      const at = now();
+      if (Number.isInteger(image.index) && (!openStep || openStep.index !== image.index)) {
+        closeStep(at);
+        openStep = { index: image.index, label: imageStepLabel(image.detail, image.index), startedAt: at };
+      }
       last = { ...(last || {}), ...image };
-      const gap = Date.now() - lastAt;
+      const gap = at - lastAt;
       if (gap >= IMAGE_PROGRESS_MIN_GAP_MS) {
         if (timer) { clearTimeout(timer); timer = null; }
         flush();
@@ -187,8 +220,18 @@ function makeImageProgressReporter(config, session, timings, startedAt) {
         if (typeof timer.unref === 'function') timer.unref();
       }
     },
-    close() { if (timer) { clearTimeout(timer); timer = null; } },
+    close() {
+      if (timer) { clearTimeout(timer); timer = null; }
+      closeStep(now());
+    },
     last() { return last; },
+    // The steps worth naming: the slowest few, back in the order they ran.
+    slowestSteps() {
+      if (!stepTimes.length) return null;
+      const top = stepTimes.slice().sort((a, b) => b.ms - a.ms).slice(0, IMAGE_SLOW_STEPS_KEPT);
+      const keep = new Set(top);
+      return stepTimes.filter((s) => keep.has(s));
+    },
   };
 }
 
@@ -397,12 +440,13 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     timings.imageBuildMs = Date.now() - imageBuildStartedAt;
     // The phases with their times, for the finished build's record: the
     // kpack pod's own stamps, or the last docker step counter.
-    const finalImage = build && Array.isArray(build.phases) && build.phases.length
-      ? { phases: build.phases }
-      : imageProgress.last();
-    if (finalImage && Array.isArray(finalImage.phases) && finalImage.phases.length) {
-      timings.imagePhases = finalImage.phases;
-    }
+    // The runtime's own phases when it reports them (kpack); otherwise the
+    // slowest of the steps it counted (docker). Either way the finished
+    // build says where inside the image build the time went.
+    const reportedPhases = build && Array.isArray(build.phases) && build.phases.length ? build.phases : null;
+    const countedSteps = reportedPhases ? null : imageProgress.slowestSteps();
+    if (reportedPhases) timings.imagePhases = reportedPhases;
+    else if (countedSteps && countedSteps.length) timings.imagePhases = countedSteps;
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
 
     // 3. Clone the production database. cloneDatabase creates a fresh
@@ -973,6 +1017,7 @@ async function rebuildProductionInner(config, app) {
 
 module.exports = {
   _makeImageProgressReporterForTest: makeImageProgressReporter,
+  _imageStepLabelForTest: imageStepLabel,
   buildAndDeployStaging,
   hasInFlightBuild,
   previewDisplayState,

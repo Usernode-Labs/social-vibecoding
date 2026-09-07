@@ -78,6 +78,27 @@ import {
 } from './waitlist-shared';
 
 /**
+ * Did this submission actually say anything? (#1539)
+ *
+ * Every field on the form is optional and the endpoint accepts an empty body,
+ * so pressing Save with nothing filled in used to store nothing and answer
+ * with the same confirmation panel a full set of answers gets.
+ *
+ * "Something" is deliberately broad: a chip, a select, a handle, a tick on
+ * "I followed along" — any one of them is an answer. The three shapes a field
+ * can take (an `undefined`-or-string, an array of chips, the follow boolean)
+ * are all handled here rather than at each call site, so a question added
+ * later is covered by construction.
+ */
+export function hasAnyAnswer(payload: Record<string, unknown>): boolean {
+  return Object.values(payload).some((v) => {
+    if (Array.isArray(v)) return v.length > 0;
+    if (typeof v === 'boolean') return v;
+    return typeof v === 'string' && v.trim() !== '';
+  });
+}
+
+/**
  * #1530: grow a long-answer box to fit what is in it.
  *
  * The two open questions ship `rows={3}`, and a three-line window is a poor
@@ -487,29 +508,45 @@ export function MoreScreen() {
       e.preventDefault();
       const value = token.current;
       const normalizedMadeUrl = normalizeMadeUrlInput();
+      const answers = {
+        made_url: normalizedMadeUrl || undefined,
+        made_note: madeNote.current?.value.trim() || undefined,
+        group_name: groupName.current?.value.trim() || undefined,
+        group_size: groupSize.current?.value || undefined,
+        group_role: groupRole.current?.value || undefined,
+        group_tools: tools,
+        group_need: groupNeed.current?.value.trim() || undefined,
+        had_loss: lossHad || undefined,
+        loss_product: lossProduct.current?.value.trim() || undefined,
+        loss_kind: lossKinds,
+        loss_story: lossStory.current?.value.trim() || undefined,
+        farcaster: farcaster.current?.value.trim() || undefined,
+        discord: discord.current?.value.trim() || undefined,
+        telegram: telegram.current?.value.trim() || undefined,
+        other_handle: other.current?.value.trim() || undefined,
+        followed_claim: !!followed.current?.checked,
+      };
+
+      // #1539: an empty save was accepted, and answered with the same "thanks"
+      // panel as a full one — so the one thing this form exists to collect
+      // could be skipped by pressing the button, and nothing said so.
+      //
+      // The guard is on SUBMIT rather than a disabled button: every field here
+      // is uncontrolled by design (see the header comment), so a live-disabled
+      // control would mean putting all sixteen of them into React state to
+      // answer a question that only matters once. Every question stays
+      // optional — this asks for one of them, not for any particular one.
+      if (!hasAnyAnswer(answers)) {
+        setMsg({ text: 'Answer at least one question before saving.', tone: 'warn' });
+        return;
+      }
+
       setSaving(true);
       try {
         const res = await fetch('/api/public/waitlist/more/' + encodeURIComponent(value || ''), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            made_url: normalizedMadeUrl || undefined,
-            made_note: madeNote.current?.value.trim() || undefined,
-            group_name: groupName.current?.value.trim() || undefined,
-            group_size: groupSize.current?.value || undefined,
-            group_role: groupRole.current?.value || undefined,
-            group_tools: tools,
-            group_need: groupNeed.current?.value.trim() || undefined,
-            had_loss: lossHad || undefined,
-            loss_product: lossProduct.current?.value.trim() || undefined,
-            loss_kind: lossKinds,
-            loss_story: lossStory.current?.value.trim() || undefined,
-            farcaster: farcaster.current?.value.trim() || undefined,
-            discord: discord.current?.value.trim() || undefined,
-            telegram: telegram.current?.value.trim() || undefined,
-            other_handle: other.current?.value.trim() || undefined,
-            followed_claim: !!followed.current?.checked,
-          }),
+          body: JSON.stringify(answers),
         });
         const data = await res.json().catch(() => null);
         if (res.ok) {
@@ -661,7 +698,7 @@ export function MoreScreen() {
               maxLength={2000}
               placeholder="https://"
               onBlur={normalizeMadeUrlInput}
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
             />
             <input
               ref={madeNote}
@@ -669,7 +706,7 @@ export function MoreScreen() {
               type="text"
               maxLength={140}
               placeholder="What is it, in one line? (optional)"
-              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
             />
           </div>
           {/* 5 · The group */}
@@ -689,13 +726,13 @@ export function MoreScreen() {
               type="text"
               maxLength={255}
               placeholder="A 200-person Discord for indie game devs in Lagos"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
             />
             <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <select
                 ref={groupSize}
                 id="more-group-size"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               >
                 <option value="">
                   Roughly how many people?
@@ -705,7 +742,7 @@ export function MoreScreen() {
               <select
                 ref={groupRole}
                 id="more-group-role"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               >
                 <option value="">
                   Your role in it
@@ -729,7 +766,7 @@ export function MoreScreen() {
               onInput={(e) => autoGrow(e.currentTarget)}
               maxLength={800}
               placeholder="What would its own app do that those tools can't? Money, membership, voting, scheduling, reputation, records…"
-              className="mt-3 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="mt-3 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
             >
             </textarea>
           </div>
@@ -760,7 +797,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Which one? Google Reader, a Discord server, a game's private servers, an API…"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
               <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-1">
                 What happened? (pick any)
@@ -778,7 +815,7 @@ export function MoreScreen() {
                 onInput={(e) => autoGrow(e.currentTarget)}
                 maxLength={800}
                 placeholder="What happened, and what did you do next? Where did everyone go? Did you move them somewhere? Rebuild it? Give up?"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               >
               </textarea>
             </div>
@@ -828,6 +865,25 @@ export function MoreScreen() {
                       '?token=' +
                       encodeURIComponent(token.current || '')
                     }
+                    /*
+                        #1532: the OAuth round trip leaves in a NEW TAB.
+
+                        It used to navigate this one away, and the form's
+                        fields are uncontrolled and unsaved (see the header
+                        comment), so a provider that asked for a password, or
+                        a phone where getting back means finding the tab
+                        again, cost the reader whatever they had typed. The
+                        new tab carries the whole flow and lands on
+                        `#more/<token>?connect=<outcome>`; this tab keeps the
+                        half-filled form exactly as it was.
+
+                        Verification is recorded server-side by the callback,
+                        so saving from EITHER tab afterwards stores it. The
+                        `rel` is not optional: `target="_blank"` without it
+                        hands the opened page a live `window.opener`.
+                    */
+                    target="_blank"
+                    rel="noopener noreferrer"
                   >
                     {'Connect ' + label}
                   </a>
@@ -841,7 +897,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Farcaster (@handle)"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
               <input
                 ref={discord}
@@ -849,7 +905,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Discord (username)"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
               <input
                 ref={telegram}
@@ -857,7 +913,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Telegram (@handle)"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
               <input
                 ref={other}
@@ -865,7 +921,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Anywhere else: Twitch, YouTube, Mastodon…"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
             </div>
             {/*
@@ -943,7 +999,7 @@ export function MoreScreen() {
                 readOnly={true}
                 value={inviteUrl}
                 placeholder="Your link appears here"
-                className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
               <Button
                 type="button"

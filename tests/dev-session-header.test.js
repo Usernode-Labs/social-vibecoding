@@ -280,13 +280,25 @@ test('the strip hosts no lifecycle pill — the header chip does', () => {
   );
 });
 
-test('with no preview built yet the strip is the bare Building chip', () => {
+test('with no preview built yet Building is a compact, non-interactive status chip (#1594)', () => {
   const { view } = makeDevChat();
   const rest = headerHtml(view(SESSION));
   assert.doesNotMatch(rest, /dc-mode-chip/, 'absent at rest');
   assert.doesNotMatch(rest, /dc-mode-switch/, 'and no switch — there is nothing to see');
   const busy = headerHtml({ ...view(SESSION), busy: true });
-  assert.match(busy, /id="dc-mode-chip"[^>]*>Building</);
+  const chip = busy.match(/<span id="dc-mode-chip"[^>]*>[\s\S]*?Building<\/span>/)?.[0];
+  assert.ok(chip, 'the activity label is a span, not a button');
+  assert.match(chip, /role="status"/);
+  assert.match(chip, /bg-zinc-100/);
+  assert.match(chip, /dark:bg-zinc-800/);
+  assert.match(chip, /text-zinc-600/);
+  assert.match(chip, /dark:text-zinc-300/);
+  assert.match(chip, /py-0\.5 rounded-md/);
+  assert.match(chip, /cursor-default/);
+  assert.match(chip, /<span[^>]*bg-amber-500[^>]*aria-hidden="true"/,
+    'the decorative activity dot complements the visible status text');
+  assert.doesNotMatch(chip, /<button|tabindex=|aria-pressed=|aria-disabled=|hover:|cursor-pointer|bg-violet-600|text-white|un-touch-target/i,
+    'no button semantics, focus target, hover treatment, or primary-action fill');
   assert.doesNotMatch(busy, /dc-mode-switch/);
 });
 
