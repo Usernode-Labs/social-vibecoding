@@ -4943,6 +4943,12 @@ const AppView = {
   // pending, at }. Slug-keyed so an app-to-app hop never draws the previous
   // app's grouping over this one's cards.
   _workshopThemes: null,
+  // The one pending re-fetch of the themes, or null. One chain per page: a
+  // draft in progress leaves `pending` true, and every WS-driven
+  // _loadDevFeed lands here at attempt 0 — without this each of those
+  // started a chain of its own, and a busy board could be polling the
+  // endpoint (which rebuilds the server's input) several times per interval.
+  _workshopPollTimer: null,
   // 'feed-comments' while that capture deep link is active — see the ?shot=
   // block in _applyShotDeepLink.
   _workshopShot: null,
@@ -5015,15 +5021,32 @@ const AppView = {
     return theme ? theme.name : 'Theme';
   },
 
-  // Fetch the themes, and re-fetch a few times while a regeneration is
-  // pending server-side so a freshly grouped board arrives without a reload.
-  // Throttled per slug: the board's WS-driven reloads call _loadDevFeed
-  // freely, and the themes endpoint rebuilds the server's input each time.
+  // While a regeneration is pending server-side, the re-fetch schedule in
+  // ms: a model drafting a full board takes tens of seconds, and the first
+  // version of this gave up after four polls six seconds apart — which left
+  // the lander on the category grouping with a "no model" footnote until the
+  // next navigation, on exactly the first visit after a deploy. Widens to
+  // about three minutes in total, then stops; the next _loadDevFeed picks
+  // the finished grouping up.
+  WORKSHOP_POLL_MS: [6000, 10000, 15000, 20000, 30000, 30000, 30000, 30000],
+
+  // Fetch the themes, and re-fetch on the schedule above while a
+  // regeneration is pending server-side so a freshly grouped board arrives
+  // without a reload. Throttled per slug: the board's WS-driven reloads call
+  // _loadDevFeed freely, and the themes endpoint rebuilds the server's input
+  // each time.
   async _loadWorkshopThemes(slug, attempt) {
     if (!slug) return;
     const n = attempt || 0;
     const cur = AppView._workshopThemes;
     if (!n && cur && cur.slug === slug && !cur.pending && (Date.now() - (cur.at || 0)) < 60000) return;
+    // A chain is already polling this slug: let it finish rather than
+    // starting a second one beside it.
+    if (!n && cur && cur.slug === slug && cur.pending && AppView._workshopPollTimer != null) return;
+    if (AppView._workshopPollTimer != null) {
+      clearTimeout(AppView._workshopPollTimer);
+      AppView._workshopPollTimer = null;
+    }
     let next;
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/workshop-themes${AppView._demoQS()}`);
@@ -5036,16 +5059,20 @@ const AppView = {
         generatedAt: data.generatedAt || null,
         stale: !!data.stale,
         pending: !!data.pending,
+        lastError: typeof data.lastError === 'string' && data.lastError ? data.lastError : null,
         at: Date.now(),
       };
     } catch {
-      next = { slug, themes: [], source: null, generatedAt: null, stale: false, pending: false, at: Date.now() };
+      next = { slug, themes: [], source: null, generatedAt: null, stale: false, pending: false, lastError: null, at: Date.now() };
     }
     if (typeof App !== 'undefined' && App.currentApp !== slug) return;
     AppView._workshopThemes = next;
     if (AppView._getViewMode() === 'workshop') AppView._repaintBoardSurface();
-    if (next.pending && n < 4) {
-      setTimeout(() => { AppView._loadWorkshopThemes(slug, n + 1); }, 6000);
+    if (next.pending && n < AppView.WORKSHOP_POLL_MS.length) {
+      AppView._workshopPollTimer = setTimeout(() => {
+        AppView._workshopPollTimer = null;
+        AppView._loadWorkshopThemes(slug, n + 1);
+      }, AppView.WORKSHOP_POLL_MS[n]);
     }
   },
 
@@ -5081,7 +5108,7 @@ const AppView = {
     const ctx = { slug, canPost: !!AppView.appData?.can_collaborate };
     const empty = {
       votes: { count: 0, rows: [] }, since: null, welcome: null, discussion: null, themes: [],
-      meta: { source: null, generatedAt: null, stale: false, pending: false, filtered: false },
+      meta: { source: null, generatedAt: null, stale: false, pending: false, lastError: null, filtered: false },
       autoExpand: null,
     };
     if (!AppView._devDataReady) return { loading: true, emptyNote: null, ...empty, ...ctx };
@@ -5284,6 +5311,7 @@ const AppView = {
         generatedAt: tData ? tData.generatedAt : null,
         stale: !!(tData && tData.stale),
         pending: !!(tData && tData.pending),
+        lastError: (tData && tData.lastError) || null,
         filtered: filtering,
       },
       autoExpand,

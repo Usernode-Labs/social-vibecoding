@@ -531,9 +531,9 @@ export function DevWorkshop(): ReactNode {
           <div className="dev-ws-sort">
             <span className="dev-ws-eyebrow">
               {`${themes.filter((t) => !t.ungrouped).length} themes`}
-              {v.meta.source === 'category' ? ' · grouped by category until themes are drafted' : ''}
+              {v.meta.source === 'category' ? ' · grouped by category for now' : ''}
               {v.meta.source === 'demo' ? ' · staging demo grouping' : ''}
-              {v.meta.pending ? ' · regrouping…' : ''}
+              {v.meta.pending ? (v.meta.source === 'ai' ? ' · regrouping…' : ' · drafting themes…') : ''}
             </span>
             <div className="dev-ws-sort-opts" role="group" aria-label="Order themes">
               {SORTS.map((s) => (
@@ -563,12 +563,18 @@ export function DevWorkshop(): ReactNode {
               />
             ))}
           </div>
+          {/* Four honest states for the fallback, because the first cut said
+              "once an AI model is available" while the model was mid-draft. */}
           <div className="dev-ws-foot-note">
             {v.meta.source === 'ai'
               ? 'Themes are drafted from the board and refreshed as it changes.'
-              : (v.meta.source === 'demo'
+              : v.meta.source === 'demo'
                 ? 'Staging demo grouping: in production the themes are drafted by the model from the board.'
-                : 'Themes are drafted once an AI model is available; until then items are grouped by their voted category.')}
+                : v.meta.pending
+                  ? 'Themes are being drafted from the board now. They replace this grouping when they land.'
+                  : v.meta.lastError
+                    ? `The last attempt to draft themes failed (${v.meta.lastError}). Items stay grouped by their voted category until the next attempt.`
+                    : 'No AI model is configured, so items are grouped by their voted category.'}
           </div>
         </>
       ) : null}
