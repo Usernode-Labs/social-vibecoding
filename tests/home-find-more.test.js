@@ -223,12 +223,16 @@ test('_wireDiscoveryCards binds each badge once, however often the lane re-runs 
   const Home = makeHome();
   let toggles = 0;
   Home.toggleAdded = () => { toggles += 1; };
+  // BY TYPE, since #1763: the badge carries two listeners now — its click,
+  // and the pointerdown guard that keeps a press on ⊕ from arming the lane's
+  // drag recognizer. Both are bound through the same WeakSet, so both are the
+  // claim this test makes.
   const mkBtn = (cls, slug) => {
-    const handlers = [];
+    const handlers = {};
     return {
       className: cls,
       dataset: { slug, added: 'false' },
-      addEventListener: (_t, fn) => handlers.push(fn),
+      addEventListener: (t, fn) => { (handlers[t] || (handlers[t] = [])).push(fn); },
       handlers,
     };
   };
@@ -248,9 +252,18 @@ test('_wireDiscoveryCards binds each badge once, however often the lane re-runs 
   // changes the effect's key while React keeps the very same element.
   Home._wireDiscoveryCards(lane);
   Home._wireDiscoveryCards(lane);
-  assert.equal(badge.handlers.length, 1, 'one listener, not two');
-  badge.handlers[0]({ stopPropagation: () => {} });
+  assert.equal(badge.handlers.click.length, 1, 'one listener, not two');
+  assert.equal(badge.handlers.pointerdown.length, 1, 'and one guard, not two');
+  badge.handlers.click[0]({ stopPropagation: () => {} });
   assert.equal(toggles, 1, 'so one tap is one toggle');
+
+  // The guard's whole job: the kit's recognizer listens for pointerdown on the
+  // LANE and takes the first card that contains the target, so a press on the
+  // badge is a press on the card unless the event stops here (#1763). On
+  // desktop it arms after 6px, which is inside the slop of an ordinary click.
+  let stopped = 0;
+  badge.handlers.pointerdown[0]({ stopPropagation: () => { stopped += 1; } });
+  assert.equal(stopped, 1, 'a press on ⊕ never reaches the lane');
 });
 
 test('featuredApps: a hidden member app IS offered again (#618)', () => {
