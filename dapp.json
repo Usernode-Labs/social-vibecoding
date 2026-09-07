@@ -1345,6 +1345,20 @@
       "allowConsoleErrors": true
     },
     {
+      "name": "Waitlist acknowledges the saved signup before confirmation (#1528)",
+      "path": "/?shot=waitlist-joined",
+      "expectSelector": "#waitlist-joined h2:not(.hidden)",
+      "expectText": "You're on the waitlist!",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist email confirmation is explicitly step 2 (#1528)",
+      "path": "/?shot=waitlist-joined",
+      "expectSelector": "#waitlist-confirm:not(.hidden) label[for=\"waitlist-code\"]",
+      "expectText": "Step 2 of 2 · Confirm your email",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Waitlist joined state shows the confirm-your-email step",
       "path": "/?shot=waitlist-joined",
       "expectSelector": "#waitlist-confirm:not(.hidden) #waitlist-code",
