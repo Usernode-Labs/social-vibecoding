@@ -109,7 +109,7 @@ test('the pool bounds are passed to the capture image', () => {
 test('the staging preview can serve a parallel suite', () => {
   // The preview is the thing being hammered now. It was capped at 1 CPU when
   // exactly one page at a time talked to it.
-  assert.equal(docker.STAGING_CPUS, '2');
+  assert.equal(docker.STAGING_CPUS, '4');
   assert.equal(docker.STAGING_MEMORY, '256m',
     'memory was never the constraint — production previews sit at 28-57 MiB');
 });

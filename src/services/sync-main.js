@@ -213,7 +213,24 @@ async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) 
   const priorReviewedSha = session[pinColumn]
     ? String(session[pinColumn]).toLowerCase()
     : null;
-  const carryChecks = result.syncResult === 'clean';
+  // A clean sync carries the checks verdict onto the sync commit: the tree
+  // is the reviewed code plus main, and re-running a green suite for that
+  // is pure cost. EXCEPT while a run is in flight. That run tested the
+  // PRE-sync commit, and its verdict write is keyed to the commit it
+  // started on (visuals.storeChecks' CAS), so carrying the pin under it
+  // means the verdict lands nowhere: the row stays 'pending' with a
+  // checked_at that no longer advances, and nothing touches it until the
+  // stale-checks sweeper picks it up CHECKS_STALE_MS later. Observed on
+  // #1728: two syncs, two abandoned runs (one of them 490 checks in), two
+  // ten-minute dead waits, three full runs for one proposal.
+  //
+  // So a pending row is treated like the resolved path — pin moved, run
+  // re-kicked immediately. captureForSession's in-flight guard queues the
+  // new run behind the one still going and drains it the moment that ends,
+  // so the restart costs the wait for the container already running rather
+  // than ten minutes of nothing.
+  const runInFlight = session.check_state === 'pending';
+  const carryChecks = result.syncResult === 'clean' && !runInFlight;
 
   // eslint-disable-next-line global-require
   const github = require('./github');
@@ -307,6 +324,7 @@ async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) 
 
   log.info('sync-main', 'Proposal review advanced after platform sync', {
     sessionId: session.id,
+    runInFlight,
     reviewedFrom: priorReviewedSha,
     checksFrom: priorChecksSha,
     to: nextSha,
@@ -317,7 +335,7 @@ async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) 
   if (dstep) {
     await dstep({
       phase: 'platform_advance',
-      message: `Review advanced to the pushed sync commit: ${votesMoved} vote${votesMoved === 1 ? '' : 's'} carried, checks ${carryChecks ? 'carried forward' : 're-running'}.`,
+      message: `Review advanced to the pushed sync commit: ${votesMoved} vote${votesMoved === 1 ? '' : 's'} carried, checks ${carryChecks ? 'carried forward' : `re-running${runInFlight ? ' (the run in flight tested the pre-sync commit)' : ''}`}.`,
       detail: {
         from: priorReviewedSha, to: nextSha,
         syncResult: result.syncResult, votesCarried: votesMoved,
@@ -352,7 +370,7 @@ async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) 
       : 'was synced with main';
     const checksNote = carryChecks
       ? ''
-      : ' Its checks are re-running against the new commit and it will merge on its own once they pass.';
+      : ` Its checks are re-running against the new commit${runInFlight ? ' (the run that was in flight was testing the code from before the sync)' : ''} and it will merge on its own once they pass.`;
     try {
       const { sendSystemMessage } = require('./ws');
       await sendSystemMessage(

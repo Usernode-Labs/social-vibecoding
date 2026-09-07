@@ -83,6 +83,7 @@ import {
   // Aliased: `options` is already the name of this screen's fetched
   // options object, and the helper renders a map of them.
   options as opts,
+  useSurveyAnswered,
   useWaitlistOptions,
 } from './waitlist-shared';
 
@@ -144,6 +145,11 @@ export function WaitlistScreen() {
   // prerendered href.
   const [offer, setOffer] = useState(false);
   const [moreToken, setMoreToken] = useState<string | null>(null);
+  // #1535: this card outlives a trip to the survey and back. Once those
+  // questions have been answered it stops asking for answers and offers to
+  // edit them instead. False until the survey says otherwise, which is also
+  // what the prerendered document renders.
+  const surveyAnswered = useSurveyAnswered(moreToken);
   const [msg, setMsg] = useState<{ text: string; tone: MsgTone } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [discovery, setDiscovery] = useState<string | null>(null);
@@ -865,9 +871,9 @@ export function WaitlistScreen() {
               Want in sooner?
             </h3>
             <p className="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
-              Four more questions, about three minutes: the group you&rsquo;d bring,
-            a tool you&rsquo;ve lost, where else you are. These are the answers we
-            actually read when we pick the next group.
+              {surveyAnswered
+                ? 'Your answers are saved. Add to them any time, and they merge, so nothing you already wrote is lost.'
+                : 'Four more questions, about three minutes: the group you\u2019d bring, a tool you\u2019ve lost, where else you are. These are the answers we actually read when we pick the next group.'}
             </p>
             <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
               <a
@@ -875,7 +881,7 @@ export function WaitlistScreen() {
                 href={moreToken ? '#more/' + moreToken : '#landing'}
                 className="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors"
               >
-                Answer them now
+                {surveyAnswered ? 'Edit my answers' : 'Answer them now'}
               </a>
               <span className="text-xs text-zinc-500 dark:text-zinc-400">
                 Or stop here. You&rsquo;re on the list either way, and the link is in your email.

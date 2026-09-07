@@ -1918,6 +1918,9 @@ const App = {
           case 'issue_update':
             App.handleIssueUpdate(data);
             break;
+          case 'workshop_update':
+            App.handleWorkshopUpdate(data);
+            break;
           case 'board_order_update':
             // #613: someone reordered a Dev-board column. refreshDevData
             // re-pulls the board (including the manual order fetched by
@@ -2654,6 +2657,17 @@ const App = {
     }
   },
 
+  // The Workshop's grouping for the open app moved server-side (cards
+  // placed into themes, or the themes re-drafted): re-fetch the themes
+  // alone — the board's own data did not change — past the per-slug
+  // throttle, so what is on screen is what the server just wrote.
+  handleWorkshopUpdate(data) {
+    if (App.currentApp === data.appSlug && App.currentTab === 'dev'
+      && typeof AppView !== 'undefined' && AppView.applyWorkshopUpdate) {
+      AppView.applyWorkshopUpdate(data);
+    }
+  },
+
   // A vote/session event landed that affects the viewer's own work:
   // refresh the header cog's drawer (which took over the home screen's
   // old "Your proposals" / "Your active sessions" strips) and, while the
@@ -3063,7 +3077,19 @@ const App = {
         }
         if (authRoute) {
           AuthScreens.hideAll();
-          history.replaceState(null, '', '/');
+          // `_rootUrl('')`, not a bare '/': this strips the STALE AUTH HASH
+          // and nothing else. A hardcoded '/' dropped the QUERY too, which
+          // silently defeats `?return_to=` for the one visitor most likely
+          // to be carrying it — somebody whose session snapshot outlived
+          // their cookie (30 days against 7, with no sliding refresh). That
+          // person boots authed from the snapshot, so App.user is truthy
+          // here, reaches this line and loses the return target; only then
+          // does the unawaited _reconcileSession answer 401 and reload onto
+          // the already-stripped URL. They sign in with nothing to return
+          // to, which is the exact bug `?return_to=` exists to prevent.
+          // Every other URL write in this file goes through the same
+          // serializer for the same reason.
+          history.replaceState(null, '', App._rootUrl(''));
           hash = '';
         }
       }

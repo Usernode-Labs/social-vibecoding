@@ -56,7 +56,7 @@
  * beside `answers.verified` and never inside it.
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
@@ -71,10 +71,36 @@ import {
   MultiChipRow,
   msgClass,
   options as optionList,
+  markSurveyAnswered,
   toggleChip,
   waitlistOptions,
   WaitlistOptions,
 } from './waitlist-shared';
+
+/**
+ * #1530: grow a long-answer box to fit what is in it.
+ *
+ * The two open questions ship `rows={3}`, and a three-line window is a poor
+ * place to write the paragraph the prompt asks for — the answer scrolls away
+ * from the person writing it. This resizes the box instead.
+ *
+ * Two details are load-bearing. `auto` FIRST, so deleting text can shrink the
+ * box again: with an explicit height still set, `scrollHeight` can only ever
+ * grow. And the height is only written when the element actually measures —
+ * a screen that is still `hidden` reports `scrollHeight === 0`, and pinning
+ * that would collapse the box to nothing. Leaving it alone there is safe:
+ * `rows` governs until the first real measurement, and the reveal paths below
+ * take one.
+ *
+ * The height is written imperatively rather than through a `style` prop
+ * because the first render has to stay byte-identical to the prerendered
+ * document (AGENTS.md); a rendered `style=""` is a difference.
+ */
+function autoGrow(el: HTMLTextAreaElement | null | undefined): void {
+  if (!el) return;
+  el.style.height = 'auto';
+  if (el.scrollHeight > 0) el.style.height = `${el.scrollHeight}px`;
+}
 
 /** `GET /api/public/waitlist/more/<token>`. Every field is optional. */
 interface MoreAnswers {
@@ -324,6 +350,12 @@ export function MoreScreen() {
       setLossKinds(loss.kind || []);
       if (lossStory.current) lossStory.current.value = loss.story || '';
 
+      // Stored answers arrive by assignment, which fires no input event, so
+      // the boxes are sized here too — otherwise reopening the form shows a
+      // long saved answer through a three-line window (#1530).
+      autoGrow(groupNeed.current);
+      autoGrow(lossStory.current);
+
       if (farcaster.current) farcaster.current.value = handles.farcaster || '';
       if (discord.current) discord.current.value = handles.discord || '';
       if (telegram.current) telegram.current.value = handles.telegram || '';
@@ -485,6 +517,10 @@ export function MoreScreen() {
           // used to write would only be a second, quieter copy of it.
           setMsg(null);
           setSaved(true);
+          // #1535: the waitlist screen's offer card outlives a trip here and
+          // back, so tell it these questions have been answered — otherwise it
+          // keeps inviting you to answer them.
+          markSurveyAnswered(value);
         } else {
           setMsg({
             text: (data && data.error) || 'Something went wrong. Try again.',
@@ -518,6 +554,13 @@ export function MoreScreen() {
   // A "no" (or nothing picked) hides the follow-up, exactly as the chip row's
   // onChange used to toggle it.
   const lossDetailHidden = !lossHad || lossHad === 'no';
+
+  // The loss story sits inside that block, so a stored answer is measured for
+  // the first time when the block is revealed — before then it has no height
+  // to read (#1530).
+  useEffect(() => {
+    if (!lossDetailHidden) autoGrow(lossStory.current);
+  }, [lossDetailHidden]);
 
   // Which networks actually have a link to offer. Drives whether the
   // self-report checkbox is shown at all: "I followed along" with nothing
@@ -683,6 +726,7 @@ export function MoreScreen() {
               ref={groupNeed}
               id="more-group-need"
               rows={3}
+              onInput={(e) => autoGrow(e.currentTarget)}
               maxLength={800}
               placeholder="What would its own app do that those tools can't? Money, membership, voting, scheduling, reputation, records…"
               className="mt-3 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
@@ -731,6 +775,7 @@ export function MoreScreen() {
                 ref={lossStory}
                 id="more-loss-story"
                 rows={3}
+                onInput={(e) => autoGrow(e.currentTarget)}
                 maxLength={800}
                 placeholder="What happened, and what did you do next? Where did everyone go? Did you move them somewhere? Rebuild it? Give up?"
                 className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"

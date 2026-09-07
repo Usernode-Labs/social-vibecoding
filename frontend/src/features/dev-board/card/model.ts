@@ -259,6 +259,8 @@ export type ListRow =
     thread?: FeedThreadRef | null;
     /** Arrived since the viewer's last Workshop visit — the "new" marker. */
     fresh?: boolean;
+    /** The server has themes but has not placed this card into one yet. */
+    placing?: boolean;
   }
   | { t: 'divider'; key: string; d: DividerSpec }
   | { t: 'note'; key: string; text: string }
@@ -298,8 +300,10 @@ export interface WorkshopTheme {
   lastActive: number;
   counts: { open: number; underway: number; review: number; shipped: number; fresh: number };
   lanes: WorkshopLane[];
-  /** The trailing "Not yet grouped" pseudo-theme. */
+  /** The trailing pseudo-theme: "Being placed" / "Not yet grouped". */
   ungrouped?: boolean;
+  /** On the pseudo-theme: how many of its cards are being placed now. */
+  placing?: number;
 }
 
 export interface DevWorkshopView {
@@ -336,12 +340,20 @@ export interface DevWorkshopView {
      */
     source: 'ai' | 'category' | 'demo' | null;
     generatedAt: string | null;
+    /** When the theme definitions were last drafted; placements move between drafts. */
+    discoveredAt: string | null;
     /** The grouping predates the board's current state; a refresh is behind it. */
     stale: boolean;
-    /** A regeneration is running now. */
+    /** A reconcile is running now. */
     pending: boolean;
-    /** Why the last generation failed, when the fallback is showing because of it. */
+    /** Which stage: the definitions ('discovery') or new cards into them ('placement'). */
+    pendingStage: 'discovery' | 'placement' | null;
+    /** Why the last stage failed, so the footnote can say so. */
     lastError: string | null;
+    /** How much of the board the themes hold, as the server counts it. */
+    coverage: { total: number; placed: number; unplaced: number; pending: number } | null;
+    /** Cards on screen the server has themes for but has not placed yet. */
+    placing: number;
     /** The shared filter bar is narrowing what the themes hold. */
     filtered: boolean;
   };

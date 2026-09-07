@@ -136,6 +136,26 @@ export interface LedgerUnitProgress {
   done?: boolean;
 }
 
+/** One phase inside the image build (a buildpack lifecycle phase). */
+export interface LedgerBuildPhase {
+  name: string;
+  ms: number | null;
+  state: 'done' | 'now' | 'todo';
+}
+
+/** One step of the preview build: fetch, image, database, start. */
+export interface LedgerBuildStep {
+  key: string;
+  label: string;
+  /** Wall clock of a finished step; null while it is running or ahead. */
+  ms: number | null;
+  state: 'done' | 'now' | 'todo';
+  /** The image step's phases, live or finished. */
+  phases?: LedgerBuildPhase[] | null;
+  /** The running phase's last log line. */
+  detail?: string | null;
+}
+
 /** A run in flight: what the capture container has reported so far. */
 export interface LedgerProgress {
   ran: number;
@@ -145,6 +165,7 @@ export interface LedgerProgress {
   expected: number | null;
   done?: boolean;
   unit?: LedgerUnitProgress | null;
+  build?: LedgerBuildStep[] | null;
 }
 
 export interface LedgerRow {
