@@ -221,7 +221,12 @@ function containerSecurityContext() {
   return { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] }, readOnlyRootFilesystem: false };
 }
 
-async function deployApplication(config, { app, environment, sessionId, imageRef, env }) {
+// `cpus` is the container's CPU LIMIT (a ceiling, not a request — requests
+// stay at 100m so scheduling is unchanged). Staging previews pass
+// docker.STAGING_CPUS through application-runtime.deploy so the capture
+// run's eight concurrent pages get the same headroom on both runtimes;
+// production apps pass nothing and keep the 1-CPU limit they always had.
+async function deployApplication(config, { app, environment, sessionId, imageRef, env, cpus = null }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
   const cfg = config.kubernetes;
   const namespace = cfg.appNamespace;
@@ -268,7 +273,7 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
             startupProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 3, failureThreshold: 40 },
             readinessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 5, failureThreshold: 3 },
             livenessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 15, failureThreshold: 3 },
-            resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: '1', memory: '1Gi' } },
+            resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: String(cpus || '1'), memory: '1Gi' } },
             securityContext: containerSecurityContext(),
           }],
         },

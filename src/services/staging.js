@@ -424,8 +424,10 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     const { hostname, url: stagingUrl } = deployed;
     await getPool(config).query(
       `UPDATE chat_sessions SET staging_image_ref = $1, staging_build_ref = $2,
-         staging_runtime_kind = $3, staging_runtime_name = $4 WHERE id = $5`,
-      [build.imageRef, build.buildRef, deployed.runtimeKind, deployed.runtimeName, session.id]
+         staging_runtime_kind = $3, staging_runtime_name = $4,
+         staging_commit_sha = $6 WHERE id = $5`,
+      [build.imageRef, build.buildRef, deployed.runtimeKind, deployed.runtimeName, session.id,
+       resolvedRevision || null]
     );
 
     // NOTE: the edge verification intentionally does NOT happen here. The
@@ -449,6 +451,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       runtimeName: deployed.runtimeName,
       imageRef: build.imageRef,
       buildRef: build.buildRef,
+      // The commit this preview is of, as recorded on the row above; the
+      // recheck path compares it to the head before trusting the preview.
+      commitSha: resolvedRevision || null,
       stagingUrl,
       hostname,
       timings,
@@ -615,7 +620,8 @@ async function teardownStaging(session, app) {
   await getPool().query(
     `UPDATE chat_sessions SET staging_url = NULL, staging_container_id = NULL,
        staging_image_ref = NULL, staging_build_ref = NULL,
-       staging_runtime_kind = NULL, staging_runtime_name = NULL WHERE id = $1`,
+       staging_runtime_kind = NULL, staging_runtime_name = NULL,
+       staging_commit_sha = NULL WHERE id = $1`,
     [session.id]
   ).catch((err) => log.warn('staging', 'Failed to clear staging_url on teardown', { sessionId: session.id, err: err.message }));
 
