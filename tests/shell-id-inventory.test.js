@@ -86,7 +86,12 @@ const RETIRED_IDS = {
   'switcher-views': 'The chip menu\'s copy of the three-view strip. The menu answers WHICH APP; a control about the app you are already in sat between you and the list you opened the menu for. The Improve panel keeps the strip, and the header\'s back arrow is the way OUT of a Board now.',
   'switcher-view-app': 'Its App segment. `#app-context-row-app` in the Improve panel is the surviving one.',
   'switcher-view-board': 'Its Board segment; `#app-context-row-board` survives.',
-  'switcher-view-activity': 'Its Activity segment; `#app-context-row-activity` survives.',
+  'switcher-view-activity': 'Its Activity segment; `#app-context-row-activity` survived it, and then retired in turn (below).',
+  // ── The Workshop replaced the Activity feed ─────────────────────
+  // The strip's middle segment names the lander now: the same cards as the
+  // Board, grouped by what they are about. The old #app/<slug>/activity
+  // address resolves onto it, so nothing a link named is lost.
+  'app-context-row-activity': 'The strip\'s Activity segment. The Workshop (`#app-context-row-workshop`) replaced the Activity feed as the Dev screen\'s lander; the feed\'s two answers — what needs your vote, what changed since you were here — are strips above its themes.',
   // ── #1443: one control names where you are ──────────────────────
   // The chip's menu lists every destination with its own page, so the header
   // stopped needing a second, third and fourth way to say the same thing.
@@ -259,6 +264,12 @@ const RETIRED_IDS = {
   // worked.
   'more-invites': 'Typed-address invite rows retired for the share link (#more-invite-url); they sent nothing.',
   'more-invite-add': 'The "add another" button for the retired invite rows.',
+  // ── The buddy checkbox promised something nothing delivered (#1534) ──
+  // "Only let me in when at least one person from my link gets in too"
+  // was stored on the answers blob and read by no admission path, so it
+  // held nobody back and let nobody in. The invite link beside it, and
+  // the copy saying we try to admit people together, are untouched.
+  'more-admit-together': 'The "only let me in when someone from my link gets in too" checkbox. Nothing read the flag, so the promise it made was never kept; the field is dropped on input the way #more-invites was.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -286,8 +297,8 @@ const ADDED_IDS = {
   // inside an app is already about.
   'improve-views': 'The block holding the three. #1431 built it; #1443 kept it.',
   'app-context-row-app': 'View and use the app — Improve.openApp(). Labelled Home on the self-hosted platform row.',
+  'app-context-row-workshop': 'The app\'s Workshop — the lander: the same cards as the Board, grouped by theme, with the vote and since-last-visit strips above them. Replaced the Activity segment.',
   'app-context-row-board': 'The app\'s Board.',
-  'app-context-row-activity': 'The app\'s Activity stream.',
   // ── #1443: the chip and its menu ────────────────────────────────
   'app-switcher-btn': 'The chip: the header\'s label on EVERY screen, and the one control that opens a list. #1431 built this as #header-title-tab but gated it on being inside an app; the gate is the whole difference, and losing it is what let #header-menu-btn, #back-icon-home and #messages-btn all go. It carries the same tinted 28px surface as #back-btn and the bell, because on the bare page ground it read as the heading it replaced.',
   'app-switcher-name': 'The label inside the chip — the same text #header-title carried as a bare heading, now a named slot so a declared check can assert WHAT the chip says and not merely that it exists.',

@@ -377,11 +377,11 @@ const Improve = {
     // for one back to the dev forum — so it can never be an origin.
     if (route.tab !== 'dev') return route.selfHosted ? null : `#app/${slug}/app`;
     if (route.subTab === 'forum' || route.subTab === 'topic') {
-      // Board and Activity are one screen in two layouts, and the layout IS
+      // Workshop and Board are one screen in two layouts, and the layout IS
       // the route (see the alias block in app.js's restoreFromHash), so the
       // origin has to name the one that was on screen.
-      const feed = window.AppView?._getViewMode?.() === 'feed';
-      return `#app/${slug}/${feed ? 'activity' : 'board'}`;
+      const kanban = window.AppView?._getViewMode?.() === 'kanban';
+      return `#app/${slug}/${kanban ? 'board' : 'workshop'}`;
     }
     if (route.subTab === 'chat') return `#app/${slug}/dev/chat`;
     return null;
