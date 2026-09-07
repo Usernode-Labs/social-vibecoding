@@ -89,6 +89,30 @@ const HTML_SHELL = (body) =>
 const p = (s) => `<p>${s}</p>`;
 const link = (url) => `<a href="${esc(url)}">${esc(url)}</a>`;
 
+/**
+ * The mail's ONE action, as a button (#1540).
+ *
+ * The confirm step used to be a sentence followed by the raw URL printed as
+ * its own link text — sixty-odd characters of `https://…/api/public/waitlist/
+ * confirm/<48 hex>` wrapping across two lines. That is not a call to action,
+ * it is a machine address a person is being asked to aim at, and next to a
+ * large six-digit code it read as the lesser of two chores rather than the
+ * one-tap path it actually is.
+ *
+ * Inline styles and a real `<a>`: `<button>` does nothing in a mail client,
+ * `<style>` blocks are stripped by Gmail's clipper and Outlook, and a
+ * `mso-` conditional table would be scaffolding for a single control. Padding
+ * on the anchor is what every client renders consistently.
+ *
+ * The URL still appears in the TEXT part, which is where a reader who cannot
+ * see HTML needs it.
+ */
+const BUTTON_STYLE =
+  'display:inline-block;padding:11px 20px;border-radius:8px;background:#1f86ff;'
+  + 'color:#ffffff;font-size:15px;font-weight:600;text-decoration:none';
+const button = (url, label) =>
+  `<p><a href="${esc(url)}" style="${BUTTON_STYLE}">${esc(label)}</a></p>`;
+
 // A one-time code, set big enough to read at arm's length and to copy by
 // eye off a phone. Three mails carry one and all three render it this way;
 // #1516 asked for the join mail to stop being the odd one out.
@@ -167,10 +191,8 @@ function waitlistJoined(payload) {
       + 'rolling basis after that.');
 
   if (confirmUrl) {
-    text += '\n\nOr confirm this email address in one click:\n'
-      + confirmUrl;
-    html += p('Or confirm this email address in one click:')
-      + p(link(confirmUrl));
+    text += '\n\nOr confirm in one tap:\n' + confirmUrl;
+    html += button(confirmUrl, 'Confirm my email');
   }
   if (surveyUrl) {
     text += '\n\nWant to increase your chances of getting into an earlier group? '
@@ -220,8 +242,8 @@ function waitlistCode(payload) {
     + codeBlock(payload.code)
     + p('It works for 15 minutes. Any earlier code has stopped working, so use this one.');
   if (confirmUrl) {
-    text += '\n\nOr confirm this email address in one click:\n' + confirmUrl;
-    html += p('Or confirm this email address in one click:') + p(link(confirmUrl));
+    text += '\n\nOr confirm in one tap:\n' + confirmUrl;
+    html += button(confirmUrl, 'Confirm my email');
   }
   text += '\n\nIf you did not ask for this, you can ignore this email.';
   html += p('If you did not ask for this, you can ignore this email.');
@@ -244,8 +266,11 @@ function waitlistReleased(payload) {
         ? "Good news, you're off the Usernode waitlist and your account now has platform access."
         : "Good news, you're off the Usernode waitlist.")
       + p(payload.hasAccount
-        ? `Sign in to get started: ${link(url)}`
-        : `Create your account with this email address to get started: ${link(url)}`)
+        ? 'Sign in to get started.'
+        : 'Create your account with this email address to get started.')
+      // #1540: this mail is one link with a sentence around it, so the link
+      // is the button rather than a URL printed mid-paragraph.
+      + button(url, payload.hasAccount ? 'Sign in' : 'Create my account')
     ),
   };
 }
