@@ -203,12 +203,24 @@
     // Anonymous boot entry (App.enterAnonymous). Routing lives in
     // restoreFromHash — its anonymous branch calls back into show().
     enter() {
-      // A pre-SPA link form: /?signup=1 (old landing CTA target). Honor
-      // it once, then let the hash own everything.
+      // Pre-SPA link forms: /?signup=1 (the old landing CTA target) and
+      // /?login=1. Honor one once, then let the hash own everything.
+      //
+      // #1545: these are the shapes EMAIL links use now. A fragment is
+      // client-side only, so a desktop mail client's link rewriter can drop
+      // `#signup` while rebuilding the URL and deliver a bare `/` — which is
+      // the home page, and exactly what the access-ready mail was reported
+      // doing on desktop while working from a phone. A query survives that.
+      //
+      // First match wins, and the address is rewritten to the hash route, so
+      // whichever spelling arrives the address bar ends up identical.
       try {
-        if (!location.hash &&
-            new URLSearchParams(location.search).has('signup')) {
-          history.replaceState(null, '', '/#signup');
+        if (!location.hash) {
+          const params = new URLSearchParams(location.search);
+          const route = params.has('signup') ? 'signup'
+            : params.has('login') ? 'login'
+              : null;
+          if (route) history.replaceState(null, '', `/#${route}`);
         }
       } catch (_) {}
       if (window.App) App.restoreFromHash();
