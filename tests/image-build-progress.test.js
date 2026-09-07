@@ -273,26 +273,47 @@ test('the preview image builds with BuildKit, and falls back rather than failing
     assert.ok(calls[0].args.includes('--progress=plain'), 'the redrawing renderer would blind the step observer');
     assert.equal(out.buildKit, true);
 
-    // A daemon without BuildKit: ONE retry on the classic builder.
-    calls.length = 0;
-    failFirstWith = 'ERROR: BuildKit is enabled but the buildkit component is inoperable';
-    const fell = await docker.buildImage('/ctx', 'img:2');
-    assert.equal(calls.length, 2, 'retried once');
-    assert.deepEqual(calls.map((c) => c.buildkit), ['1', '0']);
-    assert.ok(!calls[1].args.includes('--progress=plain'), 'the classic builder is not given a BuildKit flag');
-    assert.equal(fell.buildKit, false);
-
     // A BROKEN DOCKERFILE is not a builder problem: it must fail once.
+    // Ordered before the fallback because the refusal below is remembered.
     calls.length = 0;
     failFirstWith = 'ERROR: failed to solve: process "/bin/sh -c npm ci" did not complete successfully: exit code 1';
-    await assert.rejects(docker.buildImage('/ctx', 'img:3'), (err) => {
+    await assert.rejects(docker.buildImage('/ctx', 'img:2'), (err) => {
       assert.equal(err.buildFailed, true, 'still carries the diagnosable tail');
       return true;
     });
     assert.equal(calls.length, 1, 'a failing build is never built twice');
 
-    assert.equal(docker.buildKitUnavailable({ stderr: 'buildkit not supported by daemon' }), true);
+    // A daemon without buildx: ONE retry on the classic builder. This is
+    // the message docker actually prints, word for word. The first version
+    // of this test asserted a sentence nobody had observed, so the matcher
+    // and the test agreed with each other and not with docker, and every
+    // preview on a host without buildx failed outright.
+    calls.length = 0;
+    failFirstWith = 'ERROR: BuildKit is enabled but the buildx component is missing or broken.';
+    const fell = await docker.buildImage('/ctx', 'img:3');
+    assert.equal(calls.length, 2, 'retried once');
+    assert.deepEqual(calls.map((c) => c.buildkit), ['1', '0']);
+    assert.ok(!calls[1].args.includes('--progress=plain'), 'the classic builder is not given a BuildKit flag');
+    assert.equal(fell.buildKit, false);
+
+    // And it is remembered: the next image goes straight to the classic
+    // builder rather than paying the refusal again.
+    calls.length = 0;
+    failFirstWith = null;
+    const after = await docker.buildImage('/ctx', 'img:4');
+    assert.equal(calls.length, 1, 'no second refusal');
+    assert.deepEqual(calls.map((c) => c.buildkit), ['0']);
+    assert.equal(after.buildKit, false);
+
+    // The refusal wordings, and the failures that are NOT one.
+    for (const stderr of [
+      'ERROR: BuildKit is enabled but the buildx component is missing or broken.',
+      'ERROR: BuildKit is enabled but the buildkit component is inoperable',
+      "docker: 'buildx' is not a docker command.",
+      'buildkit not supported by daemon',
+    ]) assert.equal(docker.buildKitUnavailable({ stderr }), true, stderr);
     assert.equal(docker.buildKitUnavailable({ stderr: 'npm ERR! code ELIFECYCLE' }), false);
+    assert.equal(docker.buildKitUnavailable({ stderr: 'ERROR: failed to solve: npm ci exit code 1' }), false);
     assert.equal(docker.buildKitUnavailable({}), false);
   } finally {
     if (origCp) require.cache[cpPath] = origCp; else delete require.cache[cpPath];

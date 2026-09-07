@@ -141,13 +141,30 @@ function buildKitEnabled() {
   return !(v === '0' || v === 'false' || v === 'off');
 }
 
+// Set once the CLI has refused BuildKit, so a host whose docker has no
+// buildx pays the refused attempt once per process rather than once per
+// image. The refusal is instant — the CLI answers before it reaches the
+// daemon — but it is on the path of all four callers (preview, capture,
+// worker and session images), and one warning per boot reads better than
+// one per build. A deploy restarts the process, so installing buildx takes
+// effect without a code change.
+let buildKitRefused = false;
+
 // Deliberately narrow: only the daemon/CLI saying it cannot do BuildKit.
 // A Dockerfile that fails to build must NOT be retried under another
 // builder — it would fail twice, take double the time, and report the
 // second failure.
+//
+// `buildkit is enabled but` is the durable half of that refusal. The
+// component it names next is not: the CLI says `the buildx component is
+// missing or broken`, and matching a guessed full sentence instead is how
+// the real message went unrecognised, so every image build on a host
+// without docker-buildx failed outright rather than falling back.
 function buildKitUnavailable(err) {
   const text = `${(err && err.stderr) || ''}\n${(err && err.message) || ''}`.toLowerCase();
-  return /buildkit is enabled but the buildkit component is inoperable/.test(text)
+  return /buildkit is enabled but/.test(text)
+    || /install the buildx component/.test(text)
+    || /'buildx' is not a docker command/.test(text)
     || /buildkit not supported by daemon/.test(text)
     || /failed to solve.*buildkit.*not supported/.test(text)
     || /unknown flag: --progress/.test(text);
@@ -157,7 +174,7 @@ async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null 
   const buildArgFlags = Object.entries(buildArgs).flatMap(
     ([k, v]) => ['--build-arg', `${k}=${v}`]
   );
-  const wantBuildKit = buildKitEnabled();
+  const wantBuildKit = buildKitEnabled() && !buildKitRefused;
   log.info('docker', 'Building image', { context: contextPath, tag, buildArgs, buildKit: wantBuildKit });
   const startedAt = Date.now();
   const runBuild = (useBuildKit) => {
@@ -188,9 +205,10 @@ async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null 
       await runBuild(wantBuildKit);
     } catch (err) {
       if (!wantBuildKit || !buildKitUnavailable(err)) throw err;
-      log.warn('docker', 'BuildKit unavailable on this daemon — rebuilding with the classic builder', {
+      log.warn('docker', 'BuildKit unavailable on this daemon: rebuilding with the classic builder, and not trying it again this process', {
         tag, err: err.message,
       });
+      buildKitRefused = true;
       usedBuildKit = false;
       await runBuild(false);
     }
