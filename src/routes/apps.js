@@ -1,3 +1,4 @@
+const appAllowance = require('../services/app-allowance');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -16,7 +17,7 @@ const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
-const { appCreateLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
@@ -844,6 +845,29 @@ function appRoutes(config) {
     });
   });
 
+  router.get('/api/me/app-allowance', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      res.json(await appAllowance.read(pool, req.user));
+    } catch (err) {
+      log.error('apps', 'App allowance lookup failed', { message: err.message });
+      res.status(500).json({ error: 'Could not load your app allowance. Please try again.' });
+    }
+  });
+
+  router.post('/api/me/app-allowance/request', appAllowanceRequestLimiter, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    if (req.user.canAdminWrite) return res.status(400).json({ error: 'Your account already has unlimited app slots.' });
+    try {
+      res.json(await appAllowance.requestMore(pool, req.user));
+    } catch (err) {
+      log.error('apps', 'App allowance request failed', { message: err.message });
+      res.status(500).json({ error: 'Could not send your request. Please try again.' });
+    }
+  });
+
   router.post('/api/apps', drainGuard, appCreateLimiter, async (req, res) => {
     const { name, repoUrl } = req.body;
 
@@ -894,34 +918,9 @@ function appRoutes(config) {
     }
 
     try {
-      // Per-user app-creation quota (FULL admins bypass — parity with the
-      // global maxApps bypass below; see users.app_quota in schema.sql).
-      // View-only admins do NOT bypass (issue #311): creating unlimited
-      // apps is an elevated capability, so they create within their own
-      // app_quota like any normal user.
-      // Counts the user's LIVE (non-errored) apps so a deletion frees a
-      // slot. The home screen already hides the create affordance via the
-      // derived canCreateApps boolean (auth/me); this is the real gate.
-      // The count-then-insert race (two concurrent creates both passing)
-      // is acceptable — identical to the maxApps cap below, not worth a
-      // lock for a soft per-user limit.
       if (!req.user?.canAdminWrite) {
-        const quota = req.user?.appQuota ?? 0;
-        const { rows: ownCountRows } = await pool.query(
-          `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
-          [req.user.id]
-        );
-        const liveCount = ownCountRows[0].n;
-        if (quota <= 0 || liveCount >= quota) {
-          log.warn('apps', 'App creation blocked by per-user quota', {
-            userId: req.user.id, liveCount, quota,
-          });
-          return res.status(403).json({
-            error: quota <= 0
-              ? 'You don’t have permission to create apps. Ask an admin to enable app creation for your account.'
-              : `You’ve reached your app limit (${quota}). Ask an admin to raise your quota.`,
-          });
-        }
+        const allowance = await appAllowance.read(pool, req.user);
+        if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
       }
 
       // Enforce global app cap (full admins bypass; view-only admins
@@ -1028,21 +1027,10 @@ function appRoutes(config) {
         return res.status(sourceApp.self_hosted ? 400 : 409).json({ error: readinessError });
       }
 
-      // Per-user quota + global cap — identical gate to POST /api/apps.
+      // The same allowance read as create/import and the account UI.
       if (!req.user?.canAdminWrite) {
-        const quota = req.user?.appQuota ?? 0;
-        const { rows: ownCountRows } = await pool.query(
-          `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
-          [req.user.id]
-        );
-        const liveCount = ownCountRows[0].n;
-        if (quota <= 0 || liveCount >= quota) {
-          return res.status(403).json({
-            error: quota <= 0
-              ? 'You don’t have permission to create apps. Ask an admin to enable app creation for your account.'
-              : `You’ve reached your app limit (${quota}). Ask an admin to raise your quota.`,
-          });
-        }
+        const allowance = await appAllowance.read(pool, req.user);
+        if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
       }
       if (!req.user?.canAdminWrite && config.maxApps > 0) {
         const { rows: countRows } = await pool.query(

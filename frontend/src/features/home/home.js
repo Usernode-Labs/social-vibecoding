@@ -70,6 +70,7 @@ const Home = {
       Home._reloadPending = true;
       return;
     }
+    if (App.user && !App._sessionFromSnapshot) window.UsernodeReact?.appAllowance?.refresh?.();
     Home._probeShortcutSupport();
     // The header's standing action, from the remembered row, BEFORE the
     // fetch below rather than after it. render() is the call every path
@@ -4012,7 +4013,7 @@ const Home = {
   // is on every home screen regardless of quota, so this string is what the
   // disabled tile shows in its tooltip and the inert note in its ⋮ menu. The
   // dialog it opens carries the exact used-of-limit numbers.
-  CREATE_DISABLED_HINT: 'Ask an admin to enable app creation for your account.',
+  CREATE_DISABLED_HINT: 'View your app allowance or request more slots.',
 
   // `wireCreateButtons()` lived here: `document.querySelectorAll('.home-create-btn')`,
   // each button cloneNode'd and swapped for a fresh copy so a re-paint could

@@ -138,10 +138,8 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
   }
   const cfg = requireBuildConfig(config);
   const suffix = sessionId ? `s${sessionId}-` : '';
-  const buildName = dnsName(`sv-${app.id}-${suffix}${revision.slice(0, 12)}`);
   const repository = `${cfg.repositoryPrefix}/${dnsName(app.slug)}`;
   const cacheTag = `${cfg.cacheRepositoryPrefix}/${dnsName(app.slug)}:cache`;
-  const tag = `${repository}:git-${revision}`;
   const buildEnv = [{ name: 'BP_NODE_VERSION', value: cfg.nodeVersion }];
   // The platform self-app generates ignored React/Tailwind artifacts. Paketo
   // must materialize them while /workspace is writable; the launch container
@@ -150,7 +148,19 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
   // this runtime adapter to one app id or slug.
   if (packageRunsScript(sourceDir, 'ensure:shell')) {
     buildEnv.push({ name: 'BP_NODE_RUN_SCRIPTS', value: 'ensure:shell' });
+  } else if (packageRunsScript(sourceDir, 'build')) {
+    // Standard generated/imported apps declare their asset build in npm.
+    // Keep ensure:shell first: its prerender -> CSS ordering is load-bearing.
+    buildEnv.push({ name: 'BP_NODE_RUN_SCRIPTS', value: 'build' });
   }
+  // A new builder must rebuild an unchanged app revision, not reuse an old
+  // successful immutable Build after create returns 409. Include this in the
+  // tag too, so the artifact address identifies the source AND build recipe.
+  const recipe = crypto.createHash('sha256')
+    .update(JSON.stringify({ builder: cfg.builderImage, env: buildEnv }))
+    .digest('hex').slice(0, 12);
+  const buildName = dnsName(`sv-${app.id}-${suffix}${revision.slice(0, 12)}-${recipe}`);
+  const tag = `${repository}:git-${revision}-${recipe}`;
   const body = {
     apiVersion: 'kpack.io/v1alpha2',
     kind: 'Build',

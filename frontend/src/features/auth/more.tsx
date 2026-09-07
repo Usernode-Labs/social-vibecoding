@@ -865,6 +865,25 @@ export function MoreScreen() {
                       '?token=' +
                       encodeURIComponent(token.current || '')
                     }
+                    /*
+                        #1532: the OAuth round trip leaves in a NEW TAB.
+
+                        It used to navigate this one away, and the form's
+                        fields are uncontrolled and unsaved (see the header
+                        comment), so a provider that asked for a password, or
+                        a phone where getting back means finding the tab
+                        again, cost the reader whatever they had typed. The
+                        new tab carries the whole flow and lands on
+                        `#more/<token>?connect=<outcome>`; this tab keeps the
+                        half-filled form exactly as it was.
+
+                        Verification is recorded server-side by the callback,
+                        so saving from EITHER tab afterwards stores it. The
+                        `rel` is not optional: `target="_blank"` without it
+                        hands the opened page a live `window.opener`.
+                    */
+                    target="_blank"
+                    rel="noopener noreferrer"
                   >
                     {'Connect ' + label}
                   </a>
