@@ -27,6 +27,12 @@ const {
   lockIntent,
   decideSwipeRelease,
   decidePtrRelease,
+  ptrPuckOffset,
+  PTR_PUCK,
+  PTR_HOLD,
+  PTR_THRESHOLD,
+  PTR_LIMIT,
+  PTR_LAYER_H,
   decideSheetRelease,
   remeasuredSheetY,
   keyboardInset,
@@ -457,6 +463,67 @@ test('native.css: the puck itself carries no stacking of its own', () => {
     'the old z-index:2 on the puck is what lifted it over the header — layering belongs to .un-ptr-layer now');
   assert.match(block, /position:\s*absolute/,
     'the puck positions inside the layer, even in window mode (the LAYER is the fixed one)');
+});
+
+// ── Where the puck comes to REST (issue #1526) ─────────────────────────
+// #885 fixed the anchoring; the per-frame pose it left behind dated from
+// the kit's first commit, when the puck was free-standing and unclipped.
+// At the hold it parked at -9.2px — a quarter of the circle sliced off by
+// the header's edge, with 31.8px of dead space underneath. The pose is
+// derived from the puck's own box now (PTR_PUCK + PTR_PUCK_GAP), and it
+// lives above the Node cut so these numbers are actually checkable.
+
+test('ptrPuckOffset: the puck rests FULLY below the anchor line', () => {
+  assert.ok(ptrPuckOffset(PTR_HOLD) >= 0,
+    `#1526 regression guard: at the ${PTR_HOLD}px hold the puck's top sits at ` +
+    `${ptrPuckOffset(PTR_HOLD)}px — anything negative is clipped by the header's edge`);
+});
+
+test('ptrPuckOffset: equal space above and below the resting puck', () => {
+  const above = ptrPuckOffset(PTR_HOLD);
+  const below = PTR_HOLD - ptrPuckOffset(PTR_HOLD) - PTR_PUCK;
+  assert.ok(Math.abs(above - below) <= 1,
+    `resting spacing is lopsided: ${above}px above vs ${below}px below (was 1:3.7)`);
+});
+
+test('ptrPuckOffset: parked entirely above the anchor when idle', () => {
+  assert.ok(ptrPuckOffset(0) + PTR_PUCK <= 0,
+    `at rest the whole puck must sit above the anchor line (bottom at ` +
+    `${ptrPuckOffset(0) + PTR_PUCK}px) so nothing peeks over the header`);
+});
+
+test('the puck rests at full scale and full opacity while spinning', () => {
+  // render() drives both from progress = min(1, y / PTR_THRESHOLD), so a
+  // hold shorter than the arm threshold spins at 0.97 scale / 0.93 opacity
+  // AND springs the content backwards on commit. One inequality pins both.
+  assert.ok(PTR_HOLD >= PTR_THRESHOLD,
+    `hold ${PTR_HOLD} < arm threshold ${PTR_THRESHOLD}: the puck would rest dimmed ` +
+    'and undersized, and the content would spring backwards on release');
+});
+
+test('ptrPuckOffset: travel is strictly monotonic across the pull range', () => {
+  let prev = -Infinity;
+  for (let pull = 0; pull <= PTR_LIMIT; pull += 1) {
+    const offset = ptrPuckOffset(pull);
+    assert.ok(offset > prev,
+      `the puck must never move backwards as the pull grows (${pull}px)`);
+    prev = offset;
+  }
+});
+
+test('ptrPuckOffset: a max-depth pull never escapes the clip window', () => {
+  assert.ok(ptrPuckOffset(PTR_LIMIT) + PTR_PUCK <= PTR_LAYER_H,
+    `at the ${PTR_LIMIT}px rubber-band asymptote the puck's bottom reaches ` +
+    `${ptrPuckOffset(PTR_LIMIT) + PTR_PUCK}px, outside the ${PTR_LAYER_H}px layer`);
+});
+
+test('native.css: the painted puck box matches PTR_PUCK in native.js', () => {
+  const block = cssBlock('.un-ptr-puck');
+  const width = Number(/width:\s*(\d+)px/.exec(block)[1]);
+  const height = Number(/height:\s*(\d+)px/.exec(block)[1]);
+  assert.equal(width, PTR_PUCK,
+    'the pose math is derived from PTR_PUCK — a painted box that drifts from it makes the balance meaningless');
+  assert.equal(height, PTR_PUCK, 'the puck is a circle: width and height both mirror PTR_PUCK');
 });
 
 const NATIVE_JS = fs.readFileSync(

@@ -113,6 +113,51 @@ function waitlistJoined(payload) {
   return { subject: "You're on the Usernode waitlist 🎉", text, html };
 }
 
+// A REQUESTED confirmation code (POST /api/public/waitlist/resend, and the
+// re-join branch of POST /api/public/waitlist). Separate from
+// waitlist_joined because the join mail is a welcome that happens to carry
+// a code, is capped at one per address per day, and re-sending it would
+// tell somebody they had "joined" a list they joined weeks ago.
+//
+// Two shapes, and the branch is the ONLY place the platform ever discloses
+// whether an address is already confirmed. The endpoint answers the same
+// words to everyone; the inbox belongs to the address itself, so it is the
+// one channel where saying "you are already confirmed" leaks nothing.
+function waitlistCode(payload) {
+  // Already confirmed: no code is minted, so there is nothing to type. The
+  // useful answer is where to look at where they stand.
+  if (!payload.code) {
+    const statusUrl = payload.statusUrl || null;
+    let text = 'You asked for a new confirmation code for the Usernode waitlist.\n\n'
+      + 'This address is already confirmed, so there is nothing left to do. '
+      + "You're on the list and we'll email you when your spot opens.";
+    let html = p('You asked for a new confirmation code for the Usernode waitlist.')
+      + p('This address is already confirmed, so there is nothing left to do. '
+        + "You're on the list and we'll email you when your spot opens.");
+    if (statusUrl) {
+      text += `\n\nCheck where you stand: ${statusUrl}`;
+      html += p(`Check where you stand: ${link(statusUrl)}`);
+    }
+    return { subject: 'Your Usernode waitlist address is already confirmed', text, html: HTML_SHELL(html) };
+  }
+
+  const confirmUrl = payload.confirmUrl || null;
+  let text = `Your Usernode waitlist confirmation code is ${payload.code}. `
+    + 'It works for 15 minutes.\n\n'
+    + 'Any earlier code has stopped working, so use this one.';
+  let html = p('Your Usernode waitlist confirmation code is:')
+    + `<p style="font-size:28px;font-weight:600;letter-spacing:4px">${esc(payload.code)}</p>`
+    + p('It works for 15 minutes. Any earlier code has stopped working, so use this one.');
+  if (confirmUrl) {
+    text += '\n\nOr confirm this email address in one click:\n' + confirmUrl;
+    html += p('Or confirm this email address in one click:') + p(link(confirmUrl));
+  }
+  text += '\n\nIf you did not ask for this, you can ignore this email.';
+  html += p('If you did not ask for this, you can ignore this email.');
+
+  return { subject: 'Your Usernode waitlist confirmation code', text, html: HTML_SHELL(html) };
+}
+
 function waitlistReleased(payload) {
   const url = payload.url;
   const text = payload.hasAccount
@@ -203,6 +248,8 @@ function buildMessage(kind, payload = {}) {
       const m = waitlistJoined(payload);
       return { ...m, html: HTML_SHELL(m.html) };
     }
+    case 'waitlist_code':
+      return waitlistCode(payload);
     case 'waitlist_released':
       return waitlistReleased(payload);
     case 'password_reset':
@@ -214,6 +261,6 @@ function buildMessage(kind, payload = {}) {
 
 // Every kind this module can render, for the admin console and for tests
 // that want to assert the set didn't quietly shrink.
-const KINDS = ['otp', 'waitlist_joined', 'waitlist_released', 'password_reset', 'admin_test'];
+const KINDS = ['otp', 'waitlist_joined', 'waitlist_code', 'waitlist_released', 'password_reset', 'admin_test'];
 
 module.exports = { buildMessage, KINDS };

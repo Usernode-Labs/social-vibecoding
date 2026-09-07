@@ -288,7 +288,7 @@ test('the stage-1 submit handler cannot be later than the first render', () => {
   // that cannot run before the render that attached it.
   const tsx = read(WAITLIST_TSX);
   assert.match(tsx, /id="waitlist-form"[\s\S]{0,200}onSubmit=\{onSubmit\}/);
-  const submit = tsx.match(/const onSubmit = useCallback\([\s\S]*?\n    \[discovery\],\s*\n  \);/);
+  const submit = tsx.match(/const onSubmit = useCallback\([\s\S]*?\n    \[discovery, startCooldown\],\s*\n  \);/);
   assert.ok(submit, 'onSubmit exists');
   assert.match(submit[0], /e\.preventDefault\(\)/);
   assert.match(submit[0], /'\/api\/public\/waitlist'/);

@@ -56,7 +56,7 @@ interface LegacyWindow {
       el: Element | null,
       onRefresh: () => void,
       opts?: Record<string, unknown>,
-    ): { detach(): void };
+    ): { detach(): void; refresh?(): void };
   };
   Offline?: { isOffline(): boolean; nudge(): void };
   App?: {
