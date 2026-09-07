@@ -17,12 +17,14 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const poolMod = require('../src/db/pool');
 let appQuotaUsed = 0;
 let calls = [];
+let profileFails = false;
 poolMod.getPool = () => ({
   async query(sql, params) {
     calls.push({ sql, params });
-    if (/FROM users u/.test(sql)) {
-      return { rows: [{ app_quota_used: appQuotaUsed }] };
+    if (/AS app_quota_used/.test(sql)) {
+      return { rows: [{ app_quota_used: appQuotaUsed, app_quota: user.appQuota }] };
     }
+    if (profileFails && /FROM users u/.test(sql)) throw new Error('Optional profile lookup failed');
     return { rows: [] };
   },
 });
@@ -50,6 +52,7 @@ test.after(() => {
 
 test.beforeEach(() => {
   calls = [];
+  profileFails = false;
   appQuotaUsed = 1;
   user = {
     id: 42,
@@ -115,19 +118,18 @@ test('full admins report usage with no limit, while view-only admins keep their 
 
 test('the create dialog loads and renders the quota without reset copy', () => {
   const source = read('frontend/src/features/dialogs/create-app.tsx');
-  assert.match(source, /fetch\('\/api\/auth\/me'/,
-    'opening the dialog refreshes usage instead of relying on a stale boot value');
+  const shared = read('frontend/src/features/dialogs/app-allowance.tsx');
+  const store = read('frontend/src/features/dialogs/app-allowance-store.js');
+  assert.match(store, /fetcher\('\/api\/me\/app-allowance'/,
+    'the dialog reads the independent current allowance endpoint');
   assert.match(source, /id="create-app-quota"/);
-  assert.match(source, /`\$\{quota\.used\} of \$\{quota\.limit\} app/);
+  assert.match(shared, /`\$\{quota\.used\} of \$\{quota\.limit\} app/);
   assert.match(source, /disabled=\{quotaBlocksCreation\}/,
     'the visible at-limit dialog must not offer a submit the server will refuse');
   assert.match(source, /disabledStyle="block"/,
     'the disabled submit must look unavailable, not only reject clicks');
 
-  const quotaCopy = source.slice(
-    source.indexOf('function quotaHeadline'),
-    source.indexOf('export function CreateAppDialog'),
-  );
+  const quotaCopy = shared.slice(shared.indexOf('export function quotaHeadline'));
   assert.doesNotMatch(quotaCopy, /reset/i,
     'app slots have no timed reset, so the quota copy must not claim one');
 });
@@ -153,4 +155,12 @@ test('the finite quota state has a deterministic visual-review path', () => {
   assert.ok(check);
   assert.equal(check.path, '/?shot=create-quota#create');
   assert.equal(check.expectText, '1 of 2 app slots used');
+});
+
+
+test('an optional profile query failure cannot lock a user with two app slots', async () => {
+  profileFails = true;
+  const result = await me();
+  assert.equal(result.canCreateApps, true);
+  assert.deepEqual(result.appCreationQuota, { used: 1, limit: 2, remaining: 1 });
 });

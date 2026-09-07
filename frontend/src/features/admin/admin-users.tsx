@@ -58,6 +58,7 @@ interface User {
   activation_code?: string;
   cost_today_cents?: number | string;
   app_quota?: number | null;
+  app_quota_requested_at?: string | null;
   apps_created?: number | null;
   daily_limit_cents?: number | null;
   usernode_pubkey?: string | null;
@@ -307,6 +308,7 @@ function UserRow({ user, fullAdminCount, canWrite, menuOpen, onMenu, onReload }:
       : "Set this user's role.";
 
   const costToday = (parseFloat(String(user.cost_today_cents || 0)) / 100).toFixed(2);
+  const [requestBusy, setRequestBusy] = useState(false);
   const appQuota = user.app_quota == null ? 0 : user.app_quota;
   const appsCreated = user.apps_created == null ? 0 : user.apps_created;
   const overrideDollars = user.daily_limit_cents == null
@@ -410,6 +412,23 @@ function UserRow({ user, fullAdminCount, canWrite, menuOpen, onMenu, onReload }:
     }
   };
 
+  const reviewRequest = async (grant: boolean) => {
+    setRequestBusy(true);
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}/app-quota-request${grant ? '/approve' : ''}`, {
+        method: grant ? 'POST' : 'DELETE',
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 409) await onReload();
+        throw new Error(data.error || 'Could not review this request.');
+      }
+      await onReload();
+    } catch (err: any) {
+      console_()._alert(err.message);
+    } finally { setRequestBusy(false); }
+  };
+
   const commitQuota = async (next: string, revert: () => void, accept: (v: string) => void) => {
     const n = Number(next);
     if (next === '' || !Number.isInteger(n) || n < 0) {
@@ -428,6 +447,7 @@ function UserRow({ user, fullAdminCount, canWrite, menuOpen, onMenu, onReload }:
       } else {
         const data = await res.json();
         accept(String(data.app_quota));
+        await onReload();
       }
     } catch (err: any) {
       console_()._alert(`Save failed: ${err.message}`);
@@ -448,6 +468,17 @@ function UserRow({ user, fullAdminCount, canWrite, menuOpen, onMenu, onReload }:
               </span>
             ) : null}
           </div>
+          {user.app_quota_requested_at ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2" data-app-quota-request={user.id}>
+              <span className="text-xs font-medium text-amber-800 dark:text-amber-400">Requested more app slots</span>
+              {canWrite ? <>
+                <button type="button" className={AdminUI.btn.primarySm} disabled={requestBusy || appQuota > 2147483645}
+                  onClick={() => reviewRequest(true)}>Grant 2 more</button>
+                <button type="button" className={AdminUI.btn.outlineSm} disabled={requestBusy}
+                  onClick={() => reviewRequest(false)}>Decline request</button>
+              </> : null}
+            </div>
+          ) : null}
           {user.openrouter_key_id ? <OpenRouterCard user={user} onReload={onReload} /> : null}
         </div>
         {/* Stacked under the name on narrow screens; from xl the console is
@@ -505,6 +536,7 @@ function UsersSection() {
   const [bulk, setBulk] = useState('');
   const [bulkBusy, setBulkBusy] = useState(false);
   const [filter, setFilter] = useState('');
+  const [requestsOnly, setRequestsOnly] = useState(false);
   // One open overflow menu at a time, and ONE document-level listener pair,
   // installed only while one is open. The old shape bound its pair once for
   // the module's lifetime behind a `_menusWired` flag and never removed them.
@@ -580,15 +612,20 @@ function UsersSection() {
   // this is a controlled AdminUI input rather than the topochain sections'
   // commit-on-blur box (those re-fetch per keystroke-commit; this does not).
   const query = filter.trim().toLowerCase();
-  const shown = query
-    ? (users || []).filter((u) => (u.username || '').toLowerCase().includes(query))
-    : (users || []);
+  const requestCount = (users || []).filter((u) => u.app_quota_requested_at).length;
+  const shown = (users || []).filter((u) =>
+    (!query || (u.username || '').toLowerCase().includes(query))
+    && (!requestsOnly || !!u.app_quota_requested_at));
 
   return (
     <>
       <div className={AdminUI.card}>
         <div className="flex flex-wrap items-center justify-between gap-3 p-4 border-b border-zinc-200 dark:border-zinc-800">
           <h2 className={AdminUI.cardTitle}>Users</h2>
+          <label className="flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+            <input type="checkbox" checked={requestsOnly} onChange={(e) => setRequestsOnly(e.target.checked)} />
+            App slot requests ({requestCount})
+          </label>
           {/* Named for what it searches. The Programme users card below this
               one carries its own search box, so two unlabelled fields would
               sit on the same screen filtering different lists. */}
@@ -618,9 +655,9 @@ function UsersSection() {
         <div id="admin-user-list" className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {denied ? <p className="p-4 text-sm text-zinc-500 dark:text-zinc-400">Admin access required.</p> : null}
           {!denied && users == null ? <p className="p-4 text-xs text-zinc-500 dark:text-zinc-400">Loading…</p> : null}
-          {!denied && users != null && !shown.length && query ? (
+          {!denied && users != null && !shown.length && (query || requestsOnly) ? (
             <p className="p-4 text-xs text-zinc-500 dark:text-zinc-400">
-              No user matches “{filter.trim()}”.
+              {requestsOnly ? 'No pending app slot requests match this filter.' : `No user matches “${filter.trim()}”.`}
             </p>
           ) : null}
           {shown.map((u) => (
