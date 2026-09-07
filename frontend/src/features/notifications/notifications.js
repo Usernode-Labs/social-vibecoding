@@ -607,6 +607,16 @@ const Notifications = {
       }
       return;
     }
+    if (item.kind === 'app_quota_changed' || item.kind === 'app_quota_request_declined') {
+      Notifications._dismissSheetForNav();
+      App.showCreateModal();
+      return;
+    }
+    if (item.kind === 'app_quota_requested') {
+      Notifications._dismissSheetForNav();
+      App.navigateToAdminConsole('users');
+      return;
+    }
     if (item.kind === 'openrouter_key_created' || item.kind === 'openrouter_key_review') {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
@@ -1575,6 +1585,23 @@ function rowView(n) {
       appLine: 'Messages',
       ...copy,
     };
+  }
+
+  if (n.kind === 'app_quota_changed') {
+    const [before, after] = String(n.detail || '').split(':');
+    const detail = /^\d+$/.test(before) && /^\d+$/.test(after)
+      ? `${before} → ${after} app slots` : 'View your current app allowance';
+    return { ...base, appLine: 'Account', wrap: true, icon: '＋',
+      label: 'App allowance changed', segments: [{ t: 'text', v: detail }] };
+  }
+  if (n.kind === 'app_quota_requested') {
+    return { ...base, appLine: 'Admin', wrap: true, icon: '＋',
+      label: 'Requested more app slots', segments: [{ t: 'who', v: who }] };
+  }
+  if (n.kind === 'app_quota_request_declined') {
+    return { ...base, appLine: 'Account', wrap: true, icon: 'ℹ️',
+      label: 'App allowance request declined',
+      segments: [{ t: 'text', v: 'Your app allowance is unchanged.' }] };
   }
 
   // The two OpenRouter-key rows: `who` is WHOSE KEY it is, not who acted, so

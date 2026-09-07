@@ -6,6 +6,10 @@ CREATE TABLE IF NOT EXISTS users (
   is_admin        BOOLEAN DEFAULT FALSE,
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
+-- #1583: account-wide, durable first-feedback acknowledgement. Historical
+-- feedback was not recorded per user; existing accounts start tracking at
+-- rollout. Written only after GitHub has accepted a feedback issue.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS first_feedback_at TIMESTAMPTZ;
 -- #30: optional user-provided Anthropic API key. `anthropic_key_enc`
 -- holds the encrypted payload (v1:<iv>:<tag>:<ct>, base64). We also
 -- keep the last 4 chars unencrypted purely so the UI can show
@@ -26,15 +30,16 @@ UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_app
 -- apps a user may have created. This is the actual app-creation gate (see
 -- src/routes/apps.js) — a non-admin may create iff their live app count is
 -- below this number, so deleting an app frees a slot (mirrors the server-
--- wide maxApps cap). Default 0 means "cannot create until an admin raises
--- it", matching the old can_create_apps default-off behaviour. Full admins
+-- wide maxApps cap). New accounts receive two slots. Full admins
 -- bypass enforcement entirely; view-only admins keep their ordinary quota.
 -- The client sees both a derived `canCreateApps` boolean (computed in auth/me
 -- as canAdminWrite || liveCount < app_quota) and the numeric quota used by the
 -- create dialog. `can_create_apps`
 -- is KEPT for now purely as the one-shot backfill source below — dropping
 -- it (and the derived canCreateApps plumbing) is deferred work.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota INTEGER NOT NULL DEFAULT 2;
+ALTER TABLE users ALTER COLUMN app_quota SET DEFAULT 2;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota_requested_at TIMESTAMPTZ;
 
 -- is_admin is now mutable from the admin panel (grant/revoke toggle in
 -- public/admin.html → POST /api/admin/users/:id/is-admin). The column is
@@ -1983,7 +1988,7 @@ ON CONFLICT (key) DO NOTHING;
 --     below the apps they already have. Admins are included (their quota is
 --     cosmetic since they bypass enforcement) so the admin UI shows a
 --     sensible number.
---   can_create_apps = FALSE → quota stays 0 (the column default).
+--   can_create_apps = FALSE → keep the numeric quota (now defaulting to 2).
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'app_quota_migrated') THEN
@@ -2042,6 +2047,21 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
 -- string. Today only 'reaction' uses it (the emoji someone reacted with);
 -- kept generic + nullable so future kinds can reuse it.
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS detail VARCHAR(32);
+
+-- #1559: grant existing accounts at least two slots once, preserving higher
+-- allowances. A later explicit admin reduction must survive every restart.
+-- Persist the notification in the same migration so offline users see it too.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'app_allowance_default_two_migrated') THEN
+    INSERT INTO notifications (user_id, kind, detail)
+      SELECT id, 'app_quota_changed', app_quota::text || ':2'
+        FROM users WHERE app_quota < 2;
+    UPDATE users SET app_quota = 2 WHERE app_quota < 2;
+    INSERT INTO platform_settings (key, value)
+      VALUES ('app_allowance_default_two_migrated', 'true');
+  END IF;
+END $$;
 
 -- #1405 path B: a coding agent driving the connector telling the platform it
 -- has asked the user something and is now waiting.

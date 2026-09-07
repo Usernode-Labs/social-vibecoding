@@ -636,7 +636,7 @@ test('Create app is a fixed section, for every account', () => {
 test('a viewer with no quota can open the dialog to inspect it', () => {
   // The compact locked state still carries the shared hint in its tooltip
   // and menu note; tapping now opens the detailed used-of-limit row.
-  assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'Ask an admin to enable app creation for your account\.'/);
+  assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'View your app allowance or request more slots\.'/);
   const btn = PANEL_SRC.create.slice(PANEL_SRC.create.indexOf('onClick={'));
   assert.match(btn, /App\?\.showCreateModal\?\.\(\)/,
     'both enabled and locked tiles open the create modal');

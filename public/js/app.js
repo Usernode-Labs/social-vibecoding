@@ -1231,7 +1231,7 @@ const App = {
     if (shot !== 'feedback' && shot !== 'feedback-spent'
         && shot !== 'feedback-offline' && shot !== 'feedback-queued'
         && shot !== 'feedback-capture-failed'
-        && shot !== 'feedback-required') return;
+        && shot !== 'feedback-required' && shot !== 'feedback-first') return;
     const spent = shot === 'feedback-spent';
     // #1054: the two offline variants. `feedback-offline` is the dialog as a
     // disconnected user meets it (the hint, and Submit reading "Save for
@@ -1280,6 +1280,7 @@ const App = {
         },
       }]);
     }
+    if (shot === 'feedback-first') window.FeedbackQueue?.seedDisplayOnly?.([]);
     if (offline) {
       try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
     }
@@ -1323,6 +1324,16 @@ const App = {
           Kudos.Budget.refresh = () => Promise.resolve();
         }
         App.openFeedbackModal();
+        if (shot === 'feedback-first') {
+          let firstTries = App.IMPROVE_SHOT_TRIES;
+          const showFirst = () => {
+            const success = document.getElementById('feedback-first-success');
+            if (success && !success.classList.contains('hidden')) return;
+            App._simulateFirstFeedback?.();
+            if (--firstTries > 0) setTimeout(showFirst, App.IMPROVE_SHOT_INTERVAL_MS);
+          };
+          setTimeout(showFirst, 50);
+        }
         if (captureFailed) {
           const text = document.getElementById('feedback-text');
           // Assigned, not typed: dispatching `input` would start the live
@@ -1966,6 +1977,7 @@ const App = {
             App.resyncCurrentView();
             break;
           case 'app_status':
+            window.UsernodeReact?.appAllowance?.invalidate?.();
             App.handleAppStatusUpdate(data);
             break;
           case 'session_update':
@@ -2014,6 +2026,9 @@ const App = {
             if (typeof DevChat !== 'undefined' && DevChat.applyDraftsUpdate) {
               DevChat.applyDraftsUpdate(data.sessionId);
             }
+            break;
+          case 'app_allowance_changed':
+            window.UsernodeReact?.appAllowance?.invalidate?.();
             break;
           case 'notification_new':
             if (window.Notifications) Notifications.handleIncoming(data.notification);

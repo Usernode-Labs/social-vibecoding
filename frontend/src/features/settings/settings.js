@@ -2025,6 +2025,18 @@
         provider,
         name,
         heading: link.linked && link.handle ? `${name} · @${link.handle}` : name,
+        // #1557: the durable half of "did that work?". The OAuth round trip
+        // already writes a one-line result into #github-link-status, but that
+        // line is transient, xs, and a sibling of this block — come back to
+        // Settings a minute later and the only thing distinguishing a
+        // connected account from an unconnected one was a sentence about
+        // credit tiers. The badge says the state itself, on the row it is
+        // about. A reconnect-required link is deliberately NOT "Connected":
+        // it is linked for attribution and not yet credit-eligible, which is
+        // the distinction the amber state text spells out.
+        badge: link.reconnectRequired
+          ? { text: 'Reconnect needed', tone: 'amber' }
+          : (link.linked ? { text: 'Connected', tone: 'emerald' } : null),
         state,
         linkedAt: link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
           ? `linked ${new Date(link.linkedAt).toLocaleString()}`
@@ -2045,9 +2057,8 @@
         unlink: link.linked ? { disabled: !!demo } : null,
         strandedNote: link.pendingAttemptAt
           ? `Your last ${name} connection attempt didn't complete. `
-            + `If ${name} showed "Something went wrong — You weren't able to give access to the App", `
-            + `the platform's callback address isn't registered on the ${name} developer app, `
-            + 'so an administrator needs to update that app’s settings.'
+            + 'Try Connect again. This can happen if the browser did not reach the sign-in page or the flow was cancelled. '
+            + `If ${name} reports a callback or redirect address error, ask an administrator to check its OAuth settings.`
           : null,
         diagnostics: link.diagnostics
           ? this._socialIdentityDiagnosticsView(provider, link.diagnostics, demo)

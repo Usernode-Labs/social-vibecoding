@@ -48,6 +48,8 @@ type ProviderRowView = {
   provider: 'github' | 'x';
   name: string;
   heading: string;
+  /** #1557 — the row's own state, as a pill. `null` when not connected. */
+  badge: { text: string; tone: 'emerald' | 'amber' } | null;
   state: { text: string; tone: 'amber' | 'emerald' | 'muted' };
   linkedAt: string | null;
   noToken: string | null;
@@ -93,6 +95,24 @@ const STATE_TONE = {
   amber: 'text-amber-800 dark:text-amber-400',
   emerald: 'text-emerald-700 dark:text-emerald-400',
   muted: 'text-zinc-500 dark:text-zinc-400',
+};
+
+/*
+ * #1557: the connected badge, in the platform's read-only pill shape.
+ *
+ * A `<span>`, not @/components/ui/chip: that component is a
+ * `<button aria-pressed>` for filter toggles, and announcing a status as a
+ * pressed button is wrong for anyone on a screen reader. Same reasoning, and
+ * the same class run, as the stage-2 survey's verified pill.
+ *
+ * Whole class strings, because Tailwind's extractor is a regex over source
+ * text and a tint assembled at runtime never compiles.
+ */
+const BADGE_BASE =
+  'shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[0.65rem] font-medium';
+const BADGE_TONE = {
+  emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+  amber: 'bg-amber-500/10 text-amber-800 dark:text-amber-400',
 };
 
 function TierCard({ tier }: { tier: TierCardView }) {
@@ -244,8 +264,18 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
     <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-            {row.heading}
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 truncate">
+              {row.heading}
+            </div>
+            {row.badge ? (
+              <span
+                id={`${row.provider}-link-badge`}
+                className={`${BADGE_BASE} ${BADGE_TONE[row.badge.tone]}`}
+              >
+                {row.badge.text}
+              </span>
+            ) : null}
           </div>
           <div className={`text-xs mt-1 ${STATE_TONE[row.state.tone]}`}>{row.state.text}</div>
           {row.linkedAt ? (

@@ -579,6 +579,18 @@
       "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)"
     },
     {
+      "name": "First feedback is congratulated in a lasting confirmation (#1583)",
+      "path": "/?shot=feedback-first#app/usernode-2d5619/dev",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-first-success:not(.hidden)",
+      "expectText": "Congratulations on your first feedback!"
+    },
+    {
+      "name": "First feedback offers an editable fix and this app's board (#1583)",
+      "path": "/?shot=feedback-first#app/usernode-2d5619/dev",
+      "expectSelector": "#feedback-first-success:not(.hidden):has(#feedback-first-fix:not(:disabled)) #feedback-first-board:not(:disabled)",
+      "expectText": "Try a fix yourself"
+    },
+    {
       "name": "The bounty checkbox is disabled once the weekly allowance is spent (#964)",
       "path": "/?shot=feedback-spent",
       "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:disabled"
@@ -1213,6 +1225,18 @@
       "expectText": "Drag to reorder"
     },
     {
+      "name": "Dialog fade: the iOS modal opens with its backdrop (#1566)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=modal",
+      "expectSelector": "body:has(.un-backdrop[style*=\"opacity: 1\"]) .un-modal.un-in",
+      "expectText": "Edit item"
+    },
+    {
+      "name": "Dialog fade: the iOS alert opens with its backdrop (#1566)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=alert",
+      "expectSelector": "body:has(.un-backdrop[style*=\"opacity: 1\"]) .un-alert.un-in",
+      "expectText": "Rename item"
+    },
+    {
       "name": "Kit demo Toasts section ships the priority undo-flow button (#718)",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": "#toast-undo-btn",
@@ -1779,6 +1803,12 @@
       "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-venue-select:disabled[data-venue-busy=\"1\"] .dc-venue-busy",
       "expectText": "Thinking…"
+    },
+    {
+      "name": "Building in the dev chat header is a non-interactive status chip (#1594)",
+      "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-session-header > span#dc-mode-chip[role=\"status\"]:not([tabindex])",
+      "expectText": "Building"
     },
     {
       "name": "The circle carries the keystroke the retired hint line named (#920)",
