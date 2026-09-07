@@ -2108,6 +2108,7 @@
         conflict: `That ${name} account is already linked elsewhere, or a different account must be disconnected first.`,
         denied: `${name} connection was cancelled.`,
         error: `${name} could not be connected. Try again.`,
+        account_mismatch: 'This browser is signed into a different Usernode account than the app. Sign out here, then tap Connect again in the app and sign in with the same account.',
       };
       status.textContent = messages[result] || '';
       if (!status.textContent) return;
