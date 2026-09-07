@@ -47,6 +47,8 @@ spec:
             - {name: APP_RUNTIME, value: kubernetes}
             - {name: WORKER_RUNTIME, value: kubernetes}
             - {name: CAPTURE_RUNTIME, value: kubernetes}
+            - {name: NODE_RPC_URL, value: {{ .Values.config.nodeRpcUrl | quote }}}
+            - {name: NATIVE_SESSION_V2_TESTNET_CHAIN_ID, value: {{ .Values.config.nativeSessionV2TestnetChainId | quote }}}
             - {name: GIT_SHA, value: {{ .Values.release.sourceRevision | quote }}}
             - {name: USERNODE_DOMAIN, value: {{ .Values.config.domain | quote }}}
             - {name: USERNODE_PLATFORM_REPO, value: {{ .Values.config.platformRepository | quote }}}

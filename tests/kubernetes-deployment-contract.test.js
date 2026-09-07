@@ -73,6 +73,8 @@ test('Kubernetes workloads receive the canonical repository and release revision
   assert.match(migrationJob, /name: CLI_CANONICAL_ORIGIN, value: \{\{ printf "https:\/\/%s" \.Values\.config\.domain \| quote \}\}/);
   assert.match(migrationJob, /name: USERNODE_PLATFORM_REPO, value: \{\{ \.Values\.config\.platformRepository \| quote \}\}/);
   assert.match(migrationJob, /name: GIT_SHA, value: \{\{ \.Values\.release\.sourceRevision \| quote \}\}/);
+  assert.match(migrationJob, /name: NODE_RPC_URL, value: \{\{ \.Values\.config\.nodeRpcUrl \| quote \}\}/);
+  assert.match(migrationJob, /name: NATIVE_SESSION_V2_TESTNET_CHAIN_ID, value: \{\{ \.Values\.config\.nativeSessionV2TestnetChainId \| quote \}\}/);
   assert.match(platform, /name: USERNODE_PLATFORM_REPO, value: \{\{ \.Values\.config\.platformRepository \| quote \}\}/);
   assert.match(platform, /name: GIT_SHA, value: \{\{ \.Values\.release\.sourceRevision \| quote \}\}/);
   assert.match(platform, /name: NODE_RPC_URL, value: \{\{ \.Values\.config\.nodeRpcUrl \| quote \}\}/);
