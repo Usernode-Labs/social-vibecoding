@@ -20,9 +20,13 @@
  *                                        (element container OR the window
  *                                        scroller; the puck hangs BELOW the
  *                                        app header — opts.topEl / opts.top
- *                                        anchor it under a fixed one — and
- *                                        lingers briefly once onRefresh
- *                                        settles; never throws on bad input)
+ *                                        anchor it under a fixed one —
+ *                                        resting FULLY below that anchor
+ *                                        line with equal space above and
+ *                                        below, and lingers briefly once
+ *                                        onRefresh settles. Returns
+ *                                        { detach(), refresh() }; never
+ *                                        throws on bad input)
  *   unNative.attachGridPlacement(listEl, opts) — free-form placement on a
  *     fixed grid (drop anywhere, holes allowed — the homescreen model;
  *     cellFromPoint(x, y, info) gets the dragged tile's live rect/centre in
@@ -242,6 +246,52 @@
   function decidePtrRelease(input) {
     if (input.pull >= input.threshold) return true;
     return projectDisplacement(input.pull, input.v, input.horizonMs) >= input.threshold;
+  }
+
+  /* ── Pull-to-refresh geometry ─────────────────────────────────────────
+   * Above the Node cut on purpose: the puck's resting pose is arithmetic,
+   * and issue #1526 (a quarter of the spinner sliced off by the header's
+   * edge for two releases) went unnoticed precisely because these numbers
+   * lived down in the DOM half where no unit test could reach them.
+   *
+   * Tuning note (v1 in-place fix): the original COEFF 0.4 / THRESHOLD 70
+   * pair required ~330px of raw finger travel to arm — more than half a
+   * phone screen, so short lists were nearly impossible to refresh. The
+   * pair below arms at ~125px of travel (UIRefreshControl territory)
+   * while keeping the same asymptote, so a deep pull still saturates at
+   * the familiar rubber-band feel.
+   */
+  var PTR_THRESHOLD = 60; // px of displayed pull that arms a refresh
+  var PTR_LIMIT = 150; // rubber-band asymptote
+  var PTR_COEFF = 0.8; // initial resistance slope (~dy/1.25)
+  var PTR_MIN_HOLD_MS = 500; // spinner floor so instant refreshes still read
+  var PTR_SETTLE_HOLD_MS = 500; // linger AFTER onRefresh settles, then retract
+  var PTR_LAYER_H = 240; // clip window the puck travels inside
+
+  // The puck's box, mirroring .un-ptr-puck's width/height in native.css
+  // (cross-checked by a test — the pose math below is meaningless if the
+  // painted box drifts from the constant it is derived from).
+  var PTR_PUCK = 34;
+  // Breathing room above AND below the puck at rest. Everything else is
+  // derived from these two numbers, so the resting state stays balanced
+  // by construction rather than by a hand-tuned coefficient.
+  var PTR_PUCK_GAP = 14;
+  // Where the content holds while refreshing: gap, puck, gap. 62px, just
+  // past PTR_THRESHOLD, so the puck rests at full scale and full opacity
+  // and the content never springs BACKWARDS on commit.
+  var PTR_HOLD = PTR_PUCK + 2 * PTR_PUCK_GAP;
+  // Retracted pose: the whole puck sits above the anchor line, where the
+  // layer's overflow clip hides it.
+  var PTR_PUCK_PARKED = -(PTR_PUCK + 6);
+  // Travel per px of pull, solved so ptrPuckOffset(PTR_HOLD) === the gap.
+  var PTR_PUCK_TRAVEL = (PTR_PUCK_GAP - PTR_PUCK_PARKED) / PTR_HOLD;
+
+  // The puck's top edge, in px relative to the clip layer's top (= the
+  // anchor line). Negative means clipped behind the header — which is the
+  // emerge-from-under-the-bar idiom during the drag (the top crosses the
+  // line at ~43px of pull) and, at rest, the bug this helper fixed.
+  function ptrPuckOffset(pull) {
+    return PTR_PUCK_PARKED + pull * PTR_PUCK_TRAVEL;
   }
 
   // Bottom-sheet release decision. y is the sheet's downward displacement
@@ -660,6 +710,13 @@
     lockIntent: lockIntent,
     decideSwipeRelease: decideSwipeRelease,
     decidePtrRelease: decidePtrRelease,
+    PTR_PUCK: PTR_PUCK,
+    PTR_PUCK_GAP: PTR_PUCK_GAP,
+    PTR_HOLD: PTR_HOLD,
+    PTR_THRESHOLD: PTR_THRESHOLD,
+    PTR_LIMIT: PTR_LIMIT,
+    PTR_LAYER_H: PTR_LAYER_H,
+    ptrPuckOffset: ptrPuckOffset,
     decideSheetRelease: decideSheetRelease,
     GHOST_CLICK_MS: GHOST_CLICK_MS,
     decideBackdropDismiss: decideBackdropDismiss,
@@ -1141,22 +1198,10 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
-   * Pull-to-refresh
+   * Pull-to-refresh — the wiring. The travel geometry (PTR_PUCK,
+   * PTR_PUCK_GAP, PTR_HOLD, ptrPuckOffset, …) lives above the Node cut
+   * so it can be unit-tested; see the "Pull-to-refresh geometry" block.
    * ──────────────────────────────────────────────────────────────────── */
-
-  // Tuning note (v1 in-place fix): the original COEFF 0.4 / THRESHOLD 70
-  // pair required ~330px of raw finger travel to arm — more than half a
-  // phone screen, so short lists were nearly impossible to refresh. The
-  // pair below arms at ~125px of travel (UIRefreshControl territory)
-  // while keeping the same asymptote, so a deep pull still saturates at
-  // the familiar rubber-band feel.
-  var PTR_THRESHOLD = 60; // px of displayed pull that arms a refresh
-  var PTR_HOLD = 56; // px the content holds at while refreshing
-  var PTR_LIMIT = 150; // rubber-band asymptote
-  var PTR_COEFF = 0.8; // initial resistance slope (~dy/1.25)
-  var PTR_MIN_HOLD_MS = 500; // spinner floor so instant refreshes still read
-  var PTR_SETTLE_HOLD_MS = 500; // linger AFTER onRefresh settles, then retract
-  var PTR_LAYER_H = 240; // clip window the puck travels inside
 
   // First element child that is the app's own, skipping kit chrome.
   function firstContentChild(parent) {
@@ -1179,8 +1224,15 @@
   // reads as one. No-op on desktop. Invalid input NEVER throws: it warns
   // once and returns a no-op { detach() }.
   //
+  // Returns { detach(), refresh() }. refresh() starts a refresh without a
+  // gesture (the UIRefreshControl.beginRefreshing() equivalent) and is a
+  // no-op while one is already running.
+  //
   // The puck NEVER paints over the app's header. It lives in a clip layer
-  // whose top edge is the anchor, and it is stacked BENEATH the header:
+  // whose top edge is the anchor, and it is stacked BENEATH the header. At
+  // rest it sits ENTIRELY below that anchor line, with PTR_PUCK_GAP of
+  // space above and below it; during the drag it emerges from under the
+  // bar as the content slides away.
   //
   //   opts.topEl  — an Element (typically the fixed/sticky app header)
   //                 whose bottom edge the puck hangs from. Re-measured on
@@ -1192,7 +1244,7 @@
   //                 parent (i.e. below whatever chrome sits above it);
   //                 window mode: the safe-area top inset.
   function attachPullToRefresh(scrollEl, onRefresh, opts) {
-    var noop = { detach: function () {} };
+    var noop = { detach: function () {}, refresh: function () {} };
     if (platform === 'desktop') return noop;
 
     var windowMode = scrollEl === window || scrollEl === document ||
@@ -1305,7 +1357,7 @@
       var progress = Math.min(1, y / PTR_THRESHOLD);
       puck.style.opacity = String(progress);
       puck.style.transform =
-        'translate(-50%, ' + (y * 0.55 - 40) + 'px) scale(' + (0.5 + 0.5 * progress) + ') ' +
+        'translate(-50%, ' + ptrPuckOffset(y) + 'px) scale(' + (0.5 + 0.5 * progress) + ') ' +
         'rotate(' + y * 2.2 + 'deg)';
       var nowArmed = !refreshing && y >= PTR_THRESHOLD;
       if (nowArmed !== armed) {
@@ -1423,6 +1475,13 @@
     listenEl.addEventListener('touchcancel', onTouchEnd, { passive: true });
 
     return {
+      // Programmatic refresh — the kit's beginRefreshing(). Used by the
+      // demo page's ?un-demo=ptr-hold screenshot state; a no-op while a
+      // refresh is already running.
+      refresh: function () {
+        if (refreshing) return;
+        startRefresh(0);
+      },
       detach: function () {
         listenEl.removeEventListener('touchstart', onTouchStart);
         listenEl.removeEventListener('touchmove', onTouchMove);

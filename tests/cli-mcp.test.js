@@ -102,6 +102,7 @@ test('MCP initializes without credentials and returns the external login contrac
       'social_vibecoding.proposal_append_context',
       'social_vibecoding.proposal_promote',
       'social_vibecoding.proposal_push_commit',
+      'social_vibecoding.proposal_recheck',
       'social_vibecoding.proposal_start',
       'social_vibecoding.proposal_status',
       'social_vibecoding.proposal_submit_build',
@@ -112,6 +113,7 @@ test('MCP initializes without credentials and returns the external login contrac
         || name === 'social_vibecoding.proposal_start'
         || name === 'social_vibecoding.proposal_append_context'
         || name === 'social_vibecoding.proposal_push_commit'
+        || name === 'social_vibecoding.proposal_recheck'
         || name === 'social_vibecoding.proposal_submit_build'
         || name === 'social_vibecoding.proposal_promote';
       assert.equal(tool.annotations.readOnlyHint, !mutating);
@@ -121,6 +123,14 @@ test('MCP initializes without credentials and returns the external login contrac
     }
     assert.match(byName.get('social_vibecoding.proposal_start').description,
       /proposal_push_commit/);
+    assert.match(byName.get('social_vibecoding.proposal_start').description,
+      /permanent idempotency key/);
+    assert.ok(byName.get('social_vibecoding.proposal_start')
+      .inputSchema.properties.supersedes_session_id);
+    assert.match(byName.get('social_vibecoding.proposal_status').description,
+      /stalled/);
+    assert.match(byName.get('social_vibecoding.proposal_recheck').description,
+      /same native CLI proposal/);
     assert.doesNotMatch(byName.get('social_vibecoding.proposal_start').description,
       /branch to push/i);
     assert.ok(byName.get('social_vibecoding.proposal_push_commit')
@@ -365,6 +375,7 @@ test('proposal MCP tools call the native handoff lifecycle and gate promotion on
   const token = makeAccessToken();
   const requests = [];
   let promoted = false;
+  let proposalState = 'stalled';
   const server = http.createServer(async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
@@ -394,9 +405,17 @@ test('proposal MCP tools call the native handoff lifecycle and gate promotion on
       res.statusCode = 200;
       res.end(JSON.stringify({
         sessionId: 41,
-        state: promoted ? 'promoted' : 'ready',
+        source: 'cli_handoff',
+        state: promoted ? 'promoted' : proposalState,
+        checkState: proposalState === 'stalled' ? 'pending' : 'passing',
         headSha: 'b'.repeat(40),
       }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/api/sessions/41/recheck') {
+      proposalState = 'ready';
+      res.statusCode = 200;
+      res.end(JSON.stringify({ status: 'running', checkState: 'pending' }));
       return;
     }
     if (req.method === 'POST' && req.url === '/api/sessions/41/promote') {
@@ -507,7 +526,19 @@ test('proposal MCP tools call the native handoff lifecycle and gate promotion on
       name: 'social_vibecoding.proposal_status',
       arguments: { session_id: 41 },
     });
-    assert.equal(status.structuredContent.body.state, 'ready');
+    assert.equal(status.structuredContent.body.state, 'stalled');
+
+    const recheck = await client.callTool({
+      name: 'social_vibecoding.proposal_recheck',
+      arguments: { session_id: 41 },
+    });
+    assert.equal(recheck.structuredContent.body.status, 'running');
+
+    const ready = await client.callTool({
+      name: 'social_vibecoding.proposal_status',
+      arguments: { session_id: 41 },
+    });
+    assert.equal(ready.structuredContent.body.state, 'ready');
 
     const promote = await client.callTool({
       name: 'social_vibecoding.proposal_promote',
@@ -527,6 +558,9 @@ test('proposal MCP tools call the native handoff lifecycle and gate promotion on
       ['POST', '/api/apps/demo/proposal-handoffs'],
       ['POST', '/api/sessions/41/proposal-handoff/context'],
       ['POST', '/api/sessions/41/proposal-handoff/build'],
+      ['GET', '/api/sessions/41/proposal-handoff'],
+      ['GET', '/api/sessions/41/proposal-handoff'],
+      ['POST', '/api/sessions/41/recheck'],
       ['GET', '/api/sessions/41/proposal-handoff'],
       ['GET', '/api/sessions/41/proposal-handoff'],
       ['POST', '/api/sessions/41/promote'],

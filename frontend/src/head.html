@@ -175,6 +175,189 @@
       return { get, set, apply, onChange };
     }());
   </script>
+  <script>
+    // ── The boot record: what went wrong, for an inspector to read ───────
+    //
+    // When the boot fails, it fails INVISIBLY: every island is left as the
+    // empty markup the prerender shipped, and the screen the router reveals
+    // has nothing in it. This block captures every error from as early in
+    // the document as a script can run, so a reader with an inspector
+    // attached, or a tester with a console, can ask what happened. It is
+    // inline and classic, with no imports, no framework and no stylesheet,
+    // because the things it records are precisely the bundle, the framework
+    // and the stylesheet failing.
+    //
+    // It PAINTS NOTHING. An earlier version judged the page by its pixels
+    // and painted a "did not finish loading" panel over anything it took for
+    // blank. On real devices it accused pages that were fine, and a
+    // diagnostic that lies is worse than none, so the judgement and the
+    // panel are gone. Everything here is passive:
+    //
+    //   window.__unBoot.errors    thrown errors, rejected promises, scripts
+    //                             and stylesheets that failed to load, and
+    //                             boot steps that threw (frontend/src/lib/
+    //                             boot-guard.ts pushes into the same list)
+    //   window.__unBoot.steps     boot steps that completed, with when
+    //   window.__unBoot.snapshot()  the document's state as one string, for
+    //                             pasting out of a console
+    //
+    // Nothing in it prints a token: query values are never read, only their
+    // keys, and the fragment is cut at its first segment.
+    (function () {
+      'use strict';
+      var W = (window.__unBoot = window.__unBoot || { errors: [], steps: [] });
+      if (!Array.isArray(W.errors)) W.errors = [];
+      if (!Array.isArray(W.steps)) W.steps = [];
+      function push(step, message, stack) {
+        try {
+          W.errors.push({ step: step, message: String(message || ''), stack: stack || '' });
+        } catch (e) { /* a full or frozen array is not worth a throw */ }
+      }
+      window.addEventListener('error', function (e) {
+        push('error', (e && e.message) || 'script error', e && e.error && e.error.stack);
+      });
+      // A script or stylesheet that FAILED TO LOAD fires `error` on its own
+      // element and it does not bubble, so the listener above never hears
+      // it. Capture phase does. A thrown error has `window` as its target
+      // and is already recorded above.
+      window.addEventListener('error', function (e) {
+        var t = e && e.target;
+        if (!t || t === window || !t.tagName) return;
+        var url = '';
+        try { url = String(t.src || t.href || '').split('?')[0].split('#')[0]; } catch (x) { url = ''; }
+        push('resource', String(t.tagName).toLowerCase() + ' failed to load: ' + (url || '(no url)'));
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e && e.reason;
+        push('unhandledrejection', (r && r.message) || String(r), r && r.stack);
+      });
+
+      function nameOf(el) {
+        if (!el) return 'null';
+        var t = (el.tagName || '?').toLowerCase();
+        if (el.id) return t + '#' + el.id;
+        var c = el.classList && el.classList.length ? el.classList[0] : '';
+        return c ? t + '.' + c : t;
+      }
+      function safeRoute() {
+        var keys = [];
+        try {
+          new URLSearchParams(window.location.search).forEach(function (v, k) { keys.push(k); });
+        } catch (e) { /* no URL API */ }
+        var hash = window.location.hash || '';
+        var m = /^(#[^/]*)(\/.*)?$/.exec(hash);
+        if (m) hash = m[1] + (m[2] ? '/...' : '');
+        return window.location.pathname + (keys.length ? '?' + keys.join(',') : '') + hash;
+      }
+      function samplePoints() {
+        var w = window.innerWidth || 0;
+        var h = window.innerHeight || 0;
+        if (!(w > 0 && h > 0)) return [];
+        return [
+          [w * 0.5, h * 0.1], [w * 0.5, h * 0.3], [w * 0.5, h * 0.5],
+          [w * 0.5, h * 0.7], [w * 0.25, h * 0.4], [w * 0.75, h * 0.4],
+        ];
+      }
+      // Every line is its own try/catch and answers "?" on failure: a
+      // diagnostic that throws is the joke of the file.
+      W.snapshot = function () {
+        var lines = [];
+        function add(label, fn) {
+          var value = '?';
+          try { value = fn(); } catch (e) { value = '?'; }
+          lines.push(label + ': ' + value);
+        }
+        add('at', function () { return Math.round(window.performance.now()) + 'ms'; });
+        add('document', function () {
+          return document.readyState + ', ' + document.visibilityState + ', '
+            + (window.navigator.onLine ? 'online' : 'offline') + ', '
+            + window.innerWidth + 'x' + window.innerHeight;
+        });
+        add('route', safeRoute);
+        add('on top', function () {
+          var pts = samplePoints();
+          var out = [];
+          for (var i = 0; i < pts.length; i++) {
+            out.push(nameOf(document.elementFromPoint(pts[i][0], pts[i][1])));
+          }
+          return out.join(' ') || 'no viewport';
+        });
+        add('screens shown', function () {
+          var els = document.querySelectorAll('[id$="-screen"], #app-view');
+          var out = [];
+          for (var i = 0; i < els.length; i++) {
+            var el = els[i];
+            if (el.hidden || (el.classList && el.classList.contains('hidden'))) continue;
+            var text = '';
+            try { text = (el.innerText || '').trim(); } catch (e) { text = ''; }
+            out.push(el.id + '(text=' + text.length + ')');
+          }
+          return out.length ? out.join(' ') : 'none';
+        });
+        add('globals', function () {
+          var names = ['App', 'AuthScreens', 'Home', 'Offline', 'NativeChrome', 'UsernodeReact'];
+          var have = [];
+          var miss = [];
+          for (var i = 0; i < names.length; i++) (window[names[i]] ? have : miss).push(names[i]);
+          var mount = window.UsernodeReact && window.UsernodeReact.mount;
+          (mount && mount.ensure ? have : miss).push('UsernodeReact.mount');
+          return 'present ' + (have.join(',') || '-') + '; missing ' + (miss.join(',') || '-');
+        });
+        add('react', function () {
+          var keys = Object.keys(document.body || {});
+          for (var i = 0; i < keys.length; i++) {
+            if (keys[i].indexOf('__reactContainer') === 0) return 'adopted the document';
+          }
+          return 'has NOT adopted the document';
+        });
+        add('boot steps', function () {
+          var s = W.steps || [];
+          if (!s.length) return 'none completed';
+          var out = [];
+          for (var i = 0; i < s.length; i++) out.push(s[i].step + '@' + s[i].at + 'ms');
+          return out.join(' ');
+        });
+        add('errors', function () {
+          var errs = W.errors || [];
+          if (!errs.length) return 'none recorded';
+          var out = [];
+          for (var i = 0; i < errs.length && i < 8; i++) out.push('[' + errs[i].step + '] ' + errs[i].message);
+          return out.join(' | ');
+        });
+        add('session', function () {
+          var A = window.App;
+          if (!A) return 'no App';
+          return (A.user ? 'user held' : 'no user')
+            + (A.user && A.user.hasPlatformAccess === false ? ' (no platform access)' : '')
+            + ', fromSnapshot=' + !!A._sessionFromSnapshot
+            + ', authedBooted=' + !!A._authedBooted
+            + ', authScreen=' + ((window.AuthScreens && window.AuthScreens._current) || 'none');
+        });
+        add('interiors asked for', function () {
+          var m = window.__usernodeMounted && window.__usernodeMounted.mounted;
+          var ks = m ? Object.keys(m) : [];
+          return ks.length ? ks.join(',') : 'none';
+        });
+        add('visibility published', function () {
+          var v = window.__usernodeVisibility && window.__usernodeVisibility.visible;
+          var out = [];
+          if (v) for (var k in v) if (v[k]) out.push(k);
+          return out.length ? out.join(',') : 'none';
+        });
+        add('storage', function () {
+          try { void window.localStorage.length; return 'readable'; } catch (e) { return 'throws'; }
+        });
+        add('worker', function () {
+          var sw = window.navigator.serviceWorker;
+          return sw && sw.controller ? 'controlling this page' : 'not controlling this page';
+        });
+        add('html class', function () {
+          return (document.documentElement.className || '').slice(0, 100) || '-';
+        });
+        return lines.join('\n');
+      };
+    }());
+  </script>
   <script src="/usernode-bridge.js"></script>
   <script>
     // Mark the document when running as the top frame of the Usernode

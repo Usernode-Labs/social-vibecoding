@@ -60,11 +60,11 @@ const mergedRowHtml = (AppView, row) => {
   return m ? cardHtml(m) : '';
 };
 
-/** Render the whole list feed from `AppView._feedView()`. */
-function feedHtml(AppView) {
+/** Render the whole Workshop from `AppView._workshopView()`. */
+function workshopHtml(AppView) {
   const m = mod();
-  m.devFeedStore.set(AppView._feedView());
-  return renderToHtml(createElement(m.DevFeed));
+  m.devWorkshopStore.set(AppView._workshopView());
+  return renderToHtml(createElement(m.DevWorkshop));
 }
 
 /** Render the whole kanban board from `AppView._kanbanView()`. */
@@ -242,7 +242,7 @@ module.exports = {
   mergedCardHtml,
   closeIssueCardHtml,
   mergedRowHtml,
-  feedHtml,
+  workshopHtml,
   kanbanHtml,
   listRowHtml,
   columnHtml,

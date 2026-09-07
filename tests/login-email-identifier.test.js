@@ -60,11 +60,6 @@ for (const level of ['info', 'warn', 'error', 'debug']) {
   logger[level] = (...args) => { logCalls.push([level, ...args]); };
 }
 
-// ── Pass-through auth limiter (same rationale as password-reset.test.js:
-// one shared 10/15min/IP bucket would 429 this file's later tests) ──
-const rateLimits = require('../src/middleware/rate-limits');
-rateLimits.authLimiter = (_req, _res, next) => next();
-
 const { authRoutes } = require('../src/routes/auth');
 const express = require('express');
 const cookieParser = require('cookie-parser');

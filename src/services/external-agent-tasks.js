@@ -1930,32 +1930,31 @@ async function inspectPushedBranch(task, branchName, forkRepoName) {
 
 // ── The PR-creation ladder ─────────────────────────────────────────────
 //
-// The whole reason this change exists. `submit_work` has never once
-// succeeded in production: three attempts, all reaching one generic
-// `platform_error` that DISCARDED whatever
-// GitHub actually said. The one structural difference between that call and
-// every same-repo `createPR` in this codebase (all of which succeed daily,
-// including several on the platform's own repo the same afternoon these
-// failed) is the cross-fork `head: "<owner>:<branch>"`.
+// Three rungs, and the order is a decision about who owns the head after
+// the submission — see the branch path in submitWorkLocked for the whole
+// argument. In short:
 //
-// So there are three rungs now, cheapest first:
-//
-//   1. the plain cross-fork create, as before;
-//   2. the same call with an explicit `head_repo` — a bare `owner:branch`
+//   1. a MIRROR — copy the verified branch into the app's own repository and
+//      open a plain same-repo pull request. The head is then a branch the
+//      platform can write, so the auto-sync and the conflict resolver keep
+//      the proposal current when main moves (task 153). This is the rung
+//      that runs for every submission the platform can write;
+//   2. the plain cross-fork create, the FALLBACK when the platform cannot
+//      write the app repository just now: a genuine cross-fork PR shows the
+//      fork as the head on GitHub and the group can still vote on it, but
+//      nobody except its author can bring it up to date;
+//   3. the same call with an explicit `head_repo` — a bare `owner:branch`
 //      makes GitHub SEARCH the base's fork network for a repo owned by that
 //      login, which is ambiguous the moment the user owns two repos in the
-//      network, exactly the case CONFLICT_FORK_SUFFIX creates. One extra
-//      request that either fixes the leading hypothesis outright or rules it
-//      out of the log forever;
-//   3. a MIRROR — copy the verified branch into the app's own repository and
-//      open a plain same-repo pull request, the shape that demonstrably
-//      works on this deployment.
+//      network, exactly the case CONFLICT_FORK_SUFFIX creates.
 //
-// Rung 1 is still preferred, not skipped: a genuine cross-fork PR shows the
-// fork as the head on GitHub, which is better provenance and keeps the
-// contributor's name on the commit list. Preferring it costs at most two
-// failed API calls. `submitted_via` records which rung ran, so "did the
-// missing head_repo turn out to be the whole bug?" becomes a SQL query.
+// The mirror used to be the LAST rung, reached only when both cross-fork
+// creates refused — and `submit_work` had never once succeeded in production
+// until the cross-fork error was made legible: three attempts, all reaching
+// one generic `platform_error` that DISCARDED whatever GitHub actually said.
+// `resolvePullRequest` below is rungs 2 and 3, and the error that survives
+// them names the cause. `submitted_via` records which rung ran, so "how
+// often is the platform's own write path unwell?" is a SQL query.
 async function resolvePullRequest(ctx) {
   const {
     gh, owner, repo, forkOwner, forkRepo, branch, prTitle, prBody,
@@ -2088,16 +2087,9 @@ async function resolvePullRequest(ctx) {
 // GitHub's errors[] is where the actual objection lives — "field: head,
 // code: invalid" is the difference between a resolution problem and a
 // repository policy, and `field: fork_collab` is the one that cost three
-// production runs. One reader, shared by the user-facing refusal and the
-// mirror-fallback log line, so the two can never disagree about what
-// GitHub said.
+// production runs. One reader for the user-facing refusal.
 function firstErrorEntry(desc) {
   return desc && desc.data && Array.isArray(desc.data.errors) ? desc.data.errors[0] : null;
-}
-
-function firstErrorField(desc) {
-  const entry = firstErrorEntry(desc);
-  return entry ? entry.field || entry.resource || null : null;
 }
 
 // The typed, self-diagnosing replacement for the old generic refusal, which
@@ -2813,83 +2805,92 @@ async function submitWorkLocked(deps, params) {
     }
 
     if (!pr) {
-      const outcome = await resolvePullRequest({
-        gh, owner, repo, forkOwner, forkRepo, branch,
-        prTitle: prTitleFor({ title, task, slug }),
-        prBody: prBodyFor({ body, task }),
+      // ── Rung 1: the mirror ─────────────────────────────────────────
+      //
+      // Copy the verified fork branch into the app's own repository and
+      // open a plain same-repo pull request from it. This used to be the
+      // last rung, reached only when both cross-fork creates refused — and
+      // for as long as they did, every connector proposal was a mirror
+      // anyway. Making it the FIRST rung is a choice about who owns the
+      // head afterwards: a `usernode/from-…` branch is one the platform can
+      // write, so when main moves under the proposal the auto-sync and the
+      // conflict resolver bring it up to date the way they do for a native
+      // session. A head in the author's fork cannot be written by anyone
+      // but the author, so a fork-tracked proposal sat at "Conflict
+      // resolution failed" until its author came back (task 153).
+      //
+      // Provenance is verified inside mirrorForkBranch BEFORE anything is
+      // copied — that is where the attribution gate lives for a
+      // platform-written head — and it is the mirror's own refusals
+      // (somebody else's fork, a branch not built on the recorded base, a
+      // branch GitHub does not have) that are handed back verbatim: each
+      // names what to fix, and a cross-fork create would fail on the same
+      // fact with a worse sentence. Only a refusal about the PLATFORM —
+      // no write credential, the copy itself failed, the ancestry check
+      // could not be made — falls through to rungs 2 and 3.
+      const prTitle = prTitleFor({ title, task, slug });
+      const prBody = prBodyFor({ body, task });
+      const mirrored = await externalAgentHead.mirrorForkBranch({
+        gh, githubPublic, owner, repo, forkOwner, forkRepo, branch,
+        expectedLogin: link.login,
         baseSha: task ? task.base_sha : null,
         taskId: task ? task.id : null,
-        expectedLogin: link.login,
-        pushedState: pushed,
       });
-      if (outcome.done) return outcome.done;
-      if (outcome.ok) {
-        pr = outcome.pr;
-        via = outcome.via;
+      if (mirrored.ok) {
+        platformOwnedHead = mirrored;
+        via = 'mirror';
+        try {
+          pr = await gh.createPR(owner, repo, { branch: mirrored.branch, title: prTitle, body: prBody });
+        } catch (err) {
+          await mirrored.cleanup();
+          platformOwnedHead = null;
+          const desc = gh.describeGithubError ? gh.describeGithubError(err) : null;
+          log.error('external-agent-tasks', 'same-repo PR failed for a mirrored head', {
+            owner, repo, taskId: task ? task.id : null, ...(desc || { message: err && err.message }),
+          });
+          return prOpenFailed({ desc, owner, repo, forkOwner, forkRepo, branch });
+        }
+      } else if (mirrored.code !== 'platform_unavailable') {
+        return mirrored;
       } else {
-        // ── Rung 3: the mirror ───────────────────────────────────────
+        // ── Rungs 2 and 3: the cross-fork pull request ─────────────────
         //
-        // Both cross-fork attempts refused. Rather than hand back an
-        // error the user can do nothing with, copy the branch into the
-        // app's own repository and open the plain same-repo pull request
-        // that works. Provenance is verified inside mirrorForkBranch
-        // BEFORE anything is copied — that is where the attribution gate
-        // lives for a platform-written head.
+        // The platform could not write the app repository just now. A
+        // proposal whose head the platform only TRACKS is still a proposal
+        // — the group can review and vote on it, and it merges the same
+        // way — so rather than hand back an error the user can do nothing
+        // with, open the pull request from the fork itself. What is lost
+        // is the automatic sync: the topic page says so, and the author
+        // brings the branch up to date and submits again.
         //
-        // Say out loud that we got here and why. Since cross-fork creates
-        // send `maintainer_can_modify: false`, rung 1 is expected to
-        // succeed and this line should stop appearing entirely — so its
-        // presence is the signal that something new is refusing the fork
-        // head, visible in the log rather than only as a `submitted_via`
-        // value somebody has to go and query.
-        log.info('external-agent-tasks', 'cross-fork create refused — falling back to the mirror', {
+        // Say out loud that we got here and why. With the mirror first this
+        // line should be rare, so its presence in the log is the signal
+        // that the platform's own write path is unwell — visible without
+        // anyone going and querying `submitted_via`.
+        log.warn('external-agent-tasks', 'mirror unavailable — falling back to a cross-fork pull request', {
           owner,
           repo,
           head: `${forkOwner}:${branch}`,
           taskId: task ? task.id : null,
-          // Which rung failed and what GitHub said about it. `desc` is the
-          // describeGithubError shape from the second attempt; the field
-          // GitHub objected to is the part worth reading at a glance.
-          failedRungs: 'branch, branch_head_repo',
-          status: outcome.desc ? outcome.desc.status || null : null,
-          requestId: outcome.desc ? outcome.desc.requestId || null : null,
-          githubField: firstErrorField(outcome.desc),
-          message: outcome.desc ? outcome.desc.message : null,
+          mirrorCode: mirrored.code || null,
+          mirrorMessage: mirrored.message || null,
         });
-        const mirrored = await externalAgentHead.mirrorForkBranch({
-          gh, githubPublic, owner, repo, forkOwner, forkRepo, branch,
-          expectedLogin: link.login,
+        const outcome = await resolvePullRequest({
+          gh, owner, repo, forkOwner, forkRepo, branch,
+          prTitle, prBody,
           baseSha: task ? task.base_sha : null,
           taskId: task ? task.id : null,
+          expectedLogin: link.login,
+          pushedState: pushed,
         });
-        if (!mirrored.ok) {
-          // A refusal with a REASON (someone else's fork, a branch built
-          // off a different base) is the mirror's own answer and is more
-          // useful than GitHub's. Anything else falls back to the typed
-          // GitHub error, which now says what actually happened.
-          if (mirrored.code === 'fork_mismatch' || mirrored.code === 'base_mismatch') return mirrored;
+        if (outcome.done) return outcome.done;
+        if (!outcome.ok) {
           return prOpenFailed({
             desc: outcome.desc, owner, repo, forkOwner, forkRepo, branch,
           });
         }
-        platformOwnedHead = mirrored;
-        via = 'mirror';
-        try {
-          pr = await gh.createPR(owner, repo, {
-            branch: mirrored.branch,
-            title: prTitleFor({ title, task, slug }),
-            body: prBodyFor({ body, task }),
-          });
-        } catch (err) {
-          await mirrored.cleanup();
-          const desc = gh.describeGithubError ? gh.describeGithubError(err) : null;
-          log.error('external-agent-tasks', 'same-repo PR failed for a mirrored head', {
-            owner, repo, ...(desc || { message: err && err.message }),
-          });
-          return prOpenFailed({
-            desc: desc || outcome.desc, owner, repo, forkOwner, forkRepo, branch,
-          });
-        }
+        pr = outcome.pr;
+        via = outcome.via;
       }
     }
   }

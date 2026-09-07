@@ -57,11 +57,16 @@ const KEYS = [
   'WAITLIST_FOLLOW_X_URL',
   'WAITLIST_FOLLOW_LINKEDIN_URL',
   'WAITLIST_FOLLOW_INSTAGRAM_URL',
+  // Shared secrets that re-key the join endpoint's rate limit for a
+  // trusted integrator. Same contract again: unset is the normal state,
+  // so the only way anyone finds out the setting exists is the panel.
+  'WAITLIST_INTEGRATION_KEYS',
 ];
 const SECRETS = [
   'WAITLIST_GITHUB_CLIENT_SECRET',
   'WAITLIST_X_CLIENT_SECRET',
   'WAITLIST_LINKEDIN_CLIENT_SECRET',
+  'WAITLIST_INTEGRATION_KEYS',
 ];
 
 // ── the declaration side ───────────────────────────────────────────────

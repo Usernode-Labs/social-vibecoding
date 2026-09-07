@@ -1809,11 +1809,18 @@ saying so is better than a queue that silently disappears.
 
 ## User language preference
 
-The platform owns a single per-user language/locale setting
-(Settings → Language on the platform shell). Apps that localize their
-UI should treat it as the **default** instead of building their own
-detection from `navigator.language` (which reflects the device, not
-the user's Usernode-level choice). It reaches apps two ways:
+The platform owns a single per-user language/locale setting. Apps that
+localize their UI should treat it as the **default** instead of building
+their own detection from `navigator.language` (which reflects the device,
+not the user's Usernode-level choice). It reaches apps two ways:
+
+**Expect `null` for nearly every user (SV #1556).** The setting is still
+stored and still delivered on both paths below, but the platform shell is
+English-only, so its Settings picker is hidden pending platform i18n and is
+offered only to the few users who had already chosen a language. So make
+device-language fallback the PRIMARY path and the platform tag an override
+when present. Do not build a feature that only works once the user sets a
+platform locale, and do not tell users to go and set one.
 
 - **JWT claim (server-side).** The iframe token carries a `locale`
   claim alongside `id` / `username` / `usernode_pubkey`, so after
@@ -2001,7 +2008,10 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   one. **The puck never paints over the app's header**: it lives in an
   overflow-clipped layer stacked underneath the header, anchored by
   default at the scroller's own top edge (element mode) or the safe-area
-  inset (window mode, which also tucks it under `.un-navbar`). For a
+  inset (window mode, which also tucks it under `.un-navbar`). During the
+  pull it emerges from under that anchor line, and **at rest it sits
+  entirely below it, with equal space above and below the puck** — the
+  whole pose is derived from the puck's box, so no call site tunes it. For a
   custom **fixed** header in window mode, pass `opts.topEl` (the header
   element — re-measured on resize and at each pull, so a collapsing bar
   stays correct) or `opts.top` (a px offset); a header that lives
@@ -2009,7 +2019,9 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   anchor. For element containers, give them
   `overscroll-behavior-y: contain` (the kit also sets it defensively).
   No-op on desktop. Never throws: invalid input logs a console warning
-  and returns a no-op `{ detach() }`.
+  and returns a no-op `{ detach() }`. The returned handle also carries
+  `refresh()` — start a refresh with no gesture (the kit's
+  `beginRefreshing()`), a no-op while one is already running.
 - **Drag-to-reorder lists.**
   `unNative.attachReorder(listEl, { handle?, itemSelector?,
   longPressMs?, canDrop?, onReorder })`. Native-feel reordering: on

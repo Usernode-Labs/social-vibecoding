@@ -113,7 +113,10 @@ test('an imported Underway topic reuses proposal details without opening voting'
   assert.equal(view.lockedNote, null);
 
   const html = detailsHtml(AppView, item);
-  assert.match(html, /View PR on GitHub/);
+  // The GitHub link is the card's meta line's last word now (`_topicCard`),
+  // not a line under the card; the model still carries it.
+  assert.equal(view.meta[0].href, 'https://github.example/pull/88');
+  assert.doesNotMatch(html, /View PR on GitHub/);
   assert.match(html, /authored by.*contributor/);
   assert.match(html, /checks and proposal details are available now/);
   assert.match(html, /voting begins only after it is put up for vote/);

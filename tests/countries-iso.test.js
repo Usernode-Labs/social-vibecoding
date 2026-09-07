@@ -183,3 +183,87 @@ test('the admin bundle copy of countryLabel agrees with the server copy', () => 
       `the two copies disagree on ${JSON.stringify(input)}`);
   }
 });
+
+// ─── 5. The published contract ────────────────────────────────────────
+
+// docs/waitlist-public-api.md is written for an integrator with no access to
+// the source, and it opens by claiming it reflects the shipped behaviour. It
+// did not: for eight months after the buckets went away it still documented
+// `countries` as a region-nested map whose leaves included the pseudo-codes.
+//
+// That is worse than an ordinary stale doc, and the reason is the asymmetry
+// test above. An integrator following it sends `EU` and gets a clean 422 —
+// annoying, visible, fixed in a minute. Send `LA` for "Elsewhere in Latin
+// America" and the join SUCCEEDS, recording Laos. No error reaches anyone.
+//
+// So the doc is pinned here, against the table itself, rather than trusted to
+// be re-read whenever the data changes. Precedent: the callback URLs in
+// SELF-HOSTING.md are pinned the same way by waitlist-connect-config.test.js.
+
+const fs = require('node:fs');
+const path = require('node:path');
+
+const API_DOC = fs.readFileSync(
+  path.join(__dirname, '..', 'docs', 'waitlist-public-api.md'), 'utf8');
+
+// The `countries` value out of the options-endpoint sample payload. Pulled by
+// brace matching from the key rather than by a regex over the whole block,
+// so a reformat of the surrounding JSON does not quietly match nothing.
+function documentedCountriesSample() {
+  const at = API_DOC.indexOf('"countries": {');
+  assert.notEqual(at, -1, 'the options sample no longer documents `countries`');
+  const open = API_DOC.indexOf('{', at);
+  let depth = 0;
+  for (let i = open; i < API_DOC.length; i += 1) {
+    if (API_DOC[i] === '{') depth += 1;
+    else if (API_DOC[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return JSON.parse(API_DOC.slice(open, i + 1));
+    }
+  }
+  throw new Error('unbalanced braces in the documented `countries` sample');
+}
+
+// `"…": "…"` is this document's own elision idiom, used in every truncated
+// sample payload it carries. Everything else has to be a real entry.
+const ELISION = '…';
+
+test('the documented countries sample is flat, not the retired region buckets', () => {
+  const sample = documentedCountriesSample();
+  const entries = Object.entries(sample);
+  assert.ok(entries.length > 0, 'the sample is empty');
+
+  for (const [key, value] of entries) {
+    assert.equal(typeof value, 'string',
+      `"${key}" is nested — the sample still shows region buckets`);
+    if (key === ELISION) continue;
+    assert.match(key, /^[A-Z]{2}$/, `"${key}" is not an alpha-2 code`);
+  }
+});
+
+test('every code in the documented sample is one this endpoint actually serves', () => {
+  const served = q.publicOptions().countries;
+  for (const [code, name] of Object.entries(documentedCountriesSample())) {
+    if (code === ELISION) continue;
+    assert.equal(served[code], name,
+      `the doc shows ${code} as "${name}", the endpoint serves "${served[code]}"`);
+  }
+});
+
+// The three that a 200 stores as the WRONG country. If the doc ever stops
+// warning about them, an integrator's silent miswrite is back.
+test('the doc warns that LA, AF and ME are countries now, not regions', () => {
+  for (const name of ['Laos', 'Afghanistan', 'Montenegro']) {
+    assert.ok(API_DOC.includes(name),
+      `the breaking-change note no longer names ${name}`);
+  }
+  assert.match(API_DOC, /Breaking change/,
+    'the countries section no longer carries a breaking-change note');
+});
+
+test('the doc tells stage-2 readers that a legacy X- value is not an ISO code', () => {
+  for (const key of Object.keys(LEGACY_REGION_LABELS)) {
+    assert.ok(API_DOC.includes(`\`${key}\``),
+      `the more/:token response does not mention ${key}`);
+  }
+});

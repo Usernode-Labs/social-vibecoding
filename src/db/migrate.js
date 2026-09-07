@@ -68,6 +68,8 @@ async function migrate(config) {
   // Must run AFTER seedStagingSharedSession — it forks that fixture's rows.
   await seedStagingForkedChat(pool, config);
   await seedStagingCcProgressRun(pool, config);
+  await seedStagingTranscriptShowcase(pool, config);
+  await seedStagingQuestionnaire(pool, config);
   await seedStagingCcEstimateRun(pool, config);
   await seedStagingCcCohortRuns(pool, config);
   await seedStagingPlatformIssueDrafts(pool, config);
@@ -3447,6 +3449,289 @@ async function seedStagingCcProgressRun(pool, config) {
     appId,
     owner: owner.username,
     sessionId,
+  });
+}
+
+// The dev chat's own vocabulary, staged as ONE conversation.
+//
+// The individual fixtures above each isolate a single element — a progress
+// run, an estimate, a cohort hint, an issue draft. That is right for
+// regression review and wrong for judging how the screen READS: a transcript
+// is a sequence, and the question "does a failure stand out from the ticks
+// above it" cannot be answered by a session that contains only a failure.
+//
+// So this one is deliberately a whole conversation, in order: a request, the
+// thinking ladder, a reply, a coding run that finished, the Changes-ready card
+// with its before/after strip, a second turn the user STOPS after it has
+// already committed, and a third that FAILS. The last two are the pair worth
+// seeing together — a stop the user chose reads as neutral facts, a failure
+// reads as red — and neither can be judged from a fixture holding only one.
+//
+// The questionnaire is not here: it renders only on the LAST non-system row
+// of a session, so it cannot follow anything. It has its own fixture below.
+//
+// Its id is explicit so the route is stable for dapp.json and for the
+// before/after screenshots. 990412 continues the 9904xx dev-session block
+// (990401-990411 are taken).
+const STAGING_TRANSCRIPT_SESSION_ID = 990412;
+
+async function seedStagingTranscriptShowcase(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging transcript fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const owner = await getStagingCheckViewer(pool, 'Staging transcript fixture');
+  if (!owner) return;
+
+  const stagingUrl = 'https://usernode-2d5619--s990412.example.invalid';
+  const { rowCount } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_number, pr_title, pr_url, session_title,
+        status, staging_url, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/transcript-showcase', 4242,
+             '[staging fixture] Say how long a proposal has been waiting',
+             'https://github.com/example/example/pull/4242',
+             '[staging fixture] Say how long a proposal has been waiting',
+             'active', $4,
+             NOW() - INTERVAL '26 minutes', NOW() - INTERVAL '3 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id`,
+    [STAGING_TRANSCRIPT_SESSION_ID, appId, owner.id, stagingUrl]
+  );
+
+  const { rows: already } = await pool.query(
+    'SELECT 1 FROM chat_session_messages WHERE session_id = $1 LIMIT 1',
+    [STAGING_TRANSCRIPT_SESSION_ID]
+  );
+
+  if (!already.length) {
+    // Same vocabulary worker.js emits, so the summary helpers get realistic
+    // input rather than prose that happens to look like a log.
+    const progressLog = [
+      '[refresh]',
+      '[claude (mode build)]',
+      '… Finding where a proposal card decides what to show under its title',
+      'Reading frontend/src/features/dev-board/card/dev-card.tsx',
+      '  ⎿ Read: 412 lines',
+      '$ grep -rn "votesRequired" src/services',
+      '  ⎿ 7 lines',
+      'Reading src/services/merge-status.js',
+      '  ⎿ Read: 268 lines',
+      '… The wait is measured from the promotion, not from the session',
+      'Editing src/services/merge-status.js',
+      '  ⎿ Edit: ok',
+      'Editing frontend/src/features/dev-board/card/dev-card.tsx',
+      '  ⎿ Edit: ok',
+      '$ node --test tests/merge-status.test.js',
+      '  ⎿ 11 lines',
+      '[commit]',
+      '[push]',
+      '[done]',
+    ];
+
+    const ccOutput = [
+      '**Changed**',
+      '',
+      '- `src/services/merge-status.js` — `waitingSince(pr)`, measured from the',
+      '  promotion rather than from when the session was created.',
+      '- `dev-card.tsx` — one line under the title on a proposal that is in vote',
+      '  and has no votes yet.',
+      '',
+      '**Not changed**',
+      '',
+      '- Merged and closed cards. The wait has an answer there and it is not news.',
+    ].join('\n');
+
+    // The failure is the point of the second turn: `turnError` is what the
+    // transcript reads to draw it as a failure rather than as another ✓ row.
+    // The text is a real producer's — routes/sessions.js's catch-all — so the
+    // fixture cannot drift into copy the product does not write.
+    const messages = [
+      { role: 'user', content: '[staging fixture] Can a proposal card say how long it has been waiting for its first vote?', metadata: {}, minutesAgo: 26 },
+      { role: 'system', content: 'Thinking about your request...', metadata: {}, minutesAgo: 26 },
+      { role: 'system', content: 'Reading the repo\u2019s GitHub issues', metadata: {}, minutesAgo: 25 },
+      { role: 'assistant', content: 'Yes — and it is a smaller change than it sounds. `merge-status.js` already derives the lifecycle for every card, so the wait is one more field on the same object rather than a new query. I will measure it from the promotion, not from when the session was created: a change can sit in a session for days before anyone is asked to vote on it.', model: 'claude-opus-5', metadata: { costCents: 3 }, minutesAgo: 25 },
+      { role: 'system', content: 'Spinning up coding agent (Claude Opus 5)...', metadata: {}, minutesAgo: 24 },
+      { role: 'system', content: 'Claude Code is running...', metadata: {}, minutesAgo: 24 },
+      { role: 'system', content: 'Claude Code progress', metadata: { progressLog }, minutesAgo: 24 },
+      { role: 'system', content: 'Claude Code finished', metadata: { ccOutput, ccOutcome: 'success', durationMs: 268000 }, minutesAgo: 20 },
+      { role: 'system', content: 'Changes ready', metadata: { changesReady: true, stagingUrl, prNumber: 4242, prUrl: 'https://github.com/example/example/pull/4242' }, minutesAgo: 19 },
+      { role: 'user', content: '[staging fixture] Round it to the nearest hour past a day.', metadata: {}, minutesAgo: 12 },
+      { role: 'system', content: 'Spinning up coding agent (Claude Opus 5)...', metadata: {}, minutesAgo: 12 },
+      // A STOP THAT LANDED. `content` is the sentence the server writes;
+      // `stopLanding` is the same landing as data, which is what draws the
+      // chips. Both, because the sentence is still what a notification and a
+      // plain-text export show — see stopLandingMeta in routes/sessions.js.
+      {
+        role: 'system',
+        content: `Claude Code stopped by @${owner.username}, but it had already committed 2 changes to the branch (7c41ab90, pushed); no pull request was opened.`,
+        metadata: {
+          durationMs: 74000,
+          stopLanding: {
+            headline: `Claude Code stopped by @${owner.username}`,
+            commits: 2, sha: '7c41ab90', pushOk: true,
+          },
+        },
+        minutesAgo: 11,
+      },
+      { role: 'user', content: '[staging fixture] Fine, go ahead and finish it.', metadata: {}, minutesAgo: 4 },
+      { role: 'system', content: 'This turn failed: the coding agent exited before writing a result. Send your message again to retry.', metadata: { turnError: true }, minutesAgo: 3 },
+    ];
+
+    for (const m of messages) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, model, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5, NOW() - ($6::int * INTERVAL '1 minute'))`,
+        [STAGING_TRANSCRIPT_SESSION_ID, m.role, m.content, m.model || null,
+         JSON.stringify(m.metadata), m.minutesAgo]
+      );
+    }
+  }
+
+  // …and the captures the Changes-ready card carries. FOUR groups, chosen so
+  // the strip has to answer every question it can be asked: an ordinary pair,
+  // a phone-viewport pair, a route with no production version (after-only),
+  // and one whose "before" fell back to the home page. Only the first is
+  // visible without opening "All 4 screens", which is the arrangement under
+  // review.
+  const PNG_1X1 = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  const vis = [
+    { id: '9'.repeat(31) + '0', kind: 'before', idx: 0, path: '/' },
+    { id: '9'.repeat(31) + '1', kind: 'after', idx: 0, path: '/' },
+    { id: '9'.repeat(31) + '2', kind: 'before', idx: 1, path: '/', viewport: 'mobile' },
+    { id: '9'.repeat(31) + '3', kind: 'after', idx: 1, path: '/', viewport: 'mobile' },
+    { id: '9'.repeat(31) + '4', kind: 'after', idx: 2, path: '/waiting' },
+    { id: '9'.repeat(31) + '5', kind: 'before', idx: 3, path: '/settings', fellBack: true },
+    { id: '9'.repeat(31) + '6', kind: 'after', idx: 3, path: '/settings' },
+  ];
+  for (const r of vis) {
+    await pool.query(
+      `INSERT INTO session_visuals
+         (id, session_id, commit_hash, kind, media, content_type, data,
+          captured_path, capture_index, captured_viewport, before_fell_back)
+       SELECT $1, $2, NULL, $3, 'png', 'image/png', $4, $5, $6, $7, $8
+        WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2)
+       ON CONFLICT (id) DO NOTHING`,
+      [r.id, STAGING_TRANSCRIPT_SESSION_ID, r.kind, PNG_1X1, r.path, r.idx,
+       r.viewport || null, !!r.fellBack]
+    );
+  }
+
+  log.info('db', 'Staging transcript fixture seeded', {
+    appId, owner: owner.username,
+    sessionId: STAGING_TRANSCRIPT_SESSION_ID,
+    inserted: rowCount,
+  });
+}
+
+// The questionnaire, staged on its own route.
+//
+// It cannot live in the showcase above: the chips render only on the LAST
+// non-system row of an interactive session, so anything after them hides
+// them. Hence a second session whose whole point is to END on the question.
+//
+// TWO groups on purpose, because the interesting behaviour is the difference
+// between them. The first is ordinary chips and carries the escape hatch —
+// the last chip in the row, which opens a one-line input scoped to that
+// question instead of sending the reader to the composer to do a form's job.
+// The second is answers that are all bare numbers sharing one unit, which is
+// not a set of choices at all; it draws as a stepper with the first answer as
+// its suggestion. Past one question neither sends on tap: they select, and a
+// shared Send answers row commits both at once.
+//
+// 990413 continues the 9904xx dev-session block.
+const STAGING_QUESTIONNAIRE_SESSION_ID = 990413;
+
+async function seedStagingQuestionnaire(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging questionnaire fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const owner = await getStagingCheckViewer(pool, 'Staging questionnaire fixture');
+  if (!owner) return;
+
+  const { rowCount } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, session_title, pr_title,
+        status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/questionnaire',
+             '[staging fixture] Flag a proposal that has gone quiet',
+             '[staging fixture] Flag a proposal that has gone quiet',
+             'active', NOW() - INTERVAL '9 minutes', NOW() - INTERVAL '8 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id`,
+    [STAGING_QUESTIONNAIRE_SESSION_ID, appId, owner.id]
+  );
+
+  const { rows: already } = await pool.query(
+    'SELECT 1 FROM chat_session_messages WHERE session_id = $1 LIMIT 1',
+    [STAGING_QUESTIONNAIRE_SESSION_ID]
+  );
+  if (already.length) return;
+
+  // The prose and the chips say the same thing, which is the product's own
+  // arrangement: the sentence is what a shared transcript and a plain-text
+  // export show, and the chips are how you answer without typing.
+  const assistantContent = 'Two things I need before I dispatch anything:\n\n'
+    + '1. Where should the flag show? (suggested: on the proposal card)\n'
+    + '2. How long is "gone quiet"? (suggested: 3 days)';
+  const suggestions = [
+    {
+      question: 'Where should the flag show?',
+      answers: ['On the proposal card', 'In the session header', 'Both'],
+    },
+    {
+      question: 'How long is "gone quiet"?',
+      answers: ['3 days', '5 days', '7 days'],
+    },
+  ];
+
+  const messages = [
+    {
+      role: 'user',
+      content: '[staging fixture] Flag a proposal that has gone quiet.',
+      metadata: {}, minutesAgo: 9,
+    },
+    {
+      role: 'assistant', model: 'claude-opus-5',
+      content: assistantContent,
+      metadata: { suggestions, costCents: 2 }, minutesAgo: 8,
+    },
+  ];
+  for (const m of messages) {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, model, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW() - ($6::int * INTERVAL '1 minute'))`,
+      [STAGING_QUESTIONNAIRE_SESSION_ID, m.role, m.content, m.model || null,
+       JSON.stringify(m.metadata), m.minutesAgo]
+    );
+  }
+
+  log.info('db', 'Staging questionnaire fixture seeded', {
+    appId, owner: owner.username,
+    sessionId: STAGING_QUESTIONNAIRE_SESSION_ID,
+    inserted: rowCount,
   });
 }
 
@@ -11041,22 +11326,36 @@ async function seedStagingTopochain(pool, config) {
         WHERE os = 'android' AND is_active = TRUE`
     );
 
-    // ─── Waitlist signups (4) ──────────────────────────────────────────
+    // ─── Waitlist signups (7) ──────────────────────────────────────────
     // The admin console's Waitlist screen reads `waitlist_signups`
     // directly, and in a staging clone that table is emptied along with
-    // every other signup surface — so the screen, its pending/released
-    // filter and its per-row Release button were all reviewable only as an
-    // empty state. Four rows, one per state that renders differently:
+    // every other signup surface — so the screen, its filters, its columns
+    // and its per-row Admit button were all reviewable only as an empty
+    // state. Seven rows, one per thing the screen renders differently:
     //
-    //   900500  pending, CONFIRMED, with survey answers   → the row whose
-    //           "Survey answers" disclosure has something to disclose.
-    //   900501  pending, UNCONFIRMED, no answers          → the plain row,
-    //           and the only one that proves confirmed_at can be null.
-    //   900502  RELEASED and linked to a fixture account  → the released
-    //           half of the filter, plus the linked-username cell.
-    //   900503  pending, CONFIRMED, RETIRED REGION answer → the row whose
+    //   900500  waiting, CONFIRMED, every survey section answered, and the
+    //           row two others came in through → the "7 of 7 answered"
+    //           Answers cell, the "Brought in 2" Referrals cell, and the
+    //           Details block with something in every line.
+    //   900501  waiting, UNCONFIRMED, no answers      → the plain row, the
+    //           "Nothing answered yet" cell, and the only one that proves
+    //           confirmed_at can be null.
+    //   900502  ADMITTED and linked to a fixture account → the admitted
+    //           half of the filter, the linked-username cell, and the row
+    //           whose invite mail has a delivery record behind it (seeded
+    //           by seedStagingPlatformMail, since mail_deliveries is
+    //           staging:private and arrives empty).
+    //   900503  waiting, CONFIRMED, RETIRED REGION answer → the row whose
     //           country is `X-LA`, one of the five namespaced pseudo-codes
     //           the old region-bucket picker produced.
+    //   900504  waiting, came in through 900500       → the other half of
+    //           the invite graph, which the screen used to never show.
+    //   900505  waiting, came in through 900500, and asked to be admitted
+    //           together with them → the Referrals cell's third line.
+    //   900506  waiting, answers in the RETIRED pre-survey shape → the
+    //           "Other answers" line, which exists because an answers blob
+    //           spans several schema versions and an admin reading a row is
+    //           entitled to see what is actually stored in it.
     //
     // The country on 900500 is `UY` on purpose: Uruguay is the exact place
     // the old curated list could not express (#1527), and its "Where" line
@@ -11065,36 +11364,94 @@ async function seedStagingTopochain(pool, config) {
     // "Uruguay" against "Elsewhere in Latin America (region)" — rather than
     // both collapsing into a raw two-letter string.
     //
-    // Emails are `.invalid` and nothing here is ever mailed: the release
-    // action is the only thing that sends, and a tester triggering it in
-    // staging hits the same skipped_staging path as every other fixture.
+    // The answer VALUES are real option codes from waitlist-questions.js
+    // (`friend`, `lt10`, `organizer`, `shutdown`), not invented strings:
+    // the screen labels them through /api/public/waitlist/options, so a
+    // fixture carrying a made-up code would render as the code and quietly
+    // look like the lookup was broken.
+    //
+    // 900504 and 900505 point at 900500, which is inserted earlier in the
+    // same VALUES list — the foreign key is checked per row, so the order
+    // is load-bearing.
+    //
+    // Emails are `.invalid` and nothing here is ever mailed: admitting is
+    // the only thing that sends, and a tester triggering it in staging hits
+    // the same skipped_staging path as every other fixture.
     await pool.query(
       `INSERT INTO waitlist_signups
          (id, email, submitted_at, ip, answers, released_at, linked_user_id,
-          confirmed_at)
+          confirmed_at, invited_by)
        VALUES
          (900500, 'staging-demo-topochain-waitlist-1@example.invalid',
           NOW() - INTERVAL '30 days', NULL,
-          '{"role": "Validator", "chain": "Testnet", "country": "UY", "why": "Staging demo survey answer."}'::jsonb,
-          NULL, NULL, NOW() - INTERVAL '29 days'),
+          '{"made_url": "https://staging-demo.example.invalid/what-i-made", "made_note": "Staging demo build note.", "country": "UY", "discovery": {"source": "friend", "detail": "Staging demo: heard about it at lunch."}, "group": {"name": "Staging demo crew", "size": "lt10", "role": "organizer", "tools": ["groupchat", "spreadsheet"], "need": "Staging demo group need."}, "loss": {"had": "yes", "product": "Staging demo defunct tool", "kind": ["shutdown"], "story": "Staging demo loss story."}, "handles": {"farcaster": "staging-demo"}, "followed_claim": true}'::jsonb,
+          NULL, NULL, NOW() - INTERVAL '29 days', NULL),
          (900501, 'staging-demo-topochain-waitlist-2@example.invalid',
-          NOW() - INTERVAL '18 days', NULL, NULL, NULL, NULL, NULL),
+          NOW() - INTERVAL '18 days', NULL, NULL, NULL, NULL, NULL, NULL),
          (900502, 'staging-demo-topochain-waitlist-3@example.invalid',
           NOW() - INTERVAL '40 days', NULL,
-          '{"role": "Builder", "chain": "Testnet", "why": "Staging demo survey answer (released)."}'::jsonb,
-          NOW() - INTERVAL '20 days', $1, NOW() - INTERVAL '39 days'),
+          '{"made_url": "https://staging-demo.example.invalid/admitted", "country": "PT", "discovery": {"source": "podcast"}, "handles": {"telegram": "staging-demo-admitted"}}'::jsonb,
+          NOW() - INTERVAL '20 days', $1, NOW() - INTERVAL '39 days', NULL),
          (900503, 'staging-demo-topochain-waitlist-4@example.invalid',
           NOW() - INTERVAL '25 days', NULL,
-          '{"country": "X-LA", "why": "Staging demo legacy region answer."}'::jsonb,
-          NULL, NULL, NOW() - INTERVAL '24 days')
+          '{"country": "X-LA", "made_note": "Staging demo legacy region answer."}'::jsonb,
+          NULL, NULL, NOW() - INTERVAL '24 days', NULL),
+         (900504, 'staging-demo-topochain-waitlist-5@example.invalid',
+          NOW() - INTERVAL '12 days', NULL,
+          '{"country": "UY", "discovery": {"source": "friend"}, "made_note": "Staging demo: came in through someone else."}'::jsonb,
+          NULL, NULL, NOW() - INTERVAL '12 days', 900500),
+         (900505, 'staging-demo-topochain-waitlist-6@example.invalid',
+          NOW() - INTERVAL '11 days', NULL,
+          '{"country": "UY", "discovery": {"source": "friend"}, "admit_together": true, "made_note": "Staging demo: wants to come in with the others."}'::jsonb,
+          NULL, NULL, NULL, 900500),
+         (900506, 'staging-demo-topochain-waitlist-7@example.invalid',
+          NOW() - INTERVAL '9 days', NULL,
+          '{"role": "Validator", "chain": "Testnet", "why": "Staging demo answer in the retired shape."}'::jsonb,
+          NULL, NULL, NOW() - INTERVAL '9 days', NULL)
        ON CONFLICT (id) DO NOTHING`,
       [USERS.bpReleased]
     );
 
-    // ON CONFLICT DO NOTHING above means an edit to the seeded `answers`
-    // literal only lands on a database that has never seen row 900500. Both
-    // country fixtures are re-asserted here so a re-cloned staging DB picks
-    // them up too, the same way the platform-mail fixture re-asserts its row.
+    // ON CONFLICT DO NOTHING above means an edit to a seeded `answers`
+    // literal only lands on a database that has never seen the row. Three
+    // fixtures are re-asserted here so a staging DB seeded before this
+    // change picks them up too, the same way the platform-mail fixture
+    // re-asserts its row.
+    //
+    // 900500 is rewritten WHOLESALE rather than patched: it used to carry
+    // the retired `{role, chain, why}` shape, which answers none of the
+    // seven survey sections, so a re-cloned database would have shown "0 of
+    // 7 answered" on the one row that exists to show the opposite. Gated on
+    // that shape being present (`role`, which the survey never writes) so
+    // the statement is a no-op on an already-correct row and can never
+    // clobber a fixture somebody edited by hand.
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET answers = $2::jsonb
+        WHERE id = $1 AND answers IS NOT NULL
+          AND answers->>'role' IS NOT NULL`,
+      [900500, JSON.stringify({
+        made_url: 'https://staging-demo.example.invalid/what-i-made',
+        made_note: 'Staging demo build note.',
+        country: 'UY',
+        discovery: { source: 'friend', detail: 'Staging demo: heard about it at lunch.' },
+        group: {
+          name: 'Staging demo crew',
+          size: 'lt10',
+          role: 'organizer',
+          tools: ['groupchat', 'spreadsheet'],
+          need: 'Staging demo group need.',
+        },
+        loss: {
+          had: 'yes',
+          product: 'Staging demo defunct tool',
+          kind: ['shutdown'],
+          story: 'Staging demo loss story.',
+        },
+        handles: { farcaster: 'staging-demo' },
+        followed_claim: true,
+      })]
+    );
     await pool.query(
       `UPDATE waitlist_signups
           SET answers = jsonb_set(answers, '{country}', to_jsonb($2::text))
@@ -11622,17 +11979,40 @@ async function migrateAppDbsToPerRole(pool, config) {
 async function seedStagingPlatformMail(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
-  // Obvious, fixed token so the testing steps can name the exact URL.
-  // 48 hex chars, matching the real more_token shape.
-  const DEMO_MORE_TOKEN = 'dead'.repeat(12);
+  // Obvious, fixed tokens so the testing steps can name the exact URL.
+  // 48 hex chars each, matching the real more_token shape. Three rows,
+  // one per state the stage-2 screen's status pill can be in — the pill
+  // is derived from timestamps a tester cannot set by clicking, so
+  // without fixtures two of its three states are unreachable in a
+  // preview.
+  const DEMO_MORE_TOKEN = 'dead'.repeat(12);          // pending
+  const DEMO_CONFIRMED_TOKEN = 'beef'.repeat(12);     // confirmed, not admitted
+  const DEMO_ADMITTED_TOKEN = 'cafe'.repeat(12);      // admitted, account linked
 
   const ROWS = [
     // A staging preview never delivers, so this is the status a tester's
     // OWN actions produce here.
     { kind: 'otp', to: 'staging-demo-user@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
     { kind: 'waitlist_joined', to: 'staging-demo-waitlist@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
+    // A REQUESTED code, from POST /api/public/waitlist/resend or a re-join.
+    // Its own kind because waitlist_joined is capped at one per address per
+    // day, which is the thing a resend exists to work around. Seeded so the
+    // admin mail log shows the kind at all in a preview: without a row, a
+    // reviewer cannot tell the filter has a value for it.
+    { kind: 'waitlist_code', to: 'staging-demo-waitlist@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
+    // The throttled shape of the same kind: what a sixth request in a day
+    // records. It delivers nothing and counts toward nothing, and the log is
+    // the only place that is visible.
+    { kind: 'waitlist_code', to: 'staging-demo-throttled@example.invalid', provider: 'log', status: 'suppressed_rate_limit', error: 'another waitlist_code mail went to this address 12s ago' },
     // What production looks like when it works.
     { kind: 'waitlist_released', to: 'staging-demo-released@example.invalid', provider: 'gmail', status: 'sent', error: null },
+    // The same kind, addressed to the ADMITTED waitlist fixture (900502).
+    // The waitlist screen's Details block reads this row back to answer
+    // "did the 'you're in' mail actually leave?", which is otherwise
+    // invisible: mail_deliveries is staging:private, so without a fixture
+    // every admitted row in a preview reads "No delivery recorded" and the
+    // line looks broken rather than empty.
+    { kind: 'waitlist_released', to: 'staging-demo-topochain-waitlist-3@example.invalid', provider: 'gmail', status: 'sent', error: null },
     // The throttle firing, which is the system working, not an error.
     { kind: 'otp', to: 'staging-demo-throttled@example.invalid', provider: 'log', status: 'suppressed_rate_limit', error: 'another otp mail went to this address 12s ago' },
     // A provider refusal, so the card's error column is exercised.
@@ -11682,6 +12062,51 @@ async function seedStagingPlatformMail(pool) {
       `UPDATE waitlist_signups SET confirmed_at = NULL, more_token = $2
         WHERE email = $1 AND released_at IS NULL AND linked_user_id IS NULL`,
       ['staging-demo-waitlist@example.invalid', DEMO_MORE_TOKEN]
+    );
+
+    // A signup that has confirmed its address and is still waiting. The
+    // middle state, and the one a tester cannot produce here: confirming
+    // the row above takes a click, but the pill it then shows is the
+    // point, so it needs a row that is already there.
+    await pool.query(
+      `INSERT INTO waitlist_signups (email, answers, more_token)
+       VALUES ($1, NULL, $2)
+       ON CONFLICT (email) DO NOTHING`,
+      ['staging-demo-waitlist-confirmed@example.invalid', DEMO_CONFIRMED_TOKEN]
+    );
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET confirmed_at = COALESCE(confirmed_at, NOW() - INTERVAL '2 days'),
+              released_at = NULL,
+              linked_user_id = NULL,
+              more_token = $2
+        WHERE email = $1`,
+      ['staging-demo-waitlist-confirmed@example.invalid', DEMO_CONFIRMED_TOKEN]
+    );
+
+    // A signup that has been let in AND has redeemed the invite into an
+    // account. linked_user_id points at 900001, the canonical fake
+    // `staging-demo-user` seeded before any fixture runs — never a real
+    // account, and never whoever opened the preview. Nothing keys off
+    // this row: linkUserByEmail matches on EMAIL, and no address ending
+    // in .invalid can be registered.
+    await pool.query(
+      `INSERT INTO waitlist_signups (email, answers, more_token)
+       VALUES ($1, NULL, $2)
+       ON CONFLICT (email) DO NOTHING`,
+      ['staging-demo-waitlist-admitted@example.invalid', DEMO_ADMITTED_TOKEN]
+    );
+    await pool.query(
+      `UPDATE waitlist_signups
+          SET confirmed_at = COALESCE(confirmed_at, NOW() - INTERVAL '9 days'),
+              released_at = COALESCE(released_at, NOW() - INTERVAL '1 day'),
+              linked_user_id = COALESCE(
+                linked_user_id,
+                (SELECT id FROM users WHERE username = 'staging-demo-user')
+              ),
+              more_token = $2
+        WHERE email = $1`,
+      ['staging-demo-waitlist-admitted@example.invalid', DEMO_ADMITTED_TOKEN]
     );
 
     log.info('migrate', 'Staging platform-mail fixture seeded', {

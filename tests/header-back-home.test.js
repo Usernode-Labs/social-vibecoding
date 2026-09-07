@@ -210,7 +210,7 @@ test('the first routing pass of a page load captures no origin', () => {
 test('entering a session serialises the route being left', () => {
   for (const [label, from, expected] of [
     ['the app tab', { tab: 'app', subTab: null }, '#app/demo-app/app'],
-    ['the Board', { tab: 'dev', subTab: 'forum' }, '#app/demo-app/board'],
+    ['the Workshop', { tab: 'dev', subTab: 'forum' }, '#app/demo-app/workshop'],
     ['the general chat', { tab: 'dev', subTab: 'chat' }, '#app/demo-app/dev/chat'],
   ]) {
     const { Improve, store } = loadImprove({ slug: 'demo-app' });
@@ -223,15 +223,15 @@ test('entering a session serialises the route being left', () => {
   }
 });
 
-test('Activity and Board are one screen in two layouts, and back knows which', () => {
+test('Workshop and Board are one screen in two layouts, and back knows which', () => {
   // The layout IS the route (see the alias block in app.js's
   // restoreFromHash), so an origin that always said "board" would drop the
   // viewer into the other layout of the screen they had just been reading.
   const { Improve, store, sandbox } = loadImprove({ slug: 'demo-app' });
-  sandbox.AppView = { _getViewMode: () => 'feed' };
+  sandbox.AppView = { _getViewMode: () => 'workshop' };
   Improve.setTab('dev', 'forum');
   Improve.setTab('dev', 'sessions');
-  assert.equal(store.state.sessionOrigin, '#app/demo-app/activity');
+  assert.equal(store.state.sessionOrigin, '#app/demo-app/workshop');
 });
 
 test('the origin survives hops inside the session and dies on the way out', () => {

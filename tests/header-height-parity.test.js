@@ -3,8 +3,16 @@
 //
 // The two authored top bars — #platform-header (signed-in shell: home, app
 // view, leaderboard, profile, settings, admin console) and #landing-header
-// (anonymous shell) — are `py-3` around a 28px CONTENT ROW, i.e.
-// 52px + env(safe-area-inset-top), everywhere.
+// (anonymous shell) — are `pt-3 pb-5` around a 28px CONTENT ROW, i.e.
+// 60px + env(safe-area-inset-top), everywhere.
+//
+// It was `py-3` (52px) until the bottom padding grew. #platform-header also
+// carries `-mb-2`, which pulls the screen below it 8px UP into the bar to cut
+// the `rounded-b-2xl` notch — so the controls had 12px of padding minus an
+// 8px overlap, i.e. four pixels, between them and whatever came next. On the
+// routes where that next thing is a raised sheet with a 28px radius and a
+// shadow reaching up (inside an app, inside a proposal session) the chip, the
+// bell and Improve sat on its lip. `pb-5` restores the 12px the notch spends.
 //
 // It was 53px until the reskin, when both bars lost the 1px `border-b`
 // hairline they had carried: the widget language draws no rule under a top
@@ -86,12 +94,25 @@ const BARS = [
   { id: 'landing-header', slice: headerSlice('landing-header') },
 ];
 
-test('both top bars carry the identical shape: py-3, no hairline, safe-area', () => {
+test('both top bars carry the identical shape: pt-3/pb-5, no hairline, safe-area', () => {
   for (const bar of BARS) {
     const tag = openingTag(bar.slice);
-    // 12px top+bottom padding around the content row.
-    assert.match(tag, /\bpy-3\b/,
-      `#${bar.id} keeps py-3 — the 12px half of the 52px total`);
+    // 12px above and 20px below the content row. NOT symmetric, and not by
+    // accident: `-mb-2` on #platform-header pulls the screen below it 8px up
+    // to cut the notch every platform surface reads as its rounded top, and
+    // that 8px comes out of the bottom padding. At py-3 the controls had four
+    // pixels of clearance, which nobody could see until the thing below was a
+    // raised sheet (an app, a proposal session) instead of a transparent
+    // screen root. pb-5 buys it back.
+    //
+    // PARITY, NOT SYMMETRY, is what this file is for: both bars carry the
+    // same pair, so both are 60px and the bar does not jump as you sign in.
+    assert.match(tag, /\bpt-3\b/,
+      `#${bar.id} keeps pt-3 — 12px above the row`);
+    assert.match(tag, /\bpb-5\b/,
+      `#${bar.id} keeps pb-5 — 20px below it, 8px of which the notch spends`);
+    assert.doesNotMatch(tag, /\bpy-\d/,
+      `#${bar.id} states its vertical padding once, as the pt/pb pair`);
     // A bottom border is part of the height (border-box), so it is part of
     // parity — which is why this is asserted at all rather than left alone.
     // The reskin removed the hairline from BOTH bars; re-adding it to one

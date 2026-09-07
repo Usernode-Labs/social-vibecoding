@@ -369,7 +369,11 @@ test('the cohort hint is resolved from elapsed alone, on every tick', () => {
   assert.match(rowHtml(row), /data-cohort-since="1800000000000"><\/span>/,
     'the span renders empty until the first tick, exactly as the template did');
   setTranscriptNow(since + 15 * 60_000);
-  assert.match(rowHtml(row), /dc-cc-cohort[^>]*> · /, 'past the gate it says something');
+  // The ` · ` separator moved into CSS with the chips/note split
+  // (`.dc-cc-cohort:not(:empty)::before`), so the span's text is the hint
+  // and nothing else — which is what makes "empty span, never a bare
+  // separator" true by construction rather than by a ternary.
+  assert.match(rowHtml(row), /dc-cc-cohort[^>]*>[^<]+</, 'past the gate it says something');
   setTranscriptNow(0);
 });
 

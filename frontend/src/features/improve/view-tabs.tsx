@@ -1,5 +1,6 @@
 /**
- * #improve-views — the app's three views as ONE segmented control.
+ * #improve-views — the app's three views as ONE segmented control:
+ * App | Workshop | Board.
  *
  * ── What it replaced, and why ──────────────────────────────────────────
  *
@@ -50,9 +51,11 @@
  *
  * ── The ids and the data-* keys are load-bearing ───────────────────────
  *
- * `data-context-row="app" | "board" | "activity"` is what dapp.json's declared
+ * `data-context-row="app" | "workshop" | "board"` is what dapp.json's declared
  * checks select on. The keys named rows and now name segments; the key says
- * WHICH DESTINATION, which has not changed.
+ * WHICH DESTINATION. `workshop` replaced `activity` when the Workshop replaced
+ * the Activity feed as the Dev screen's lander (the old route still resolves,
+ * as an alias).
  *
  * The ids stay a PARAMETER even with one caller left. They were parameterised
  * because two surfaces rendered the strip at once and element ids cannot be
@@ -119,8 +122,8 @@ function segClass(active: boolean): string {
 export const IMPROVE_VIEW_IDS = {
   root: 'improve-views',
   app: 'app-context-row-app',
+  workshop: 'app-context-row-workshop',
   board: 'app-context-row-board',
-  activity: 'app-context-row-activity',
 } as const;
 
 /**
@@ -136,17 +139,17 @@ export function activeAppView(
   tab: string | null,
   subTab: string | null,
   mode: string,
-): 'app' | 'board' | 'activity' | null {
+): 'app' | 'workshop' | 'board' | null {
   if (tab !== 'dev') return 'app';
   if (subTab === 'forum' || subTab === 'topic') {
-    return mode === 'feed' ? 'activity' : 'board';
+    return mode === 'kanban' ? 'board' : 'workshop';
   }
   return null;
 }
 
 export function AppViewTabs({ ids, onNavigate, className }: {
   /** Element ids for the track and its three segments. */
-  ids: { root: string; app: string; board: string; activity: string };
+  ids: { root: string; app: string; workshop: string; board: string };
   onNavigate: () => void;
   className?: string;
 }): ReactNode {
@@ -175,6 +178,19 @@ export function AppViewTabs({ ids, onNavigate, className }: {
       >
         <span className="min-w-0 truncate">{appLabel}</span>
       </button>
+      {/* The Workshop is the lander for everything happening to the project
+          — the same cards as the Board, grouped by what they are about — so
+          it sits before the Board, which is the detailed read-it-all view. */}
+      <a
+        id={ids.workshop}
+        data-context-row="workshop"
+        href={slug ? `#app/${slug}/workshop` : '#'}
+        aria-current={active === 'workshop' ? 'page' : 'false'}
+        className={segClass(active === 'workshop')}
+        onClick={onNavigate}
+      >
+        <span className="min-w-0 truncate">Workshop</span>
+      </a>
       <a
         id={ids.board}
         data-context-row="board"
@@ -184,16 +200,6 @@ export function AppViewTabs({ ids, onNavigate, className }: {
         onClick={onNavigate}
       >
         <span className="min-w-0 truncate">Board</span>
-      </a>
-      <a
-        id={ids.activity}
-        data-context-row="activity"
-        href={slug ? `#app/${slug}/activity` : '#'}
-        aria-current={active === 'activity' ? 'page' : 'false'}
-        className={segClass(active === 'activity')}
-        onClick={onNavigate}
-      >
-        <span className="min-w-0 truncate">Activity</span>
       </a>
     </div>
   );

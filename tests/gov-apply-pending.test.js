@@ -531,7 +531,10 @@ test('_renderGovCard shows the spinner badge and disables every control while ap
   const voteActions = model.actions.filter((a) => a.act && a.act.fn === 'castIssueVote');
   assert.equal(voteActions.length, 2, 'Yes / No rendered');
   for (const a of voteActions) assert.ok(a.disabled, `control disabled while applying: ${a.label}`);
-  assert.equal((html.match(/<button[^>]*disabled=""/g) || []).length, 2, 'and both render inert');
+  // The pair is ONE vote button on the card face (round three), and it goes
+  // inert with them.
+  assert.match(html, /<button[^>]*class="dev-vote-btn"[^>]*disabled=""/, 'the vote button renders inert');
+  assert.equal((html.match(/<button[^>]*disabled=""/g) || []).length, 1, 'and it is the only control on the face');
 
   const menu = menuItems(h.AppView, html);
   const menuControls = menu.filter((it) =>

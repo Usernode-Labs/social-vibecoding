@@ -86,7 +86,12 @@ const RETIRED_IDS = {
   'switcher-views': 'The chip menu\'s copy of the three-view strip. The menu answers WHICH APP; a control about the app you are already in sat between you and the list you opened the menu for. The Improve panel keeps the strip, and the header\'s back arrow is the way OUT of a Board now.',
   'switcher-view-app': 'Its App segment. `#app-context-row-app` in the Improve panel is the surviving one.',
   'switcher-view-board': 'Its Board segment; `#app-context-row-board` survives.',
-  'switcher-view-activity': 'Its Activity segment; `#app-context-row-activity` survives.',
+  'switcher-view-activity': 'Its Activity segment; `#app-context-row-activity` survived it, and then retired in turn (below).',
+  // ── The Workshop replaced the Activity feed ─────────────────────
+  // The strip's middle segment names the lander now: the same cards as the
+  // Board, grouped by what they are about. The old #app/<slug>/activity
+  // address resolves onto it, so nothing a link named is lost.
+  'app-context-row-activity': 'The strip\'s Activity segment. The Workshop (`#app-context-row-workshop`) replaced the Activity feed as the Dev screen\'s lander; the feed\'s two answers — what needs your vote, what changed since you were here — are strips above its themes.',
   // ── #1443: one control names where you are ──────────────────────
   // The chip's menu lists every destination with its own page, so the header
   // stopped needing a second, third and fourth way to say the same thing.
@@ -259,12 +264,18 @@ const RETIRED_IDS = {
   // worked.
   'more-invites': 'Typed-address invite rows retired for the share link (#more-invite-url); they sent nothing.',
   'more-invite-add': 'The "add another" button for the retired invite rows.',
+  // ── The buddy checkbox promised something nothing delivered (#1534) ──
+  // "Only let me in when at least one person from my link gets in too"
+  // was stored on the answers blob and read by no admission path, so it
+  // held nobody back and let nobody in. The invite link beside it, and
+  // the copy saying we try to admit people together, are untouched.
+  'more-admit-together': 'The "only let me in when someone from my link gets in too" checkbox. Nothing read the flag, so the promise it made was never kept; the field is dropped on input the way #more-invites was.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
   'improve-working-dot': 'What is left on #improve-btn once the session COUNT moved to the bell (#1610): a bare 8px emerald pulse, rendered only while a dev session the viewer can see is mid-turn. It carries no text and no count, because that is the distinction the move was about — a count is an event waiting to be read and belongs where reading happens, while "a turn is running right now" is a live fact about this button that needs no dismissal. Top-right, so it cannot hide under the bottom-left outbox dot.',
-  'wallet-recovery-modal': 'Native-only recovery for a pre-merge email wallet when authoritative session admission reports that the seeded wallet pool is empty.',
+  'wallet-recovery-modal': 'Native-only recovery for a pre-merge email wallet when authoritative session admission reports that the seeded wallet pool is empty. Opened ONLY from Settings → Usernode app → connection ("Connect existing wallet"); it used to open itself on every failed admission attempt, which is the pop-up that was reported.',
   // ── Home area labels: the block chrome moved above the card ──────
   'home-browse-btn': 'Discover\'s way into the #apps directory. Not a new control — it has always been the block\'s browse link — but it is in the COLD DOCUMENT now, which is why it is a new id here. The block\'s title moved out of the card to become the section\'s label, its controls followed (a card whose first row was chrome with one link floating at the end of it reads worse than one that opens on content), and a section heading is constant markup where the block behind it is fetched. So the control ships with the shell instead of appearing when /api/home-panels answers — which is also one less thing that pops in on a cached load.',
   // ── Platform UI pass: the update state, and where the versions live ──
@@ -286,8 +297,8 @@ const ADDED_IDS = {
   // inside an app is already about.
   'improve-views': 'The block holding the three. #1431 built it; #1443 kept it.',
   'app-context-row-app': 'View and use the app — Improve.openApp(). Labelled Home on the self-hosted platform row.',
+  'app-context-row-workshop': 'The app\'s Workshop — the lander: the same cards as the Board, grouped by theme, with the vote and since-last-visit strips above them. Replaced the Activity segment.',
   'app-context-row-board': 'The app\'s Board.',
-  'app-context-row-activity': 'The app\'s Activity stream.',
   // ── #1443: the chip and its menu ────────────────────────────────
   'app-switcher-btn': 'The chip: the header\'s label on EVERY screen, and the one control that opens a list. #1431 built this as #header-title-tab but gated it on being inside an app; the gate is the whole difference, and losing it is what let #header-menu-btn, #back-icon-home and #messages-btn all go. It carries the same tinted 28px surface as #back-btn and the bell, because on the bare page ground it read as the heading it replaced.',
   'app-switcher-name': 'The label inside the chip — the same text #header-title carried as a bare heading, now a named slot so a declared check can assert WHAT the chip says and not merely that it exists.',
@@ -316,6 +327,10 @@ const ADDED_IDS = {
   'waitlist-confirm': 'The confirm-your-email block on the join success state. Hides once the code is accepted.',
   'waitlist-code': 'Six-digit email verification code; confirms the same row the mailed link does.',
   'waitlist-code-submit': 'Submits the verification code.',
+  'waitlist-enter-code': 'Step-1 link to the confirm step, for somebody who joined earlier and whose 15-minute code expired. Before it, that control was reachable only by submitting the join form again.',
+  'waitlist-confirm-email': 'The address the code belongs to, asked for only when the confirm step was reached without a join. Hidden after a join, where the form field still holds it.',
+  'waitlist-resend': 'Requests a fresh confirmation code (POST /api/public/waitlist/resend). Disabled for the advertised 60-second gap.',
+  'waitlist-resend-note': 'The resend result, kept apart from #waitlist-msg so a wrong code and a resend answer cannot overwrite each other.',
   // The share link that replaced the typed rows (see RETIRED_IDS above).
   'more-invite-url': "The signup's shareable invite link; joins through it set waitlist_signups.invited_by.",
   'more-invite-copy': 'Copies the invite link to the clipboard.',
@@ -331,6 +346,15 @@ const ADDED_IDS = {
   'more-saved': 'The stage-2 survey\'s ending. A successful save wrote one line into #more-msg and left the whole three-minute form on screen under a heading still asking "Want in sooner?"; this panel takes the screen instead. #more-msg survives for the error and ?connect= cases.',
   'more-saved-edit': 'Returns to that form with every value still in place \u2014 the form is hidden, never unmounted, and answers merge server-side, so adding to them later is the intended path rather than a recovery.',
   'more-saved-back': 'The way out of the ending, to #landing.',
+  'more-status-pill': "Where this signup stands in the queue, on the stage-2 form: waiting for confirmation, on the waitlist, or you're in. It is not a new fact \u2014 the row's submitted_at / confirmed_at / released_at have always said this \u2014 it is the first place the person it is about can read it, and it answers the question the survey otherwise leaves open ('I filled this in, then what?'). Present but empty and hidden here by design: the row ships in the markup, and its contents arrive with the stage-2 load effect, because a pill with data in it before the fetch would be a hydration mismatch.",
+  // ── #1537: both "you're on the list" surfaces name the address ───
+  // Every other fact about a signup was on screen and the one people wrote in
+  // about was not: which address they had used. Both ids are always in the
+  // markup and `hidden` until there is an address to name, the same contract
+  // #more-status-pill above documents — a line that reads "Registered with"
+  // and then stops is worse than no line.
+  'waitlist-confirmed-email': 'The address inside #waitlist-confirmed, on the join flow. Read from the same client-side value the confirm step already echoes, so no request was added; it is stored lower-cased now, matching what the server normalizes and stores, so this surface and the stage-2 one cannot disagree about the same address.',
+  'more-signup-email': "The address on the stage-2 form at #more/<token>, beneath the queue pill. This screen is where the mailed confirm link lands, so it is the surface a RETURNING visitor sees, and it has no client-side memory of the join to read — the value is a new `email` field on the full GET /api/public/waitlist/more/:token payload, which discloses nothing: the 48-hex token is only obtainable by joining with that address or receiving the join mail at it. Plain text, never a mailto: anchor.",
   // ── #1372: the mobile-browser install strip ──────────────────────
   // A visitor on a phone browser is offered the native app. The strip is
   // always in the document and starts `hidden` (the island rule: data loads
@@ -377,6 +401,18 @@ const ADDED_IDS = {
   'feedback-queue-dot': 'Header dot for feedback saved offline and still waiting to send (#1054).',
   'feedback-screenshot-picker-btn': 'Photos fallback for mobile feedback screenshots (#824).',
   'feedback-screenshot-input': 'PNG/JPEG picker backing the mobile feedback fallback (#824).',
+  // ── #1603: the description's requirement, said out loud ─────────
+  // The field was always mandatory — submitFeedback returned early on an
+  // empty one — but nothing on screen said so and the refusal was a bare
+  // `return`, so Submit read as broken. Four additive ids: two that state
+  // the rule before you type, one that states it back on the field when it
+  // is broken, and one naming the field that is NOT required, because
+  // marking one of two fields required only reads as a rule if the other's
+  // silence is deliberate rather than an omission.
+  'feedback-text-label': 'The Description label on #feedback-text, which had a placeholder and no label at all. Also the anchor the declared check selects the asterisk through, so the marker is asserted where a reader would look for it rather than anywhere on the card.',
+  'feedback-text-required': 'The red asterisk inside that label. `aria-hidden` because the accessible requirement is carried by aria-required on the field itself, and a screen reader announcing "star" adds nothing to that.',
+  'feedback-text-error': "The inline refusal under the description: \"Please add a description.\" Deliberately its OWN node rather than a fifth writer of #feedback-status, which has an explicit newer-and-more-specific-wins rule (paintQueueState) that would either swallow this message or let it erase the offline hint. Ships empty and hidden, like #feedback-status: the controller owns the text, and a message rendered before the submit that earns it would both lie on open and mismatch on hydration.",
+  'feedback-title-label': 'The Title label, marked optional. The title generates itself from the description and the server names the issue when it is blank, so its emptiness is a working state - which is worth saying next to a field that is now visibly required.',
   // ── THE UI OVERHAUL: the Improve panel ───────────────────────────
   // One surface for everything you do *to* the app on screen rather than
   // *with* it. It absorbed four header controls (see RETIRED_IDS above)

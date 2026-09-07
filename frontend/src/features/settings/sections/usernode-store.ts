@@ -72,6 +72,14 @@ export interface UnConnection {
   build: string;
   message: string | null;
   retryDisabled: boolean;
+  /**
+   * "Connect existing wallet" — present only while native admission is
+   * refused with `native_session_wallet_pool_exhausted` and the session is
+   * not admitted (Settings._walletRecoveryAvailable). This button is the ONE
+   * way into features/dialogs/wallet-recovery.tsx; the dialog no longer
+   * opens itself.
+   */
+  walletRecovery: UnAction | null;
 }
 
 /** The read-failure panel, and its loading variant. */

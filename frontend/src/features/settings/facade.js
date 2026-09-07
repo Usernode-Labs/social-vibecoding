@@ -72,6 +72,33 @@ const state = {
 let chunk = null;   // the import in flight (or settled), once started
 let ready = false;  // window.Settings is the module
 
+// Whether an open() has been FORWARDED and not since closed.
+//
+// app.js's navigateToSettings tells an in-screen navigation from a screen
+// entry by reading `App._inSettings && Settings.isOpen()`: true routes
+// inside the mounted screen, false runs the whole screen swap and calls
+// open(). Before the split, open() rendered synchronously precisely so that
+// isOpen() stayed truthful for that guard on the very next navigation --
+// the comment on that call site says so.
+//
+// The split made the first open() of a page asynchronous, and a hard
+// `false` here made isOpen() answer for the MODULE ("no module, so nothing
+// is open") where the caller is asking about the SCREEN ("did we already
+// enter it"). So while the chunk was in flight every navigation took the
+// entry path. A drill-in followed by a back traversal
+// (`?shot=settings-back`) queued three open() calls instead of one open()
+// and two route()s, and the later ones carry a null section, which open()
+// reads as "keep the current pane" -- so the viewer ended up on #settings
+// looking at Password, on any connection slow enough that the chunk missed
+// the 250ms between the two. It also meant route() never ran, so the
+// idempotence guard that #1102 exists for never got the chance to skip the
+// duplicate.
+//
+// Answering for the screen instead costs nothing when there is no module:
+// a forwarded open() is a screen entry that WILL happen, and every call the
+// guard sends to route() from here is queued on the same promise behind it.
+let opened = false;
+
 /**
  * Load the module (once) and resolve to window.Settings — the real object
  * after the chunk evaluates, or null when the load failed. Safe to call any
@@ -194,10 +221,11 @@ const Facade = {
   state,
   _cliAuthPromise: null,
 
-  // Nothing is open before the module exists, so these answer truthfully
-  // without loading anything: app.js calls all three on every navigation.
-  isOpen() { return false; },
-  close() {},
+  // app.js calls all three on every navigation, and they still answer
+  // without loading anything. isOpen() reports whether the SCREEN has been
+  // entered (see `opened` above), not whether the module has arrived.
+  isOpen() { return opened; },
+  close() { opened = false; },
   syncChrome() {},
   _syncFooter() {},
   // init() binds the panes' controls; it is called from ./sections once the
@@ -234,6 +262,9 @@ const Facade = {
   },
 
   open(section, opts) {
+    // Before the await: the next navigation may arrive while the chunk is
+    // still in flight, and it has to see the screen as entered.
+    opened = true;
     whenLoaded((real) => {
       if (window.App && !window.App._inSettings) return;
       real.open(section, opts);

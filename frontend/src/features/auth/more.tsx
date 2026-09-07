@@ -84,18 +84,131 @@ interface MoreAnswers {
   loss?: { had?: string; product?: string; kind?: string[]; story?: string };
   handles?: { farcaster?: string; discord?: string; telegram?: string; other?: string };
   verified?: Record<string, string>;
-  admit_together?: boolean;
   followed_claim?: boolean;
+}
+
+/**
+ * Where this signup stands in the queue, derived server-side from the row's
+ * own timestamps. `state` is the one to read: it is ordered most-advanced
+ * first, so an admitted row reads as admitted even though it also carries a
+ * confirmed_at.
+ */
+interface MoreStatus {
+  state?: 'pending' | 'confirmed' | 'admitted';
+  admitted?: boolean;
+  confirmed?: boolean;
+  has_account?: boolean;
+  joined_at?: string | null;
+  confirmed_at?: string | null;
+  admitted_at?: string | null;
 }
 
 interface MorePayload {
   ok?: boolean;
+  /** Also published at the top level of the payload; this is the same value. */
+  admitted?: boolean;
+  status?: MoreStatus;
+  /**
+   * The address this signup was made with (#1537). Present on the full read
+   * only; the `?view=status` poll does not carry it.
+   */
+  email?: string;
   answers?: MoreAnswers;
   oauth?: Record<string, boolean>;
   /** Public profile URLs for "Follow along". A network with none is absent. */
   follow?: Record<string, string | null>;
   /** The signup's own share link, and who has joined through it so far. */
   invite?: { url?: string | null; count?: number; emails?: string[] };
+}
+
+/**
+ * The three states the pill can be in. Written as WHOLE class strings on
+ * purpose: Tailwind's extractor is a regex over source text, so a tint
+ * assembled at runtime is a tint that never gets compiled.
+ *
+ * Shape and scale match the platform's other status pills (the app-details
+ * contributor pill, the session-row pills) rather than @/components/ui/chip,
+ * which is a `<button aria-pressed>` toggle for a filter rail. This is read-
+ * only text, and a node that says "pressed" to a screen reader when nothing
+ * can press it is the same category of mistake that component's own doc
+ * comment warns about for tabs.
+ */
+const QUEUE_PILL = {
+  pending: {
+    label: 'Waiting for confirmation',
+    tint: 'bg-amber-50 dark:bg-amber-900/30 border-amber-200 dark:border-amber-700 text-amber-700 dark:text-amber-300',
+    note: 'Click the link in the email we sent, and your answers below move you up.',
+  },
+  confirmed: {
+    label: 'On the waitlist',
+    tint: 'bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300',
+    note: 'Your address is confirmed. Answering the questions below moves you up.',
+  },
+  admitted: {
+    label: "You're in",
+    tint: 'bg-emerald-50 dark:bg-emerald-900/30 border-emerald-200 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300',
+    note: 'Access is open for you. Check your email for the invite.',
+  },
+} as const;
+
+/**
+ * The row is always in the markup and always empty in the prerender: the
+ * pill's contents arrive with the load effect, so rendering them any earlier
+ * would be a hydration mismatch, and a mismatch console.errors, which fails
+ * proposal checks. It stays `hidden` until there is something to say, so an
+ * unrecognised `state` collapses rather than leaving a gap above the form.
+ *
+ * A `<span>` rather than @/components/ui/chip: Chip is a `<button
+ * aria-pressed>` built for filter toggles, and announcing a read-only status
+ * as a pressed button is wrong for anyone on a screen reader. This is the
+ * platform's other pill — the same class string browse-detail.tsx uses for an
+ * app's state badge.
+ */
+function StatusPill({ status }: { status: MoreStatus | null }) {
+  const key = status?.state;
+  const pill = key ? QUEUE_PILL[key] : null;
+  const note = pill && key === 'admitted' && status?.has_account
+    ? 'Access is open and your account is linked. Sign in any time.'
+    : pill?.note;
+  return (
+    <div
+      id="more-status-pill"
+      className={`flex flex-wrap items-center gap-x-3 gap-y-1${pill ? '' : ' hidden'}`}
+    >
+      {pill ? (
+        <>
+          <span
+            className={`shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${pill.tint}`}
+          >
+            {pill.label}
+          </span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">{note}</span>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Which address this signup was made with (#1537). Same contract as the pill
+ * above it: always in the markup, empty and `hidden` in the prerender, filled
+ * by the load effect — contents rendered before the fetch would be a hydration
+ * mismatch, and a mismatch console.errors, which fails proposal checks.
+ *
+ * Plain text, never a `mailto:` anchor. The address here is a fact being read
+ * back, not a control, and a tappable one on a phone opens a mail composer
+ * nobody asked for.
+ */
+function SignupEmail({ email }: { email: string }) {
+  return (
+    <p
+      id="more-signup-email"
+      className={`text-xs text-zinc-500 dark:text-zinc-400 break-words${email ? '' : ' hidden'}`}
+    >
+      {'Registered with '}
+      <span className="font-medium text-zinc-700 dark:text-zinc-200">{email}</span>
+    </p>
+  );
 }
 
 export function MoreScreen() {
@@ -127,6 +240,21 @@ export function MoreScreen() {
    * it, so the initial markup stays what the hand-written shell shipped.
    */
   const [follow, setFollow] = useState<Record<string, string | null>>({});
+  /**
+   * The queue-position pill. `null` is the prerendered state and renders
+   * NOTHING: the interior mounts on reveal, so a pill with data in it before
+   * the fetch resolves is a hydration mismatch, which console.errors and
+   * fails proposal checks.
+   */
+  const [queue, setQueue] = useState<MoreStatus | null>(null);
+  /**
+   * The address behind this token, for the same reason the pill is here: this
+   * screen is where the mailed confirm link lands, so it is the "you're on the
+   * list" surface a returning visitor actually sees, and until now it named
+   * every fact about the signup except which address it was made with (#1537).
+   * Empty is the prerendered state and renders nothing.
+   */
+  const [signupEmail, setSignupEmail] = useState('');
   const [inviteUrl, setInviteUrl] = useState('');
   const [inviteCount, setInviteCount] = useState(0);
   const [inviteEmails, setInviteEmails] = useState<string[]>([]);
@@ -148,7 +276,6 @@ export function MoreScreen() {
   const discord = useRef<HTMLInputElement>(null);
   const telegram = useRef<HTMLInputElement>(null);
   const other = useRef<HTMLInputElement>(null);
-  const admitTogether = useRef<HTMLInputElement>(null);
   const followed = useRef<HTMLInputElement>(null);
 
   // The token from `#more/<token>`.
@@ -204,6 +331,8 @@ export function MoreScreen() {
 
       setConnect({ verified: a.verified || {}, oauth: payload.oauth || {} });
       setFollow(payload.follow || {});
+      setQueue(payload.status || null);
+      setSignupEmail(payload.email || '');
 
       if (madeUrl.current) madeUrl.current.value = a.made_url || '';
       if (madeNote.current) madeNote.current.value = a.made_note || '';
@@ -215,7 +344,6 @@ export function MoreScreen() {
       setInviteCount(payload.invite?.count || 0);
       setInviteEmails(Array.isArray(payload.invite?.emails) ? payload.invite.emails : []);
 
-      if (admitTogether.current) admitTogether.current.checked = !!a.admit_together;
       if (followed.current) followed.current.checked = !!a.followed_claim;
 
       setMsg(connectMsg());
@@ -348,7 +476,6 @@ export function MoreScreen() {
             discord: discord.current?.value.trim() || undefined,
             telegram: telegram.current?.value.trim() || undefined,
             other_handle: other.current?.value.trim() || undefined,
-            admit_together: !!admitTogether.current?.checked,
             followed_claim: !!followed.current?.checked,
           }),
         });
@@ -401,7 +528,7 @@ export function MoreScreen() {
     <main
       ref={rootRef}
       id="auth-more-screen"
-      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
+      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll"
     >
       {mounted ? (
         <>
@@ -459,6 +586,11 @@ export function MoreScreen() {
           className={hiddenFirst(status !== 'ready' || saved, 'mt-6 space-y-8')}
           onSubmit={onSubmit}
         >
+          {/* Where this signup stands, and which address it was made with. */}
+          <div className="space-y-1.5">
+            <StatusPill status={queue} />
+            <SignupEmail email={signupEmail} />
+          </div>
           {/* 4 · Something you've made — relocated from the join form, where
               it used to be required. Joining takes an email now; this is one
               of the things that helps you move up instead. */}
@@ -788,15 +920,6 @@ export function MoreScreen() {
                 </>
               ) : null}
             </div>
-            <label className="mt-3 flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-300 cursor-pointer">
-              <input
-                ref={admitTogether}
-                id="more-admit-together"
-                type="checkbox"
-                className="mt-0.5 size-4 shrink-0 rounded accent-violet-600"
-              />
-              Only let me in when at least one person from my link gets in too
-            </label>
           </div>
           <div className="border-t border-zinc-200 dark:border-zinc-800 pt-5">
             <Button

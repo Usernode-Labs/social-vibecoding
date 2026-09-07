@@ -183,18 +183,19 @@ test('a card with no ⋯ still gets its chevron, with no empty rail around it', 
   assert.doesNotMatch(html, /dev-card-rail/);
   assert.match(html, /M9 5l7 7-7 7/, 'the chevron survives on its own');
 
-  // Give that same card a preview and the column DOES appear — the eye needs
-  // something to be pinned to the bottom of, even with no ⋯ above it.
+  // Give that same card a preview and there is STILL no column: the preview
+  // is a labelled pill at the end of the action band now (round three), so
+  // the chevron stays the only thing on the right edge.
   const withPreviewModel = AppView._sharedSessionCardModel({
     id: 71, session_title: 'Theirs', username: 'them', user_id: 9, staging_url: 'https://s',
   });
   const withPreview = cardHtml(withPreviewModel);
   assert.equal(menuKeyOf(withPreview), null, 'still nothing demoted');
-  assert.match(withPreview, /dev-card-rail/);
-  const rail = withPreview.slice(withPreview.indexOf('dev-card-rail'));
-  assert.doesNotMatch(rail, /dev-card-menu-btn/, 'no trigger in it');
-  assert.match(rail, /M9 5l7 7-7 7[\s\S]*gc-vote-btn-preview/,
-    'chevron above, eye at the bottom');
+  assert.doesNotMatch(withPreview, /dev-card-rail/);
+  assert.match(withPreview, /<div class="gc-card-actions"><button [^>]*gc-vote-btn-preview[^>]*>[\s\S]*?Preview<\/button><\/div>/,
+    'the Preview pill in the band');
+  assert.match(withPreview, /Preview<\/button><\/div><\/div><svg [^>]*class="w-4 h-4/,
+    'and the bare chevron after the content column');
 });
 
 test('an applied close-issue card has no ⋯ and no action row at all', () => {

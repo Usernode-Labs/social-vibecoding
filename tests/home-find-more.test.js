@@ -160,6 +160,82 @@ test('featuredApps: apps already in "Your apps" are left out', () => {
     'no point re-offering what the user already keeps');
 });
 
+// ── #1567: the rail holds still while the tap is happening ─────────
+
+test('featuredApps: a slug in _discoverKeep stays in the rail after it becomes yours', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ slug: 'kept', featured: true, featured_order: 0, is_favorited: true }),
+    app({ slug: 'other', featured: true, featured_order: 1, is_favorited: true }),
+  ];
+  assert.deepEqual(Home.featuredApps(apps).map((a) => a.slug), [],
+    'both are yours, so neither is offered');
+  Home._discoverKeep.add('kept');
+  assert.deepEqual(Home.featuredApps(apps).map((a) => a.slug), ['kept'],
+    'the one the finger is on holds its place, ticked, so the tap is reversible');
+});
+
+test('popularApps: _discoverKeep holds a card there too, and only that card', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ slug: 'kept', active_users: 9, is_favorited: true }),
+    app({ slug: 'other', active_users: 8, is_favorited: true }),
+  ];
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), []);
+  Home._discoverKeep.add('kept');
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['kept']);
+});
+
+test('_discoverKeep is per-visit: a fresh Home offers the honest list again', () => {
+  const kept = makeHome();
+  kept._discoverKeep.add('kept');
+  const apps = [app({ slug: 'kept', featured: true, featured_order: 0, is_favorited: true })];
+  assert.equal(kept.featuredApps(apps).length, 1);
+  assert.equal(makeHome().featuredApps(apps).length, 0,
+    'the next load of the home screen starts from what the viewer actually has');
+});
+
+test('featuredApps: ?shot=discover-empty still wins over a kept slug', () => {
+  const Home = makeHome({ search: '?shot=discover-empty' });
+  Home._discoverKeep.add('kept');
+  const apps = [app({ slug: 'kept', featured: true, featured_order: 0, is_favorited: true })];
+  assert.equal(Home.featuredApps(apps).length, 0);
+});
+
+test('_wireDiscoveryCards binds each badge once, however often the lane re-runs it', () => {
+  const Home = makeHome();
+  let toggles = 0;
+  Home.toggleAdded = () => { toggles += 1; };
+  const mkBtn = (cls, slug) => {
+    const handlers = [];
+    return {
+      className: cls,
+      dataset: { slug, added: 'false' },
+      addEventListener: (_t, fn) => handlers.push(fn),
+      handlers,
+    };
+  };
+  const badge = mkBtn('card-add-btn', 'fresh');
+  const card = {
+    dataset: { slug: 'fresh', status: 'running' },
+    addEventListener: () => {},
+  };
+  const lane = {
+    querySelectorAll: (sel) => {
+      if (sel === '.app-card') return [card];
+      if (sel === '.card-add-btn') return [badge];
+      return [];
+    },
+  };
+  // Twice, which is what really happens now: the badge flipping to "added"
+  // changes the effect's key while React keeps the very same element.
+  Home._wireDiscoveryCards(lane);
+  Home._wireDiscoveryCards(lane);
+  assert.equal(badge.handlers.length, 1, 'one listener, not two');
+  badge.handlers[0]({ stopPropagation: () => {} });
+  assert.equal(toggles, 1, 'so one tap is one toggle');
+});
+
 test('featuredApps: a hidden member app IS offered again (#618)', () => {
   const Home = makeHome();
   // your_apps_hidden means they took it OFF their home screen, so it is

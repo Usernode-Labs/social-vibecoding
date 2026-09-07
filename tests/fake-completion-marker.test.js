@@ -48,16 +48,18 @@ test('a successful web sync advances a shared CLI proposal review without changi
   assert.match(calls[0].sql, /INSERT INTO session_platform_pushes/);
   const advance = calls.find((c) => /UPDATE chat_sessions/.test(c.sql));
   assert.match(advance.sql, /checks_commit_sha = CASE WHEN \$5::boolean/);
-  assert.match(advance.sql, /reviewed_head_sha = \$1/);
+  // Task 153: $6 is the imported-mirror licence. For a native row it is
+  // false, so the native pin is the one that moves and is compared against.
+  assert.match(advance.sql, /reviewed_head_sha = CASE WHEN \$6::boolean THEN reviewed_head_sha ELSE \$1 END/);
   assert.match(advance.sql, /UPDATE pr_votes SET head_sha = \$1/);
   assert.match(advance.sql,
     /checks_commit_sha IS NOT DISTINCT FROM \$4::varchar/,
     'the sync cannot overwrite a checked head advanced by another reconciler');
   assert.match(advance.sql,
-    /reviewed_head_sha IS NOT DISTINCT FROM \$3::varchar/,
+    /CASE WHEN \$6::boolean THEN imported_pr_head_sha ELSE reviewed_head_sha END\)\s+IS NOT DISTINCT FROM \$3::varchar/,
     'the sync cannot overwrite a review advanced by another reconciler');
   assert.deepEqual(advance.params, [
-    synced.sha, 7, 'b'.repeat(40), 'b'.repeat(40), true,
+    synced.sha, 7, 'b'.repeat(40), 'b'.repeat(40), true, false,
   ]);
 });
 
@@ -111,7 +113,9 @@ test('a sync that pushed nothing never touches the reviewed head', async () => {
     { id: 9, source: 'cli_handoff' },
     { syncResult: 'clean', pushOk: true, sha: 'not-a-commit' }
   ), false);
-  // #955: an imported PR's head is owned by its external author, never by us.
+  // #955: an imported PR's head in its author's fork is owned by that
+  // author, never by us. (A mirrored connector head is the exception —
+  // tests/platform-sync-vote-carry.test.js.)
   assert.equal(await advanceSharedReviewAfterSync(
     pool,
     { id: 10, source: 'imported' },

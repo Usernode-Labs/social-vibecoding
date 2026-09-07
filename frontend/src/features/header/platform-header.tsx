@@ -335,7 +335,7 @@ export function PlatformHeader() {
       <header
         ref={headerRef}
         id="platform-header"
-        className={'un-safe-top-extend relative z-10 flex items-center gap-4 px-4 py-3 shrink-0'
+        className={'un-safe-top-extend relative z-10 flex items-center gap-4 px-4 pt-3 pb-5 shrink-0'
           + ' bg-zinc-200 dark:bg-zinc-900 rounded-b-2xl -mb-2'}
       >
         {/*

@@ -183,6 +183,27 @@ test('successful deploy clears last_failure and broadcasts running with no error
   assert.ok(!statusPushes.some((p) => p.status === 'error'));
 });
 
+test('a repo-less fork is refused at the starter-template boundary', async () => {
+  const { appCreator, pool, statusPushes } = loadAppCreator();
+
+  await appCreator.createApp({ jwtSecret: 's' }, {
+    id: 42,
+    name: 'Forked App',
+    slug: 'forked-app',
+    self_hosted: false,
+    repo_url: null,
+    forked_from: { appId: 7, slug: 'source-app' },
+  });
+
+  assert.ok(!pool.queries.some((q) => /SET db_password/.test(q.sql)),
+    'the guard fires before a fresh DB/template create can begin');
+  const failureWrite = pool.queries.find((q) => /SET last_failure = \$1/.test(q.sql));
+  assert.ok(failureWrite);
+  const failure = JSON.parse(failureWrite.params[0]);
+  assert.match(failure.reason, /copied.*source repository|source repository.*copy/i);
+  assert.ok(statusPushes.some((p) => p.status === 'error' && p.errorReason === failure.reason));
+});
+
 // Session-2585 fix: with GitHub enabled, a repo-creation failure is FATAL
 // (status='error', last_failure stage 'repo') instead of silently falling
 // back to a local build that leaves repo_url NULL on a 'running' app.

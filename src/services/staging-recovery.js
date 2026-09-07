@@ -12,6 +12,85 @@
 
 const log = require('./logger');
 
+const DEFAULT_CHECKS_STALE_MS = 10 * 60 * 1000;
+
+function checksStaleMs() {
+  const configured = Number.parseInt(
+    process.env.CHECKS_STALE_MS || String(DEFAULT_CHECKS_STALE_MS),
+    10
+  );
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_CHECKS_STALE_MS;
+}
+
+// A missing/old timestamp is actionable only after a proposal has a submitted
+// head. Runtime ownership is deliberately checked by the caller: this helper
+// answers whether the durable snapshot is overdue, not whether a live process
+// is still working on it.
+function checkRunOverdue(session, { now = Date.now(), staleMs = checksStaleMs() } = {}) {
+  if (session?.check_state != null && session.check_state !== 'pending') return false;
+  if (!(session?.checks_commit_sha || session?.handoff_head_sha)) return false;
+  const checkedAt = session?.checks_checked_at == null
+    ? NaN
+    : new Date(session.checks_checked_at).getTime();
+  return !Number.isFinite(checkedAt) || (now - checkedAt) > staleMs;
+}
+
+// Promoted proposals retain the recovery behavior they have always had.
+// Before promotion, only a submitted native CLI handoff is eligible: ordinary
+// active Dev sessions have their own turn-tail recovery, a fresh draft has no
+// checks to re-run, and an uploaded-but-unsubmitted commit is still waiting on
+// proposal_submit_build rather than on the checks service.
+function isStuckCheckRecoveryScope(session) {
+  if (session?.status === 'promoted') return true;
+  if (session?.status !== 'active' || session?.source !== 'cli_handoff') return false;
+  if (!(session.checks_commit_sha || session.handoff_head_sha)) return false;
+  const hasUnsubmittedUpload = !!session.handoff_uploaded_sha
+    && session.handoff_uploaded_sha !== session.handoff_head_sha
+    && (session.checks_commit_sha || null)
+      === (session.handoff_upload_checked_sha || null);
+  return !hasUnsubmittedUpload;
+}
+
+// One query shared by boot reconciliation and the live sweeper. Keeping the
+// scope here prevents the two recovery paths from drifting back to the old
+// promoted-only rule that stranded pre-vote CLI handoffs after a restart.
+async function findStuckCheckSessions({
+  pool,
+  staleMs = checksStaleMs(),
+  maxAutoRetries,
+  limit = 50,
+}) {
+  const boundedLimit = Math.max(1, Math.min(100, Number(limit) || 50));
+  const { rows } = await pool.query(
+    `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
+      WHERE (cs.status = 'promoted'
+             OR (cs.status = 'active'
+                 AND cs.source = 'cli_handoff'
+                 AND COALESCE(cs.checks_commit_sha, cs.handoff_head_sha) IS NOT NULL
+                 AND NOT (cs.handoff_uploaded_sha IS NOT NULL
+                          AND cs.handoff_uploaded_sha IS DISTINCT FROM cs.handoff_head_sha
+                          AND cs.checks_commit_sha IS NOT DISTINCT FROM cs.handoff_upload_checked_sha)))
+        AND cs.branch_name IS NOT NULL
+        AND (cs.check_state IS NULL
+             OR (cs.check_state = 'pending'
+                 AND (cs.checks_checked_at IS NULL
+                      OR cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0)))
+             OR (cs.check_state = 'error'
+                 AND cs.consecutive_check_failures < $2
+                 AND cs.check_next_retry_at IS NOT NULL
+                 AND cs.check_next_retry_at < NOW()))
+      ORDER BY COALESCE(cs.promoted_at, cs.last_activity_at, cs.created_at) ASC
+      LIMIT $3`,
+    [staleMs, maxAutoRetries, boundedLimit]
+  );
+  // The SQL is the efficient filter; this is the executable invariant that
+  // keeps a future query refactor from widening recovery to ordinary sessions.
+  return { rows: rows.filter(isStuckCheckRecoveryScope) };
+}
+
 // Does a session need its staging preview (re)built?
 //
 // THREE failure shapes leave a card without a working preview:
@@ -659,6 +738,11 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
 }
 
 module.exports = {
+  DEFAULT_CHECKS_STALE_MS,
+  checksStaleMs,
+  checkRunOverdue,
+  isStuckCheckRecoveryScope,
+  findStuckCheckSessions,
   stagingNeedsRebuild,
   rebuildSessionStaging,
   recheckSessionChecks,

@@ -24,6 +24,16 @@ import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
 
+// Which discovery cards and add badges already carry their listeners.
+// `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
+// and React KEEPS the card nodes it can (they are keyed by slug), so a lane
+// whose only change is a badge flipping to "added" hands the same elements
+// back for a second binding — two listeners, and one tap toggling twice.
+// A WeakSet is the same idiom app-grid.tsx uses for its own once-per-card
+// attachments, and it holds no node alive past its removal.
+const wiredCards = new WeakSet();
+const wiredButtons = new WeakSet();
+
 const Home = {
   // Can this viewer create apps right now? Derived per request by
   // /api/auth/me as `canAdminWrite || live app count < app_quota`, so it
@@ -169,6 +179,24 @@ const Home = {
   _appsLoaded: false,
   _query: '',
 
+  // Slugs the Discover rails keep showing even though they now count as
+  // "yours" (#1567). Adding an app from a rail repaints "Your apps"
+  // immediately, and the same paint would otherwise pull the card the finger
+  // is still on straight out of the row: the rails exclude apps you already
+  // have, so the row would reflow under the tap and the tick the viewer
+  // pressed for would never be seen. Keeping the slug holds the card in place
+  // with its badge ticked, which is also what makes the tap reversible
+  // without hunting for the app again. Per-visit and deliberately not
+  // persisted: the next load of the home screen starts from the honest list.
+  _discoverKeep: new Set(),
+
+  // Set by toggleAdded for the one render that follows an ADD, then cleared.
+  // The collapsed grid shows only the first couple of rows, so an app that
+  // lands past the bound would be added to a section that visibly does not
+  // change. render() expands the grid for that case rather than leaving the
+  // viewer to guess. One-shot, because it describes a single paint.
+  _revealSlug: null,
+
   // "Your apps" = apps the viewer is a member of (creator or accepted
   // invite — the server's is_collaborator flag, see app_collaborators
   // in schema.sql) OR apps they manually added (a favorite row; the
@@ -268,7 +296,8 @@ const Home = {
       if (new URLSearchParams(location.search).get('shot') === 'discover-empty') return [];
     } catch (err) { /* ignore */ }
     return (apps || [])
-      .filter((a) => a && a.featured && !Home.isYours(a))
+      .filter((a) => a && a.featured
+        && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
       .sort((x, y) => {
         const xo = x.featured_order == null ? Infinity : x.featured_order;
         const yo = y.featured_order == null ? Infinity : y.featured_order;
@@ -309,7 +338,8 @@ const Home = {
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
     return (apps || [])
       .filter((a) => a && !a.featured && !a.self_hosted
-        && a.status !== 'error' && !Home.isYours(a) && users(a) >= 1)
+        && a.status !== 'error' && users(a) >= 1
+        && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
       .sort((x, y) => users(y) - users(x))
       .slice(0, Home.POPULAR_LIMIT);
   },
@@ -686,6 +716,16 @@ const Home = {
       // same number; on one with a hole on row 1 the old form collapsed the
       // two-row default down to a single visible row of tiles.
       const rowBound = HomeLayout.defaultRowBound(layout, cols, rowBudget);
+      // AN ADD THAT LANDS BELOW THE FOLD OPENS THE GRID (#1567). The whole
+      // point of repainting on add is that the viewer SEES the app arrive;
+      // a collapsed grid that holds it back turns the tick into the only
+      // feedback, which is the reload complaint again in a smaller form.
+      // Same flag "Show all N apps" sets, so the rest of the visit behaves
+      // as if it had been pressed.
+      if (Home._revealSlug) {
+        const landed = canvas.find((it) => it && it.slug === Home._revealSlug);
+        if (landed && landed.row > rowBound) Home._appsExpanded = true;
+      }
       const hiddenRows = !Home._appsExpanded
         && canvas.some((it) => it.row > rowBound);
       const shown = hiddenRows
@@ -705,6 +745,8 @@ const Home = {
       // rendering rows 0-1 would pad the grid out with an empty tile row.
       rowTemplate = Home.rowTemplate(hiddenRows ? shown : layout, cols);
       moreCount = hiddenRows ? (canvas.length + HomeLayout.overflowItems(layout).length) : 0;
+      // One-shot: it described this paint.
+      Home._revealSlug = null;
     }
 
     // The search view is a flat, transient list — it must not inherit the
@@ -733,6 +775,81 @@ const Home = {
     // from render() on purpose — see publishImproveTarget for why that is the
     // one call that makes it consistent.
     Home.publishImproveTarget();
+    // ?shot=discover-add, once the first real paint has happened.
+    Home._maybeDiscoverAddShot();
+  },
+
+  // ===== ?shot=discover-add — the add round trip, as a URL (#1567) =====
+  //
+  // Adding an app from a Discover rail is a TAP, so no URL rendered the
+  // result of one: the before/after screenshots and every declared check saw
+  // the home screen with nothing added, and the fix they exist to protect was
+  // invisible to both. This drives the flow the way a finger would — press
+  // the +, watch "Your apps" take the app WITHOUT a reload, press the ✓,
+  // watch it leave — and stamps how far it got on <body>.
+  //
+  // <body> rather than a node inside the grid: #app-list and
+  // #home-apps-section are React-owned, and an imperative write into either
+  // is a second writer that the next push paints over. `body.is-offline` is
+  // the same precedent, and six declared checks already select through it.
+  //
+  // Ungated and identical in both environments, like every other shot link
+  // here — the "before" side of a capture is shot against production, so an
+  // env-gated link would starve it forever. It writes only what the tap it
+  // imitates writes, and it ends by undoing that write, so a preview it ran
+  // in is left as it was found.
+  _discoverAddShotRan: false,
+  async _maybeDiscoverAddShot() {
+    if (Home._discoverAddShotRan) return;
+    try {
+      if (new URLSearchParams(location.search).get('shot') !== 'discover-add') return;
+    } catch (err) { return; }
+    Home._discoverAddShotRan = true;
+
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const until = async (pred, budgetMs) => {
+      const started = Date.now();
+      let out = pred();
+      while (!out && Date.now() - started < budgetMs) {
+        await wait(30);
+        out = pred();
+      }
+      return out;
+    };
+
+    // Every leg bails WITHOUT stamping. A half-finished round trip must not
+    // read as a passing one, and the check's selector is the final stamp.
+    const badge = await until(() => document.querySelector(
+      '#home-discover-section .app-card:not([data-demo]) .card-add-btn[data-added="false"]',
+    ), 8000);
+    if (!badge) return;
+    const slug = badge.dataset.slug;
+    if (!slug) return;
+    badge.click();
+
+    // The tile is in "Your apps" now, painted from the cached flags with no
+    // refetch — which is the whole claim this shot is here to make.
+    const tile = await until(
+      () => document.querySelector(`#app-list .app-card[data-slug="${slug}"]`),
+      8000,
+    );
+    if (!tile) return;
+    document.body.dataset.shotAdd = 'added';
+
+    // The card stayed put in the rail (that is _discoverKeep) with its badge
+    // ticked, so the same finger can undo it.
+    const ticked = await until(() => document.querySelector(
+      `#home-discover-section .card-add-btn[data-slug="${slug}"][data-added="true"]`,
+    ), 8000);
+    if (!ticked) return;
+    ticked.click();
+
+    const gone = await until(
+      () => !document.querySelector(`#app-list .app-card[data-slug="${slug}"]`),
+      8000,
+    );
+    if (!gone) return;
+    document.body.dataset.shotAdd = 'round-trip';
   },
 
 
@@ -1342,9 +1459,15 @@ const Home = {
   //
   // `onChange` (optional) is called after a successful toggle so the
   // host can re-render its own grid; home just reloads.
+  // Binding is IDEMPOTENT (#1567): a lane re-runs this whenever its tiles
+  // change identity, and a badge flipping to "added" is now such a change
+  // while React keeps the very same card elements. The two WeakSets above
+  // are what make the second sweep a no-op instead of a duplicate listener.
   _wireDiscoveryCards(listEl, onChange) {
     if (!listEl) return;
     listEl.querySelectorAll('.app-card').forEach((card) => {
+      if (wiredCards.has(card)) return;
+      wiredCards.add(card);
       // #1036: the card can't BE an anchor (it wraps its own Add and "…"
       // buttons), so cmd/middle-click is intercepted instead. hrefFor
       // repeats the plain click's guards exactly, so an inert card (demo
@@ -1367,12 +1490,16 @@ const Home = {
       Home._wirePrewarm(card);
     });
     listEl.querySelectorAll('.card-add-btn').forEach((btn) => {
+      if (wiredButtons.has(btn)) return;
+      wiredButtons.add(btn);
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         Home.toggleAdded(btn.dataset.slug, btn.dataset.added !== 'true', onChange);
       });
     });
     listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {
+      if (wiredButtons.has(btn)) return;
+      wiredButtons.add(btn);
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         // Pass the element so the kit popover can toggle closed on a
@@ -1382,20 +1509,41 @@ const Home = {
     });
   },
 
-  // Add / remove one app from "Your apps" from a discovery grid.
-  // Same endpoint and same semantics as the card menu's entry
-  // (_menuToggleFavorite): for a member, favorited=false writes the
-  // per-user `hidden` opt-out rather than dropping membership.
+  // Add / remove one app from "Your apps", from anywhere: a discovery rail,
+  // the browse screen's rows and detail, and the card menu (which is this
+  // function now — see _menuToggleFavorite). For a member, favorited=false
+  // writes the per-user `hidden` opt-out rather than dropping membership.
   //
-  // Optimistic: flip the flags on the cached app object, let the caller
-  // re-render, and revert to server truth by reloading on failure.
+  // Optimistic: flip the flags on the cached app object and repaint, then
+  // revert to server truth by reloading on failure.
+  //
+  // THE REPAINT IS THE POINT (#1567). The flags on the cached object decide
+  // what "Your apps" holds, but only a render turns that into pixels, and
+  // this function used to leave it to `onChange` — which the home screen's
+  // Discover rail does not pass at all, so an add from the home screen
+  // changed nothing on screen until the next reload. Home.render() is the
+  // single call that covers every surface: it rebuilds the grid AND ends by
+  // re-rendering the panels, so the badge and the new tile land in the same
+  // frame. `onChange` still runs, because the browse screen's own list is
+  // outside Home's paint.
   async toggleAdded(slug, desired, onChange) {
     const app = (Home._apps || []).find((a) => a.slug === slug);
     // Staging ?demo=1 tiles have no DB row — a POST would 404.
     if (!app || app.demo) return;
     const prev = { is_favorited: app.is_favorited, your_apps_hidden: app.your_apps_hidden };
+    // Asked BEFORE the flip, while the answer still describes where the card
+    // is: an app currently in a rail stays in it for the rest of the visit.
+    if (!Home.isYours(app)) {
+      const inLane = Home.featuredApps(Home._apps || []).some((a) => a.slug === slug)
+        || Home.popularApps(Home._apps || []).some((a) => a.slug === slug);
+      if (inLane) Home._discoverKeep.add(slug);
+    }
     app.is_favorited = desired;
     if (app.is_collaborator) app.your_apps_hidden = !desired;
+    // Only an ADD needs the reveal: a removal takes a tile away, and a grid
+    // that expanded itself to show an absence would be nonsense.
+    if (desired) Home._revealSlug = slug;
+    Home.render();
     if (typeof onChange === 'function') onChange();
     try {
       const res = await fetch(`/api/apps/${slug}/favorite`, {
@@ -1411,6 +1559,10 @@ const Home = {
     } catch (err) {
       app.is_favorited = prev.is_favorited;
       app.your_apps_hidden = prev.your_apps_hidden;
+      // The add never happened, so nothing should be revealed for it. load()
+      // renders, and a stale slug would expand the grid for an app that is
+      // not there.
+      Home._revealSlug = null;
       PlatformUI.toast(`Update failed: ${err.message}`);
       await Home.load();
       if (typeof onChange === 'function') onChange();
@@ -3215,24 +3367,16 @@ const Home = {
   // caller working for non-member apps. For member apps the server
   // maps favorited=false to a hidden opt-out row rather than a delete
   // (#618), so the same endpoint drives both card menu states.
-  async _menuToggleFavorite(app, desired) {
+  //
+  // ONE IMPLEMENTATION (#1567). This used to POST first and repaint by
+  // reloading the whole list, which meant the menu and the rails disagreed
+  // about how fast the section updates and about whether a failure is
+  // announced. toggleAdded is the better of the two — it flips the cached
+  // flags, paints immediately, and reverts against the server if the write
+  // loses — so this is now the name the menu calls it by.
+  _menuToggleFavorite(app, desired) {
     const next = typeof desired === 'boolean' ? desired : !app.is_favorited;
-    try {
-      const res = await fetch(`/api/apps/${app.slug}/favorite`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ favorited: next }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-      app.is_favorited = next;
-      if (app.is_collaborator) app.your_apps_hidden = !next;
-      await Home.load();
-    } catch (err) {
-      PlatformUI.toast(`Update failed: ${err.message}`);
-    }
+    return Home.toggleAdded(app.slug, next);
   },
 
   async _menuRetry(app) {

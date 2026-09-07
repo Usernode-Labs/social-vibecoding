@@ -21,8 +21,15 @@
 //   2. The chip is only viewport-centred while it fits
 //      (features/header/use-header-layout.ts toggles `.is-centered`), so the
 //      panel follows the class rather than assuming the middle.
-//   3. The backdrop stays — it is what catches the dismissing click — but
-//      stops dimming, because a scrim behind a header menu says "modal".
+//   3. The backdrop stays — it is what catches the dismissing click — and
+//      paints nothing. That WAS an argument about modality (a scrim behind a
+//      header menu says "modal"), and it lost on review: this menu and the
+//      Improve rail are opened the same way, so one dimming and the other not
+//      made them read as two kinds of surface. The dim came back and is here
+//      now; what changed is that the PANEL casts it, as a 100vmax box-shadow
+//      on `.dc-lift-panel[data-open]`. A dim painted behind the panel lands
+//      inside the panel's own backdrop-filter and turns its glass grey — see
+//      tests/overlay-panes-lift.test.js for the measurements.
 //
 // And the offset is the header's own height, restated once as
 // --platform-header-h, which is only worth having if it cannot drift from the
@@ -111,10 +118,20 @@ test('--platform-header-h is the height the header markup actually builds', () =
   // it fails HERE rather than as a panel that has quietly drifted off the bar
   // it hangs from. No hairline — the reskin took the border off both top bars,
   // and one coming back would add a pixel to the border box.
+  //
+  // THE TWO PADDINGS ARE READ SEPARATELY. The bar was `py-3`; it is
+  // `pt-3 pb-5` now, because `-mb-2` spends 8px of the bottom padding
+  // cutting the notch below it and the controls were left with four pixels
+  // of clearance above an app's raised sheet. A single `py-N` read would
+  // have gone on matching nothing and silently reported the old height.
   const bar = HEADER.slice(HEADER.indexOf('id="platform-header"'));
   const className = bar.slice(0, bar.indexOf('>'));
-  const py = className.match(/\bpy-(\d+)\b/);
-  assert.ok(py, '#platform-header states its vertical padding as py-N');
+  const pt = className.match(/\bpt-(\d+)\b/);
+  const pb = className.match(/\bpb-(\d+)\b/);
+  assert.ok(pt && pb, '#platform-header states its vertical padding as pt-N / pb-N');
+  assert.ok(!/\bpy-\d/.test(className),
+    'and states it in ONE vocabulary — a py-N beside them is a second source '
+    + 'of truth this arithmetic cannot see');
   assert.ok(!/\bborder-b\b/.test(className),
     'no hairline under the bar — if one comes back this arithmetic gains a pixel');
 
@@ -127,9 +144,9 @@ test('--platform-header-h is the height the header markup actually builds', () =
     + 'tests/header-height-parity.test.js for the floor and the ceiling');
 
   // Tailwind's scale is 0.25rem per step; h-7 is 1.75rem.
-  const expected = (Number(py[1]) * 0.25 * 2) + 1.75;
+  const expected = ((Number(pt[1]) + Number(pb[1])) * 0.25) + 1.75;
   assert.equal(Number(declared[1]), expected,
-    `--platform-header-h must equal py-${py[1]} * 2 + h-7 = ${expected}rem`);
+    `--platform-header-h must equal pt-${pt[1]} + pb-${pb[1]} + h-7 = ${expected}rem`);
 });
 
 // ── The dropdown ───────────────────────────────────────────────────────
@@ -248,10 +265,21 @@ test('below sm it is still a bottom sheet, dim and all', () => {
   assert.match(sheet, /bottom:\s*0/);
   assert.match(sheet, /transform:\s*translateY\(100%\)/, 'it still comes up from the floor');
   assert.match(block, /#apps-switcher-sheet\[data-open\] \{\s*\n\s*transform:\s*translateY\(0\)/);
-  assert.match(sheet, /border-top-left-radius:\s*1rem/, 'and keeps its two top corners');
+  // Two top corners, and they are the pane radius now rather than 1rem: below
+  // sm this menu is a bottom sheet like the Improve rail and the bell's, and
+  // all three read the same 1.75rem off `.dc-lift`. What is pinned here is
+  // that it still HAS two rounded top corners — the dropdown above keeps its
+  // own 0.75rem menu radius, which is the shape this must not inherit.
+  assert.match(sheet, /border-top-left-radius:\s*1\.75rem/, 'and keeps its two top corners');
+  assert.match(sheet, /border-top-right-radius:\s*1\.75rem/);
 
-  // The dim is the default and only desktop opts out of it.
-  assert.match(SHEET, /id="apps-switcher-overlay"[\s\S]{0,400}?bg-black\/40/);
+  // The dim is still the default at every width — but the panel CASTS it now
+  // (`.dc-lift-panel[data-open]`'s 100vmax box-shadow) rather than the backdrop
+  // painting it, because a dim painted behind the panel lands inside the
+  // panel's own backdrop-filter and turns its glass grey. The backdrop element
+  // stays for pointer-events and dismiss-on-click, and paints nothing.
+  assert.match(SHEET, /id="apps-switcher-overlay"[\s\S]{0,400}?className="fixed inset-0 z-40"/);
+  assert.doesNotMatch(SHEET, /id="apps-switcher-overlay"[\s\S]{0,400}?bg-black/);
 });
 
 test('the sheet markup is one panel — the presentation is entirely CSS', () => {

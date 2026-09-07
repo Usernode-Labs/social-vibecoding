@@ -64,6 +64,51 @@ function StatusIcon({ kind }: { kind: 'spinner' | 'check' | 'key' | 'flag' }): R
 }
 
 /**
+ * A failed turn. See the `failure` row in ./transcript-store.ts for why this
+ * exists at all and why it carries no heading and no retry button.
+ *
+ * A CARD rather than a status row, and that is the whole point: the ladder of
+ * `✓` rows above it is a pipeline reading itself out, and a failure is not a
+ * step in that pipeline — it is the end of it. Given a row it inherited the
+ * ladder's shape and, until now, the ladder's green tick.
+ *
+ * Three tones share it, because all three are "the pipeline did not finish"
+ * and only one of them is a problem the user did not choose. `blocked` and
+ * `stopping` are red; `stopped` is the neutral surface with the landing in
+ * chips beside it. See the `failure` row's `tone` for why a stop that the
+ * user asked for must not be painted as an error — that is the green tick's
+ * mistake run in reverse.
+ */
+function Failure({ r }: { r: Extract<TranscriptRow, { t: 'failure' }> }): ReactNode {
+  const tone = r.tone || 'blocked';
+  return (
+    <div className={`dc-failure dc-failure-${tone}`} role="status">
+      <span className="dc-failure-icon" aria-hidden="true">
+        {tone === 'stopped' ? '\u25A0' : '\u2297'}
+      </span>
+      <span className="dc-failure-body">
+        {r.html !== undefined
+          ? <span className="dc-failure-text" dangerouslySetInnerHTML={{ __html: r.html }} />
+          : <span className="dc-failure-text">{r.text}</span>}
+        {r.chips && r.chips.length ? (
+          <span className="dc-failure-chips">
+            {r.chips.map((c, i) => <span key={`${i}-${c}`}>{c}</span>)}
+          </span>
+        ) : null}
+      </span>
+      <Elapsed e={r.elapsed ?? null} />
+      {r.forceStop ? (
+        <button
+          className="dc-force-stop-btn"
+          onClick={(e) => controller()?._forceStopTurn?.(e.currentTarget)}
+        >Force stop</button>
+      ) : null}
+      <Stamp text={r.stamp} />
+    </div>
+  );
+}
+
+/**
  * The elapsed suffix. A live row re-derives its label from `nowStore` on the
  * 1s heartbeat; `data-elapsed-since` stays in the markup because
  * `_syncElapsedTicker` reads it to decide whether the heartbeat runs at all.
@@ -135,19 +180,53 @@ function CcLog({ r }: { r: Extract<TranscriptRow, { t: 'ccLog' }> }): ReactNode 
 }
 
 /**
- * The live run's summary spans, all of which tick.
+ * The run's FACTS, as chips.
  *
- * The elapsed suffix renders HERE, between the phase label and the AI guess,
- * because that is where the string template put it — current · steps · phase ·
- * elapsed · estimate (countdown inside it) · cohort. It is the one span of the
- * six that also appears on a row with no progress at all, which is why it is
- * passed in rather than living in the model's `progress` object.
+ * They were four inline spans joined by `· ` inside the summary, on the same
+ * line as "Claude Code is running" — a run-on that truncated the two things
+ * a reader actually wants (which file, how long) and pushed the rest onto a
+ * second and third line. On a phone it was worse: the 640px block below
+ * `display: none`d `.dc-cc-current` outright, so the answer to "what is it
+ * doing" simply vanished at the width where you most want it.
+ *
+ * Chips wrap instead of truncating, so the narrow case loses a line of
+ * height rather than a fact. Each span keeps its class — two declared checks
+ * select `.dc-cc-attached-summary .dc-cc-cohort`, and the elapsed/countdown/
+ * cohort spans still carry the `data-*` the 1s heartbeat finds by
+ * `querySelector` on `#dc-messages`, which nesting does not disturb.
+ *
+ * An empty chip renders as an empty span rather than nothing, and app.css
+ * hides it with `:empty`. That is deliberate: the spans are addressed by
+ * class from tests and checks, and a chip that disappears from the DOM
+ * whenever its value is blank is a selector that fails for a reason nobody
+ * can see.
  */
-function ProgressSpans(
+function ProgressChips(
   { p, elapsed }: {
     p: NonNullable<Extract<TranscriptRow, { t: 'attached' }>['progress']>;
     elapsed: ElapsedSpec;
   },
+): ReactNode {
+  return (
+    <>
+      <span className="dc-cc-current">{p.current}</span>
+      <span className="dc-cc-steps">{p.steps ? `${p.steps} steps` : ''}</span>
+      <span className="dc-cc-phase">{p.phase}</span>
+      <Elapsed e={elapsed} />
+    </>
+  );
+}
+
+/**
+ * …and the run's two SENTENCES, on their own row under the chips.
+ *
+ * The estimate and the cohort hint are prose, not facts: one is a guess and
+ * says so, the other is a statement about other people's runs. As chips they
+ * would be a paragraph in a pill. They keep the `data-countdown-to` /
+ * `data-cohort-since` hooks the ticker reads.
+ */
+function ProgressNote(
+  { p }: { p: NonNullable<Extract<TranscriptRow, { t: 'attached' }>['progress']> },
 ): ReactNode {
   const { now } = useStoreState(nowStore);
   const w = fmt();
@@ -163,24 +242,20 @@ function ProgressSpans(
     ? w.runCohortHint(Math.max(0, now - p.cohortSince))
     : '';
   return (
-    <>
-      <span className="dc-cc-current">{p.current ? `· ${p.current}` : ''}</span>
-      <span className="dc-cc-steps">{p.steps ? `· ${p.steps} steps` : ''}</span>
-      <span className="dc-cc-phase">{p.phase ? `· ${p.phase}` : ''}</span>
-      <Elapsed e={elapsed} />
+    <span className="dc-cc-note">
       <span
         className="dc-cc-estimate"
         title="Experimental: a small AI model's rough guess from the progress log. May be wrong."
       >
-        {p.estimate ? `· ✦ AI guess: ${p.estimate}` : ''}
+        {p.estimate ? `\u2726 AI guess: ${p.estimate}` : ''}
         {p.estimate && p.countdownTo != null
           ? <span className="dc-cc-countdown" data-countdown-to={p.countdownTo}>{countdown}</span>
           : null}
       </span>
       {p.cohortSince != null
-        ? <span className="dc-cc-cohort" data-cohort-since={p.cohortSince}>{hint ? ` · ${hint}` : ''}</span>
+        ? <span className="dc-cc-cohort" data-cohort-since={p.cohortSince}>{hint}</span>
         : null}
-    </>
+    </span>
   );
 }
 
@@ -192,16 +267,25 @@ function Attached({ r }: { r: Extract<TranscriptRow, { t: 'attached' }> }): Reac
       data-default-open={r.details.defaultOpen ? '1' : '0'}
       open={open} onToggle={onToggle}
     >
+      {/* TWO ROWS INSIDE THE SUMMARY, not one line. Everything a collapsed
+          card shows has to live in the <summary> — a <details> hides every
+          other child — so the head and the chip row are siblings here rather
+          than the chips being a block under the disclosure. */}
       <summary className="dc-status-line dc-cc-attached-summary">
-        <StatusIcon kind={r.icon} />
-        {r.html !== undefined
-          ? <span dangerouslySetInnerHTML={{ __html: ` ${r.html}` }} />
-          : ` ${r.text}`}
-        {r.progress
-          ? <ProgressSpans p={r.progress} elapsed={r.elapsed} />
-          : <Elapsed e={r.elapsed} />}
-        <span className="dc-cc-attached-chevron" aria-hidden="true"></span>
-        <Stamp text={r.stamp} />
+        <span className="dc-cc-head">
+          <StatusIcon kind={r.icon} />
+          {r.html !== undefined
+            ? <span dangerouslySetInnerHTML={{ __html: ` ${r.html}` }} />
+            : ` ${r.text}`}
+          <span className="dc-cc-attached-chevron" aria-hidden="true"></span>
+          <Stamp text={r.stamp} />
+        </span>
+        <span className="dc-cc-chips">
+          {r.progress
+            ? <ProgressChips p={r.progress} elapsed={r.elapsed} />
+            : <Elapsed e={r.elapsed} />}
+        </span>
+        {r.progress ? <ProgressNote p={r.progress} /> : null}
       </summary>
       {r.body.kind === 'log'
         ? <pre className="dc-cc-attached-log" data-persist-id={r.body.persistId}>{r.body.text}</pre>
@@ -383,9 +467,18 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
   const more = useDetails(r.more ? r.more.details : { persistId: '', defaultOpen: false });
   const reasoning = useDetails(r.reasoning ? r.reasoning.details : { persistId: '', defaultOpen: false });
   const who = r.who === 'user' ? 'You' : r.who === 'cc' ? 'Claude Code' : 'AI';
+  // "You" is READ, not shown. Side and surface already say whose turn it is —
+  // the row is right-aligned and it is the only one drawn as a card — so the
+  // word was labelling a thing that labels itself, at the top of every second
+  // row. It stays in the accessible tree because alignment is not available
+  // to a screen reader, which is the one audience it was actually telling.
+  //
+  // The agent's rows keep theirs visible: "AI" sits in a meta line that also
+  // carries the model and what the reply cost, so it is the first word of a
+  // sentence rather than a label on its own.
   const whoClass = r.who === 'user'
-    ? 'text-violet-700 dark:text-violet-400'
-    : r.who === 'cc' ? 'text-emerald-700 dark:text-emerald-400' : 'text-emerald-700 dark:text-emerald-400';
+    ? 'sr-only'
+    : 'text-emerald-700 dark:text-emerald-400';
   return (
     <div className={`dc-msg ${r.who === 'user' ? 'dc-msg-user' : 'dc-msg-assistant'}`}>
       <div className="dc-msg-header">
@@ -440,18 +533,71 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
           {r.qa.groups.map((g, gi) => (
             <div className="dc-qa-group" key={gi}>
               {g.label ? <div className="dc-qa-group-label">{g.label}</div> : null}
-              <div className="dc-qa-chip-row">
-                {g.answers.map((a, ai) => (
+              {g.kind === 'number' && g.number ? (
+                /* A QUANTITY, asked as one. The model offered bare magnitudes,
+                   so a row of chips would be five guesses at the value you
+                   want and no way to give the sixth. `defaultValue` and a
+                   commit on blur/Enter, not a controlled field: a controlled
+                   one republishes the whole transcript per keystroke and
+                   takes the caret with it. */
+                <div className="dc-qa-number">
                   <button
-                    key={ai} type="button"
-                    className={`dc-qa-chip${a.suggested ? ' dc-qa-chip-default' : ''}${a.selected ? ' dc-qa-chip-selected' : ''}`}
-                    data-qa-group={gi} data-qa-answer={ai}
-                  >
-                    {a.text}
-                    {a.suggested ? <span className="dc-qa-chip-hint">suggested</span> : null}
-                  </button>
-                ))}
-              </div>
+                    type="button" className="dc-qa-step" aria-label="Less"
+                    data-qa-group={gi} data-qa-step="-1"
+                  >{'\u2212'}</button>
+                  <input
+                    className="dc-qa-number-field" type="text" inputMode="decimal"
+                    aria-label={g.label || 'Value'}
+                    data-qa-number={gi} defaultValue={g.number.value} key={g.number.value}
+                    onBlur={(e) => controller()?._onQaNumberCommit?.(e.currentTarget)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                    }}
+                  />
+                  <button
+                    type="button" className="dc-qa-step" aria-label="More"
+                    data-qa-group={gi} data-qa-step="1"
+                  >{'+'}</button>
+                  {/* The default is still NAMED, in the same muted voice the
+                      suggested chip uses — a stepper that opens on a value
+                      says nothing about whether that value was recommended. */}
+                  <span className="dc-qa-chip-hint">suggested {g.number.suggested}</span>
+                </div>
+              ) : (
+                <div className="dc-qa-chip-row">
+                  {g.answers.map((a, ai) => (
+                    <button
+                      key={ai} type="button"
+                      className={`dc-qa-chip${a.suggested ? ' dc-qa-chip-default' : ''}${a.selected ? ' dc-qa-chip-selected' : ''}`}
+                      data-qa-group={gi} data-qa-answer={ai}
+                    >
+                      {a.text}
+                      {a.suggested ? <span className="dc-qa-chip-hint">suggested</span> : null}
+                    </button>
+                  ))}
+                  {g.escape ? (
+                    <button
+                      type="button"
+                      className={`dc-qa-chip dc-qa-escape${g.escape.open ? ' dc-qa-escape-open' : ''}`}
+                      data-qa-escape={gi}
+                    >
+                      <span aria-hidden="true">{'\u270e'}</span> {g.escape.label}
+                    </button>
+                  ) : null}
+                </div>
+              )}
+              {g.escape && g.escape.open ? (
+                <input
+                  className="dc-qa-typed" type="text"
+                  aria-label={g.label || g.escape.label}
+                  placeholder={g.escape.label}
+                  data-qa-typed={gi} defaultValue={g.escape.value} autoFocus
+                  onBlur={(e) => controller()?._onQaTypedCommit?.(e.currentTarget)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); }
+                  }}
+                />
+              ) : null}
             </div>
           ))}
           {r.qa.multi ? (
@@ -469,6 +615,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
 function Row({ r }: { r: TranscriptRow }): ReactNode {
   switch (r.t) {
     case 'status': return <StatusLine r={r} />;
+    case 'failure': return <Failure r={r} />;
     case 'spec': return <SpecCard r={r} />;
     case 'issueDraft': return <IssueDraftCard r={r} />;
     case 'ccLog': return <CcLog r={r} />;
@@ -529,4 +676,4 @@ export function DevChatTranscript(): ReactNode {
   );
 }
 
-export { StatusLine, Attached, ChangesCard, Bubble, LiveContent, Row };
+export { StatusLine, Failure, Attached, ChangesCard, Bubble, LiveContent, Row };

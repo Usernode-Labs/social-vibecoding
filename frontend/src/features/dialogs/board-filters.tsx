@@ -2,7 +2,7 @@
  * Board Filters dialog (#board-filters-modal) — Streamlined Concept.
  *
  * The Figma board moves the Board's priority / category / assignee selects
- * and the "Needs my vote" toggle off the filter bar and into a dialog, so
+ * and the "Waiting on you" toggle off the filter bar and into a dialog, so
  * the bar itself is just search + a `Filters (n)` chip + the active-filter
  * chips. This is that dialog.
  *
@@ -169,10 +169,10 @@ export function BoardFiltersDialog() {
           >
             <span className="min-w-0">
               <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                Needs my vote
+                Waiting on you
               </span>
               <span className="block text-xs text-zinc-500">
-                Only proposals awaiting your vote
+                Only proposals you haven’t weighed in on yet
               </span>
             </span>
             <Switch

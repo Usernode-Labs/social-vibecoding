@@ -27,24 +27,11 @@
     return code === 'native_session_ticket_expired' ||
       code === 'native_session_attempt_revoked' ||
       code === 'native_session_attempt_conflict' ||
+      // TODO(native-walletless-compat): Drop a pre-hotfix walletless replay so
+      // a later attempt can provision a compatible wallet when one is available.
+      code === 'native_session_wallet_required' ||
       code === 'native_session_credential_revoked' ||
       code === 'native_session_credential_expired';
-  }
-
-  function offerWalletRecovery(userId, error) {
-    if (!error ||
-        error.usernodeCode !== 'native_session_wallet_pool_exhausted' ||
-        typeof window.dispatchEvent !== 'function' ||
-        typeof window.CustomEvent !== 'function') return;
-    try {
-      window.dispatchEvent(new CustomEvent(
-        'usernode:wallet-recovery-required',
-        { detail: { userId: String(userId) } }
-      ));
-    } catch (dispatchError) {
-      console.warn('[native-chrome] wallet recovery event failed:',
-        dispatchError);
-    }
   }
 
   const NativeChrome = {
@@ -404,7 +391,14 @@
               ? 'update-required' : 'native-establish',
             error
           );
-          offerWalletRecovery(userId, error);
+          // `native_session_wallet_pool_exhausted` used to dispatch
+          // `usernode:wallet-recovery-required` here, which popped the
+          // "Connect your existing wallet" dialog on every admission
+          // attempt — and _initSessionRecoveryEvents() retries on every
+          // online / pageshow / visibilitychange, so the dialog kept
+          // coming back. The failure is RECORDED only now; Settings →
+          // Usernode app → connection reads lastSessionFailure() and offers
+          // the recovery as a button the user presses on purpose.
         }
         return null;
       }).finally(() => {

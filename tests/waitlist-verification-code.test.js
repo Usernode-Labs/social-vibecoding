@@ -35,6 +35,7 @@ const {
   issueVerificationCode,
   confirmSignupByCode,
   confirmSignupByMoreToken,
+  getSignupByEmail,
   MAX_CODE_ATTEMPTS,
 } = require('../src/services/waitlist');
 
@@ -128,6 +129,16 @@ function makePool(state) {
         rows: [{
           id: s.id, email: s.email, confirmed_at: s.confirmed_at, more_token: s.more_token,
         }],
+      };
+    }
+
+    if (sql.startsWith('SELECT id, email, confirmed_at, more_token FROM waitlist_signups WHERE email = $1')) {
+      const [email] = params;
+      const s = state.signups.get(email);
+      return {
+        rows: s
+          ? [{ id: s.id, email: s.email, confirmed_at: s.confirmed_at, more_token: s.more_token }]
+          : [],
       };
     }
 
@@ -266,4 +277,50 @@ test('the link and the code stamp the same row, and the first wins', async () =>
   const byCode = await confirmSignupByCode(pool, 'a@example.com', code);
   assert.ok(byCode);
   assert.equal(state.signups.get('a@example.com').confirmed_at, first);
+});
+
+// ─── 5. The by-address lookup the resend endpoint decides on ──────────
+
+test('getSignupByEmail answers null for an address that never joined', async () => {
+  const { pool } = fixture();
+  assert.equal(await getSignupByEmail(pool, 'nobody@example.com'), null);
+});
+
+test('getSignupByEmail normalizes before it looks up', async () => {
+  // The endpoint in front of it takes whatever was typed into a form, and
+  // the column stores the normalized form. Without this, "A@Example.COM "
+  // would look like a stranger and be answered with silence.
+  const { pool } = fixture();
+  await joinWaitlist(pool, { email: 'a@example.com' });
+  const row = await getSignupByEmail(pool, '  A@Example.COM ');
+  assert.ok(row);
+  assert.equal(row.email, 'a@example.com');
+});
+
+test('getSignupByEmail refuses a non-address without touching the database', async () => {
+  // The mock throws on an unhandled query, so reaching the pool at all
+  // would fail here rather than return null.
+  const { pool } = fixture();
+  assert.equal(await getSignupByEmail(pool, 'not-an-email'), null);
+  assert.equal(await getSignupByEmail(pool, ''), null);
+  assert.equal(await getSignupByEmail(pool, null), null);
+});
+
+test('getSignupByEmail reports confirmed state and the stage-2 token', async () => {
+  // The three fields the resend branch decides on: that the address exists,
+  // whether it still needs confirming, and which token to carry into the
+  // mail. Nothing else, and none of it ever reaches a response body.
+  const { pool } = fixture();
+  await joinWaitlist(pool, { email: 'a@example.com' });
+
+  const pending = await getSignupByEmail(pool, 'a@example.com');
+  assert.equal(pending.confirmed_at, null);
+  assert.ok(pending.more_token, 'the join mints the token');
+
+  const code = await issueVerificationCode(pool, 'a@example.com');
+  await confirmSignupByCode(pool, 'a@example.com', code);
+
+  const confirmed = await getSignupByEmail(pool, 'a@example.com');
+  assert.ok(confirmed.confirmed_at, 'a confirmed row is distinguishable to the CALLER');
+  assert.equal(confirmed.more_token, pending.more_token);
 });

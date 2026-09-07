@@ -133,6 +133,14 @@ const App = {
   SESSION_SNAPSHOT_KEY: 'usernode.session.v1',
   SESSION_SNAPSHOT_MAX_AGE_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
 
+  // #1524 — a one-shot advisory handed from a sign-out to the anonymous boot
+  // that follows it. Sign-out always navigates now, which destroys any toast
+  // raised before it, so the message rides across in sessionStorage instead.
+  // Written by Settings.logout on the one path that has something to say (a
+  // native sign-out whose terminal step failed); read and removed exactly
+  // once, by enterAnonymous below.
+  LOGOUT_NOTICE_KEY: 'sv:logout_notice',
+
   // How long boot waits for /api/auth/me before falling back to the
   // snapshot. Deliberately just past the service worker's own API deadline
   // (API_TIMEOUT_MS, now 1000) so the SW gets first refusal at answering
@@ -575,6 +583,25 @@ const App = {
     // platformMovedOn() needs a boot-time baseline to compare against.
     App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
+    App._drainLogoutNotice();
+  },
+
+  // Read-and-remove the one-shot sign-out advisory (#1524). Runs after the
+  // auth screens are up so the toast lands on the landing page the user was
+  // just sent to. One-shot by construction: the key is removed before it is
+  // shown, so a later anonymous boot stays silent.
+  _drainLogoutNotice() {
+    let message = null;
+    try {
+      message = window.sessionStorage?.getItem?.(App.LOGOUT_NOTICE_KEY) || null;
+      if (message) window.sessionStorage.removeItem(App.LOGOUT_NOTICE_KEY);
+    } catch (err) { /* private mode / no storage — nothing to say */ }
+    if (!message) return;
+    try {
+      if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(message, { error: true });
+      }
+    } catch (err) { /* ignore */ }
   },
 
   // True for the anonymous-shell screenshot-state links (see init). Also
@@ -599,12 +626,28 @@ const App = {
     // confirming is what puts somebody on the list now, so the list place
     // and the stage-2 offer live there rather than on `waitlist-joined`,
     // which stops at the confirm step.
+    // `waitlist-more` opens the stage-2 survey for the token in the
+    // fragment (`/?shot=waitlist-more#more/<48 hex>`). The survey is an
+    // auth screen, and restoreFromHash drops an auth route outright for a
+    // signed-in user who has platform access — which every capture and
+    // proposal-check session is — so without this the screen is reachable
+    // by a real recipient and by nothing that photographs or checks it.
+    // `waitlist-step1` and `waitlist-code-entry` are the two halves of the
+    // returning-user path: the join form carrying the "Already joined?"
+    // link, and the confirm step reached through it, which is the only
+    // state that asks which address the code belongs to. Both need the
+    // anonymous boot for the same reason waitlist-more does: restoreFromHash
+    // drops an auth route outright for the signed-in session every capture
+    // and proposal check runs as.
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
+        shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
+        shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
         shot !== 'password-recovery' && shot !== 'password-recovery-sent') {
       return false;
     }
-    if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed') &&
+    if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed'
+         || shot === 'waitlist-step1' || shot === 'waitlist-code-entry') &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }
@@ -1187,7 +1230,8 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'feedback' && shot !== 'feedback-spent'
         && shot !== 'feedback-offline' && shot !== 'feedback-queued'
-        && shot !== 'feedback-capture-failed') return;
+        && shot !== 'feedback-capture-failed'
+        && shot !== 'feedback-required') return;
     const spent = shot === 'feedback-spent';
     // #1054: the two offline variants. `feedback-offline` is the dialog as a
     // disconnected user meets it (the hint, and Submit reading "Save for
@@ -1206,6 +1250,11 @@ const App = {
     // the draft is typed into the field, never stashed (the stash skips any
     // ?shot= route on purpose) and never filed.
     const captureFailed = shot === 'feedback-capture-failed';
+    // #1603: the dialog after a submit with nothing in the description — the
+    // state that used to be indistinguishable from a dead button. Clicks the
+    // real Submit and photographs the real refusal; the controller returns
+    // before any fetch, so this posts nothing either.
+    const requiredError = shot === 'feedback-required';
     // ONCE PER DOCUMENT. _applyRouteShots dedupes on the hash, not on the
     // applier, so a fragment that changes after boot re-runs this one — and
     // this shot is not idempotent the way the others are. Its
@@ -1296,6 +1345,24 @@ const App = {
             if (--capTries > 0) setTimeout(runFailure, App.IMPROVE_SHOT_INTERVAL_MS);
           };
           setTimeout(runFailure, 50);
+        }
+        if (requiredError) {
+          // Same retry shape, and for the same reason, as captureFailed
+          // above: a submit fired into a shell that is still settling can
+          // land before the dialog's own open-time reset, which then clears
+          // the error this is trying to photograph. What the check asserts
+          // is the message being VISIBLE, so that is what this waits for.
+          // The hook is the controller's, like the capture one beside it —
+          // it calls the shipped submitFeedback, which keeps the dialog's
+          // own ids and internals out of this file.
+          let reqTries = App.IMPROVE_SHOT_TRIES;
+          const runEmptySubmit = () => {
+            const err = document.getElementById('feedback-text-error');
+            if (err && !err.classList.contains('hidden')) return;
+            try { App._simulateEmptyFeedbackSubmit?.(); } catch (e) { /* ignore */ }
+            if (--reqTries > 0) setTimeout(runEmptySubmit, App.IMPROVE_SHOT_INTERVAL_MS);
+          };
+          setTimeout(runEmptySubmit, 50);
         }
       } catch (err) { /* ignore */ }
     };
@@ -2942,14 +3009,14 @@ const App = {
           : norm.ref.kind === 'proposal' ? 'proposals'
           : norm.ref.kind === 'session' ? 'shared' : 'governance';
         suffix = `/dev/${seg}/${norm.ref.id}`;
-      } else if (opts.boardView === 'feed') {
-        suffix = '/activity';
+      } else if (opts.boardView === 'workshop') {
+        suffix = '/workshop';
       } else if (opts.boardView === 'kanban') {
         suffix = '/board';
       } else {
-        const feed = typeof AppView !== 'undefined' && AppView._getViewMode
-          && AppView._getViewMode() === 'feed';
-        suffix = `/${feed ? 'activity' : 'board'}`;
+        const kanban = typeof AppView !== 'undefined' && AppView._getViewMode
+          && AppView._getViewMode() === 'kanban';
+        suffix = `/${kanban ? 'board' : 'workshop'}`;
       }
     }
     return `/app/${safeSlug}${suffix}${App._routeSearch(
@@ -3316,7 +3383,9 @@ const App = {
         // the two leaves `tab` and `subTab` identical, which nothing else
         // would notice.
         let boardView = null;
-        if (tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'feed'; }
+        // `activity` is the retired Activity feed's address; the Workshop
+        // replaced it as the lander, so the old links land there.
+        if (tab === 'workshop' || tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'workshop'; }
         else if (tab === 'board') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'kanban'; }
         if (tab === 'dev') {
           const sec = parts[3] || null;
@@ -4241,7 +4310,7 @@ const App = {
         }
         if (!boardView && App.currentSubTab === 'forum') {
           boardView = typeof AppView !== 'undefined' && AppView._getViewMode
-            && AppView._getViewMode() === 'feed' ? 'feed' : 'kanban';
+            && AppView._getViewMode() === 'kanban' ? 'kanban' : 'workshop';
         }
       }
       const innerPath = (App.chromeless && typeof AppView !== 'undefined'
@@ -4275,13 +4344,13 @@ const App = {
         ? parsed.hash.replace(/^#/, '').split('?')[0]
         : parsed.pathname.replace(/^\/+/, '');
       const segs = route.split('/');
-      // Aliases (see restoreFromHash): /app/x/board and /app/x/activity are
-      // both the card area, so an alias in the address bar and the canonical
-      // form updateHash computes are the SAME screen — replace, never a
-      // spurious push. The two are one screen as far as history goes for the
-      // same reason Kanban|Feed never pushed an entry: switching layout is
-      // not somewhere to go BACK from.
-      if (segs[0] === 'app' && (segs[2] === 'activity' || segs[2] === 'board')) {
+      // Aliases (see restoreFromHash): /app/x/board and /app/x/workshop (and
+      // the retired /app/x/activity) are all the card area, so an alias in
+      // the address bar and the canonical form updateHash computes are the
+      // SAME screen — replace, never a spurious push. The two are one screen
+      // as far as history goes for the same reason Kanban|Feed never pushed
+      // an entry: switching layout is not somewhere to go BACK from.
+      if (segs[0] === 'app' && (segs[2] === 'workshop' || segs[2] === 'activity' || segs[2] === 'board')) {
         segs.splice(2, 1, 'dev');
       }
       if (segs[0] === 'app' && segs[2] === 'dev') {

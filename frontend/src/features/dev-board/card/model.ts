@@ -257,38 +257,94 @@ export type ListRow =
     card: DevCardModel;
     commentsFor?: number | null;
     thread?: FeedThreadRef | null;
+    /** Arrived since the viewer's last Workshop visit — the "new" marker. */
+    fresh?: boolean;
   }
   | { t: 'divider'; key: string; d: DividerSpec }
   | { t: 'note'; key: string; text: string }
   | { t: 'archived'; key: string; rows: ArchivedRow[] };
 
-/** A list surface's trailing affordance. */
+/** A kanban column's trailing affordance. */
 export type FooterSpec =
-  | { kind: 'showMore'; n: number }
+  /** The Done column's age cut: "Show all N" lifts it for the session. */
+  | { kind: 'showAll'; n: number }
   | { kind: 'loadMerged'; loading: boolean; n?: number | null }
   | { kind: 'github'; href: string }
   | { kind: 'moreCompleted'; n: number };
 
-export interface DevFeedView {
-  /**
-   * True until the board's first fetch lands. The stream draws placeholder
-   * cards and the empty note is withheld — see ../card/skeleton.tsx for why
-   * "No activity yet" on a screen that is still loading is worse than slow.
-   */
+/** One lane of a Workshop theme: the theme's items at one lifecycle stage. */
+export interface WorkshopLane {
+  key: 'review' | 'underway' | 'open' | 'shipped';
+  title: string;
+  rows: ListRow[];
+  /** Items past the lane's cap, reachable on the Board with the theme filter. */
+  more: number;
+}
+
+/**
+ * One theme on the Workshop: what a slice of the board is ABOUT, with its
+ * items grouped by stage underneath. `people` is the distinct set of
+ * members involved — filed, building, proposing, shipped — most involved
+ * first; it is the ranking unit, as it is in Talk to the City.
+ */
+export interface WorkshopTheme {
+  id: string;
+  name: string;
+  description: string;
+  /** "What people are asking for" — the model's line, absent on the category grouping. */
+  saying: string | null;
+  people: string[];
+  /** Epoch ms of the newest activity on any item in the theme. */
+  lastActive: number;
+  counts: { open: number; underway: number; review: number; shipped: number; fresh: number };
+  lanes: WorkshopLane[];
+  /** The trailing "Not yet grouped" pseudo-theme. */
+  ungrouped?: boolean;
+}
+
+export interface DevWorkshopView {
+  /** True until the board's first fetch lands — the skeleton stays up. */
   loading?: boolean;
-  /** The no-activity note, with its load-failure prefix. */
-  emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
-  entries: ListRow[];
-  footer: FooterSpec | null;
-  /**
-   * Whether the viewer may post into a row's thread. Posting is collab-gated
-   * server-side (a 404 on deny, so private slugs stay unenumerable), so a
-   * reply box offered to a viewer who cannot post would be a control whose
-   * only feedback is a failure.
-   */
-  canPost?: boolean;
   /** The open app, which the inline composer posts to. */
   slug?: string;
+  /** Whether the viewer may post into a row's thread (collab-gated server-side). */
+  canPost?: boolean;
+  /** The no-items note, with its load-failure prefix. */
+  emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
+  /** Proposals awaiting THIS viewer's vote — pinned above the themes. */
+  votes: { count: number; rows: ListRow[] };
+  /**
+   * What happened since the viewer last opened this app's Workshop, or null
+   * on a first visit (the welcome takes its place). `baseline` is epoch ms.
+   */
+  since: {
+    baseline: number;
+    shipped: number;
+    opened: number;
+    proposed: number;
+    rows: ListRow[];
+  } | null;
+  /** First-visit orientation: the board's shape in numbers. */
+  welcome: { open: number; themes: number; votesWaiting: number; shippedWeek: number } | null;
+  /** The app's general discussion, as a row — see AppView._discussionCardModel. */
+  discussion: ListRow | null;
+  themes: WorkshopTheme[];
+  meta: {
+    /**
+     * 'ai' from the model, 'category' from the voted category, 'demo' for
+     * staging's obviously-fake grouping, null while unknown.
+     */
+    source: 'ai' | 'category' | 'demo' | null;
+    generatedAt: string | null;
+    /** The grouping predates the board's current state; a refresh is behind it. */
+    stale: boolean;
+    /** A regeneration is running now. */
+    pending: boolean;
+    /** The shared filter bar is narrowing what the themes hold. */
+    filtered: boolean;
+  };
+  /** A row to open on paint (the ?shot= deep links) — theme id and item key. */
+  autoExpand: { theme: string; key: string } | null;
 }
 
 export interface KanbanColView {

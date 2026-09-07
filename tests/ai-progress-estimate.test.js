@@ -318,17 +318,28 @@ function narrowMediaBlock(css) {
   throw new Error('unbalanced braces in 640px media query');
 }
 
-test('mobile (#286): the 640px block no longer hides .dc-cc-estimate', () => {
-  const block = narrowMediaBlock(read('public/css/app.css'));
-  // The activity snippet stays hidden on narrow screens...
-  assert.match(block, /\.dc-cc-current\s*\{\s*display:\s*none/,
-    '.dc-cc-current must remain hidden on narrow viewports');
-  // ...but the AI progress estimate must NOT be display:none anymore.
-  assert.doesNotMatch(block, /\.dc-cc-estimate\s*\{\s*display:\s*none/,
-    '.dc-cc-estimate must not be hidden in the 640px block');
-  // And it should wrap onto its own full-width row instead.
-  assert.match(block, /\.dc-cc-estimate\s*\{[^}]*flex-basis:\s*100%/,
-    '.dc-cc-estimate must span its own full-width row on mobile');
+test('mobile (#286): NOTHING in the run summary is hidden by width any more', () => {
+  // #286 relaxed this block so the estimate survived a phone; the block
+  // itself is gone now, and that is the stronger version of the same rule.
+  //
+  // It existed because four muted spans could not share one inline line at
+  // 344px: `.dc-cc-current` (the answer to "what is it doing") and
+  // `.dc-cc-cohort` were `display: none`d outright, and the estimate was
+  // re-ordered onto a row of its own with `flex-basis: 100%`. All three were
+  // workarounds for the inline row. The facts are chips that wrap and the
+  // two sentences have their own row, so the narrow case costs a line of
+  // height instead of a fact — measured at 344px, where the chips take two
+  // rows and every value is still on screen.
+  const css = read('public/css/app.css');
+  assert.doesNotMatch(css, /\.dc-cc-current\s*\{\s*display:\s*none/,
+    'the activity snippet must never be hidden by viewport width again');
+  assert.doesNotMatch(css, /\.dc-cc-cohort\s*\{\s*display:\s*none/,
+    'nor the cohort hint');
+  assert.doesNotMatch(css, /\.dc-cc-estimate\s*\{[^}]*flex-basis:\s*100%/,
+    'and the estimate needs no re-ordering — it is on its own row at all widths');
+  // The chip row is what replaced all of it.
+  assert.match(css, /\.dc-cc-chips\s*\{[^}]*flex-wrap:\s*wrap/,
+    'the facts wrap rather than truncate or vanish');
 });
 
 test('mobile (#286): dev-chat hydrates _estimate from persisted metadata', () => {

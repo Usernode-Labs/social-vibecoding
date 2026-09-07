@@ -342,6 +342,31 @@ function RowActions({ msg }: { msg: TranscriptMessage }) {
   );
 }
 
+/**
+ * Consecutive system lines that say the same thing fold into one, with a
+ * count: a merge gate that re-runs on every check posts "PR #N reached the
+ * vote threshold but has 1 test failing…" each time, and eight copies of
+ * one sentence were the longest thing on a topic page. The last copy is
+ * the one kept, so a reaction or a save lands on the newest. Vote rows and
+ * people's messages never fold.
+ */
+export function foldRepeats(messages: TranscriptMessage[]): TranscriptMessage[] {
+  const out: TranscriptMessage[] = [];
+  let run = 0;
+  for (const m of messages) {
+    const prev = out[out.length - 1];
+    const foldable = m.kind === 'system' && !!m.systemText;
+    if (foldable && prev && prev.kind === 'system' && prev.systemText === m.systemText) {
+      run += 1;
+      out[out.length - 1] = { ...m, repeat: run + 1 };
+    } else {
+      run = 0;
+      out.push(m);
+    }
+  }
+  return out;
+}
+
 /** A system or vote row — one line of text, plus whatever the module fills in. */
 export function SystemRow({ msg }: { msg: TranscriptMessage }) {
   return (
@@ -350,6 +375,9 @@ export function SystemRow({ msg }: { msg: TranscriptMessage }) {
       data-msg-id={msg.id ?? ''}
     >
       <span className="gc-msg-system-text">{msg.systemText}</span>
+      {msg.repeat && msg.repeat > 1 ? (
+        <span className="gc-msg-system-repeat" title={`Posted ${msg.repeat} times in a row; this is the latest`}>{` · ×${msg.repeat}`}</span>
+      ) : null}
       {/*
           The controls host, rendered once as an empty span with a constant
           className and never looked inside — the controller-host seam. The
@@ -557,7 +585,7 @@ export function Transcript({ source = 'main' }: { source?: string }) {
       {view.lead.placeholder ? (
         <div className="text-xs text-zinc-500 dark:text-zinc-400 px-2 py-2">{view.lead.placeholder}</div>
       ) : null}
-      {view.messages.map((msg, i) => {
+      {foldRepeats(view.messages).map((msg, i) => {
         const key = msg.id != null ? `m${msg.id}` : `i${i}`;
         if (msg.kind === 'spec_share') return <SpecShareRow key={key} msg={msg} />;
         if (msg.kind === 'message') return <MessageRow key={key} msg={msg} />;

@@ -23,14 +23,26 @@
  * why `_forkSource` no longer needs to exist as shared state.
  */
 
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 
 import { useHiddenClass } from '../../lib/legacy-dom';
+import { useStoreState } from '../../lib/use-store-state';
+import { CreateProgress } from './create-progress';
+import {
+  creationProgressStore,
+  fetchCreationProgress,
+  outcomeOf,
+  publishAppStatus,
+  stopWatchingCreation,
+  watchCreation,
+} from './creation-progress-store.js';
 import { useDialog } from './use-dialog';
+
+const POLL_INTERVAL_MS = 4000;
 
 export interface ForkSource {
   slug: string;
@@ -44,6 +56,8 @@ export function ForkAppDialog() {
   const [sourceName, setSourceName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [forked, setForked] = useState<{ slug: string; name: string } | null>(null);
+  const progress = useStoreState(creationProgressStore);
 
   const dialog = useDialog<ForkSource>('fork', {
     onOpen: (payload) => {
@@ -51,6 +65,8 @@ export function ForkAppDialog() {
       sourceRef.current = src;
       setSourceName(src?.name || '');
       setError('');
+      setForked(null);
+      stopWatchingCreation();
       if (inputRef.current) inputRef.current.value = `${src?.name || 'App'} (fork)`;
       setTimeout(() => {
         inputRef.current?.focus();
@@ -59,11 +75,33 @@ export function ForkAppDialog() {
     },
     onClose: () => {
       setError('');
+      setBusy(false);
+      setForked(null);
+      stopWatchingCreation();
       if (inputRef.current) inputRef.current.value = '';
     },
   });
 
   useHiddenClass(errorRef, !error);
+
+  // Forking is asynchronous just like creating/importing. Follow the shared
+  // phase stream, with a poll as the recovery path if the terminal websocket
+  // event is missed while the source app remains open behind this dialog.
+  const creatingSlug = forked && outcomeOf(progress.status) === 'pending' ? forked.slug : null;
+  useEffect(() => {
+    if (!creatingSlug) return undefined;
+    let stopped = false;
+    const poll = () => {
+      if (stopped) return;
+      void fetchCreationProgress(creatingSlug, (url: string) => fetch(url));
+    };
+    poll();
+    const timer = setInterval(poll, POLL_INTERVAL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [creatingSlug]);
 
   // Verbatim from AppView.submitFork.
   async function submit(event: FormEvent) {
@@ -85,15 +123,23 @@ export function ForkAppDialog() {
         setError(data.error || 'Fork failed.');
         return;
       }
-      dialog.close();
-      // Same creation toast as the create dialog (issue #1418) — a fork ends
-      // in the identical 'creating' → "Spinning up…" tile state.
-      window.PlatformUI?.toast?.(
-        'Your app is being created. It will appear in your list of apps when it’s ready.',
-      );
-      // Land the user on the home feed where the new fork tile shows its
-      // "Spinning up…" state (identical to creating a new app).
-      (window.App?.navigateHome as (() => void) | undefined)?.();
+      const slug = data.app?.slug;
+      if (!slug) {
+        // A malformed success cannot be followed. Preserve the old fallback
+        // rather than rendering a progress card with no app to poll.
+        dialog.close();
+        window.PlatformUI?.toast?.(
+          'Your fork is being created. It will appear in your apps when it is ready.',
+        );
+        (window.App?.navigateHome as (() => void) | undefined)?.();
+        return;
+      }
+      watchCreation(slug);
+      setForked({ slug, name: data.app?.name || name });
+      // Put the new tile behind the still-open report immediately. The dialog
+      // owns the detailed status; the tile remains a useful destination after
+      // the user closes it.
+      (window.Home?.load as (() => void) | undefined)?.();
     } catch {
       setError('Network error. Please try again.');
     } finally {
@@ -108,6 +154,49 @@ export function ForkAppDialog() {
       {...dialog.backdropProps}
     >
       <DialogCard size="sm">
+        {forked ? (
+          <CreateProgress
+            appName={forked.name}
+            mode="fork"
+            progress={progress}
+            onOpenApp={() => {
+              const slug = forked.slug;
+              dialog.close();
+              (window.App?.openAppTab as ((s: string, t: string) => void) | undefined)?.(slug, 'app');
+            }}
+            onSetSecrets={() => {
+              const slug = forked.slug;
+              dialog.close();
+              (window.Secrets?.open as ((s: string) => void) | undefined)?.(slug);
+            }}
+            onRetry={() => {
+              const slug = forked.slug;
+              watchCreation(slug);
+              void fetch(`/api/apps/${encodeURIComponent(slug)}/retry`, { method: 'POST' })
+                .then(async (res) => {
+                  if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    publishAppStatus({
+                      slug,
+                      status: 'error',
+                      errorReason: data.error || `Retry failed (HTTP ${res.status}).`,
+                    });
+                    return;
+                  }
+                  (window.Home?.load as (() => void) | undefined)?.();
+                })
+                .catch(() => {
+                  publishAppStatus({
+                    slug,
+                    status: 'error',
+                    errorReason: 'Could not reach the server to retry. Try again from the app tile.',
+                  });
+                });
+            }}
+            onClose={() => dialog.close()}
+          />
+        ) : (
+          <>
         <h2 className="text-lg font-bold mb-1">
           Fork this app
         </h2>
@@ -193,6 +282,8 @@ export function ForkAppDialog() {
             </Button>
           </div>
         </form>
+          </>
+        )}
       </DialogCard>
     </DialogRoot>
   );

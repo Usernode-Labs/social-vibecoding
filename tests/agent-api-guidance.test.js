@@ -154,6 +154,14 @@ test('proposal summaries remain scannable user-visible Markdown', () => {
   assert.match(proposal, /`phase` field.*not a substitute for visible structure in `content`/);
 });
 
+test('proposal guidance preserves one work identity through check recovery', () => {
+  const proposal = readSkill('usernode-proposal');
+  assert.match(proposal, /request ID and returned session ID as the permanent identity/);
+  assert.match(proposal, /recovering stalled checks never authorizes another `proposal_start`/);
+  assert.match(proposal, /When stalled, call `proposal_recheck` for that session/);
+  assert.match(proposal, /`supersedes_session_id` only after the user explicitly asks/);
+});
+
 test('machine-local agent setup artifacts are ignored', () => {
   const ignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
   assert.match(ignore, /^\.codex\/config\.toml$/m);

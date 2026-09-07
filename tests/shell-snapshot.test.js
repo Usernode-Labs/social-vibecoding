@@ -142,7 +142,10 @@ test('the snapshot is applied AFTER hydration, never before it', () => {
   // error on any route fails proposal checks. The prerender is allowed to be
   // wrong for exactly as long as it takes to hydrate.
   const hydrateAt = MAIN.indexOf('hydrateRoot(document.body');
-  const applyAt = MAIN.indexOf('applyShellSnapshot()');
+  // Both calls are wrapped in bootStep() now (nothing above hydrateRoot may
+  // be fatal — see tests/boot-floor.test.js); the ORDERING this test exists
+  // for is untouched by that.
+  const applyAt = MAIN.indexOf("bootStep('applyShellSnapshot'");
   assert.ok(hydrateAt > -1, 'the entry still hydrates the body');
   assert.ok(applyAt > -1, 'and applies the snapshot');
   assert.ok(applyAt > hydrateAt, 'the apply comes after the hydration');

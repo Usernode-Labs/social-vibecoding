@@ -146,12 +146,11 @@ const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
  * between them is frozen at mount rather than followed live. A view toggle
  * does not re-pick: by then the real board owns the node.
  *
- * The second node the feed form used to carry — `#gc-merged`, the Completed
- * block — is gone: completed work is ordinary activity in the Feed's own
- * stream now (see `AppView._feedItems`), and the kanban Done column renders
- * its own.
+ * The list form is the Workshop's (`#dev-workshop`, features/dev-board/
+ * workshop/workshop.tsx), which replaced the Activity feed as the Dev
+ * screen's lander; the kanban Done column renders its own completed rows.
  */
-const DEV_BODY_FEED_INITIAL = { __html: '<div id="dev-feed">' + skeletonListHtml(3) + '</div>' };
+const DEV_BODY_WORKSHOP_INITIAL = { __html: '<div id="dev-workshop">' + skeletonListHtml(3) + '</div>' };
 const DEV_BODY_KANBAN_INITIAL = { __html: skeletonKanbanHtml() };
 
 /**
@@ -170,7 +169,7 @@ function useBodyInitial(): { __html: string } {
   const mode = useDevViewMode();
   const chosen = useRef<{ __html: string } | null>(null);
   if (!chosen.current) {
-    chosen.current = mode === 'kanban' ? DEV_BODY_KANBAN_INITIAL : DEV_BODY_FEED_INITIAL;
+    chosen.current = mode === 'kanban' ? DEV_BODY_KANBAN_INITIAL : DEV_BODY_WORKSHOP_INITIAL;
   }
   return chosen.current;
 }
@@ -185,14 +184,12 @@ function useBodyInitial(): { __html: string } {
  * chat: the board's recency stream took the name, and the screen it displaced
  * was left reachable only from a notification.
  *
- * It draws on the KANBAN only, because the Feed draws the same fact better.
- * A feed is a stream of what just happened and a conversation is one of the
- * things that just happened, so there it is an ordinary activity row sorted by
- * its latest message (`AppView._discussionCardModel`); a pinned tile above
- * that stream would be saying the discussion is not activity, immediately
- * above the row proving it is. The kanban is a prioritised worklist with no
- * such slot, so there the card is chrome above the columns — which is exactly
- * what it always was.
+ * It draws on the KANBAN only. The Workshop draws the same fact as one of its
+ * own rows (`AppView._discussionCardModel`), in its own place between the
+ * strips and the themes, so a second copy above the host would be the
+ * discussion twice. The kanban is a prioritised worklist with no such slot,
+ * so there the card is chrome above the columns — which is exactly what it
+ * always was.
  *
  * ── An anchor ──────────────────────────────────────────────────────────
  *
@@ -251,7 +248,14 @@ export function DevBoardFrame({
   const { locked } = useStoreState<LockedNoticeState>(lockedNoticeStore);
   const bodyInitial = useBodyInitial();
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-strip">
+      {/*
+          THE BOARD IS THE STRIP. The dev area is drawn on the lift ladder the
+          session view already uses (`.dc-lift` in app.css): this column is
+          the frosted strip on the wallpaper, and a topic or the Discussion
+          opens as the sheet rising on it (./topic-frame.tsx, ./chat-frame.tsx).
+          Nothing inside the column changes.
+      */}
       {/*
           THE "DEV" SUB-HEADER ROW IS GONE (#1367 follow-up).
 
@@ -424,10 +428,10 @@ export function DevBoardFrame({
           ) : null}
         </div>
         <DiscussionCard cardCls={cardCls} cardHoverCls={cardHoverCls} />
-        {/* Body region: the Feed mounts #dev-feed here; Kanban mounts
-            #dev-kanban-filterbar + #dev-kanban-board. _repaintDevBody() owns
-            the swap. The wrapper node is stable across tab switches so the
-            delegated card-open handler (bound by the module) survives both. */}
+        {/* Body region: the Workshop mounts #dev-workshop here; Kanban mounts
+            #dev-kanban-board. _repaintDevBody() owns the swap. The wrapper
+            node is stable across tab switches so the delegated card-open
+            handler (bound by the module) survives both. */}
         <div
           id="dev-body"
           className="px-3 py-2"
