@@ -941,6 +941,18 @@
       "expectText": "Browse all apps"
     },
     {
+      "name": "Directory leads with reviewed apps and keeps demos under Show more (#1523)",
+      "path": "/?demo=1&curation=1&sort=recommended#apps",
+      "expectSelector": "#browse-list:has([data-slug=\"directory-sample-working\"][data-directory-state=\"working\"]):not(:has(.browse-row[data-slug=\"directory-sample-demo\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]",
+      "expectText": "Reviewed working apps"
+    },
+    {
+      "name": "Show more keeps demo and broken directory apps reachable (#1523)",
+      "path": "/?demo=1&curation=1&sort=recommended&shot=browse-more#apps",
+      "expectSelector": "#browse-more-apps:has([data-directory-state=\"demo\"]) [data-directory-state=\"broken\"]",
+      "expectText": "Show less"
+    },
+    {
       "name": "With nothing featured, Discover shows its compact note (?shot=discover-empty)",
       "path": "/?demo=1&shot=discover-empty",
       "expectSelector": "#home-body [data-panel-slot=\"discover\"][data-featured=\"0\"] .home-panel-browse",
@@ -3197,7 +3209,7 @@
     },
     {
       "name": "Browse draws the first-letter fallback tile for a seeded app (#1120)",
-      "path": "/#apps",
+      "path": "/?sort=recommended&shot=browse-more#apps",
       "expectSelector": "#browse-list .browse-row .app-icon-tile[data-icon=\"letter\"]",
       "expectText": "Staging demo app — letter tile"
     },
