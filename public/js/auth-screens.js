@@ -154,20 +154,29 @@
     // A `return_to` value this platform will actually navigate to, or ''.
     //
     // Resolved against this origin and then matched by pathname, so an
-    // allowed page keeps the query string it was asked for while everything
-    // that is not a plain same-origin absolute path is refused: an absolute
-    // URL, a protocol-relative '//host', a scheme like javascript:, and a
-    // traversal that climbs out all fail rather than becoming an open
-    // redirect. What does the refusing is the ORIGIN comparison plus the
-    // pathname match against a returned `url.pathname` — never the raw
-    // string — so the leading-'/' test below is belt-and-braces ahead of
-    // them rather than the thing holding the property up.
+    // allowed page keeps the query string it was asked for while an absolute
+    // URL, a scheme like javascript:, and a traversal that climbs out are all
+    // refused rather than becoming an open redirect. What refuses an OFF-SITE
+    // target is the ORIGIN comparison plus a pathname match taken from the
+    // parsed `url` — never from the raw string.
     //
-    // The fragment is DROPPED, and that is a control, not tidiness:
-    // /cli/authorize carries the CLI launch code in its fragment (see
-    // cli-authorize.js, which reads location.hash and stashes the code), so
-    // forwarding one would let a crafted `return_to` seed a device code the
-    // victim never asked for. Do not "restore" url.hash here.
+    // The two shape tests do something narrower and are still load-bearing:
+    // dropping `raw.startsWith('//')` changes outcomes, because a
+    // protocol-relative value naming THIS host ('//usernode.example/…')
+    // resolves same-origin onto an allowed path and would then be accepted.
+    // That would not escape anywhere — it lands on the same page the plain
+    // path does — but the accepted spelling is deliberately just one shape,
+    // a plain absolute path, so a reader is never left comparing two.
+    //
+    // The fragment is dropped, and NOT because it is a security boundary —
+    // saying so would be false and would invite somebody to defend the wrong
+    // line. Neither allowed page needs one forwarded: connect-authorize.js
+    // never reads location.hash at all, and cli-authorize.js carries its
+    // launch code across a sign-in in sessionStorage rather than in the URL
+    // it returns to. (That card is reachable anyway from the
+    // `verification_uri_complete` link the server itself mints, so nothing
+    // here stands between anyone and it.) Forwarding a fragment would add a
+    // value nothing reads, so this returns one shape and only one.
     returnToUrl(value) {
       const raw = String(value || '');
       if (!raw.startsWith('/') || raw.startsWith('//')) return '';

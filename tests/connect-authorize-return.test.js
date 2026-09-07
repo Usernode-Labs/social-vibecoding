@@ -275,25 +275,27 @@ test('the snapshot outliving the cookie is why that path is ordinary', () => {
     'snapshot outlives the session, so the authed-from-snapshot boot is reachable');
 });
 
-// ── The fragment drop is a control, so pin it where it bites ───────────
+// ── One returned shape, for both pages ────────────────────────────────
 //
-// A review mutated returnToUrl to forward the fragment for /cli/authorize
-// only, and the suite still passed. That is the one page where forwarding
-// matters: cli-authorize.js reads the CLI launch code out of location.hash,
-// so a crafted `return_to` carrying a fragment would seed a device code the
-// victim never asked for. The generic "fragment is dropped" case above does
-// not cover it, because it only exercises the consent path.
+// returnToUrl returns pathname and search, never the fragment, and the CLI
+// page is where that is worth pinning: it is the only allowed page that
+// reads a fragment at all. This is NOT a security boundary and the tests do
+// not claim it is — the CLI card is reachable from the
+// `verification_uri_complete` link the server mints, and the page carries
+// its launch code across a sign-in in sessionStorage rather than in the URL
+// it returns to. What these pin is that the helper has one output shape, so
+// a forwarded fragment cannot appear for one page and not the other.
 
-test('a fragment is never forwarded to the CLI page, which reads its code from one', () => {
+test('a fragment is dropped for the CLI page too, not just the consent page', () => {
   const { AuthScreens } = loadAuthScreens();
-  assert.equal(AuthScreens.returnToUrl('/cli/authorize#code=ATTACKER'), '/cli/authorize',
-    'no device code can be seeded through return_to');
-  assert.equal(AuthScreens.returnToUrl('/cli/authorize?x=1#code=ATTACKER'), '/cli/authorize?x=1');
-  // And the page really does read its code from the fragment, which is what
-  // makes the line above load-bearing rather than decorative.
+  assert.equal(AuthScreens.returnToUrl('/cli/authorize#code=SOMETHING'), '/cli/authorize');
+  assert.equal(AuthScreens.returnToUrl('/cli/authorize?x=1#code=SOMETHING'), '/cli/authorize?x=1');
+  // The page does read a fragment on FIRST arrival, which is why dropping it
+  // here has to be deliberate rather than incidental — and why nothing
+  // breaks: the code it needs after a sign-in comes from sessionStorage.
   const cli = fs.readFileSync(path.join(ROOT, 'public/js/cli-authorize.js'), 'utf8');
-  assert.match(cli, /location\.hash/, 'cli-authorize reads the fragment');
-  assert.match(cli, /getAll\('code'\)/, 'and takes its launch code from it');
+  assert.match(cli, /location\.hash/, 'cli-authorize reads the fragment on arrival');
+  assert.match(cli, /sessionStorage\.setItem/, 'and stashes the code for after a sign-in');
 });
 
 test('finishLogin does not forward a fragment either, end to end', async () => {

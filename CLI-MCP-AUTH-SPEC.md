@@ -594,10 +594,11 @@ absolute, protocol-relative, and otherwise off-origin values are discarded.
 
 The QUERY STRING is preserved, because the MCP consent request is carried in
 one — client id, redirect uri, PKCE challenge and state — and an exact-string
-allowlist could not have carried it. The FRAGMENT is always discarded, and
-that is a security control rather than tidiness: this page takes its launch
-code from the fragment, so forwarding one would let a crafted `return_to`
-seed a device code the victim never asked for.
+allowlist could not have carried it. The FRAGMENT is always discarded. That is
+a normalisation and not a security boundary: this page takes its launch code
+from a fragment on first arrival but carries it across a sign-in in
+`sessionStorage`, and the consent page never reads a fragment at all, so a
+forwarded one would be a value nothing reads.
 
 After login it returns to the approval page, which restores the launch code
 from `sessionStorage`.
