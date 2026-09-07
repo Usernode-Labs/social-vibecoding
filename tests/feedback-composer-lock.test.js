@@ -75,3 +75,24 @@ test('the submit BUTTON is still disabled, which is right for a button', () => {
   assert.match(SRC, /feedbackBtn\.disabled = true;/);
   assert.match(SRC, /feedbackBtn\.disabled = false;/);
 });
+
+test('nothing reads the property the lock stopped setting', () => {
+  // The three ways #1757 half-landed, each a reader or writer left behind
+  // when the lock moved from `disabled` to `readOnly`:
+  //   * showFirstFeedback still DISABLED both fields, which is the focus-
+  //     and-keyboard bug the change existed to remove;
+  //   * the queue-flush handler still BRANCHED on `feedbackText.disabled`,
+  //     which is now permanently false, so a flush landing on an
+  //     already-sent composer never showed the confirmation;
+  //   * `_open` unlocked after its early return rather than before.
+  // Two of the three were green on their own and red only together.
+  assert.doesNotMatch(SRC, /feedbackText\.disabled/, 'no writer AND no reader');
+  assert.doesNotMatch(SRC, /feedbackTitle\.disabled/);
+  assert.match(SRC, /else if \(feedbackText\.readOnly\) showFirstFeedback/,
+    'the flush handler asks what the lock is actually made of');
+  const open = SRC.slice(SRC.indexOf('Feedback._open ='));
+  const unlock = open.indexOf('setComposerLocked(false)');
+  const branch = open.indexOf('opts.firstFeedback && showFirstFeedback');
+  assert.ok(unlock >= 0 && unlock < branch,
+    'every open hands back an editable composer before the branch that re-locks it');
+});
