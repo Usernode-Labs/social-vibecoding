@@ -250,13 +250,6 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "767046d15a8b591a58c7",
-      "count": 1,
-      "preview": "`SELECT COALESCE(SUM(total_cost_cents), 0)::float AS cents FROM llm_usage WHERE date = CURRENT_DATE ${adminFilter('user_id', includeAdmins)}`"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
       "fingerprint": "7b689087e7ec4ffd947e",
       "count": 1,
       "preview": "`WITH base AS ( SELECT u.id AS user_id, u.is_admin FROM users u WHERE ${userCohort} ${adminFilter('u.id', includeAdmins)} ), flags AS ( SELECT b.user_id, b.is_a"
@@ -309,6 +302,13 @@
       "fingerprint": "d4da12286fe69ae2c5c6",
       "count": 1,
       "preview": "`WITH cohorts AS ( SELECT id AS user_id, date_trunc('week', created_at)::date AS cohort_wk FROM users WHERE TRUE ${adminFilter('id', includeAdmins)} ), activity"
+    },
+    {
+      "source": "src/routes/dashboard.js",
+      "kind": "structural-template",
+      "fingerprint": "d5accaf0d7be85f38b5e",
+      "count": 1,
+      "preview": "`SELECT COALESCE(SUM(total_cost_cents) FILTER (WHERE date = CURRENT_DATE), 0)::float AS cents, COALESCE(SUM(total_cost_cents) FILTER (WHERE date >= date_trunc('"
     },
     {
       "source": "src/routes/debug.js",

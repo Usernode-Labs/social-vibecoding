@@ -118,6 +118,7 @@ async function migrate(config) {
   await seedStagingBootstrapFailure(pool, config);
   await seedStagingChatEditFixtures(pool, config);
   await seedStagingLlmUsage(pool);
+  await seedStagingWeeklyCaps(pool);
   await seedStagingSpendDistribution(pool);
   await seedStagingCapReached(pool, config);
   await seedStagingAppCapApps(pool, config);
@@ -6352,6 +6353,68 @@ async function seedStagingLlmUsage(pool) {
   }
 
   log.info('db', 'Staging llm_usage fixtures seeded', { users: users.length });
+}
+
+// #1788: weekly-cap fixtures for the admin Users list and the Limits
+// panel. Two facts make them necessary on a preview:
+//   1. llm_usage is staging:private (schema-only clone → empty), so the
+//      new "spent this week" figure on every user row would read $0.00
+//      and a reviewer could not tell that from a broken query.
+//   2. users.weekly_limit_cents is brand new, so no cloned row carries a
+//      per-user weekly override and the new "Weekly $" control would only
+//      ever show its blank "default" state.
+// Two obviously-fake users cover the two interesting cap combinations —
+// weekly-only (daily switched off with a 0) and weekly-off (a 0 weekly
+// beside a live daily cap) — with week-to-date spend attached so the
+// weekly figure is visibly larger than the daily one. Fixed ids +
+// ON CONFLICT DO NOTHING, so re-running on every container boot is a
+// no-op; strictly a no-op outside staging; fake identities only, never
+// the account that opened the preview.
+async function seedStagingWeeklyCaps(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    const fixtures = [
+      // Daily off (0), weekly $12.50 — the weekly cap is the only ceiling.
+      { id: 9300021, name: 'staging-demo-weekly-only', daily: 0, weekly: 1250 },
+      // Weekly off (0), daily $20 — today's behaviour, stated explicitly.
+      { id: 9300022, name: 'staging-demo-weekly-off', daily: 2000, weekly: 0 },
+    ];
+
+    for (const f of fixtures) {
+      // Sentinel password → never an interactive login.
+      await pool.query(
+        `INSERT INTO users (id, username, password, daily_limit_cents, weekly_limit_cents)
+         VALUES ($1, $2, '!staging-fixture-no-login!', $3, $4)
+         ON CONFLICT (id) DO NOTHING`,
+        [f.id, f.name, f.daily, f.weekly]
+      );
+      // Pin the caps on reboot so a tester who edits them in the console
+      // gets the intended pair back on the next container build.
+      await pool.query(
+        'UPDATE users SET daily_limit_cents = $2, weekly_limit_cents = $3 WHERE id = $1',
+        [f.id, f.daily, f.weekly]
+      );
+      // Week-to-date spend: one row per day since Monday, so the row's
+      // "this week" figure is several times its "today" figure and the two
+      // are visibly different numbers rather than the same one twice.
+      await pool.query(
+        `INSERT INTO llm_usage (user_id, date, total_cost_cents, byok_cost_cents)
+         SELECT $1, d::date, 37.5, 0
+           FROM generate_series(
+                  date_trunc('week', CURRENT_DATE)::date,
+                  CURRENT_DATE,
+                  INTERVAL '1 day'
+                ) d
+         ON CONFLICT (user_id, date) DO NOTHING`,
+        [f.id]
+      );
+    }
+
+    log.info('db', 'Staging weekly-cap fixtures seeded', { users: fixtures.length });
+  } catch (err) {
+    log.warn('db', 'Staging weekly-cap seeding failed', { message: err.message });
+  }
 }
 
 // Daily spend distribution fixtures (the seven-bucket stacked chart on

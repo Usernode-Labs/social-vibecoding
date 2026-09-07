@@ -304,7 +304,7 @@ function adminRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.app_quota_requested_at, u.created_at,
-                u.daily_limit_cents, u.usernode_pubkey,
+                u.daily_limit_cents, u.weekly_limit_cents, u.usernode_pubkey,
                 EXISTS (
                   SELECT 1 FROM user_social_identities identity
                    WHERE identity.user_id = u.id
@@ -321,6 +321,14 @@ function adminRoutes(config) {
                 (u.id = $1) AS is_self,
                 ac.code as activation_code,
                 COALESCE(lu.total_cost_cents, 0) as cost_today_cents,
+                -- #1788: week-to-date platform-key spend, over the same
+                -- Monday-00:00-UTC week the weekly cap is enforced on. A
+                -- correlated subquery rather than a second join so the
+                -- cost_today_cents join above keeps its one-row shape.
+                (SELECT COALESCE(SUM(w.total_cost_cents), 0)
+                   FROM llm_usage w
+                  WHERE w.user_id = u.id
+                    AND w.date >= date_trunc('week', CURRENT_DATE)::date) AS cost_week_cents,
                 COALESCE(ac2.n, 0) AS apps_created
          FROM users u
          LEFT JOIN credentials.managed_openrouter_keys managed ON managed.user_id = u.id
@@ -740,19 +748,26 @@ function adminRoutes(config) {
 
   // ── LLM Spend Limits ───────────────────────────────────────
   //
-  // Admin-tunable daily caps on LLM spend. Backed by the
-  // `platform_settings` table (default per-user + global) plus the
-  // `users.daily_limit_cents` per-user override. Reads are cached for
-  // 10s in src/services/limits.js; PUTs invalidate that cache so the
-  // new value takes effect on the next request from any worker.
+  // Admin-tunable caps on LLM spend. Backed by the `platform_settings`
+  // table (default per-user daily + per-user weekly + global) plus the
+  // `users.daily_limit_cents` / `users.weekly_limit_cents` per-user
+  // overrides. Reads are cached for 10s in src/services/limits.js; PUTs
+  // invalidate that cache so the new value takes effect on the next
+  // request from any worker.
+  //
+  // #1788: the weekly cap layers on top of the daily one — a turn stops at
+  // whichever is exhausted first, and either set to 0 means that cap does
+  // not apply. limits.resolveCaps owns the full interaction.
 
   router.get('/api/admin/limits', async (_req, res) => {
     try {
       const userCents = await limits.getDefaultUserLimitCents(pool);
       const globalCents = await limits.getGlobalLimitCents(pool);
       const systemCents = await limits.getSystemTokensLimitCents(pool);
+      const weeklyCents = await limits.getDefaultUserWeeklyLimitCents(pool);
       res.json({
         user_daily_limit_cents: userCents,
+        user_weekly_limit_cents: weeklyCents,
         global_daily_limit_cents: globalCents,
         system_tokens_daily_limit_cents: systemCents,
       });
@@ -763,7 +778,7 @@ function adminRoutes(config) {
   });
 
   router.put('/api/admin/limits', requireAdminWrite, async (req, res) => {
-    const { user, global, system } = req.body || {};
+    const { user, weekly, global, system } = req.body || {};
     const updates = [];
     const validate = (label, v) => {
       if (v === undefined) return null;
@@ -779,10 +794,13 @@ function adminRoutes(config) {
     if (typeof globalN === 'string') return res.status(400).json({ error: globalN });
     const systemN = validate('system', system);
     if (typeof systemN === 'string') return res.status(400).json({ error: systemN });
-    if (userN === null && globalN === null && systemN === null) {
-      return res.status(400).json({ error: 'Provide at least one of: user, global, system' });
+    const weeklyN = validate('weekly', weekly);
+    if (typeof weeklyN === 'string') return res.status(400).json({ error: weeklyN });
+    if (userN === null && globalN === null && systemN === null && weeklyN === null) {
+      return res.status(400).json({ error: 'Provide at least one of: user, weekly, global, system' });
     }
     if (userN !== null) updates.push([limits.KEY_USER, String(userN)]);
+    if (weeklyN !== null) updates.push([limits.KEY_WEEKLY, String(weeklyN)]);
     if (globalN !== null) updates.push([limits.KEY_GLOBAL, String(globalN)]);
     if (systemN !== null) updates.push([limits.KEY_SYSTEM, String(systemN)]);
 
@@ -801,13 +819,15 @@ function adminRoutes(config) {
       limits.invalidate(...updates.map(([k]) => k));
       log.info('admin', 'Platform limits updated', {
         by: req.user.username,
-        user: userN, global: globalN, system: systemN,
+        user: userN, weekly: weeklyN, global: globalN, system: systemN,
       });
       const userCents = await limits.getDefaultUserLimitCents(pool);
       const globalCents = await limits.getGlobalLimitCents(pool);
       const systemCents = await limits.getSystemTokensLimitCents(pool);
+      const weeklyCents = await limits.getDefaultUserWeeklyLimitCents(pool);
       res.json({
         user_daily_limit_cents: userCents,
+        user_weekly_limit_cents: weeklyCents,
         global_daily_limit_cents: globalCents,
         system_tokens_daily_limit_cents: systemCents,
       });
@@ -1068,6 +1088,47 @@ function adminRoutes(config) {
       res.json({ ok: true, daily_limit_cents: rows[0].daily_limit_cents });
     } catch (err) {
       log.error('admin', 'Per-user limit update failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #1788: the weekly twin of the route above. Body `{ cents }` sets a
+  // weekly cap for this user only, `{ cents: null }` clears it back to the
+  // platform default, and `{ cents: 0 }` means "no weekly cap applies to
+  // this user" (see limits.resolveCaps). No cache invalidation for the same
+  // reason as the daily route: per-user values are read fresh from `users`
+  // on every gate.
+  router.put('/api/admin/users/:id/weekly-limit', requireAdminWrite, async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    const { cents } = req.body || {};
+    let value;
+    if (cents === null) {
+      value = null;
+    } else {
+      const n = Number(cents);
+      if (!Number.isInteger(n) || n < 0) {
+        return res.status(400).json({ error: 'cents must be a non-negative integer or null' });
+      }
+      value = n;
+    }
+    try {
+      const { rows } = await pool.query(
+        `UPDATE users SET weekly_limit_cents = $1 WHERE id = $2
+         RETURNING id, username, weekly_limit_cents`,
+        [value, userId]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'User not found' });
+      log.info('admin', 'Per-user weekly limit updated', {
+        id: rows[0].id, username: rows[0].username,
+        weeklyLimitCents: rows[0].weekly_limit_cents,
+        by: req.user.username,
+      });
+      res.json({ ok: true, weekly_limit_cents: rows[0].weekly_limit_cents });
+    } catch (err) {
+      log.error('admin', 'Per-user weekly limit update failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

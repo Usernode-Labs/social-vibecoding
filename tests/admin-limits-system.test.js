@@ -96,3 +96,88 @@ test('PUT /api/admin/limits with only user/global leaves system untouched', asyn
   assert.equal(r.user_daily_limit_cents, 3000);
   assert.equal(r.system_tokens_daily_limit_cents, 5000, 'system cap is preserved when not sent');
 });
+
+// ── #1788: the weekly cap is the fourth setting on the same route ────────
+//
+// It shares the daily cap's whole shape — one platform_settings key, one
+// param on this PUT, the same validation, the same cache invalidation — so
+// what these cover is that it actually got wired into all four of those
+// places rather than three.
+
+test('GET /api/admin/limits returns the default weekly cap when none is stored', async () => {
+  limits.invalidate();
+  store.delete('user_weekly_limit_cents');
+  const r = await fetch(`${base}/api/admin/limits`).then((x) => x.json());
+  assert.equal(r.user_weekly_limit_cents, 17500,
+    'seven days of the $25 daily default, so an untouched deployment gains no new refusals');
+});
+
+test('PUT /api/admin/limits persists weekly and re-reads it (cache invalidated)', async () => {
+  limits.invalidate();
+  const r = await fetch(`${base}/api/admin/limits`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ weekly: 30000 }),
+  }).then((x) => x.json());
+  assert.equal(r.user_weekly_limit_cents, 30000, 'response reflects the new value immediately');
+  assert.equal(store.get('user_weekly_limit_cents'), '30000', 'persisted to platform_settings');
+
+  const g = await fetch(`${base}/api/admin/limits`).then((x) => x.json());
+  assert.equal(g.user_weekly_limit_cents, 30000, 'and the cache was dropped, so a fresh read agrees');
+});
+
+test('a weekly cap of 0 is storable, and means "no weekly cap"', async () => {
+  limits.invalidate();
+  const r = await fetch(`${base}/api/admin/limits`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ weekly: 0 }),
+  }).then((x) => x.json());
+  assert.equal(r.user_weekly_limit_cents, 0);
+  assert.equal(store.get('user_weekly_limit_cents'), '0',
+    'stored as an explicit zero rather than falling back to the default');
+});
+
+test('PUT /api/admin/limits rejects a negative/non-integer weekly cap', async () => {
+  const r = await fetch(`${base}/api/admin/limits`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ weekly: -1 }),
+  });
+  assert.equal(r.status, 400);
+  const body = await r.json();
+  assert.match(body.error, /weekly/);
+
+  const f = await fetch(`${base}/api/admin/limits`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ weekly: 12.5 }),
+  });
+  assert.equal(f.status, 400, 'cents are integers');
+});
+
+test('PUT /api/admin/limits with only user leaves weekly untouched', async () => {
+  limits.invalidate();
+  store.set('user_weekly_limit_cents', '30000');
+  const r = await fetch(`${base}/api/admin/limits`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ user: 3000 }),
+  }).then((x) => x.json());
+  assert.equal(r.user_daily_limit_cents, 3000);
+  assert.equal(r.user_weekly_limit_cents, 30000, 'weekly cap is preserved when not sent');
+  assert.equal(store.get('user_weekly_limit_cents'), '30000');
+});
+
+test('sending nothing at all is a client error naming every accepted param', async () => {
+  const r = await fetch(`${base}/api/admin/limits`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(r.status, 400);
+  const body = await r.json();
+  for (const p of ['user', 'weekly', 'global', 'system']) {
+    assert.match(body.error, new RegExp(p), `the error names ${p}`);
+  }
+});

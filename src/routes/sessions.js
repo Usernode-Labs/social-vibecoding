@@ -6890,6 +6890,58 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         aiEnabled: true,
         resetsAt: reset.toISOString(),
         lowBalancePct: 80,
+        // #1788: which window these three figures describe. The daily cap
+        // is the one that bound here, which is what ?demo=1 has always
+        // meant — stated explicitly now that it is not the only answer.
+        capWindow: 'daily',
+        windowLabel: 'Today',
+        resetLabel: 'midnight UTC',
+        dailyApplies: true,
+        dailyLimitCents: 2000,
+        dailySpentCents: 2000,
+        weeklyApplies: false,
+        weeklyLimitCents: 0,
+        weeklySpentCents: 0,
+        demo: true,
+      });
+    }
+    // #1788: the weekly sibling. A spent WEEKLY allowance is even less
+    // reachable on a preview than a spent daily one — it would take seven
+    // days of seeded spend — and its copy differs everywhere the boundary
+    // is named ("this week", "Resets Monday 00:00 UTC"), so it gets its own
+    // fixture rather than a flag on the one above. The daily cap still has
+    // headroom here, so the weekly cap is unambiguously the one binding.
+    if (process.env.USERNODE_ENV === 'staging' && req.query.demo === 'weekly-out') {
+      // Next Monday 00:00 UTC, inline for the same reason as above: this
+      // branch stays provably free of any service call.
+      const weekReset = new Date();
+      weekReset.setUTCDate(weekReset.getUTCDate() + (((8 - weekReset.getUTCDay()) % 7) || 7));
+      weekReset.setUTCHours(0, 0, 0, 0);
+      return res.json({
+        spentCents: 17500,
+        limitCents: 17500,
+        remainingCents: 0,
+        creditPolicy: 'legacy',
+        tier: 'legacy',
+        limitSource: 'default',
+        verificationRequired: false,
+        entitlementAvailable: true,
+        tierLimitCents: 1000,
+        globalSpentCents: 4000,
+        globalLimitCents: 100000,
+        byokSpentCents: 0,
+        aiEnabled: true,
+        resetsAt: weekReset.toISOString(),
+        lowBalancePct: 80,
+        capWindow: 'weekly',
+        windowLabel: 'This week',
+        resetLabel: 'Monday 00:00 UTC',
+        dailyApplies: true,
+        dailyLimitCents: 2000,
+        dailySpentCents: 900,
+        weeklyApplies: true,
+        weeklyLimitCents: 17500,
+        weeklySpentCents: 17500,
         demo: true,
       });
     }

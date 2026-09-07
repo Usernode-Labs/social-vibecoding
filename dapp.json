@@ -2805,6 +2805,33 @@
       "expectSelector": "#admin-credit-balance"
     },
     {
+      "name": "Limits offers the default per-user WEEKLY cap beside the daily one (#1788)",
+      "path": "/#admin/limits",
+      "expectSelector": "#admin-limit-weekly",
+      "expectText": "Default per-user weekly cap"
+    },
+    {
+      "name": "A user row states week-to-date spend, not just today's (#1788)",
+      "path": "/?demo=1#admin/users",
+      "expectText": "this week"
+    },
+    {
+      "name": "A user row can be given its own weekly cap (#1788)",
+      "path": "/?demo=1#admin/users",
+      "expectSelector": ".admin-user-weekly-limit-input"
+    },
+    {
+      "name": "Analytics states the week's platform-key LLM spend (#1788)",
+      "path": "/?demo=1#admin/analytics",
+      "expectText": "LLM spend this week"
+    },
+    {
+      "name": "A spent WEEKLY allowance says it comes back Monday, not at midnight (#1788)",
+      "path": "/?demo=weekly-out#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "#dc-credits-banner [data-credits-reset]",
+      "expectText": "reset Monday 00:00 UTC"
+    },
+    {
       "name": "Admin console renders full width — no capped centered column",
       "path": "/#admin/analytics",
       "expectSelector": "#admin-root.w-full:not([class*=\"max-w-\"]):not(.mx-auto)"

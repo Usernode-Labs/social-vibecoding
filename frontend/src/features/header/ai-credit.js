@@ -117,7 +117,10 @@ import { aiBudgetStore } from './ai-budget-store.js';
         var state = CO ? CO.creditState(s) : null;
         // The reset boundary, worded once (CreditOptions.resetSentence) so
         // this row and the dev chat cannot describe it differently.
-        var resetText = state ? CO.resetSentence(state) : 'Free credits reset at midnight UTC.';
+        var resetText = state ? CO.resetSentence(state)
+          : (s.capWindow === 'weekly'
+            ? 'Free credits reset Monday 00:00 UTC.'
+            : 'Free credits reset at midnight UTC.');
         var show = function (view) { aiBudgetStore.set({ view: view, hidden: false }); };
 
         // A zero tier is a real state, not an unknown cap. Render the
@@ -152,17 +155,26 @@ import { aiBudgetStore } from './ai-budget-store.js';
         var pct = limit > 0 ? Math.min(100, (spent / limit) * 100) : 0;
         var spentTone = pct > 80 ? 'high' : pct > 50 ? 'mid' : 'low';
 
+        // #1788: the figures above describe whichever cap is BINDING —
+        // daily or weekly — so the words around them follow the server's
+        // window rather than assuming "daily"/"today".
+        var weeklyWindow = (state ? state.capWindow : s.capWindow) === 'weekly';
+        var windowAdj = weeklyWindow ? 'weekly' : 'daily';
+        var windowWhen = weeklyWindow ? 'this week’s' : 'today’s';
+
         var tip;
         if (exhausted && s.hasByokKey) {
-          tip = 'Your ' + money(limit) + ' daily allowance is used up. AI turns are now '
+          tip = 'Your ' + money(limit) + ' ' + windowAdj + ' allowance is used up. AI turns are now '
             + 'billed to the Anthropic key you saved in Settings. ' + resetText;
         } else if (exhausted) {
-          tip = 'You have used all ' + money(limit) + ' of today’s AI allowance. ' + resetText;
+          tip = 'You have used all ' + money(limit) + ' of ' + windowWhen + ' AI allowance. ' + resetText;
         } else {
-          tip = money(spent) + ' of your ' + money(limit) + ' daily AI allowance used ('
+          tip = money(spent) + ' of your ' + money(limit) + ' ' + windowAdj + ' AI allowance used ('
             + money(remaining) + ' left). ' + resetText;
         }
         if (byok > 0) {
+          // Still today's figure: the BYOK tally is the day row's, not the
+          // week's, whichever window the cap above is measuring.
           tip += ' A further ' + money(byok)
             + ' today was billed to your own Anthropic key and does not count against the allowance.';
         }
