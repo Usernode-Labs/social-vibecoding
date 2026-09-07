@@ -587,10 +587,21 @@ If there is no platform session, the page redirects to:
 /login.html?return_to=%2Fcli%2Fauthorize
 ```
 
-The login implementation may honor only the exact relative value
-`/cli/authorize`, with no query or fragment; it must discard absolute,
-protocol-relative, or other values. After login it returns to the approval
-page, which restores the launch code from `sessionStorage`.
+The login implementation honors a relative value whose PATH is on a short
+allowlist: `/cli/authorize` and the MCP consent path `/connect/authorize`.
+It resolves the value against its own origin and matches `url.pathname`, so
+absolute, protocol-relative, and otherwise off-origin values are discarded.
+
+The QUERY STRING is preserved, because the MCP consent request is carried in
+one — client id, redirect uri, PKCE challenge and state — and an exact-string
+allowlist could not have carried it. The FRAGMENT is always discarded. That is
+a normalisation and not a security boundary: this page takes its launch code
+from a fragment on first arrival but carries it across a sign-in in
+`sessionStorage`, and the consent page never reads a fragment at all, so a
+forwarded one would be a value nothing reads.
+
+After login it returns to the approval page, which restores the launch code
+from `sessionStorage`.
 
 Approval endpoint:
 
@@ -1178,6 +1189,7 @@ enabled_tools = [
   "social_vibecoding.proposal_push_commit",
   "social_vibecoding.proposal_submit_build",
   "social_vibecoding.proposal_status",
+  "social_vibecoding.proposal_recheck",
   "social_vibecoding.proposal_promote",
 ]
 
@@ -1458,6 +1470,7 @@ social_vibecoding.proposal_append_context
 social_vibecoding.proposal_push_commit
 social_vibecoding.proposal_submit_build
 social_vibecoding.proposal_status
+social_vibecoding.proposal_recheck
 social_vibecoding.proposal_promote
 ```
 
@@ -1469,7 +1482,7 @@ platform endpoint's HTTP status and JSON body, never accept an origin/header/
 cookie/token input, and never call GitHub directly. This path-based bridge
 means a new user-facing platform endpoint needs no CLI/MCP registry change.
 
-The six proposal tools are reviewed convenience wrappers around those same
+The seven proposal tools are reviewed convenience wrappers around those same
 user-facing APIs, not a hardcoded API registry. They preserve the browser Dev
 workflow for work authored in a local Codex or Claude session:
 
@@ -1494,7 +1507,12 @@ workflow for work authored in a local Codex or Claude session:
    request and atomically commits the session, initial spec, and initial
    history, so retrying remains read-only even after later local/web edits.
    The spec is stored in both the live session document and immutable spec
-   history.
+   history. The request ID and returned session ID remain the identity for
+   retries, rebases, pushes, and check recovery. A new request ID for the same
+   owner's linked pre-vote handoff returns `proposal_already_started` with the
+   existing session. Only an explicitly supplied `supersedes_session_id` may
+   replace it; Usernode archives the named predecessor and inserts the
+   lineage-linked successor in one transaction.
 3. The agent implements and tests in its local checkout and creates one normal
    non-merge commit. It does not push the bot-owned branch with personal
    GitHub credentials and does not dispatch a web worker merely to obtain push
@@ -1518,11 +1536,14 @@ workflow for work authored in a local Codex or Claude session:
    `proposal_submit_build`. Usernode re-verifies ancestry and branch ownership,
    then runs the ordinary staging, preview, screenshot, and proposal-check
    pipeline against that exact bot-owned commit.
-6. The agent polls `proposal_status` until `ready` or `failed`, iterating with
-   later fast-forward commits as needed. `proposal_promote` first verifies the
-   session is ready, then uses the existing Usernode promotion route to create
-   the app PR lazily and enter the normal vote flow; it never opens a GitHub PR
-   directly.
+6. The agent polls `proposal_status` until `ready`, `failed`, or `stalled`.
+   Status exposes the check phase, trigger, timestamp, commit staleness, and
+   whether a live worker/build/capture still owns the run. `stalled` means the
+   durable pending snapshot is overdue with no live owner; `proposal_recheck`
+   rebuilds or re-runs checks on that same session. Failed code is revised with
+   later fast-forward commits. `proposal_promote` first verifies the session is
+   ready, then uses the existing Usernode promotion route to create the app PR
+   lazily and enter the normal vote flow; it never opens a GitHub PR directly.
 
 The returned `webPath` opens the exact same native session on the web Dev
 page. Continuing there is optional: its user/assistant transcript, spec,
@@ -2108,6 +2129,6 @@ This keeps global platform identity separate from child-app identity.
    `reauthorization_required` retry contracts.
 8. Add native CLI proposal handoff storage/routes, GitHub-App-backed exact-tree
    commit upload, pinned-commit branch adoption, shared transcript/spec
-   context, staging/check orchestration, and the six proposal workflow tools
+   context, staging/check orchestration, and the seven proposal workflow tools
    for Codex and Claude.
 9. Add operational metrics and audit-retention monitoring.

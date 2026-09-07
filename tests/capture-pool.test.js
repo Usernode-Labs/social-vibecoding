@@ -434,6 +434,10 @@ function makeEventPage({ onGoto, onHash } = {}) {
         fn({ type: () => 'error', text: () => text, location: () => ({ url: 'app.js', lineNumber: 1 }) });
       }
     },
+    // One request lifecycle event, which is what rolls the assert window.
+    emitRequest() {
+      for (const fn of handlers.get('response') || []) fn({});
+    },
     async setViewport() {},
     async goto(u) {
       page.gotos.push(u);
@@ -755,6 +759,113 @@ test('a selector that never appears still fails, inside the assertion ceiling', 
   assert.ok(elapsed < 1500, `polling is bounded by the ceiling, took ${elapsed}ms`);
 });
 
+test('a check still waiting on the wire gets another window, floored and capped', async () => {
+  // The failure this exists for: the element is not missing, its data is
+  // still in flight, and eight pages are contending for one preview. A
+  // fixed window judges it before the fetch lands.
+  const read = collect();
+  let ready = false;
+  const timers = [];
+  const page = makeEventPage();
+  page.$ = async () => (ready ? {} : null);
+  // Requests keep arriving past the fixed window; the element lands well
+  // after it, and only the ROLLING window can still see it.
+  for (const at of [100, 250, 400, 550]) timers.push(setTimeout(() => page.emitRequest(), at));
+  timers.push(setTimeout(() => { ready = true; page.emitRequest(); }, 620));
+  const started = Date.now();
+  try {
+    await runTestGroup({ newPage: async () => page },
+      [{ index: 0, name: 'late data', path: '/p', url: 'http://s/p', expectSelector: '#badge' }],
+      { settleQuietMs: 20, settleMaxMs: 40, assertMaxMs: 200, assertPollMs: 20,
+        groupDeadlineAt: Date.now() + 20000 });
+  } finally {
+    for (const t of timers) clearTimeout(t);
+  }
+  const elapsed = Date.now() - started;
+  const { frames } = read();
+  assert.equal(frames[0].status, 'pass',
+    'the window rolled while the page was still fetching, so the badge was seen');
+  assert.ok(elapsed > 200, `it outlived the fixed window (${elapsed}ms)`);
+});
+
+test('a silent missing element still fails on the fixed window, and console noise does not roll it', async () => {
+  // The discrimination the rolling window has to make: no requests means
+  // nothing is coming, so the old ceiling still applies. Console errors are
+  // deliberately not enough — a page spewing them is broken, not loading.
+  const read = collect();
+  const page = makeEventPage();
+  page.$ = async () => null;
+  const timers = [];
+  for (const at of [60, 120, 180, 240]) timers.push(setTimeout(() => page.emitError(`boom ${at}`), at));
+  const started = Date.now();
+  try {
+    await runTestGroup({ newPage: async () => page },
+      [{ index: 0, name: 'a', path: '/p', url: 'http://s/p', expectSelector: '#never' }],
+      { settleQuietMs: 20, settleMaxMs: 40, assertMaxMs: 300, assertPollMs: 50,
+        groupDeadlineAt: Date.now() + 20000 });
+  } finally {
+    for (const t of timers) clearTimeout(t);
+  }
+  const elapsed = Date.now() - started;
+  assert.equal(read().frames[0].status, 'fail');
+  assert.ok(elapsed < 1500, `still bounded by the fixed window, took ${elapsed}ms`);
+});
+
+test('the rolling window never outlives the group budget, and never undercuts the fixed one', async () => {
+  // #1710's two self-inflicted bugs, both pinned. A page that keeps
+  // fetching forever must stop at the group's ceiling (minus the reserve
+  // for writing frames) rather than manufacture a "did not finish" — and a
+  // ceiling that has already passed must never hand back LESS than the
+  // fixed window.
+  const read = collect();
+  const page = makeEventPage();
+  page.$ = async () => null;
+  const spam = setInterval(() => page.emitRequest(), 20);
+  const started = Date.now();
+  try {
+    await runTestGroup({ newPage: async () => page },
+      [{ index: 0, name: 'a', path: '/p', url: 'http://s/p', expectSelector: '#never' }],
+      { settleQuietMs: 20, settleMaxMs: 40, assertMaxMs: 100, assertPollMs: 20,
+        // 2400ms budget minus the 2000ms reserve → a ~400ms ceiling.
+        groupDeadlineAt: Date.now() + 2400 });
+  } finally {
+    clearInterval(spam);
+  }
+  const capped = Date.now() - started;
+  assert.equal(read().frames[0].status, 'fail');
+  assert.ok(capped < 2400, `capped by the group ceiling, took ${capped}ms`);
+
+  // Ceiling already in the past: the floor is what is left.
+  const read2 = collect();
+  const page2 = makeEventPage();
+  page2.$ = async () => null;
+  const spam2 = setInterval(() => page2.emitRequest(), 20);
+  const started2 = Date.now();
+  try {
+    await runTestGroup({ newPage: async () => page2 },
+      [{ index: 0, name: 'a', path: '/p', url: 'http://s/p', expectSelector: '#never' }],
+      { settleQuietMs: 20, settleMaxMs: 40, assertMaxMs: 300, assertPollMs: 20,
+        groupDeadlineAt: Date.now() - 60000 });
+  } finally {
+    clearInterval(spam2);
+  }
+  const floored = Date.now() - started2;
+  assert.equal(read2().frames[0].status, 'fail');
+  assert.ok(floored >= 300, `the floor held the fixed window, took ${floored}ms`);
+  assert.ok(floored < 1500, `and did not roll past it, took ${floored}ms`);
+});
+
+test('runTests hands each group its own ceiling', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'capture/capture.js'), 'utf8');
+  assert.match(src, /const groupOpts = \{ \.\.\.settleOpts, groupDeadlineAt: now\(\) \+ groupBudgetMs \};/);
+  assert.match(src, /runTestGroup\(browser, group, groupOpts\)/);
+  assert.match(src, /const ASSERT_REPORT_RESERVE_MS = 2000;/);
+  // Only request traffic rolls it.
+  assert.match(src, /on\(ev, \(\) => \{ activity\.bump\(\); netActivity\.bump\(\); \}\);/);
+});
+
 test('the assertion deadline is shared by a cohort, not paid per failing check', async () => {
   // Ten missing selectors on one screen must not cost ten deadlines — the
   // group budget only grows per cohort, so the poll budget has to as well.
@@ -814,12 +925,12 @@ test('pool bounds come from env with sane defaults and a hard ceiling', () => {
   assert.equal(testTimeoutMs({ TEST_TIMEOUT_MS: '900' }), 900);
   assert.equal(testTimeoutMs({ TEST_TIMEOUT_MS: '-1' }), 25000);
   // 470000 since #1417, moved with MAX_DECLARED_TESTS 430 → 480 and the
-  // platform-side default in services/visuals.js; 520000 with 480 → 530. The
-  // three are asserted
+  // platform-side default in services/visuals.js; 520000 with 480 → 530;
+  // 560000 with 530 → 560; 570000 with 560 → 580. The three are asserted
   // equal to each other elsewhere (tests/checks-budget.test.js); this one
   // pins that the container's own fallback is the raised value, so a run
   // without the env var does not quietly apply the old shorter budget.
-  assert.equal(testsDeadlineMs({}), 520000);
+  assert.equal(testsDeadlineMs({}), 570000);
   assert.equal(testsDeadlineMs({ TESTS_DEADLINE_MS: '1000' }), 1000);
 });
 

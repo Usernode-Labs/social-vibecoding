@@ -56,7 +56,7 @@
  * beside `answers.verified` and never inside it.
  */
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 
 import { Button } from '@/components/ui/button';
@@ -71,10 +71,36 @@ import {
   MultiChipRow,
   msgClass,
   options as optionList,
+  markSurveyAnswered,
   toggleChip,
   waitlistOptions,
   WaitlistOptions,
 } from './waitlist-shared';
+
+/**
+ * #1530: grow a long-answer box to fit what is in it.
+ *
+ * The two open questions ship `rows={3}`, and a three-line window is a poor
+ * place to write the paragraph the prompt asks for — the answer scrolls away
+ * from the person writing it. This resizes the box instead.
+ *
+ * Two details are load-bearing. `auto` FIRST, so deleting text can shrink the
+ * box again: with an explicit height still set, `scrollHeight` can only ever
+ * grow. And the height is only written when the element actually measures —
+ * a screen that is still `hidden` reports `scrollHeight === 0`, and pinning
+ * that would collapse the box to nothing. Leaving it alone there is safe:
+ * `rows` governs until the first real measurement, and the reveal paths below
+ * take one.
+ *
+ * The height is written imperatively rather than through a `style` prop
+ * because the first render has to stay byte-identical to the prerendered
+ * document (AGENTS.md); a rendered `style=""` is a difference.
+ */
+function autoGrow(el: HTMLTextAreaElement | null | undefined): void {
+  if (!el) return;
+  el.style.height = 'auto';
+  if (el.scrollHeight > 0) el.style.height = `${el.scrollHeight}px`;
+}
 
 /** `GET /api/public/waitlist/more/<token>`. Every field is optional. */
 interface MoreAnswers {
@@ -84,7 +110,6 @@ interface MoreAnswers {
   loss?: { had?: string; product?: string; kind?: string[]; story?: string };
   handles?: { farcaster?: string; discord?: string; telegram?: string; other?: string };
   verified?: Record<string, string>;
-  admit_together?: boolean;
   followed_claim?: boolean;
 }
 
@@ -109,6 +134,11 @@ interface MorePayload {
   /** Also published at the top level of the payload; this is the same value. */
   admitted?: boolean;
   status?: MoreStatus;
+  /**
+   * The address this signup was made with (#1537). Present on the full read
+   * only; the `?view=status` poll does not carry it.
+   */
+  email?: string;
   answers?: MoreAnswers;
   oauth?: Record<string, boolean>;
   /** Public profile URLs for "Follow along". A network with none is absent. */
@@ -185,6 +215,28 @@ function StatusPill({ status }: { status: MoreStatus | null }) {
   );
 }
 
+/**
+ * Which address this signup was made with (#1537). Same contract as the pill
+ * above it: always in the markup, empty and `hidden` in the prerender, filled
+ * by the load effect — contents rendered before the fetch would be a hydration
+ * mismatch, and a mismatch console.errors, which fails proposal checks.
+ *
+ * Plain text, never a `mailto:` anchor. The address here is a fact being read
+ * back, not a control, and a tappable one on a phone opens a mail composer
+ * nobody asked for.
+ */
+function SignupEmail({ email }: { email: string }) {
+  return (
+    <p
+      id="more-signup-email"
+      className={`text-xs text-zinc-500 dark:text-zinc-400 break-words${email ? '' : ' hidden'}`}
+    >
+      {'Registered with '}
+      <span className="font-medium text-zinc-700 dark:text-zinc-200">{email}</span>
+    </p>
+  );
+}
+
 export function MoreScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.more, false);
@@ -221,6 +273,14 @@ export function MoreScreen() {
    * fails proposal checks.
    */
   const [queue, setQueue] = useState<MoreStatus | null>(null);
+  /**
+   * The address behind this token, for the same reason the pill is here: this
+   * screen is where the mailed confirm link lands, so it is the "you're on the
+   * list" surface a returning visitor actually sees, and until now it named
+   * every fact about the signup except which address it was made with (#1537).
+   * Empty is the prerendered state and renders nothing.
+   */
+  const [signupEmail, setSignupEmail] = useState('');
   const [inviteUrl, setInviteUrl] = useState('');
   const [inviteCount, setInviteCount] = useState(0);
   const [inviteEmails, setInviteEmails] = useState<string[]>([]);
@@ -242,7 +302,6 @@ export function MoreScreen() {
   const discord = useRef<HTMLInputElement>(null);
   const telegram = useRef<HTMLInputElement>(null);
   const other = useRef<HTMLInputElement>(null);
-  const admitTogether = useRef<HTMLInputElement>(null);
   const followed = useRef<HTMLInputElement>(null);
 
   // The token from `#more/<token>`.
@@ -291,6 +350,12 @@ export function MoreScreen() {
       setLossKinds(loss.kind || []);
       if (lossStory.current) lossStory.current.value = loss.story || '';
 
+      // Stored answers arrive by assignment, which fires no input event, so
+      // the boxes are sized here too — otherwise reopening the form shows a
+      // long saved answer through a three-line window (#1530).
+      autoGrow(groupNeed.current);
+      autoGrow(lossStory.current);
+
       if (farcaster.current) farcaster.current.value = handles.farcaster || '';
       if (discord.current) discord.current.value = handles.discord || '';
       if (telegram.current) telegram.current.value = handles.telegram || '';
@@ -299,6 +364,7 @@ export function MoreScreen() {
       setConnect({ verified: a.verified || {}, oauth: payload.oauth || {} });
       setFollow(payload.follow || {});
       setQueue(payload.status || null);
+      setSignupEmail(payload.email || '');
 
       if (madeUrl.current) madeUrl.current.value = a.made_url || '';
       if (madeNote.current) madeNote.current.value = a.made_note || '';
@@ -310,7 +376,6 @@ export function MoreScreen() {
       setInviteCount(payload.invite?.count || 0);
       setInviteEmails(Array.isArray(payload.invite?.emails) ? payload.invite.emails : []);
 
-      if (admitTogether.current) admitTogether.current.checked = !!a.admit_together;
       if (followed.current) followed.current.checked = !!a.followed_claim;
 
       setMsg(connectMsg());
@@ -443,7 +508,6 @@ export function MoreScreen() {
             discord: discord.current?.value.trim() || undefined,
             telegram: telegram.current?.value.trim() || undefined,
             other_handle: other.current?.value.trim() || undefined,
-            admit_together: !!admitTogether.current?.checked,
             followed_claim: !!followed.current?.checked,
           }),
         });
@@ -453,6 +517,10 @@ export function MoreScreen() {
           // used to write would only be a second, quieter copy of it.
           setMsg(null);
           setSaved(true);
+          // #1535: the waitlist screen's offer card outlives a trip here and
+          // back, so tell it these questions have been answered — otherwise it
+          // keeps inviting you to answer them.
+          markSurveyAnswered(value);
         } else {
           setMsg({
             text: (data && data.error) || 'Something went wrong. Try again.',
@@ -487,6 +555,13 @@ export function MoreScreen() {
   // onChange used to toggle it.
   const lossDetailHidden = !lossHad || lossHad === 'no';
 
+  // The loss story sits inside that block, so a stored answer is measured for
+  // the first time when the block is revealed — before then it has no height
+  // to read (#1530).
+  useEffect(() => {
+    if (!lossDetailHidden) autoGrow(lossStory.current);
+  }, [lossDetailHidden]);
+
   // Which networks actually have a link to offer. Drives whether the
   // self-report checkbox is shown at all: "I followed along" with nothing
   // to follow is a question with no answer.
@@ -496,7 +571,7 @@ export function MoreScreen() {
     <main
       ref={rootRef}
       id="auth-more-screen"
-      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
+      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll"
     >
       {mounted ? (
         <>
@@ -554,7 +629,11 @@ export function MoreScreen() {
           className={hiddenFirst(status !== 'ready' || saved, 'mt-6 space-y-8')}
           onSubmit={onSubmit}
         >
-          <StatusPill status={queue} />
+          {/* Where this signup stands, and which address it was made with. */}
+          <div className="space-y-1.5">
+            <StatusPill status={queue} />
+            <SignupEmail email={signupEmail} />
+          </div>
           {/* 4 · Something you've made — relocated from the join form, where
               it used to be required. Joining takes an email now; this is one
               of the things that helps you move up instead. */}
@@ -582,7 +661,7 @@ export function MoreScreen() {
               maxLength={2000}
               placeholder="https://"
               onBlur={normalizeMadeUrlInput}
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
             />
             <input
               ref={madeNote}
@@ -590,7 +669,7 @@ export function MoreScreen() {
               type="text"
               maxLength={140}
               placeholder="What is it, in one line? (optional)"
-              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
             />
           </div>
           {/* 5 · The group */}
@@ -610,13 +689,13 @@ export function MoreScreen() {
               type="text"
               maxLength={255}
               placeholder="A 200-person Discord for indie game devs in Lagos"
-              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
             />
             <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <select
                 ref={groupSize}
                 id="more-group-size"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               >
                 <option value="">
                   Roughly how many people?
@@ -626,7 +705,7 @@ export function MoreScreen() {
               <select
                 ref={groupRole}
                 id="more-group-role"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               >
                 <option value="">
                   Your role in it
@@ -647,9 +726,10 @@ export function MoreScreen() {
               ref={groupNeed}
               id="more-group-need"
               rows={3}
+              onInput={(e) => autoGrow(e.currentTarget)}
               maxLength={800}
               placeholder="What would its own app do that those tools can't? Money, membership, voting, scheduling, reputation, records…"
-              className="mt-3 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              className="mt-3 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
             >
             </textarea>
           </div>
@@ -680,7 +760,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Which one? Google Reader, a Discord server, a game's private servers, an API…"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
               <p className="text-xs text-zinc-500 dark:text-zinc-400 pt-1">
                 What happened? (pick any)
@@ -695,9 +775,10 @@ export function MoreScreen() {
                 ref={lossStory}
                 id="more-loss-story"
                 rows={3}
+                onInput={(e) => autoGrow(e.currentTarget)}
                 maxLength={800}
                 placeholder="What happened, and what did you do next? Where did everyone go? Did you move them somewhere? Rebuild it? Give up?"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               >
               </textarea>
             </div>
@@ -760,7 +841,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Farcaster (@handle)"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
               <input
                 ref={discord}
@@ -768,7 +849,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Discord (username)"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
               <input
                 ref={telegram}
@@ -776,7 +857,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Telegram (@handle)"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
               <input
                 ref={other}
@@ -784,7 +865,7 @@ export function MoreScreen() {
                 type="text"
                 maxLength={255}
                 placeholder="Anywhere else: Twitch, YouTube, Mastodon…"
-                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
             </div>
             {/*
@@ -862,7 +943,7 @@ export function MoreScreen() {
                 readOnly={true}
                 value={inviteUrl}
                 placeholder="Your link appears here"
-                className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+                className="w-full rounded-lg bg-zinc-50 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
               />
               <Button
                 type="button"
@@ -884,15 +965,6 @@ export function MoreScreen() {
                 </>
               ) : null}
             </div>
-            <label className="mt-3 flex items-start gap-2 text-sm text-zinc-600 dark:text-zinc-300 cursor-pointer">
-              <input
-                ref={admitTogether}
-                id="more-admit-together"
-                type="checkbox"
-                className="mt-0.5 size-4 shrink-0 rounded accent-violet-600"
-              />
-              Only let me in when at least one person from my link gets in too
-            </label>
           </div>
           <div className="border-t border-zinc-200 dark:border-zinc-800 pt-5">
             <Button

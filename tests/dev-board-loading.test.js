@@ -21,7 +21,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { kanbanHtml, feedHtml } = require('./lib/dev-card-html');
+const { kanbanHtml, workshopHtml } = require('./lib/dev-card-html');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -237,17 +237,17 @@ test('a loaded board draws its counts and its empty notes again', () => {
     'the Issues count is the real one');
 });
 
-test('the feed shows placeholders before the load and its own rows after', () => {
+test('the Workshop shows placeholders before the load and its own rows after', () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._devDataReady = false;
-  const loading = feedHtml(AppView);
+  const loading = workshopHtml(AppView);
   assert.match(loading, /animate-pulse/, 'placeholder rows');
-  assert.ok(!loading.includes('No activity yet'),
-    '"no activity yet" is exactly the wrong thing to say mid-load');
+  assert.ok(!loading.includes('Nothing on the board yet'),
+    '"nothing on the board yet" is exactly the wrong thing to say mid-load');
 
   AppView._devDataReady = true;
-  const done = feedHtml(AppView);
+  const done = workshopHtml(AppView);
   assert.ok(!done.includes('animate-pulse'), 'the placeholders go');
 });
 
@@ -256,9 +256,9 @@ test('EVERY feed view model carries `loading`, because the store merges', () => 
   // key would inherit the previous publish's `true` — and the feed would sit
   // on its placeholders for the rest of the session.
   const code = APP_VIEW_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
-  const fn = code.slice(code.indexOf('_feedView() {'), code.indexOf('_mergedRowModel(row) {'));
+  const fn = code.slice(code.indexOf('_workshopView() {'), code.indexOf('_mergedRowModel(row) {'));
   const returns = fn.match(/return \{[\s\S]*?\};/g) || [];
-  assert.ok(returns.length >= 3, 'found the view models _feedView can return');
+  assert.ok(returns.length >= 2, 'found the view models _workshopView can return');
   for (const r of returns) {
     assert.match(r, /loading:/, `this return path states loading: ${r.slice(0, 60)}…`);
   }

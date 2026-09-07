@@ -68,6 +68,7 @@ const buildScript = fs.readFileSync(path.join(ROOT, 'frontend', 'scripts', 'buil
 const prerenderSrc = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'prerender.tsx'), 'utf8');
 const viteConfig = fs.readFileSync(path.join(ROOT, 'frontend', 'vite.config.ts'), 'utf8');
 const dockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile'), 'utf8');
+const kubernetesDockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile.kubernetes'), 'utf8');
 
 test('the build still gates on adjacent text children', () => {
   assert.match(
@@ -168,7 +169,7 @@ test('Docker builds the shell before Tailwind and copies both outputs into the r
     'the image must preserve every generated chunk outside the dev public bind mount');
 });
 
-test('every file the shell bundle imports from outside frontend/ is copied into its stage', () => {
+test('every file the shell bundle imports from outside frontend/ is copied into each image stage', () => {
   // WHY THIS EXISTS. The shell stage's build context is `frontend/` plus a
   // named file or two — nothing else. An import that climbs out of it
   // (`../../../../../src/services/countries.json`) resolves in EVERY local
@@ -180,8 +181,8 @@ test('every file the shell bundle imports from outside frontend/ is copied into 
   //
   // So the rule is not "never import out of frontend/" — one shared table
   // beats two copies of 249 country names — it is that anything imported out
-  // of it must be COPIED INTO THE STAGE. This reads the imports and asks the
-  // Dockerfile about each one.
+  // of it must be COPIED INTO EVERY SHELL STAGE. This reads the imports and
+  // asks both production Dockerfiles about each one.
   const escapes = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -203,20 +204,26 @@ test('every file the shell bundle imports from outside frontend/ is copied into 
   };
   walk(path.join(ROOT, 'frontend'));
 
-  const shellStage = dockerfile.slice(
-    dockerfile.indexOf('FROM node:22-alpine AS shell'),
-    dockerfile.indexOf('# Stage 2'),
-  );
-  for (const e of escapes) {
-    // The path as the stage would have to name it, with either COPY spelling.
-    const copied = new RegExp(
-      `COPY\\s+${e.resolved.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s`,
-    ).test(shellStage);
-    assert.ok(copied,
-      `${e.file} imports '${e.spec}', which resolves to ${e.resolved} — outside the shell `
-      + "stage's build context. Add `COPY " + e.resolved + ' ./' + e.resolved
-      + '` to the shell stage, or move the file under frontend/. Without it the image build '
-      + 'fails with "Could not resolve" while every local test passes.');
+  for (const [name, source] of [
+    ['Dockerfile', dockerfile],
+    ['Dockerfile.kubernetes', kubernetesDockerfile],
+  ]) {
+    const shellStart = source.indexOf('FROM node:22-alpine AS shell');
+    const shellEnd = source.indexOf('FROM node:22-alpine AS css', shellStart);
+    assert.ok(shellStart > -1 && shellEnd > shellStart, `${name} must keep its shell builder stage`);
+    const shellStage = source.slice(shellStart, shellEnd);
+
+    for (const e of escapes) {
+      // The path as the stage would have to name it, with either COPY spelling.
+      const copied = new RegExp(
+        `COPY\\s+${e.resolved.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s`,
+      ).test(shellStage);
+      assert.ok(copied,
+        `${e.file} imports '${e.spec}', which resolves to ${e.resolved} — outside ${name}'s `
+        + 'shell stage. Add `COPY ' + e.resolved + ' ./' + e.resolved
+        + '` to that stage, or move the file under frontend/. Without it the image build '
+        + 'fails with "Could not resolve" while every local test passes.');
+    }
   }
 });
 

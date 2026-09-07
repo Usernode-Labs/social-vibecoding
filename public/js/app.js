@@ -133,6 +133,14 @@ const App = {
   SESSION_SNAPSHOT_KEY: 'usernode.session.v1',
   SESSION_SNAPSHOT_MAX_AGE_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
 
+  // #1524 — a one-shot advisory handed from a sign-out to the anonymous boot
+  // that follows it. Sign-out always navigates now, which destroys any toast
+  // raised before it, so the message rides across in sessionStorage instead.
+  // Written by Settings.logout on the one path that has something to say (a
+  // native sign-out whose terminal step failed); read and removed exactly
+  // once, by enterAnonymous below.
+  LOGOUT_NOTICE_KEY: 'sv:logout_notice',
+
   // How long boot waits for /api/auth/me before falling back to the
   // snapshot. Deliberately just past the service worker's own API deadline
   // (API_TIMEOUT_MS, now 1000) so the SW gets first refusal at answering
@@ -173,91 +181,6 @@ const App = {
 
   clearSessionSnapshot() {
     try { localStorage.removeItem(App.SESSION_SNAPSHOT_KEY); } catch (err) { /* ignore */ }
-  },
-
-  // ── The boot reload gets a ceiling, and the ceiling is in the URL ─────
-  //
-  // The three reloads in _reconcileSession are the only AUTOMATIC ones in the
-  // app, and each is safe only because it first clears the thing that made it
-  // reload — the session snapshot. Every one of those clears is a
-  // `localStorage` call inside a `try/catch` (see clearSessionSnapshot just
-  // above). Where storage is ephemeral or blocked, which is the ordinary
-  // condition inside a WebView with a non-persistent data store, the clear
-  // fails SILENTLY, the snapshot survives, the next boot reads it back and
-  // reaches the same branch, and the document reloads forever. A reload loop
-  // is indistinguishable from a dead app: the screen never settles, and there
-  // is nothing on it to report itself.
-  //
-  // So the budget lives in the URL, not in storage. sessionStorage would be
-  // the obvious place and is the wrong one: if localStorage is unavailable
-  // then sessionStorage almost certainly is too, so the counter would fail in
-  // exactly the case it exists for. A query parameter survives a reload with
-  // no storage of any kind, which is the only thing that can be relied on
-  // here.
-  //
-  // At most one automatic reload per document chain. A second attempt keeps
-  // the shell up in whatever degraded state it is in — stale, signed-out,
-  // wrong — because a wrong screen a reader can see and act on beats a blank
-  // one that never stops trying.
-  BOOT_RETRY_PARAM: 'un-boot-retry',
-
-  /** Has this document chain already spent its one automatic reload? */
-  _bootRetrySpent() {
-    try {
-      return new URLSearchParams(location.search).get(App.BOOT_RETRY_PARAM) === '1';
-    } catch (err) {
-      // No URL API to read means no marker can be WRITTEN either, so the
-      // budget is already unusable: report it spent and never reload.
-      return true;
-    }
-  },
-
-  // Reload once, marking the document so the next boot knows not to.
-  // Returns false when the budget is spent or the marker cannot be written —
-  // the caller then degrades in place instead. Failing closed is deliberate:
-  // an unmarkable reload is precisely the unbounded one.
-  _bootReload(reason) {
-    if (App._bootRetrySpent()) {
-      App._recordBootRetryDeclined(reason);
-      return false;
-    }
-    let href = null;
-    try {
-      const url = new URL(location.href);
-      url.searchParams.set(App.BOOT_RETRY_PARAM, '1');
-      href = url.toString();
-    } catch (err) { href = null; }
-    if (!href) {
-      App._recordBootRetryDeclined(reason + ' (no URL API)');
-      return false;
-    }
-    // replace(), not assign(): a boot retry is not a place in the reader's
-    // history to go back to.
-    try { location.replace(href); } catch (err) { return false; }
-    return true;
-  },
-
-  _recordBootRetryDeclined(reason) {
-    try {
-      window.__unBoot = window.__unBoot || { errors: [] };
-      window.__unBoot.errors.push({
-        step: 'boot-reload',
-        message: 'declined a second automatic reload (' + reason + ')',
-      });
-    } catch (err) { /* the console.warn below is the other half */ }
-    console.warn('[boot] not reloading again:', reason);
-  },
-
-  // Once a boot has actually settled, take the marker back off the address
-  // bar — it has done its job, and it must not ride along into a link the
-  // reader copies or a route the checks shoot.
-  _clearBootRetryMark() {
-    if (!App._bootRetrySpent()) return;
-    try {
-      const url = new URL(location.href);
-      url.searchParams.delete(App.BOOT_RETRY_PARAM);
-      history.replaceState(null, '', url.toString());
-    } catch (err) { /* cosmetic only */ }
   },
 
   // Ask the service worker to drop the cached API responses of a session
@@ -565,10 +488,7 @@ const App = {
       App._dropCachedSession();
       App._sessionFromSnapshot = false;
       App._publishBootSession({ signedOut: true });
-      // The reload lands on the sign-in screen. With the budget spent,
-      // enterAnonymous() reaches the same place without a navigation, which
-      // is the whole point of having a degraded path.
-      if (!App._bootReload('session ended')) await App.enterAnonymous();
+      location.reload();
       return;
     }
     let user = null;
@@ -576,10 +496,7 @@ const App = {
     if (!user) return;
     if (String(user.id) !== String(App.user?.id)) {
       App.clearSessionSnapshot();
-      // A shell painted for someone else cannot be repaired in place, so with
-      // the budget spent the honest fallback is the anonymous shell rather
-      // than another account's screen.
-      if (!App._bootReload('different account')) await App.enterAnonymous();
+      location.reload();
       return;
     }
     // Platform access is the one field whose value decides which SHELL is
@@ -589,13 +506,10 @@ const App = {
     // that in place.
     if (!!user.hasPlatformAccess !== !!App.user?.hasPlatformAccess) {
       App.saveSessionSnapshot(user);
-      // enterAuthed routes on hasPlatformAccess, so re-entering with the
-      // verified user puts the right shell up without a navigation.
-      if (!App._bootReload('platform access changed')) await App.enterAuthed(user);
+      location.reload();
       return;
     }
     App._sessionFromSnapshot = false;
-    App._clearBootRetryMark();
     if (window.NativeChrome &&
         typeof NativeChrome.prepareIdentityPublication === 'function') {
       NativeChrome.prepareIdentityPublication(user);
@@ -669,6 +583,25 @@ const App = {
     // platformMovedOn() needs a boot-time baseline to compare against.
     App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
+    App._drainLogoutNotice();
+  },
+
+  // Read-and-remove the one-shot sign-out advisory (#1524). Runs after the
+  // auth screens are up so the toast lands on the landing page the user was
+  // just sent to. One-shot by construction: the key is removed before it is
+  // shown, so a later anonymous boot stays silent.
+  _drainLogoutNotice() {
+    let message = null;
+    try {
+      message = window.sessionStorage?.getItem?.(App.LOGOUT_NOTICE_KEY) || null;
+      if (message) window.sessionStorage.removeItem(App.LOGOUT_NOTICE_KEY);
+    } catch (err) { /* private mode / no storage — nothing to say */ }
+    if (!message) return;
+    try {
+      if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(message, { error: true });
+      }
+    } catch (err) { /* ignore */ }
   },
 
   // True for the anonymous-shell screenshot-state links (see init). Also
@@ -699,13 +632,22 @@ const App = {
     // signed-in user who has platform access — which every capture and
     // proposal-check session is — so without this the screen is reachable
     // by a real recipient and by nothing that photographs or checks it.
+    // `waitlist-step1` and `waitlist-code-entry` are the two halves of the
+    // returning-user path: the join form carrying the "Already joined?"
+    // link, and the confirm step reached through it, which is the only
+    // state that asks which address the code belongs to. Both need the
+    // anonymous boot for the same reason waitlist-more does: restoreFromHash
+    // drops an auth route outright for the signed-in session every capture
+    // and proposal check runs as.
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
+        shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
         shot !== 'password-recovery' && shot !== 'password-recovery-sent') {
       return false;
     }
-    if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed') &&
+    if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed'
+         || shot === 'waitlist-step1' || shot === 'waitlist-code-entry') &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }
@@ -1288,7 +1230,8 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'feedback' && shot !== 'feedback-spent'
         && shot !== 'feedback-offline' && shot !== 'feedback-queued'
-        && shot !== 'feedback-capture-failed') return;
+        && shot !== 'feedback-capture-failed'
+        && shot !== 'feedback-required') return;
     const spent = shot === 'feedback-spent';
     // #1054: the two offline variants. `feedback-offline` is the dialog as a
     // disconnected user meets it (the hint, and Submit reading "Save for
@@ -1307,6 +1250,11 @@ const App = {
     // the draft is typed into the field, never stashed (the stash skips any
     // ?shot= route on purpose) and never filed.
     const captureFailed = shot === 'feedback-capture-failed';
+    // #1603: the dialog after a submit with nothing in the description — the
+    // state that used to be indistinguishable from a dead button. Clicks the
+    // real Submit and photographs the real refusal; the controller returns
+    // before any fetch, so this posts nothing either.
+    const requiredError = shot === 'feedback-required';
     // ONCE PER DOCUMENT. _applyRouteShots dedupes on the hash, not on the
     // applier, so a fragment that changes after boot re-runs this one — and
     // this shot is not idempotent the way the others are. Its
@@ -1397,6 +1345,24 @@ const App = {
             if (--capTries > 0) setTimeout(runFailure, App.IMPROVE_SHOT_INTERVAL_MS);
           };
           setTimeout(runFailure, 50);
+        }
+        if (requiredError) {
+          // Same retry shape, and for the same reason, as captureFailed
+          // above: a submit fired into a shell that is still settling can
+          // land before the dialog's own open-time reset, which then clears
+          // the error this is trying to photograph. What the check asserts
+          // is the message being VISIBLE, so that is what this waits for.
+          // The hook is the controller's, like the capture one beside it —
+          // it calls the shipped submitFeedback, which keeps the dialog's
+          // own ids and internals out of this file.
+          let reqTries = App.IMPROVE_SHOT_TRIES;
+          const runEmptySubmit = () => {
+            const err = document.getElementById('feedback-text-error');
+            if (err && !err.classList.contains('hidden')) return;
+            try { App._simulateEmptyFeedbackSubmit?.(); } catch (e) { /* ignore */ }
+            if (--reqTries > 0) setTimeout(runEmptySubmit, App.IMPROVE_SHOT_INTERVAL_MS);
+          };
+          setTimeout(runEmptySubmit, 50);
         }
       } catch (err) { /* ignore */ }
     };
@@ -1952,6 +1918,9 @@ const App = {
           case 'issue_update':
             App.handleIssueUpdate(data);
             break;
+          case 'workshop_update':
+            App.handleWorkshopUpdate(data);
+            break;
           case 'board_order_update':
             // #613: someone reordered a Dev-board column. refreshDevData
             // re-pulls the board (including the manual order fetched by
@@ -2189,6 +2158,12 @@ const App = {
     // events are scoped per-session and don't need a session-list
     // refetch.
     if (data.action === 'behind_main' && typeof data.behindMain === 'number') {
+      // The topic page's "Behind main" pill read this number from its last
+      // refetch and went stale while the dev-chat banner updated live; both
+      // surfaces now take the same patch.
+      if (typeof AppView !== 'undefined' && AppView.applyBehindMainEvent) {
+        AppView.applyBehindMainEvent(data.sessionId, data.behindMain);
+      }
       if (typeof DevChat !== 'undefined' && DevChat.applyBehindMainUpdate) {
         DevChat.applyBehindMainUpdate(data.sessionId, data.behindMain);
       }
@@ -2200,6 +2175,7 @@ const App = {
     // together — a proposal reading "0 behind" for eight commits was the
     // failure the issue reported.
     if (data.action === 'freshness') {
+      if (typeof AppView !== 'undefined' && AppView.applyFreshnessEvent) AppView.applyFreshnessEvent(data);
       if (typeof DevChat !== 'undefined' && DevChat.applyFreshnessUpdate) {
         DevChat.applyFreshnessUpdate(data);
       }
@@ -2209,6 +2185,7 @@ const App = {
     // banner's spinner/phase text and terminal feedback. Scoped
     // per-session like behind_main — no list refetch needed.
     if (data.action === 'sync_status') {
+      if (typeof AppView !== 'undefined' && AppView.applySyncStatusEvent) AppView.applySyncStatusEvent(data);
       if (typeof DevChat !== 'undefined' && DevChat.applySyncStatusUpdate) {
         DevChat.applySyncStatusUpdate(data);
       }
@@ -2238,17 +2215,30 @@ const App = {
     // dev session the viewer happens to have focused — refresh the vote
     // panel + home strip globally before the currentSession early-return.
     if (data.event === 'checks_ready') {
+      // A run in flight reports once a second, to everyone, for as long as
+      // it runs (`progress` on a 'pending' event). Those ticks are for the
+      // row that is showing: they patch it in place and touch no fetch. The
+      // start-of-run and verdict events (no `progress`) keep the refreshes
+      // below, which is what the board and the home strip advance on.
+      const progressTick = data.checkState === 'pending' && data.progress && typeof data.progress === 'object';
       if (App.currentTab === 'dev' && App.currentSubTab !== 'sessions') {
-        AppView.refreshDevData('session');
+        // The event carries checkState / checkPhase / checkTrigger and, for
+        // a run in flight, `progress`. Patch the cached row and repaint from
+        // it; a final verdict (which needs test_results the event does not
+        // carry) refetches — through a kind that keeps the vote roster.
+        if (typeof AppView !== 'undefined' && AppView.applyChecksEvent) AppView.applyChecksEvent(data);
+        else if (!progressTick) AppView.refreshDevData('session');
       }
-      // The Underway board refresh above is intentionally skipped while the
-      // owner is inside a session. Refresh that focused row directly so its
-      // header advances Draft -> Checks running -> Checks passed/failed
-      // without waiting for a vote/version event or a manual reload.
-      if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
-        DevChat.refreshCurrentSessionStatus(data.sessionId);
+      if (!progressTick) {
+        // The Underway board refresh above is intentionally skipped while the
+        // owner is inside a session. Refresh that focused row directly so its
+        // header advances Draft -> Checks running -> Checks passed/failed
+        // without waiting for a vote/version event or a manual reload.
+        if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
+          DevChat.refreshCurrentSessionStatus(data.sessionId);
+        }
+        App.refreshHomeProposals();
       }
-      App.refreshHomeProposals();
     }
     // #439: an on-demand preview rebuild (Preview-click → ensure-staging)
     // can complete for a session that isn't the focused dev-chat one (e.g. a
@@ -2667,6 +2657,17 @@ const App = {
     }
   },
 
+  // The Workshop's grouping for the open app moved server-side (cards
+  // placed into themes, or the themes re-drafted): re-fetch the themes
+  // alone — the board's own data did not change — past the per-slug
+  // throttle, so what is on screen is what the server just wrote.
+  handleWorkshopUpdate(data) {
+    if (App.currentApp === data.appSlug && App.currentTab === 'dev'
+      && typeof AppView !== 'undefined' && AppView.applyWorkshopUpdate) {
+      AppView.applyWorkshopUpdate(data);
+    }
+  },
+
   // A vote/session event landed that affects the viewer's own work:
   // refresh the header cog's drawer (which took over the home screen's
   // old "Your proposals" / "Your active sessions" strips) and, while the
@@ -2966,14 +2967,14 @@ const App = {
           : norm.ref.kind === 'proposal' ? 'proposals'
           : norm.ref.kind === 'session' ? 'shared' : 'governance';
         suffix = `/dev/${seg}/${norm.ref.id}`;
-      } else if (opts.boardView === 'feed') {
-        suffix = '/activity';
+      } else if (opts.boardView === 'workshop') {
+        suffix = '/workshop';
       } else if (opts.boardView === 'kanban') {
         suffix = '/board';
       } else {
-        const feed = typeof AppView !== 'undefined' && AppView._getViewMode
-          && AppView._getViewMode() === 'feed';
-        suffix = `/${feed ? 'activity' : 'board'}`;
+        const kanban = typeof AppView !== 'undefined' && AppView._getViewMode
+          && AppView._getViewMode() === 'kanban';
+        suffix = `/${kanban ? 'board' : 'workshop'}`;
       }
     }
     return `/app/${safeSlug}${suffix}${App._routeSearch(
@@ -3076,7 +3077,19 @@ const App = {
         }
         if (authRoute) {
           AuthScreens.hideAll();
-          history.replaceState(null, '', '/');
+          // `_rootUrl('')`, not a bare '/': this strips the STALE AUTH HASH
+          // and nothing else. A hardcoded '/' dropped the QUERY too, which
+          // silently defeats `?return_to=` for the one visitor most likely
+          // to be carrying it — somebody whose session snapshot outlived
+          // their cookie (30 days against 7, with no sliding refresh). That
+          // person boots authed from the snapshot, so App.user is truthy
+          // here, reaches this line and loses the return target; only then
+          // does the unawaited _reconcileSession answer 401 and reload onto
+          // the already-stripped URL. They sign in with nothing to return
+          // to, which is the exact bug `?return_to=` exists to prevent.
+          // Every other URL write in this file goes through the same
+          // serializer for the same reason.
+          history.replaceState(null, '', App._rootUrl(''));
           hash = '';
         }
       }
@@ -3340,7 +3353,9 @@ const App = {
         // the two leaves `tab` and `subTab` identical, which nothing else
         // would notice.
         let boardView = null;
-        if (tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'feed'; }
+        // `activity` is the retired Activity feed's address; the Workshop
+        // replaced it as the lander, so the old links land there.
+        if (tab === 'workshop' || tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'workshop'; }
         else if (tab === 'board') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'kanban'; }
         if (tab === 'dev') {
           const sec = parts[3] || null;
@@ -3636,6 +3651,19 @@ const App = {
     // ...and home last. This is the first converted root that ships
     // VISIBLE, which is why _isScreenVisible below grew a DOM fallback.
     'home-screen',
+    // Messages. The island has owned #messages-screen's `hidden` through
+    // useVisibilityHiddenClass since #1431, which ALSO took this entry out
+    // when Messages became a sheet; #1444 made it a screen again and put it
+    // back in SCREEN_IDS and _showOnlyScreen — everywhere but here. So
+    // _setScreenVisible took the classList path and the class had two
+    // owners: app.js toggled it off, and the hook — which re-applies on
+    // every publish of ANY id and reads an unpublished id as its shipped
+    // (hidden) state — put it back on whichever fetch-driven publish came
+    // next. Six declared checks failed by arrival order on proposals that
+    // had not touched Messages. Listed, app.js publishes and React applies:
+    // one owner. tests/react-screen-ids-consistency.test.js pins the rule
+    // for every screen root at once.
+    'messages-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on
@@ -4265,7 +4293,7 @@ const App = {
         }
         if (!boardView && App.currentSubTab === 'forum') {
           boardView = typeof AppView !== 'undefined' && AppView._getViewMode
-            && AppView._getViewMode() === 'feed' ? 'feed' : 'kanban';
+            && AppView._getViewMode() === 'kanban' ? 'kanban' : 'workshop';
         }
       }
       const innerPath = (App.chromeless && typeof AppView !== 'undefined'
@@ -4299,13 +4327,13 @@ const App = {
         ? parsed.hash.replace(/^#/, '').split('?')[0]
         : parsed.pathname.replace(/^\/+/, '');
       const segs = route.split('/');
-      // Aliases (see restoreFromHash): /app/x/board and /app/x/activity are
-      // both the card area, so an alias in the address bar and the canonical
-      // form updateHash computes are the SAME screen — replace, never a
-      // spurious push. The two are one screen as far as history goes for the
-      // same reason Kanban|Feed never pushed an entry: switching layout is
-      // not somewhere to go BACK from.
-      if (segs[0] === 'app' && (segs[2] === 'activity' || segs[2] === 'board')) {
+      // Aliases (see restoreFromHash): /app/x/board and /app/x/workshop (and
+      // the retired /app/x/activity) are all the card area, so an alias in
+      // the address bar and the canonical form updateHash computes are the
+      // SAME screen — replace, never a spurious push. The two are one screen
+      // as far as history goes for the same reason Kanban|Feed never pushed
+      // an entry: switching layout is not somewhere to go BACK from.
+      if (segs[0] === 'app' && (segs[2] === 'workshop' || segs[2] === 'activity' || segs[2] === 'board')) {
         segs.splice(2, 1, 'dev');
       }
       if (segs[0] === 'app' && segs[2] === 'dev') {

@@ -176,10 +176,16 @@ function makeBrowse(opts = {}) {
     subscribe: () => () => {},
     setFlush: () => {},
   };
+  // Home.render() is the LAUNCHER's paint, and this harness has neither
+  // HomeLayout nor the grid store loaded — so count the calls instead of
+  // running them. Worth counting rather than merely silencing: #1567 made
+  // Home.toggleAdded repaint, and that call is the whole fix.
+  const renders = { count: 0 };
+  sandbox.__Home.render = () => { renders.count += 1; };
   return {
     Browse: sandbox.Browse, Home: sandbox.__Home, AppCard: sandbox.AppCard,
     state, nodes, fetchCalls, chrome, history, location: sandbox.location,
-    storage,
+    storage, renders,
   };
 }
 
@@ -549,8 +555,8 @@ test('rowView: an app-store row — icon, name, meta, Add state', () => {
   // The whole app record rides the descriptor, because the icon tile and the
   // chip strip are shared decisions (app-card.js) the row does not re-make.
   assert.equal(fresh.app.slug, 'fresh');
-  // Added rows read "Added", fresh ones "Add" — the flag is the descriptor's,
-  // the two labels are browse-list.tsx's.
+  // Added rows read "Added", fresh ones "Add to Your apps" (#1553) — the flag
+  // is the descriptor's, the two labels are browse-list.tsx's.
   assert.equal(fresh.added, false);
   assert.equal(rowFor(state, 'mine').added, true);
   assert.match(rowFor(state, 'mine').addTitle, /Tap to remove/);
@@ -1077,6 +1083,55 @@ test('toggleAdded posts { favorited } and flips the cached flags', async () => {
   });
 });
 
+// ── #1567: the write REPAINTS, it does not wait for a reload ─────────
+
+test('toggleAdded repaints Your apps before the write lands, and tells the caller too', async () => {
+  const { Home, renders, fetchCalls } = makeBrowse();
+  const fresh = app({ slug: 'fresh' });
+  Home._apps = [fresh];
+  let notified = 0;
+  const p = Home.toggleAdded('fresh', true, () => { notified += 1; });
+  // Both before the POST has resolved: the section is the optimistic flip's
+  // to show, and this is what made an add from the home screen look like it
+  // had done nothing until a reload.
+  assert.equal(renders.count, 1, 'the launcher grid and the panels repaint');
+  assert.equal(notified, 1, "and the caller's own list is told as well");
+  assert.equal(fetchCalls.length, 1, 'one write');
+  await p;
+  assert.equal(renders.count, 1, 'a successful write adds no second paint');
+});
+
+test('toggleAdded repaints again on the failure path, through the reload', async () => {
+  const { Home, renders } = makeBrowse({ fetchOk: false });
+  const fresh = app({ slug: 'fresh' });
+  Home._apps = [fresh];
+  let notified = 0;
+  // load() is the launcher's own re-sync; the paint it would do is counted
+  // here so the revert is as visible as the optimistic flip was.
+  Home.load = async () => { Home.render(); };
+  await Home.toggleAdded('fresh', true, () => { notified += 1; });
+  assert.equal(fresh.is_favorited, false, 'reverted');
+  assert.equal(renders.count, 2, 'painted the add, then painted it back out');
+  assert.equal(notified, 2);
+});
+
+test('a failed add clears the reveal, so nothing expands for an app that never arrived', async () => {
+  const { Home } = makeBrowse({ fetchOk: false });
+  const fresh = app({ slug: 'fresh' });
+  Home._apps = [fresh];
+  Home.load = async () => {};
+  await Home.toggleAdded('fresh', true, () => {});
+  assert.equal(Home._revealSlug, null);
+});
+
+test('a removal never sets the reveal — an expanded grid showing an absence is nonsense', async () => {
+  const { Home } = makeBrowse();
+  const mine = app({ slug: 'mine', is_favorited: true });
+  Home._apps = [mine];
+  await Home.toggleAdded('mine', false, () => {});
+  assert.equal(Home._revealSlug, null);
+});
+
 test('toggleAdded on a member app writes the hidden opt-out, not a delete (#618)', async () => {
   const { Home } = makeBrowse();
   const member = app({ slug: 'mine', is_collaborator: true });
@@ -1165,6 +1220,17 @@ test('browse.js is a bundle module the #browse-screen island imports', () => {
     'the string builders belong to the surfaces that are still legacy');
   assert.match(read('frontend/src/features/apps/browse-list.tsx'),
     /from '\.\/app-card-view'/);
+});
+
+test('#1553: the row button names the destination, like every other surface', () => {
+  // "Add" alone did not say add to WHAT, and this row was the only place the
+  // platform left that a guess — the detail page's button, the app-chip menu
+  // and this button's own title attribute all spell out "Your apps".
+  const listSrc = read('frontend/src/features/apps/browse-list.tsx');
+  assert.match(listSrc, /'Added' : 'Add to Your apps'/);
+  assert.doesNotMatch(listSrc, /'Added' : 'Add'/);
+  // The state label stays short: the row it sits on already says which app.
+  assert.match(listSrc, /view\.added \? 'Added'/);
 });
 
 // ── app.js routing ───────────────────────────────────────────────

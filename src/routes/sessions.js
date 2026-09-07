@@ -70,7 +70,7 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId) {
             cs.mergeability_files_complete, cs.freshness_main_sha,
             cs.freshness_merge_base_sha, cs.freshness_behind_by,
             cs.freshness_ahead_by, cs.freshness_checked_at,
-            cs.freshness_error, cs.check_phase, cs.check_trigger,
+            cs.freshness_error, cs.check_phase, cs.check_trigger, cs.checks_progress,
             cs.platform_env_state, cs.platform_env_detail,
             cs.check_error_detail, cs.requires_explicit_approval,
             (SELECT jsonb_object_agg(
@@ -7154,6 +7154,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
       const session = rows[0];
 
+      if (!['active', 'promoted'].includes(session.status)) {
+        return res.status(409).json({
+          error: 'proposal_closed',
+          message: `This proposal is ${session.status || 'no longer open'}, so its checks cannot be re-run.`,
+        });
+      }
+
       // Owner or admin only — re-running checks costs a staging build +
       // headless run, so it's not opened to every collaborator (deferred).
       // NB: req.user is the camelCase shape from middleware/auth.js —
@@ -14139,7 +14146,7 @@ ${buildGuidance.testingGuidance}`;
               appSlug: session.app_slug,
               merged: false,
             });
-            const resetMsg = `Votes reset on PR #${session.pr_number || session.id}: new commit ${commitHash.substring(0, 8)} pushed.`;
+            const resetMsg = `An update was pushed to PR #${session.pr_number || session.id} (commit ${commitHash.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
             await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
             // Dual-post into the proposal's thread (lifecycle in context).
             await sendSystemMessage(pool, session.app_id, resetMsg, 'system',

@@ -261,32 +261,24 @@ test('every held-back call is started again when the session is verified', () =>
     'and this is where the verified answer reaches everyone who joined');
 });
 
-test('reconciling handles all four answers, and no branch can reload unbounded', () => {
+test('reconciling handles all four answers, and only one of them is a reload loop risk', () => {
   const rec = APP.slice(APP.indexOf('async _reconcileSession({'),
     APP.indexOf('// ── Staged boot'));
   // 401/403 — the session really did end. The snapshot MUST be dropped
   // before the reload, or the next boot paints the same dead shell and
   // reloads again, forever.
-  assert.match(rec, /if \(!res\.ok\) \{\s*App\._dropCachedSession\(\);[\s\S]{0,600}?App\._bootReload\('session ended'\)/);
+  assert.match(rec, /if \(!res\.ok\) \{\s*App\._dropCachedSession\(\);[\s\S]{0,200}?location\.reload\(\);/);
   const dropAt = rec.indexOf('App._dropCachedSession();');
-  const reloadAt = rec.indexOf("App._bootReload('session ended')");
+  const reloadAt = rec.indexOf('location.reload();');
   assert.ok(dropAt !== -1 && dropAt < reloadAt, 'drop the trace BEFORE reloading');
-  // …and the drop is no longer the ONLY thing standing between this branch
-  // and a loop. Every clear here is a localStorage call inside a try/catch,
-  // so where storage silently fails the snapshot survives and the same branch
-  // is reached again. _bootReload spends a one-shot budget kept in the URL —
-  // see tests/boot-floor.test.js — so a second attempt degrades in place
-  // instead of navigating. No bare reload may come back.
-  assert.doesNotMatch(rec, /location\.reload\(\)/,
-    'every automatic reload in the reconcile goes through the budget');
   // Another user — a shell painted for somebody else cannot be repaired.
-  assert.match(rec, /String\(user\.id\) !== String\(App\.user\?\.id\)[\s\S]{0,600}?clearSessionSnapshot\(\);[\s\S]{0,600}?App\._bootReload\('different account'\)/);
+  assert.match(rec, /String\(user\.id\) !== String\(App\.user\?\.id\)[\s\S]{0,200}?clearSessionSnapshot\(\);\s*location\.reload\(\);/);
   // Platform access decides WHICH SHELL is on screen (enterAuthed sends a
   // viewer without it to the waiting room), so a snapshot that disagrees
   // painted the wrong one. Saving the fresh record first is what stops THIS
   // one looping: the next boot has the right answer.
   assert.match(rec,
-    /!!user\.hasPlatformAccess !== !!App\.user\?\.hasPlatformAccess\) \{\s*App\.saveSessionSnapshot\(user\);[\s\S]{0,600}?App\._bootReload\('platform access changed'\)/);
+    /!!user\.hasPlatformAccess !== !!App\.user\?\.hasPlatformAccess\) \{\s*App\.saveSessionSnapshot\(user\);\s*location\.reload\(\);/);
   // No answer — offline. Stay on the snapshot; this is where the strip
   // belongs, because the shell is up and readable and the thing the viewer
   // needs to know is that it is not live.
@@ -441,7 +433,7 @@ test('reconnecting reconciles the snapshot against the real session', () => {
   assert.match(body, /_dropCachedSession\(\)/);
   // A different user → the shell was painted for someone else.
   assert.match(body, /String\(user\.id\) !== String\(App\.user\?\.id\)/);
-  assert.match(body, /App\._bootReload\(/, 'through the one-shot reload budget');
+  assert.match(body, /location\.reload\(\)/);
   // Same user → promote to a live session.
   assert.match(body, /_sessionFromSnapshot = false/);
   assert.match(body, /App\.connectEvents\(\)/);
@@ -453,13 +445,20 @@ test('reconnecting reconciles the snapshot against the real session', () => {
 test('every way out of a session clears the snapshot', () => {
   // Leaving it behind would let the next offline boot paint a signed-in
   // shell for an account that logged out — a worse bug than the original.
-  assert.match(SETTINGS, /clearSessionSnapshot/);
+  //
+  // Both sign-out paths reach it through _dropCachedSession now (#1524),
+  // which clears the snapshot AND the rest of the remembered session: the
+  // shell chrome snapshot and the Improve target, which main.tsx re-applies
+  // unconditionally at boot and which would otherwise paint the previous
+  // account's header on the landing page they were just sent to.
+  assert.match(APP, /_dropCachedSession\(\) \{\s*\n\s*App\.clearSessionSnapshot\(\);/);
+  assert.match(SETTINGS, /window\.App\?\._dropCachedSession\?\.\(\)/);
   assert.match(AUTH, /clearSessionSnapshot/);
   // Including the waiting-room logout, which does not go through settings.
   // That screen is React now (#1080 chunk C), so its own fallback path is
   // where the call has to be.
   const waitingLogout = AUTH_WAITING_TSX.slice(AUTH_WAITING_TSX.indexOf('const onLogout'));
-  assert.match(waitingLogout.slice(0, 800), /clearSessionSnapshot/);
+  assert.match(waitingLogout.slice(0, 800), /_dropCachedSession/);
 });
 
 // ── The visible offline state ────────────────────────────────────────

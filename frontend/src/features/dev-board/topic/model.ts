@@ -112,9 +112,94 @@ export type DetailBlock =
   | { t: 'checks'; v: ChecksVerdict };
 
 /** The proposal's detail block: the meta line, its notes, and the boxes. */
+/**
+ * One row of the "Where it stands" ledger — the topic page's one place
+ * where state is EXPLAINED (the card's bar is where it is summarised).
+ *
+ * A row is a dot in the bar's tone, a label with an optional count under
+ * it, a sentence, and at most a couple of controls. It replaces four
+ * things that used to stack under the card in four box styles: the "Why
+ * this can't merge yet" reasons, the checks panel, the roster line and the
+ * amber provenance notes. `key` is the row's `data-note`, which is what the
+ * declared checks address a row by (`mergeability`, `checks`, `env`, …).
+ */
+/** The repo unit suite (`npm test`), run alongside the browser checks. */
+export interface LedgerUnitProgress {
+  /** cloning | installing | running | done */
+  phase: string;
+  ran: number;
+  passed: number;
+  failed: number;
+  skipped?: number;
+  /** Last completed run's `# tests`, when known; null while it is not. */
+  expected: number | null;
+  done?: boolean;
+}
+
+/** One phase inside the image build (a buildpack lifecycle phase). */
+export interface LedgerBuildPhase {
+  name: string;
+  ms: number | null;
+  state: 'done' | 'now' | 'todo';
+}
+
+/** One step of the preview build: fetch, image, database, start. */
+export interface LedgerBuildStep {
+  key: string;
+  label: string;
+  /** Wall clock of a finished step; null while it is running or ahead. */
+  ms: number | null;
+  state: 'done' | 'now' | 'todo';
+  /** The image step's phases, live or finished. */
+  phases?: LedgerBuildPhase[] | null;
+  /** The running phase's last log line. */
+  detail?: string | null;
+}
+
+/** A run in flight: what the capture container has reported so far. */
+export interface LedgerProgress {
+  ran: number;
+  passed: number;
+  failed: number;
+  /** Declared check count, when known; null while it is not. */
+  expected: number | null;
+  done?: boolean;
+  unit?: LedgerUnitProgress | null;
+  build?: LedgerBuildStep[] | null;
+}
+
+export interface LedgerRow {
+  key: string;
+  tone: 'bad' | 'warn' | 'ok' | 'vote' | 'mute' | 'progress';
+  spinner?: boolean;
+  label: string;
+  /** The small line under the label: "1 of 463 failing", "14 commits". */
+  sub?: string | null;
+  /** The sentence, in the primary ink. */
+  text: TextRun[];
+  /** Follow-on lines, muted. */
+  foot?: TextRun[][];
+  /** Follow-on lines in the attention tone — the admins-list and locked-app rules. */
+  warnFoot?: TextRun[][];
+  /** A mono list — conflicting files, missing variables, console errors. */
+  list?: NoteItem[] | null;
+  /** The checks row's failing tests, listed; and its passing ones, folded. */
+  fails?: CheckRow[] | null;
+  passes?: CheckRow[] | null;
+  /** The votes row's roster. */
+  roster?: RosterView | null;
+  /** The checks row's live progress while the run is pending. */
+  progress?: LedgerProgress | null;
+  actions?: ActionSpec[];
+  /** Extra attributes on the row — `data-checks-base="superseded"` for one check. */
+  attrs?: Record<string, string>;
+}
+
 export interface ProposalDetails {
-  /** "View PR on GitHub · proposed by maya · 2h ago", already split. */
+  /** "View PR on GitHub · proposed by maya · 2h ago", already split. The head draws the GitHub link on the card's meta line instead. */
   meta: { href?: string | null; parts: TextRun[] }[];
+  /** The ledger the head draws; the fields below are the material it is built from. */
+  ledger: LedgerRow[];
   /** The circular "?" beside the meta line. */
   help: boolean;
   /** A prose note under the meta line. */
@@ -151,12 +236,19 @@ export interface TranscriptSection {
 
 /** Everything under the card, by topic kind. */
 export interface TopicBody {
-  /** The full action list, the blocked reasons and the before/after block. */
+  /**
+   * The detail actions. The PILLS are merged onto the card's own action band
+   * by `_renderTopicHead` (one action line, as on the board); the head draws
+   * only `visuals` from here, as the About sheet's before/after row. `reasons`
+   * stays for the builders that read it — the ledger is what says it now.
+   */
   actions: {
     pills: ActionSpec[];
     reasons: { heading: string; items: { key: string; label: string; detail: string; soft: boolean }[] } | null;
     visuals: { sessionId: number; open: boolean; tilesHtml: string } | null;
   } | null;
+  /** The About sheet's heading — "About this change", "About this issue". */
+  aboutTitle?: string | null;
   /** An issue's markdown body, already rendered and sanitised. */
   issueBodyHtml?: string | null;
   /** Render the `#dev-issue-comments` host (features/dev-board/issue-comments.tsx). */

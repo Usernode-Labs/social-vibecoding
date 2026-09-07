@@ -621,9 +621,9 @@
     {
       "source": "src/routes/topochain/admin/waitlist.js",
       "kind": "structural-template",
-      "fingerprint": "a5ba989b29c286008dbf",
+      "fingerprint": "74fc8edae7a6433dc149",
       "count": 1,
-      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited"
+      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, w.invited_by, (SELECT COUNT(*)::int FROM waitlist_signups c W"
     },
     {
       "source": "src/routes/topochain/ingest.js",
@@ -691,20 +691,6 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "036986681db4d5f91b5e",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
-      "fingerprint": "080e08908a64d1c71e19",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
       "fingerprint": "760e6c035395e025ef99",
       "count": 1,
       "preview": "`SELECT i.id, i.kind, i.title, i.description, i.payload, i.status, i.github_issue_number, i.created_by, i.created_at, u.username AS created_by_username, (SELECT"
@@ -729,6 +715,20 @@
       "fingerprint": "a5b4a368484cb1330963",
       "count": 1,
       "preview": "`SELECT pv.vote, u.username, pv.user_id FROM pr_votes pv JOIN users u ON pv.user_id = u.id JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = "
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "c0f8e5747ee725a64c53",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "e933979c578bc1fbc742",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
     },
     {
       "source": "src/services/agent-turn.js",
@@ -1100,6 +1100,13 @@
       "fingerprint": "ffdbcfbaa56765b4a618",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET headless_status = $4, headless_outcome = COALESCE($5, headless_outcome), headless_step = NULL, headless_turn_id = NULL, last_activity_"
+    },
+    {
+      "source": "src/services/workshop-themes.js",
+      "kind": "structural-template",
+      "fingerprint": "2e26921bc2eaf7ee6d9c",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.linked_issues, cs.status, cs.created_at, u.username, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.s"
     }
   ]
 }

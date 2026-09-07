@@ -126,6 +126,8 @@ export interface TranscriptMessage {
   /** Sanitized markdown for an ordinary message; plain text for a system row. */
   bodyHtml: string;
   systemText: string;
+  /** Set by transcript.tsx's foldRepeats: how many identical lines this one stands for. */
+  repeat?: number;
   mine: boolean;
   /** Full timestamp for the "edited" marker's tooltip, or null if never edited. */
   editedTitle: string | null;

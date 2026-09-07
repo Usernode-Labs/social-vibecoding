@@ -188,6 +188,39 @@ test('an unknown view value returns the full payload rather than an error', asyn
   });
 });
 
+test('the full read names the address, and the poll still does not (#1537)', async () => {
+  await withPublicApi(async (base) => {
+    // The stage-2 screen is where the mailed confirm link lands, so it is the
+    // "you're on the list" surface a returning visitor sees — and it had no
+    // way to say which address the signup was made with. The row the route
+    // already SELECTs carries it, so this costs no extra query.
+    for (const [token, email] of [
+      [PENDING, 'pending@example.invalid'],
+      [CONFIRMED, 'confirmed@example.invalid'],
+      [ADMITTED, 'admitted@example.invalid'],
+    ]) {
+      const before = statements.length;
+      const body = await (await get(base, token)).json();
+      assert.equal(body.email, email, `full payload should name ${email}`);
+      assert.ok(
+        statements.length - before <= 3,
+        'naming the address must not add a query of its own'
+      );
+    }
+  });
+});
+
+test('the confirmation poll is unchanged by the address (#1537)', async () => {
+  await withPublicApi(async (base) => {
+    // ?view=status repeats on a timer while the screen waits for a
+    // confirmation to land, and nothing reads an address off it.
+    const body = await (await get(base, CONFIRMED, '?view=status')).json();
+    assert.equal(body.email, undefined);
+    assert.deepEqual(Object.keys(body).sort(), ['admitted', 'ok', 'status']);
+    assert.equal(statements.length, 1, 'a status poll must still be a single SELECT');
+  });
+});
+
 test('an unknown token still 404s, with and without the status view', async () => {
   await withPublicApi(async (base) => {
     // The non-enumeration contract is unchanged: the cheap view must not
@@ -196,6 +229,10 @@ test('an unknown token still 404s, with and without the status view', async () =
     assert.equal(full.status, 404);
     const poll = await get(base, UNKNOWN, '?view=status');
     assert.equal(poll.status, 404);
-    assert.deepEqual(await poll.json(), await full.json());
+    const body = await full.json();
+    assert.deepEqual(await poll.json(), body);
+    // #1537: the refusal must not echo anything back either — the address
+    // field exists on the SUCCESS payload only.
+    assert.equal(body.email, undefined);
   });
 });

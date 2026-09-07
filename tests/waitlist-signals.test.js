@@ -26,16 +26,36 @@ const { signalsFor, SECTIONS } = require('../src/services/waitlist-signals');
 
 test('an empty signup has no signals at all', () => {
   assert.deepEqual(signalsFor({}), {
-    confirmed: false, verified: [], sections: [], invited: 0,
+    confirmed: false,
+    verified: [],
+    sections: [],
+    // How many sections there ARE, which is a property of the survey and
+    // not of this row: an unanswered signup still reads "0 of 7".
+    sections_total: SECTIONS.length,
+    invited: 0,
   });
+});
+
+// The denominator travels WITH the facts because it used to be typed into
+// the admin column instead, where it went stale: the section list grew to
+// seven and the screen kept reporting "6/6 answered" for a row that had
+// answered six of them (#1544).
+test('the section total is the length of the section list, not a copy of it', () => {
+  assert.equal(signalsFor({}).sections_total, SECTIONS.length);
+  assert.equal(signalsFor({ answers: { made_url: 'https://x.invalid' } }).sections_total,
+    SECTIONS.length);
 });
 
 test('there is no score — adding one is a product decision, not a refactor', () => {
   const s = signalsFor({ confirmed_at: '2026-08-01T00:00:00Z', invited_count: 9 });
   assert.equal(s.score, undefined);
+  // `total` specifically: `sections_total` is a count of QUESTIONS, and it
+  // is named that way so it can never be mistaken for the tally this module
+  // refuses to compute.
   assert.equal(s.total, undefined);
   assert.equal(s.rank, undefined);
-  assert.deepEqual(Object.keys(s).sort(), ['confirmed', 'invited', 'sections', 'verified']);
+  assert.deepEqual(Object.keys(s).sort(),
+    ['confirmed', 'invited', 'sections', 'sections_total', 'verified']);
 });
 
 test('confirmation and invite count come off the row, not the answers', () => {
@@ -124,6 +144,8 @@ test('a malformed verified blob is survivable', () => {
 });
 
 test('no row at all is survivable', () => {
-  assert.deepEqual(signalsFor(null), { confirmed: false, verified: [], sections: [], invited: 0 });
+  assert.deepEqual(signalsFor(null), {
+    confirmed: false, verified: [], sections: [], sections_total: SECTIONS.length, invited: 0,
+  });
   assert.deepEqual(signalsFor(undefined).sections, []);
 });

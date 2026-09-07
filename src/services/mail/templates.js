@@ -33,6 +33,12 @@ const HTML_SHELL = (body) =>
 const p = (s) => `<p>${s}</p>`;
 const link = (url) => `<a href="${esc(url)}">${esc(url)}</a>`;
 
+// A one-time code, set big enough to read at arm's length and to copy by
+// eye off a phone. Three mails carry one and all three render it this way;
+// #1516 asked for the join mail to stop being the odd one out.
+const codeBlock = (code) =>
+  `<p style="font-size:28px;font-weight:600;letter-spacing:4px">${esc(code)}</p>`;
+
 function otp(payload) {
   const code = payload.code;
   return {
@@ -41,7 +47,7 @@ function otp(payload) {
       + 'It expires in 10 minutes. If you did not request it, you can ignore this email.',
     html: HTML_SHELL(
       p('Your Usernode login code is:')
-      + `<p style="font-size:28px;font-weight:600;letter-spacing:4px">${esc(code)}</p>`
+      + codeBlock(code)
       + p('It expires in 10 minutes. If you did not request it, you can ignore this email.')
     ),
   };
@@ -72,29 +78,38 @@ function waitlistJoined(payload) {
   const confirmUrl = payload.confirmUrl || null;
   const surveyUrl = payload.url || null;
 
-  let text = 'Thanks for joining the Usernode waitlist.\n\n'
-    + "We'll email you at this address as soon as your access is ready.\n\n"
-    + 'Early access opens in small groups, with more groups opening on a '
-    + 'rolling basis after that.';
-  let html = p('Thanks for joining the Usernode waitlist.')
-    + p("We'll email you at this address as soon as your access is ready.")
-    + p('Early access opens in small groups, with more groups opening on a '
-      + 'rolling basis after that.');
+  let text = '';
+  let html = '';
 
-  // The code comes first. On a phone, leaving for the mail app and coming
-  // back loses the WebView's place, so typing six digits beats following a
-  // link; on desktop the link below is still one click. Either confirms
+  // #1516: the code LEADS the mail. Somebody opening this on a phone is
+  // here to type six digits, and the welcome above them was three
+  // paragraphs to scroll past first — so the ask comes first, in the same
+  // large type `otp` and `waitlistCode` already use, and the thank-you
+  // follows it. On a phone, leaving for the mail app and coming back loses
+  // the WebView's place, so typing the code beats following a link; on
+  // desktop the one-click link below is still one click. Either confirms
   // the same row.
   //
   // Confirming is now what puts somebody ON the list rather than a tidy-up
   // afterwards, so the copy asks for it plainly instead of mentioning it in
   // passing.
   if (payload.code) {
-    text += '\n\nConfirm your email\n'
-      + `Your verification code is ${payload.code}. It works for 15 minutes.`;
+    text += 'Confirm your email\n'
+      + `Your verification code is ${payload.code}. It works for 15 minutes.\n\n`;
     html += p('<strong>Confirm your email</strong>')
-      + p(`Your verification code is <strong>${payload.code}</strong>. It works for 15 minutes.`);
+      + codeBlock(payload.code)
+      + p('It works for 15 minutes.');
   }
+
+  text += 'Thanks for joining the Usernode waitlist.\n\n'
+    + "We'll email you at this address as soon as your access is ready.\n\n"
+    + 'Early access opens in small groups, with more groups opening on a '
+    + 'rolling basis after that.';
+  html += p('Thanks for joining the Usernode waitlist.')
+    + p("We'll email you at this address as soon as your access is ready.")
+    + p('Early access opens in small groups, with more groups opening on a '
+      + 'rolling basis after that.');
+
   if (confirmUrl) {
     text += '\n\nOr confirm this email address in one click:\n'
       + confirmUrl;
@@ -111,6 +126,51 @@ function waitlistJoined(payload) {
   }
 
   return { subject: "You're on the Usernode waitlist 🎉", text, html };
+}
+
+// A REQUESTED confirmation code (POST /api/public/waitlist/resend, and the
+// re-join branch of POST /api/public/waitlist). Separate from
+// waitlist_joined because the join mail is a welcome that happens to carry
+// a code, is capped at one per address per day, and re-sending it would
+// tell somebody they had "joined" a list they joined weeks ago.
+//
+// Two shapes, and the branch is the ONLY place the platform ever discloses
+// whether an address is already confirmed. The endpoint answers the same
+// words to everyone; the inbox belongs to the address itself, so it is the
+// one channel where saying "you are already confirmed" leaks nothing.
+function waitlistCode(payload) {
+  // Already confirmed: no code is minted, so there is nothing to type. The
+  // useful answer is where to look at where they stand.
+  if (!payload.code) {
+    const statusUrl = payload.statusUrl || null;
+    let text = 'You asked for a new confirmation code for the Usernode waitlist.\n\n'
+      + 'This address is already confirmed, so there is nothing left to do. '
+      + "You're on the list and we'll email you when your spot opens.";
+    let html = p('You asked for a new confirmation code for the Usernode waitlist.')
+      + p('This address is already confirmed, so there is nothing left to do. '
+        + "You're on the list and we'll email you when your spot opens.");
+    if (statusUrl) {
+      text += `\n\nCheck where you stand: ${statusUrl}`;
+      html += p(`Check where you stand: ${link(statusUrl)}`);
+    }
+    return { subject: 'Your Usernode waitlist address is already confirmed', text, html: HTML_SHELL(html) };
+  }
+
+  const confirmUrl = payload.confirmUrl || null;
+  let text = `Your Usernode waitlist confirmation code is ${payload.code}. `
+    + 'It works for 15 minutes.\n\n'
+    + 'Any earlier code has stopped working, so use this one.';
+  let html = p('Your Usernode waitlist confirmation code is:')
+    + codeBlock(payload.code)
+    + p('It works for 15 minutes. Any earlier code has stopped working, so use this one.');
+  if (confirmUrl) {
+    text += '\n\nOr confirm this email address in one click:\n' + confirmUrl;
+    html += p('Or confirm this email address in one click:') + p(link(confirmUrl));
+  }
+  text += '\n\nIf you did not ask for this, you can ignore this email.';
+  html += p('If you did not ask for this, you can ignore this email.');
+
+  return { subject: 'Your Usernode waitlist confirmation code', text, html: HTML_SHELL(html) };
 }
 
 function waitlistReleased(payload) {
@@ -203,6 +263,8 @@ function buildMessage(kind, payload = {}) {
       const m = waitlistJoined(payload);
       return { ...m, html: HTML_SHELL(m.html) };
     }
+    case 'waitlist_code':
+      return waitlistCode(payload);
     case 'waitlist_released':
       return waitlistReleased(payload);
     case 'password_reset':
@@ -214,6 +276,6 @@ function buildMessage(kind, payload = {}) {
 
 // Every kind this module can render, for the admin console and for tests
 // that want to assert the set didn't quietly shrink.
-const KINDS = ['otp', 'waitlist_joined', 'waitlist_released', 'password_reset', 'admin_test'];
+const KINDS = ['otp', 'waitlist_joined', 'waitlist_code', 'waitlist_released', 'password_reset', 'admin_test'];
 
 module.exports = { buildMessage, KINDS };

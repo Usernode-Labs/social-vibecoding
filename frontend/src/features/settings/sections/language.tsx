@@ -11,13 +11,31 @@ import { Select } from '@/components/ui/select';
  *
  * #settings-locale is a dapp.json anchor and settings.js reads/writes its
  * `.value`, so it stays a native `<select>` — see @/components/ui/select.
+ *
+ * #1556: the section is NOT offered by default any more. The platform shell
+ * is English-only, so a "Language" row in Preferences reads as a UI language
+ * switch and does nothing visible — the value only ever reached APPS. So
+ * #settings-language-section ships `hidden` and is the CAPABILITY GATE
+ * Settings._visibleSections() reads back (same arrangement as #wallet-section
+ * in ./wallet.tsx): Settings._renderLanguageSection reveals it only for a
+ * user who ALREADY has a locale saved, so nobody is stranded with a
+ * preference they can no longer change or clear. Every read path (the JWT
+ * claim, the bridge, the server consumers) is untouched. To re-launch the
+ * picker once the shell is translated, drop the `hidden` here and the gate
+ * lines in _renderLanguageSection.
+ *
+ * The rendered `className` on the gate node is a CONSTANT and this pane holds
+ * no state, so React never reconciles it away from under settings.js — the
+ * same idiom as #wallet-section.
  */
 export function LanguageSection() {
   return (
     <div data-settings-section="language" className="hidden">
-      <div id="settings-language-section">
+      <div id="settings-language-section" className="hidden">
         <SectionHeading title="Language">
-          Apps on Usernode use this as their default language. Apps may offer their own override.
+          Apps on Usernode use this as their default language, and may offer their own override.
+          Usernode's own screens are English-only for now, so changing this will not translate
+          the platform.
         </SectionHeading>
         <Select id="settings-locale" variant="plain">
           <option value="">

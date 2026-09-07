@@ -230,6 +230,27 @@ test('settings.js wires the picker to POST /api/me/locale and the live push', ()
   assert.match(js, /notifyLocaleChanged/);
 });
 
+test('the Settings picker is gated on an already-saved locale (#1556)', () => {
+  // The platform shell is English-only, so a "Language" row in Preferences
+  // reads as a UI language switch and does nothing visible. The value only
+  // ever reached APPS, so the picker is no longer offered by default — but
+  // it stays reachable for the accounts that already have one saved, and
+  // every read path above this line is untouched.
+  const js = read('frontend/src/features/settings/settings.js');
+  assert.match(js, /\{ key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' \}/,
+    'the registry entry names the gate node, which _visibleSections() reads back');
+  const start = js.indexOf('    _renderLanguageSection() {');
+  assert.ok(start > -1, '_renderLanguageSection exists');
+  const fn = js.slice(start, start + 1200);
+  assert.match(fn, /getElementById\('settings-language-section'\)/);
+  assert.match(fn, /if \(!value\) \{[^}]*classList\.add\('hidden'\);[^}]*return;/,
+    'no saved locale -> hidden, so the section drops out of the menu');
+  assert.match(fn, /classList\.remove\('hidden'\)/,
+    'a saved locale -> shown, so nobody is stranded with an unchangeable preference');
+  // The pane ships hidden in the markup; the render fn is the only reveal.
+  assert.match(shellMarkup(), /id="settings-language-section" class="hidden"/);
+});
+
 test('shell answers the __usernode_locale family and pushes changes', () => {
   const shell = read('public/js/app-view.js');
   assert.match(shell, /handleLocaleBridgeMessage/);

@@ -112,7 +112,13 @@ const CONTENT_TYPES = {
 // 600s → 640s with the 480 → 530 ceiling bump: the suite deadline below
 // crossed 480s, and this one has to stay 120s above it (pinned by
 // tests/checks-budget.test.js and tests/capture-pool.test.js).
-const RUN_TIMEOUT_MS = 640 * 1000;
+//
+// 640s → 680s with 530 → 560 (#1699 crossed 512): the deadline moved to
+// 560s, and 120s above it is 680s.
+//
+// 680s → 690s with 560 → 580 (a proposal in flight at the same time): the
+// deadline moved to 570s, and 120s above it is exactly 690s.
+const RUN_TIMEOUT_MS = 690 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 
 // The capture container drives up to TEST_CONCURRENCY headless pages at
@@ -139,7 +145,18 @@ const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
 // 470s → 520s with MAX_DECLARED_TESTS 480 → 530: ~258s of ideal work for a
 // full suite, so 520s keeps the 2x margin with ~3s to spare. This crossed the
 // 480s line the note above warned about, so RUN_TIMEOUT_MS moved with it.
-const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '520000';
+//
+// 520s → 560s with MAX_DECLARED_TESTS 530 → 560, when the manifest reached 512
+// and left 18 of the 20 slots the headroom rule requires. ~273s of ideal work
+// for a full suite, so 560s keeps the 2x margin by 14s — more room than the
+// last move left, deliberately, because the previous two both had to be redone
+// within a few hundred checks. RUN_TIMEOUT_MS moves 640s → 680s with it, the
+// required 120s clear and no more, as every one of these moves has done.
+//
+// 560s → 570s with MAX_DECLARED_TESTS 560 → 580, a proposal in flight at the
+// same time: ~283s of ideal work for a full suite, so 570s keeps the 2x
+// margin with ~4s to spare. RUN_TIMEOUT_MS moves 680s → 690s with it again.
+const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '570000';
 
 // Mint a 15-minute capture identity token for a seeded capture identity
 // row, scoped to the app being captured.
@@ -797,6 +814,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
     const write = await pool.query(
       `UPDATE chat_sessions
           SET check_state = $1,
+              checks_progress = NULL,
               test_results = $2,
               checks_commit_sha = $3::text,
               checks_checked_at = NOW(),
@@ -821,6 +839,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
     `UPDATE chat_sessions
        SET check_state = $1, test_results = $2, checks_commit_sha = $3::text, checks_checked_at = NOW(),
            check_phase = NULL,
+           checks_progress = NULL,
            check_error_detail = NULL,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
@@ -853,6 +872,7 @@ async function storeChecksSkipped(
   const write = await pool.query(
     `UPDATE chat_sessions
        SET check_state = 'skipped', test_results = '[]', checks_commit_sha = $1::text,
+           checks_progress = NULL,
            checks_checked_at = NOW(),
            check_phase = NULL,
            check_error_detail = $2,
@@ -915,6 +935,7 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null, trigge
        SET check_state = 'pending', checks_commit_sha = $2::text, checks_checked_at = NOW(),
            check_phase = $3::text,
            check_trigger = $4::text,
+           checks_progress = NULL,
            check_next_retry_at = NULL,
            checks_base_sha = COALESCE(
              (SELECT a.main_sha FROM apps a WHERE a.id = chat_sessions.app_id),
@@ -1438,6 +1459,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   // outcome; 'error' is the default so a run that throws before reaching a
   // verdict is not left reading 'running' forever.
   let traceStatus = 'error';
+  // Set once the run's progress state exists (see makeChecksProgressState);
+  // a no-op until then so the catch below can always call it.
+  let closeProgress = () => {};
   try {
     const buildTimings = (stagingResult && stagingResult.timings) || null;
     if (buildTimings) {
@@ -1456,7 +1480,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         // Historically the single largest phase of the whole run: a full
         // logical dump/restore of the app's database. See
         // db-manager.privateDataExclusions for what shrank it.
-        traceStep('clone', 'Preview database cloned', { durationMs: buildTimings.cloneMs });
+        traceStep('clone', 'Preview database cloned', {
+          durationMs: buildTimings.cloneMs,
+          // 'template' is the file-level copy of the app's staging template;
+          // 'direct' is the dump/restore of the live database. The one that
+          // also refreshed the template paid the direct cost this run.
+          via: buildTimings.cloneVia || undefined,
+          templateRefreshed: buildTimings.templateRefreshed || undefined,
+        });
       }
       if (buildTimings.healthMs != null) {
         traceStep('staging_health', 'Preview answered its healthcheck', { durationMs: buildTimings.healthMs });
@@ -1797,6 +1828,26 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       }
     }
 
+    // Live progress. Two containers report into ONE snapshot: the capture
+    // run's per-check frames (the tracker dedupes them by index) and the
+    // unit suite's TAP lines (its own tracker, under `unit`). Both observers
+    // see stdout as it streams; persist and broadcast are throttled to one
+    // snapshot per second, with a done sentinel always flushed. Every step
+    // is best-effort and swallowed: the verdict below is still read from
+    // the whole stdout. `closeProgress` is called before the verdict is
+    // written so a late timer can never broadcast 'pending' after it.
+    const progress = makeChecksProgressState({
+      expected: tests.length,
+      // The build half, finished, rides every testing-half snapshot.
+      build: buildProgressFromTimings(stagingResult && stagingResult.timings),
+      flush: (snap) => {
+        setChecksProgress(pool, session.id, commitHash, snap).catch(() => {});
+        notifyChecksProgress(session.id, commitHash, snap, 'testing', trigger);
+      },
+    });
+    closeProgress = progress.close;
+    const progressObserver = progress.observeCapture;
+
     // Repo unit suite (aggregate `npm test` check). Launched BEFORE the
     // capture container and awaited after it, so the suite runs in its own
     // one-shot container CONCURRENTLY with the browser checks and adds
@@ -1807,6 +1858,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       pool, appId: app.id, sessionId: session.id,
       repoOwner, repoName, ref: gitRef,
       prNumber: Number(session.pr_number) || null,
+      onProgress: progress.observeUnit,
     }).catch((err) => {
       log.warn('visuals', 'Unit-suite check failed to run (non-fatal)', {
         sessionId: session.id, err: err.message,
@@ -1892,6 +1944,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       };
       if (kubernetesCapture) {
         ({ stdout, ...res } = await kubernetes.runCaptureJob(config, {
+          onStdoutLine: progressObserver,
           sessionId: session.id,
           env: captureEnv,
           stdinPayload: testsViaStdin ? testsJson : null,
@@ -1899,6 +1952,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         }));
       } else {
         ({ stdout, ...res } = await docker.runOneShot(`usernode-capture-${session.id}`, {
+          onStdoutLine: progressObserver,
           image: CAPTURE_IMAGE,
           env: captureEnv,
           stdinPayload: testsViaStdin ? testsJson : null,
@@ -1963,6 +2017,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // has usually been finished for minutes. Its own timeoutMs bounds this
     // await, and the .catch at launch made rejection impossible.
     const unitOutcome = await unitSuitePromise;
+    closeProgress();
     if (unitOutcome) extraRows.push(unitOutcome.row);
     const checksResult = classifyTests(parseTests(stdout), tests.length, dispatched
       ? { dispatched, sentinel: parseTestsDone(stdout), extraRows }
@@ -2163,6 +2218,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       durationMs: Date.now() - runStartedAt,
     });
   } catch (err) {
+    closeProgress();
     traceStep('capture_error', 'Checks run threw', { error: err.message, level: 'error' });
     log.warn('visuals', 'Capture failed (non-fatal)', { sessionId: session.id, err: err.message });
     // The run broke before an outcome could be computed (container build,
@@ -2338,6 +2394,209 @@ function notifyVisualsReady(sessionId, visuals, send) {
 //
 // `phase` rides along so a card that re-renders from the event alone shows
 // the right stage caption without waiting for its next fetch.
+// ── Live progress of a run in flight ──
+//
+// The capture container prints one `__USERNODE_TEST__ index=<n> status=…`
+// header per check, and `__USERNODE_TESTS_DONE__ ran=… expected=…` when the
+// suite stops dispatching. The verdict is read from the whole stdout after
+// exit (parseTests / classifyTests, unchanged); this tracker only listens to
+// the same lines as they stream past, so "checks running" can say how far
+// along it is. Dedup is by index, exactly as parseTests does, so a retried
+// frame counts once. Nothing here can change a verdict.
+function makeChecksProgressTracker(expected) {
+  const byIndex = new Map();
+  let done = false;
+  let doneRan = null;
+  const total = Number.isInteger(expected) && expected >= 0 ? expected : null;
+  return {
+    // Returns true when the line advanced the state (a new frame, or done).
+    feed(line) {
+      const l = String(line || '');
+      if (l.startsWith('__USERNODE_TEST__ ')) {
+        const m = /\bindex=(\d+)\b/.exec(l);
+        const st = /\bstatus=(pass|fail)\b/.exec(l);
+        if (!m) return false;
+        const index = parseInt(m[1], 10);
+        const status = st && st[1] === 'pass' ? 'pass' : 'fail';
+        const before = byIndex.get(index);
+        byIndex.set(index, status);
+        return before !== status;
+      }
+      if (l.startsWith('__USERNODE_TESTS_DONE__ ')) {
+        done = true;
+        const r = /\bran=(\d+)\b/.exec(l);
+        doneRan = r ? parseInt(r[1], 10) : null;
+        return true;
+      }
+      return false;
+    },
+    snapshot() {
+      let passed = 0;
+      let failed = 0;
+      for (const st of byIndex.values()) { if (st === 'pass') passed++; else failed++; }
+      const ran = byIndex.size;
+      return {
+        ran, passed, failed,
+        expected: total,
+        done,
+        updatedAt: new Date().toISOString(),
+        ...(done && doneRan !== null && doneRan !== ran ? { reportedRan: doneRan } : {}),
+      };
+    },
+  };
+}
+
+// Persist a progress snapshot on the row — only while THIS run is the one in
+// flight. `check_state = 'pending'` and the commit guard together mean a
+// verdict that has already landed, or a newer run that has since started,
+// can never be overwritten by a late frame from an older container.
+async function setChecksProgress(pool, sessionId, commitSha, progress) {
+  if (!pool || !sessionId) return false;
+  const res = await pool.query(
+    `UPDATE chat_sessions
+        SET checks_progress = $2::jsonb
+      WHERE id = $1
+        AND check_state = 'pending'
+        AND (checks_commit_sha IS NOT DISTINCT FROM $3::text)`,
+    [sessionId, JSON.stringify(progress || null), commitSha || null]
+  );
+  return !!(res && res.rowCount);
+}
+
+// The same event type the finished verdict rides on (#47), so no client has
+// to learn a second one: `checkState: 'pending'` plus a `progress` block.
+// A client that patches from the event gets a live bar; one that refetches
+// gets the same numbers from the row.
+// `commitSha` and `trigger` are OMITTED from the event when the caller
+// passes undefined (a build-step tick knows neither), so a client that
+// patches its row from the event keeps what it has instead of nulling it.
+function notifyChecksProgress(sessionId, commitSha, progress, phase = null, trigger) {
+  try {
+    const event = {
+      type: 'checks_ready',
+      _seq: `chk${Date.now().toString(36)}-${++_notifySeq}`,
+      sessionId,
+      checkState: 'pending',
+      failingCount: progress && Number.isInteger(progress.failed) ? progress.failed : 0,
+      ...(commitSha === undefined ? {} : { commitSha: commitSha || null }),
+      checkPhase: normalizeCheckPhase(phase),
+      ...(trigger === undefined ? {} : { checkTrigger: normalizeCheckTrigger(trigger) }),
+      progress: progress || null,
+    };
+    sessionBus.publish(sessionId, event);
+    const { broadcastGlobal } = require('./ws');
+    broadcastGlobal({ type: 'session_event', sessionId, event: 'checks_ready', ...event });
+  } catch (err) {
+    log.warn('visuals', 'checks_progress notify failed', { sessionId, err: err.message });
+  }
+}
+
+// The build half's progress: which step the staging build is on, and how
+// long the finished ones took. Merged INTO checks_progress rather than
+// replacing it, guarded only by the pending state (the build runs before
+// the row's commit pin is necessarily settled), and carried through the
+// testing half by makeChecksProgressState so the ledger can keep saying
+// how long the build took beside the checks bar.
+//   { step: 'source_fetch'|'image_build'|'clone'|'health'|'done',
+//     startedAt, steps: [{ key, ms, via? }], totalMs? }
+const BUILD_STEP_KEYS = ['source_fetch', 'image_build', 'clone', 'health'];
+
+async function setChecksBuildProgress(pool, sessionId, build) {
+  if (!pool || !sessionId || !build) return false;
+  const res = await pool.query(
+    `UPDATE chat_sessions
+        SET checks_progress = COALESCE(checks_progress, '{}'::jsonb)
+                              || jsonb_build_object('build', $2::jsonb, 'updatedAt', $3::text)
+      WHERE id = $1
+        AND check_state = 'pending'`,
+    [sessionId, JSON.stringify(build), new Date().toISOString()]
+  );
+  return !!(res && res.rowCount);
+}
+
+function notifyChecksBuildProgress(sessionId, build) {
+  notifyChecksProgress(sessionId, undefined, { build: build || null }, 'building', undefined);
+}
+
+// The finished build, from the timings staging.js threads out, in the same
+// shape the live steps use — so the testing half's snapshots carry it.
+function buildProgressFromTimings(timings) {
+  if (!timings || typeof timings !== 'object') return null;
+  const steps = [];
+  const push = (key, ms, extra) => {
+    if (Number.isFinite(ms)) steps.push({ key, ms: Math.round(ms), ...(extra || {}) });
+  };
+  push('source_fetch', timings.sourceFetchMs);
+  push('image_build', timings.imageBuildMs, Array.isArray(timings.imagePhases) && timings.imagePhases.length
+    ? { phases: timings.imagePhases.map((ph) => ({ name: String(ph.name), ms: Number.isFinite(ph.ms) ? Math.round(ph.ms) : null })) }
+    : null);
+  push('clone', timings.cloneMs, timings.cloneVia ? { via: timings.cloneVia } : null);
+  push('health', timings.healthMs);
+  if (!steps.length) return null;
+  return {
+    step: 'done',
+    steps,
+    ...(Number.isFinite(timings.totalMs) ? { totalMs: Math.round(timings.totalMs) } : {}),
+  };
+}
+
+// Minimum gap between two persisted/broadcast snapshots for one run. A pool
+// of eight can finish several checks in the same second; the last frame
+// (and the done sentinel) always gets through regardless.
+const CHECKS_PROGRESS_MIN_GAP_MS = 1000;
+
+// One run's progress state: the capture tracker plus the latest unit-suite
+// snapshot, merged into one `{ ran, passed, failed, expected, done, unit }`
+// and handed to `flush` at most once per CHECKS_PROGRESS_MIN_GAP_MS. A
+// `done` from either side flushes at once. `close()` drops any pending
+// timer and makes every later observation a no-op: the verdict write that
+// follows it must be the last thing anyone hears about this run.
+function makeChecksProgressState({ expected, flush, minGapMs = CHECKS_PROGRESS_MIN_GAP_MS, build = null }) {
+  const tracker = makeChecksProgressTracker(expected);
+  let unit = null;
+  let lastFlushAt = 0;
+  let timer = null;
+  let closed = false;
+  const snapshot = () => ({
+    ...tracker.snapshot(),
+    ...(unit ? { unit } : {}),
+    ...(build ? { build } : {}),
+  });
+  const doFlush = () => {
+    timer = null;
+    if (closed) return;
+    lastFlushAt = Date.now();
+    try { flush(snapshot()); } catch { /* best-effort */ }
+  };
+  const schedule = (urgent) => {
+    if (closed) return;
+    const gap = Date.now() - lastFlushAt;
+    if (urgent || gap >= minGapMs) {
+      if (timer) { clearTimeout(timer); timer = null; }
+      doFlush();
+    } else if (!timer) {
+      timer = setTimeout(doFlush, minGapMs - gap);
+      if (typeof timer.unref === 'function') timer.unref();
+    }
+  };
+  return {
+    observeCapture(line) {
+      if (closed || !tracker.feed(line)) return;
+      schedule(tracker.snapshot().done);
+    },
+    observeUnit(snap) {
+      if (closed || !snap || typeof snap !== 'object') return;
+      unit = snap;
+      schedule(!!snap.done);
+    },
+    close() {
+      closed = true;
+      if (timer) { clearTimeout(timer); timer = null; }
+    },
+    snapshot,
+  };
+}
+
 function notifyChecksPending(sessionId, commitSha, phase = null, trigger = null) {
   try {
     const event = {
@@ -2423,7 +2682,8 @@ module.exports = {
   storeChecks,
   storeChecksSkipped,
   setChecksPending,
-  notifyChecksPending,
+  notifyChecksPending, makeChecksProgressTracker, makeChecksProgressState, setChecksProgress, notifyChecksProgress,
+  setChecksBuildProgress, notifyChecksBuildProgress, buildProgressFromTimings, BUILD_STEP_KEYS,
   checksAlreadyDecided,
   normalizeCheckTrigger,
   CHECK_TRIGGERS,

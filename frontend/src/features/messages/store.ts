@@ -600,6 +600,13 @@ export function notifyTyping(typing: boolean): void {
   if (!conversationId) return;
   const now = Date.now();
   if (typing && now - (typingSentAt.get(conversationId) || 0) < 1800) return;
+  // "Stopped typing" is only news after "typing" was sent. The composer
+  // says it on blur and on unmount, and its unmount for one conversation
+  // runs after the route has already moved to the next one — so without
+  // this a hop between threads pinged a conversation nobody had typed in,
+  // which the demo routes answer with a 404 and the check harness counts
+  // as a console error.
+  if (!typing && !typingSentAt.get(conversationId)) return;
   typingSentAt.set(conversationId, typing ? now : 0);
   void api.setTyping(conversationId, typing).catch(() => { /* ephemeral */ });
 }

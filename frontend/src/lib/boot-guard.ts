@@ -50,8 +50,21 @@ export interface BootError {
   stack?: string;
 }
 
+/**
+ * A step that finished, and when (ms since navigation start). The watchdog
+ * prints these next to the errors: a boot whose record says "no error" and
+ * "hydrate never completed" is a different diagnosis from one that says "no
+ * error" and "every step completed", and on a device with no inspector the
+ * panel is the only place either can be read.
+ */
+export interface BootStepDone {
+  step: string;
+  at: number;
+}
+
 interface BootWatchState {
   errors: BootError[];
+  steps: BootStepDone[];
 }
 
 /**
@@ -62,14 +75,30 @@ interface BootWatchState {
 function store(): BootWatchState | null {
   if (typeof window === 'undefined') return null;
   const w = window as unknown as { __unBoot?: BootWatchState };
-  if (!w.__unBoot) w.__unBoot = { errors: [] };
+  if (!w.__unBoot) w.__unBoot = { errors: [], steps: [] };
   if (!Array.isArray(w.__unBoot.errors)) w.__unBoot.errors = [];
+  // The head creates the record with `errors` only; an older head, or a test
+  // that stubbed the store, may have no `steps` at all.
+  if (!Array.isArray(w.__unBoot.steps)) w.__unBoot.steps = [];
   return w.__unBoot;
 }
 
 /** Every boot step that has failed on this load, oldest first. */
 export function bootErrors(): BootError[] {
   return store()?.errors ?? [];
+}
+
+/** Every boot step that COMPLETED on this load, oldest first. */
+export function bootSteps(): BootStepDone[] {
+  return store()?.steps ?? [];
+}
+
+function now(): number {
+  try {
+    return Math.round(performance.now());
+  } catch {
+    return -1;
+  }
 }
 
 /**
@@ -81,6 +110,9 @@ export function bootErrors(): BootError[] {
 export function bootStep(step: string, fn: () => void): boolean {
   try {
     fn();
+    try {
+      store()?.steps.push({ step, at: now() });
+    } catch { /* the record is a nicety; the step already succeeded */ }
     return true;
   } catch (err) {
     const error = err as { message?: string; stack?: string } | null;
@@ -104,4 +136,5 @@ if (typeof window !== 'undefined') {
   const w = window as unknown as { UsernodeReact?: Record<string, unknown> };
   w.UsernodeReact = w.UsernodeReact || {};
   w.UsernodeReact.bootErrors = bootErrors;
+  w.UsernodeReact.bootSteps = bootSteps;
 }

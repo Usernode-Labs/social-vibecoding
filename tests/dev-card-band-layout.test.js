@@ -530,7 +530,7 @@ test('the preview eye is pinned to the BOTTOM of the card\'s right-hand rail', (
     'the band itself stays a plain left-aligned flex row');
 });
 
-test('the rail emits ⋯, then the chevron, then the preview — in that order', () => {
+test('the rail emits ⋯, then the chevron; the preview rides at the end of the band', () => {
   const AppView = makeAppView();
   const key = AppView._registerCardMenu('k:1', [{ label: 'Withdraw', act: () => {} }]);
   const eye = { state: 'live', sessionId: 1, url: 'u', title: 'p', iconOnly: true };
@@ -539,21 +539,27 @@ test('the rail emits ⋯, then the chevron, then the preview — in that order',
     const at = html.indexOf('<div class="dev-card-rail">');
     return at < 0 ? '' : html.slice(at, html.lastIndexOf('</div>'));
   };
-  // The order IS the layout: the auto margins on the chevron centre it in the
-  // gap between whatever precedes and follows it, so emitting the eye before
-  // the chevron would put the eye in the middle and the chevron at the bottom.
+  // Round three: the board card's preview is a LABELLED pill at the right end
+  // of the action band (the corner eye was the hardest thing on the card to
+  // hit), so `rail.preview` — which the builders still hand over — is drawn
+  // there and the rail holds the ⋯ and the chevron only.
   assert.match(railOf({ menuKey: key, chevron: true, preview: eye }),
-    /^<div class="dev-card-rail"><button [^>]*dev-card-menu-btn[\s\S]*?<svg [^>]*class="w-4 h-4[\s\S]*?<\/svg><button [^>]*gc-vote-btn-preview[\s\S]*$/);
+    /^<div class="dev-card-rail"><button [^>]*dev-card-menu-btn[\s\S]*?<svg [^>]*class="w-4 h-4[\s\S]*?<\/svg><\/div>$/);
+  assert.doesNotMatch(railOf({ menuKey: key, chevron: true, preview: eye }), /gc-vote-btn-preview/);
+  const withEye = BANDS({ rail: { menuKey: key, chevron: true, preview: eye } });
+  assert.match(withEye, /<div class="gc-card-actions">[\s\S]*<button [^>]*class="gc-vote-btn gc-vote-btn-preview"[^>]*>[\s\S]*?Preview<\/button><\/div>/,
+    'the labelled pill closes the action band');
+  assert.doesNotMatch(withEye, /gc-vote-btn-preview[^>]*gc-vote-btn-icon/, 'never the icon variant on a board card');
 
-  // No preview → the rail as it was before this moved: no reserved slot, so a
-  // card with nothing to preview looks untouched.
+  // No preview → the rail as it was: no reserved slot.
   assert.equal(railOf({ menuKey: key, chevron: true, preview: null }),
     railOf({ menuKey: key, chevron: true }));
 
-  // A card with a preview but no ⋯ still needs the column (the shared-session
-  // card): a bare chevron is only rendered when it is the rail's sole content.
-  assert.match(railOf({ chevron: true, preview: eye }),
-    /^<div class="dev-card-rail"><svg [\s\S]*gc-vote-btn-preview[\s\S]*$/);
+  // A card with a preview but no ⋯ (the shared-session card) needs no column:
+  // the chevron is the rail's sole content, so it renders bare.
+  assert.doesNotMatch(BANDS({ rail: { chevron: true, preview: eye } }), /dev-card-rail/);
+  assert.match(BANDS({ rail: { chevron: true, preview: eye } }), /gc-vote-btn-preview[\s\S]*w-4 h-4/,
+    'preview in the band, chevron after it');
   assert.doesNotMatch(BANDS({ rail: { chevron: true } }), /dev-card-rail/,
     'a lone chevron needs no column to be centred in');
   assert.doesNotMatch(BANDS({ rail: { chevron: false } }), /dev-card-rail|w-4 h-4/);

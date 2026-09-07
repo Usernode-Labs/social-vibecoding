@@ -573,7 +573,7 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS manifest_snapshot JSONB;
 -- #416: detail of the last build/deploy failure so the UI can show a
 -- build log instead of a bare "Error" status. Shape:
 --   { stage, reason, log, at, sha }
---   stage  : 'repo'|'clone'|'build'|'start'|'healthcheck'|'timeout'|'other'
+--   stage  : 'database'|'repo'|'clone'|'build'|'start'|'healthcheck'|'timeout'|'other'
 --   reason : concise human line (<= 280 chars)
 --   log    : ANSI-stripped tail of the docker build / boot output (<= 16 kB)
 -- Written by the deploy catch paths (services/app-creator.js,
@@ -736,6 +736,13 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_image_ref TE
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_build_ref VARCHAR(253);
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_runtime_kind VARCHAR(32);
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_runtime_name VARCHAR(253);
+-- The commit the preview was actually built from (the clone's HEAD at build
+-- time). A clean platform sync of main carries the checks verdict forward
+-- WITHOUT a rebuild, so the preview can sit a commit behind the head the
+-- row now describes; "Re-run checks" compares this to the head and rebuilds
+-- instead of testing the new head's checks against the old build. NULL for
+-- previews built before this column existed, which keeps the old behaviour.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_commit_sha VARCHAR(64);
 -- LLM-generated PR title shown alongside the PR number across the UI
 -- (dev chat, vote panel, status page). Nullable so old rows predate the
 -- auto-title feature and just fall back to showing "by <user>".
@@ -824,9 +831,10 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS console_checked_at T
 -- parallel for one release so a rolling deploy's old readers still work.
 -- #447: 'pending' is only ever advanced out by the same captureForSession
 -- run that set it, so a restart mid-capture (or a staging rebuild that
--- predated the capture wiring) could leave a promoted PR 'pending'/NULL and
--- permanently merge-blocked. A 'pending' row whose checks_checked_at is
--- older than CHECKS_STALE_MS (default 10m) is now treated as STUCK and
+-- predated the capture wiring) could leave a submitted CLI handoff or promoted
+-- PR 'pending'/NULL and permanently merge-blocked. A 'pending' row whose
+-- checks_checked_at is older than CHECKS_STALE_MS (default 10m) is now treated
+-- as STUCK and
 -- re-run: by server.js reconcileStuckChecks (boot + session-sweeper Pass 4),
 -- by a vote that reaches threshold (checkAndMerge stale-pending kick), by any
 -- staging rebuild (staging-recovery.rebuildSessionStaging now re-runs checks),
@@ -934,6 +942,17 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_phase VARCHAR(
 -- simply shows no trigger caption then. Advisory/display only, exactly like
 -- check_phase: the merge gate reads check_state and nothing else.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_trigger VARCHAR(32);
+-- Live progress of the run in flight: `{ ran, passed, failed, expected,
+-- updatedAt, unit }`, written as the capture container's per-check frames
+-- stream in and cleared with the verdict. `unit` is the repo unit suite's
+-- own `{ phase, ran, passed, failed, skipped, expected, done }`, read off
+-- its TAP output the same way. NULL outside a run. The verdict itself
+-- stays in test_results; this is only what "checks running" has to say
+-- between the start and the end, which used to be nothing.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_progress JSONB;
+-- The unit suite's size from its last completed run (`# tests`), so the
+-- next run's live bar has a denominator before the suite finishes.
+ALTER TABLE apps                   ADD COLUMN IF NOT EXISTS unit_suite_last_tests INTEGER;
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.
@@ -1118,6 +1137,16 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_local_commit_sha VARC
 -- web turn naturally changes checks_commit_sha and supersedes that upload
 -- without needing to know about CLI-specific state.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_upload_checked_sha VARCHAR(40);
+-- Explicit replacement lineage for local proposal handoffs. A new request ID
+-- may replace a same-owner, same-app pre-vote handoff only when the caller
+-- names it. proposal_start archives the predecessor and inserts the successor
+-- in one transaction; the nullable self-reference preserves that decision
+-- without imposing uniqueness on an issue (other authors and promoted
+-- alternatives remain valid proposals).
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_supersedes_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS chat_sessions_handoff_supersedes_idx
+  ON chat_sessions(handoff_supersedes_session_id)
+  WHERE handoff_supersedes_session_id IS NOT NULL;
 -- Deliberately scoped independently of source: a delayed proposal_start retry
 -- must always resolve to the same cross-surface session.
 CREATE UNIQUE INDEX IF NOT EXISTS chat_sessions_handoff_request_idx
@@ -6224,6 +6253,48 @@ CREATE TABLE IF NOT EXISTS app_report_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_app_report_snapshots_app
   ON app_report_snapshots (app_id, locked_at DESC);
+
+-- Workshop themes cache (the Dev screen's lander). One row per app, shared
+-- by every viewer — the input is built from shared-visibility data only,
+-- exactly like app_report_ai above. themes_json is the model's grouping:
+-- [{ id, name, description, saying, items: ['issue:12', 'session:34', …] }]
+-- with STABLE ids (the previous themes are fed back into each run so a
+-- theme keeps its id across regenerations). input_hash fingerprints the
+-- board the grouping was made from; a stale row is served as is while a
+-- regeneration runs behind the request. `source` is 'ai' for every cached
+-- row — the no-model category grouping is computed per request and never
+-- written here, so a key arriving later takes over cleanly.
+CREATE TABLE IF NOT EXISTS app_workshop_themes (
+  app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  input_hash    VARCHAR(64) NOT NULL,
+  themes_json   JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source        VARCHAR(16) NOT NULL DEFAULT 'ai',
+  model         VARCHAR(64),
+  generated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- The grouping became a two-stage pipeline (services/workshop-themes.js):
+-- themes_json now holds theme DEFINITIONS only ([{ id, name, description,
+-- saying, anchors }]) and placements_json the card → theme id map they are
+-- served with, so a card the model skipped is retried, never lost. Rows
+-- written before this carry `items` on the definitions and serve from them
+-- until the first reconcile. input_hash became the key set's digest.
+--   unplaced_json        cards the placer said fit no theme (they count as churn)
+--   discovered_at        when the definitions were last drafted
+--   discovery_key_count  how many cards that draft covered (the drift base)
+--   churn_added/removed  cards added / gone since that draft; a tenth re-drafts
+--   last_error/failed_at the last failed stage, for the footnote and the backoff
+--   last_viewed_at       stamped by GET; the hourly sweep re-checks recent apps
+--   reconcile_started_at the cross-instance lease one reconcile holds
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS placements_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS unplaced_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovered_at TIMESTAMPTZ;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovery_key_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS churn_added INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS churn_removed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_error TEXT;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_failed_at TIMESTAMPTZ;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS reconcile_started_at TIMESTAMPTZ;
 
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,

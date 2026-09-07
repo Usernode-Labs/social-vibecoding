@@ -22,6 +22,7 @@ const ids = {
   github: require.resolve('../src/services/github'),
   dbManager: require.resolve('../src/services/db-manager'),
   template: require.resolve('../src/services/template'),
+  appForker: require.resolve('../src/services/app-forker'),
   ws: require.resolve('../src/services/ws'),
   pool: require.resolve('../src/db/pool'),
   appHeal: require.resolve('../src/services/app-heal'),
@@ -50,6 +51,13 @@ function freshFixtures() {
     repoCreateError: null,
     repoAdopted: false,
     pushFilesCalls: [],
+    forkCopyCalls: [],
+    forkSource: {
+      id: 7,
+      slug: 'source-app',
+      repo_url: 'https://github.com/acme/source-app',
+      status: 'running',
+    },
   };
 }
 
@@ -64,6 +72,7 @@ const fakePool = {
 stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
 stub(ids.pool, { getPool: () => fakePool });
 stub(ids.docker, {
+  execFileAsync: async () => ({ stdout: '', stderr: '' }),
   getContainerStatus: async () => fx.containerStatus,
   startContainer: async (name) => {
     fx.startCalls.push(name);
@@ -114,6 +123,16 @@ stub(ids.dbManager, {
   connectionUrl: () => 'postgres://x',
 });
 stub(ids.template, { getTemplateFiles: () => [] });
+stub(ids.appForker, {
+  findForkSource: async () => fx.forkSource,
+  copyRepoTree: async (args) => {
+    fx.forkCopyCalls.push(args);
+    return {
+      repoUrl: `https://github.com/${args.botUsername}/${args.forkSlug}`,
+      mainSha: 'forkcopy123',
+    };
+  },
+});
 stub(ids.ws, { broadcastGlobal() {} });
 
 delete require.cache[ids.appHeal];
@@ -306,6 +325,31 @@ test('running app with repo_url NULL gets its repo provisioned and prod rebuilt'
   const update = fx.queries.find((q) => /UPDATE apps SET container_id/.test(q.sql));
   assert.ok(update, 'rebuild result persisted');
   assert.equal(update.params[0], 'rebuilt-id');
+});
+
+test('repo-less fork recovery copies its source and never pushes starter-template files', async () => {
+  fx.containerStatus = 'running';
+  const fork = app({
+    name: 'Puzzle Chain Fork',
+    repo_url: null,
+    forked_from: { appId: 7, slug: 'source-app' },
+  });
+
+  const r = await appHeal.checkAndHealOne(config, fakePool, fork);
+  assert.equal(r.status, 'repo_provisioned');
+  assert.equal(fx.forkCopyCalls.length, 1);
+  assert.equal(fx.forkCopyCalls[0].sourceApp, fx.forkSource);
+  assert.equal(fx.forkCopyCalls[0].forkSlug, fork.slug);
+  assert.equal(fx.forkCopyCalls[0].forkName, fork.name);
+  assert.equal(fx.repoCreateCalls.length, 0,
+    'generic repo provisioning is not allowed to create a template fork');
+  assert.equal(fx.pushFilesCalls.length, 0,
+    'starter-template files are never written for a fork');
+
+  const repoWrite = fx.queries.find((q) => /UPDATE apps SET repo_url/.test(q.sql));
+  assert.ok(repoWrite);
+  assert.equal(repoWrite.params[0], 'https://github.com/usernode-bot/puzzle-chain');
+  assert.deepEqual(fx.rebuildCalls, ['puzzle-chain']);
 });
 
 // The mypage-777ed2 incident: the repo already exists on the bot account

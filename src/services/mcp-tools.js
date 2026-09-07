@@ -505,6 +505,14 @@ function shapeChecks(session) {
     phase: session.check_phase || null,
     trigger: session.check_trigger || null,
     checkedAt: isoOrNull(session.checks_checked_at),
+    // A run in flight, as far as it has got: `{ ran, passed, failed,
+    // expected, done, updatedAt, unit }`, written as the capture container's
+    // frames stream in and cleared with the verdict. `unit` is the repo
+    // unit suite (`npm test`) run alongside: `{ phase, ran, passed, failed,
+    // skipped, expected, done }`. Null outside a run — and null during the
+    // build phase, before the first check has run.
+    progress: (session.checks_progress && typeof session.checks_progress === 'object')
+      ? session.checks_progress : null,
     // The commit this verdict describes, and whether that is still the head.
     // `stale` answers false when either side is unknown: an unprovable
     // mismatch must not read as a proven one.
@@ -787,6 +795,28 @@ function shapeProposal(session, origin) {
     // yet must not report itself clean.
     mergeability: session.mergeability || null,
     freshness: require('./proposal-freshness').readFreshness(session),
+    // How current each part of this answer is. Everything above is read
+    // from the proposal's row, not from GitHub, and the row is written by
+    // several asynchronous jobs — the mirror copy after a submit, the
+    // pr-import sweep, the freshness pass, the checks run. A field can
+    // therefore lag the world by a sweep interval, and a caller comparing
+    // `headSha` to the branch it just pushed has to know that. `readAt` is
+    // this call; the others are when their own job last wrote.
+    asOf: {
+      readAt: new Date().toISOString(),
+      checks: isoOrNull(session.checks_checked_at),
+      freshness: isoOrNull(session.freshness_checked_at),
+      head: isoOrNull(session.imported_pr_head_at || session.updated_at),
+    },
+    // Writes the platform has in flight for this proposal right now. A
+    // staging build means checks_* and the preview URL are about to change;
+    // a caller that reads `checks.state` while this is true is reading the
+    // previous run.
+    pendingWrite: {
+      buildInFlight: (() => {
+        try { return !!require('./staging').hasInFlightBuild(session.id); } catch { return null; }
+      })(),
+    },
     externalAgent: session.external_agent || null,
     webPath: session.app_slug
       ? `${origin}/#app/${session.app_slug}/dev/sessions/${session.id}`

@@ -45,6 +45,7 @@ const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
 const { reportAiRoutes } = require('./src/routes/report-ai');
+const { workshopThemesRoutes } = require('./src/routes/workshop-themes');
 const { reportSnapshotRoutes, reportShareRoutes } = require('./src/routes/report-snapshots');
 const { homePanelRoutes } = require('./src/routes/home-panels');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
@@ -97,6 +98,8 @@ const stagingReap = require('./src/services/staging-reap');
 // preview is being built right now alone (see Pass 2 / Pass 3 below). Named
 // stagingSvc because recoverActiveWorkers() already binds a local `staging`.
 const stagingSvc = require('./src/services/staging');
+const visualsSvc = require('./src/services/visuals');
+const { hasInFlightHandoffPipeline } = require('./src/services/handoff-pipeline');
 const limits = require('./src/services/limits');
 const events = require('./src/services/events');
 const ws = require('./src/services/ws');
@@ -575,6 +578,18 @@ app.use(userAgentFilesRoutes(config));
 app.use(topicAttributeRoutes(config));
 app.use(boardOrderRoutes(config));
 app.use(reportAiRoutes(config));
+app.use(workshopThemesRoutes(config));
+// The Workshop's placement stage runs when a card arrives on or leaves a
+// board — which every route and service announces through ws.pushSessionUpdate
+// / pushIssueUpdate — on whichever instance handled the change (the row's
+// lease keeps two from racing). Registered here, not under the leader, for
+// that reason; the daily re-draft is the leader's sweep below.
+{
+  const workshopThemes = require('./src/services/workshop-themes');
+  if (typeof ws.onBoardChange === 'function') {
+    ws.onBoardChange((info) => workshopThemes.noteBoardChange(getPool(config), info));
+  }
+}
 app.use(reportSnapshotRoutes(config));
 // Home-screen panels (#911): the challenges card's data + its per-user
 // show/hide. Me-scoped reads, so it sits behind authMiddleware like the
@@ -1012,6 +1027,11 @@ async function becomeLeader() {
   // period, and hard-purges archived CC volumes once their retention
   // window elapses. Day-scale, so it polls on its own slow interval.
   startStalePrSweeper(config);
+
+  // The Workshop's theme sweep: every app opened in the last week gets its
+  // board re-checked hourly, and its themes re-drafted once a day when
+  // anything changed, or sooner when a tenth of the board did.
+  startWorkshopThemeSweeper(config);
 
   // #907: release local coding-agent leases whose machine stopped
   // heartbeating, and fail the turn they were holding.
@@ -1529,10 +1549,7 @@ async function reconcileEligibleMerges(config) {
 // The headless capture run is capped at RUN_TIMEOUT_MS (240s in
 // services/visuals.js) plus the staging build, so 10 minutes is comfortably
 // beyond any legitimately in-flight run. Tunable via CHECKS_STALE_MS.
-const CHECKS_STALE_MS = parseInt(
-  process.env.CHECKS_STALE_MS || String(10 * 60 * 1000),
-  10
-);
+const CHECKS_STALE_MS = stagingRecovery.checksStaleMs();
 
 // #237: crash-loop short-circuit. A staging build that crashes deterministically
 // (e.g. an app whose staging-only seed hits a missing constraint) used to be
@@ -1548,13 +1565,20 @@ const CHECK_MAX_AUTO_RETRIES = parseInt(
   10
 );
 
+function checkRecoveryInFlight(sessionId) {
+  return activeWorkersSvc.isSessionBusy(sessionId)
+    || hasInFlightHandoffPipeline(sessionId)
+    || stagingSvc.hasInFlightBuild(Number(sessionId))
+    || visualsSvc.hasInFlightCapture(sessionId);
+}
+
 // #447: reconcile stuck proposal checks. check_state is only ever advanced
 // out of 'pending' by the same captureForSession invocation that set it, so
 // a process restart/crash mid-capture (or a staging rebuild that predated
-// the #447 capture wiring) can leave a promoted PR 'pending'/NULL forever —
-// past the vote threshold but permanently "still running its tests", blocked
-// from merging with no retry. This re-runs the checks for promoted sessions
-// whose verdict is NULL or has been 'pending' longer than CHECKS_STALE_MS.
+// the #447 capture wiring) can leave a submitted CLI handoff or promoted PR
+// 'pending'/NULL forever. This re-runs the checks for those managed sessions
+// once the durable run is stale and no in-process worker, build, handoff tail,
+// or capture still owns it. Drafts and unsubmitted uploads stay out.
 // captureForSession always resolves to a terminal state (or 'error' via its
 // catch), so this guarantees no row stays 'pending' indefinitely. Bounded
 // per run like the staging-heal sweep; runs at boot and from the session
@@ -1570,22 +1594,12 @@ async function reconcileStuckChecks(config) {
 
   let rows;
   try {
-    ({ rows } = await pool.query(
-      `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-         FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-        WHERE cs.status = 'promoted'
-          AND cs.branch_name IS NOT NULL
-          AND (cs.check_state IS NULL
-               OR (cs.check_state = 'pending'
-                   AND cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0))
-               OR (cs.check_state = 'error'
-                   AND cs.consecutive_check_failures < $2
-                   AND cs.check_next_retry_at IS NOT NULL
-                   AND cs.check_next_retry_at < NOW()))
-        ORDER BY cs.promoted_at ASC NULLS FIRST
-        LIMIT 50`,
-      [CHECKS_STALE_MS, CHECK_MAX_AUTO_RETRIES]
-    ));
+    ({ rows } = await stagingRecovery.findStuckCheckSessions({
+      pool,
+      staleMs: CHECKS_STALE_MS,
+      maxAutoRetries: CHECK_MAX_AUTO_RETRIES,
+      limit: 50,
+    }));
   } catch (err) {
     log.warn('server', 'reconcileStuckChecks query failed', { err: err.message });
     return;
@@ -1598,7 +1612,7 @@ async function reconcileStuckChecks(config) {
   let rechecked = 0;
   for (const session of rows) {
     if (rechecked >= MAX_RECHECKS) break;
-    if (activeWorkersSvc.isSessionBusy(session.id)) continue;
+    if (checkRecoveryInFlight(session.id)) continue;
     rechecked++;
     try {
       await stagingRecovery.recheckSessionChecks({
@@ -2972,7 +2986,7 @@ async function finalizeRecoveredTurn({
         if (rowCount > 0) {
           const { sendSystemMessage, pushVoteUpdate } = require('./src/services/ws');
           pushVoteUpdate({ sessionId, appSlug: session.app_slug, merged: false });
-          const resetMsg = `Votes reset on PR #${session.pr_number || sessionId} — new commit ${result.sha.substring(0, 8)} pushed.`;
+          const resetMsg = `An update was pushed to PR #${session.pr_number || sessionId} (commit ${result.sha.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
           await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
           await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
             null, { type: 'session', ref: sessionId }).catch(() => {});
@@ -4342,38 +4356,26 @@ function startSessionAutoPauseSweeper(config) {
     }
 
     // Pass 4: stuck-check reconcile (#447). The flip side of the merge gate
-    // — a promoted PR whose proposal checks are NULL or stuck 'pending' past
-    // CHECKS_STALE_MS is permanently blocked from merging ("still running its
-    // tests") because nothing ever advances check_state out of 'pending'
-    // after a restart mid-capture. Re-run the checks (rebuild staging if the
-    // preview is gone, else recheck the live container) so legitimately-
-    // passing PRs flip to 'passing' and become mergeable. Bounded per sweep
+    // — a submitted CLI handoff or promoted PR whose checks are NULL or stuck
+    // 'pending' past CHECKS_STALE_MS has no live tail left to advance it after
+    // a restart. Re-run the checks (rebuild staging if the preview is gone,
+    // else recheck the live container) so the same proposal can continue.
+    // Bounded per sweep
     // with a per-session cooldown, exactly like the staging-heal pass above;
     // the boot-time reconcileStuckChecks handles the restart case, this keeps
     // them healed live without a restart.
     try {
-      const { rows } = await pool.query(
-        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-           FROM chat_sessions cs
-           JOIN apps a ON cs.app_id = a.id
-          WHERE cs.status = 'promoted'
-            AND cs.branch_name IS NOT NULL
-            AND (cs.check_state IS NULL
-                 OR (cs.check_state = 'pending'
-                     AND cs.checks_checked_at < NOW() - make_interval(secs => $1::double precision / 1000.0))
-                 OR (cs.check_state = 'error'
-                     AND cs.consecutive_check_failures < $2
-                     AND cs.check_next_retry_at IS NOT NULL
-                     AND cs.check_next_retry_at < NOW()))
-          ORDER BY cs.promoted_at ASC NULLS FIRST
-          LIMIT 50`,
-        [CHECKS_STALE_MS, CHECK_MAX_AUTO_RETRIES]
-      );
+      const { rows } = await stagingRecovery.findStuckCheckSessions({
+        pool,
+        staleMs: CHECKS_STALE_MS,
+        maxAutoRetries: CHECK_MAX_AUTO_RETRIES,
+        limit: 50,
+      });
       const MAX_RECHECKS_PER_SWEEP = 5;
       let rechecked = 0;
       for (const session of rows) {
         if (rechecked >= MAX_RECHECKS_PER_SWEEP) break;
-        if (activeWorkersSvc.isSessionBusy(session.id)) continue;
+        if (checkRecoveryInFlight(session.id)) continue;
         const last = checkRecheckAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
         // Stamp BEFORE the (minutes-long) recheck so a later tick won't kick
@@ -4933,6 +4935,38 @@ function startStalePrSweeper(config) {
   }, config.staleSweepIntervalMs).unref();
 }
 
+let workshopThemeSweeperHandle = null;
+
+// The Workshop's theme sweep (services/workshop-themes.js sweep): the daily
+// re-draft's clock, and the backstop for cards that arrived without a
+// broadcast (an issue filed directly on GitHub). Leader-only, like the
+// other sweepers: two instances re-drafting the same app is two model
+// calls for one grouping. WORKSHOP_THEMES_SWEEP_INTERVAL_MS=0 disables it;
+// the change hook and the GET backstop still place cards.
+function startWorkshopThemeSweeper(config) {
+  if (workshopThemeSweeperHandle) return;
+  if (!(config.workshopSweepIntervalMs > 0)) {
+    log.info('server', 'Workshop theme sweeper disabled');
+    return;
+  }
+  const pool = getPool(config);
+  const workshopThemes = require('./src/services/workshop-themes');
+  log.info('server', 'Workshop theme sweeper started', { intervalMs: config.workshopSweepIntervalMs });
+  let running = false;
+  workshopThemeSweeperHandle = setInterval(async () => {
+    if (lifecycle.isShuttingDown() || running) return;
+    running = true;
+    try {
+      const out = await workshopThemes.sweep({ pool, isShuttingDown: () => lifecycle.isShuttingDown() });
+      if (out && out.apps) log.info('workshop-themes', 'sweep done', out);
+    } catch (err) {
+      log.warn('server', 'Workshop theme sweep failed', { err: err.message });
+    } finally {
+      running = false;
+    }
+  }, config.workshopSweepIntervalMs).unref();
+}
+
 // Graceful shutdown: mark drain state so new chats/app-creates/builds get
 // 503'd, wait up to DRAIN_TIMEOUT_MS for in-flight HTTP handlers to
 // finish flushing DB writes, then exit.
@@ -5017,6 +5051,10 @@ async function cleanup() {
   if (stalePrSweeperHandle) {
     clearInterval(stalePrSweeperHandle);
     stalePrSweeperHandle = null;
+  }
+  if (workshopThemeSweeperHandle) {
+    clearInterval(workshopThemeSweeperHandle);
+    workshopThemeSweeperHandle = null;
   }
   if (governanceApplyTickerHandle) {
     clearInterval(governanceApplyTickerHandle);

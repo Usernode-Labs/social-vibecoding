@@ -96,6 +96,9 @@ export function init() {
     const feedbackText = document.getElementById('feedback-text');
     const feedbackBtn = document.getElementById('feedback-submit');
     const feedbackStatus = document.getElementById('feedback-status');
+    // #1603: the inline refusal under the description. Rendered empty and
+    // hidden by ./feedback.tsx; this module owns its text and its `hidden`.
+    const feedbackTextError = document.getElementById('feedback-text-error');
     const feedbackTargetApp = document.getElementById('feedback-target-app');
     const feedbackTargetPlatform = document.getElementById('feedback-target-platform');
     const feedbackCaretApp = document.getElementById('feedback-caret-app');
@@ -254,7 +257,11 @@ export function init() {
         generateTitlePreview();
       }, TITLE_GEN_DEBOUNCE_MS);
     };
-    feedbackText.addEventListener('input', scheduleTitlePreview);
+    feedbackText.addEventListener('input', () => {
+      // #1603: typing is the fix, so the refusal goes as soon as it starts.
+      clearDescriptionError();
+      scheduleTitlePreview();
+    });
     // Leaving the description flushes the pending debounce immediately —
     // the "type body → title appears → submit" happy path.
     feedbackText.addEventListener('blur', () => {
@@ -352,6 +359,29 @@ export function init() {
       feedbackStatus.textContent = text;
       feedbackStatus.className = `text-sm mt-2 ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
       feedbackStatus.classList.remove('hidden');
+    };
+
+    // #1603: the empty-description refusal. Deliberately NOT routed through
+    // showFeedbackNotice: #feedback-status has four writers with a "newer and
+    // more specific wins" rule (see paintQueueState), so a validation message
+    // there would either be suppressed by the offline hint or erase it. This
+    // one lives on the field it is about, which is also where the fix is.
+    const showDescriptionError = () => {
+      if (!feedbackTextError) return;
+      feedbackTextError.textContent = 'Please add a description.';
+      feedbackTextError.classList.remove('hidden');
+      feedbackText.setAttribute('aria-invalid', 'true');
+      feedbackText.setAttribute('aria-describedby', 'feedback-text-error');
+      // The field is the thing to fix, so put the caret in it.
+      try { feedbackText.focus(); } catch { /* detached in tests */ }
+    };
+
+    const clearDescriptionError = () => {
+      if (!feedbackTextError) return;
+      feedbackTextError.classList.add('hidden');
+      feedbackTextError.textContent = '';
+      feedbackText.removeAttribute('aria-invalid');
+      feedbackText.removeAttribute('aria-describedby');
     };
 
     const paintScreenshotActions = () => {
@@ -722,6 +752,7 @@ export function init() {
       queueLineText = '';
       feedbackText.value = '';
       feedbackTitle.value = '';
+      clearDescriptionError();
       // #1284: safe in the outbox now — the capture stash has nothing to add.
       clearCaptureDraft();
       resetTitleGenState();
@@ -776,7 +807,10 @@ export function init() {
 
     const submitFeedback = async () => {
       const text = feedbackText.value.trim();
-      if (!text) return;
+      // #1603: this used to be a bare `return` — the one submit path that
+      // refused and said nothing. It stays FIRST (ahead of the offline
+      // branch below, which would otherwise queue an empty description).
+      if (!text) { showDescriptionError(); return; }
       // Guard against double-submit while the request is in flight, and
       // also against submits after success (the textarea is disabled
       // then, but a stale cmd+enter on a focused button could still
@@ -917,6 +951,7 @@ export function init() {
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
           feedbackTitle.value = '';
+          clearDescriptionError();
           // #1284: filed — there is nothing left to rescue.
           clearCaptureDraft();
           // Discard any in-flight title preview so it can't repopulate
@@ -976,6 +1011,8 @@ export function init() {
       feedbackTitle.disabled = false;
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
+      // #1603: a refusal from a previous open never greets the next one.
+      clearDescriptionError();
       resetTitleGenState();
       // #683/#824: each open starts screenshot-less. Photos is immediately
       // available; native capture appears after a fresh capability probe.
@@ -1129,6 +1166,7 @@ export function init() {
         feedbackText.value = '';
         feedbackTitle.value = '';
         feedbackStatus.classList.add('hidden');
+        clearDescriptionError();
         resetTitleGenState();
         clearCaptureDraft();
       }
@@ -1203,4 +1241,11 @@ export function init() {
     async () => { const err = new Error('capture failed'); err.code = 'capture_failed'; throw err; },
     { nativeAttempt: true },
   );
+
+  // #1603: the ?shot=feedback-required reviewable state — the dialog after a
+  // submit with an empty description. Same arrangement, and for the same
+  // reason: it calls the REAL submitFeedback, so what gets photographed is
+  // the shipped refusal rather than a mock of it. That path returns before
+  // any fetch on an empty description, so this files nothing either.
+  App._simulateEmptyFeedbackSubmit = () => { void submitFeedback(); };
 }

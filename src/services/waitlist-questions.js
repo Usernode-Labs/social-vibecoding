@@ -271,8 +271,12 @@ function validateStage2(body) {
   // it sent nothing, attributed nothing and was never read back, so the
   // key is deliberately dropped rather than validated. A stale client
   // still sending it gets a normal save with the key ignored.
-
-  if (body?.admit_together != null) value.admit_together = !!body.admit_together;
+  //
+  // `admit_together` ("only let me in when at least one person from my
+  // link gets in too") is retired the same way: no admission path ever
+  // read it, so the promise it made was never kept. Same contract as
+  // `invites` -- dropped on input, never rejected, and rows that already
+  // carry it keep it.
 
   // "Follow along" (doc comment, 27 Aug 2026). This is a CLAIM, not a
   // verification, and the name says so wherever it is read.

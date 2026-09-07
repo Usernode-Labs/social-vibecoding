@@ -1758,6 +1758,47 @@ test('the Discover widget renders the curated cards when Home is reachable', () 
   assert.match(bare, /Browse all apps/);
 });
 
+// ── #1567: the badge ticks from the CACHE, in the same paint ─────────
+//
+// The add is optimistic: toggleAdded flips is_favorited on the app object Home
+// already holds and calls Home.render(), which ends by re-rendering the
+// panels. Nothing refetches in between, so `added` has to be read from those
+// flags at paint time. A tile view that captured its own copy would leave the
+// + badge unticked until the next load, which is the reload complaint the fix
+// exists to remove.
+test('discoverTileView.added follows the cached flags, with no refetch (#1567)', () => {
+  const alpha = { slug: 'alpha', name: 'Alpha', featured: true, is_favorited: false };
+  // The real predicate, spelled out: this is Home.isYours, which is the whole
+  // of what the badge and "Your apps" agree on.
+  const yours = (a) => !!(a && ((a.is_collaborator && !a.your_apps_hidden) || a.is_favorited));
+  const { HP, host, sandbox } = renderBlock('discover', {
+    home: {
+      featuredApps: () => [alpha], popularApps: () => [], isYours: yours, _apps: [alpha],
+    },
+  });
+  assert.match(host.innerHTML, /data-slug="alpha"/);
+  assert.match(host.innerHTML, /data-added="false"/, 'not added yet');
+
+  let fetches = 0;
+  sandbox.fetch = async () => { fetches += 1; return { ok: false, json: async () => ({}) }; };
+
+  // Exactly what toggleAdded does to the cached object before it paints, and
+  // nothing else — no reload, no new payload.
+  alpha.is_favorited = true;
+  HP.render();
+  const painted = paintHosts(sandbox, [host]);
+  assert.match(painted, /data-added="true"/, 'the ✓ lands in the very next paint');
+  assert.doesNotMatch(painted, /data-added="false"/);
+  assert.equal(fetches, 0, 'read from the cache, never from the server');
+
+  // And back: removing is the same write in reverse, so the badge is a
+  // function of the flags rather than a one-way latch.
+  alpha.is_favorited = false;
+  HP.render();
+  assert.match(paintHosts(sandbox, [host]), /data-added="false"/);
+  assert.equal(fetches, 0);
+});
+
 // ── Discover: ONE shape, at every width ───────────────────────────────
 //
 // It used to be two (#949). The widget's grid footprint was asymmetric — 4x1

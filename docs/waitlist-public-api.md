@@ -155,22 +155,43 @@ No headers, no body, no rate limit.
     "neglect": "Left to rot"
   },
   "countries": {
-    "North America": { "US": "United States", "CA": "Canada", "MX": "Mexico" },
-    "Europe": { "GB": "United Kingdom", "…": "…", "EU": "Elsewhere in Europe" },
-    "Latin America": { "BR": "Brazil", "…": "…", "LA": "Elsewhere in Latin America" },
-    "Africa": { "NG": "Nigeria", "…": "…", "AF": "Elsewhere in Africa" },
-    "Middle East": { "AE": "United Arab Emirates", "…": "…", "ME": "Elsewhere in the Middle East" },
-    "Asia Pacific": { "IN": "India", "…": "…", "AP": "Elsewhere in Asia-Pacific" }
+    "AF": "Afghanistan",
+    "AX": "Åland Islands",
+    "AL": "Albania",
+    "DZ": "Algeria",
+    "…": "…",
+    "GB": "United Kingdom",
+    "US": "United States",
+    "UY": "Uruguay",
+    "ZM": "Zambia",
+    "ZW": "Zimbabwe"
   }
 }
 ```
 
-`countries` is grouped by region. The keys are ISO-3166 alpha-2 codes
-plus one pseudo-code per region (`EU`, `LA`, `AF`, `ME`, `AP`) meaning
-"elsewhere in this region", so a visitor can place themselves without
-the platform maintaining all 249 codes. Send a **key**, never a label.
-Labels are display text and can be reworded without notice; keys are
-what gets stored.
+`countries` is one flat map of all 249 officially assigned ISO 3166-1
+alpha-2 codes to their common English names. It arrives already sorted
+by name, so render it in the order you received it rather than sorting
+it yourself: the order is authored, and re-sorting in your own locale
+moves the accented names (`Åland Islands` belongs with the A's, not at
+the end). Send a **key**, never a label. Labels are display text and
+can be reworded without notice; keys are what gets stored.
+
+> **Breaking change, September 2026.** `countries` used to be grouped by
+> region, with one pseudo-code per bucket (`EU`, `LA`, `AF`, `ME`, `AP`)
+> meaning "elsewhere in this region". All five are gone, and they stop
+> working in two different ways:
+>
+> - `EU` and `AP` are not ISO codes at all, so they are now rejected
+>   with `422 {"error":"Unknown country."}`.
+> - `LA`, `AF` and `ME` **are** real ISO codes, and are now accepted as
+>   **Laos**, **Afghanistan** and **Montenegro**. A client still mapping
+>   "Elsewhere in Latin America" to `LA` gets a `200` and stores the
+>   wrong country, with nothing to alert you.
+>
+> If your form hardcoded the old buckets, replace them with this
+> endpoint's flat map. Nothing you send needs to change for the ISO
+> codes you were already sending.
 
 ### POST /api/public/waitlist
 
@@ -411,7 +432,6 @@ Host: social-vibecoding.usernodelabs.org
     },
     "handles": { "discord": "ada#4021" },
     "verified": { "github": "adalovelace" },
-    "admit_together": true,
     "followed_claim": true
   },
   "oauth": { "github": true, "x": true, "linkedin": false },
@@ -441,8 +461,20 @@ Field by field:
   `{}` for a signup that answered nothing. `_version` is the answers
   schema version, currently `3`. Sections are only present once
   something in them has been answered, so treat every key as optional.
+  A record saved before a key was retired still carries it, so `answers`
+  can hold keys this document no longer lists (`invites`,
+  `admit_together`); nothing reads them and no new save can add them.
   `handles` holds self-reported handles; `verified` holds handles proved
   by OAuth, and the two are kept apart deliberately.
+  `country` is normally an ISO 3166-1 alpha-2 code, but a signup made
+  before the region buckets were retired can carry one of five
+  namespaced legacy values instead: `X-EU`, `X-LA`, `X-AF`, `X-ME`,
+  `X-AP`, meaning "elsewhere in Europe / Latin America / Africa / the
+  Middle East / Asia-Pacific". They are display-only. The options
+  endpoint never offers them, a join can never submit one, and they must
+  not be parsed as ISO codes: strip the `X-` prefix and `LA` is Laos,
+  not the region the person meant. Render an unrecognised value as
+  stored rather than hiding it.
 - **`oauth`** (object). Whether each provider is configured on this
   deployment. All three keys are always present. `false` means the
   deployment has no credentials for that provider, so hide its connect
@@ -553,15 +585,17 @@ Content-Type: application/json
 | `loss_story` | string | 800 | What happened. |
 | `farcaster`, `discord`, `telegram` | string | 255 each | Self-reported handles. Stored under `answers.handles`. |
 | `other_handle` | string | 255 | Stored as `answers.handles.other`. |
-| `admit_together` | boolean | | Coerced with `!!`. Whether to admit the group together. |
 | `followed_claim` | boolean | | Coerced with `!!`. A claim that they followed, stored apart from `answers.verified` because no network confirms a follow. |
 
 A string longer than its maximum is treated as absent rather than
 rejected. An unknown enum key is a `422`: optional means "may be
 absent", never "may be anything".
 
-`invites` (an older array of typed addresses) is accepted and silently
-dropped; use the invite link from the full read instead.
+`invites` (an older array of typed addresses) and `admit_together` (an
+older flag asking to be admitted only alongside someone from the same
+link) are accepted and silently dropped rather than rejected. Use the
+invite link from the full read instead of `invites`; nothing reads
+`admit_together`, and admission has never depended on it.
 
 **Example**
 
@@ -579,7 +613,6 @@ dropped; use the invite link from the full read instead.
   "loss_kind": ["shutdown"],
   "loss_story": "Ten years of subscriptions, one announcement.",
   "discord": "ada#4021",
-  "admit_together": true,
   "followed_claim": true
 }
 ```

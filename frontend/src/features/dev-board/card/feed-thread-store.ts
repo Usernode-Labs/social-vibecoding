@@ -19,6 +19,8 @@ import { createStore } from '../../../lib/plain-store.js';
 export interface FeedThreadMessage {
   id: number;
   author: string;
+  /** The author's user id, so the viewer's own replies can wear the accent tint. */
+  userId?: number | null;
   content: string;
   createdAt: string;
 }

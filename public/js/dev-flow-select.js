@@ -78,6 +78,52 @@
     return AGENT_URLS[agent] || '';
   }
 
+  // The chat product a hand-off's connector lives in. Claude Code on the web
+  // signs in as a Claude.ai account and Codex as a ChatGPT one, and the
+  // Usernode connector is added in THAT account's settings — not in Claude
+  // Code or Codex themselves.
+  function connectorProduct(agent) {
+    return agent === 'codex' ? 'ChatGPT' : 'Claude';
+  }
+
+  // ── The connector, named once, at the paste moment ───────────────────
+  //
+  // The walkthrough deliberately does not REQUIRE the MCP connector (#1049):
+  // the branch gets pushed without one and this tab's Submit button finishes
+  // the job. But the work order tells the agent to read the full platform
+  // rules through its connector and to submit the branch itself, and a
+  // Claude or ChatGPT account that never added the connector can do neither.
+  // It stalls at "I have no Usernode tools", and the person who pasted it was
+  // never told why, because nothing in these five steps mentioned it — the
+  // only place the connect steps live is Settings → Connectors, which the
+  // venue definition points at and nothing here navigated to.
+  //
+  // So the hand-off step says it once, where the paste happens, and links the
+  // page that already has the connector URL and the click-by-click steps.
+  // A connector belongs to the chat ACCOUNT it was added in, which is why the
+  // server's count cannot settle this for somebody pasting into a second
+  // account: with none it is a prerequisite worth stating; with some, the
+  // card-level hint below carries the per-account caveat instead.
+  //
+  // Null once the branch is pushed — the moment has passed — and null when
+  // the status carries no connector count at all, so a payload that predates
+  // the field renders exactly as before.
+  function connectorNote(connectors, agent, branch) {
+    if (branch && branch.pushed) return null;
+    if (!connectors || typeof connectors.count !== 'number') return null;
+    if (connectors.count > 0) return null;
+    var label = agentLabel(agent);
+    return {
+      before: 'Before you paste, connect Usernode in the ' + connectorProduct(agent)
+        + ' account ' + label + ' will run as. ',
+      linkLabel: 'Settings → Connectors',
+      href: '#settings/connectors',
+      after: ' has the connector URL and the steps. ' + label
+        + ' uses the connector to read the full platform rules and to submit the branch as a proposal itself.'
+        + ' Without it the branch still gets pushed, but you finish here: come back to this tab and press Submit.',
+    };
+  }
+
   // Why the external flows are not on offer, in the user's words. The
   // server sends the reason code; this is the only place it becomes copy.
   function unavailableNote(reason) {
@@ -150,6 +196,7 @@
         title: 'Hand it to ' + label,
         done: !!(branch && branch.pushed),
         detail: handoffDetail(branch, task, label, targetKind),
+        note: connectorNote(st.connectors, agent || (task && task.agent), branch),
         actions: task ? handoffActions(agent || task.agent) : [],
       },
       {
@@ -181,6 +228,10 @@
         title: step.title,
         state: state,
         detail: step.detail,
+        // Unlike actions and the brief box, the note is not gated on
+        // 'current': it names a prerequisite for a step still ahead, and
+        // connecting first is precisely the point.
+        note: step.note || null,
         // Only on the step you are ON, for the same reason its actions are:
         // a brief box under a step nobody can act on is furniture.
         brief: !!step.brief && state === 'current',
@@ -368,6 +419,17 @@
           + step.actions.map(function (a) { return actionHtml(a, !!s.busy); }).join('')
           + '</div>'
         : '';
+      // A plain anchor, on purpose: it carries no data-flow-action, so
+      // wire() leaves it alone and the browser's own hash navigation opens
+      // Settings → Connectors in this tab, where the walkthrough resumes
+      // from the server's status when the person comes back.
+      var note = step.note
+        ? '<div class="dc-flow-step-note" data-flow-note="connector">'
+          + escapeHtml(step.note.before)
+          + '<a href="' + escapeHtml(step.note.href) + '">' + escapeHtml(step.note.linkLabel) + '</a>'
+          + escapeHtml(step.note.after)
+          + '</div>'
+        : '';
       var brief = step.brief
         ? '<textarea class="dc-flow-brief" data-flow-brief="1" rows="3"'
           + (s.busy ? ' disabled' : '')
@@ -380,6 +442,7 @@
         + '<div class="dc-flow-step-body">'
         + '<div class="dc-flow-step-title">' + escapeHtml(step.title) + '</div>'
         + '<div class="dc-flow-step-detail">' + escapeHtml(step.detail) + '</div>'
+        + note
         + brief
         + actions
         + '</div>'
@@ -393,10 +456,17 @@
         + '</details>'
       : '';
 
+    // The server counts the user's connectors across every Claude and
+    // ChatGPT account, so a non-zero count says nothing about the ONE account
+    // the paste is going to — hence the per-account caveat, with the same
+    // link the zero-connector note on the hand-off step carries.
     var connectors = s.status.connectors && s.status.connectors.count
       ? '<div class="dc-flow-card-hint">You already have ' + escapeHtml(String(s.status.connectors.count))
         + ' Claude / ChatGPT connector' + (s.status.connectors.count === 1 ? '' : 's')
-        + ' connected. You can also just ask it to pick this task up.</div>'
+        + ' connected. You can also just ask it to pick this task up.'
+        + ' A connector belongs to the ' + escapeHtml(connectorProduct(agent))
+        + ' account it was added in, so pasting into a different account needs its own:'
+        + ' <a href="#settings/connectors">Settings → Connectors</a> has the steps.</div>'
       : '';
 
     return ''
@@ -459,6 +529,8 @@
     AGENT_URLS: AGENT_URLS,
     agentLabel: agentLabel,
     agentUrl: agentUrl,
+    connectorProduct: connectorProduct,
+    connectorNote: connectorNote,
     unavailableNote: unavailableNote,
     steps: steps,
     vendorToggleHtml: vendorToggleHtml,
