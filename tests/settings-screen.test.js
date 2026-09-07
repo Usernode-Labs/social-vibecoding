@@ -1735,7 +1735,15 @@ test('sign-out closes once, then uses terminal protocol 2 or web navigation',
     'web-session deletion follows the closed native boundary');
   assert.match(logout, /if \(preflight\.nativeTerminal\)/);
   assert.match(logout, /return NativeChrome\.commitNativeLogout\(\)/);
-  assert.match(logout, /window\.location\.href = '\/'/);
+  // #1524 turned the web path's `location.href = '/'` into a REPLACE onto the
+  // landing page, on both branches: an entry pushed by an assignment lets Back
+  // restore the signed-in document straight out of the BFCache. Assert the
+  // constant too, so the destination cannot drift off the landing page while
+  // the navigation still reads correct.
+  assert.match(settingsJs, /const LANDING_URL = '\/';/);
+  assert.match(logout, /window\.location\.replace\(LANDING_URL\)/);
+  assert.doesNotMatch(logout, /window\.location\.(href|assign)\b/,
+    'a pushed entry would let Back restore the signed-in document (#1524)');
   assert.doesNotMatch(settingsJs,
     /_confirmDegradedSignOut|_bestEffortNativeLogout|NATIVE_SIGNOUT_NOTICE_KEY/,
     'legacy split/fallback logout machinery is removed, not maintained');
