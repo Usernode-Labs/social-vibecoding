@@ -62,6 +62,8 @@ const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
 const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challenge-view');
+const { loadOnboarding, visibleChallenges, challengeCategory } =
+  require('../../services/topochain/challenge-onboarding');
 const events = require('../../services/events');
 
 // Fire-and-forget tally behind POST /app-version/check, so the admin screen
@@ -641,9 +643,20 @@ function topochainPublicRoutes(config) {
       // skipping any row whose template join came back empty instead
       // (the FK itself should make this unreachable in practice — see the
       // schema.sql comment on `challenges.challenge_template_id`).
-      const data = rows.filter((r) => r.t_id != null).map(buildChallengeListItem);
+      const onboarding = await loadOnboarding(pool, req.user?.id, { eventId: id });
+      const data = visibleChallenges(rows.filter((r) => r.t_id != null), onboarding)
+        .map((r) => {
+          const item = buildChallengeListItem(r);
+          const category = challengeCategory(item.id, item.activity_type.category, onboarding);
+          item.activity_type.category = category;
+          item.card_preview.label = (category || '').toUpperCase();
+          if (onboarding?.progress.has(item.id)) item.progress = onboarding.progress.get(item.id);
+          return item;
+        });
 
-      return ok(res, { data });
+      // This list now carries the signed-in viewer's onboarding state.
+      res.set('Cache-Control', 'private, no-store');
+      return ok(res, { data, ...(onboarding ? { onboarding: onboarding.summary } : {}) });
     } catch (err) {
       log.error('topochain-public', 'GET /season-events/:id/challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
