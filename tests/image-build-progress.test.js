@@ -102,10 +102,24 @@ test('createBuild reports each phase as the pod advances, follows the running ph
       app: { id: 1, slug: 'demo', repo_url: 'https://github.com/x/demo' }, revision: 'a'.repeat(40), environment: 'staging', sessionId: 9,
       onProgress: (img) => seen.push(img),
     });
-    await new Promise((r) => t(r, 8));
+    // WAIT for the build follow, do not guess at it. This was a fixed 8ms
+    // sleep against a poll loop compressed to 5ms above — two async round
+    // trips that an idle machine finishes inside 8ms and a loaded one does
+    // not. When it lost, `follows.indexOf('build')` was -1, `sinks[-1]` was
+    // undefined, and the write below was skipped by its own `if` guard; the
+    // run then failed on the `detail` assertion forty lines later, naming
+    // neither the phase that never started nor the line that was never
+    // written. The cap is generous because it is a CAP, not a sleep: the
+    // happy path returns on the first check and this test got FASTER.
+    const until = async (pred, capMs) => {
+      const stop = Date.now() + capMs;
+      while (!pred() && Date.now() < stop) await new Promise((r) => t(r, 1));
+      return pred();
+    };
+    assert.ok(await until(() => follows.includes('build'), 5000),
+      'the build phase is followed before its log line is written');
     // The build phase's log is being followed by now; a line becomes the detail.
-    const buildSink = sinks[follows.indexOf('build')];
-    if (buildSink) buildSink.write("\x1b[36m  Running 'npm ci'\x1b[0m\n");
+    sinks[follows.indexOf('build')].write("\x1b[36m  Running 'npm ci'\x1b[0m\n");
     const result = await run;
     assert.deepEqual(follows, ['prepare', 'build'], 'each running phase is followed once, in turn');
     assert.ok(seen.some((s) => s.phase === 'prepare' && s.phases.length === 0));
