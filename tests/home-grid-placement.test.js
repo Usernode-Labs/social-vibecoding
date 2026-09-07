@@ -1712,6 +1712,24 @@ test('?shot=discover-drag is re-applied when the lane\'s cards actually arrive',
   assert.equal((src.match(/_maybeShowShotIncoming\?\.\(\)/g) || []).length, 2);
 });
 
+test('?shot=discover-drag does not depend on which apps happen to be in the rails', () => {
+  // Which cards land in the two lanes is DATA, and it moved under this state
+  // twice: curation (#1753) put demos behind "Show more", and a staging
+  // clone can fill both rails with rows that are all demo. A screenshot
+  // state that paints or does not paint depending on that is a check that
+  // fails for reasons unrelated to the feature it guards.
+  //
+  // A non-demo card is still preferred, because that is what a real lift
+  // looks like — the recognizer ignores demo rows (#746). The fallback is a
+  // card, any card: this state is synthetic, it writes classes and a preview
+  // and clears itself, and it never reaches the recognizer.
+  const shot = HOME_SRC.slice(
+    HOME_SRC.indexOf('_maybeShowShotIncoming() {'),
+    HOME_SRC.indexOf('\n  // Kit-era long-press actions menu'));
+  assert.match(shot, /\.app-card\[data-slug\]:not\(\[data-demo\]\)'\)\s*\n\s*\|\| document\.querySelector\('\.home-discover-rail \.app-card\[data-slug\]'\)/,
+    'preferred, then any card at all');
+});
+
 test('?shot=discover-drag enters the incoming state, not a lookalike of it', () => {
   // Same shape as the ?shot=home-grid assertion above and for the same
   // reason: a gesture is not navigable, so the deep link is the only thing a
