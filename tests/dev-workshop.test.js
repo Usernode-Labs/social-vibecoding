@@ -409,6 +409,37 @@ test('the theme poll follows a widening schedule that outlasts a full draft, the
   assert.deepEqual(timers, [AppView.WORKSHOP_POLL_MS[0]], 'past the schedule, no further poll');
 });
 
+test('a board reload during a draft joins the running poll chain instead of starting another', async () => {
+  // Every WS-driven _loadDevFeed lands at attempt 0. While a draft is pending
+  // and a re-fetch is already scheduled, that call must not fetch again or
+  // schedule a second chain — the themes endpoint rebuilds the server's
+  // input on every GET, which is what the per-slug throttle exists to bound.
+  const timers = [];
+  let calls = 0;
+  let nextId = 1;
+  const AppView = makeAppView({
+    fetch: async () => { calls++; return { ok: true, json: async () => ({ themes: [], source: 'category', pending: true }) }; },
+    setTimeout: (_fn, ms) => { timers.push(ms); return nextId++; },
+  });
+  AppView._getViewMode = () => 'kanban';
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(calls, 1);
+  assert.equal(timers.length, 1);
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(calls, 1, 'the reloads did not fetch again');
+  assert.equal(timers.length, 1, 'and scheduled nothing');
+  // The chain itself advances: the scheduled step clears the timer first.
+  AppView._workshopPollTimer = null;
+  await AppView._loadWorkshopThemes('demo-app', 1);
+  assert.equal(calls, 2);
+  assert.deepEqual(timers, [AppView.WORKSHOP_POLL_MS[0], AppView.WORKSHOP_POLL_MS[1]]);
+  // A different app is never held back by this one's chain.
+  AppView._workshopThemes = { ...AppView._workshopThemes, slug: 'other-app' };
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(calls, 3);
+});
+
 function AppView_pollTotal() {
   const m = APP_VIEW_SRC.match(/WORKSHOP_POLL_MS:\s*\[([^\]]+)\]/);
   assert.ok(m, 'WORKSHOP_POLL_MS is a literal array');

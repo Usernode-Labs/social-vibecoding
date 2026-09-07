@@ -4851,6 +4851,12 @@ const AppView = {
   // pending, at }. Slug-keyed so an app-to-app hop never draws the previous
   // app's grouping over this one's cards.
   _workshopThemes: null,
+  // The one pending re-fetch of the themes, or null. One chain per page: a
+  // draft in progress leaves `pending` true, and every WS-driven
+  // _loadDevFeed lands here at attempt 0 — without this each of those
+  // started a chain of its own, and a busy board could be polling the
+  // endpoint (which rebuilds the server's input) several times per interval.
+  _workshopPollTimer: null,
   // 'feed-comments' while that capture deep link is active — see the ?shot=
   // block in _applyShotDeepLink.
   _workshopShot: null,
@@ -4942,6 +4948,13 @@ const AppView = {
     const n = attempt || 0;
     const cur = AppView._workshopThemes;
     if (!n && cur && cur.slug === slug && !cur.pending && (Date.now() - (cur.at || 0)) < 60000) return;
+    // A chain is already polling this slug: let it finish rather than
+    // starting a second one beside it.
+    if (!n && cur && cur.slug === slug && cur.pending && AppView._workshopPollTimer != null) return;
+    if (AppView._workshopPollTimer != null) {
+      clearTimeout(AppView._workshopPollTimer);
+      AppView._workshopPollTimer = null;
+    }
     let next;
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/workshop-themes${AppView._demoQS()}`);
@@ -4964,7 +4977,10 @@ const AppView = {
     AppView._workshopThemes = next;
     if (AppView._getViewMode() === 'workshop') AppView._repaintBoardSurface();
     if (next.pending && n < AppView.WORKSHOP_POLL_MS.length) {
-      setTimeout(() => { AppView._loadWorkshopThemes(slug, n + 1); }, AppView.WORKSHOP_POLL_MS[n]);
+      AppView._workshopPollTimer = setTimeout(() => {
+        AppView._workshopPollTimer = null;
+        AppView._loadWorkshopThemes(slug, n + 1);
+      }, AppView.WORKSHOP_POLL_MS[n]);
     }
   },
 
