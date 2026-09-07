@@ -23,6 +23,7 @@ const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
+const discoveryCuration = require('../services/discovery-curation');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -156,7 +157,7 @@ function demoAgo(hours) {
   return new Date(Date.now() - hours * 3600 * 1000).toISOString();
 }
 
-function demoIconApps() {
+function demoIconApps(curation = false) {
   const base = {
     status: 'running',
     self_hosted: false,
@@ -165,6 +166,11 @@ function demoIconApps() {
     view_visibility: 'public',
     created_at: new Date().toISOString(),
     last_deploy_at: new Date().toISOString(),
+    // Synthetic preview reviews, never assigned to real apps.
+    main_sha: '0000000000000000000000000000000000000001',
+    directory_reviewed_sha: '0000000000000000000000000000000000000001',
+    directory_reviewed_at: new Date().toISOString(),
+    directory_review_status: 'working',
     url: null,
     version: null,
     deployProgress: null,
@@ -191,7 +197,7 @@ function demoIconApps() {
     // home.js excludes [data-demo] cards from the kit drag.
     demo: true,
   };
-  return [
+  const apps = [
     { ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮' },
     {
       ...base,
@@ -289,6 +295,18 @@ function demoIconApps() {
       created_at: demoAgo(400 * 24), last_deploy_at: demoAgo(300 * 24),
     },
   ];
+  if (curation) apps.push(
+    { ...base, id: 990031, slug: 'directory-sample-working', name: 'Directory sample working',
+      icon_emoji: '🧩', featured: true, featured_order: -1 },
+    { ...base, id: 990032, slug: 'directory-sample-unreviewed', name: 'Directory sample unreviewed',
+      icon_emoji: '🌱', directory_review_status: 'unreviewed', directory_reviewed_at: null },
+    { ...base, id: 990033, slug: 'directory-sample-demo', name: 'Directory sample demo',
+      icon_emoji: '🎭', directory_review_status: 'demo', active_users: 9999 },
+    { ...base, id: 990034, slug: 'directory-sample-broken', name: 'Directory sample needs fixes',
+      icon_emoji: '🔧', directory_review_status: 'broken', active_users: 9998 },
+    { ...base, id: 990035, slug: 'directory-sample-no-icon', name: 'Directory sample needs an icon' },
+  );
+  return apps.map((app) => ({ ...app, directory: discoveryCuration.describe(app) }));
 }
 
 // SELF-HOSTING.md sub-step 2k: helper for the import-flow guards.
@@ -774,6 +792,7 @@ function appRoutes(config) {
           // Server-built icon URL so the client never assembles ids into
           // paths (and staging demo rows can inject arbitrary sources).
           icon_url: a.icon_image_id ? `/app-icons/${a.icon_image_id}` : null,
+          directory: discoveryCuration.describe(a),
           is_favorited: !!a.is_favorited,
           your_apps_hidden: !!a.your_apps_hidden,
           favorite_order: a.favorite_order ?? null,
@@ -793,7 +812,7 @@ function appRoutes(config) {
       await attachForkLineage(pool, apps);
       // Staging demo tiles for the icon feature (see demoIconApps above).
       if (IS_STAGING && req.query.demo === '1') {
-        apps.unshift(...demoIconApps());
+        apps.unshift(...demoIconApps(req.query.curation === '1'));
       }
       res.json({ apps });
     } catch (err) {
@@ -1172,6 +1191,7 @@ function appRoutes(config) {
 
       const appPayload = {
         ...appAccess.stripAppSecrets(appRow),
+        directory: discoveryCuration.describe(appRow),
         last_failure: undefined,
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
           ? appRow.last_failure : null,

@@ -27,6 +27,8 @@ export const browseStore = createStore({
   level: 'list',
   /** null until the first _renderList; else an array of row descriptors. */
   rows: null,
+  curated: true,
+  moreExpanded: false,
   /**
    * The #browse-empty line: null hides it, a string shows it. A separate field
    * from `rows` because the load-failure state has neither rows nor an empty
