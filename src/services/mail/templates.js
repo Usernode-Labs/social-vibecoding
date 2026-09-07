@@ -24,10 +24,66 @@ function esc(s) {
     .replace(/"/g, '&quot;');
 }
 
+/**
+ * The ONE branded frame every send goes through (#1555).
+ *
+ * The report was that the mails do not look like one another. They did not:
+ * the shell was a bare `<body>` with a font stack, three templates wrapped
+ * themselves in it, one was wrapped by `buildMessage`, and the result had no
+ * sender identity anywhere except inside the sentences.
+ *
+ * ── Why a wordmark and not a logo image ────────────────────────────────
+ *
+ * A remote `<img>` in an email is a tracking pixel as far as every mail
+ * client is concerned: Gmail and Outlook block it until the reader asks,
+ * Apple Mail proxies it, and the mail's identity would be the one thing that
+ * arrives broken. An inline data: URI is worse — several clients strip them,
+ * and the ones that do not count the bytes against the clipping threshold.
+ * Type always renders. The wordmark is the product's own name in the
+ * platform's accent, which is what the header, the landing page and the
+ * manifest already put there.
+ *
+ * ── Table-free, and deliberately ───────────────────────────────────────
+ *
+ * The layout is one centred block with a max width. There is no grid to hold
+ * together, so the usual `<table>` scaffolding buys nothing here and costs
+ * every future editor a nested-markup puzzle. Inline styles only: `<style>`
+ * blocks and classes are stripped by Gmail's clipper and by Outlook.
+ *
+ * ── The footer says what this IS and why it arrived ────────────────────
+ *
+ * Claiming anything more would be a promise the platform does not keep: there
+ * is no preference centre and no unsubscribe route for transactional mail, so
+ * the footer does not offer one. It names the product, and it says these are
+ * account mails rather than marketing — which is the honest answer to "why am
+ * I getting this".
+ */
+const BRAND_NAME = 'Usernode';
+const BRAND_ACCENT = '#1f86ff';
+const BODY_STYLE =
+  'margin:0;padding:24px 12px;background:#f4f4f5;font-family:-apple-system,'
+  + 'Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;'
+  + 'line-height:1.55;color:#111';
+const CARD_STYLE =
+  'max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;'
+  + 'padding:28px 24px';
+const WORDMARK_STYLE =
+  `margin:0 0 20px;font-size:18px;font-weight:700;letter-spacing:-0.2px;color:${BRAND_ACCENT}`;
+const FOOTER_STYLE =
+  'margin:24px 0 0;padding-top:16px;border-top:1px solid #e4e4e7;'
+  + 'font-size:12px;line-height:1.5;color:#71717a';
+
 const HTML_SHELL = (body) =>
-  '<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Roboto,'
-  + 'Helvetica,Arial,sans-serif;font-size:15px;line-height:1.55;color:#111">'
+  '<!doctype html><html><body style="' + BODY_STYLE + '">'
+  + '<div style="' + CARD_STYLE + '">'
+  + '<div style="' + WORDMARK_STYLE + '">' + BRAND_NAME + '</div>'
   + body
+  + '<div style="' + FOOTER_STYLE + '">'
+  + BRAND_NAME + ' Social Vibecoding'
+  + '<br>You are receiving this because of activity on your account or your '
+  + 'place on the waitlist. We only send mail you asked for.'
+  + '</div>'
+  + '</div>'
   + '</body></html>';
 
 const p = (s) => `<p>${s}</p>`;
@@ -45,7 +101,7 @@ function otp(payload) {
     subject: 'Your Usernode login code',
     text: `Your Usernode login code is ${code}.\n\n`
       + 'It expires in 10 minutes. If you did not request it, you can ignore this email.',
-    html: HTML_SHELL(
+    html: (
       p('Your Usernode login code is:')
       + codeBlock(code)
       + p('It expires in 10 minutes. If you did not request it, you can ignore this email.')
@@ -153,7 +209,7 @@ function waitlistCode(payload) {
       text += `\n\nCheck where you stand: ${statusUrl}`;
       html += p(`Check where you stand: ${link(statusUrl)}`);
     }
-    return { subject: 'Your Usernode waitlist address is already confirmed', text, html: HTML_SHELL(html) };
+    return { subject: 'Your Usernode waitlist address is already confirmed', text, html };
   }
 
   const confirmUrl = payload.confirmUrl || null;
@@ -170,7 +226,7 @@ function waitlistCode(payload) {
   text += '\n\nIf you did not ask for this, you can ignore this email.';
   html += p('If you did not ask for this, you can ignore this email.');
 
-  return { subject: 'Your Usernode waitlist confirmation code', text, html: HTML_SHELL(html) };
+  return { subject: 'Your Usernode waitlist confirmation code', text, html };
 }
 
 function waitlistReleased(payload) {
@@ -183,7 +239,7 @@ function waitlistReleased(payload) {
   return {
     subject: 'Your Usernode access is ready',
     text,
-    html: HTML_SHELL(
+    html: (
       p(payload.hasAccount
         ? "Good news, you're off the Usernode waitlist and your account now has platform access."
         : "Good news, you're off the Usernode waitlist.")
@@ -207,7 +263,7 @@ function passwordReset(payload) {
       + `Set a new password here: ${url}\n\n`
       + 'The link expires in 30 minutes and works once. If you did not request '
       + 'this, you can ignore it. Your password is unchanged.',
-    html: HTML_SHELL(
+    html: (
       p('Someone asked to reset the password for the Usernode account with this '
         + 'email address.')
       + p(`Set a new password here: ${link(url)}`)
@@ -241,7 +297,7 @@ function adminTest(payload) {
   return {
     subject: 'Usernode test email',
     text,
-    html: HTML_SHELL(
+    html: (
       p('This is a test email from the Usernode platform admin console.')
       + `<p>Provider: <strong>${esc(provider)}</strong><br>`
       + `Sent as: ${esc(from)}<br>`
@@ -253,29 +309,35 @@ function adminTest(payload) {
   };
 }
 
+/**
+ * Every template returns a FRAGMENT; the frame is applied here, once (#1555).
+ *
+ * It used to be applied by the templates themselves — six of them wrapped
+ * their own html and `waitlist_joined` was wrapped in this switch instead,
+ * which is exactly the arrangement where a seventh template ships unbranded
+ * because its author copied the wrong neighbour. One wrap, at the one place
+ * every kind passes through, makes that impossible rather than unlikely.
+ */
+const TEMPLATES = {
+  otp,
+  waitlist_joined: waitlistJoined,
+  waitlist_code: waitlistCode,
+  waitlist_released: waitlistReleased,
+  password_reset: passwordReset,
+  admin_test: adminTest,
+};
+
 function buildMessage(kind, payload = {}) {
-  switch (kind) {
-    case 'otp':
-      return otp(payload);
-    case 'admin_test':
-      return adminTest(payload);
-    case 'waitlist_joined': {
-      const m = waitlistJoined(payload);
-      return { ...m, html: HTML_SHELL(m.html) };
-    }
-    case 'waitlist_code':
-      return waitlistCode(payload);
-    case 'waitlist_released':
-      return waitlistReleased(payload);
-    case 'password_reset':
-      return passwordReset(payload);
-    default:
-      throw new Error(`unknown mail kind: ${kind}`);
-  }
+  const template = Object.prototype.hasOwnProperty.call(TEMPLATES, kind)
+    ? TEMPLATES[kind]
+    : null;
+  if (!template) throw new Error(`unknown mail kind: ${kind}`);
+  const message = template(payload);
+  return { ...message, html: HTML_SHELL(message.html) };
 }
 
 // Every kind this module can render, for the admin console and for tests
 // that want to assert the set didn't quietly shrink.
-const KINDS = ['otp', 'waitlist_joined', 'waitlist_code', 'waitlist_released', 'password_reset', 'admin_test'];
+const KINDS = Object.keys(TEMPLATES);
 
 module.exports = { buildMessage, KINDS };

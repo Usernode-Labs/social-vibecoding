@@ -39,6 +39,21 @@
  * It is also IDEMPOTENT (#1567), which the effect below now depends on: the
  * badge really does flip between renders since an add repaints in place, and
  * React hands back the same card elements it kept.
+ *
+ * ── AND THE RAIL IS A DRAG SURFACE (#1763) ────────────────────────────
+ *
+ * A card can be long-pressed and dragged onto the launcher grid above, which
+ * adds the app AND places it in the cell it was dropped in — the ⊕ badge can
+ * only append it wherever the layout happens to have room. That is the kit's
+ * own placement recognizer, attached per LANE by the second effect below and
+ * driven entirely by `Home._attachDiscoverPlacement`; nothing about it lives
+ * here, for the same reason none of the click wiring does.
+ *
+ * It also means the rail may not deny vertical panning. `.home-discover-rail`
+ * declares `touch-action: pan-x pan-y` for that (#1762) — `pan-x` alone took
+ * the feed's own scroll away from every touch landing on a card — and the
+ * lift survives it because the kit arms on a long press with a movement slop:
+ * a scroll cancels the press rather than competing with it.
  */
 
 import { useEffect, useRef } from 'react';
@@ -163,6 +178,19 @@ function Lane({ tiles, extraClass }: { tiles: DiscoverTileView[]; extraClass?: s
     const el = laneRef.current;
     if (el) home()?._wireDiscoveryCards?.(el);
   }, [tiles.map((t) => `${t.slug}:${t.added}`).join(',')]);
+
+  // The drag-to-add recognizer (#1763), and the screenshot state that stands
+  // in for it (?shot=discover-drag). ONCE PER LANE, not once per tile change:
+  // the kit binds to this element and re-queries its items on every press, so
+  // cards coming and going need no re-attachment — unlike the click wiring
+  // above, which is per element. Two lanes means two handles, which is why
+  // Home hands one back rather than parking it on itself.
+  useEffect(() => {
+    const el = laneRef.current;
+    if (!el) return undefined;
+    home()?._maybeShowShotIncoming?.();
+    return home()?._attachDiscoverPlacement?.(el) || undefined;
+  }, []);
 
   return (
     <div

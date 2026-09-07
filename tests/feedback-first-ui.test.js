@@ -72,6 +72,10 @@ test('first feedback stays open, focuses the confirmation, and preserves bounty 
   assert.ok(h.shown());
   assert.ok(h.el('feedback-first-success').focused);
   assert.ok(h.el('feedback-form').classList.contains('hidden'));
+  for (const id of ['feedback-text', 'feedback-title']) {
+    assert.equal(h.el(id).readOnly, true);
+    assert.equal(h.el(id).disabled, false);
+  }
   assert.match(h.el('feedback-first-notice').textContent, /Pledged 1 kudos.*4 left/);
   assert.equal([...h.timers.values()].filter(t => t.ms === 1500).length, 0);
   h.el('feedback-submit').click(); await settle();
@@ -111,10 +115,18 @@ test('a rejected submission never congratulates the user', async () => {
 });
 test('Done dismisses the moment and reopening restores the form', async () => {
   const h = harness(); await h.submit(); h.el('feedback-first-done').click();
+  for (const id of ['feedback-text', 'feedback-title']) {
+    assert.equal(h.el(id).readOnly, false);
+    assert.equal(h.el(id).disabled, false);
+  }
   h.sandbox.App.openFeedbackModal();
   assert.equal(h.shown(), false);
   assert.equal(h.el('feedback-submit').disabled, false);
   assert.equal(h.el('feedback-form').classList.contains('hidden'), false);
+  for (const id of ['feedback-text', 'feedback-title']) {
+    assert.equal(h.el(id).readOnly, false);
+    assert.equal(h.el(id).disabled, false);
+  }
 });
 test('queued success waits for an active draft to close before showing the moment', async () => {
   const h = harness(); h.el('feedback-text').value = 'Still writing'; h.flush();
@@ -125,6 +137,11 @@ test('queued success waits for an active draft to close before showing the momen
 });
 test('queued success cancels an existing auto-close timer', async () => {
   const h = harness({ response: {} }); await h.submit(); h.flush();
+  assert.equal([...h.timers.values()].filter(t => t.ms === 1500).length, 0);
+  for (const id of ['feedback-text', 'feedback-title']) {
+    assert.equal(h.el(id).readOnly, true);
+    assert.equal(h.el(id).disabled, false);
+  }
   await h.fireTimers(1500);
   assert.ok(h.shown());
   assert.equal(h.el('feedback-modal').classList.contains('hidden'), false);
