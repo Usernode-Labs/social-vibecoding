@@ -241,6 +241,12 @@ function socialIdentityRoutes(config) {
     if (!adapter || !adapter.isEnabled(config)) {
       return res.status(404).json({ error: 'not_found' });
     }
+    // An app-originated trip crosses into the system browser's cookie jar.
+    // The account parameter is only an expectation: authentication still
+    // comes from the cookie, and OAuth state remains bound to that user.
+    if (req.query.account !== undefined && req.query.account !== String(req.user.id)) {
+      return res.redirect(302, settingsUrl(config, 'account_mismatch', provider));
+    }
     try {
       const pending = await socialIdentity.createOauthState(pool, {
         userId: req.user.id,

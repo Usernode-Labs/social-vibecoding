@@ -60,7 +60,11 @@
   // that flow ended up smuggling its return target in a fragment nothing
   // reads. The pathname is still the thing that decides the destination, so
   // the open-redirect property is unchanged.
-  const RETURN_TO_PATHS = ['/cli/authorize', '/connect/authorize'];
+  const RETURN_TO_PATHS = [
+    '/cli/authorize', '/connect/authorize',
+    '/api/me/social-identities/github/connect',
+    '/api/me/social-identities/x/connect',
+  ];
 
   // Screen transitions come from the platform's native kit via the
   // PlatformUI seam; when the kit failed to load the mutation just runs
