@@ -238,6 +238,19 @@ test('a runtime that reports no phases gets no phase row invented for it', () =>
   assert.equal(bp.bar, null, 'a lifecycle has no counter to draw a bar from');
 });
 
+test('the four-step pipeline draws as a segmented bar', () => {
+  const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
+  assert.match(tsx, /className="dev-ledger-build-bar"/);
+  assert.match(tsx, /data-build-progress=\{`\$\{doneCount\}\/\$\{steps\.length\}`\}/);
+  assert.match(tsx, /<span key=\{s\.key\} className=\{`dev-ledger-build-seg is-\$\{s\.state\}`\} data-step=\{s\.key\} \/>/);
+  assert.match(tsx, /const doneCount = steps\.filter\(\(s\) => s\.state === 'done'\)\.length;/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-ledger-build-seg \{[^}]*flex: 1 1 0;/, 'equal widths: a position, not a prediction');
+  assert.match(css, /\.dev-ledger-build-seg\.is-done \{ background: var\(--dc-ok, #16a34a\); \}/);
+  assert.match(css, /\.dev-ledger-build-seg\.is-now \{[^}]*animation:/);
+  assert.match(css, /prefers-reduced-motion: reduce\) \{\n\s+\.dev-ledger-build-seg\.is-now \{ animation: none; \}/);
+});
+
 test('the build rows separate their labels with real text, not only a flex gap', () => {
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   // A separator that exists only in CSS is invisible to a copy, a screen

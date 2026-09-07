@@ -196,8 +196,26 @@ function BuildSteps({ steps }: { steps: LedgerBuildStep[] }): ReactNode {
   };
   const withPhases = steps.find((s) => s.phases && s.phases.length);
   const nowPhase = withPhases ? withPhases.phases!.find((p) => p.state === 'now') : null;
+  const doneCount = steps.filter((s) => s.state === 'done').length;
   return (
     <span className="dev-ledger-progress-build" data-build-step={now ? now.key : 'done'}>
+      {/*
+          The pipeline as a bar: one segment per step, EQUAL width. It is a
+          position indicator, not a time prediction — the four steps are
+          nothing like equal (the image build is minutes, the others
+          seconds), so sizing the segments by duration would show a bar that
+          sat at 4% and then jumped. Where the time is going is the job of
+          the labels' own numbers and, inside the image step, of its bar.
+      */}
+      <span
+        className="dev-ledger-build-bar"
+        aria-hidden="true"
+        data-build-progress={`${doneCount}/${steps.length}`}
+      >
+        {steps.map((s) => (
+          <span key={s.key} className={`dev-ledger-build-seg is-${s.state}`} data-step={s.key} />
+        ))}
+      </span>
       {/*
           The separator is a real text node, not a flex gap. Gap is a
           painting instruction: it separates these labels on screen and
