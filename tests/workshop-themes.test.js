@@ -305,6 +305,72 @@ test('a stale cache inside the cooldown is served without starting a regeneratio
   }
 });
 
+test('a staging preview shows the demo grouping, not the themes its clone carried from production', async () => {
+  // The bug this pins cost five declared checks on every open proposal.
+  //
+  // A staging database is a CLONE OF PRODUCTION, so it arrives carrying
+  // production's `app_workshop_themes` row. That row's input hash cannot
+  // match a preview's input — the preview's board additionally holds the
+  // staging-only seed rows the checks are there to look at — so getThemes
+  // falls past the fresh path. It then hit `if (cached)` and served
+  // PRODUCTION's themes: a grouping of production's items, describing a
+  // board the reviewer is not looking at, with no mention of the seeded
+  // session. Nothing could correct it, because there is no model on staging
+  // and the regeneration never runs.
+  //
+  // `stagingDemoGrouping` was written for exactly this position, but sat
+  // BELOW the stale-cache return and so became unreachable the moment
+  // production generated its first row.
+  publicIssues = { issues: [{ number: 1, title: 'New thing', updatedAt: '2026-09-01T00:00:00Z' }], truncatedList: false };
+  const prevEnv = process.env.USERNODE_ENV;
+  const prev = llm._setClientForTests(null);
+  process.env.USERNODE_ENV = 'staging';
+  dispatch([[/FROM app_workshop_themes/i, [{
+    input_hash: 'a-hash-computed-in-production',
+    themes_json: [{ id: 'prod', name: 'Production theme', items: [] }],
+    source: 'ai', model: 'claude-haiku-4-5', generated_at: new Date().toISOString(),
+  }]]]);
+  try {
+    assert.equal(svc.isStagingEnv(), true, 'the branch under test is reachable');
+    const out = await svc.getThemes({ pool, app: APP });
+    assert.equal(out.source, 'demo',
+      'staging serves its own grouping, never the clone\'s production themes');
+    assert.ok(!out.themes.some((t) => t.name === 'Production theme'),
+      'production\'s theme names must not surface on a preview');
+    assert.ok(out.themes.length, 'and the demo grouping is not empty, or the view has nothing to exercise');
+  } finally {
+    llm._setClientForTests(prev);
+    if (prevEnv === undefined) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = prevEnv;
+    publicIssues = { issues: [], truncatedList: false };
+  }
+});
+
+test('in PRODUCTION a stale cache is still served, because it describes the same board', async () => {
+  // The other side of the same branch: the reorder must not change what
+  // production does. There a mismatched cache is one input behind on the
+  // board the viewer is actually looking at, and a regeneration is running
+  // behind it — strictly better than a placeholder grouping.
+  publicIssues = { issues: [{ number: 1, title: 'New thing', updatedAt: '2026-09-01T00:00:00Z' }], truncatedList: false };
+  const prevEnv = process.env.USERNODE_ENV;
+  const prev = llm._setClientForTests(null);
+  process.env.USERNODE_ENV = 'production';
+  dispatch([[/FROM app_workshop_themes/i, [{
+    input_hash: 'stale', themes_json: [{ id: 'old', name: 'Old', items: [] }],
+    source: 'ai', model: 'claude-haiku-4-5', generated_at: new Date().toISOString(),
+  }]]]);
+  try {
+    const out = await svc.getThemes({ pool, app: APP });
+    assert.equal(out.source, 'ai', 'production keeps serving its own stale cache');
+    assert.equal(out.stale, true);
+  } finally {
+    llm._setClientForTests(prev);
+    if (prevEnv === undefined) delete process.env.USERNODE_ENV;
+    else process.env.USERNODE_ENV = prevEnv;
+    publicIssues = { issues: [], truncatedList: false };
+  }
+});
+
 test('a model failure leaves the previous cache in place and clears the in-flight guard', async () => {
   publicIssues = { issues: [{ number: 1, title: 'New thing', updatedAt: '2026-09-01T00:00:00Z' }], truncatedList: false };
   const prev = llm._setClientForTests({ messages: { create: async () => { throw new Error('boom'); } } });

@@ -54,7 +54,13 @@ const MIN_INTERVAL_MS = Math.max(
   60 * 1000
 );
 
-const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+// Read at CALL time, not at module load. The only consumer is the staging
+// fallback in getThemes, and reading it there lets a test exercise both sides
+// of that branch in one process — the reason the branch's own bug went
+// unnoticed is that nothing could reach it from a test.
+function isStagingEnv() {
+  return process.env.USERNODE_ENV === 'staging';
+}
 
 const clip = (v, n) => String(v == null ? '' : v).trim().slice(0, n);
 const day = (v) => {
@@ -485,16 +491,37 @@ async function getThemes({ pool, app, waitForGeneration = false }) {
       pending = false;
     }
   }
+  // ── A staging preview must not serve PRODUCTION's themes ──
+  //
+  // Reaching here means the cache did NOT match the input (the fresh path
+  // above returns on a match), so the cached row describes some other board.
+  // On a staging preview that row is not merely stale, it is foreign: the
+  // database is a clone of production, so the themes in it were computed
+  // from production's items and can say nothing about this preview — whose
+  // board additionally carries the staging-only seed rows a reviewer and
+  // the declared checks are here to look at.
+  //
+  // Nothing can correct it either, because there is no model on staging, so
+  // the regeneration above never runs. `stagingDemoGrouping` was written for
+  // exactly this position — its comment says it exists so that "every part
+  // of the view (several themes, every lane, the roster, the counts) is
+  // exercised against real cards" — but it sat BELOW the stale-cache return
+  // and was therefore unreachable from the moment production generated its
+  // first row and clones started carrying one.
+  //
+  // So the staging fallback goes first, and only on staging: in production a
+  // stale cache is the right answer (it describes the same board, one input
+  // behind, and a regeneration is already running behind it).
+  if (isStagingEnv() && !llm.isEnabled()) {
+    return {
+      themes: stagingDemoGrouping(input), source: 'demo', generatedAt: null,
+      stale: true, pending: false, itemCount: input.items.length,
+    };
+  }
   if (cached) {
     return {
       themes: cached.themes, source: cached.source, generatedAt: cached.generatedAt,
       stale: true, pending, itemCount: input.items.length,
-    };
-  }
-  if (IS_STAGING && !llm.isEnabled()) {
-    return {
-      themes: stagingDemoGrouping(input), source: 'demo', generatedAt: null,
-      stale: true, pending: false, itemCount: input.items.length,
     };
   }
   return {
@@ -505,6 +532,7 @@ async function getThemes({ pool, app, waitForGeneration = false }) {
 
 module.exports = {
   buildThemeInput, fingerprint, fallbackThemes, stagingDemoGrouping, assignIds, slugify, excerpt,
+  isStagingEnv,
   getCached, getThemes, regenerate,
   MIN_INTERVAL_MS,
   _inFlightForTests: inFlight,
