@@ -11106,7 +11106,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-progress-build {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem 0.75rem;
+  /* The middle dots between labels carry the separation now (see
+     BuildSteps), so the column gap only has to breathe around them. */
+  gap: 0.25rem 0.125rem;
   margin: 0.25rem 0;
   font-size: 12px;
   line-height: 1.3;
@@ -11115,13 +11117,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-build-step small { margin-left: 0.25rem; font-size: 11px; opacity: 0.8; }
 .dev-ledger-build-step.is-now { color: var(--text-primary); font-weight: 600; animation: dev-ledger-progress-pulse 1.4s ease-in-out infinite; }
 .dev-ledger-build-step.is-todo { opacity: 0.55; }
+.dev-ledger-build-sep { opacity: 0.45; }
 /* Inside the image step: the buildpack lifecycle phases on their own row,
    indented, with the running phase's last log line under them in mono. */
 .dev-ledger-build-phases {
   flex-basis: 100%;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.125rem 0.625rem;
+  gap: 0.125rem 0.125rem;
   padding-left: 0.75rem;
   border-left: 2px solid color-mix(in srgb, currentColor 18%, transparent);
   font-size: 11px;

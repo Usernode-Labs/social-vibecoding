@@ -198,19 +198,33 @@ function BuildSteps({ steps }: { steps: LedgerBuildStep[] }): ReactNode {
   const nowPhase = withPhases ? withPhases.phases!.find((p) => p.state === 'now') : null;
   return (
     <span className="dev-ledger-progress-build" data-build-step={now ? now.key : 'done'}>
-      {steps.map((s) => (
-        <span key={s.key} className={`dev-ledger-build-step is-${s.state}`} data-step={s.key}>
-          {s.label}
-          {s.ms != null ? <small>{fmt(s.ms)}</small> : null}
-        </span>
+      {/*
+          The separator is a real text node, not a flex gap. Gap is a
+          painting instruction: it separates these labels on screen and
+          nowhere else, so a copy, a screen reader, or a render that got
+          the markup before the stylesheet reads them as one word —
+          "fetchbranchbuildimageclonedatabase". The middle dot is the
+          same separator the checks sub line already uses.
+      */}
+      {steps.map((s, i) => (
+        <Fragment key={s.key}>
+          {i > 0 ? <span className="dev-ledger-build-sep"> · </span> : null}
+          <span className={`dev-ledger-build-step is-${s.state}`} data-step={s.key}>
+            {s.label}
+            {s.ms != null ? <small>{fmt(s.ms)}</small> : null}
+          </span>
+        </Fragment>
       ))}
       {withPhases ? (
         <span className="dev-ledger-build-phases" data-image-phase={nowPhase ? nowPhase.name : 'done'}>
-          {withPhases.phases!.map((p) => (
-            <span key={p.name} className={`dev-ledger-build-phase is-${p.state}`} data-phase={p.name}>
-              {p.name}
-              {p.ms != null ? <small>{fmt(p.ms)}</small> : null}
-            </span>
+          {withPhases.phases!.map((p, i) => (
+            <Fragment key={p.name}>
+              {i > 0 ? <span className="dev-ledger-build-sep"> · </span> : null}
+              <span className={`dev-ledger-build-phase is-${p.state}`} data-phase={p.name}>
+                {p.name}
+                {p.ms != null ? <small>{fmt(p.ms)}</small> : null}
+              </span>
+            </Fragment>
           ))}
           {withPhases.detail ? <span className="dev-ledger-build-detail">{withPhases.detail}</span> : null}
         </span>
