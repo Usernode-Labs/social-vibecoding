@@ -37,7 +37,7 @@ const mod = () => (api || (api = loadTsx('tests/fixtures/dev-view-api.ts')));
 const SESSION = {
   kind: 'session', launchpadHtml: '', barEmpty: false,
   spec: { open: false, width: null }, staging: { open: false, width: null },
-  proposalHint: false,
+  proposalHint: false, returnHint: false,
 };
 
 const html = (s) => renderToHtml(createElement(mod().DevChatViewView, {
@@ -357,6 +357,69 @@ test('the proposal hint is a field, not an insertAdjacentHTML in front of the tr
   // It is one-shot: the next full render drops it.
   DevChat.renderChatView();
   assert.equal(view().proposalHint, false);
+});
+
+test('the return tip persists dismissal across sessions and reloads, independently for each viewer', () => {
+  const saved = new Map();
+  const storage = {
+    getItem: (key) => saved.get(key) || null,
+    setItem: (key, value) => saved.set(key, value),
+  };
+  const { DevChat, sandbox, view, published } = makeDevChat();
+  sandbox.localStorage = storage;
+  sandbox.App.user = { id: 42 };
+  DevChat.currentSession.user_id = 42;
+
+  assert.equal(view().returnHint, true);
+  DevChat.renderChatView();
+  assert.equal(view().returnHint, true, 'a status repaint does not consume the tip');
+  DevChat.dismissReturnHint();
+  assert.equal(published.at(-1).state.returnHint, false, 'dismissal updates the visible card');
+  DevChat.currentSession = { id: 8, user_id: 42, status: 'active' };
+  assert.equal(view().returnHint, false, 'a new session does not repeat the tip');
+
+  const reload = makeDevChat();
+  reload.sandbox.localStorage = storage;
+  reload.sandbox.App.user = { id: 42 };
+  reload.DevChat.currentSession.user_id = 42;
+  assert.equal(reload.view().returnHint, false, 'dismissal survives a page reload');
+  reload.sandbox.App.user = { id: 43 };
+  assert.equal(reload.view().returnHint, false, 'reading another person’s session is not first use');
+  reload.DevChat.currentSession.user_id = 43;
+  assert.equal(reload.view().returnHint, true, 'another account receives its own tip');
+});
+
+test('the return tip can be dismissed even when browser storage is blocked', () => {
+  const { DevChat, sandbox, view } = makeDevChat();
+  sandbox.App.user = { id: 42 };
+  DevChat.currentSession.user_id = 42;
+  sandbox.localStorage = {
+    getItem() { throw new Error('Storage blocked'); },
+    setItem() { throw new Error('Storage blocked'); },
+  };
+  assert.equal(view().returnHint, true);
+  DevChat.dismissReturnHint();
+  assert.equal(view().returnHint, false);
+  DevChat.renderChatView();
+  assert.equal(view().returnHint, false, 'polling keeps the in-memory dismissal');
+});
+
+test('the first-use capture renders the real explainer without changing saved preferences', () => {
+  const { DevChat, sandbox, view } = makeDevChat();
+  const writes = [];
+  sandbox.localStorage = { getItem: () => '1', setItem: (...args) => writes.push(args) };
+  sandbox.location.search = '?shot=dev-chat-first-use';
+  assert.equal(view().returnHint, true, 'capture works even for a returning user');
+  const out = html(view());
+  assert.match(out, /You can leave this page and return anytime/);
+  assert.match(out, /<strong>Improve<\/strong>/);
+  assert.match(out, /session’s status/);
+  assert.match(out, /id="dc-return-hint-dismiss"[^>]*>Got it<\/button>/);
+  DevChat.dismissReturnHint();
+  assert.equal(view().returnHint, false, 'the preview uses the real dismissal');
+  assert.deepEqual(writes, [], 'a capture never consumes the account’s first-use state');
+  sandbox.location.search = '?shot=venue-sheet';
+  assert.equal(view().returnHint, false, 'other capture states remain focused on their surface');
 });
 
 // ── 5. The swap, which no longer needs the screen rebuilt ──────────────

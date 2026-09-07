@@ -8139,7 +8139,42 @@ const DevChat = {
       // to be wider).
       staging: { open: stagingOpen, width: DevChat._readStagingPanelWidth() || null },
       proposalHint: !!DevChat._proposalHint,
+      returnHint: DevChat._showReturnHint(),
     };
+  },
+
+  // #1595: keep the first-use explainer until it is acknowledged. Scope the
+  // dismissal to the viewer, across apps/sessions, with an in-memory fallback
+  // when browser storage is unavailable. Merely reading someone else's chat
+  // must not consume your first-use hint.
+  _dismissedReturnHints: new Set(),
+
+  _returnHintKey() {
+    // A deterministic capture can show the tip even after dismissal, without
+    // writing the viewer's preference or changing other screenshot states.
+    try {
+      const shot = new URLSearchParams(location.search).get('shot');
+      if (shot) return shot === 'dev-chat-first-use' ? 'preview' : null;
+    } catch { /* no browser location */ }
+    if (!DevChat._ownsSession(DevChat.currentSession) || !App.user.id) return null;
+    return `usernode:dev-chat-return-hint:v1:${App.user.id}`;
+  },
+
+  _showReturnHint() {
+    const key = DevChat._returnHintKey();
+    if (!key || DevChat._dismissedReturnHints.has(key)) return false;
+    if (key === 'preview') return true;
+    try { return localStorage.getItem(key) !== '1'; } catch { return true; }
+  },
+
+  dismissReturnHint() {
+    const key = DevChat._returnHintKey();
+    if (!key) return;
+    DevChat._dismissedReturnHints.add(key);
+    if (key !== 'preview') {
+      try { localStorage.setItem(key, '1'); } catch { /* keep the in-memory dismissal */ }
+    }
+    DevChat._publishDevView();
   },
 
   /**
