@@ -404,15 +404,23 @@ test('#906: staging seeds estimator-OFF runs at both side-slot states', () => {
     'each fixture run needs an assistant reply or the unanswered sweep breaks it');
 
   // The fixture rows are only useful if the routes are checks-gated.
+  //
+  // A route may carry MORE than one declared check — this change adds a
+  // collapsed-state one on 900810 — so each assertion below selects the #906
+  // check by what it asserts rather than taking whichever the manifest
+  // happens to list first. `find` on the path alone made this test fail on a
+  // change that had not touched the side slot at all.
   const tests = require('../dapp.json').tests || [];
+  const SIDE_SLOT = '.dc-cc-attached-summary .dc-cc-cohort';
+  const onRoute = (id) => tests.filter((x) => x.path.includes(`/sessions/${id}`));
   for (const id of [900810, 900811]) {
-    const t = tests.find((x) => x.path.includes(`/sessions/${id}`));
-    assert.ok(t, `dapp.json must declare a test for the ${id} fixture route`);
-    assert.equal(t.expectSelector, '.dc-cc-attached-summary .dc-cc-cohort',
-      `${id}: the test must assert the side slot actually renders`);
+    assert.ok(onRoute(id).length, `dapp.json must declare a test for the ${id} fixture route`);
+    assert.ok(onRoute(id).some((x) => x.expectSelector === SIDE_SLOT),
+      `${id}: a check must assert the side slot actually renders`);
   }
+  const longRun = onRoute(900811).find((x) => x.expectSelector === SIDE_SLOT);
   assert.match(
-    tests.find((x) => x.path.includes('/sessions/900811')).expectText,
+    longRun.expectText,
     /some runs go 30 min\+/,
     'the long-run route must assert the cohort note is still there'
   );
