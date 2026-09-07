@@ -1106,11 +1106,6 @@ export function init() {
     // that used to be this function's first line belongs to useStaticModal
     // now: by the time this runs the island has already revealed the root
     // and lifted the card into the kit shell.
-    // `setComposerLocked(false)` runs FIRST, ahead of the queued-success
-    // return: that path locks again through the same helper, so no open can
-    // leave behind a composer nobody can type into. It also resets a
-    // "Submitted" lock from a prior session, so a returning user can file
-    // again without reloading.
     Feedback._open = (opts = {}) => {
       presentation += 1;
       clearTimeout(closeTimer);
@@ -1119,7 +1114,6 @@ export function init() {
       setComposerLocked(false);
       firstSuccess?.classList.add('hidden');
       feedbackForm?.classList.remove('hidden');
-      setComposerLocked(false);
       // Opening a queued success must not consume a failed outbox draft or
       // start screenshot/title probes behind the confirmation.
       if (opts.firstFeedback && showFirstFeedback(opts.firstFeedback, 'Your saved feedback has been sent.')) return;
