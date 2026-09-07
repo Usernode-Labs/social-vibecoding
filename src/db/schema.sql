@@ -736,6 +736,13 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_image_ref TE
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_build_ref VARCHAR(253);
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_runtime_kind VARCHAR(32);
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_runtime_name VARCHAR(253);
+-- The commit the preview was actually built from (the clone's HEAD at build
+-- time). A clean platform sync of main carries the checks verdict forward
+-- WITHOUT a rebuild, so the preview can sit a commit behind the head the
+-- row now describes; "Re-run checks" compares this to the head and rebuilds
+-- instead of testing the new head's checks against the old build. NULL for
+-- previews built before this column existed, which keeps the old behaviour.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_commit_sha VARCHAR(64);
 -- LLM-generated PR title shown alongside the PR number across the UI
 -- (dev chat, vote panel, status page). Nullable so old rows predate the
 -- auto-title feature and just fall back to showing "by <user>".

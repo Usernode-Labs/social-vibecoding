@@ -57,8 +57,16 @@ const APP_CPUS = '0.5';
 // itself became the bottleneck the ceiling was protecting against. Still a
 // ceiling — an idle preview is unaffected, and the cost only appears during
 // the same capture window the 1.0 bump was already for.
+//
+// Raised 2 → 4: eight concurrent pages on two cores left every request
+// queueing behind the others during the capture window, which is where the
+// "did not finish within the assert window" flakes came from — a check that
+// passes alone and fails under its seven neighbours. Still a ceiling. The
+// same figure is handed to the kubernetes deploy (services/kubernetes.js
+// deployApplication), whose preview limit used to be a hard-coded 1 CPU that
+// this setting never reached.
 const STAGING_MEMORY = process.env.STAGING_MEMORY || '256m';
-const STAGING_CPUS = process.env.STAGING_CPUS || '2';
+const STAGING_CPUS = process.env.STAGING_CPUS || '4';
 
 const SHARED_NETWORK = process.env.DOCKER_NETWORK || 'shared-web';
 
