@@ -1056,12 +1056,12 @@
     },
     {
       "name": "Restart-recovery pill fixtures are seeded (#786)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "path": "/?demo=1#app/usernode-2d5619/board",
       "expectText": "Staging demo: pills after a recovered build turn"
     },
     {
       "name": "Interrupted-reply pill fixture is seeded (#786)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "path": "/?demo=1#app/usernode-2d5619/board",
       "expectText": "Staging demo: pills after an interrupted reply"
     },
     {
@@ -1738,7 +1738,7 @@
     },
     {
       "name": "Shared demo session renders in the In progress area",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "path": "/?demo=1#app/usernode-2d5619/board",
       "expectText": "Staging demo shared session"
     },
     {
@@ -1836,12 +1836,12 @@
     },
     {
       "name": "Shared session cards show the owner subtitle",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "path": "/?demo=1#app/usernode-2d5619/board",
       "expectText": "is working on this"
     },
     {
       "name": "Busy own session card renders (working state, two-row layout)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "path": "/?demo=1#app/usernode-2d5619/board",
       "expectText": "[Mock] Busy own session"
     },
     {
