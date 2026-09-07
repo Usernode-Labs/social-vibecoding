@@ -84,6 +84,13 @@ function stagingMockProposals(viewer) {
     pr_summary_md: 'This is a sample plain-language summary so testers can see '
       + 'the new explanation that now appears at the top of a proposal, written '
       + 'in everyday words, with no technical jargon.',
+    // The technical half, so a reviewer can see BOTH sections of the About
+    // sheet on ?demo=1 rather than only the labelled one. Obviously fake and
+    // deliberately written in the register the summary above must not use —
+    // the contrast between the two is the thing being reviewed.
+    pr_body: '## What changed\n\n- `renderTopicHead` now emits the summary '
+      + 'behind its own label\n- `parseImportSummary` bounds the field at 600 '
+      + 'characters\n\nSee `src/routes/votes.js` for the import path.',
     staging_url: null,
     testing_md: null,
     testing_path: null,
@@ -1520,6 +1527,28 @@ function parseImportLinkedIssues(body) {
   return sanitizeIssueNumbers(body && body.linkedIssues).slice(0, MAX_IMPORT_LINKED_ISSUES);
 }
 
+// The plain-language summary an import may carry (the About sheet's user-facing
+// half). On-platform sessions get one from llm.generatePrMetadata; an imported
+// or connector-submitted PR had no way to supply one at all, so those proposals
+// rendered the technical description as their only content — which is what the
+// two-section About sheet exists to avoid.
+//
+// Bounded, because it is the body text a voter reads FIRST. An agent that
+// pastes its whole PR body here would collapse the two sections back into one,
+// so the cap is deliberately much smaller than the description's: a few
+// sentences, not a document. Truncation is silent for the same reason the
+// testing note's is — one over-long field must not cost somebody their whole
+// submission — and the field is optional, so an omitted one behaves exactly as
+// before rather than inventing a summary nobody wrote.
+const MAX_IMPORT_SUMMARY = 600;
+
+function parseImportSummary(body) {
+  const raw = body && typeof body.summary === 'string' ? body.summary : '';
+  const trimmed = raw.replace(/\r\n/g, '\n').trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, MAX_IMPORT_SUMMARY);
+}
+
 function revisionChangedVoteResponse(res, headSha, message = null) {
   return res.status(409).json({
     error: message
@@ -2446,6 +2475,7 @@ function voteRoutes(config) {
       // import button sends none, which leaves the column at the empty array
       // it defaulted to before.
       const importLinkedIssues = parseImportLinkedIssues(req.body);
+      const importSummary = parseImportSummary(req.body);
       const promote = req.body?.promote === true;
       const initialStatus = promote ? 'promoted' : 'active';
 
@@ -2461,12 +2491,13 @@ function voteRoutes(config) {
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
             source, imported_pr_head_sha, imported_pr_author, imported_pr_head_repo,
             promoted_at, shared_at, created_at,
-            testing_md, testing_path, testing_paths, linked_issues, pr_body)
+            testing_md, testing_path, testing_paths, linked_issues, pr_body,
+            pr_summary_md)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
             'imported', $8, $9, $10,
             CASE WHEN $7::text = 'promoted' THEN NOW() END,
             CASE WHEN $7::text = 'active' THEN NOW() END,
-            NOW(), $11, $12, $13::jsonb, $14, $15)
+            NOW(), $11, $12, $13::jsonb, $14, $15, $16)
            RETURNING id, status`,
           [
             app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
@@ -2483,6 +2514,10 @@ function voteRoutes(config) {
             // already holds `pr`, so this costs no extra GitHub call and the
             // proposal reports a description from its very first read.
             pr.body || null,
+            // The user-facing half of the About sheet. Null when the submitter
+            // sent none: the platform does not generate one here, so a proposal
+            // without it renders exactly as it did before this field existed.
+            importSummary,
           ]
         ));
         await selfAssignImportedProposal(

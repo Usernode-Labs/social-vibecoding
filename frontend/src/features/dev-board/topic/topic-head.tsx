@@ -420,7 +420,7 @@ export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> 
       }}
     >
       <summary className="dev-topic-details-summary">
-        Full proposal details
+        Technical details
       </summary>
       {/* DevChat.renderMarkdown's output — sanitised where it is built, and
           the same pipeline the issue body above uses. */}
@@ -467,12 +467,21 @@ export function TopicHead(): ReactNode {
   const { card, body } = useStoreState(topicHeadStore);
   if (!card || !body) return null;
   const a = body.actions;
-  // The About sheet: the words (summary or issue body), the before/after
-  // tiles — open, they are the most useful thing on the page for a voter —
-  // the full PR body as a disclosure line, and a session's note.
-  const aboutHtml = body.summaryHtml || body.issueBodyHtml || null;
+  // The About sheet: the words, the before/after tiles — open, they are the
+  // most useful thing on the page for a voter — the PR body as a disclosure
+  // line, and a session's note.
+  //
+  // The words are TWO different things wearing one slot. A proposal's
+  // `summaryHtml` is the user-facing half and gets a label, because the
+  // technical half below it has one too and an unlabelled block above a
+  // labelled one reads as a preamble rather than as the other section. An
+  // issue body is just the issue and keeps rendering bare — labelling it
+  // "what changes for you" would be a claim nobody made. Kept as two
+  // variables rather than one so the label can never end up over an issue.
+  const summaryHtml = body.summaryHtml || null;
+  const issueHtml = summaryHtml ? null : (body.issueBodyHtml || null);
   const tiles = a && a.visuals ? a.visuals : null;
-  const hasAbout = !!(aboutHtml || tiles || body.proposalBody || body.note);
+  const hasAbout = !!(summaryHtml || issueHtml || tiles || body.proposalBody || body.note);
   return (
     <div className="dev-topic">
       <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
@@ -483,7 +492,13 @@ export function TopicHead(): ReactNode {
         <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about">
           <h4 className="dev-topic-h">{body.aboutTitle || 'About'}</h4>
           {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
-          {aboutHtml ? <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: aboutHtml }} /> : null}
+          {summaryHtml ? (
+            <>
+              <h5 className="dev-topic-sub">What changes for you</h5>
+              <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: summaryHtml }} />
+            </>
+          ) : null}
+          {issueHtml ? <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: issueHtml }} /> : null}
           {tiles ? (
             <div className="dev-topic-visuals" data-visuals-scope="1">
               {/* AppView.visualsTilesHtml's markup — four other surfaces

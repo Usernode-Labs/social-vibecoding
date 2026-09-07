@@ -1,5 +1,7 @@
-// The focused proposal view exposes the complete GitHub PR description in a
-// collapsed disclosure. Compact cards keep using the short generated summary.
+// The focused proposal view splits About into two labelled halves: the
+// user-facing summary, then the complete GitHub PR description behind a
+// collapsed "Technical details" disclosure. Compact cards keep using the
+// short generated summary and render neither label.
 //
 // Run with: node --test tests/proposal-body-details.test.js
 
@@ -187,7 +189,7 @@ test('a full PR body is collapsed and rendered through the Markdown pipeline', (
     'reviewer screenshots use the Markdown renderer\'s sanitized image mode');
   assert.match(html, /^<details /);
   assert.doesNotMatch(html, /^<details[^>]* open(?: |>|=)/, 'closed by default');
-  assert.match(html, />Full proposal details<\/summary>/);
+  assert.match(html, />Technical details<\/summary>/);
   assert.match(html, /<safe-markdown># Why\n\nMore context\.<\/safe-markdown>/);
   // The toggle is an onToggle closure now, not an `ontoggle` attribute, so
   // what the markup can carry is the id it reports back with.
@@ -233,7 +235,7 @@ test('compact proposal cards do not render the full body', () => {
     created_at: '2026-08-21T00:00:00Z',
   });
 
-  assert.doesNotMatch(html, /Full proposal details/);
+  assert.doesNotMatch(html, /Technical details/);
   assert.doesNotMatch(html, /UNIQUE FULL BODY COPY/);
 });
 
