@@ -8506,7 +8506,8 @@ const AppView = {
     const ran = n(p.ran); const passed = n(p.passed); const failed = n(p.failed);
     const expected = Number.isInteger(p.expected) && p.expected > 0 ? p.expected : null;
     const unit = AppView._unitSuiteProgressView(p.unit);
-    if (!ran && !expected && !unit) return null;
+    const build = AppView._buildProgressView(p.build);
+    if (!ran && !expected && !unit && !build) return null;
     const of = expected ? ` of ${expected}` : '';
     const bits = [`${ran}${of} run`, `${passed} passed`];
     if (failed) bits.push(`${failed} failed`);
@@ -8517,10 +8518,61 @@ const AppView = {
         ? `${ran} of ${expected} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`
         : `${ran} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`;
     if (unit && !sub) sub = unit.sub;
+    if (build && !sub && !build.done) sub = build.sub;
     return {
-      bar: { ran, passed, failed, expected, done: !!p.done, unit: unit ? unit.bar : null },
-      sub, sentence, unit,
+      bar: { ran, passed, failed, expected, done: !!p.done, unit: unit ? unit.bar : null, build: build ? build.steps : null },
+      sub, sentence, unit, build,
     };
+  },
+
+  // The build half, step by step: fetch the branch, build the image, clone
+  // the database, start the preview. Live while "Preview building…" (the
+  // current step is named, the finished ones carry their time) and kept
+  // through the testing half as one line saying what the build cost.
+  BUILD_STEP_COPY: {
+    source_fetch: { label: 'fetch branch', doing: 'fetching the branch', done: 'branch fetched' },
+    image_build: { label: 'build image', doing: 'building the preview image', done: 'image built' },
+    clone: { label: 'clone database', doing: 'cloning the database', done: 'database cloned' },
+    health: { label: 'start preview', doing: 'starting the preview', done: 'preview started' },
+  },
+  _fmtMs(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m ${s % 60}s`;
+  },
+  _buildProgressView(b) {
+    if (!b || typeof b !== 'object') return null;
+    const keys = ['source_fetch', 'image_build', 'clone', 'health'];
+    const doneSteps = Array.isArray(b.steps) ? b.steps.filter((s) => s && keys.includes(s.key)) : [];
+    const current = typeof b.step === 'string' ? b.step : null;
+    const done = current === 'done';
+    const steps = keys.map((key) => {
+      const copy = AppView.BUILD_STEP_COPY[key];
+      const rec = doneSteps.find((s) => s.key === key);
+      const state = rec ? 'done' : (key === current ? 'now' : 'todo');
+      const via = rec && rec.via === 'template' ? ' (from template)' : '';
+      return { key, label: copy.label + via, ms: rec && Number.isFinite(rec.ms) ? rec.ms : null, state };
+    });
+    const parts = doneSteps.map((s) => {
+      const copy = AppView.BUILD_STEP_COPY[s.key];
+      const via = s.via === 'template' ? ' from template' : '';
+      return `${copy.done}${via} (${AppView._fmtMs(s.ms)})`;
+    });
+    let sentence;
+    let sub;
+    if (done) {
+      const total = Number.isFinite(b.totalMs) ? b.totalMs : doneSteps.reduce((n, s) => n + (s.ms || 0), 0);
+      sentence = `Preview built in ${AppView._fmtMs(total)}: ${parts.join(', ')}.`;
+      sub = `built in ${AppView._fmtMs(total)}`;
+    } else {
+      const copy = current && AppView.BUILD_STEP_COPY[current];
+      const doing = copy ? copy.doing : 'building';
+      sentence = parts.length
+        ? `Preview build: ${parts.join(', ')}, now ${doing}.`
+        : `Preview build: ${doing}.`;
+      sub = `build: ${doing}`;
+    }
+    return { steps, sentence, sub, done, current };
   },
 
   // The repo unit suite (`npm test`) runs in its own container alongside the
@@ -8616,6 +8668,7 @@ const AppView = {
       const progress = AppView._checksProgressView(pr);
       if (progress) {
         const lines = [];
+        if (progress.build) lines.push({ t: 'line', parts: [progress.build.sentence], ...(progress.build.done ? { weight: 'foot' } : {}) });
         if (progress.sentence) lines.push({ t: 'line', parts: [progress.sentence] });
         if (progress.unit) lines.push({ t: 'line', parts: [progress.unit.sentence] });
         rows.splice(1, 0, ...lines);
