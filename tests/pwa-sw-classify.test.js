@@ -179,3 +179,10 @@ test('eviction-immune paths are paths the worker actually caches', () => {
     assert.equal(classify('GET', p), 'api', `${p} is immune but never cached`);
   }
 });
+
+
+test('app allowance reads always reach the server after an admin change', () => {
+  assert.equal(classify('GET', '/api/me/app-allowance'), 'bypass');
+  assert.equal(classify('GET', '/api/me/app-allowance?refresh=1'), 'bypass');
+  assert.equal(classify('POST', '/api/me/app-allowance/request'), 'bypass');
+});

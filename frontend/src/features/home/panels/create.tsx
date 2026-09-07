@@ -20,8 +20,8 @@
  *      creating your one allowed app, an admin editing your quota, an app
  *      erroring out. A conditional block would turn each of those flips into a
  *      layout change under the user.
- *   2. It is the majority rendering — most accounts carry no quota — so
- *      "absent" would read as a missing feature rather than a locked one.
+ *   2. Reaching the allowance should leave its details and request action
+ *      in the same place.
  *
  * The locked treatment belongs to the widget, not to the button: the button's
  * available action is now "open the quota details", so marking that control
@@ -39,6 +39,7 @@
  * would have left a loaded gun pointed at this block.
  */
 
+import { useAppAllowance, quotaHeadline } from '../../dialogs/app-allowance';
 import { PlusWideIcon } from '@/components/ui/icons';
 
 import type { CreateView } from '../panels-store';
@@ -48,6 +49,7 @@ function win(): any {
 }
 
 export function CreatePanel({ view }: { view: CreateView }) {
+  const { quota } = useAppAllowance();
   const label = view.canCreate ? 'Create a new app' : `View app quota. ${view.hint}`;
   return (
     // ONE SHAPE. It used to be two: the widget's grid footprint was 4x1 below
@@ -89,6 +91,7 @@ export function CreatePanel({ view }: { view: CreateView }) {
           }`}
         >
           Create app
+          {quota ? <span className="block mt-1 text-xs text-zinc-500 dark:text-zinc-400">{quotaHeadline(quota)}</span> : null}
         </span>
       </button>
     </div>

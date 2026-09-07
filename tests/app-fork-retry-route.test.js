@@ -61,6 +61,7 @@ stub(ids.staging, { rebuildProduction: async () => ({}), MissingSecretsError: cl
 stub(ids.lifecycle, { drainGuard: (_req, _res, next) => next() });
 stub(ids.rateLimits, {
   appCreateLimiter: (_req, _res, next) => next(),
+  appAllowanceRequestLimiter: (_req, _res, next) => next(),
   issueCreateLimiter: (_req, _res, next) => next(),
 });
 

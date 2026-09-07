@@ -556,7 +556,7 @@ const HomePanels = {
       key: panel.key,
       canCreate: !!(window.Home && typeof Home.canCreate === 'function' && Home.canCreate()),
       hint: (window.Home && Home.CREATE_DISABLED_HINT)
-        || 'Ask an admin to enable app creation for your account.',
+        || 'View your app allowance or request more slots.',
     };
   },
 
@@ -742,7 +742,7 @@ const HomePanels = {
     // tile's tooltip, while a tap opens the detailed quota in the dialog.
     if (key === 'create' && window.Home && typeof Home.canCreate === 'function' && !Home.canCreate()) {
       items.push({
-        label: Home.CREATE_DISABLED_HINT || 'Ask an admin to enable app creation for your account.',
+        label: Home.CREATE_DISABLED_HINT || 'View your app allowance or request more slots.',
         disabled: true,
       });
     }
