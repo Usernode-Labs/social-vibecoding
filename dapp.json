@@ -2714,6 +2714,11 @@
       "expectSelector": ".un-ptr-layer > .un-ptr-puck"
     },
     {
+      "name": "Native kit: the refresh puck rests fully below its anchor line (#1526)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=ptr-hold",
+      "expectSelector": ".un-ptr-layer > .un-ptr-puck.un-refreshing"
+    },
+    {
       "name": "Native kit: side panel presents from the right edge with a scrollable body",
       "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=panel",
       "expectSelector": ".un-panel[data-un-side=\"right\"] > .un-panel-body"
