@@ -102,9 +102,11 @@
  * flattened `life.label` would have dropped all four.
  */
 
-import type { RefObject } from 'react';
+import type { ReactNode, RefObject } from 'react';
 
-import { ChevronDownIcon } from '@/components/ui/icons';
+import {
+  BoardIcon, ChatIcon, ChevronDownIcon, ListLinesIcon,
+} from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { headerTitleStore } from './header-title-store.js';
@@ -112,6 +114,43 @@ import { improveStore } from '../improve/improve-store.js';
 import { appContextStore } from '../app-context/app-context-store.js';
 import { sessionHeaderStore } from '../dev-chat/session-header-store';
 import { MergeStatusPill } from '../dev-chat/session-header';
+
+/*
+ * #1613: on a phone the subtitle is a GLYPH, and the word returns at `sm`.
+ *
+ * The chip is the one control that has to fit an app's name, the part of it
+ * you are in, and a chevron into a single line on a 360px screen — and the
+ * name is the half that truncates, because the subtitle is `shrink-0`. So
+ * "Board" costs roughly six characters of the app's own name on every narrow
+ * screen, permanently.
+ *
+ * Both forms are in the markup and CSS picks one, rather than matchMedia
+ * deciding: nothing re-renders on a resize or an orientation change, and the
+ * word is still in the document at every width for anything reading text
+ * rather than pixels. The button's `aria-label` already spells the subtitle
+ * out, so the glyph is `aria-hidden` and no screen reader loses anything.
+ *
+ * A subtitle with no glyph keeps its word at every width. That is the safe
+ * direction for a map that a new route can add to later, and it is what
+ * "Discussion" got before this had an icon for it.
+ */
+const SUBTITLE_ICON: Record<string, (props: { className?: string }) => ReactNode> = {
+  Board: BoardIcon,
+  Workshop: ListLinesIcon,
+  Discussion: ChatIcon,
+};
+
+/** The subtitle's two forms: the glyph below `sm`, the word from `sm` up. */
+function SubtitleLabel({ subtitle }: { subtitle: string }): ReactNode {
+  const Icon = SUBTITLE_ICON[subtitle];
+  if (!Icon) return <>{subtitle}</>;
+  return (
+    <>
+      <Icon className="sm:hidden w-3.5 h-3.5" aria-hidden="true" />
+      <span className="hidden sm:inline">{subtitle}</span>
+    </>
+  );
+}
 
 export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
   const { text, subtitle } = useStoreState(headerTitleStore);
@@ -171,7 +210,7 @@ export function AppSwitcherChip({ titleRef }: { titleRef: RefObject<HTMLHeadingE
                   not care which descendant holds it. */}
               {onSession
                 ? <span id="header-status-pill" className="min-w-0 truncate">{sessionPill}</span>
-                : subtitle}
+                : <SubtitleLabel subtitle={subtitle} />}
             </span>
           ) : null}
         </span>
