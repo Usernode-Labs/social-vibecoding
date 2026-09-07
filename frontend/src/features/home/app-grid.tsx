@@ -176,7 +176,7 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
       role="button"
       aria-label={app.name}
       aria-haspopup="menu"
-      title={`${app.name} — hold or right-click for app actions`}
+      title={`${app.name}. Hold or right-click for app actions`}
       {...(app.demo ? { 'data-demo': 'true' } : null)}
       {...(yours ? { 'data-yours': 'true' } : null)}
       onPointerDownCapture={(e) => {
