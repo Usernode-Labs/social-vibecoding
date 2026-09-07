@@ -3063,7 +3063,19 @@ const App = {
         }
         if (authRoute) {
           AuthScreens.hideAll();
-          history.replaceState(null, '', '/');
+          // `_rootUrl('')`, not a bare '/': this strips the STALE AUTH HASH
+          // and nothing else. A hardcoded '/' dropped the QUERY too, which
+          // silently defeats `?return_to=` for the one visitor most likely
+          // to be carrying it — somebody whose session snapshot outlived
+          // their cookie (30 days against 7, with no sliding refresh). That
+          // person boots authed from the snapshot, so App.user is truthy
+          // here, reaches this line and loses the return target; only then
+          // does the unawaited _reconcileSession answer 401 and reload onto
+          // the already-stripped URL. They sign in with nothing to return
+          // to, which is the exact bug `?return_to=` exists to prevent.
+          // Every other URL write in this file goes through the same
+          // serializer for the same reason.
+          history.replaceState(null, '', App._rootUrl(''));
           hash = '';
         }
       }

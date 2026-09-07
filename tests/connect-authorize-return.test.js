@@ -31,6 +31,8 @@ const CONNECT_CODE = CONNECT_SRC
   .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
   .join('\n');
 const CONSTANTS_SRC = fs.readFileSync(path.join(ROOT, 'src/services/mcp-connect-constants.js'), 'utf8');
+const APP_SRC = fs.readFileSync(path.join(ROOT, 'public/js/app.js'), 'utf8');
+const AUTH_ROUTES_SRC = fs.readFileSync(path.join(ROOT, 'src/routes/auth.js'), 'utf8');
 
 const ORIGIN = 'https://usernode.example';
 
@@ -197,10 +199,12 @@ test('the consent page sends its return target in the query, not the fragment', 
     'the unreadable fragment form is gone');
   assert.doesNotMatch(CONNECT_CODE, /next=/,
     'and so is the parameter name that had no reader');
-  assert.match(CONNECT_CODE, /window\.location\.replace\('\/\?return_to='/,
-    'the return target is the query string');
-  assert.match(CONNECT_CODE, /\+ '#login'\)/,
-    'and the fragment only selects the screen');
+  // Deliberately not pinned to formatting — the URL this builds is asserted
+  // by running the real module, below. All that is checked here is that the
+  // carrier is named and the navigation replaces rather than pushes.
+  assert.match(CONNECT_CODE, /return_to/, 'it names the carrier the platform reads');
+  assert.match(CONNECT_CODE, /location\.replace\(/,
+    'and replaces, so Back leaves instead of bouncing through the same answer');
 });
 
 test('the page the consent page asks to return to is the page it is served at', () => {
@@ -225,4 +229,156 @@ test('the page the consent page asks to return to is the page it is served at', 
     'the consent path is on the allowlist verbatim');
   assert.ok(AUTH_SRC.includes("'/cli/authorize'"),
     'and the CLI path it already carried is still there');
+});
+
+// ── The third defect: the carrier being destroyed before it is read ────
+//
+// Putting the target in the query is not enough on its own. `restoreFromHash`
+// strips a stale auth hash for an already-authed visitor, and it used to do
+// that with a hardcoded '/', which took the query with it. That is reachable
+// on the ordinary path, not a corner: a visitor whose session snapshot
+// outlived their cookie boots authed from the snapshot, so App.user is truthy
+// when this runs, and only the unawaited reconcile afterwards discovers the
+// session is dead and reloads onto the already-stripped URL. They then sign
+// in with nothing to return to — the very failure ?return_to= exists to stop.
+
+test('stripping a stale auth hash does not take the query with it', () => {
+  assert.match(
+    APP_SRC,
+    /if \(authRoute\) \{[\s\S]*?AuthScreens\.hideAll\(\);[\s\S]*?history\.replaceState\(null, '', App\._rootUrl\(''\)\);/,
+    'the authed-branch strip goes through the serializer that keeps the query'
+  );
+  assert.doesNotMatch(
+    APP_SRC,
+    /history\.replaceState\(null, '', '\/'\)/,
+    'and no bare-root rewrite is left to drop it again'
+  );
+});
+
+test('_routeSearch keeps return_to, which is what makes that strip safe', () => {
+  // The serializer drops exactly one key, `path`, and keeps everything else.
+  // If that ever narrows to an allowlist, return_to has to be on it.
+  const m = APP_SRC.match(/_routeSearch\(innerPath\) \{[\s\S]*?\n  \},/);
+  assert.ok(m, '_routeSearch is still shaped as expected');
+  assert.match(m[0], /!== 'path'/, 'it excludes `path` by name');
+  assert.doesNotMatch(m[0], /return_to/, 'and singles out nothing else');
+});
+
+test('the snapshot outliving the cookie is why that path is ordinary', () => {
+  // Pinned so the hazard stays visible: while the snapshot lives longer than
+  // the session, there is a window in which a returning visitor boots authed
+  // against a cookie the server has already forgotten.
+  const snap = APP_SRC.match(/SESSION_SNAPSHOT_MAX_AGE_MS: (\d+) \* 24 \* 60 \* 60 \* 1000/);
+  const days = AUTH_ROUTES_SRC.match(/const SESSION_DAYS = (\d+);/);
+  assert.ok(snap && days, 'both lifetimes are still declared where expected');
+  assert.ok(Number(snap[1]) > Number(days[1]),
+    'snapshot outlives the session, so the authed-from-snapshot boot is reachable');
+});
+
+// ── The fragment drop is a control, so pin it where it bites ───────────
+//
+// A review mutated returnToUrl to forward the fragment for /cli/authorize
+// only, and the suite still passed. That is the one page where forwarding
+// matters: cli-authorize.js reads the CLI launch code out of location.hash,
+// so a crafted `return_to` carrying a fragment would seed a device code the
+// victim never asked for. The generic "fragment is dropped" case above does
+// not cover it, because it only exercises the consent path.
+
+test('a fragment is never forwarded to the CLI page, which reads its code from one', () => {
+  const { AuthScreens } = loadAuthScreens();
+  assert.equal(AuthScreens.returnToUrl('/cli/authorize#code=ATTACKER'), '/cli/authorize',
+    'no device code can be seeded through return_to');
+  assert.equal(AuthScreens.returnToUrl('/cli/authorize?x=1#code=ATTACKER'), '/cli/authorize?x=1');
+  // And the page really does read its code from the fragment, which is what
+  // makes the line above load-bearing rather than decorative.
+  const cli = fs.readFileSync(path.join(ROOT, 'public/js/cli-authorize.js'), 'utf8');
+  assert.match(cli, /location\.hash/, 'cli-authorize reads the fragment');
+  assert.match(cli, /getAll\('code'\)/, 'and takes its launch code from it');
+});
+
+test('finishLogin does not forward a fragment either, end to end', async () => {
+  const { AuthScreens, location } = loadAuthScreens(
+    '?return_to=' + encodeURIComponent('/cli/authorize#code=ATTACKER')
+  );
+  await AuthScreens.finishLogin();
+  assert.equal(location.href, '/cli/authorize');
+});
+
+// ── The consent page's redirect, by running it rather than reading it ──
+
+function runConsentPage(status) {
+  const els = new Map();
+  const el = (id) => {
+    if (!els.has(id)) {
+      els.set(id, {
+        id,
+        textContent: '',
+        className: '',
+        hidden: false,
+        addEventListener: () => {},
+        appendChild: () => {},
+      });
+    }
+    return els.get(id);
+  };
+  const location = {
+    origin: ORIGIN,
+    pathname: '/connect/authorize',
+    search: '?response_type=code&client_id=abc123'
+      + '&redirect_uri=https%3A%2F%2Fclaude.ai%2Fapi%2Fmcp%2Fcallback'
+      + '&code_challenge=xyz&code_challenge_method=S256&state=s1',
+    href: '',
+    replace(value) { location.href = value; location.replaced = value; },
+    replaced: null,
+  };
+  const sandbox = {
+    console,
+    URL,
+    URLSearchParams,
+    location,
+    setTimeout,
+    clearTimeout,
+    fetch: async () => ({ status, ok: status >= 200 && status < 300, json: async () => ({}) }),
+    document: {
+      getElementById: el,
+      querySelector: () => el('x'),
+      querySelectorAll: () => [],
+      createElement: () => el('created'),
+      addEventListener: () => {},
+    },
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(CONNECT_SRC, sandbox);
+  return new Promise((resolve) => {
+    setTimeout(() => resolve({ location, els, message: el('entry-message').textContent }), 10);
+  });
+}
+
+test('an anonymous visitor is sent to sign in carrying the whole request', async () => {
+  const { location } = await runConsentPage(401);
+  assert.ok(location.replaced, 'it navigates');
+  const url = new URL(location.replaced, ORIGIN);
+  assert.equal(url.pathname, '/', 'to the SPA shell');
+  assert.equal(url.hash, '#login', 'with the fragment naming only the screen');
+  const back = url.searchParams.get('return_to');
+  assert.ok(back, 'and the request in the query, where finishLogin reads it');
+  // Byte-for-byte: one level of encoding, so a single decode restores the
+  // redirect_uri that was already percent-encoded inside the query.
+  assert.equal(back, '/connect/authorize?response_type=code&client_id=abc123'
+    + '&redirect_uri=https%3A%2F%2Fclaude.ai%2Fapi%2Fmcp%2Fcallback'
+    + '&code_challenge=xyz&code_challenge_method=S256&state=s1');
+  // And the two halves agree: what it sends is what finishLogin will accept.
+  const { AuthScreens } = loadAuthScreens();
+  assert.equal(AuthScreens.returnToUrl(back), back, 'the allowlist accepts it unchanged');
+});
+
+test('a waitlisted account is told what is actually wrong, not that its request expired', async () => {
+  // New accounts default to has_platform_access = FALSE, so somebody who
+  // SIGNS UP from this page returns here with a real session and a 403.
+  const { message } = await runConsentPage(403);
+  assert.match(message, /waitlist/i, 'it names the account, not the request');
+  assert.doesNotMatch(message, /invalid or has expired/,
+    'and does not blame a request that is perfectly good');
 });

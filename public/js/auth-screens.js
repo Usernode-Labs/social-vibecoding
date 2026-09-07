@@ -157,9 +157,17 @@
     // allowed page keeps the query string it was asked for while everything
     // that is not a plain same-origin absolute path is refused: an absolute
     // URL, a protocol-relative '//host', a scheme like javascript:, and a
-    // traversal that climbs out all fail the check rather than becoming an
-    // open redirect. The fragment is dropped — neither allowed page uses
-    // one, and forwarding it would widen this for nothing.
+    // traversal that climbs out all fail rather than becoming an open
+    // redirect. What does the refusing is the ORIGIN comparison plus the
+    // pathname match against a returned `url.pathname` — never the raw
+    // string — so the leading-'/' test below is belt-and-braces ahead of
+    // them rather than the thing holding the property up.
+    //
+    // The fragment is DROPPED, and that is a control, not tidiness:
+    // /cli/authorize carries the CLI launch code in its fragment (see
+    // cli-authorize.js, which reads location.hash and stashes the code), so
+    // forwarding one would let a crafted `return_to` seed a device code the
+    // victim never asked for. Do not "restore" url.hash here.
     returnToUrl(value) {
       const raw = String(value || '');
       if (!raw.startsWith('/') || raw.startsWith('//')) return '';

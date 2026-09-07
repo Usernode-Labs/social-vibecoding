@@ -113,6 +113,23 @@
         + '#login');
       return;
     }
+    // Platform access is a SECOND gate, separate from having a session, and
+    // it is the ordinary state of a brand new account: `has_platform_access`
+    // defaults FALSE (src/db/schema.sql) until the waitlist releases it.
+    // Somebody who SIGNED UP from this page therefore comes back holding a
+    // real session and still cannot be shown the request. Answering with
+    // GENERIC_INVALID would blame the request, which is not what is wrong —
+    // the request is fine and the account is not ready — and would send them
+    // back to Claude or ChatGPT to retry something that cannot yet succeed.
+    if (resp.status === 403) {
+      showEntry(
+        'Your Usernode account has not been released off the waitlist yet, so it '
+        + 'cannot approve a connection. Once it is, start the connection again '
+        + 'from Claude or ChatGPT.',
+        true
+      );
+      return;
+    }
     if (!resp.ok) {
       showEntry(GENERIC_INVALID, true);
       return;
