@@ -2045,9 +2045,8 @@
         unlink: link.linked ? { disabled: !!demo } : null,
         strandedNote: link.pendingAttemptAt
           ? `Your last ${name} connection attempt didn't complete. `
-            + `If ${name} showed "Something went wrong — You weren't able to give access to the App", `
-            + `the platform's callback address isn't registered on the ${name} developer app, `
-            + 'so an administrator needs to update that app’s settings.'
+            + 'Try Connect again. This can happen if the browser did not reach the sign-in page or the flow was cancelled. '
+            + `If ${name} reports a callback or redirect address error, ask an administrator to check its OAuth settings.`
           : null,
         diagnostics: link.diagnostics
           ? this._socialIdentityDiagnosticsView(provider, link.diagnostics, demo)

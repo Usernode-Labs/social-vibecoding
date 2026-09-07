@@ -1963,6 +1963,20 @@ test('a demo Connect control is inert but present, and matches the live one', ()
   assert.ok(live.includes(surface) && demo.includes(surface), 'one surface, both spellings');
 });
 
+test('unfinished social connections describe the symptom without diagnosing the callback (#1543)', () => {
+  const view = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  for (const provider of ['github', 'x']) {
+    const row = view._socialIdentityRowView(provider, {
+      available: true, linked: false, pendingAttemptAt: '2026-09-07T10:00:00Z',
+    }, {}, false);
+    assert.match(row.strandedNote, /connection attempt didn't complete/);
+    assert.match(row.strandedNote, /Try Connect again/);
+    assert.match(row.strandedNote, /browser did not reach the sign-in page/);
+    assert.doesNotMatch(row.strandedNote, /callback address isn't registered/);
+    assert.equal(view._socialIdentityRowView(provider, { available: true }, {}, false).strandedNote, null);
+  }
+});
+
 test('the reviewable claims travel with the row that makes them', () => {
   const html2 = socialHtml({
     ...socialBase,
