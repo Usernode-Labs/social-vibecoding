@@ -1995,6 +1995,9 @@ const App = {
           case 'issue_update':
             App.handleIssueUpdate(data);
             break;
+          case 'workshop_update':
+            App.handleWorkshopUpdate(data);
+            break;
           case 'board_order_update':
             // #613: someone reordered a Dev-board column. refreshDevData
             // re-pulls the board (including the manual order fetched by
@@ -2728,6 +2731,17 @@ const App = {
   handleIssueUpdate(data) {
     if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
       AppView.refreshDevData('issue');
+    }
+  },
+
+  // The Workshop's grouping for the open app moved server-side (cards
+  // placed into themes, or the themes re-drafted): re-fetch the themes
+  // alone — the board's own data did not change — past the per-slug
+  // throttle, so what is on screen is what the server just wrote.
+  handleWorkshopUpdate(data) {
+    if (App.currentApp === data.appSlug && App.currentTab === 'dev'
+      && typeof AppView !== 'undefined' && AppView.applyWorkshopUpdate) {
+      AppView.applyWorkshopUpdate(data);
     }
   },
 
