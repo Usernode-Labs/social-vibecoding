@@ -77,7 +77,7 @@ async function deploy(config, {
     // persist the deterministic name rather than the opaque run result.
     return { runtimeKind: 'docker', runtimeName: dockerName, imageRef, hostname, url };
   }
-  return kubernetes.deployApplication(config, { app, environment, sessionId, imageRef, env });
+  return kubernetes.deployApplication(config, { app, environment, sessionId, imageRef, env, cpus });
 }
 
 async function status(config, ref) {
