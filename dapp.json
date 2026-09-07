@@ -678,6 +678,12 @@
       "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic[data-edge] .dev-card-badges > .dev-status-pill-block) + .dev-topic-ledger:has(.dev-ledger-row[data-note=\"checks\"] ~ .dev-ledger-row[data-note=\"votes\"]) + .dev-topic-about"
     },
     {
+      "name": "About this change is two labelled halves, with the technical one collapsed",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
+      "expectSelector": "#gc-thread-head .dev-topic-about > .dev-topic-sub + .dev-topic-about-body ~ details.dev-topic-details:not([open]) > .dev-topic-details-summary",
+      "expectText": "Technical details"
+    },
+    {
       "name": "Issue page, round three: GitHub ends the meta line, and the Discussion sheet follows the card",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
       "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic .dev-card-meta a.dev-topic-gh) ~ #dev-issue-comments.dev-topic-comments"
