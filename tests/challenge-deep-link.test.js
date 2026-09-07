@@ -170,6 +170,50 @@ const overlayOpen = (store) => store.get().detail !== null;
 const pending = (pane) =>
   (pane._pendingDeepLink ? { ...pane._pendingDeepLink } : pane._pendingDeepLink);
 
+test('onboarding progress uses personal completion and explains the later unlocks', () => {
+  const challenges = [1, 2, 3].map((id) => ({
+    id, completed: true, progress: { done: id !== 1 },
+    card_preview: { label: 'ONBOARDING', goal: `Step ${id}` },
+  }));
+  const { pane, store } = loadPane({ challenges, eventId: 10 });
+  pane._onboarding = { total: 3, completed: 2, unlocked: false, event_id: 10 };
+  pane._renderGrid();
+  const grid = store.get().grid;
+  assert.match(grid.summary, /^2 of 3 onboarding/);
+  assert.match(grid.notice, /unlock persistent and weekly/);
+  assert.equal(grid.groups.length, 1);
+  assert.equal(grid.groups[0].heading, 'Get started');
+  assert.equal(grid.groups[0].cards[0].done, false, 'the organiser flag cannot finish a personal step');
+});
+
+test('unlocked challenge groups preserve each card’s detail target', () => {
+  const challenges = [
+    { id: 1, progress: { done: true }, card_preview: { label: 'ONBOARDING', goal: 'First step' } },
+    { id: 4, card_preview: { label: 'PERSISTENT', goal: 'Prove your identity' } },
+    { id: 6, card_preview: { label: 'WEEKLY', goal: 'Weekly task' } },
+  ];
+  const { pane, store } = loadPane({ challenges, eventId: 10 });
+  pane._onboarding = { total: 3, completed: 3, unlocked: true, event_id: 10 };
+  pane._renderGrid();
+  const grid = store.get().grid;
+  assert.deepEqual(Array.from(grid.groups, (g) => g.heading),
+    ['Persistent challenges', 'Weekly challenges', 'Onboarding']);
+  const identity = grid.groups[0].cards[0];
+  pane._openIdx(identity.idx);
+  assert.equal(pane._detailChallenge.id, 4);
+  assert.match(grid.notice, /are unlocked/);
+});
+
+test('a locked weekly event explains how to return to the introductory steps', () => {
+  const { pane, store, context } = loadPane({ challenges: [], eventId: 11 });
+  pane._onboarding = { total: 3, completed: 0, unlocked: false, event_id: 10 };
+  pane._renderGrid();
+  assert.equal(store.get().grid.kind, 'cards');
+  assert.equal(store.get().grid.onboardingEventId, 10);
+  pane._toOnboarding(10);
+  assert.equal(context.eventId, 10);
+});
+
 // ─── 1. Behavioural ─────────────────────────────────────────────────────
 
 test('a deep link opens that challenge once the grid paints', () => {
