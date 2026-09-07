@@ -37,6 +37,8 @@ function nativeSessionRoutes(config) {
       const { handoffToken, rawJson } = await protocol.createHandoff({
         sessionToken: req.cookies?.session,
         body: req.body,
+        appVersion: req.get('Usernode-Native-App-Version'),
+        buildNumber: req.get('Usernode-Native-App-Build'),
       });
       res.cookie(HANDOFF_COOKIE, handoffToken, {
         httpOnly: true,

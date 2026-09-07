@@ -45,6 +45,21 @@ available. Supporting builds separately advertise
 Unsupported builds remain web-only/update-required; Social never falls back
 to the removed split lifecycle API.
 
+Temporary walletless compatibility uses the existing `appVersion` and
+`buildNumber` discovery fields: Social forwards them as
+`Usernode-Native-App-Version` / `Usernode-Native-App-Build` headers on the
+web-authenticated handoff. Releases at or above `0.4.0+1252` may receive
+`account: null`. Semantic versions are compared numerically before build numbers:
+`0.4.1`, `0.5.0`, and `1.0.0` remain compatible even if their build counter restarts.
+Older releases and missing/malformed metadata retain the wallet-required HTTP
+fallback. The server persists this decision for both issuance and exact replay,
+and refreshes it on each authenticated handoff.
+These public identifiers select a decoder format and grant no authority.
+Native ticket/exchange bodies, proofs and encrypted response formats are unchanged.
+TODO(remove-build-1250-compat): Remove this negotiation and the wallet-required
+fallback together once the minimum supported mobile release accepts walletless
+credentials. Normal version bumps require no Social compatibility change.
+
 The security capabilities remain independently discoverable:
 
 - `privilegedBridgeCapability`: privileged top-frame methods require a
