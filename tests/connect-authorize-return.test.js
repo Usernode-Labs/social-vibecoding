@@ -103,6 +103,18 @@ test('the CLI consent page keeps working, unchanged', () => {
   assert.equal(AuthScreens.returnToUrl('/cli/authorize'), '/cli/authorize');
 });
 
+test('mobile social connect retains provider and account expectation through sign-in (#1543)', async () => {
+  for (const provider of ['github', 'x']) {
+    const target = `/api/me/social-identities/${provider}/connect?account=7`;
+    const { AuthScreens, location } = loadAuthScreens('?return_to=' + encodeURIComponent(target));
+    assert.equal(AuthScreens.returnToUrl(target), target);
+    await AuthScreens.finishLogin();
+    assert.equal(location.href, target);
+    assert.equal(AuthScreens.returnToUrl(target.replace('/connect?', '/callback?')), '');
+    assert.equal(AuthScreens.returnToUrl('https://evil.example' + target), '');
+  }
+});
+
 test('nothing but an allowlisted same-origin path is accepted', () => {
   const { AuthScreens } = loadAuthScreens();
   // The whole reason finishLogin had an exact-match check: this must not
