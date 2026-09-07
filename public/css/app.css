@@ -4324,6 +4324,24 @@ body:has(#platform-header.hidden) #app-frame-host {
   line-height: 1.4;
 }
 
+/* The connector prerequisite on the hand-off step: set off from the
+   step's detail so it reads as "before you paste", with the one link
+   the person has to follow. */
+.dc-flow-step-note {
+  font-size: 12px;
+  color: var(--text-primary);
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--accent-tint);
+  line-height: 1.4;
+}
+.dc-flow-step-note a,
+.dc-flow-card-hint a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .dc-flow-step-done .dc-flow-step-mark {
   background: #059669;
   border-color: #059669;
