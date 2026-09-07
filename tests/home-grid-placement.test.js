@@ -676,7 +676,7 @@ test('?shot=home-grid renders a real preview, not just the outlines', () => {
   // check only proves the dashed cells still paint.
   const shot = HOME_SRC.slice(
     HOME_SRC.indexOf('_maybeShowShotGrid(listEl) {'),
-    HOME_SRC.indexOf('\n  // Kit-era long-press actions menu'));
+    HOME_SRC.indexOf('\n  // Long-press actions'));
   assert.match(shot, /_previewDrop\(el, \{ col: 0, row: 0 \}, true, cols\)/);
   // THE LAST RENDERED ITEM, not `canvas[canvas.length - 1]`. The canvas is
   // eight rows deep and the grid shows two of them by default
@@ -1525,4 +1525,28 @@ test('the reveal is one-shot: the next paint does not re-open the grid', () => {
   Home._appsExpanded = false;
   Home.render();
   assert.equal(Home._appsExpanded, false);
+});
+
+test('a stationary touch lift opens context without placing; movement continues as a drag', () => {
+  const { Home, attachCalls } = makeHome();
+  const list = { querySelectorAll: () => [], appendChild: () => {} };
+  const item = { dataset: { slug: 'a' } };
+  Home._attachGridPlacement(list, true);
+  const { opts } = attachCalls[0];
+  const events = [];
+  Home._cardPointerType = 'touch';
+  Home.openCardMenu = (slug, anchor) => events.push(['open', slug, anchor]);
+  Home.closeCardMenu = () => events.push(['close']);
+  Home._showGridOverlay = () => events.push(['overlay']);
+  Home._targetCellFor = () => ({ col: 1, row: 0 });
+  opts.onLift(item);
+  assert.deepEqual(events, [['open', 'a', item]]);
+  assert.equal(opts.cellFromPoint(20, 20, {}), null);
+  assert.equal(opts.cellFromPoint(23, 24, {}), null, 'finger jitter does not place');
+  assert.equal(events.length, 1);
+  assert.deepEqual(opts.cellFromPoint(40, 20, {}), { col: 1, row: 0 });
+  assert.deepEqual(events.slice(1), [['close'], ['overlay']]);
+  assert.equal(Home._contextLift, null);
+  opts.onSettle(true);
+  assert.equal(Home._dragActive, false);
 });
