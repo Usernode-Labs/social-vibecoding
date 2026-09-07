@@ -49,6 +49,7 @@ const STORE = read('frontend/src/features/header/back-button-store.js');
 const MOUNT = read('frontend/src/features/header/mount.ts');
 const DEV_CHAT = read('frontend/src/features/dev-chat/dev-chat.js');
 const IMPROVE_CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
+const IMPROVE_STORE = read('frontend/src/features/improve/improve-store.js');
 
 // ── 1. The three modes exist end to end ────────────────────────────────
 
@@ -146,10 +147,20 @@ test('the route decides where UP is, inside an app', () => {
   assert.match(body, /if \(!slug \|\| tab !== 'dev'\) return null;/,
     'the app tab itself has no level above it inside the app — it gets the '
     + 'house, like every other root');
-  assert.match(body, /subTab === 'sessions'\) return sessionOrigin \|\| `#app\/\$\{slug\}\/board`/,
-    'a session goes where it was opened from, falling back to the Board');
-  assert.match(body, /subTab === 'chat' \|\| subTab === 'topic'\) return `#app\/\$\{slug\}\/board`/,
+  assert.match(body, /const board = boardHref\(slug, boardView\);/,
+    '"the board" is TWO screens — Workshop and Board are one screen in two '
+    + 'layouts and the layout IS the route — so the destination is resolved '
+    + 'from the layout that was on screen, never spelled as a literal');
+  assert.match(body, /subTab === 'sessions'\) return sessionOrigin \|\| board;/,
+    'a session goes where it was opened from, falling back to that board');
+  assert.match(body, /subTab === 'chat' \|\| subTab === 'topic'\) return board;/,
     'the general chat and a topic card are reached FROM the board');
+  // THE REGRESSION. `#app/${slug}/board` sent a viewer who had opened an
+  // issue from the Workshop to the Kanban board — and that route APPLIES its
+  // layout (AppView._setViewMode in restoreFromHash's alias block), so the
+  // back arrow also rewrote their stored preference on the way.
+  assert.ok(!/`#app\/\$\{slug\}\/board`/.test(body),
+    'and no literal /board survives in the derivation');
   assert.match(body, /subTab === 'forum'\) return selfHosted \? null : `#app\/\$\{slug\}\/app`/,
     'and the Board/Activity go up to the app itself — except on the '
     + "platform's own app, which HAS no app tab (App.switchTab coerces a "
@@ -171,7 +182,7 @@ test('the derived answer outranks the imperative one, and only inside an app', (
 function loadImprove(initial) {
   const store = makeStoreStub({
     slug: null, tab: 'app', subTab: null, selfHosted: false,
-    sessionOrigin: null, ...initial,
+    sessionOrigin: null, boardView: 'workshop', ...initial,
   });
   const sandbox = {
     console, Promise, setTimeout, clearTimeout,
@@ -182,17 +193,28 @@ function loadImprove(initial) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  // The REAL store module, in its own scope, so `boardHref` below is the
+  // function the header imports rather than a copy of it that can drift.
+  // Its `createStore` is the stub above, which is also what the controller
+  // then writes into — one store, reached two ways, as in the bundle.
+  runModules(sandbox, [['improve-store.js', IMPROVE_STORE]], {
+    imports: { '../../lib/plain-store.js': { createStore: () => store } },
+    tail: 'window.__improveStore = { improveStore, boardHref };',
+  });
   runModules(sandbox, [['improve-controller.js', IMPROVE_CONTROLLER]], {
     imports: {
       '../apps/app-card.js': { iconViewFor: () => ({}) },
       '../../lib/kit-surface': { adoptKitSurface: () => null },
       '../../lib/sheet-controller.js': { dismissRegisteredSheets() {} },
-      './improve-store.js': { improveStore: store },
+      './improve-store.js': sandbox.__improveStore,
       '../../lib/shell-snapshot': { saveShellSnapshot() {} },
     },
     tail: 'window.__improve = Improve;',
   });
-  return { Improve: sandbox.__improve, store, sandbox };
+  return {
+    Improve: sandbox.__improve, store, sandbox,
+    boardHref: sandbox.__improveStore.boardHref,
+  };
 }
 
 test('the first routing pass of a page load captures no origin', () => {
@@ -279,6 +301,66 @@ test('leaving a session follows the same origin the arrow shows', () => {
   const code = body.replace(/\/\/.*$/gm, '');
   assert.ok(code.indexOf('location.hash = origin') < code.indexOf("App.switchTab('dev')"),
     'the origin is preferred over the fallback, not the other way round');
+});
+
+// ── 5b. Which board "back to the board" means ──────────────────────────
+
+test('boardHref names the layout, and only kanban is the Kanban board', () => {
+  const { boardHref } = loadImprove({ slug: 'demo-app' });
+  assert.equal(boardHref('demo-app', 'kanban'), '#app/demo-app/board');
+  assert.equal(boardHref('demo-app', 'workshop'), '#app/demo-app/workshop');
+  // `_getViewMode`'s own terminal fallback is the Workshop, so an unset or
+  // unrecognised layout has to land there too rather than on the Board.
+  assert.equal(boardHref('demo-app', undefined), '#app/demo-app/workshop',
+    'anything that is not kanban is the Workshop');
+});
+
+test('the route publishes the layout it was entered from', () => {
+  // THE BUG. Opening an issue from the Workshop and pressing back landed on
+  // the Kanban board — a screen the viewer had not been on — and because
+  // `#app/<slug>/board` APPLIES its layout, it rewrote their stored
+  // preference to kanban as it went.
+  for (const [mode, expected] of [['workshop', 'workshop'], ['kanban', 'kanban']]) {
+    const { Improve, store, sandbox } = loadImprove({ slug: 'demo-app' });
+    sandbox.AppView = { _getViewMode: () => mode };
+    Improve.setTab('dev', 'forum');
+    Improve.setTab('dev', 'topic');
+    assert.equal(store.state.boardView, expected,
+      `a topic opened from the ${mode} layout goes back to it`);
+  }
+});
+
+test('the layout is read from AppView, not from the board frame', () => {
+  // A COLD DEEP LINK to an issue never mounts a board, so the view-mode store
+  // in features/dev-board/view-mode-store.ts — which is seeded at mount —
+  // would answer with its own default instead of this viewer's preference.
+  // `_getViewMode()` resolves the ?view= override and then localStorage, and
+  // needs no board.
+  const { Improve, store, sandbox } = loadImprove({ slug: 'demo-app' });
+  sandbox.AppView = { _getViewMode: () => 'kanban' };
+  Improve.setTab('dev', 'topic');
+  assert.equal(store.state.boardView, 'kanban');
+  assert.match(IMPROVE_CONTROLLER, /window\.AppView\?\._getViewMode\?\.\(\) === 'kanban'/,
+    'and it is that function it asks, through the window bridge');
+});
+
+test('with no AppView at all the layout is the Workshop', () => {
+  // The prerender and the pre-hydration window both reach this with no
+  // AppView on the page yet; falling back to kanban there would put the
+  // arrow on a screen chosen by boot order.
+  const { Improve, store } = loadImprove({ slug: 'demo-app' });
+  Improve.setTab('dev', 'topic');
+  assert.equal(store.state.boardView, 'workshop');
+});
+
+test('a session origin and the topic arrow answer with the same board', () => {
+  // One expression, imported by both (features/improve/improve-store.js), so
+  // the captured origin and the derived arrow cannot name different screens.
+  const { Improve, store, sandbox, boardHref } = loadImprove({ slug: 'demo-app' });
+  sandbox.AppView = { _getViewMode: () => 'workshop' };
+  Improve.setTab('dev', 'forum');
+  Improve.setTab('dev', 'sessions');
+  assert.equal(store.state.sessionOrigin, boardHref('demo-app', store.state.boardView));
 });
 
 test('the accessor the click path reads is published on the controller', () => {
