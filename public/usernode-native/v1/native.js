@@ -3213,6 +3213,67 @@
 
   var modalStack = []; // Escape dismisses the TOPMOST dismissible modal only
 
+  // Modal/alert cards and the dim over the page are one fade (#1566).
+  // Explicitly commit BOTH starting opacities, including the separately
+  // composited backdrop, before a microtask-origin open can reach its rAF.
+  // Keep the two writes in one frame, and retire the pair only when both
+  // opacity transitions end — never on a child's transition or keyboard top.
+  function animateDialog(card, backdrop, onEntered) {
+    var layers = [card, backdrop];
+    layers.forEach(function (el) { void getComputedStyle(el).opacity; });
+    var closed = false;
+    var frame = requestAnimationFrame(function () {
+      frame = null;
+      if (closed) return;
+      backdrop.style.opacity = '1';
+      card.classList.add('un-in');
+      if (onEntered) onEntered();
+    });
+
+    return {
+      dismiss: function (onExited) {
+        if (closed) return;
+        closed = true;
+        if (frame !== null) cancelAnimationFrame(frame);
+        // A close before the entrance paints has nothing to fade. Reading
+        // both current styles also commits an interrupted entrance before
+        // reversing it, so the browser can shorten both exits consistently.
+        var ended = layers.map(function (el) { return getComputedStyle(el).opacity === '0'; });
+        var fired = false;
+        var timer = null;
+        var handlers = layers.map(function (el, index) {
+          return function (event) {
+            if (event.target !== el || event.propertyName !== 'opacity') return;
+            // An entrance transitionend can already be queued at close.
+            if (getComputedStyle(el).opacity !== '0') return;
+            ended[index] = true;
+            if (ended.every(Boolean)) finish();
+          };
+        });
+        function finish() {
+          if (fired) return;
+          fired = true;
+          if (timer !== null) clearTimeout(timer);
+          layers.forEach(function (el, index) {
+            el.removeEventListener('transitionend', handlers[index]);
+            if (el.parentNode) el.parentNode.removeChild(el);
+          });
+          if (onExited) onExited();
+        }
+        layers.forEach(function (el, index) {
+          el.style.pointerEvents = 'none';
+          el.addEventListener('transitionend', handlers[index]);
+        });
+        card.classList.remove('un-in');
+        backdrop.style.opacity = '0';
+        if (ended.every(Boolean)) finish();
+        // Safety for a hidden document, removed CSS, or a cancelled
+        // transition: longer than the shared 180ms fade, never its clock.
+        else timer = setTimeout(finish, 300);
+      },
+    };
+  }
+
   window.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape' || !modalStack.length) return;
     // A popover open above a modal owns Escape (its own handler
@@ -3248,49 +3309,25 @@
     var closed = false;
     var entry = { dismissible: dismissible, dismiss: dismiss };
     modalStack.push(entry);
+    var fade = animateDialog(card, backdrop, function () {
+      var auto = card.querySelector('[autofocus]');
+      try { (auto || card).focus(); } catch (e) { /* ignore */ }
+    });
 
     function dismiss() {
       if (closed) return;
       closed = true;
       var i = modalStack.indexOf(entry);
       if (i >= 0) modalStack.splice(i, 1);
-      card.classList.remove('un-in');
-      backdrop.style.opacity = '0';
-      // Nothing is clickable while fading out — not the card, not the
-      // dimmed area underneath it.
-      card.style.pointerEvents = 'none';
-      backdrop.style.pointerEvents = 'none';
-      var fired = false;
-      function finish() {
-        if (fired) return;
-        fired = true;
-        if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
-        if (card.parentNode) card.parentNode.removeChild(card);
+      fade.dismiss(function () {
         if (prevFocus && typeof prevFocus.focus === 'function') {
           try { prevFocus.focus(); } catch (e) { /* ignore */ }
         }
         if (opts.onDismiss) opts.onDismiss();
-      }
-      card.addEventListener('transitionend', finish, { once: true });
-      setTimeout(finish, 300); // safety if transitionend never fires
+      });
     }
 
     if (dismissible) onBackdropDismiss(backdrop, function () { dismiss(); });
-
-    // Commit the initial (hidden) style before the entrance class lands.
-    // Without this reflow the browser can coalesce append + class-add
-    // into one style pass and skip the fade entirely — reliably so when
-    // presentModal is called from a microtask (e.g. a MutationObserver
-    // callback), where no paint happens before the rAF below.
-    void card.offsetWidth;
-
-    // Next frame: engage the CSS entrance (scale 1.04 → 1, fade in).
-    requestAnimationFrame(function () {
-      backdrop.style.opacity = '1';
-      card.classList.add('un-in');
-      var auto = card.querySelector('[autofocus]');
-      try { (auto || card).focus(); } catch (e) { /* ignore */ }
-    });
 
     return { el: card, dismiss: dismiss };
   }
@@ -3926,14 +3963,10 @@
           if (settled) return;
           settled = true;
           var value = field ? field.value : undefined;
-          card.classList.remove('un-in');
-          backdrop.style.opacity = '0';
-          setTimeout(function () {
-            if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
-            if (card.parentNode) card.parentNode.removeChild(card);
+          fade.dismiss(function () {
             if (button.handler) button.handler(value);
             resolve({ button: button, value: value });
-          }, 180);
+          });
         });
         row.appendChild(btn);
       });
@@ -3941,15 +3974,7 @@
 
       document.body.appendChild(backdrop);
       document.body.appendChild(card);
-      // Commit the initial (hidden) style before the entrance class lands —
-      // the same coalescing hazard presentModal guards against: without
-      // this reflow a microtask-origin call (e.g. a MutationObserver
-      // callback) can skip the fade + scale entrance entirely.
-      void card.offsetWidth;
-      // Next frame: engage the CSS entrance (scale 1.12 → 1, fade in).
-      requestAnimationFrame(function () {
-        backdrop.style.opacity = '1';
-        card.classList.add('un-in');
+      var fade = animateDialog(card, backdrop, function () {
         if (field) { try { field.focus(); } catch (e) { /* ignore */ } }
       });
     });
