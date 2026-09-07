@@ -136,6 +136,15 @@ export interface LedgerUnitProgress {
   done?: boolean;
 }
 
+/** One step of the preview build: fetch, image, database, start. */
+export interface LedgerBuildStep {
+  key: string;
+  label: string;
+  /** Wall clock of a finished step; null while it is running or ahead. */
+  ms: number | null;
+  state: 'done' | 'now' | 'todo';
+}
+
 /** A run in flight: what the capture container has reported so far. */
 export interface LedgerProgress {
   ran: number;
@@ -145,6 +154,7 @@ export interface LedgerProgress {
   expected: number | null;
   done?: boolean;
   unit?: LedgerUnitProgress | null;
+  build?: LedgerBuildStep[] | null;
 }
 
 export interface LedgerRow {

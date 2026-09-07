@@ -216,12 +216,50 @@ async function dropDatabase(dbName) {
   log.info('db-manager', 'Database and role dropped', { dbName, role });
 }
 
-async function cloneDatabase(sourceDb, targetDb) {
-  log.info('db-manager', 'Cloning database', { sourceDb, targetDb });
-
+// `viaTemplate` (staging previews only): clone from the source's staging
+// template — a redacted copy kept warm on the server and refreshed at most
+// every STAGING_DB_TEMPLATE_MAX_AGE_MS — with a file-level CREATE DATABASE
+// … TEMPLATE, instead of dumping and restoring the live source on every
+// build. Falls back to the direct path on any template failure, so a
+// preview build can only ever be as slow as before, never blocked.
+async function cloneDatabase(sourceDb, targetDb, { viaTemplate = false } = {}) {
   if (!SAFE_IDENT.test(sourceDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`cloneDatabase: unsafe identifiers ${sourceDb}/${targetDb}`);
   }
+  if (viaTemplate && stagingTemplatesEnabled()) {
+    const viaTmpl = await withTemplateLock(sourceDb, async () => {
+      const ensured = await ensureStagingTemplate(sourceDb).catch((err) => {
+        log.warn('db-manager', 'Staging template unavailable — cloning directly', {
+          sourceDb, err: err.message,
+        });
+        return null;
+      });
+      if (!ensured) return null;
+      try {
+        const result = await cloneFromTemplate(ensured.template, targetDb);
+        return { ...result, via: 'template', templateRefreshed: ensured.refreshed, templateStale: ensured.stale };
+      } catch (err) {
+        log.warn('db-manager', 'Clone from staging template failed — cloning directly', {
+          sourceDb, targetDb, template: ensured.template, err: err.message,
+        });
+        await dropDatabase(targetDb).catch(() => {});
+        return null;
+      }
+    });
+    if (viaTmpl) {
+      // A template past its soft age served this build as it was; bring it
+      // up to date now, off the build's critical path, so the next build
+      // finds it warm. Serialised behind any clone in flight.
+      if (viaTmpl.templateStale) queueTemplateRefresh(sourceDb);
+      return viaTmpl;
+    }
+  }
+  const direct = await cloneDatabaseDirect(sourceDb, targetDb);
+  return { ...direct, via: 'direct', templateRefreshed: false };
+}
+
+async function cloneDatabaseDirect(sourceDb, targetDb) {
+  log.info('db-manager', 'Cloning database', { sourceDb, targetDb });
 
   // Drop any prior clone (and its role) before cloning fresh. The
   // dropDatabase below also takes care of the role.
@@ -373,6 +411,219 @@ async function cloneDatabase(sourceDb, targetDb) {
   await scrubPrivateColumns(targetDb);
 
   log.info('db-manager', 'Database cloned with new role', { sourceDb, targetDb, targetRole });
+  return { password };
+}
+
+// ── Staging templates ───────────────────────────────────────────────────
+//
+// Every preview build used to pay the full logical copy of the live source:
+// pg_dump | pg_restore, then the two redaction passes and the ownership
+// walk — the same cost for a one-line diff as for a thousand, and the part
+// of the build half that no image cache can shrink. The template keeps that
+// work's RESULT: `<source>_stgtmpl` is a redacted, truncated, reassigned copy
+// with connections disallowed, so a clone from it is CREATE DATABASE …
+// TEMPLATE — a file copy of the ~80 MB that survives redaction, seconds
+// rather than a minute — and the expensive path runs once per
+// STAGING_DB_TEMPLATE_MAX_AGE_MS per app instead of once per build.
+//
+// Two properties make it safe:
+//   - It is built with exactly the direct path's steps (exclusions, restore,
+//     reassign to a NOLOGIN template role, truncate, scrub) into a `_next`
+//     database, then swapped in by a rename. A half-built template is never
+//     the one clones read from.
+//   - Clones re-run the two redaction passes anyway. They are no-ops on a
+//     template that was built right, and they keep the guarantee the direct
+//     path makes: the passes are the redaction, the exclusion is the
+//     optimisation.
+// Refresh and clone are serialised per source in this process (a rename
+// under a running CREATE DATABASE … TEMPLATE is the one race), and the
+// staleness window is the only difference a preview can observe: its data
+// is as much as MAX_AGE old. Its own boot applies its own schema on top.
+//
+// Two ages. Past the SOFT age a build still clones from the template it
+// finds and a refresh is queued behind it, so the rebuild is never on a
+// build's critical path unless there is nothing to clone from: a low-traffic
+// app whose builds are hours apart would otherwise pay the direct cost on
+// every one and gain nothing. Past the HARD age the data is too old to hand
+// to a reviewer, and the build refreshes first. Both are env-tunable; a soft
+// age of 0 turns templates off.
+const STAGING_TEMPLATE_SUFFIX = '_stgtmpl';
+const STAGING_TEMPLATE_MAX_AGE_MS = (() => {
+  const v = parseInt(process.env.STAGING_DB_TEMPLATE_MAX_AGE_MS, 10);
+  return Number.isFinite(v) && v >= 0 ? v : 15 * 60 * 1000;
+})();
+const STAGING_TEMPLATE_HARD_MAX_AGE_MS = (() => {
+  const v = parseInt(process.env.STAGING_DB_TEMPLATE_HARD_MAX_AGE_MS, 10);
+  return Number.isFinite(v) && v >= 0 ? v : 6 * 60 * 60 * 1000;
+})();
+// Postgres identifiers are 63 bytes; the `_next` build name is the longest.
+const MAX_TEMPLATE_IDENT = 63 - '_next'.length;
+
+function stagingTemplatesEnabled() {
+  return STAGING_TEMPLATE_MAX_AGE_MS > 0;
+}
+
+function stagingTemplateDbName(sourceDb) {
+  return `${sourceDb}${STAGING_TEMPLATE_SUFFIX}`;
+}
+
+const _templateChains = new Map();
+function withTemplateLock(key, fn) {
+  const prev = _templateChains.get(key) || Promise.resolve();
+  const run = prev.then(fn, fn);
+  const tail = run.then(() => {}, () => {});
+  _templateChains.set(key, tail);
+  tail.then(() => { if (_templateChains.get(key) === tail) _templateChains.delete(key); });
+  return run;
+}
+
+// Drop a template-side database WITHOUT the role handling dropDatabase does:
+// the template role is shared by every build of the template and owns the
+// objects inside it, so it must outlive any one database.
+async function dropTemplateDb(dbName) {
+  if (!SAFE_IDENT.test(dbName)) throw new Error(`dropTemplateDb: unsafe dbName ${JSON.stringify(dbName)}`);
+  await execInDb(
+    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dbName}' AND pid <> pg_backend_pid()`
+  ).catch(() => {});
+  await execInDb(`DROP DATABASE IF EXISTS ${dbName}`);
+}
+
+// When the template was last rebuilt, from the comment the refresh stamps
+// on it. Null when there is no template, or nothing readable on it.
+async function readTemplateRefreshedAt(templateDb) {
+  if (!SAFE_IDENT.test(templateDb)) return null;
+  const out = await execInDb(
+    `SELECT COALESCE(shobj_description(oid, 'pg_database'), '') FROM pg_database WHERE datname = '${templateDb}'`,
+    { tuplesOnly: true }
+  ).catch(() => '');
+  const m = /refreshed_at=(\S+)/.exec(String(out || ''));
+  if (!m) return null;
+  const t = Date.parse(m[1]);
+  return Number.isFinite(t) ? t : null;
+}
+
+// Rebuild the template from the live source, then swap it in.
+async function refreshStagingTemplate(sourceDb) {
+  const templateDb = stagingTemplateDbName(sourceDb);
+  const next = `${templateDb}_next`;
+  const templateRole = ownerRoleName(templateDb);
+  if (!SAFE_IDENT.test(templateDb) || !SAFE_IDENT.test(templateRole) || templateDb.length > MAX_TEMPLATE_IDENT) {
+    throw new Error(`refreshStagingTemplate: unusable template name for ${sourceDb}`);
+  }
+  const startedAt = Date.now();
+  log.info('db-manager', 'Refreshing staging template', { sourceDb, templateDb });
+
+  await dropTemplateDb(next);
+  await execInDb(`DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${templateRole}') THEN
+      CREATE ROLE ${templateRole} NOLOGIN;
+    END IF;
+  END $$;`);
+  await execInDb(`CREATE DATABASE ${next} TEMPLATE template0 OWNER ${templateRole}`);
+
+  // The direct path's steps, verbatim, into `next`.
+  const excludeData = await privateDataExclusions(sourceDb);
+  await dumpRestore(sourceDb, next, excludeData);
+  const sourceRole = ownerRoleName(sourceDb);
+  if (SAFE_IDENT.test(sourceRole)) {
+    await reassignUserObjectsTo(next, sourceRole, templateRole).catch((err) => {
+      log.warn('db-manager', 'template reassign from source-role failed', { next, sourceRole, err: err.message });
+    });
+  }
+  await reassignUserObjectsTo(next, adminUser(), templateRole).catch((err) => {
+    log.warn('db-manager', 'template reassign from superuser failed', { next, err: err.message });
+  });
+  await truncatePrivateTables(next);
+  await scrubPrivateColumns(next);
+
+  await execInDb(`REVOKE CONNECT ON DATABASE ${next} FROM PUBLIC`);
+  const stamp = new Date().toISOString();
+  await execInDb(`COMMENT ON DATABASE ${next} IS 'staging-template source=${sourceDb} refreshed_at=${stamp}'`);
+  // A template nobody can connect to is one CREATE DATABASE … TEMPLATE can
+  // always copy (the "being accessed by other users" refusal needs a
+  // session, and there can be none) and one the reap sweep never mistakes
+  // for a preview clone: its name carries no `_staging_s<id>_` segment.
+  await execInDb(`ALTER DATABASE ${next} WITH ALLOW_CONNECTIONS false`);
+
+  // Swap. A failed rename leaves `next` behind and no template, which the
+  // next ensure simply rebuilds; a failed drop is surfaced, not hidden.
+  await dropTemplateDb(templateDb);
+  await execInDb(`ALTER DATABASE ${next} RENAME TO ${templateDb}`);
+  log.info('db-manager', 'Staging template refreshed', {
+    sourceDb, templateDb, excludedTables: excludeData.length, durationMs: Date.now() - startedAt,
+  });
+  return templateDb;
+}
+
+// The template to clone from. Refreshed first (`refreshed: true`) when it
+// is missing or past the hard age; handed over as it is with `stale: true`
+// when it is only past the soft age, so the caller can queue the refresh
+// behind the clone. Resolves `{ template, refreshed, stale }`.
+async function ensureStagingTemplate(sourceDb, {
+  maxAgeMs = STAGING_TEMPLATE_MAX_AGE_MS,
+  hardMaxAgeMs = STAGING_TEMPLATE_HARD_MAX_AGE_MS,
+  now = Date.now(),
+} = {}) {
+  if (!SAFE_IDENT.test(sourceDb)) throw new Error(`ensureStagingTemplate: unsafe sourceDb ${JSON.stringify(sourceDb)}`);
+  const templateDb = stagingTemplateDbName(sourceDb);
+  if (templateDb.length > MAX_TEMPLATE_IDENT) throw new Error(`ensureStagingTemplate: name too long for ${sourceDb}`);
+  const refreshedAt = await readTemplateRefreshedAt(templateDb);
+  const age = refreshedAt === null ? null : now - refreshedAt;
+  if (age !== null && age <= maxAgeMs) return { template: templateDb, refreshed: false, stale: false };
+  if (age !== null && age <= Math.max(hardMaxAgeMs, maxAgeMs)) {
+    return { template: templateDb, refreshed: false, stale: true };
+  }
+  await refreshStagingTemplate(sourceDb);
+  return { template: templateDb, refreshed: true, stale: false };
+}
+
+// Refresh off the critical path, behind whatever holds the source's lock.
+// Re-checks the age under the lock: two builds that both found the template
+// stale must not rebuild it twice.
+const _queuedRefreshes = new Set();
+function queueTemplateRefresh(sourceDb) {
+  if (_queuedRefreshes.has(sourceDb)) return;
+  _queuedRefreshes.add(sourceDb);
+  withTemplateLock(sourceDb, async () => {
+    const refreshedAt = await readTemplateRefreshedAt(stagingTemplateDbName(sourceDb));
+    if (refreshedAt !== null && (Date.now() - refreshedAt) <= STAGING_TEMPLATE_MAX_AGE_MS) return;
+    await refreshStagingTemplate(sourceDb);
+  }).catch((err) => {
+    log.warn('db-manager', 'Background staging-template refresh failed', { sourceDb, err: err.message });
+  }).finally(() => { _queuedRefreshes.delete(sourceDb); });
+}
+
+// Tests: settle everything queued for a source.
+function templateIdle(sourceDb) {
+  return _templateChains.get(sourceDb) || Promise.resolve();
+}
+
+// The fast clone: a file copy of the template, handed to a fresh role.
+async function cloneFromTemplate(templateDb, targetDb) {
+  if (!SAFE_IDENT.test(templateDb) || !SAFE_IDENT.test(targetDb)) {
+    throw new Error(`cloneFromTemplate: unsafe identifiers ${templateDb}/${targetDb}`);
+  }
+  const templateRole = ownerRoleName(templateDb);
+  const targetRole = ownerRoleName(targetDb);
+  if (!SAFE_IDENT.test(templateRole) || !SAFE_IDENT.test(targetRole)) {
+    throw new Error(`cloneFromTemplate: unsafe roles ${templateRole}/${targetRole}`);
+  }
+  const startedAt = Date.now();
+  await dropDatabase(targetDb);
+  const password = generatePassword();
+  await execInDb(`CREATE ROLE ${targetRole} LOGIN PASSWORD '${password}'`);
+  await execInDb(`CREATE DATABASE ${targetDb} TEMPLATE ${templateDb} OWNER ${targetRole}`);
+  await execInDb(`REVOKE CONNECT ON DATABASE ${targetDb} FROM PUBLIC`);
+  await execInDb(`GRANT ALL PRIVILEGES ON DATABASE ${targetDb} TO ${targetRole}`);
+  // The copy keeps the template role's ownership of every object; the
+  // preview must ALTER, INSERT and DROP as its own role.
+  await reassignUserObjectsTo(targetDb, templateRole, targetRole);
+  // The redaction guarantee, re-applied (see the header comment).
+  await truncatePrivateTables(targetDb);
+  await scrubPrivateColumns(targetDb);
+  log.info('db-manager', 'Database cloned from staging template', {
+    templateDb, targetDb, targetRole, durationMs: Date.now() - startedAt,
+  });
   return { password };
 }
 
@@ -1044,4 +1295,15 @@ module.exports = {
   scrubPrivateColumns,
   privateDataExclusions,
   pgRestoreArgs,
+  // Staging templates.
+  stagingTemplateDbName,
+  stagingTemplatesEnabled,
+  ensureStagingTemplate,
+  refreshStagingTemplate,
+  cloneFromTemplate,
+  readTemplateRefreshedAt,
+  queueTemplateRefresh,
+  STAGING_TEMPLATE_MAX_AGE_MS,
+  STAGING_TEMPLATE_HARD_MAX_AGE_MS,
+  _templateIdleForTest: templateIdle,
 };
