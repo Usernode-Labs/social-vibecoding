@@ -8794,6 +8794,22 @@ const AppView = {
       // nothing at all, so legacy rows are unchanged.
       const why = AppView._checksTriggerCopy(pr.check_trigger);
       if (why) rows.push({ t: 'line', parts: [why], weight: 'foot' });
+      // What happens to THIS run if main moves first. Three rows used to
+      // describe the same proposal without any of them saying which acts
+      // first: the checks row said a run was going, the "Behind main" pill
+      // said a sync was coming, and neither said that the sync ends the run.
+      // It does: a sync moves the commit this run is judged against, so the
+      // run in flight is restarted on the synced commit. Say it here, on the
+      // row the reader is watching, rather than leaving it to be inferred
+      // from two other rows.
+      const behindNow = AppView._freshnessOf(pr).behindBy || 0;
+      if (behindNow > 0) {
+        rows.push({
+          t: 'line',
+          parts: [`Main has moved ${behindNow} commit${behindNow === 1 ? '' : 's'} ahead. This run is judged against the commit before that, so when the platform syncs this proposal the run starts again on the synced commit.`],
+          weight: 'foot',
+        });
+      }
       if (stale) rows.push({ t: 'line', parts: ['If this has been running for a while, the platform re-runs the checks automatically, or re-run them now.'], weight: 'foot' });
       // Live progress, when the run has reported any. `progress` is drawn as
       // a bar by the ledger row; `sub` is the same fact as text under the
