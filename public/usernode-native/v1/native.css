@@ -359,7 +359,13 @@ html.un-android .un-switch:checked:active::before {
    it ride up over the header, and the layer sits BENEATH the header in
    stacking order — level 0 and first in tree order in element mode, below
    .un-navbar's z-index:100 in window mode. So the puck is revealed by the
-   content sliding away rather than painted on top of the chrome. */
+   content sliding away rather than painted on top of the chrome.
+
+   The 34px box below is mirrored by PTR_PUCK in native.js, which derives
+   the whole travel pose from it (park, hold, per-px travel) so the puck
+   rests FULLY below the anchor line with equal space above and below —
+   issue #1526. The two copies are cross-checked by a test in
+   tests/native-kit.test.js; change them together. */
 
 .un-ptr-layer {
   position: absolute;

@@ -2692,6 +2692,12 @@
       "expectText": "Programme users"
     },
     {
+      "name": "Admin Users explains what excluding a user from ranking does (#1558)",
+      "path": "/#admin/users",
+      "expectSelector": "#admin-topo-u-ranking-help",
+      "expectText": "non-podium"
+    },
+    {
       "name": "Admin Waitlist is a first-class menu section (#1179)",
       "path": "/#admin/waitlist",
       "expectSelector": "#admin-topo-content"
@@ -2717,6 +2723,11 @@
       "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": ".un-ptr-layer > .un-ptr-puck"
+    },
+    {
+      "name": "Native kit: the refresh puck rests fully below its anchor line (#1526)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=ptr-hold",
+      "expectSelector": ".un-ptr-layer > .un-ptr-puck.un-refreshing"
     },
     {
       "name": "Native kit: side panel presents from the right edge with a scrollable body",

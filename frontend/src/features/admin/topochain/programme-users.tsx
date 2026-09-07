@@ -10,10 +10,12 @@ import {
 } from './ui.tsx';
 import type { Column, PageMeta } from './ui.tsx';
 
-// Programme users — full CRUD, toggle-exclude-podium, CSV import and CSV
-// export. `accept_logs` lives here too (the mobile-logs API gap: no admin
-// endpoint lists per-user log payloads, so the one related capability is
-// surfaced as a field on this form rather than as a dead "Mobile logs" tab).
+// Programme users — full CRUD, the ranking exclusion (the
+// toggle-exclude-podium route, relabelled per #1558; see RANKING_TITLE
+// below), CSV import and CSV export. `accept_logs` lives here too (the
+// mobile-logs API gap: no admin endpoint lists per-user log payloads, so
+// the one related capability is surfaced as a field on this form rather
+// than as a dead "Mobile logs" tab).
 //
 // NOT a screen of its own. Since #1179 it renders INSIDE the console's Users
 // section — one Users menu entry, both user surfaces — below the platform
@@ -61,6 +63,44 @@ type User = {
 type SeasonEvent = { id: number; name: string };
 
 const ident = (u: User) => u.email || u.telegram || u.discord || `user #${u.id}`;
+
+// ── The ranking control's words (#1558) ────────────────────────────────
+//
+// The row action used to read "Toggle podium", which named `exclude_podium`
+// and nothing a person does, and the column beside it read "Podium" over an
+// `excluded` / "—" pair. Feedback said so plainly: "toggle podium is
+// confusing."
+//
+// Only the WORDS moved. `PATCH …/:id/toggle-exclude-podium`, the
+// `users.exclude_podium` column, the public API's `is_non_podium` field and
+// the `data-toggle-podium` hook are all untouched, exactly as #1544's
+// Release-to-Admit rename left `POST …/:id/release` alone: renaming a route
+// to match a label is how a deploy breaks a bookmark.
+//
+// What the flag actually does, which is what these strings have to be true
+// to: an excluded user keeps their points, their enrolment and their line on
+// the public board. What they lose is the RANK. src/services/topochain/
+// standings.js gives them the counter's value without bumping it (so nobody
+// below them skips a number), event-standings.js reports their rank as null
+// and drops them from the home page's top three, and the leaderboard screen
+// renders "—" plus a `non-podium` tag. The tag is quoted here on purpose:
+// it is the word an admin sees on the public board, so the admin copy has to
+// use it too until that public wording is revisited.
+const RANKING_TITLE = {
+  exclude: "Removes this user's position from the public leaderboard. They keep their "
+    + 'points and stay listed, but the board shows a dash instead of a rank, tags them '
+    + 'non-podium, and leaves them out of the top three.',
+  include: 'Gives this user a numbered position on the public leaderboard again: no dash, '
+    + 'no non-podium tag, and eligible for the top three.',
+};
+
+// The same explanation, always visible. A `title` tooltip does not exist on a
+// phone and is awkward from the keyboard, and the row buttons only render for
+// an admin who can write — so a view-only admin would otherwise read the
+// Ranking column with no legend at all.
+const RANKING_HELP = 'Ranking: an excluded user keeps earning points and still appears on the '
+  + 'public leaderboard, but their position shows as a dash, the board tags them non-podium, '
+  + 'and they never appear in the top three. Use it for internal testers and staff.';
 
 function DeleteConfirm({ user, onCancel, onConfirm }: {
   user: User;
@@ -461,10 +501,14 @@ function ProgrammeUsers() {
     { label: 'Telegram', cell: (u) => u.telegram || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
     { label: 'Discord', cell: (u) => u.discord || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
     {
-      label: 'Podium',
+      // #1558: "Podium" named the database flag; the header and both values
+      // say what the reader is looking at now. The amber stays: the excluded
+      // state is the exceptional one, and it has to be findable down a
+      // column of 50 rows.
+      label: 'Ranking',
       cell: (u) => (u.exclude_podium
-        ? <span className="text-amber-800 dark:text-amber-400">excluded</span>
-        : '—'),
+        ? <span className="text-amber-800 dark:text-amber-400">Excluded</span>
+        : 'Ranked'),
     },
     { label: 'Accept logs', cell: (u) => (u.accept_logs ? 'yes' : 'no') },
   ];
@@ -475,7 +519,7 @@ function ProgrammeUsers() {
     <>
       <ScreenHeader
         title="Programme users"
-        subtitle="Everyone enrolled in an event, and their podium and log settings."
+        subtitle="Everyone enrolled in an event, plus their leaderboard ranking and log settings."
         actions={(
           <>
             {/* Commits on blur or Enter, not per keystroke — a paged server
@@ -523,6 +567,12 @@ function ProgrammeUsers() {
           </>
         )}
       />
+      <p
+        id="admin-topo-u-ranking-help"
+        className="mb-4 -mt-2 text-xs text-zinc-500 dark:text-zinc-400"
+      >
+        {RANKING_HELP}
+      </p>
       <div id="admin-topo-u-form">
         {open.kind === 'form' && write ? (
           <UserForm
@@ -580,9 +630,10 @@ function ProgrammeUsers() {
                     data-toggle-podium={u.id}
                     type="button"
                     className={BTN.row}
+                    title={u.exclude_podium ? RANKING_TITLE.include : RANKING_TITLE.exclude}
                     onClick={() => togglePodium(u.id)}
                   >
-                    Toggle podium
+                    {u.exclude_podium ? 'Include in ranking' : 'Exclude from ranking'}
                   </button>
                   <button
                     data-edit-u={u.id}

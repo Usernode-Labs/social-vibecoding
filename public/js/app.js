@@ -133,6 +133,14 @@ const App = {
   SESSION_SNAPSHOT_KEY: 'usernode.session.v1',
   SESSION_SNAPSHOT_MAX_AGE_MS: 30 * 24 * 60 * 60 * 1000, // 30 days
 
+  // #1524 — a one-shot advisory handed from a sign-out to the anonymous boot
+  // that follows it. Sign-out always navigates now, which destroys any toast
+  // raised before it, so the message rides across in sessionStorage instead.
+  // Written by Settings.logout on the one path that has something to say (a
+  // native sign-out whose terminal step failed); read and removed exactly
+  // once, by enterAnonymous below.
+  LOGOUT_NOTICE_KEY: 'sv:logout_notice',
+
   // How long boot waits for /api/auth/me before falling back to the
   // snapshot. Deliberately just past the service worker's own API deadline
   // (API_TIMEOUT_MS, now 1000) so the SW gets first refusal at answering
@@ -575,6 +583,25 @@ const App = {
     // platformMovedOn() needs a boot-time baseline to compare against.
     App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
+    App._drainLogoutNotice();
+  },
+
+  // Read-and-remove the one-shot sign-out advisory (#1524). Runs after the
+  // auth screens are up so the toast lands on the landing page the user was
+  // just sent to. One-shot by construction: the key is removed before it is
+  // shown, so a later anonymous boot stays silent.
+  _drainLogoutNotice() {
+    let message = null;
+    try {
+      message = window.sessionStorage?.getItem?.(App.LOGOUT_NOTICE_KEY) || null;
+      if (message) window.sessionStorage.removeItem(App.LOGOUT_NOTICE_KEY);
+    } catch (err) { /* private mode / no storage — nothing to say */ }
+    if (!message) return;
+    try {
+      if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(message, { error: true });
+      }
+    } catch (err) { /* ignore */ }
   },
 
   // True for the anonymous-shell screenshot-state links (see init). Also

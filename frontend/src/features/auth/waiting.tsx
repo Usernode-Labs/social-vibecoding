@@ -114,8 +114,12 @@ export function WaitingScreen() {
       return;
     }
     stopWaitingPoll();
+    // Same sweep and same landing as Settings.logout (#1524): the wider
+    // _dropCachedSession so no remembered header survives the sign-out, and a
+    // REPLACE to a bare '/' so Back cannot restore the signed-in document and
+    // no leftover query or fragment turns the landing page into a sign-in form.
     try {
-      w.App?.clearSessionSnapshot?.();
+      w.App?._dropCachedSession?.();
     } catch {
       /* ignore */
     }
@@ -124,7 +128,7 @@ export function WaitingScreen() {
     } catch {
       /* ignore */
     }
-    window.location.href = '/';
+    window.location.replace('/');
   }, [stopWaitingPoll]);
 
   const live = useRef({ waitingOnShow, startWaitingPoll, stopWaitingPoll });
