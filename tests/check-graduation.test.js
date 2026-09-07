@@ -166,8 +166,9 @@ test('a check that disagrees with itself on its debut does not land', () => {
   // is the check saying it is not deterministic, and letting it land anyway
   // is exactly how a flake gets the power to block strangers.
   const src = read('src/services/visuals.js');
-  assert.match(src, /const pass = fails === 0;/,
-    'all of them, not most of them');
+  assert.match(src, /const pass = passedOnRetry \|\| fails === 0;/,
+    'debut repeats: all of them, not most of them. A RETRY is the other way '
+    + 'round, and only because the check already failed to earn one.');
   assert.match(src, /const flakyRun = passes > 0 && fails > 0;/,
     'disagreement inside one run needs no history to read');
   assert.match(src, /if \(d\.repeatOf != null\) continue;/,

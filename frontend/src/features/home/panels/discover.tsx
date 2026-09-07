@@ -177,6 +177,16 @@ function Lane({ tiles, extraClass }: { tiles: DiscoverTileView[]; extraClass?: s
   useEffect(() => {
     const el = laneRef.current;
     if (el) home()?._wireDiscoveryCards?.(el);
+    // The screenshot state (?shot=discover-drag) needs A CARD to lift, and
+    // on first mount this lane has none: the tiles arrive with their own
+    // fetch. The effect below runs once, finds nothing, and returns — and
+    // nothing called it again, because the grid's own post-commit effect
+    // (the other caller) does not re-commit when a PANEL's data lands. So
+    // the state painted only when the cards happened to beat the mount, and
+    // stopped painting at all once curation (#1753) changed how the lanes
+    // fill. Calling it here as well is the fix: this effect already runs on
+    // every tile change, and the state is repeatable by design.
+    home()?._maybeShowShotIncoming?.();
   }, [tiles.map((t) => `${t.slug}:${t.added}`).join(',')]);
 
   // The drag-to-add recognizer (#1763), and the screenshot state that stands

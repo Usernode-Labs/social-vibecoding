@@ -513,6 +513,10 @@ function parseTests(stdout) {
       loadStatus,
       consoleErrors: Array.isArray(payload.consoleErrors) ? payload.consoleErrors : [],
       failureReason: typeof payload.failureReason === 'string' ? payload.failureReason : '',
+      // Set on a frame that is a SECOND OPINION on another check rather
+      // than a check of its own: the container re-ran a failure on its own
+      // cold document. Names the index it is a retry of.
+      retryOf: Number.isInteger(payload.retryOf) ? payload.retryOf : null,
     });
     i += 2;
   }
@@ -680,6 +684,15 @@ function classifyTests(frames, expectedCount, options) {
     if (!repeatsOf.has(d.repeatOf)) repeatsOf.set(d.repeatOf, []);
     repeatsOf.get(d.repeatOf).push(d);
   }
+  // Retries are not dispatched — the container decides at runtime which
+  // failures to ask again — so they arrive only as frames, each naming the
+  // check it is a second opinion on.
+  const retriesOf = new Map();
+  for (const f of parsed) {
+    if (!Number.isInteger(f.retryOf)) continue;
+    if (!retriesOf.has(f.retryOf)) retriesOf.set(f.retryOf, []);
+    retriesOf.get(f.retryOf).push(f);
+  }
 
   for (const d of dispatched) {
     if (d.repeatOf != null) continue;
@@ -696,12 +709,25 @@ function classifyTests(frames, expectedCount, options) {
       const f = byIndex.get(Number(r.index) || 0);
       if (f) observed.push(f);
     }
+    const retried = retriesOf.get(Number(d.index) || 0) || [];
+    for (const f of retried) observed.push(f);
     const passes = observed.filter((f) => f.status === 'pass').length;
     const fails = observed.length - passes;
-    // All of them, not most of them. One failure among a check's debut runs
-    // is the check telling you it is not deterministic, and letting it land
-    // anyway is how a flake gets the power to block strangers.
-    const pass = fails === 0;
+    // Two rules, and the difference is who asked for the extra runs.
+    //
+    // DEBUT repeats are dispatched up front, before anything is known: all
+    // of them have to pass, because one failure among them is the check
+    // saying it is not deterministic and letting it land anyway is how a
+    // flake gets the power to block strangers.
+    //
+    // RETRIES are asked for BECAUSE the check already failed. Any pass
+    // among them means the failure was not reproducible, so the check did
+    // not really fail — but it did not really pass either, which is what
+    // the flaky tag and the reset streak are for. Demanding all of them
+    // would make the retry pointless; ignoring the failure entirely would
+    // lose the only evidence that the check is unreliable.
+    const passedOnRetry = retried.length > 0 && retried.some((f) => f.status === 'pass');
+    const pass = passedOnRetry || fails === 0;
     // Disagreement inside one run is the loudest flake signal there is, and
     // unlike the lifetime rate it needs no history to read.
     const flakyRun = passes > 0 && fails > 0;
@@ -720,6 +746,10 @@ function classifyTests(frames, expectedCount, options) {
       passes,
       fails,
       flakyRun,
+      // It failed, it was asked again, and it answered differently. The
+      // merge is not blocked on it — and nobody has to wonder why the run
+      // is green when the log shows a failure.
+      passedOnRetry,
       // The card renders advisory rows muted with a chip rather than
       // rewriting the name, so the check reads identically whichever power
       // it currently has.

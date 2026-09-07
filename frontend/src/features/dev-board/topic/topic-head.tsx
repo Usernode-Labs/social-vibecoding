@@ -120,7 +120,10 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
           </span>
         ) : null}
       </li>
-      {!r.pass ? (
+      {/* A row that passed only after a retry is GREEN and still carries its
+          reason: the failure happened, it just did not reproduce, and the
+          person who owns that check is the one who needs to know. */}
+      {!r.pass || r.keepReason ? (
         <>
           <div className="ml-4 opacity-90">{r.reason || 'failed'}</div>
           {r.errors && r.errors.length ? (
