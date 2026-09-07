@@ -11,6 +11,8 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
 
 const { classifyRequest, NO_FALLBACK_PAGES, NO_FALLBACK_PREFIXES } = require('../public/sw.js');
 
@@ -42,6 +44,60 @@ test('credential and auth endpoints are bypassed — except /api/auth/me', () =>
   assert.equal(classify('GET', '/api/cli/device/approval?user_code=ABCD-EFGH'), 'bypass');
   assert.equal(classify('GET', '/api/me/cli-tokens'), 'bypass');
   assert.equal(classify('GET', '/api/me/cli-tokens/42?x=1'), 'bypass');
+});
+
+test('OAuth Connect and callback navigations never use the cached SPA fallback (#1543)', () => {
+  for (const path of [
+    '/api/me/social-identities/github/connect',
+    '/api/me/social-identities/github/connect?account=7',
+    '/api/me/social-identities/x/connect?account=7',
+    '/api/me/github/connect',
+    '/api/me/github/callback?code=example&state=example',
+    '/api/me/x/callback?code=example&state=example',
+    '/api/me/social-identities/x/callback?code=example&state=example',
+    '/api/connect/authorize',
+    '/api/cli/device/approval?user_code=ABCD-EFGH',
+    '/api/me/cli-tokens',
+    '/api/auth/login',
+  ]) {
+    for (const mode of ['navigate', 'cors', 'no-cors']) {
+      assert.equal(classify('GET', path, 'text/html', mode), 'bypass', `${path} (${mode})`);
+    }
+  }
+});
+
+test('the installed worker leaves OAuth navigation responses entirely to the browser (#1543)', () => {
+  const handlers = {};
+  let cacheReads = 0;
+  let fetches = 0;
+  const intercepted = [];
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+    self: { location: { origin: ORIGIN }, addEventListener: (name, fn) => { handlers[name] = fn; } },
+    URL, Headers, Response, Map, Set, Promise,
+    caches: { open: async () => {
+      cacheReads++;
+      return { match: async () => new Response('<h1>Cached Social Vibecoding</h1>') };
+    } },
+    // The server/provider may take indefinitely long. A hard bypass must
+    // neither fetch on its behalf nor arm the shell fallback timer.
+    fetch: () => { fetches++; return new Promise(() => {}); },
+    setTimeout: () => 1, clearTimeout: () => {},
+  });
+  for (const provider of ['github', 'x']) {
+    for (const path of [
+      `/api/me/social-identities/${provider}/connect?account=7`,
+      `/api/me/${provider}/callback?code=example&state=example`,
+    ]) {
+      handlers.fetch({
+        request: { method: 'GET', url: ORIGIN + path, headers: new Headers({ accept: 'text/html' }), mode: 'navigate' },
+        respondWith: response => intercepted.push(response),
+        waitUntil: () => {},
+      });
+    }
+  }
+  assert.equal(intercepted.length, 0, 'the worker must not substitute any response, even when offline');
+  assert.equal(cacheReads, 0, 'a warm shell cache cannot replace provider redirects');
+  assert.equal(fetches, 0, 'the browser owns the redirect chain');
 });
 
 test('the mock namespace and the /health probe hit the network directly', () => {
@@ -178,4 +234,11 @@ test('eviction-immune paths are paths the worker actually caches', () => {
   for (const p of IMMUNE_API_PATHS) {
     assert.equal(classify('GET', p), 'api', `${p} is immune but never cached`);
   }
+});
+
+
+test('app allowance reads always reach the server after an admin change', () => {
+  assert.equal(classify('GET', '/api/me/app-allowance'), 'bypass');
+  assert.equal(classify('GET', '/api/me/app-allowance?refresh=1'), 'bypass');
+  assert.equal(classify('POST', '/api/me/app-allowance/request'), 'bypass');
 });

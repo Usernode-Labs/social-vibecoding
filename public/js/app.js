@@ -1966,6 +1966,7 @@ const App = {
             App.resyncCurrentView();
             break;
           case 'app_status':
+            window.UsernodeReact?.appAllowance?.invalidate?.();
             App.handleAppStatusUpdate(data);
             break;
           case 'session_update':
@@ -2014,6 +2015,9 @@ const App = {
             if (typeof DevChat !== 'undefined' && DevChat.applyDraftsUpdate) {
               DevChat.applyDraftsUpdate(data.sessionId);
             }
+            break;
+          case 'app_allowance_changed':
+            window.UsernodeReact?.appAllowance?.invalidate?.();
             break;
           case 'notification_new':
             if (window.Notifications) Notifications.handleIncoming(data.notification);
