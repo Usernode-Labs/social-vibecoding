@@ -45,7 +45,7 @@
 import { iconViewFor } from '../apps/app-card.js';
 import { adoptKitSurface } from '../../lib/kit-surface';
 import { dismissRegisteredSheets } from '../../lib/sheet-controller.js';
-import { improveStore } from './improve-store.js';
+import { boardHref, improveStore } from './improve-store.js';
 import { saveShellSnapshot } from '../../lib/shell-snapshot';
 
 /** Sessions whose state means "an AI turn is in flight right now". */
@@ -303,8 +303,32 @@ const Improve = {
       // Which dev sub-view: the header's eye is a PREVIEW control on a
       // session and a back-to-the-app control everywhere else.
       subTab: nextSubTab,
+      // And which LAYOUT the Dev screen is in, for the header's back arrow on
+      // the sub-views that are reached from it. Captured on every route change
+      // rather than subscribed to, because the only reader is a route that has
+      // already left the board: by the time a topic publishes, the layout can
+      // no longer change under it.
+      boardView: Improve._boardView(),
       sessionOrigin: Improve._sessionOriginFor(prev, next, nextSubTab),
     });
+  },
+
+  /**
+   * Which layout the Dev screen is in — 'kanban' or 'workshop'.
+   *
+   * Read through `window.AppView` rather than from the view-mode store in
+   * ../dev-board/view-mode-store.ts, and the difference is a COLD DEEP LINK:
+   * that store is seeded when the board frame mounts, and a link straight to
+   * an issue never mounts one, so it would answer with its own default
+   * instead of with this viewer's preference. `_getViewMode()` resolves the
+   * `?view=` override and then the stored preference, and needs no board.
+   *
+   * Settled by the time this runs on a layout hop too: `restoreFromHash`
+   * calls `AppView._setViewMode(boardView)` BEFORE `App.navigateToApp`, which
+   * is what reaches `App.switchTab` and therefore `setTab` above.
+   */
+  _boardView() {
+    return window.AppView?._getViewMode?.() === 'kanban' ? 'kanban' : 'workshop';
   },
 
   /**
@@ -380,8 +404,7 @@ const Improve = {
       // Workshop and Board are one screen in two layouts, and the layout IS
       // the route (see the alias block in app.js's restoreFromHash), so the
       // origin has to name the one that was on screen.
-      const kanban = window.AppView?._getViewMode?.() === 'kanban';
-      return `#app/${slug}/${kanban ? 'board' : 'workshop'}`;
+      return boardHref(slug, Improve._boardView());
     }
     if (route.subTab === 'chat') return `#app/${slug}/dev/chat`;
     return null;
