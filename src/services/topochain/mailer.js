@@ -4,7 +4,7 @@
 // returns a value the caller must check) and src/services/mail/select.js
 // for how a transport is chosen.
 //
-// The three senders keep their exact signatures, so every existing caller
+// The senders keep their exact signatures, so every existing caller
 // (src/services/email-signup.js, src/routes/public-api.js,
 // src/routes/topochain/admin/waitlist.js) is unchanged. This path stays so
 // those requires — and the tests that pin them — keep resolving.
@@ -15,5 +15,6 @@ const mail = require('../mail');
 module.exports = {
   sendOtpMail: mail.sendOtpMail,
   sendWaitlistJoinMail: mail.sendWaitlistJoinMail,
+  sendWaitlistCodeMail: mail.sendWaitlistCodeMail,
   sendWaitlistReleaseMail: mail.sendWaitlistReleaseMail,
 };

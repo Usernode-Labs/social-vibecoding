@@ -307,7 +307,7 @@
       "key": "PLATFORM_MAIL_MAX_PER_HOUR",
       "group": "Platform mail",
       "default": "300",
-      "description": "Global ceiling on outbound mail per rolling hour, across all recipients and kinds. Bounds the provider bill and the sender-reputation damage from a runaway loop or an abusive burst; per-recipient caps (5 login codes/hour, 1 waitlist confirmation/day) are fixed in code. Sends over the ceiling are recorded as suppressed_rate_limit and visible in the admin mail card."
+      "description": "Global ceiling on outbound mail per rolling hour, across all recipients and kinds. Bounds the provider bill and the reputation damage from a runaway loop or an abusive burst; per-recipient caps (5 login codes/hour, 1 waitlist welcome/day, 5 requested waitlist codes/day, a minute apart) are fixed in code. Sends over the ceiling are recorded as suppressed_rate_limit and shown in the admin mail card."
     },
     {
       "key": "TOPOCHAIN_MAIL_API_URL",
@@ -1295,6 +1295,38 @@
       "name": "Waitlist joined state shows the confirm-your-email step",
       "path": "/?shot=waitlist-joined",
       "expectSelector": "#waitlist-confirm:not(.hidden) #waitlist-code",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist offers a fresh code on the confirm step",
+      "path": "/?shot=waitlist-joined",
+      "expectSelector": "#waitlist-confirm:not(.hidden) #waitlist-resend",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist does not ask for the address again after a join",
+      "path": "/?shot=waitlist-joined",
+      "expectSelector": "#waitlist-confirm-email.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist step 1 offers a way back to the code entry",
+      "path": "/?shot=waitlist-step1",
+      "expectSelector": "#waitlist-enter-code",
+      "expectText": "Enter your confirmation code",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist code entry without a join asks which address",
+      "path": "/?shot=waitlist-code-entry",
+      "expectSelector": "#waitlist-confirm:not(.hidden) #waitlist-confirm-email:not(.hidden)",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist code entry without a join can request a code",
+      "path": "/?shot=waitlist-code-entry",
+      "expectSelector": "#waitlist-confirm:not(.hidden) #waitlist-resend",
+      "expectText": "Send a new code",
       "allowConsoleErrors": true
     },
     {
