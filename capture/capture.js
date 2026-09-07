@@ -1074,9 +1074,26 @@ function groupTestsByDocument(tests, opts) {
 
 // The dispatch-time entry point: document grouping unless the kill-switch is
 // set, in which case the historical per-URL grouping.
+//
+// A `solo` check is exempt from BOTH. It is one of the repeat runs a check
+// gets on its first appearance, and the whole value of a repeat is that it
+// is an independent observation — its own cold document, its own module
+// init, its own first paint. Grouped, five repeats would share one
+// navigation and become five assertions against a single loaded page, which
+// says nothing about the flake class that actually bites here: a console
+// error on load. Each solo check is therefore its own group, paying a full
+// navigation on purpose. Nothing else in the suite is affected: they are
+// pulled out before grouping and appended after, so a normal run groups
+// exactly as it did.
 function groupTests(tests, env) {
-  if (!groupByDocument(env)) return groupTestsByUrl(tests);
-  return groupTestsByDocument(tests, { cap: hashGroupCap(env) });
+  const all = Array.isArray(tests) ? tests : [];
+  const solo = all.filter((t) => t && t.solo);
+  const shared = solo.length ? all.filter((t) => !(t && t.solo)) : all;
+  const groups = groupByDocument(env)
+    ? groupTestsByDocument(shared, { cap: hashGroupCap(env) })
+    : groupTestsByUrl(shared);
+  for (const t of solo) groups.push([t]);
+  return groups;
 }
 
 // Load the document and establish the same readiness condition as

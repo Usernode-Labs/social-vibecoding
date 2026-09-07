@@ -676,7 +676,7 @@ test('?shot=home-grid renders a real preview, not just the outlines', () => {
   // check only proves the dashed cells still paint.
   const shot = HOME_SRC.slice(
     HOME_SRC.indexOf('_maybeShowShotGrid(listEl) {'),
-    HOME_SRC.indexOf('\n  // Long-press actions'));
+    HOME_SRC.indexOf('\n  // Screenshot-state deep link (?shot=discover-drag'));
   assert.match(shot, /_previewDrop\(el, \{ col: 0, row: 0 \}, true, cols\)/);
   // THE LAST RENDERED ITEM, not `canvas[canvas.length - 1]`. The canvas is
   // eight rows deep and the grid shows two of them by default
@@ -1549,4 +1549,196 @@ test('a stationary touch lift opens context without placing; movement continues 
   assert.equal(Home._contextLift, null);
   opts.onSettle(true);
   assert.equal(Home._dragActive, false);
+});
+
+// ── Dragging an app IN from Discover (#1763) ──────────────────────────
+//
+// The same recognizer, attached to a rail instead of to #app-list, carrying
+// an item that is not on the canvas yet. What is pinned here is the whole of
+// what makes that work: the item is modelled and parked off-canvas for the
+// span of the gesture, the grid's own plan then treats the drop as ordinary,
+// and a committed drop both PLACES and ADDS while a cancelled one does
+// neither.
+
+/** A Discover card, as the recognizer hands it to Home. */
+const cardEl = (slug) => ({
+  dataset: { slug },
+  classList: { contains: () => false, add: () => {}, remove: () => {} },
+});
+
+/** Arm the rail recognizer and hand back its options. */
+function armRail(Home, attachCalls) {
+  const detach = Home._attachDiscoverPlacement({ querySelectorAll: () => [] });
+  return { opts: attachCalls[attachCalls.length - 1].opts, detach };
+}
+
+test('the rail arms the SAME recognizer the grid does, and excludes demo tiles', () => {
+  const { Home, attachCalls } = makeHome();
+  seedLayout(Home);
+  const { opts, detach } = armRail(Home, attachCalls);
+  assert.equal(attachCalls.length, 1);
+  assert.match(opts.itemSelector, /:not\(\[data-demo\]\)/,
+    'staging demo tiles stay drag-inert (#746) — no row to favourite');
+  assert.match(opts.itemSelector, /\[data-slug\]/, 'and the empty-lane note is not a card');
+  for (const hook of ['cellFromPoint', 'canPlace', 'onHover', 'rectForCell', 'onPlace', 'onSettle']) {
+    assert.equal(typeof opts[hook], 'function', `${hook} is the grid's own`);
+  }
+  assert.equal(typeof detach, 'function',
+    'a handle per lane, because there are two rails and one slot would drop one');
+});
+
+test('a card that is not on the canvas is carried as an off-canvas item', () => {
+  const { Home, attachCalls, HomeLayout } = makeHome();
+  seedLayout(Home);
+  const { opts } = armRail(Home, attachCalls);
+
+  opts.onLift(cardEl('newcomer'));
+  assert.equal(Home._dragActive, true);
+  // Spread: the item is built inside the vm context, so deepStrictEqual would
+  // fail on the prototype rather than on anything about the value.
+  assert.deepEqual({ ...Home._incoming },
+    { type: 'app', slug: 'newcomer', col: 0, row: HomeLayout.MAX_ROWS });
+
+  // It is on the layout the DRAG works against, and only that one: the cache
+  // the grid renders from is untouched, so nothing paints a tile for an app
+  // the viewer has not dropped yet.
+  const working = Home.currentLayoutCached(4);
+  assert.equal(working.some((it) => it.slug === 'newcomer'), true);
+  assert.equal(Home._layoutCache.some((it) => it.slug === 'newcomer'), false);
+  assert.equal(Home._itemFor(cardEl('newcomer')), Home._incoming);
+
+  opts.onSettle(false);
+  assert.equal(Home._incoming, null, 'and it is gone the moment the gesture is');
+  assert.equal(Home._dragActive, false);
+});
+
+test('a card whose app is already yours moves that tile instead of adding a second', () => {
+  const { Home, attachCalls } = makeHome();
+  seedLayout(Home);
+  const { opts } = armRail(Home, attachCalls);
+
+  // The lane keeps a card for the rest of the visit after an add (#1567), so
+  // this is the ordinary case, not a corner one.
+  opts.onLift(cardEl('a'));
+  assert.equal(Home._incoming, null);
+  assert.deepEqual({ ...Home._itemFor(cardEl('a')) }, { type: 'app', slug: 'a', col: 0, row: 0 });
+});
+
+test('the incoming drop displaces the occupant to a free cell, never off the canvas', () => {
+  const { Home, attachCalls, HomeLayout } = makeHome();
+  seedLayout(Home);
+  const { opts } = armRail(Home, attachCalls);
+  opts.onLift(cardEl('newcomer'));
+
+  // (0,0) is app "a". HomeLayout.place re-homes a displaced occupant into the
+  // dragged item's VACATED rectangle first — which for an incoming item is the
+  // overflow row, and HomeLayout.fits refuses row >= MAX_ROWS. So "a" takes
+  // the first free cell instead of being pushed off the grid.
+  assert.equal(opts.canPlace(cardEl('newcomer'), { col: 0, row: 0 }), true);
+  const { next } = Home._planFor(cardEl('newcomer'), { col: 0, row: 0 }, 4);
+  const placed = next.find((it) => it.slug === 'newcomer');
+  assert.deepEqual([placed.col, placed.row], [0, 0]);
+  const bumped = next.find((it) => it.slug === 'a');
+  assert.ok(bumped.row < HomeLayout.MAX_ROWS,
+    `"a" was pushed to row ${bumped.row} — an occupant must never be sent to `
+    + 'the overflow region by a tile arriving from off-canvas');
+  assert.notDeepEqual([bumped.col, bumped.row], [0, 0]);
+});
+
+test('a committed incoming drop places the app AND adds it to Your apps', async () => {
+  const { Home, attachCalls, fetchCalls } = makeHome();
+  seedLayout(Home);
+  Home._apps.push(app('newcomer'));
+  Home.render = () => {};
+  const { opts } = armRail(Home, attachCalls);
+
+  opts.onLift(cardEl('newcomer'));
+  opts.onPlace(cardEl('newcomer'), { col: 2, row: 1 });
+  // The membership write waits for the gesture to be over, so the repaint it
+  // ends in is not swallowed by the drag deferral.
+  assert.equal(fetchCalls.filter((c) => c.method === 'POST').length, 0);
+  opts.onSettle(true);
+  await flush();
+
+  const put = fetchCalls.find((c) => c.method === 'PUT' && c.url === '/api/home-layout');
+  assert.ok(put, 'the cell is written');
+  const landed = put.body.items.find((i) => i.slug === 'newcomer');
+  assert.deepEqual([landed.col, landed.row], [2, 1], 'at the cell it was dropped in');
+
+  const post = fetchCalls.find((c) => c.url === '/api/apps/newcomer/favorite');
+  assert.ok(post, 'and the app joins Your apps');
+  assert.deepEqual(post.body, { favorited: true });
+  assert.equal(Home._apps.find((a) => a.slug === 'newcomer').is_favorited, true);
+  assert.equal(Home._pendingAdd, null);
+});
+
+test('a cancelled incoming drag adds nothing and writes nothing', async () => {
+  const { Home, attachCalls, fetchCalls } = makeHome();
+  seedLayout(Home);
+  Home._apps.push(app('newcomer'));
+  Home.render = () => {};
+  const { opts } = armRail(Home, attachCalls);
+
+  // Released off the grid: the kit never calls onPlace, only onSettle.
+  opts.onLift(cardEl('newcomer'));
+  opts.onSettle(false);
+  await flush();
+
+  assert.equal(fetchCalls.filter((c) => c.method !== 'GET').length, 0,
+    'the gesture is cancellable, which the ⊕ badge is not');
+  assert.equal(Home._apps.find((a) => a.slug === 'newcomer').is_favorited, false);
+});
+
+test('an incoming add does not let a deferred reload race its own POST', async () => {
+  const { Home, attachCalls } = makeHome();
+  seedLayout(Home);
+  Home._apps.push(app('newcomer'));
+  Home.render = () => {};
+  let loaded = 0;
+  Home.load = async () => { loaded += 1; };
+  const { opts } = armRail(Home, attachCalls);
+
+  opts.onLift(cardEl('newcomer'));
+  opts.onPlace(cardEl('newcomer'), { col: 2, row: 1 });
+  // A WS app event mid-gesture asks for a full reload. On an ordinary drop
+  // that wins; here it would re-read /api/apps while the favourite POST is
+  // still in flight and paint the app straight back out of Your apps.
+  Home._reloadPending = true;
+  opts.onSettle(true);
+  await flush();
+
+  assert.equal(loaded, 0, 'toggleAdded owns the repaint on this path');
+  assert.equal(Home._reloadPending, false);
+  assert.equal(Home._rerenderPending, false);
+});
+
+test('?shot=discover-drag enters the incoming state, not a lookalike of it', () => {
+  // Same shape as the ?shot=home-grid assertion above and for the same
+  // reason: a gesture is not navigable, so the deep link is the only thing a
+  // declared check or a capture pair can look at — and a link that painted
+  // outlines rather than the real drop would leave both asserting nothing.
+  const shot = HOME_SRC.slice(
+    HOME_SRC.indexOf('_maybeShowShotIncoming() {'),
+    HOME_SRC.indexOf('\n  // Long-press actions for search/demo tiles'));
+
+  // The preview is computed through the SAME _incoming item the gesture uses,
+  // so the link cannot drift into describing a drop the recognizer would not
+  // make.
+  assert.match(shot, /Home\._incoming = \{ type: 'app', slug: card\.dataset\.slug/);
+  assert.match(shot, /row: HomeLayout\.MAX_ROWS/, 'parked off-canvas, as in a real lift');
+  assert.match(shot, /_previewDrop\(card, \{ col: 0, row: 0 \}, true, cols\)/);
+  // …and cleared again once that synchronous read is done, or every later
+  // currentLayoutCached() would carry a phantom item.
+  assert.match(shot, /_previewDrop\([^)]*\);\s*\n\s*Home\._incoming = null;/);
+
+  // The two halves the dapp.json selector needs: the grid handed over to the
+  // overlay, and the card wearing the origin slot a lift leaves behind.
+  assert.match(shot, /listEl\.classList\.add\('un-reordering'\)/);
+  assert.match(shot, /card\.classList\.add\('un-reorder-slot'\)/);
+
+  // A demo tile is never the subject: it has no DB row, so the drop it
+  // depicts could not happen (#746).
+  assert.match(shot, /:not\(\[data-demo\]\)/);
+  // And a real gesture always wins over the screenshot state.
+  assert.match(shot, /if \(Home\._dragActive\) return;/);
 });

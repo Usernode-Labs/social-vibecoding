@@ -334,7 +334,7 @@ if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
   echo "__USERNODE_PHASE__ claude (resume $CLAUDE_RESUME_SESSION_ID, mode $MODE)"
   claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
     --resume "$CLAUDE_RESUME_SESSION_ID" \
-    --model "$MODEL" --output-format stream-json < "$PROMPT_FILE"
+    --model "$MODEL" --include-partial-messages --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
   if [ "$CC_EXIT" -ne 0 ]; then
     echo "__USERNODE_WARN__ resume failed (exit $CC_EXIT); retrying fresh"
@@ -343,13 +343,13 @@ if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
       RETRY_PROMPT_FILE="$RESUME_FALLBACK_PROMPT_FILE"
     fi
     claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
-      --model "$MODEL" --output-format stream-json < "$RETRY_PROMPT_FILE"
+      --model "$MODEL" --include-partial-messages --output-format stream-json < "$RETRY_PROMPT_FILE"
     CC_EXIT=$?
   fi
 else
   echo "__USERNODE_PHASE__ claude (mode $MODE)"
   claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
-    --model "$MODEL" --output-format stream-json < "$PROMPT_FILE"
+    --model "$MODEL" --include-partial-messages --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
 fi
 

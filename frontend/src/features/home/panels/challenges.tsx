@@ -278,6 +278,11 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
       footer={<PanelFooter panelKey={view.key} total={view.total} expanded={view.expanded} />}
     >
       {view.season ? <SeasonRing view={view.season} /> : null}
+      {view.onboardingNote ? (
+        <p className="px-1 pb-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">
+          {view.onboardingNote}
+        </p>
+      ) : null}
       <div className="home-panel-body">
         <div className="home-panel-rows flex flex-col gap-2">
           {view.rows.map((row) => (

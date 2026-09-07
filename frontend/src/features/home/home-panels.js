@@ -425,6 +425,11 @@ const HomePanels = {
       // heading; `season` is where it shows.
       summary: HomePanels.summaryLine(panel),
       season: HomePanels.seasonView(panel),
+      onboardingNote: panel.onboarding
+        ? (panel.onboarding.unlocked
+          ? 'Persistent and weekly challenges are unlocked.'
+          : `${panel.onboarding.completed} of ${panel.onboarding.total} onboarding challenges completed. Finish these to unlock persistent and weekly challenges.`)
+        : null,
       total,
       expanded,
       rows: rows.map((c) => HomePanels.challengeRowView(c)),

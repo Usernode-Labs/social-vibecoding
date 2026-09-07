@@ -115,7 +115,8 @@ const Home = {
       // fetches now.
       // ?demo=1 rides on /api/apps: staging injects the icon-demo
       // tiles there (routes/apps.js demoIconApps). No-op in production.
-      const demoQS = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+      const params = new URLSearchParams(location.search);
+      const demoQS = params.get('demo') === '1' ? `?demo=1${params.get('curation') === '1' ? '&curation=1' : ''}` : '';
       const res = await fetch(`/api/apps${demoQS}`);
       if (!res.ok) throw new Error('Failed to load apps');
       const { apps } = await res.json();
@@ -278,6 +279,13 @@ const Home = {
   // How many admin-featured tiles the "Featured apps" row shows.
   FEATURED_LIMIT: 6,
 
+  // The API derives this from an explicit review of the current deployment,
+  // not from active-user counts or the staging-only `demo` fixture flag.
+  isDiscoveryReady(app) {
+    return !!app && app.directory?.tier === 'ready' && app.status === 'running'
+      && !app.self_hosted && !!(app.icon_url || app.icon_emoji);
+  },
+
   // The featured row's contents for this viewer: admin-curated apps
   // (the `featured` flag served by GET /api/apps) that are NOT already
   // in "Your apps" — those are one screen-section up, so repeating
@@ -292,12 +300,13 @@ const Home = {
   // invisible to the before/after screenshots and to every declared check.
   // Pure UI state: it changes one derived list at render time, writes
   // nothing, and is not env-gated, so it works in production immediately.
+
   featuredApps(apps) {
     try {
       if (new URLSearchParams(location.search).get('shot') === 'discover-empty') return [];
     } catch (err) { /* ignore */ }
     return (apps || [])
-      .filter((a) => a && a.featured
+      .filter((a) => a && a.featured && Home.isDiscoveryReady(a)
         && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
       .sort((x, y) => {
         const xo = x.featured_order == null ? Infinity : x.featured_order;
@@ -326,20 +335,17 @@ const Home = {
   // "Popular" asks.) parseInt because the count arrives as a STRING — it is a
   // Postgres bigint and, unlike open_prs, the serializer doesn't coerce it.
   //
-  // Four exclusions, each load-bearing:
+  // Only currently reviewed working apps with icons qualify. Also exclude:
   //   * `featured` — the lane above already offers those.
   //   * isYours — the whole point is apps you don't have yet.
-  //   * status 'error' — a broken app is not a discovery target.
-  //   * self_hosted — the platform app itself is visible only to admins, so
-  //     including it would make the lane read differently per viewer.
   // And a floor of one active user: an app nobody uses is not "popular",
   // and padding the lane out with zero-user rows would misrepresent it.
   // Pure — unit-tested in tests/home-find-more.test.js.
   popularApps(apps) {
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
     return (apps || [])
-      .filter((a) => a && !a.featured && !a.self_hosted
-        && a.status !== 'error' && users(a) >= 1
+      .filter((a) => a && !a.featured && Home.isDiscoveryReady(a)
+        && users(a) >= 1
         && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
       .sort((x, y) => users(y) - users(x))
       .slice(0, Home.POPULAR_LIMIT);
@@ -983,6 +989,119 @@ const Home = {
     Home.closeCardMenu();
   },
 
+  // ── Dragging an app IN from Discover (#1763) ───────────────────────
+  //
+  // The launcher above is free placement, so the gesture a Discover card was
+  // missing is the obvious one: long-press it, drag it up onto the grid, drop
+  // it in the cell you want. Add and place in one go, where the ⊕ badge can
+  // only append the app to whatever cell happens to be free.
+  //
+  // This is THE SAME kit recognizer the grid itself uses, attached to a rail
+  // instead of to #app-list, and every callback below is the grid's own. The
+  // geometry (_targetCellFor), the drop plan (_planFor → HomeLayout.place),
+  // the displacement preview, the release spring and the edge auto-scroll
+  // that brings the grid into view are shared code, not a second
+  // implementation of any of it.
+  //
+  // WHAT IS ACTUALLY NEW is one fact: the item being dragged is not on the
+  // canvas yet. It is modelled as `_incoming` and parked in the OVERFLOW
+  // region (row === MAX_ROWS) for the span of the gesture, with one
+  // deliberate consequence — HomeLayout.place re-homes a displaced occupant
+  // into the dragged item's vacated rectangle first, and HomeLayout.fits
+  // rejects row >= MAX_ROWS, so that step finds nothing and the occupant
+  // takes the first free cell instead. That is the right answer here: a tile
+  // arriving from off-canvas has no cells to swap with.
+  //
+  // THE OVERLAY AND `un-reordering` BELONG TO #app-list, not to the rail. The
+  // kit puts its own class on ITS list element, and the CSS that makes the
+  // grid's tiles pointer-events:none — the thing that lets _cellFromPoint
+  // resolve an occupied cell as a target at all — is scoped to #app-list, so
+  // this reaches across and sets it there. Safe for exactly the reason
+  // _showGridOverlay is safe at all (see its header): _dragActive holds for
+  // the whole gesture, render() and load() both return early while it does,
+  // and React therefore cannot reconcile #app-list inside that window.
+  //
+  // Returns a detach function for the lane's own effect to call, rather than
+  // parking a handle on Home: there are TWO rails (Featured and Popular) and
+  // a single slot would silently drop one of them.
+
+  // The app a cross-surface drag is carrying, or null when the card being
+  // dragged already has a tile on the canvas.
+  _incoming: null,
+
+  // The slug a committed incoming drop still owes an "add to Your apps",
+  // handed from onPlace to onSettle so the membership write happens with the
+  // gesture over and the grid free to repaint.
+  _pendingAdd: null,
+
+  _attachDiscoverPlacement(railEl) {
+    if (!railEl || !window.unNative?.attachGridPlacement) return null;
+    const cols = Home.currentCols();
+    const gridEl = () => (typeof document !== 'undefined'
+      ? document.getElementById('app-list') : null);
+    const handle = window.unNative.attachGridPlacement(railEl, {
+      // Demo tiles stay drag-inert (#746) — they have no DB row to favourite
+      // and no cell to persist. A card with no slug is the empty-lane note.
+      itemSelector: '.app-card[data-slug]:not([data-demo])',
+      cellFromPoint: (x, y, info) => Home._targetCellFor(x, y, info, cols),
+      canPlace: (el, cell) => !!Home._planFor(el, cell, cols),
+      onLift: (el) => {
+        const slug = (el && el.dataset && el.dataset.slug) || '';
+        const onCanvas = (Home._layoutCache || [])
+          .some((it) => it.type === 'app' && it.slug === slug);
+        Home._incoming = onCanvas
+          ? null
+          : { type: 'app', slug, col: 0, row: HomeLayout.MAX_ROWS };
+        Home._dragActive = true;
+        const listEl = gridEl();
+        if (!listEl) return;
+        listEl.classList.add('un-reordering');
+        Home._showGridOverlay(listEl, cols, el);
+      },
+      onHover: (el, cell, ok) => { Home._previewDrop(el, cell, ok, cols); },
+      rectForCell: (el, cell) => Home._rectForCell(el, cell, cols),
+      onPlace: (el, cell) => {
+        const incoming = Home._incoming;
+        // The cell is written first and the membership second, which is safe
+        // in that order: PUT /api/home-layout stores a cell for any app the
+        // viewer can SEE (its header says so), and it is the add below that
+        // decides whether a tile renders there.
+        Home._onGridPlace(el, cell, cols);
+        if (incoming) Home._pendingAdd = incoming.slug;
+      },
+      onSettle: () => {
+        Home._dragActive = false;
+        Home._hideGridOverlay();
+        const listEl = gridEl();
+        if (listEl) listEl.classList.remove('un-reordering');
+        Home._incoming = null;
+        const add = Home._pendingAdd;
+        Home._pendingAdd = null;
+        if (add) {
+          // toggleAdded flips the cached flags, repaints — the model already
+          // holds the app at its cell — and POSTs. It is the TERMINAL repaint
+          // here, so anything deferred mid-gesture is dropped rather than
+          // flushed: a load() at this point would re-read /api/apps while
+          // that POST is still in flight and paint the app straight back out
+          // of Your apps.
+          Home._reloadPending = false;
+          Home._rerenderPending = false;
+          Home.toggleAdded(add, true);
+          return;
+        }
+        if (Home._reloadPending) {
+          Home._reloadPending = false;
+          Home._rerenderPending = false;
+          Home.load();
+        } else if (Home._rerenderPending) {
+          Home._rerenderPending = false;
+          Home.render();
+        }
+      },
+    });
+    return () => { try { handle.detach(); } catch { /* ignore */ } };
+  },
+
   // The errored card's Retry, lifted out of the _wireCards sweep so the button
   // can carry its own handler as a prop.
   async _onRetry(slug, btn) {
@@ -1510,9 +1629,23 @@ const Home = {
       else card.addEventListener('click', activate);
       Home._wirePrewarm(card);
     });
+    // A press on one of the card's own buttons must never arm the lane's drag
+    // (#1763). The kit's recognizer listens for pointerdown on the LANE and
+    // takes the first matching card that CONTAINS the target, so without this
+    // a press on ⊕ is a press on the card — and on desktop it arms after 6px
+    // of movement, which is inside the slop of an ordinary click, so a
+    // slightly shaky click on the badge would lift the card and swallow the
+    // click instead of adding the app. Same guard, and the same reason, as
+    // home-panels.js's on the panel headers' buttons.
+    //
+    // NATIVE, not a React `onPointerDown`: React attaches its listeners at
+    // the tree's root, so a synthetic handler's stopPropagation runs long
+    // after the event has already bubbled past the lane's own listener.
+    const stopDrag = (e) => { e.stopPropagation(); };
     listEl.querySelectorAll('.card-add-btn').forEach((btn) => {
       if (wiredButtons.has(btn)) return;
       wiredButtons.add(btn);
+      btn.addEventListener('pointerdown', stopDrag);
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         Home.toggleAdded(btn.dataset.slug, btn.dataset.added !== 'true', onChange);
@@ -1521,6 +1654,7 @@ const Home = {
     listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {
       if (wiredButtons.has(btn)) return;
       wiredButtons.add(btn);
+      btn.addEventListener('pointerdown', stopDrag);
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         // Pass the element so the kit popover can toggle closed on a
@@ -3482,8 +3616,14 @@ const Home = {
   // The layout the drag is working against — the same array render() painted
   // from. Falls back to computing one if a drag somehow starts before a
   // render (it can't, but a null here would be a silent no-op drop).
+  // An INCOMING card is part of that layout for the span of its drag and no
+  // longer (#1763). HomeLayout.place refuses an item it cannot find, and
+  // canPlace, rectForCell and the displacement preview all resolve their plan
+  // through here, so appending it is what makes a card dragged in from
+  // Discover an ordinary drop rather than a special case in five callbacks.
   currentLayoutCached(cols) {
-    return Home._layoutCache || Home.currentLayout(cols);
+    const layout = Home._layoutCache || Home.currentLayout(cols);
+    return Home._incoming ? layout.concat([Home._incoming]) : layout;
   },
 
   // A dragged DOM element → its layout item. The element carries only its
@@ -3492,11 +3632,17 @@ const Home = {
   //
   // The `.home-panel-slot` branch that resolved a widget host is gone with the
   // widgets: every draggable item on this canvas is an app tile now.
+  // THE LAYOUT IS ASKED FIRST, which is also the rule for a Discover card
+  // whose app is already yours: the lane keeps it for the rest of the visit
+  // after an add, and dragging it then moves the tile it already has rather
+  // than adding a second one. `_incoming` is only ever the fallback, and only
+  // ever set for a card with no tile on the canvas.
   _itemFor(el) {
     if (!el) return null;
     const layout = Home._layoutCache || [];
     const slug = el.dataset?.slug;
-    return layout.find((it) => it.type === 'app' && it.slug === slug) || null;
+    return layout.find((it) => it.type === 'app' && it.slug === slug)
+      || (Home._incoming && Home._incoming.slug === slug ? Home._incoming : null);
   },
 
   // Which cell is this POINT over? Answered by hit-testing the OVERLAY's
@@ -3963,6 +4109,53 @@ const Home = {
       const first = Home._overlayEl && Home._overlayEl.querySelector('[data-cell="0,0"]');
       if (first) first.classList.add('home-grid-cell--on');
     }
+  },
+
+  // Screenshot-state deep link (?shot=discover-drag, #1763): the sibling of
+  // the one above, for the drag that starts in a Discover rail. It exists
+  // only mid-gesture for the same reason, so no capture and no declared check
+  // could otherwise see it — and this is the state worth seeing, because it
+  // is the whole feature: a Discover card lifted, the launcher's overlay up
+  // underneath it, and the cell it would land in tinted.
+  //
+  // The preview is computed through THE SAME `_incoming` item the real
+  // gesture uses, so this link cannot drift into describing a drop the
+  // recognizer would not make. `_incoming` is cleared again as soon as the
+  // (synchronous) preview has read it: leaving it set would put a phantom
+  // item on every later currentLayoutCached() call.
+  //
+  // Pure UI state — no writes, no env gate — so the production "before" side
+  // of a capture pair works too, and, like ?shot=home-grid, it is deliberately
+  // repeatable rather than once-per-load: a repaint that drops the overlay
+  // should get it back.
+  _maybeShowShotIncoming() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'discover-drag') return;
+    if (Home._dragActive) return; // a real gesture owns the overlay
+    if (typeof document === 'undefined') return;
+    // ACROSS BOTH RAILS, and it takes no element on purpose. Featured leads
+    // with the staging demo rows on ?demo=1 and those are drag-inert by
+    // construction (#746), so a lane-local search finds nothing there and the
+    // state never paints; Popular ranks by active users, which no demo row
+    // has, so that is where the first real card usually is. The other caller
+    // — the grid's post-commit effect, which is what puts this state back
+    // after a repaint took `un-reordering` off #app-list — has no rail to
+    // hand over anyway.
+    const card = document.querySelector(
+      '.home-discover-rail .app-card[data-slug]:not([data-demo])');
+    if (!card || !card.dataset || !card.dataset.slug) return;
+    const listEl = document.getElementById('app-list');
+    if (!listEl || listEl.offsetParent === null) return; // not the visible grid
+    const cols = Home.currentCols();
+    Home._incoming = { type: 'app', slug: card.dataset.slug, col: 0, row: HomeLayout.MAX_ROWS };
+    Home._showGridOverlay(listEl, cols, card);
+    listEl.classList.add('un-reordering');
+    // The dashed, contents-hidden origin slot a real lift leaves behind
+    // (native.css .un-reorder-slot), on the card rather than on a tile.
+    card.classList.add('un-reorder-slot');
+    Home._previewDrop(card, { col: 0, row: 0 }, true, cols);
+    Home._incoming = null;
   },
 
   // Long-press actions for search/demo tiles and pen input. Placed touch
