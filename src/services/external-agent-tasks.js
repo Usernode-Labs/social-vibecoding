@@ -1033,10 +1033,26 @@ function buildWorkOrder({
       '',
       '2. SUBMIT IT YOURSELF, through the Usernode connector. Call `submit_work`',
       `   with taskId ${taskRef}, branch set to the name you actually pushed,`,
-      `   agent "${agentValue}", source "work_order", and a short title and`,
-      '   description for the people who will vote on it. It answers with a link',
-      '   to the new proposal — give that link to the user and tell them it is up',
-      '   for the group\'s vote.',
+      `   agent "${agentValue}", source "work_order", and a short title, plus`,
+      '   BOTH pieces of prose described next. It answers with a link to the new',
+      '   proposal — give that link to the user and tell them it is up for the',
+      '   group\'s vote.',
+      // The two-audience rule, at the moment it is acted on. An agent that
+      // sends only `description` produces a proposal whose About sheet shows
+      // a non-technical voter nothing but the diff explained in developer
+      // terms — the common case before `summary` existed, and the reason the
+      // sheet has two sections at all. The charter says the same thing; this
+      // is the copy that gets read, because it sits in the step.
+      '   `summary` is the USER-FACING half and the first thing a voter reads:',
+      '   one to three short sentences of plain everyday English saying what',
+      '   changes for somebody USING the app — what looks different, what they',
+      '   can now do, what stops going wrong. No file names, no identifiers, no',
+      '   code, no developer vocabulary.',
+      '   `description` is the TECHNICAL half: it becomes the pull request body',
+      '   and sits behind a collapsed "Technical details" section, so',
+      '   implementation, trade-offs and testing detail belong there and are not',
+      '   lost. Write the summary from what the person voting would NOTICE, not',
+      '   from what you edited. Not every member of the group is a developer.',
       // Without these two, an imported proposal has no testing metadata at
       // all: the capture step falls back to the app's home page, and the
       // people voting get a before/after pair of a screen the change never

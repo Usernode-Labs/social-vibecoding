@@ -1518,6 +1518,33 @@ async function runTests(browser, tests, opts) {
   const o = opts || {};
   const concurrency = Math.max(1, Number(o.concurrency) || 8);
   const perTestMs = Number(o.testTimeoutMs) > 0 ? Number(o.testTimeoutMs) : 25000;
+  // The one navigation every group performs, budgeted explicitly.
+  //
+  // It never was. `perTestMs` is documented as the PER-CHECK wall clock, and
+  // the group budget spent it on the whole group — cold load, settle and the
+  // first check's assertion together — while GROUP_EXTRA_CHECK_MS gave each
+  // check past the first its own second. So a group of TWO had a spare second
+  // of slack for the navigation and a group of ONE had none, even though the
+  // comment on GROUP_EXTRA_CHECK_MS names "the navigation + settle sleeps" as
+  // the expensive part and each extra check as milliseconds. That is backwards:
+  // the cost the whole group shares is the one the formula omitted, and 146 of
+  // this repo's 236 routes carry a single check.
+  //
+  // The second, worse consequence was diagnostic. NAV_TIMEOUT_MS (30s) bounds
+  // the navigation, and it EXCEEDED a lone group's entire 25s budget, so the
+  // group race always resolved first: a load that was merely slow could not
+  // report as a navigation timeout, only as "did not finish within 25s" — a
+  // message that cannot distinguish a page that never loaded from an assertion
+  // that failed. Budgeting the navigation separately puts the group ceiling
+  // above NAV_TIMEOUT_MS, so the navigation gets to fail as itself.
+  //
+  // Sized at perTestMs rather than at NAV_TIMEOUT_MS: it scales with the one
+  // knob callers already tune (TEST_TIMEOUT_MS, and the suites here), and
+  // 25s + 25s clears the 30s navigation bound with room for the settle. These
+  // are CAPS, not sleeps — a healthy group still finishes in seconds and never
+  // reaches this — so the cost is paid only by pages that are genuinely stuck,
+  // and a stuck navigation is itself bounded by NAV_TIMEOUT_MS.
+  const navBudgetMs = Number(o.navBudgetMs) > 0 ? Number(o.navBudgetMs) : perTestMs;
   const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 570000;
   const now = typeof o.now === 'function' ? o.now : () => Date.now();
 
@@ -1543,6 +1570,7 @@ async function runTests(browser, tests, opts) {
   const runOne = async (group, { counts = true } = {}) => {
     const cohortCount = cohortsOf(group).length;
     const groupBudgetMs = perTestMs
+      + navBudgetMs
       + GROUP_EXTRA_CHECK_MS * (group.length - 1)
       + GROUP_EXTRA_COHORT_MS * Math.max(0, cohortCount - 1);
     let timer = null;
