@@ -14,7 +14,8 @@
  * used to do from outside React, and Cancel and the backdrop click are
  * rendered handlers rather than listeners `App.bindEvents` attached.
  *
- * DOES NOT OWN: anything inside the card. The target pills, the title and
+ * DOES NOT OWN: anything inside the card, including the first-feedback
+ * confirmation. The target pills, the title and
  * description fields, the screenshot row, the two opt-in rows and the status
  * line are written by `./feedback-controller` — the retired ~810-line block
  * from `App.bindEvents`, whose header explains why it is still imperative.
@@ -40,6 +41,7 @@ import { useDialog } from './use-dialog';
 /** Reserved for callers that still pass `{ fromDev: true }` — see #226/#312. */
 interface OpenOptions {
   fromDev?: boolean;
+  firstFeedback?: { userId: number; appSlug: string | null; issueNumber: number; canFix: boolean };
 }
 
 export function FeedbackDialog() {
@@ -62,6 +64,7 @@ export function FeedbackDialog() {
       {...dialog.backdropProps}
     >
       <DialogCard size="sm">
+        <div id="feedback-form">
         <h2 className="text-lg font-bold mb-4">
           Send Feedback
         </h2>
@@ -285,6 +288,24 @@ export function FeedbackDialog() {
             Submit
           </Button>
         </div>
+        </div>
+        <section id="feedback-first-success" className="hidden" aria-labelledby="feedback-first-title" tabIndex={-1}>
+          <h2 id="feedback-first-title" className="text-xl font-bold mb-3">
+            Congratulations on your first feedback!
+          </h2>
+          <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
+            You’ve helped make this app better. Want to take the next step?
+          </p>
+          <p id="feedback-first-notice" className="text-sm text-emerald-700 dark:text-emerald-400 mb-4" role="status"></p>
+          <div className="flex flex-col gap-3">
+            <Button id="feedback-first-fix" disabledStyle="block" className="min-h-[44px]">Try a fix yourself</Button>
+            <p id="feedback-first-fix-note" className="text-xs text-zinc-500 dark:text-zinc-400">
+              Start with a draft you can edit before sending it to the coding agent.
+            </p>
+            <Button id="feedback-first-board" variant="neutral" ink="neutral" disabledStyle="block" className="min-h-[44px]">See this app’s board</Button>
+            <Button id="feedback-first-done" variant="unstyled" ink="muted" className="min-h-[44px]">Done</Button>
+          </div>
+        </section>
       </DialogCard>
     </DialogRoot>
   );

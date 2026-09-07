@@ -579,6 +579,18 @@
       "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)"
     },
     {
+      "name": "First feedback is congratulated in a lasting confirmation (#1583)",
+      "path": "/?shot=feedback-first#app/usernode-2d5619/dev",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-first-success:not(.hidden)",
+      "expectText": "Congratulations on your first feedback!"
+    },
+    {
+      "name": "First feedback offers an editable fix and this app's board (#1583)",
+      "path": "/?shot=feedback-first#app/usernode-2d5619/dev",
+      "expectSelector": "#feedback-first-success:not(.hidden):has(#feedback-first-fix:not(:disabled)) #feedback-first-board:not(:disabled)",
+      "expectText": "Try a fix yourself"
+    },
+    {
       "name": "The bounty checkbox is disabled once the weekly allowance is spent (#964)",
       "path": "/?shot=feedback-spent",
       "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:disabled"
