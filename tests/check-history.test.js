@@ -51,15 +51,19 @@ const tests = (n, from = 0) => Array.from({ length: n }, (_, i) => ({
 
 // ── loadGraduated ──────────────────────────────────────────────────────
 
-test('loadGraduated returns the keys that have ever passed', async () => {
+test('loadGraduated returns the keys with a long enough run of passes', async () => {
   const pool = makePool((text) => (
     /SELECT check_key/.test(text) ? { rows: [{ check_key: 'aaa' }, { check_key: 'bbb' }] } : null
   ));
   const set = await checkHistory.loadGraduated(pool, 7);
   assert.ok(set.has('aaa') && set.has('bbb'));
   assert.equal(set.size, 2);
-  assert.match(pool.sql(0), /first_passed_at IS NOT NULL/,
-    'graduation is derived from first_passed_at, never from a stored flag');
+  // The bar used to be a single observed pass, which let a check that is
+  // flaky from birth graduate on its first lucky run and then gate every
+  // proposal, permanently, since there is no demotion.
+  assert.match(pool.sql(0), /consecutive_passes, 0\) >= \$2/,
+    'graduation is a run of passes, still derived and never a stored flag');
+  assert.doesNotMatch(pool.sql(0), /first_passed_at IS NOT NULL/);
 });
 
 test('an unreadable history makes everything advisory, not everything blocking', async () => {

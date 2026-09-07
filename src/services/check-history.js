@@ -7,16 +7,28 @@
 // the very next proposal on hundreds of failures it did not cause. So a
 // check's power is EARNED:
 //
-//   * observed passing at least once for this app → BLOCKING. A later
+//   * observed passing GRADUATION_PASSES times in a row → BLOCKING. A later
 //     failure blocks the merge, exactly like the 12 always did.
-//   * never observed passing                     → ADVISORY. It runs, its
-//     failures show on the card, but they do not block anybody.
+//   * anything less                                      → ADVISORY. It
+//     runs, its failures show on the card, but they do not block anybody.
 //
-// Graduation is derived, never stored: a check is blocking iff its row has
-// a non-null `first_passed_at`. There is no demotion — a graduated check
-// that starts failing STAYS blocking, which is the entire point. The
-// promotion path is automatic: fix an advisory check, it passes once, it is
-// a permanent guard rail from then on with no manifest edit and no ticket.
+// The bar used to be ONE pass, and that was the hole: a check that is flaky
+// from birth graduated on its first lucky run and blocked every proposal
+// afterwards, permanently, because there is no demotion. Ten consecutive
+// passes is not proof a check is deterministic — ten clean observations put
+// the 95% upper bound on its failure rate at roughly 3/10, not at zero —
+// but it is a bar a 1-in-20 flake clears about 60% of the time per window
+// rather than 95%, and the ten come from ten different builds on different
+// hosts with different caches, which is where the decorrelation is.
+//
+// There is still no demotion — a graduated check that starts failing STAYS
+// blocking, which is the entire point. What a graduated check that has
+// started failing intermittently now gets is VISIBILITY: `flakeRate` below
+// carries its lifetime fail ratio onto the proposal's checks row.
+//
+// The promotion path stays automatic: fix an advisory check, let it pass
+// ten runs running, and it is a permanent guard rail with no manifest edit
+// and no ticket.
 //
 // Keyed by appManifest.checkKey(name, path) — the same (name+path) pair the
 // reader de-duplicates on. Renaming a check mints a new key and drops it
@@ -35,6 +47,12 @@ const PRUNE_AFTER_DAYS = 90;
 // unbounded statement. Matches the reader's own ceiling.
 const MAX_ROWS_PER_RUN = appManifest.MAX_DECLARED_TESTS;
 
+// Consecutive observed passes a check needs before its failures block a
+// merge. Also the value the schema backfills onto every row that was
+// already graduated under the old one-pass rule, so raising the bar demotes
+// nothing that is gating today.
+const GRADUATION_PASSES = 10;
+
 // Every check this app has ever been seen passing. One query per checks
 // run; a few hundred rows is nothing.
 async function loadGraduated(pool, appId) {
@@ -43,8 +61,8 @@ async function loadGraduated(pool, appId) {
   try {
     const { rows } = await pool.query(
       `SELECT check_key FROM app_check_history
-        WHERE app_id = $1 AND first_passed_at IS NOT NULL`,
-      [appId]
+        WHERE app_id = $1 AND COALESCE(consecutive_passes, 0) >= $2`,
+      [appId, GRADUATION_PASSES]
     );
     for (const r of rows) out.add(r.check_key);
   } catch (err) {
@@ -98,12 +116,15 @@ async function bootstrapIfEmpty(pool, appId, declaredTests) {
     for (const t of head) {
       const base = params.length;
       params.push(appManifest.checkKey(t.name, t.path), String(t.name || ''), String(t.path || ''));
-      values.push(`($1, $${base + 1}, $${base + 2}, $${base + 3}, NOW(), NOW(), NOW())`);
+      // At the threshold, not at one: this row exists to REPRODUCE the
+      // gating set of build zero, so it has to be blocking immediately.
+      values.push(`($1, $${base + 1}, $${base + 2}, $${base + 3}, NOW(), NOW(), NOW(), ${GRADUATION_PASSES})`);
     }
     if (!values.length) return 0;
     await pool.query(
       `INSERT INTO app_check_history
-         (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at)
+         (app_id, check_key, check_name, check_path,
+          first_passed_at, last_passed_at, last_seen_at, consecutive_passes)
        VALUES ${values.join(', ')}
        ON CONFLICT (app_id, check_key) DO NOTHING`,
       params
@@ -161,14 +182,15 @@ async function recordRun(pool, appId, rows) {
       `INSERT INTO app_check_history AS h
          (app_id, check_key, check_name, check_path,
           first_passed_at, last_passed_at, last_failed_at, last_seen_at,
-          pass_count, fail_count)
+          pass_count, fail_count, consecutive_passes)
        SELECT v.app_id, v.check_key, v.check_name, v.check_path,
               CASE WHEN v.passed THEN NOW() ELSE NULL END,
               CASE WHEN v.passed THEN NOW() ELSE NULL END,
               CASE WHEN v.passed THEN NULL ELSE NOW() END,
               NOW(),
               CASE WHEN v.passed THEN 1 ELSE 0 END,
-              CASE WHEN v.passed THEN 0 ELSE 1 END
+              CASE WHEN v.passed THEN 0 ELSE 1 END,
+              CASE WHEN v.passed THEN 1 ELSE 0 END
          FROM (VALUES ${values.join(', ')})
               AS v(app_id, check_key, check_name, check_path, passed)
        ON CONFLICT (app_id, check_key) DO UPDATE SET
@@ -181,7 +203,13 @@ async function recordRun(pool, appId, rows) {
          last_failed_at = COALESCE(EXCLUDED.last_failed_at, h.last_failed_at),
          last_seen_at = NOW(),
          pass_count = h.pass_count + EXCLUDED.pass_count,
-         fail_count = h.fail_count + EXCLUDED.fail_count`,
+         fail_count = h.fail_count + EXCLUDED.fail_count,
+         -- The one counter that goes DOWN. EXCLUDED's value is 1 on a pass
+         -- and 0 on a failure, so this reads as "extend the run, or start
+         -- it again from nothing". It is the only reason a check that
+         -- passes nine times and fails once does not gate.
+         consecutive_passes = CASE WHEN EXCLUDED.consecutive_passes > 0
+           THEN COALESCE(h.consecutive_passes, 0) + 1 ELSE 0 END`,
       params
     );
     await pool.query(
@@ -196,8 +224,48 @@ async function recordRun(pool, appId, rows) {
   }
 }
 
+// Lifetime flake rate per check, for the proposal's checks row.
+//
+// A graduated check that has started failing intermittently keeps blocking
+// — that is the no-demotion rule and it is deliberate — but until now it
+// did so silently, and the four checks that reddened this app's own merges
+// were exactly that. `fail_count / (pass_count + fail_count)` over the
+// row's whole life is the cheapest honest signal: it is already stored, it
+// needs no extra runs, and a check that alternates shows up immediately.
+//
+// Returns a Map of check_key -> { passes, fails, rate }. `rate` is null
+// below MIN_OBSERVATIONS, because two runs cannot tell 50% from bad luck.
+const MIN_OBSERVATIONS = 5;
+
+async function loadFlakeRates(pool, appId) {
+  const out = new Map();
+  if (!pool || !appId) return out;
+  try {
+    const { rows } = await pool.query(
+      `SELECT check_key, pass_count, fail_count FROM app_check_history
+        WHERE app_id = $1 AND fail_count > 0`,
+      [appId]
+    );
+    for (const r of rows) {
+      const passes = parseInt(r.pass_count, 10) || 0;
+      const fails = parseInt(r.fail_count, 10) || 0;
+      const seen = passes + fails;
+      out.set(r.check_key, {
+        passes, fails, rate: seen >= MIN_OBSERVATIONS ? fails / seen : null,
+      });
+    }
+  } catch (err) {
+    // Cosmetic data: a failed read costs a chip, never a verdict.
+    log.warn('check-history', 'Flake-rate load failed (non-fatal)', { appId, err: err.message });
+  }
+  return out;
+}
+
 module.exports = {
   loadGraduated,
+  loadFlakeRates,
+  GRADUATION_PASSES,
+  MIN_OBSERVATIONS,
   hasHistory,
   bootstrapIfEmpty,
   recordRun,

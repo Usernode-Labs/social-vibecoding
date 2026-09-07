@@ -688,6 +688,11 @@ function classifyTests(frames, expectedCount, options) {
       // rewriting the name, so the check reads identically whichever power
       // it currently has.
       advisory: pass ? false : !graduated,
+      // How often this check has failed across its whole recorded life.
+      // Carried on PASSING rows too: a check that passes today and failed
+      // four times last week is the one worth knowing about, and a chip
+      // that only ever appears beside a red row would never say so.
+      flakeRate: d.flakeRate != null ? d.flakeRate : null,
       consoleErrors: normalizeConsoleErrors(frame.consoleErrors),
       failureReason: pass ? '' : String(frame.failureReason || '').slice(0, CONSOLE_MAX_MSG_LEN),
     });
@@ -1813,11 +1818,17 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         // to enforce, so turning this on never OPENS a gate that was closed.
         await checkHistory.bootstrapIfEmpty(pool, app.id, declaredTests);
         const graduated = await checkHistory.loadGraduated(pool, app.id);
+        // Cosmetic, and loaded beside the gating set so it costs one more
+        // query per run rather than one per check. A check with no failures
+        // in its whole history is simply absent from the map.
+        const flakes = await checkHistory.loadFlakeRates(pool, app.id);
         dispatched = tests.map((t) => {
           const key = appManifest.checkKey(t.name, t.path);
+          const flake = flakes.get(key);
           return {
             index: t.index, checkKey: key, name: t.name, path: t.path,
             graduated: graduated.has(key),
+            flakeRate: (flake && flake.rate != null) ? flake.rate : null,
           };
         });
       } catch (err) {
