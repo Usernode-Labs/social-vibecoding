@@ -348,16 +348,16 @@
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "4ac99c0eca6fdce41b58",
+      "fingerprint": "bc985dc7d04a921eaa79",
       "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${DONE_EXPR})::int AS done, COALESCE( array_agg(COALESCE(c.reward, ct.reward)) FILTER (WHERE NOT (${DONE_"
+      "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
     },
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "f42a87aa607f67670a39",
+      "fingerprint": "c714fb518d47b4a81b6f",
       "count": 1,
-      "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
+      "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${totalSql(doneExpr)})::int AS done, COALESCE( array_agg(COALESCE(c.reward, ct.reward)) FILTER (WHERE NOT"
     },
     {
       "source": "src/routes/kudos.js",
@@ -1002,6 +1002,13 @@
       "fingerprint": "07fc5c0dfd474d4567fc",
       "count": 1,
       "preview": "`SELECT ${appAccess.nonSecretAppColumnList()} FROM apps WHERE id = $1`"
+    },
+    {
+      "source": "src/services/topochain/challenge-onboarding.js",
+      "kind": "structural-template",
+      "fingerprint": "f5ca617f29f6a39ad971",
+      "count": 1,
+      "preview": "`/* challenge onboarding */ SELECT c.id, c.season_event_id, c.challenge_template_id, c.display_order, c.enabled, c.completed, COALESCE(c.schedule_start, ct.sche"
     },
     {
       "source": "src/services/topochain/db-console-role.js",

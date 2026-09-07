@@ -38,6 +38,9 @@
 // points plus `featured`, keyed by the same challenges.id the public endpoint
 // returns. It is strictly DECORATIVE: a 401/422/network failure leaves the
 // public grid exactly as it rendered, with no error banner.
+// The public response itself now applies onboarding before first paint and
+// carries its progress, so a failed decoration request cannot reveal locked
+// challenges or mistake an organiser's archive flag for personal completion.
 //
 // COMPLETION (#981): `completed` is a column on the challenges row — an
 // organiser flag about the CHALLENGE ("this one is over"), not a per-user
@@ -102,6 +105,7 @@ const TopochainChallenges = {
   // Empty map = no personalization available (signed out, request failed);
   // the grid renders identically, just without the "you" decorations.
   _mine: new Map(),
+  _onboarding: null,
   // Unsubscribe handle from TopochainEventContext.onChange.
   _unsub: null,
   // The event id `_challenges` was last loaded for. `undefined` until the
@@ -244,6 +248,7 @@ const TopochainChallenges = {
       TopochainChallenges._challengesLoading = false;
       TopochainChallenges._challengesError = null;
       TopochainChallenges._mine = new Map();
+      TopochainChallenges._onboarding = null;
       TopochainChallenges._renderGrid();
       return;
     }
@@ -251,6 +256,9 @@ const TopochainChallenges = {
     TopochainChallenges._challengesLoading = true;
     TopochainChallenges._challengesError = null;
     TopochainChallenges._mine = new Map();
+    TopochainChallenges._onboarding = null;
+    // Drop the previous event's cards while resolving this viewer's gate.
+    TopochainChallenges._challenges = [];
     TopochainChallenges._renderGrid();
 
     const res = await TopochainChallenges.fetchJson(
@@ -262,6 +270,7 @@ const TopochainChallenges = {
     TopochainChallenges._challengesLoading = false;
     if (res.ok && res.data?.success && Array.isArray(res.data.data)) {
       TopochainChallenges._challenges = res.data.data;
+      TopochainChallenges._onboarding = res.data.onboarding || null;
     } else {
       TopochainChallenges._challenges = [];
       TopochainChallenges._challengesError = (res.data && res.data.error)
@@ -300,6 +309,9 @@ const TopochainChallenges = {
   // is only a fallback, so a stale/older public payload still gets the chip
   // for a signed-in viewer rather than silently losing it.
   _isDone(c) {
+    // Onboarding is per-user progress. `completed` remains the organiser's
+    // archive flag for older challenge lists that have no progress payload.
+    if (c?.progress) return c.progress.done === true;
     if (c && c.completed === true) return true;
     const m = TopochainChallenges._mine.get(Number(c && c.id)) || null;
     return !!(m && m.completed === true);
@@ -348,7 +360,7 @@ const TopochainChallenges = {
       });
       return;
     }
-    if (!TopochainChallenges._challenges.length) {
+    if (!TopochainChallenges._challenges.length && !TopochainChallenges._onboarding) {
       TopochainChallenges._maybeDeepLink([]);
       store?.set({ grid: { kind: 'empty' } });
       return;
@@ -369,6 +381,29 @@ const TopochainChallenges = {
     const firstDone = ordered.findIndex((c) => TopochainChallenges._isDone(c));
     const doneCount = firstDone === -1 ? 0 : ordered.length - firstDone;
     const cards = ordered.map((c, i) => TopochainChallenges.cardView(c, i));
+    const onboarding = TopochainChallenges._onboarding;
+    if (onboarding) {
+      const categories = onboarding.unlocked
+        ? [['PERSISTENT', 'Persistent challenges'], ['WEEKLY', 'Weekly challenges'], ['ONBOARDING', 'Onboarding']]
+        : [['ONBOARDING', 'Get started']];
+      const groups = categories.map(([category, heading]) => ({
+        key: category,
+        heading,
+        cards: cards.filter((c) => c.label.toUpperCase() === category),
+      })).filter((group) => group.cards.length);
+      const other = cards.filter((c) => !categories.some(([category]) => c.label.toUpperCase() === category));
+      if (other.length) groups.push({ key: 'other', heading: 'Season challenges', cards: other });
+      return {
+        kind: 'cards',
+        summary: `${onboarding.completed} of ${onboarding.total} onboarding challenges completed`,
+        notice: onboarding.unlocked
+          ? 'Persistent and weekly challenges are unlocked.'
+          : 'Complete these introductory challenges to unlock persistent and weekly challenges.',
+        onboardingEventId: !onboarding.unlocked && !groups.some((g) => g.key === 'ONBOARDING')
+          ? onboarding.event_id : null,
+        groups,
+      };
+    }
 
     // The "Completed" subheading only earns its row when there is something
     // on BOTH sides of it. Every public event in production is currently
@@ -389,6 +424,10 @@ const TopochainChallenges = {
       summary: `${doneCount} of ${ordered.length} challenges completed`,
       groups,
     };
+  },
+
+  _toOnboarding(eventId) {
+    if (eventId != null) window.TopochainEventContext?.select(Number(eventId));
   },
 
   // One card. `idx` is this challenge's position in the flat `ordered` array
