@@ -9041,7 +9041,13 @@ const AppView = {
     const runs = r && Number(r.runs);
     const fails = r && Number(r.fails);
     if (!Number.isFinite(runs) || runs < 2 || !Number.isFinite(fails) || fails < 1) return base;
-    const lead = `Failed ${fails} of ${runs} runs on this build.`;
+    // A check that failed and then passed when asked again is not blocking
+    // this merge, and the row is green — but it is the single most useful
+    // thing on the page for whoever owns that check, so it says so rather
+    // than swallowing the failure to keep the panel tidy.
+    const lead = (r && r.passedOnRetry)
+      ? `Failed ${fails} of ${runs} runs on this build, then passed when re-run.`
+      : `Failed ${fails} of ${runs} runs on this build.`;
     return base ? `${lead} ${base}` : lead;
   },
 
@@ -9077,6 +9083,9 @@ const AppView = {
       // the reason, because "it failed" and "it failed once out of three"
       // call for different next moves.
       reason: AppView._checkReason(r),
+      // A row that passed only after a retry keeps its reason line, which
+      // the verdict view otherwise drops for anything green.
+      keepReason: !!(r && r.passedOnRetry),
       errors: (Array.isArray(r && r.consoleErrors) ? r.consoleErrors : []).map((e) => ({
         kind: (e && e.kind) ? String(e.kind) : 'console',
         message: String((e && e.message) || '').slice(0, 500),

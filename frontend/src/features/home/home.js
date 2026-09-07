@@ -4133,8 +4133,21 @@ const Home = {
     // — the grid's post-commit effect, which is what puts this state back
     // after a repaint took `un-reordering` off #app-list — has no rail to
     // hand over anyway.
-    const card = document.querySelector(
-      '.home-discover-rail .app-card[data-slug]:not([data-demo])');
+    // A non-demo card FIRST, because that is what a real lift looks like:
+    // the recognizer ignores demo rows (#746), so a state painted on one
+    // would be showing a drag the gesture would not make.
+    //
+    // But not ONLY a non-demo card. Which apps land in these two lanes is
+    // data, and it moved under this state twice: curation (#1753) put demos
+    // behind "Show more", and a staging clone can fill both rails with rows
+    // that are all demo. A screenshot state that paints or does not paint
+    // depending on which apps happen to exist is a check that fails for
+    // reasons that have nothing to do with the feature it guards — which is
+    // exactly what it did. The fallback is a card, any card: this state is
+    // synthetic, it writes classes and a preview and clears itself, and it
+    // never reaches the recognizer that has a reason to care.
+    const card = document.querySelector('.home-discover-rail .app-card[data-slug]:not([data-demo])')
+      || document.querySelector('.home-discover-rail .app-card[data-slug]');
     if (!card || !card.dataset || !card.dataset.slug) return;
     const listEl = document.getElementById('app-list');
     if (!listEl || listEl.offsetParent === null) return; // not the visible grid

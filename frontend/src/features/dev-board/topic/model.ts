@@ -94,6 +94,12 @@ export interface CheckRow {
    * demotion — so this chip is the only thing that says it is doing so.
    */
   flaky?: number | null;
+  /**
+   * True when this row is GREEN only because a retry passed. The reason
+   * line is kept for it, which the renderer otherwise drops for a pass:
+   * the failure happened, it just did not reproduce.
+   */
+  keepReason?: boolean;
   reason?: string | null;
   errors?: { kind: string; message: string; source?: string | null }[];
 }
