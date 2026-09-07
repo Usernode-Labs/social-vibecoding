@@ -160,7 +160,7 @@ test('the staging build hands image progress on once a second, keeps the last on
   }
   const src = read('src/services/staging.js');
   assert.match(src, /onProgress: imageProgress\.report,/);
-  assert.match(src, /timings\.imagePhases = finalImage\.phases;/);
+  assert.match(src, /if \(reportedPhases\) timings\.imagePhases = reportedPhases;/);
   assert.match(read('src/services/application-runtime.js'), /kubernetes\.createBuild\(config, \{ app, environment, sessionId, revision, sourceDir, onProgress \}\)|kubernetes\.createBuild\(config, \{ app, revision, environment, sessionId, sourceDir, onProgress \}\)/);
   const build = visuals.buildProgressFromTimings({ imageBuildMs: 184000, imagePhases: [{ name: 'restore', ms: 20000 }, { name: 'build', ms: 121000.4 }, { name: 'export', ms: 35000 }] });
   assert.deepEqual(build.steps[0], { key: 'image_build', ms: 184000, phases: [{ name: 'restore', ms: 20000 }, { name: 'build', ms: 121000 }, { name: 'export', ms: 35000 }] });
@@ -207,6 +207,168 @@ test('the image step shows its phases and the running phase\'s line while buildi
   const dk = AppView._imageProgressView({ phase: 'shell', index: 4, total: 9, detail: 'RUN npm ci' });
   assert.equal(dk.doing, 'step 4 of 9 in shell: RUN npm ci');
   assert.deepEqual(plain(dk.phases).map((p) => [p.name, p.state]), [['shell', 'now']], 'no invented lifecycle for a stage list it was not given');
+});
+
+test('a runtime that reports no phases gets no phase row invented for it', () => {
+  // The bug this pins: `names.every(...)` is TRUE for an empty list, so an
+  // empty phase report was read as "these are all lifecycle names" and the
+  // whole buildpack lifecycle was drawn as pending. This deployment builds
+  // previews with docker, which reports a step COUNTER and no phases, so the
+  // topic page showed "analyze detect restore build export" during a build
+  // where none of those was running.
+  const AppView = makeAppView();
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  // The exact payload a docker build reported live (proposal 3888).
+  const docker = AppView._imageProgressView({ index: 6, phase: null, total: 36, detail: 'COPY frontend ./frontend' });
+  assert.deepEqual(plain(docker.phases), [], 'no phases were reported, so none are drawn');
+  assert.deepEqual(plain(docker.bar), { ran: 6, expected: 36 }, 'a counter is a fraction, so it draws as a bar');
+  assert.equal(docker.doing, 'step 6 of 36: COPY frontend ./frontend');
+  // Nothing at all reported: still no invented row.
+  assert.deepEqual(plain(AppView._imageProgressView({}).phases), []);
+  assert.equal(AppView._imageProgressView({}).bar, null);
+  // A REAL lifecycle report still gets its ordering and its pending tail.
+  const bp = AppView._imageProgressView({
+    phase: 'build',
+    phases: [{ name: 'prepare', ms: 3000 }, { name: 'analyze', ms: 1000 }, { name: 'detect', ms: 500 }, { name: 'restore', ms: 20000 }],
+    detail: "Running 'npm ci'",
+  });
+  assert.deepEqual(plain(bp.phases).map((x) => [x.name, x.state]), [
+    ['prepare', 'done'], ['analyze', 'done'], ['detect', 'done'], ['restore', 'done'], ['build', 'now'], ['export', 'todo'],
+  ]);
+  assert.equal(bp.bar, null, 'a lifecycle has no counter to draw a bar from');
+});
+
+test('the preview image builds with BuildKit, and falls back rather than failing the fleet', async () => {
+  // The classic builder runs the Dockerfile's two independent stages one
+  // after the other; BuildKit runs them together. The risk of the swap is a
+  // daemon that cannot do it — which must cost one retry, not every preview.
+  const cp = require('child_process');
+  const util = require('node:util');
+  const cpPath = require.resolve('child_process');
+  const dockerPath = require.resolve('../src/services/docker');
+  const origCp = require.cache[cpPath];
+  const origDocker = require.cache[dockerPath];
+  const calls = [];
+  let failFirstWith = null;
+  const fakeExecFile = (cmd, args, opts = {}) => {
+    calls.push({ cmd, args, buildkit: (opts.env || {}).DOCKER_BUILDKIT });
+    const child = { stdout: null, stderr: null };
+    const p = (calls.length === 1 && failFirstWith)
+      ? Promise.reject(Object.assign(new Error('build failed'), { stderr: failFirstWith }))
+      : Promise.resolve({ stdout: '', stderr: '' });
+    p.child = child;
+    return p;
+  };
+  fakeExecFile[util.promisify.custom] = fakeExecFile;
+  require.cache[cpPath] = {
+    id: cpPath, filename: cpPath, loaded: true, paths: [], exports: { ...cp, execFile: fakeExecFile },
+  };
+  delete require.cache[dockerPath];
+  try {
+    const docker = require(dockerPath);
+    // Default: BuildKit, with plain progress so the output stays parseable.
+    const out = await docker.buildImage('/ctx', 'img:1');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].buildkit, '1');
+    assert.ok(calls[0].args.includes('--progress=plain'), 'the redrawing renderer would blind the step observer');
+    assert.equal(out.buildKit, true);
+
+    // A daemon without BuildKit: ONE retry on the classic builder.
+    calls.length = 0;
+    failFirstWith = 'ERROR: BuildKit is enabled but the buildkit component is inoperable';
+    const fell = await docker.buildImage('/ctx', 'img:2');
+    assert.equal(calls.length, 2, 'retried once');
+    assert.deepEqual(calls.map((c) => c.buildkit), ['1', '0']);
+    assert.ok(!calls[1].args.includes('--progress=plain'), 'the classic builder is not given a BuildKit flag');
+    assert.equal(fell.buildKit, false);
+
+    // A BROKEN DOCKERFILE is not a builder problem: it must fail once.
+    calls.length = 0;
+    failFirstWith = 'ERROR: failed to solve: process "/bin/sh -c npm ci" did not complete successfully: exit code 1';
+    await assert.rejects(docker.buildImage('/ctx', 'img:3'), (err) => {
+      assert.equal(err.buildFailed, true, 'still carries the diagnosable tail');
+      return true;
+    });
+    assert.equal(calls.length, 1, 'a failing build is never built twice');
+
+    assert.equal(docker.buildKitUnavailable({ stderr: 'buildkit not supported by daemon' }), true);
+    assert.equal(docker.buildKitUnavailable({ stderr: 'npm ERR! code ELIFECYCLE' }), false);
+    assert.equal(docker.buildKitUnavailable({}), false);
+  } finally {
+    if (origCp) require.cache[cpPath] = origCp; else delete require.cache[cpPath];
+    delete require.cache[dockerPath];
+    if (origDocker) require.cache[dockerPath] = origDocker;
+  }
+});
+
+test('BuildKit can be turned off without a code change', () => {
+  const src = read('src/services/docker.js');
+  assert.match(src, /const v = String\(process\.env\.STAGING_BUILDKIT \?\? '1'\)/);
+  assert.match(src, /DOCKER_BUILDKIT: useBuildKit \? '1' : '0'/);
+  // BuildKit's own step format is the one the observer already reads.
+  assert.deepEqual(require('../src/services/docker').parseDockerBuildLine('#7 [shell 4/9] RUN npm ci --ignore-scripts'),
+    { index: 4, total: 9, phase: 'shell', detail: 'RUN npm ci --ignore-scripts' });
+});
+
+test('the four-step pipeline draws as a segmented bar', () => {
+  const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
+  assert.match(tsx, /className="dev-ledger-build-bar"/);
+  assert.match(tsx, /data-build-progress=\{`\$\{doneCount\}\/\$\{steps\.length\}`\}/);
+  assert.match(tsx, /<span key=\{s\.key\} className=\{`dev-ledger-build-seg is-\$\{s\.state\}`\} data-step=\{s\.key\} \/>/);
+  assert.match(tsx, /const doneCount = steps\.filter\(\(s\) => s\.state === 'done'\)\.length;/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-ledger-build-seg \{[^}]*flex: 1 1 0;/, 'equal widths: a position, not a prediction');
+  assert.match(css, /\.dev-ledger-build-seg\.is-done \{ background: var\(--dc-ok, #16a34a\); \}/);
+  assert.match(css, /\.dev-ledger-build-seg\.is-now \{[^}]*animation:/);
+  assert.match(css, /prefers-reduced-motion: reduce\) \{\n\s+\.dev-ledger-build-seg\.is-now \{ animation: none; \}/);
+});
+
+test('the build rows separate their labels with real text, not only a flex gap', () => {
+  const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
+  // A separator that exists only in CSS is invisible to a copy, a screen
+  // reader, and any render that arrives before the stylesheet.
+  assert.match(tsx, /\{i > 0 \? <span className="dev-ledger-build-sep"> · <\/span> : null\}/);
+  assert.equal((tsx.match(/dev-ledger-build-sep/g) || []).length, 2, 'both the step row and the phase row');
+  assert.match(read('public/css/app.css'), /\.dev-ledger-build-sep \{ opacity: 0\.45; \}/);
+});
+
+test('a docker build records which step cost the time', async () => {
+  // "image build: 3m 4s" is not a diagnosis. A step's cost is the gap
+  // between its line and the next one's, so the slowest few name themselves.
+  let clock = 1000;
+  const timings = {};
+  const saved = { set: visuals.setChecksBuildProgress, notify: visuals.notifyChecksBuildProgress };
+  visuals.setChecksBuildProgress = async () => true;
+  visuals.notifyChecksBuildProgress = () => {};
+  try {
+    const r = staging._makeImageProgressReporterForTest({}, { id: 5 }, timings, clock, () => clock);
+    const step = (index, detail, ms) => { r.report({ index, total: 36, detail }); clock += ms; };
+    step(1, 'FROM node:22-alpine AS shell', 500);
+    step(2, 'COPY frontend/package.json frontend/package-lock.json ./', 1000);
+    step(3, 'RUN npm ci --ignore-scripts', 61000);
+    step(4, 'COPY frontend ./frontend', 2000);
+    step(5, 'RUN node frontend/scripts/build-shell.mjs', 34000);
+    step(6, 'RUN npm ci --production', 45000);
+    r.close();
+    const slow = r.slowestSteps();
+    assert.deepEqual(slow.map((x) => x.name), [
+      'RUN npm ci --ignore-scripts', 'COPY frontend ./frontend', 'RUN node frontend/scripts/build…', 'RUN npm ci --production',
+    ], 'the slowest four, back in the order they ran');
+    assert.deepEqual(slow.map((x) => x.ms), [61000, 2000, 34000, 45000]);
+    // A long instruction is truncated to stay a label.
+    assert.equal(staging._imageStepLabelForTest('RUN npm ci --no-audit --no-fund --loglevel=error', 3).length, 32);
+    assert.equal(staging._imageStepLabelForTest('', 7), 'step 7');
+    // Nothing counted (the kpack path) reports nothing rather than an empty row.
+    const empty = staging._makeImageProgressReporterForTest({}, { id: 6 }, {}, clock, () => clock);
+    empty.close();
+    assert.equal(empty.slowestSteps(), null);
+  } finally {
+    visuals.setChecksBuildProgress = saved.set;
+    visuals.notifyChecksBuildProgress = saved.notify;
+  }
+  const src = read('src/services/staging.js');
+  assert.match(src, /const countedSteps = reportedPhases \? null : imageProgress\.slowestSteps\(\);/);
+  assert.match(src, /else if \(countedSteps && countedSteps\.length\) timings\.imagePhases = countedSteps;/);
 });
 
 test('the finished image step names its phases so a slow build says where the time went', () => {
