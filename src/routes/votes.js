@@ -1631,6 +1631,7 @@ function mergedRowSelect() {
            -- showing one opaque "still running". NULL = legacy wording.
            cs.check_phase,
            cs.check_trigger,
+           cs.checks_progress,
            -- Platform-variables pre-merge check (display mirror; the merge
            -- gate re-evaluates live).
            cs.platform_env_state, cs.platform_env_detail,
@@ -2864,7 +2865,7 @@ function voteRoutes(config) {
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status,
                 cs.created_at, cs.promoted_at,
                 cs.merge_conflict_state, cs.behind_main,
-                cs.check_state, cs.check_error_detail, cs.check_phase, cs.check_trigger,
+                cs.check_state, cs.check_error_detail, cs.check_phase, cs.check_trigger, cs.checks_progress,
                 -- #1442: the same freshness cache /promoted reads, so the
                 -- home strip's pill and the proposal card cannot disagree
                 -- about whether a proposal is ready to merge.
@@ -3109,6 +3110,7 @@ function voteRoutes(config) {
            -- showing one opaque "still running". NULL = legacy wording.
            cs.check_phase,
            cs.check_trigger,
+           cs.checks_progress,
            -- Platform-variables pre-merge check (display mirror; the merge
            -- gate re-evaluates live).
            cs.platform_env_state, cs.platform_env_detail,

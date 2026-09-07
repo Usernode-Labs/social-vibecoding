@@ -40,6 +40,7 @@ import type {
   TextRun,
   TopicBody,
   TranscriptSection,
+  LedgerProgress,
 } from './model';
 
 function call(fn: string, ...args: unknown[]): void {
@@ -164,6 +165,24 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
   );
 }
 
+/**
+ * The checks row's bar while a run is in flight. Three segments over one
+ * track — passed, failed, remaining — sized against the declared count when
+ * it is known and against `ran` when it is not. The numbers are also in the
+ * row's `sub`, so the bar carries no information a screen reader cannot get
+ * from the text; it is marked decorative for that reason.
+ */
+function Progress({ p }: { p: LedgerProgress }): ReactNode {
+  const total = p.expected && p.expected > 0 ? p.expected : Math.max(p.ran, 1);
+  const pct = (n: number) => `${Math.max(0, Math.min(100, (n / total) * 100))}%`;
+  return (
+    <span className="dev-ledger-progress" aria-hidden="true" data-checks-progress={`${p.ran}/${p.expected ?? '?'}`}>
+      <span className="dev-ledger-progress-pass" style={{ width: pct(p.passed) }} />
+      <span className="dev-ledger-progress-fail" style={{ width: pct(p.failed) }} />
+    </span>
+  );
+}
+
 function Roster({ r }: { r: RosterView }): ReactNode {
   if (r.phase === 'hidden') return null;
   return (
@@ -201,6 +220,7 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
             </span>
             <span className="dev-ledger-v">
               {r.text.length ? <span className="dev-ledger-text"><Runs parts={r.text} /></span> : null}
+              {r.progress ? <Progress p={r.progress} /> : null}
               {r.roster ? <Roster r={r.roster} /> : null}
               {(r.foot || []).map((f, i) => <span key={i} className="dev-ledger-foot"><Runs parts={f} /></span>)}
               {(r.warnFoot || []).map((f, i) => (

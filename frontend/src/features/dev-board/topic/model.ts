@@ -123,6 +123,16 @@ export type DetailBlock =
  * amber provenance notes. `key` is the row's `data-note`, which is what the
  * declared checks address a row by (`mergeability`, `checks`, `env`, …).
  */
+/** A run in flight: what the capture container has reported so far. */
+export interface LedgerProgress {
+  ran: number;
+  passed: number;
+  failed: number;
+  /** Declared check count, when known; null while it is not. */
+  expected: number | null;
+  done?: boolean;
+}
+
 export interface LedgerRow {
   key: string;
   tone: 'bad' | 'warn' | 'ok' | 'vote' | 'mute' | 'progress';
@@ -143,6 +153,8 @@ export interface LedgerRow {
   passes?: CheckRow[] | null;
   /** The votes row's roster. */
   roster?: RosterView | null;
+  /** The checks row's live progress while the run is pending. */
+  progress?: LedgerProgress | null;
   actions?: ActionSpec[];
   /** Extra attributes on the row — `data-checks-base="superseded"` for one check. */
   attrs?: Record<string, string>;

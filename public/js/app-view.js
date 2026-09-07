@@ -3919,6 +3919,90 @@ const AppView = {
   // covers missed pushes (disconnect, laptop waking from sleep). Called
   // after every dev-data load, so the interval self-clears on the load
   // that finds nothing in progress.
+  // ── Live patches from WS events (no refetch) ─────────────────────────
+  //
+  // The checks_ready / behind_main / freshness / sync_status events already
+  // carry the fields the ledger reads; until now the topic page threw the
+  // payload away and refetched five endpoints to learn what it had just been
+  // told. Each helper finds the proposal's row in the cached lists, writes
+  // the same keys the row would carry after a refetch, and repaints the head
+  // from the cache. A row the lists do not hold (a topic opened from beyond
+  // the cached pages) falls back to the refetch path.
+  _topicRowFor(sessionId) {
+    const id = Number(sessionId);
+    if (!Number.isFinite(id)) return null;
+    return (AppView._proposals || []).find((p) => p && Number(p.id) === id)
+      || (AppView._merged || []).find((p) => p && Number(p.id) === id)
+      || (AppView._topicProposal && Number(AppView._topicProposal.id) === id ? AppView._topicProposal : null)
+      || null;
+  },
+  _repaintTopicIfShowing(sessionId) {
+    const t = AppView._devTopic;
+    if (!t || t.kind !== 'proposal' || Number(t.id) !== Number(sessionId)) return;
+    if (typeof App === 'undefined' || App.currentTab !== 'dev' || App.currentSubTab !== 'topic') return;
+    AppView._renderTopicHead();
+  },
+  patchTopicProposal(sessionId, patch) {
+    const row = AppView._topicRowFor(sessionId);
+    if (!row || !patch) return false;
+    for (const [k, v] of Object.entries(patch)) {
+      if (v !== undefined) row[k] = v;
+    }
+    AppView._repaintTopicIfShowing(sessionId);
+    return true;
+  },
+  // checks_ready with checkState 'pending' carries phase/trigger/progress —
+  // patch and repaint. A final verdict carries no test_results, so that one
+  // still refetches, but through the 'checks' kind, which keeps the roster.
+  applyChecksEvent(data) {
+    if (!data || data.sessionId == null) return;
+    const state = data.checkState || null;
+    if (state === 'pending') {
+      const patched = AppView.patchTopicProposal(data.sessionId, {
+        check_state: 'pending',
+        check_phase: data.checkPhase === undefined ? undefined : (data.checkPhase || null),
+        check_trigger: data.checkTrigger === undefined ? undefined : (data.checkTrigger || null),
+        checks_commit_sha: data.commitSha === undefined ? undefined : (data.commitSha || null),
+        checks_progress: data.progress === undefined ? undefined : (data.progress || null),
+        // A run that just started: the row's checked_at is when it started.
+        ...(data.progress ? {} : { checks_checked_at: new Date().toISOString() }),
+      });
+      if (patched) return;
+    }
+    AppView.refreshDevData('checks');
+  },
+  // Mirrors DevChat.applyBehindMainUpdate for the topic page's own row.
+  applyBehindMainEvent(sessionId, behindMain) {
+    if (typeof behindMain !== 'number') return;
+    AppView.patchTopicProposal(sessionId, { behind_main: behindMain });
+  },
+  // Mirrors DevChat.applyFreshnessUpdate: the `freshness` block AND the flat
+  // columns, because _freshnessOf accepts either shape.
+  applyFreshnessEvent(data) {
+    if (!data || data.sessionId == null) return;
+    const f = (data.freshness && typeof data.freshness === 'object') ? data.freshness : {};
+    const patch = { freshness: f };
+    if (typeof data.behindMain === 'number') patch.behind_main = data.behindMain;
+    if (f.behindBy !== undefined) patch.freshness_behind_by = f.behindBy;
+    if (f.aheadBy !== undefined) patch.freshness_ahead_by = f.aheadBy;
+    if (f.checkedAt !== undefined) patch.freshness_checked_at = f.checkedAt;
+    if (f.error !== undefined) patch.freshness_error = f.error;
+    if (f.mainSha !== undefined) patch.freshness_main_sha = f.mainSha;
+    if (f.mergeBaseSha !== undefined) patch.freshness_merge_base_sha = f.mergeBaseSha;
+    if (f.mergeability !== undefined) patch.mergeability = f.mergeability;
+    if (f.mergeabilityFiles !== undefined) patch.mergeability_files = f.mergeabilityFiles;
+    if (f.mergeabilityFilesComplete !== undefined) patch.mergeability_files_complete = f.mergeabilityFilesComplete;
+    AppView.patchTopicProposal(data.sessionId, patch);
+  },
+  // sync_status: 'running' marks the row as resolving (the conflict note
+  // stands down while an attempt is live); 'done'/'failed' clears it and the
+  // persisted state lands on the next refetch, which DevChat already triggers.
+  applySyncStatusEvent(data) {
+    if (!data || data.sessionId == null) return;
+    const running = data.state === 'running' || data.state === 'started';
+    AppView.patchTopicProposal(data.sessionId, { resolving: running });
+  },
+
   _checksPollHandle: null,
   _syncChecksPoll(proposals) {
     const inProgress = Array.isArray(proposals) && proposals.some((pr) =>
@@ -3941,6 +4025,7 @@ const AppView = {
         return;
       }
       if (document.hidden) return;
+      // 'checks-poll' is not 'vote': the roster survives the tick.
       AppView.refreshDevData('checks-poll');
     }, 20000);
   },
@@ -3957,7 +4042,14 @@ const AppView = {
       // cache entry is dropped HERE rather than in `_renderTopicHead`,
       // which repaints far more often than the data changes — a vote
       // arriving over the WS is a refresh, a repaint is not.
-      if (AppView._devTopic) delete AppView._voteRoster[AppView._devTopic.id];
+      // Only a VOTE invalidates the roster. Every other refresh (a checks
+      // phase event, the 20s checks poll, a sync-status change) used to
+      // delete it too, so the head republished with `roster: {phase:
+      // 'loading'}` — "Loading votes…" — and then again when the roster
+      // refetch landed: two paints per event, the first one blank. Voters
+      // watched the tally flicker on a timer while nothing about it changed.
+      // The roster now stays on screen until a vote actually moves it.
+      if (kind === 'vote' && AppView._devTopic) delete AppView._voteRoster[AppView._devTopic.id];
       // _refreshTopicOnDemandRow between the two: _loadDevData refreshes the
       // lists, and a topic the lists do not hold would otherwise repaint
       // from a snapshot frozen when the page opened. It no-ops for every
@@ -7744,6 +7836,8 @@ const AppView = {
       const row = {
         key: box.key, tone: toneOf(box.tone), spinner: !!box.spinner,
         label: labels[box.key] || strip(box.heading),
+        sub: box.sub || null,
+        progress: box.progress || null,
         text: labels[box.key] ? [strip(box.heading)] : [],
         foot: [], list: null, actions: box.action ? [box.action] : [],
       };
@@ -8368,6 +8462,27 @@ const AppView = {
   // skipped — plus the legacy console fallback. Each is one note box; the
   // pass/fail verdict has its own shape (_checksVerdictView below), because
   // its rows nest and its passing rows fold away.
+  // The run's live counts as the three shapes the UI needs: a bar (ran /
+  // passed / failed / expected), a one-line `sub` for under the label, and a
+  // sentence for the note. Null until the first frame has been recorded.
+  _checksProgressView(pr) {
+    const p = pr && pr.checks_progress;
+    if (!p || typeof p !== 'object') return null;
+    const n = (v) => (Number.isInteger(v) && v >= 0 ? v : 0);
+    const ran = n(p.ran); const passed = n(p.passed); const failed = n(p.failed);
+    const expected = Number.isInteger(p.expected) && p.expected > 0 ? p.expected : null;
+    if (!ran && !expected) return null;
+    const of = expected ? ` of ${expected}` : '';
+    const bits = [`${ran}${of} run`, `${passed} passed`];
+    if (failed) bits.push(`${failed} failed`);
+    const sub = bits.join(' · ');
+    // A colon, not a dash: the count is a label and this is its value (#1389).
+    const sentence = expected
+      ? `${ran} of ${expected} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`
+      : `${ran} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`;
+    return { bar: { ran, passed, failed, expected, done: !!p.done }, sub, sentence };
+  },
+
   _checksStatusNotes(pr) {
     if (!pr) return [];
     const state = pr.check_state;
@@ -8420,9 +8535,19 @@ const AppView = {
       const why = AppView._checksTriggerCopy(pr.check_trigger);
       if (why) rows.push({ t: 'line', parts: [why], weight: 'foot' });
       if (stale) rows.push({ t: 'line', parts: ['If this has been running for a while, the platform re-runs the checks automatically, or re-run them now.'], weight: 'foot' });
+      // Live progress, when the run has reported any. `progress` is drawn as
+      // a bar by the ledger row; `sub` is the same fact as text under the
+      // label. Neither exists before the first frame, so a build-phase run
+      // reads exactly as it did.
+      const progress = AppView._checksProgressView(pr);
+      if (progress) {
+        rows.splice(1, 0, { t: 'line', parts: [progress.sentence] });
+      }
       return [{
         key: 'checks', tone: 'neutral', spinner: true,
         heading: phase.title, rows, action: stale ? recheck : null,
+        progress: progress ? progress.bar : null,
+        sub: progress ? progress.sub : null,
       }];
     }
 

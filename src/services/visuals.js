@@ -814,6 +814,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
     const write = await pool.query(
       `UPDATE chat_sessions
           SET check_state = $1,
+              checks_progress = NULL,
               test_results = $2,
               checks_commit_sha = $3::text,
               checks_checked_at = NOW(),
@@ -838,6 +839,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
     `UPDATE chat_sessions
        SET check_state = $1, test_results = $2, checks_commit_sha = $3::text, checks_checked_at = NOW(),
            check_phase = NULL,
+           checks_progress = NULL,
            check_error_detail = NULL,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
@@ -870,6 +872,7 @@ async function storeChecksSkipped(
   const write = await pool.query(
     `UPDATE chat_sessions
        SET check_state = 'skipped', test_results = '[]', checks_commit_sha = $1::text,
+           checks_progress = NULL,
            checks_checked_at = NOW(),
            check_phase = NULL,
            check_error_detail = $2,
@@ -932,6 +935,7 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null, trigge
        SET check_state = 'pending', checks_commit_sha = $2::text, checks_checked_at = NOW(),
            check_phase = $3::text,
            check_trigger = $4::text,
+           checks_progress = NULL,
            check_next_retry_at = NULL,
            checks_base_sha = COALESCE(
              (SELECT a.main_sha FROM apps a WHERE a.id = chat_sessions.app_id),
@@ -1907,8 +1911,36 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           TEST_TIMEOUT_MS,
           TESTS_DEADLINE_MS,
       };
+      // Live progress. The observer sees each stdout line as it streams (both
+      // transports honour it); the tracker dedupes frames by index; persist
+      // and broadcast are throttled to one snapshot per second, with the
+      // final frame / done sentinel always flushed. Every step is best-effort
+      // and swallowed: the verdict below is still read from the whole stdout.
+      const progressTracker = makeChecksProgressTracker(tests.length);
+      let progressLastFlushAt = 0;
+      let progressFlushTimer = null;
+      const flushProgress = () => {
+        progressFlushTimer = null;
+        progressLastFlushAt = Date.now();
+        const snap = progressTracker.snapshot();
+        setChecksProgress(pool, session.id, commitHash, snap).catch(() => {});
+        notifyChecksProgress(session.id, commitHash, snap, 'testing', trigger);
+      };
+      const progressObserver = (line) => {
+        if (!progressTracker.feed(line)) return;
+        const snap = progressTracker.snapshot();
+        const gap = Date.now() - progressLastFlushAt;
+        if (snap.done || gap >= CHECKS_PROGRESS_MIN_GAP_MS) {
+          if (progressFlushTimer) { clearTimeout(progressFlushTimer); progressFlushTimer = null; }
+          flushProgress();
+        } else if (!progressFlushTimer) {
+          progressFlushTimer = setTimeout(flushProgress, CHECKS_PROGRESS_MIN_GAP_MS - gap);
+          if (typeof progressFlushTimer.unref === 'function') progressFlushTimer.unref();
+        }
+      };
       if (kubernetesCapture) {
         ({ stdout, ...res } = await kubernetes.runCaptureJob(config, {
+          onStdoutLine: progressObserver,
           sessionId: session.id,
           env: captureEnv,
           stdinPayload: testsViaStdin ? testsJson : null,
@@ -1916,6 +1948,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         }));
       } else {
         ({ stdout, ...res } = await docker.runOneShot(`usernode-capture-${session.id}`, {
+          onStdoutLine: progressObserver,
           image: CAPTURE_IMAGE,
           env: captureEnv,
           stdinPayload: testsViaStdin ? testsJson : null,
@@ -2355,6 +2388,105 @@ function notifyVisualsReady(sessionId, visuals, send) {
 //
 // `phase` rides along so a card that re-renders from the event alone shows
 // the right stage caption without waiting for its next fetch.
+// ── Live progress of a run in flight ──
+//
+// The capture container prints one `__USERNODE_TEST__ index=<n> status=…`
+// header per check, and `__USERNODE_TESTS_DONE__ ran=… expected=…` when the
+// suite stops dispatching. The verdict is read from the whole stdout after
+// exit (parseTests / classifyTests, unchanged); this tracker only listens to
+// the same lines as they stream past, so "checks running" can say how far
+// along it is. Dedup is by index, exactly as parseTests does, so a retried
+// frame counts once. Nothing here can change a verdict.
+function makeChecksProgressTracker(expected) {
+  const byIndex = new Map();
+  let done = false;
+  let doneRan = null;
+  const total = Number.isInteger(expected) && expected >= 0 ? expected : null;
+  return {
+    // Returns true when the line advanced the state (a new frame, or done).
+    feed(line) {
+      const l = String(line || '');
+      if (l.startsWith('__USERNODE_TEST__ ')) {
+        const m = /\bindex=(\d+)\b/.exec(l);
+        const st = /\bstatus=(pass|fail)\b/.exec(l);
+        if (!m) return false;
+        const index = parseInt(m[1], 10);
+        const status = st && st[1] === 'pass' ? 'pass' : 'fail';
+        const before = byIndex.get(index);
+        byIndex.set(index, status);
+        return before !== status;
+      }
+      if (l.startsWith('__USERNODE_TESTS_DONE__ ')) {
+        done = true;
+        const r = /\bran=(\d+)\b/.exec(l);
+        doneRan = r ? parseInt(r[1], 10) : null;
+        return true;
+      }
+      return false;
+    },
+    snapshot() {
+      let passed = 0;
+      let failed = 0;
+      for (const st of byIndex.values()) { if (st === 'pass') passed++; else failed++; }
+      const ran = byIndex.size;
+      return {
+        ran, passed, failed,
+        expected: total,
+        done,
+        updatedAt: new Date().toISOString(),
+        ...(done && doneRan !== null && doneRan !== ran ? { reportedRan: doneRan } : {}),
+      };
+    },
+  };
+}
+
+// Persist a progress snapshot on the row — only while THIS run is the one in
+// flight. `check_state = 'pending'` and the commit guard together mean a
+// verdict that has already landed, or a newer run that has since started,
+// can never be overwritten by a late frame from an older container.
+async function setChecksProgress(pool, sessionId, commitSha, progress) {
+  if (!pool || !sessionId) return false;
+  const res = await pool.query(
+    `UPDATE chat_sessions
+        SET checks_progress = $2::jsonb
+      WHERE id = $1
+        AND check_state = 'pending'
+        AND (checks_commit_sha IS NOT DISTINCT FROM $3::text)`,
+    [sessionId, JSON.stringify(progress || null), commitSha || null]
+  );
+  return !!(res && res.rowCount);
+}
+
+// The same event type the finished verdict rides on (#47), so no client has
+// to learn a second one: `checkState: 'pending'` plus a `progress` block.
+// A client that patches from the event gets a live bar; one that refetches
+// gets the same numbers from the row.
+function notifyChecksProgress(sessionId, commitSha, progress, phase = null, trigger = null) {
+  try {
+    const event = {
+      type: 'checks_ready',
+      _seq: `chk${Date.now().toString(36)}-${++_notifySeq}`,
+      sessionId,
+      checkState: 'pending',
+      failingCount: progress && Number.isInteger(progress.failed) ? progress.failed : 0,
+      commitSha: commitSha || null,
+      checkPhase: normalizeCheckPhase(phase),
+      checkTrigger: normalizeCheckTrigger(trigger),
+      progress: progress || null,
+    };
+    sessionBus.publish(sessionId, event);
+    const { broadcastGlobal } = require('./ws');
+    broadcastGlobal({ type: 'session_event', sessionId, event: 'checks_ready', ...event });
+  } catch (err) {
+    log.warn('visuals', 'checks_progress notify failed', { sessionId, err: err.message });
+  }
+}
+
+// Minimum gap between two persisted/broadcast snapshots for one run. A pool
+// of eight can finish several checks in the same second; the last frame
+// (and the done sentinel) always gets through regardless.
+const CHECKS_PROGRESS_MIN_GAP_MS = 1000;
+
 function notifyChecksPending(sessionId, commitSha, phase = null, trigger = null) {
   try {
     const event = {
@@ -2440,7 +2572,7 @@ module.exports = {
   storeChecks,
   storeChecksSkipped,
   setChecksPending,
-  notifyChecksPending,
+  notifyChecksPending, makeChecksProgressTracker, setChecksProgress, notifyChecksProgress,
   checksAlreadyDecided,
   normalizeCheckTrigger,
   CHECK_TRIGGERS,

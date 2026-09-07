@@ -935,6 +935,12 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_phase VARCHAR(
 -- simply shows no trigger caption then. Advisory/display only, exactly like
 -- check_phase: the merge gate reads check_state and nothing else.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_trigger VARCHAR(32);
+-- Live progress of the run in flight: `{ ran, passed, failed, expected,
+-- updatedAt }`, written as the capture container's per-check frames stream
+-- in and cleared with the verdict. NULL outside a run. The verdict itself
+-- stays in test_results; this is only what "checks running" has to say
+-- between the start and the end, which used to be nothing.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_progress JSONB;
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.

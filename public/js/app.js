@@ -2155,6 +2155,12 @@ const App = {
     // events are scoped per-session and don't need a session-list
     // refetch.
     if (data.action === 'behind_main' && typeof data.behindMain === 'number') {
+      // The topic page's "Behind main" pill read this number from its last
+      // refetch and went stale while the dev-chat banner updated live; both
+      // surfaces now take the same patch.
+      if (typeof AppView !== 'undefined' && AppView.applyBehindMainEvent) {
+        AppView.applyBehindMainEvent(data.sessionId, data.behindMain);
+      }
       if (typeof DevChat !== 'undefined' && DevChat.applyBehindMainUpdate) {
         DevChat.applyBehindMainUpdate(data.sessionId, data.behindMain);
       }
@@ -2166,6 +2172,7 @@ const App = {
     // together — a proposal reading "0 behind" for eight commits was the
     // failure the issue reported.
     if (data.action === 'freshness') {
+      if (typeof AppView !== 'undefined' && AppView.applyFreshnessEvent) AppView.applyFreshnessEvent(data);
       if (typeof DevChat !== 'undefined' && DevChat.applyFreshnessUpdate) {
         DevChat.applyFreshnessUpdate(data);
       }
@@ -2175,6 +2182,7 @@ const App = {
     // banner's spinner/phase text and terminal feedback. Scoped
     // per-session like behind_main — no list refetch needed.
     if (data.action === 'sync_status') {
+      if (typeof AppView !== 'undefined' && AppView.applySyncStatusEvent) AppView.applySyncStatusEvent(data);
       if (typeof DevChat !== 'undefined' && DevChat.applySyncStatusUpdate) {
         DevChat.applySyncStatusUpdate(data);
       }
@@ -2205,7 +2213,12 @@ const App = {
     // panel + home strip globally before the currentSession early-return.
     if (data.event === 'checks_ready') {
       if (App.currentTab === 'dev' && App.currentSubTab !== 'sessions') {
-        AppView.refreshDevData('session');
+        // The event carries checkState / checkPhase / checkTrigger and, for
+        // a run in flight, `progress`. Patch the cached row and repaint from
+        // it; a final verdict (which needs test_results the event does not
+        // carry) refetches — through a kind that keeps the vote roster.
+        if (typeof AppView !== 'undefined' && AppView.applyChecksEvent) AppView.applyChecksEvent(data);
+        else AppView.refreshDevData('session');
       }
       // The Underway board refresh above is intentionally skipped while the
       // owner is inside a session. Refresh that focused row directly so its

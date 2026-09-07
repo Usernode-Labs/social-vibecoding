@@ -676,8 +676,16 @@ async function cloneWorkerVolume(config, sourceSessionId, targetSessionId) {
   throw new Error(`Timed out waiting for worker PVC copy Job ${name}`);
 }
 
+// `onStdoutLine(line)`: the same observer contract as docker.runOneShot —
+// complete stdout lines as the run progresses, on top of the final log the
+// verdict is read from. A Job has no stdout to listen to, so while polling
+// for completion the pod log is re-read every few ticks and only the lines
+// past the last consumed offset are handed over. Errors reading the log are
+// swallowed: progress is a courtesy, the verdict still comes from the final
+// read below, unchanged.
 async function runCaptureJob(config, {
   sessionId, env, stdinPayload = null, timeoutMs = 180000,
+  onStdoutLine = null,
 }) {
   const cfg = config.kubernetes;
   if (!cfg.captureImage?.includes('@sha256:')) throw new Error('KUBERNETES_CAPTURE_IMAGE must be an immutable digest');
@@ -722,6 +730,33 @@ async function runCaptureJob(config, {
     }
     await batch.createNamespacedJob({ namespace, body });
     const deadline = Date.now() + timeoutMs + 15000;
+    // Progress observer state: the pod is looked up once it exists, the log
+    // is re-read every PROGRESS_EVERY_TICKS, and `consumed` is how much of
+    // it has already been handed to the observer (the log is cumulative).
+    const PROGRESS_EVERY_TICKS = 3;
+    let progressPodName = null;
+    let consumed = 0;
+    let tick = 0;
+    const observeProgress = async () => {
+      if (typeof onStdoutLine !== 'function') return;
+      try {
+        if (!progressPodName) {
+          const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
+          progressPodName = pods.items?.[0]?.metadata?.name || null;
+          if (!progressPodName) return;
+        }
+        const text = await core.readNamespacedPodLog({ name: progressPodName, namespace, container: 'capture', limitBytes: 64 * 1024 * 1024 });
+        const log = String(text || '');
+        if (log.length <= consumed) return;
+        const fresh = log.slice(consumed);
+        const lastNl = fresh.lastIndexOf('\n');
+        if (lastNl === -1) return; // no complete new line yet
+        for (const line of fresh.slice(0, lastNl).split('\n')) {
+          try { onStdoutLine(line); } catch { /* observer must not break the run */ }
+        }
+        consumed += lastNl + 1;
+      } catch { /* progress is best-effort */ }
+    };
     while (Date.now() < deadline) {
       const job = await batch.readNamespacedJob({ name, namespace });
       if (job.status?.failed) throw new Error(`Capture Job ${name} failed`);
@@ -730,6 +765,7 @@ async function runCaptureJob(config, {
         const pod = pods.items?.[0];
         return { stdout: pod ? await core.readNamespacedPodLog({ name: pod.metadata.name, namespace, container: 'capture', limitBytes: 64 * 1024 * 1024 }) : '', runtimeName: name };
       }
+      if (++tick % PROGRESS_EVERY_TICKS === 0) await observeProgress();
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
     throw new Error(`Timed out waiting for capture Job ${name}`);

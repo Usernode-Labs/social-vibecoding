@@ -11048,6 +11048,30 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-passes[open] > summary::after { content: " ▴"; }
 .dev-ledger-passes > ul { flex-basis: 100%; width: 100%; margin-top: 4px; }
 .dev-ledger-passes > ul > li { padding: 4px 10px; border-radius: 10px; }
+/* The checks row's live progress bar (a run in flight). One track, two
+   filled segments — passed, then failed — sized against the declared count.
+   The counts are also in the row's `sub` text, so the bar is decorative
+   (aria-hidden) and never the only carrier of the numbers. */
+.dev-ledger-progress {
+  display: block;
+  position: relative;
+  height: 0.375rem;
+  margin: 0.375rem 0 0.25rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  overflow: hidden;
+}
+.dev-ledger-progress-pass,
+.dev-ledger-progress-fail {
+  display: block;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  transition: width 240ms ease-out;
+}
+.dev-ledger-progress-pass { left: 0; background: var(--dc-ok, #16a34a); }
+.dev-ledger-progress-fail { right: 0; background: var(--dc-bad, #dc2626); }
+
 .dev-ledger-roster { color: var(--text-primary); }
 .dev-ledger-yes { color: var(--state-ok); font-weight: 600; }
 .dev-ledger-no { color: var(--state-blocked); font-weight: 600; }
