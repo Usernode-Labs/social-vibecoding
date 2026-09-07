@@ -1213,6 +1213,18 @@
       "expectText": "Drag to reorder"
     },
     {
+      "name": "Dialog fade: the iOS modal opens with its backdrop (#1566)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=modal",
+      "expectSelector": "body:has(.un-backdrop[style*=\"opacity: 1\"]) .un-modal.un-in",
+      "expectText": "Edit item"
+    },
+    {
+      "name": "Dialog fade: the iOS alert opens with its backdrop (#1566)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=alert",
+      "expectSelector": "body:has(.un-backdrop[style*=\"opacity: 1\"]) .un-alert.un-in",
+      "expectText": "Rename item"
+    },
+    {
       "name": "Kit demo Toasts section ships the priority undo-flow button (#718)",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": "#toast-undo-btn",
