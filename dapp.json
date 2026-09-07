@@ -1781,6 +1781,12 @@
       "expectText": "Thinking…"
     },
     {
+      "name": "Building in the dev chat header is a non-interactive status chip (#1594)",
+      "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-session-header > span#dc-mode-chip[role=\"status\"]:not([tabindex])",
+      "expectText": "Building"
+    },
+    {
       "name": "The circle carries the keystroke the retired hint line named (#920)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-send-btn[title=\"Send (Ctrl+Enter)\"]"
