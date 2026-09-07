@@ -36,11 +36,13 @@ const {
   waitlistTokenLimiter,
   waitlistTokenScanLimiter,
   waitlistCodeConfirmLimiter,
+  waitlistResendLimiter,
+  waitlistResendIpLimiter,
 } = require('../middleware/rate-limits');
 const { waitlistIntegratorAuth } = require('../services/waitlist-integrator');
 const waitlist = require('../services/waitlist');
 const questions = require('../services/waitlist-questions');
-const { sendWaitlistJoinMail } = require('../services/topochain/mailer');
+const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
 const { PRODUCTION_ORIGIN } = require('../services/cli-auth-constants');
 const { productionHostname } = require('../services/caddy');
 const { loadContributors, shapeContributor } = require('../services/contributors');
@@ -50,6 +52,23 @@ const { loadContributors, shapeContributor } = require('../services/contributors
 // error rows aren't usable, so they're hidden — `status` is still returned
 // for the rows that do appear).
 const HIDDEN_APP_STATUSES = ['error', 'creating', 'awaiting_secrets'];
+
+// The ONE body POST /api/public/waitlist/resend ever returns. Frozen and
+// module-scoped rather than built per request, so the four branches cannot
+// drift apart by accident — a field that differed by branch, even a
+// timestamp, would turn the endpoint into a membership oracle.
+//
+// `cooldown_seconds` is a constant the client counts down locally. It
+// matches the minute gap in services/mail/rate-limit.js's waitlist_code
+// rule, which is what actually enforces it; the real per-address decision
+// is never reported here. The message is conditional in its wording for
+// the same reason the body is not: it has to be true whichever branch ran.
+const RESEND_RESPONSE = Object.freeze({
+  ok: true,
+  cooldown_seconds: 60,
+  message: 'If that address is on our waitlist and still needs confirming, '
+    + 'a new code is on its way. It works for 15 minutes.',
+});
 
 // `?include_wallets=0` (exactly the string '0') opts addresses out;
 // anything else (unset, '1', …) keeps them — addresses-on is the default.
@@ -241,6 +260,24 @@ function publicApiRoutes(config) {
         // must not fail the join, and the one-click link still confirms.
         const code = await waitlist.issueVerificationCode(pool, email).catch(() => null);
         sendWaitlistJoinMail(config, email, { moreToken, code }); // fire-and-forget, never throws
+      } else {
+        // A RE-JOIN. The row already existed, so nothing above ran — and
+        // the screen still says "we sent a six-digit code to you@…",
+        // because the client only ever sees this endpoint's 200. That was
+        // the lie: somebody who joined last week, typed their address in
+        // again and sat waiting for a code that was never minted.
+        //
+        // So mint one, on the resend kind rather than the join kind: the
+        // words a returning person needs are "here is your code", not a
+        // second welcome, and waitlist_joined's one-per-day rule would
+        // drop this send anyway. An already-confirmed address gets the
+        // mail's other shape, which says there is nothing left to do.
+        //
+        // Both are fire-and-forget, and the response body below is
+        // untouched — byte for byte the same object every re-join has
+        // always received, whatever branch ran here. The mail throttle is
+        // what bounds how often this can actually send.
+        await resendConfirmation(email).catch(() => {});
       }
       res.json({
         ok: true,
@@ -252,6 +289,75 @@ function publicApiRoutes(config) {
       log.error('public-api', 'waitlist join failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
+  });
+
+  // Mint a fresh code for an address and mail it, or — when the address is
+  // already confirmed — mail the "nothing left to do" shape instead. Shared
+  // by POST /resend and by the re-join branch above so the two cannot drift.
+  //
+  // Returns nothing and tells the caller nothing: every branch is silent,
+  // including "not on the list", because the only way a caller could learn
+  // which branch ran is if a response differed. Failures are swallowed the
+  // same way the mail itself is best-effort.
+  async function resendConfirmation(email) {
+    const row = await waitlist.getSignupByEmail(pool, email);
+    // Not on the list. No row to confirm, so no code and no mail — sending
+    // one would tell a stranger's inbox that somebody typed it here.
+    if (!row) return;
+    if (row.confirmed_at) {
+      // Already confirmed. No code is minted (there is nothing to consume)
+      // and the mail says so. This is the ONE place the platform discloses
+      // confirmation state, and it discloses it only to the address itself.
+      sendWaitlistCodeMail(config, email, { code: null, moreToken: row.more_token || null });
+      return;
+    }
+    // Issuing deletes every unconsumed code for the address first, so the
+    // previous one dies here: exactly one code is live at a time and a
+    // forwarded older mail is already dead. That is what makes "use the
+    // newest email" true rather than advice.
+    const code = await waitlist.issueVerificationCode(pool, email).catch(() => null);
+    if (!code) return;
+    sendWaitlistCodeMail(config, email, { code, moreToken: row.more_token || null });
+  }
+
+  // POST /api/public/waitlist/resend — a new six-digit code for an address
+  // that has joined but not confirmed.
+  //
+  // The code expires after 15 minutes, and until this existed that was a
+  // dead end: somebody coming back on a new device an hour later had no way
+  // to get another one, and their only route in was the one-click link in
+  // an email they may no longer have.
+  //
+  // NON-ENUMERATION IS THE WHOLE DESIGN of the response. Four branches run
+  // here — invalid address, not on the list, on the list and unconfirmed,
+  // already confirmed — and three of them answer with the SAME 200 and the
+  // same body. Anything else makes this an oracle for "is this person on
+  // the waitlist", which is the contract the join and confirm endpoints
+  // beside it already keep.
+  //
+  // That includes the cooldown. A per-address "wait 47 more seconds" would
+  // be a membership test in itself, so `cooldown_seconds` is a CONSTANT the
+  // client counts down locally; the real per-address gap is the mail
+  // throttle's, and its decision is never reported. The mail call is
+  // fire-and-forget for the same reason: awaiting a provider would make the
+  // response TIME differ by branch.
+  router.post('/api/public/waitlist/resend', waitlistResendIpLimiter, waitlistResendLimiter, async (req, res) => {
+    const email = waitlist.normalizeEmail(req.body?.email);
+    // The one refusal, and it discloses nothing: a syntactically invalid
+    // address is not a fact about the waitlist.
+    if (!email) {
+      return res.status(422).json({ error: 'A valid email address is required.' });
+    }
+    try {
+      await resendConfirmation(email);
+    } catch (err) {
+      // Deliberately NOT a 500. A failure here is ours, and letting it
+      // change the status code would separate "something went wrong for
+      // this address" from "nothing went wrong for that one" — which is the
+      // oracle again, by another route. Log it and answer normally.
+      log.error('public-api', 'waitlist resend failed', { message: err.message });
+    }
+    return res.json(RESEND_RESPONSE);
   });
 
   // GET /api/public/waitlist/confirm/:token — the one-click confirm link
