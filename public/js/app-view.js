@@ -8101,12 +8101,15 @@ const AppView = {
       ? (AppView._conflictRemedy(pr, pr && pr.merge_conflict_state === 'failed' ? 'failed'
         : (pr && pr.merge_conflict_state === 'conflict' ? 'conflict' : 'predicted')).parts)
       : null;
+    // The file list does NOT survive into the step. It was the bulkiest
+    // thing on the panel and the least actionable: both-sides-changed is an
+    // upper bound on the conflict rather than the conflict (two edits at
+    // opposite ends of one file land in it and merge fine), and it does not
+    // change the one move available — run the sync and let git name the real
+    // overlaps. The COUNT stays, in the sentence, where it says how big the
+    // job is without pretending to say which files it is.
     sync.foot = [];
     if (remedy) sync.foot.push(remedy);
-    if (conflictFiles.length) {
-      sync.foot.push(['Changed on both sides. Some of these may still merge cleanly; they are where to look first.']);
-      sync.foot.push({ list: conflictFiles.slice(0, 20).map((f) => ({ mono: true, text: String(f) })) });
-    }
     if (manual && iBehind >= 0) rows.splice(iBehind, 1);
 
     // ── Step 2: checks, which are not the blocker while step 1 stands ───

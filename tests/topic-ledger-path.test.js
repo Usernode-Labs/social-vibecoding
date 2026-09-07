@@ -95,20 +95,42 @@ test('a conflicted proposal reads as one ordered path, not four verdicts', () =>
   assert.match(footText, /Sumarno/);
 });
 
-test('the conflicting files sit under the line that introduces them', () => {
-  // The defect: fromBox bucketed lines into `foot` and lists into `list`,
-  // and the renderer drew every list last — so "Changed on both sides:" was
-  // three sentences away from its own list.
+test('the sync step says how many files overlap and does not list them', () => {
+  // Both-sides-changed is an UPPER BOUND on the conflict, not the conflict:
+  // two edits at opposite ends of one file land in it and merge cleanly. The
+  // list was the bulkiest thing on the panel and it changed nothing about
+  // the one move available, which is to run the sync and let git name the
+  // real overlaps. The count stays, in the sentence, where it says how big
+  // the job is without claiming to say which files it is.
   const AppView = makeAppView();
   const sync = find(rowsOf(AppView, CONFLICTED), 'mergeability');
-  const lead = sync.foot.findIndex((f) => Array.isArray(f)
-    && f.join('').startsWith('Changed on both sides'));
-  assert.ok(lead >= 0, 'the list still has a lead-in');
-  const next = sync.foot[lead + 1];
-  assert.ok(next && !Array.isArray(next) && Array.isArray(next.list),
-    'and the list is the very next thing under it');
-  assert.deepEqual(next.list.map((i) => i.text),
-    ['dapp.json', 'src/services/visuals.js', 'capture/capture.js']);
+  assert.match(sync.text.join(''), /3 files changed on both sides/);
+  assert.equal(sync.foot.filter((f) => !Array.isArray(f)).length, 0, 'no file list on the step');
+  const flat = JSON.stringify(sync);
+  assert.doesNotMatch(flat, /src\/services\/visuals\.js/, 'and no path smuggled into a line');
+});
+
+test('a box that leads with its list still renders the list first', () => {
+  // The ordering fix this change carries, tested where it is still visible.
+  // The platform-variables box puts its keys FIRST and its two explanatory
+  // lines after — "the keys lead, they are what a reader has to act on".
+  // Bucketing lines into `foot` and lists into `list` sent the keys to the
+  // bottom of the row, under both explanations, silently.
+  const AppView = makeAppView();
+  const rows = rowsOf(AppView, {
+    ...CONFLICTED,
+    check_state: 'passing', test_results: [],
+    freshness: { mergeability: 'clean', behindBy: 0, mergeabilityFiles: [] },
+    platform_env_state: 'failing',
+    platform_env_detail: { added: [], missing: [{ key: 'SMTP_URL', description: 'Outbound mail' }] },
+  });
+  const env = find(rows, 'env');
+  assert.ok(env, 'the platform-variables row renders');
+  const first = env.foot[0];
+  assert.ok(first && !Array.isArray(first) && Array.isArray(first.list),
+    'the keys are the first thing under the heading, not the last');
+  assert.equal(first.list[0].code, 'SMTP_URL');
+  assert.ok(Array.isArray(env.foot[1]), 'and the explanations follow them');
 });
 
 test('a verdict measured against a base main has left behind is not reported as live', () => {
