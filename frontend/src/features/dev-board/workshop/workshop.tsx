@@ -48,7 +48,7 @@ import { devWorkshopStore } from '../card/cards-store';
 import { CardIcon, DevCard, VoteButton } from '../card/dev-card';
 import type { ActionSpec } from '../card/model';
 import { FeedThread } from '../card/feed-thread';
-import type { DevCardModel, ListRow, WorkshopTheme } from '../card/model';
+import type { DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
 
 type CardRow = Extract<ListRow, { t: 'card' }>;
@@ -141,6 +141,7 @@ function FoldedRow({
         <span className="dev-ws-row-title">
           {c.title.text}
           {row.fresh ? <span className="dev-ws-new">new</span> : null}
+          {row.placing ? <span className="dev-ws-placing" title="Being placed into a theme">placing…</span> : null}
         </span>
         <span className="dev-ws-row-meta">
           {n ? <span className="font-mono">{n}</span> : null}
@@ -360,6 +361,29 @@ function ThemeCard({
   );
 }
 
+/**
+ * The footnote under the model's grouping: when the themes were drafted and
+ * on what schedule, then how much of the board they hold right now — cards
+ * on their way into a theme, cards the placer could not fit, and the last
+ * failure if there was one. Each is a fact the viewer can see on the page
+ * ("placing…" markers, the trailing group), so the note names it.
+ */
+function aiFootnote(meta: DevWorkshopView['meta']): string {
+  const drafted = meta.discoveredAt ? Date.parse(meta.discoveredAt) : NaN;
+  const parts: string[] = [
+    Number.isFinite(drafted)
+      ? `Themes were drafted ${relTime(drafted)} and are re-drafted daily, or sooner when a tenth of the board changes.`
+      : 'Themes are drafted from the board and re-drafted daily, or sooner when a tenth of the board changes.',
+  ];
+  const c = meta.coverage;
+  if (c && c.pending) parts.push(`${c.pending} new ${c.pending === 1 ? 'card is' : 'cards are'} being placed.`);
+  if (c && c.unplaced) {
+    parts.push(`${c.unplaced} ${c.unplaced === 1 ? 'card did' : 'cards did'} not fit a theme and ${c.unplaced === 1 ? 'waits' : 'wait'} for the next draft.`);
+  }
+  if (meta.lastError) parts.push(`The last attempt failed (${meta.lastError}); it is retried shortly.`);
+  return parts.join(' ');
+}
+
 function sortThemes(themes: WorkshopTheme[], key: SortKey): WorkshopTheme[] {
   const list = themes.slice();
   const real = list.filter((t) => !t.ungrouped);
@@ -533,7 +557,11 @@ export function DevWorkshop(): ReactNode {
               {`${themes.filter((t) => !t.ungrouped).length} themes`}
               {v.meta.source === 'category' ? ' · grouped by category for now' : ''}
               {v.meta.source === 'demo' ? ' · staging demo grouping' : ''}
-              {v.meta.pending ? (v.meta.source === 'ai' ? ' · regrouping…' : ' · drafting themes…') : ''}
+              {v.meta.pending
+                ? (v.meta.pendingStage === 'placement'
+                  ? ' · placing new cards…'
+                  : (v.meta.source === 'ai' ? ' · re-drafting themes…' : ' · drafting themes…'))
+                : ''}
             </span>
             <div className="dev-ws-sort-opts" role="group" aria-label="Order themes">
               {SORTS.map((s) => (
@@ -564,10 +592,12 @@ export function DevWorkshop(): ReactNode {
             ))}
           </div>
           {/* Four honest states for the fallback, because the first cut said
-              "once an AI model is available" while the model was mid-draft. */}
+              "once an AI model is available" while the model was mid-draft —
+              and, on the model's grouping, when it was drafted and how much
+              of the board it holds. */}
           <div className="dev-ws-foot-note">
             {v.meta.source === 'ai'
-              ? 'Themes are drafted from the board and refreshed as it changes.'
+              ? aiFootnote(v.meta)
               : v.meta.source === 'demo'
                 ? 'Staging demo grouping: in production the themes are drafted by the model from the board.'
                 : v.meta.pending
