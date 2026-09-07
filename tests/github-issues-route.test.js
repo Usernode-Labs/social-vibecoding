@@ -506,6 +506,41 @@ test('staging comments endpoint serves mock thread (with a bot comment) on an em
   }
 });
 
+test('staging demo mode serves a MOCK issue’s thread without the live round trip', async () => {
+  // Proposal 3850: the declared issue-page check found no comment bubbles on
+  // staging while passing locally. Locally GitHub is off and the mocks are
+  // immediate; on staging the route first asked GitHub about an issue that
+  // does not exist, and from a preview container whose outbound fetch hangs
+  // that wait outlived the runner's five-second presence poll.
+  let liveCalls = 0;
+  global.fetch = async (url, opts) => {
+    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
+      liveCalls += 1;
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => [] };
+    }
+    return baselineFetch(url, opts);
+  };
+  const server = await startStagingServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900008/comments?demo=1`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.comments.length > 0, 'the mock row gets its stand-in thread');
+    assert.ok(body.comments.some((c) => c.author === 'usernode-bot'));
+    assert.strictEqual(liveCalls, 0, 'no live fetch for a number no real issue has');
+
+    // Without ?demo=1 the same row still goes through the live fetch first
+    // (and falls back): demo mode is the only thing that short-circuits.
+    const plain = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900008/comments`);
+    assert.strictEqual(plain.status, 200);
+    assert.strictEqual(liveCalls, 1, 'the live fetch is skipped ONLY in demo mode');
+  } finally {
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
 test('staging substitutes a thread for a REAL issue number too, with dated comments', async () => {
   // The fallback exists so the comment section is REVIEWABLE in a preview.
   // It used to be a lookup table over stagingMockIssues' own 900001-900003

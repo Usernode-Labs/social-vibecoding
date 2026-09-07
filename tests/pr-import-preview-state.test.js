@@ -309,7 +309,9 @@ test('dapp.json asserts the text the new pills render', () => {
   assert.ok(mine.length >= 2, 'the new states are checked on merge');
   for (const t of mine) {
     assert.match(t.path, /demo=1/, 'the mock rows only render under ?demo=1');
-    assert.match(t.path, /#app\/[^/]+\/dev/, 'and only on the proposal screen');
+    // The Board's own route since the Workshop became the Dev screen's
+    // lander; `dev` stays accepted for the deep links that still use it.
+    assert.match(t.path, /#app\/[^/]+\/(dev|board)\b/, 'and only on the Dev screen');
   }
   const texts = mine.map((t) => t.expectText).filter(Boolean);
   assert.ok(texts.some((t) => /Preview building/.test(t)), 'building pill checked');

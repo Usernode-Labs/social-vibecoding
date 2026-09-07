@@ -2923,14 +2923,14 @@ const App = {
           : norm.ref.kind === 'proposal' ? 'proposals'
           : norm.ref.kind === 'session' ? 'shared' : 'governance';
         suffix = `/dev/${seg}/${norm.ref.id}`;
-      } else if (opts.boardView === 'feed') {
-        suffix = '/activity';
+      } else if (opts.boardView === 'workshop') {
+        suffix = '/workshop';
       } else if (opts.boardView === 'kanban') {
         suffix = '/board';
       } else {
-        const feed = typeof AppView !== 'undefined' && AppView._getViewMode
-          && AppView._getViewMode() === 'feed';
-        suffix = `/${feed ? 'activity' : 'board'}`;
+        const kanban = typeof AppView !== 'undefined' && AppView._getViewMode
+          && AppView._getViewMode() === 'kanban';
+        suffix = `/${kanban ? 'board' : 'workshop'}`;
       }
     }
     return `/app/${safeSlug}${suffix}${App._routeSearch(
@@ -3297,7 +3297,9 @@ const App = {
         // the two leaves `tab` and `subTab` identical, which nothing else
         // would notice.
         let boardView = null;
-        if (tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'feed'; }
+        // `activity` is the retired Activity feed's address; the Workshop
+        // replaced it as the lander, so the old links land there.
+        if (tab === 'workshop' || tab === 'activity') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'workshop'; }
         else if (tab === 'board') { tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'kanban'; }
         if (tab === 'dev') {
           const sec = parts[3] || null;
@@ -4222,7 +4224,7 @@ const App = {
         }
         if (!boardView && App.currentSubTab === 'forum') {
           boardView = typeof AppView !== 'undefined' && AppView._getViewMode
-            && AppView._getViewMode() === 'feed' ? 'feed' : 'kanban';
+            && AppView._getViewMode() === 'kanban' ? 'kanban' : 'workshop';
         }
       }
       const innerPath = (App.chromeless && typeof AppView !== 'undefined'
@@ -4256,13 +4258,13 @@ const App = {
         ? parsed.hash.replace(/^#/, '').split('?')[0]
         : parsed.pathname.replace(/^\/+/, '');
       const segs = route.split('/');
-      // Aliases (see restoreFromHash): /app/x/board and /app/x/activity are
-      // both the card area, so an alias in the address bar and the canonical
-      // form updateHash computes are the SAME screen — replace, never a
-      // spurious push. The two are one screen as far as history goes for the
-      // same reason Kanban|Feed never pushed an entry: switching layout is
-      // not somewhere to go BACK from.
-      if (segs[0] === 'app' && (segs[2] === 'activity' || segs[2] === 'board')) {
+      // Aliases (see restoreFromHash): /app/x/board and /app/x/workshop (and
+      // the retired /app/x/activity) are all the card area, so an alias in
+      // the address bar and the canonical form updateHash computes are the
+      // SAME screen — replace, never a spurious push. The two are one screen
+      // as far as history goes for the same reason Kanban|Feed never pushed
+      // an entry: switching layout is not somewhere to go BACK from.
+      if (segs[0] === 'app' && (segs[2] === 'workshop' || segs[2] === 'activity' || segs[2] === 'board')) {
         segs.splice(2, 1, 'dev');
       }
       if (segs[0] === 'app' && segs[2] === 'dev') {
