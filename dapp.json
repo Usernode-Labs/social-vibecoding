@@ -2819,6 +2819,12 @@
       "expectText": "Resets Monday 00:00 UTC"
     },
     {
+      "name": "First-use dev chat explains how to leave and return through Improve (#1595)",
+      "path": "/?shot=dev-chat-first-use#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-return-hint #dc-return-hint-dismiss",
+      "expectText": "You can leave this page and return anytime. Open Improve"
+    },
+    {
       "name": "Out of daily credits: the chat offers every way to keep building (#967, #1049, #1086)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "[data-credits-card] [data-credits-hash=\"#settings/connectors\"]",

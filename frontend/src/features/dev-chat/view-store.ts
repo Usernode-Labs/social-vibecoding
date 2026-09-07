@@ -76,6 +76,8 @@ export type DevViewState =
      * second author on this subtree — and is a field here.
      */
     proposalHint: boolean;
+    /** #1595: how to leave and find this chat again; dismissed per viewer. */
+    returnHint: boolean;
   };
 
 export const devViewStore = createStore<DevViewState>({ kind: 'none' });
