@@ -45,10 +45,22 @@ import {
 const DISMISS_KEY = 'mobileInstallBannerDismissed';
 const BODY_CLASS = 'has-install-strip';
 
+/**
+ * #1514: the dismissal lasts a SESSION, not forever.
+ *
+ * It used to be written to `localStorage`, so the one person who tapped the
+ * × on a day the store link was not yet live could never be offered the app
+ * again on that device. `sessionStorage` keeps the strip down for as long as
+ * the tab is open — refreshes and in-app navigation included, which is what
+ * makes a dismissal feel respected — and lets the next visit ask once more.
+ *
+ * The old `localStorage` entry is deliberately NOT read as a fallback: it
+ * would pin exactly the people this change is meant to reach.
+ */
 /** Every read below is in a try/catch: Safari throws on storage in private mode. */
 function readDismissed(): boolean {
   try {
-    return localStorage.getItem(DISMISS_KEY) === '1';
+    return sessionStorage.getItem(DISMISS_KEY) === '1';
   } catch {
     return false;
   }
@@ -56,7 +68,7 @@ function readDismissed(): boolean {
 
 function writeDismissed(): void {
   try {
-    localStorage.setItem(DISMISS_KEY, '1');
+    sessionStorage.setItem(DISMISS_KEY, '1');
   } catch {
     /* A dismissal that cannot be persisted still hides the strip for this page. */
   }
