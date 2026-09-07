@@ -3822,8 +3822,15 @@ const AppView = {
                 label: node.textContent.replace(/\s+/g, ' ').trim(),
               };
             }
+            // #1615: the TITLE, by name. This read `querySelector('span')`,
+            // which was the title only by accident of source order — the row
+            // now has a glyph and a text-column wrapper, and either one
+            // arriving first would have labelled the sheet row wrongly or
+            // emptied it. `[data-plus-title]` is what board-frame.tsx marks.
+            const titleEl = node.querySelector('[data-plus-title]')
+              || node.querySelector('span');
             return {
-              label: (node.querySelector('span')?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+              label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
               handler: () => node.click(),
             };
           }),
