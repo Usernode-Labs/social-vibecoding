@@ -41,6 +41,7 @@ import type {
   TopicBody,
   TranscriptSection,
   LedgerProgress,
+  LedgerBuildStep,
 } from './model';
 
 function call(fn: string, ...args: unknown[]): void {
@@ -187,11 +188,30 @@ function Bar({ ran, passed, failed, expected, attr, value, indeterminate }: {
   );
 }
 
+function BuildSteps({ steps }: { steps: LedgerBuildStep[] }): ReactNode {
+  const now = steps.find((s) => s.state === 'now');
+  const fmt = (ms: number) => {
+    const s = Math.max(0, Math.round(ms / 1000));
+    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+  };
+  return (
+    <span className="dev-ledger-progress-build" data-build-step={now ? now.key : 'done'}>
+      {steps.map((s) => (
+        <span key={s.key} className={`dev-ledger-build-step is-${s.state}`} data-step={s.key}>
+          {s.label}
+          {s.ms != null ? <small>{fmt(s.ms)}</small> : null}
+        </span>
+      ))}
+    </span>
+  );
+}
+
 function Progress({ p }: { p: LedgerProgress }): ReactNode {
   const hasChecks = p.ran > 0 || (p.expected != null && p.expected > 0);
   const u = p.unit || null;
   return (
     <>
+      {p.build && p.build.length ? <BuildSteps steps={p.build} /> : null}
       {hasChecks ? (
         <Bar ran={p.ran} passed={p.passed} failed={p.failed} expected={p.expected}
           attr="data-checks-progress" value={`${p.ran}/${p.expected ?? '?'}`} />
