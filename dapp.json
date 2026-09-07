@@ -3052,6 +3052,12 @@
       "expectText": "Open Claude Code"
     },
     {
+      "name": "The hand-off step says to connect Usernode first, and links the steps",
+      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] [data-flow-note=\"connector\"] a[href=\"#settings/connectors\"]",
+      "expectText": "Settings → Connectors"
+    },
+    {
       "name": "Settings can answer the build-flow question for good (#1049)",
       "path": "/#settings/connectors",
       "expectSelector": "#settings-dev-flow option[value=\"claude-code\"]",

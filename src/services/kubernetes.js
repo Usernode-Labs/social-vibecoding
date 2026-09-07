@@ -125,7 +125,11 @@ async function deleteBuild(config, name) {
   );
 }
 
-async function createBuild(config, { app, revision, environment, sessionId, sourceDir }) {
+// `onProgress(image)` is called as the kpack Build advances: `{ phase,
+// phases: [{ name, ms }], detail }` — which lifecycle phase (init container)
+// is running, how long the finished ones took, and the last line the running
+// phase printed. Best-effort throughout; a status read that fails is skipped.
+async function createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress = null }) {
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) {
     throw new Error('Kubernetes builds require a full 40-character Git commit SHA');
   }
@@ -172,8 +176,11 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err;
   }
   try {
-    const result = await waitForBuild(config, buildName);
-    return { buildRef: `${cfg.buildNamespace}/${buildName}`, imageRef: result.status.latestImage, requestedTag: tag };
+    const result = await waitForBuild(config, buildName, { onProgress });
+    return {
+      buildRef: `${cfg.buildNamespace}/${buildName}`, imageRef: result.status.latestImage, requestedTag: tag,
+      phases: result.phases || null,
+    };
   } catch (err) {
     await deleteBuild(config, buildName).catch((cleanupErr) => {
       log.warn('kubernetes', 'Failed kpack Build cleanup failed', {
@@ -184,20 +191,104 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
   }
 }
 
-async function waitForBuild(config, name) {
+// The kpack pod runs the buildpack lifecycle as init containers, in order
+// (prepare, analyze, detect, restore, build, export on current kpack), each
+// with its own start and finish stamps. That is the whole per-phase timing,
+// read straight off the pod: no log parsing is needed for the phases, only
+// for the `detail` line.
+function buildPhasesFromPod(pod) {
+  const spec = (pod && pod.spec && Array.isArray(pod.spec.initContainers)) ? pod.spec.initContainers : [];
+  const statuses = (pod && pod.status && Array.isArray(pod.status.initContainerStatuses)) ? pod.status.initContainerStatuses : [];
+  const byName = new Map(statuses.map((s) => [s.name, s]));
+  const phases = [];
+  let phase = null;
+  let runningSince = null;
+  for (const c of spec) {
+    const st = byName.get(c.name) || {};
+    const t = st.state && st.state.terminated;
+    const r = st.state && st.state.running;
+    if (t) {
+      const ms = Date.parse(t.finishedAt) - Date.parse(t.startedAt);
+      phases.push({ name: c.name, ms: Number.isFinite(ms) ? Math.max(0, ms) : null });
+    } else if (r && !phase) {
+      phase = c.name;
+      runningSince = r.startedAt || null;
+    }
+  }
+  if (!phase) {
+    const main = (pod && pod.status && Array.isArray(pod.status.containerStatuses)) ? pod.status.containerStatuses[0] : null;
+    if (main && main.state && main.state.running) phase = main.name || 'completion';
+    else if (spec.length && phases.length === spec.length) phase = 'completion';
+    else if (spec.length) phase = spec[0].name; // scheduled, nothing running yet
+  }
+  return { phase, phases, runningSince, order: spec.map((c) => c.name) };
+}
+
+async function waitForBuild(config, name, { onProgress = null } = {}) {
   const cfg = config.kubernetes;
   const deadline = Date.now() + (cfg.activeDeadlineSeconds + 60) * 1000;
-  const { custom } = getClients();
-  while (Date.now() < deadline) {
-    const build = await custom.getNamespacedCustomObject({ group: 'kpack.io', version: 'v1alpha2', namespace: cfg.buildNamespace, plural: 'builds', name });
-    const succeeded = build.status?.conditions?.find((condition) => condition.type === 'Succeeded');
-    if (succeeded?.status === 'True' && build.status?.latestImage) return build;
-    if (succeeded?.status === 'False') {
-      throw new Error(`kpack Build ${name} failed: ${succeeded.message || succeeded.reason || 'unknown error'}`);
+  const clients = getClients();
+  const { custom, core } = clients;
+  const report = typeof onProgress === 'function';
+  let image = { phase: null, phases: [], detail: null };
+  let followed = null;
+  let followAbort = null;
+  const stopFollow = () => {
+    if (followAbort && typeof followAbort.abort === 'function') { try { followAbort.abort(); } catch { /* closed */ } }
+    followAbort = null;
+    followed = null;
+  };
+  const emit = () => { if (report) { try { onProgress({ ...image, phases: image.phases.slice() }); } catch { /* observer only */ } } };
+  // The running phase's log, followed, for the `detail` line. Re-attached
+  // when the running phase changes (kpack runs them one after another).
+  const followPhase = async (podName, phase) => {
+    if (!report || !core || !podName || !phase || phase === followed) return;
+    const logApi = clientsLogApi(clients);
+    if (!logApi) return;
+    stopFollow();
+    try {
+      const sink = new stream.PassThrough();
+      attachLineObserver(sink, (line) => {
+        const text = String(line || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
+        if (!text) return;
+        image.detail = text.length > 160 ? `${text.slice(0, 157)}...` : text;
+        emit();
+      });
+      followAbort = await logApi.log(cfg.buildNamespace, podName, phase, sink, { follow: true });
+      followed = phase;
+    } catch { /* not started yet; next tick */ }
+  };
+  const observe = async (build) => {
+    if (!report || !core) return;
+    const podName = build.status && build.status.podName;
+    if (!podName) return;
+    try {
+      const pod = await core.readNamespacedPod({ name: podName, namespace: cfg.buildNamespace });
+      const derived = buildPhasesFromPod(pod);
+      const phaseChanged = derived.phase !== image.phase;
+      image = { ...image, phase: derived.phase, phases: derived.phases, ...(phaseChanged ? { detail: null } : {}) };
+      emit();
+      if (derived.phase && derived.phase !== 'completion') await followPhase(podName, derived.phase);
+    } catch { /* progress is best-effort */ }
+  };
+  try {
+    while (Date.now() < deadline) {
+      const build = await custom.getNamespacedCustomObject({ group: 'kpack.io', version: 'v1alpha2', namespace: cfg.buildNamespace, plural: 'builds', name });
+      const succeeded = build.status?.conditions?.find((condition) => condition.type === 'Succeeded');
+      if (succeeded?.status === 'True' && build.status?.latestImage) {
+        await observe(build);
+        return { ...build, phases: image.phases.length ? image.phases : null };
+      }
+      if (succeeded?.status === 'False') {
+        throw new Error(`kpack Build ${name} failed: ${succeeded.message || succeeded.reason || 'unknown error'}`);
+      }
+      await observe(build);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
     }
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    throw new Error(`Timed out waiting for kpack Build ${name}`);
+  } finally {
+    stopFollow();
   }
-  throw new Error(`Timed out waiting for kpack Build ${name}`);
 }
 
 function appResourceName(app, environment, sessionId) {
@@ -888,6 +979,7 @@ module.exports = {
   listStatusResources, listNamespaceCapacity,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,
+  _buildPhasesFromPodForTest: buildPhasesFromPod,
   _deploymentStateForTest: deploymentState,
   _normalizeDeploymentForTest: normalizeDeployment,
   _quantityNumberForTest: quantityNumber,

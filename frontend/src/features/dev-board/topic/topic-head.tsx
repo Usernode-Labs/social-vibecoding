@@ -194,6 +194,8 @@ function BuildSteps({ steps }: { steps: LedgerBuildStep[] }): ReactNode {
     const s = Math.max(0, Math.round(ms / 1000));
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
   };
+  const withPhases = steps.find((s) => s.phases && s.phases.length);
+  const nowPhase = withPhases ? withPhases.phases!.find((p) => p.state === 'now') : null;
   return (
     <span className="dev-ledger-progress-build" data-build-step={now ? now.key : 'done'}>
       {steps.map((s) => (
@@ -202,6 +204,17 @@ function BuildSteps({ steps }: { steps: LedgerBuildStep[] }): ReactNode {
           {s.ms != null ? <small>{fmt(s.ms)}</small> : null}
         </span>
       ))}
+      {withPhases ? (
+        <span className="dev-ledger-build-phases" data-image-phase={nowPhase ? nowPhase.name : 'done'}>
+          {withPhases.phases!.map((p) => (
+            <span key={p.name} className={`dev-ledger-build-phase is-${p.state}`} data-phase={p.name}>
+              {p.name}
+              {p.ms != null ? <small>{fmt(p.ms)}</small> : null}
+            </span>
+          ))}
+          {withPhases.detail ? <span className="dev-ledger-build-detail">{withPhases.detail}</span> : null}
+        </span>
+      ) : null}
     </span>
   );
 }
