@@ -46,6 +46,9 @@ function makeMockPool(state) {
   const pool = {
     async query(rawSql, params = []) {
       const sql = collapse(rawSql);
+      // These pre-onboarding fixtures contain no introductory definitions.
+      // Progression with a real catalog is exercised in challenge-onboarding.
+      if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
       calls.push({ sql, params });
 
       // Placement moved to user_home_layout (src/routes/home-layout.js);
