@@ -140,6 +140,25 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
   return promise;
 }
 
+// Publish which build step a preview is on (and how long the finished
+// ones took) so "Preview building…" can say what it is doing. Rides the
+// checks progress row and event (services/visuals.js). Best-effort and
+// lazy-required: the build must never fail, or wait, on a status write,
+// and visuals requires this module at load.
+function reportBuildStep(config, session, step, timings, startedAt) {
+  try {
+    const visuals = require('./visuals');
+    const build = {
+      step,
+      startedAt: new Date(startedAt).toISOString(),
+      steps: visuals.buildProgressFromTimings(timings)?.steps || [],
+      ...(Number.isFinite(timings.totalMs) ? { totalMs: Math.round(timings.totalMs) } : {}),
+    };
+    visuals.setChecksBuildProgress(getPool(config), session.id, build).catch(() => {});
+    visuals.notifyChecksBuildProgress(session.id, build);
+  } catch { /* status only */ }
+}
+
 async function buildAndDeployStagingInner(config, session, app, commitHash) {
   const containerName = `usernode-staging-${app.slug}--${session.id}`;
   const imageName = `usernode-staging-${app.slug}-${session.id}:${commitHash.substring(0, 6)}`;
@@ -151,6 +170,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
   // proposal-checks slowdown meant reading a container log tail.
   const buildStartedAt = Date.now();
   const timings = {};
+  reportBuildStep(config, session, 'source_fetch', timings, buildStartedAt);
 
   try {
     // 1. Clone the PR branch
@@ -321,6 +341,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // phase of its own. It showed up in the trace only as the gap before the
     // first step, which is precisely where an unexplained regression hides.
     timings.sourceFetchMs = imageBuildStartedAt - buildStartedAt;
+    reportBuildStep(config, session, 'image_build', timings, imageBuildStartedAt);
     const { stdout: revisionOut } = await docker.execFileAsync('git', [
       '-C', cloneDir, 'rev-parse', 'HEAD',
     ], { timeout: 5000 });
@@ -345,6 +366,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     const prodDbName = dbManager.appDbName(app.slug);
     const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
     const cloneStartedAt = Date.now();
+    reportBuildStep(config, session, 'clone', timings, cloneStartedAt);
     // Previews clone from the app's staging template (a redacted copy kept
     // warm on the server) rather than dumping the live database each time;
     // db-manager falls back to the direct copy on any template trouble.
@@ -408,6 +430,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     const platformEnv = stagingEnv.platformStagingEnv(app, config);
 
     const healthStartedAt = Date.now();
+    reportBuildStep(config, session, 'health', timings, healthStartedAt);
     const deployed = await applicationRuntime.deploy(config, {
       app,
       environment: 'staging',
@@ -446,6 +469,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // revealing the preview button.
 
     timings.totalMs = Date.now() - buildStartedAt;
+    reportBuildStep(config, session, 'done', timings, Date.now());
     log.info('staging', 'Staging deployed', {
       sessionId: session.id, url: stagingUrl, ...timings,
     });
