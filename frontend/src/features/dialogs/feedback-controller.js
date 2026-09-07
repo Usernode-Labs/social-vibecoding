@@ -94,6 +94,33 @@ export function init() {
     // Feedback
     const feedbackTitle = document.getElementById('feedback-title');
     const feedbackText = document.getElementById('feedback-text');
+
+    /**
+     * Lock the composer after a send, WITHOUT taking focus off it (#1492).
+     *
+     * This used to set `disabled`, and a disabled element cannot hold focus.
+     * On a phone that blurs the textarea the moment Submit succeeds, which
+     * tears the on-screen keyboard down — and the keyboard is what the visual
+     * viewport is measured against. `html, body { height: 100dvh }` (app.css)
+     * means the whole fixed column then reflows, the modal resizes under the
+     * "Submitted" label, and 1.5s later the close reflows it a second time.
+     * Two full relayouts around one tap is the stutter that was reported, and
+     * it is a mobile-only symptom because only a phone has a keyboard taking
+     * half the viewport.
+     *
+     * `readOnly` refuses typing exactly as #32 needs, and keeps focus, so the
+     * keyboard comes down ONCE — when the dialog actually closes. It also
+     * leaves the text selectable, so somebody whose send failed can still copy
+     * what they wrote.
+     *
+     * The submit BUTTON stays `disabled`: it holds no caret and dismisses no
+     * keyboard, and disabled is the honest state for a control that must not
+     * fire.
+     */
+    const setComposerLocked = (locked) => {
+      feedbackText.readOnly = locked;
+      feedbackTitle.readOnly = locked;
+    };
     const feedbackBtn = document.getElementById('feedback-submit');
     const feedbackStatus = document.getElementById('feedback-status');
     // #1603: the inline refusal under the description. Rendered empty and
@@ -493,7 +520,7 @@ export function init() {
       // than once. Re-focusing an element that already has focus is a no-op,
       // so the extra passes cost nothing when there is no kit to lose to.
       const restoreCaret = (framesLeft) => {
-        if (feedbackText.disabled) return;
+        if (feedbackText.readOnly) return;
         try {
           feedbackText.focus();
           feedbackText.setSelectionRange(caretStart, caretEnd);
@@ -757,8 +784,7 @@ export function init() {
       clearCaptureDraft();
       resetTitleGenState();
       resetScreenshotState();
-      feedbackText.disabled = true;
-      feedbackTitle.disabled = true;
+      setComposerLocked(true);
       feedbackBtn.disabled = true;
       feedbackBtn.textContent = 'Saved';
       // This count is the freshest thing anyone knows — invalidate any read
@@ -964,8 +990,7 @@ export function init() {
           // typing (or re-fire cmd+enter) after their feedback has
           // already been filed — fixes #32. Both controls are
           // re-enabled when the modal is reopened below.
-          feedbackText.disabled = true;
-          feedbackTitle.disabled = true;
+          setComposerLocked(true);
           feedbackBtn.textContent = 'Submitted';
           // #125: make the new issue show up in this app's "Open Issues"
           // panel without a reload. The server seeds its issues cache and
@@ -1007,8 +1032,7 @@ export function init() {
     Feedback._open = (opts = {}) => {
       // Reset any "Submitted" lock from a prior session so a returning
       // user can file another piece of feedback without reloading.
-      feedbackText.disabled = false;
-      feedbackTitle.disabled = false;
+      setComposerLocked(false);
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
       // #1603: a refusal from a previous open never greets the next one.
@@ -1097,7 +1121,7 @@ export function init() {
           if (!failed || modal.classList.contains('hidden')) return;
           // Live text always wins — a returned draft must never overwrite
           // what someone is typing right now.
-          if (feedbackText.disabled || feedbackText.value.trim()) return;
+          if (feedbackText.readOnly || feedbackText.value.trim()) return;
           const p = failed.payload || {};
           feedbackText.value = p.description || '';
           if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
@@ -1118,7 +1142,7 @@ export function init() {
       const rescued = readCaptureDraft();
       if (rescued) {
         clearCaptureDraft();
-        if (!feedbackText.disabled && !feedbackText.value.trim()) {
+        if (!feedbackText.readOnly && !feedbackText.value.trim()) {
           feedbackText.value = rescued.description;
           if (rescued.title && !feedbackTitle.value.trim()) {
             feedbackTitle.value = rescued.title;
@@ -1170,8 +1194,7 @@ export function init() {
         resetTitleGenState();
         clearCaptureDraft();
       }
-      feedbackText.disabled = false;
-      feedbackTitle.disabled = false;
+      setComposerLocked(false);
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       // #683: cancelling discards the attachment client-side; an already
       // uploaded (now orphaned) row is GC'd server-side after 24h.

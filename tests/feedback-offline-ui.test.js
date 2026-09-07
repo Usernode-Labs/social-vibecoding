@@ -117,7 +117,7 @@ test('a permanently-refused message is handed back with the words intact', () =>
   assert.match(openModal, /feedbackText\.value = p\.description \|\| '';/);
   assert.match(openModal, /This message couldn't be sent/);
   // Live text always wins — a returned draft must not overwrite typing.
-  assert.match(openModal, /if \(feedbackText\.disabled \|\| feedbackText\.value\.trim\(\)\) return;/);
+  assert.match(openModal, /if \(feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) return;/);
 });
 
 test('a captured screenshot survives a failed upload', () => {
