@@ -1480,7 +1480,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         // Historically the single largest phase of the whole run: a full
         // logical dump/restore of the app's database. See
         // db-manager.privateDataExclusions for what shrank it.
-        traceStep('clone', 'Preview database cloned', { durationMs: buildTimings.cloneMs });
+        traceStep('clone', 'Preview database cloned', {
+          durationMs: buildTimings.cloneMs,
+          // 'template' is the file-level copy of the app's staging template;
+          // 'direct' is the dump/restore of the live database. The one that
+          // also refreshed the template paid the direct cost this run.
+          via: buildTimings.cloneVia || undefined,
+          templateRefreshed: buildTimings.templateRefreshed || undefined,
+        });
       }
       if (buildTimings.healthMs != null) {
         traceStep('staging_health', 'Preview answered its healthcheck', { durationMs: buildTimings.healthMs });

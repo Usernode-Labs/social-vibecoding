@@ -345,8 +345,17 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     const prodDbName = dbManager.appDbName(app.slug);
     const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
     const cloneStartedAt = Date.now();
-    const { password: stagingDbPassword } = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr);
+    // Previews clone from the app's staging template (a redacted copy kept
+    // warm on the server) rather than dumping the live database each time;
+    // db-manager falls back to the direct copy on any template trouble.
+    // `cloneVia` rides the timings into the checks trace so the two can be
+    // told apart when the build half is being measured.
+    const cloned = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr, { viaTemplate: true });
+    const { password: stagingDbPassword } = cloned;
     timings.cloneMs = Date.now() - cloneStartedAt;
+    timings.cloneVia = cloned.via || 'direct';
+    if (cloned.templateRefreshed) timings.templateRefreshed = true;
+    if (cloned.templateStale) timings.templateRefreshQueued = true;
     const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, stagingDbPassword);
 
     // 4. Stop existing staging container if any. Short grace: a preview
