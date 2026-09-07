@@ -11013,7 +11013,39 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-vote .dev-ledger-dot { background: var(--accent-tint); color: var(--accent); }
 .dev-ledger-progress .dev-ledger-dot { background: var(--state-progress-bg); color: var(--state-progress); }
 .dev-ledger-mute .dev-ledger-dot { background: var(--state-neutral-bg); color: var(--state-neutral); }
-.dev-ledger-k { font-weight: 600; white-space: nowrap; }
+/* The label track is a fixed 118px, so `nowrap` sent anything longer than
+   about two short words straight across the gap and into the value column —
+   "Conflicts with main" overlapped its own sentence. Labels wrap now; they
+   are two or three words, so this costs a second line only in the cases
+   that were previously broken. */
+.dev-ledger-k { font-weight: 600; white-space: normal; overflow-wrap: break-word; }
+
+/* ── The path checkboxes ────────────────────────────────────────────────
+   1 / 2 / 3 says the steps are ORDERED. It does not say they are a GATE,
+   and a reader can take the panel as a menu and pick the step that looks
+   nearest. A checklist says it without a word: a squared, ringed box per
+   step, holding its number while it is outstanding and a tick once it is
+   cleared. It replaced a rail drawn between the dots, which read as a line
+   behind the numbers rather than as a connection, and which had to derive
+   its geometry from the dot size and the row padding to land at all.
+
+   The tone still colours the box, so the blocking step stays the loud one. */
+.dev-ledger-row[data-step] .dev-ledger-dot {
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+  font-size: 10.5px;
+}
+.dev-ledger-row[data-step][data-step-done] .dev-ledger-dot {
+  background: var(--state-ok-bg);
+  color: var(--state-ok);
+  font-size: 11px;
+}
+
+.dev-ledger-path-note {
+  margin: -4px 0 8px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
 .dev-ledger-k small {
   display: block;
   font-size: 12px;
