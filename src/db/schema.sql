@@ -663,6 +663,26 @@ CREATE TABLE IF NOT EXISTS app_check_history (
   UNIQUE (app_id, check_key)
 );
 CREATE INDEX IF NOT EXISTS idx_app_check_history_app ON app_check_history(app_id);
+
+-- `consecutive_passes` is what graduation reads now. ONE observed pass used
+-- to be enough, so a check that is flaky from birth graduated on its first
+-- lucky run and blocked every proposal afterwards, with no demotion to
+-- undo it. Ten in a row, reset to zero by any failure, is a bar a 1-in-20
+-- flake clears only 60% of the time per window instead of 95%.
+--
+-- The backfill is a genuine one-time migration written to be safe under
+-- the idempotent boot: the column is added NULLABLE with no default, the
+-- two UPDATEs give every pre-existing row a value, and recordRun always
+-- writes one explicitly. On the second boot nothing is NULL, so both
+-- UPDATEs match nothing. A default would have re-run on every boot and
+-- re-graduated any check whose counter a failure had just reset.
+ALTER TABLE app_check_history ADD COLUMN IF NOT EXISTS consecutive_passes INTEGER;
+-- Already gating under the one-pass rule: keep it gating. No guard rail
+-- this app relies on is demoted by raising the bar.
+UPDATE app_check_history SET consecutive_passes = 10
+  WHERE consecutive_passes IS NULL AND first_passed_at IS NOT NULL;
+UPDATE app_check_history SET consecutive_passes = 0 WHERE consecutive_passes IS NULL;
+
 -- The graduated-set load is the hot read (once per checks run).
 CREATE INDEX IF NOT EXISTS idx_app_check_history_graduated
   ON app_check_history(app_id) WHERE first_passed_at IS NOT NULL;
