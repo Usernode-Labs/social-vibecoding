@@ -759,7 +759,9 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 }
 
 // Dollars per 1k tokens, aligned with services/models.js (the allowlist's
-// $/MTok figures: haiku 1/5, sonnet 3/15, opus 5/25, fable 10/50).
+// $/MTok figures: haiku 1/5, sonnet 2/10, opus 5/25, fable 10/50). The
+// sonnet row is Sonnet 5's rate; the 4.6 generation cost 3/15, and billing
+// it at that over-debited every Sonnet 5 turn by a third.
 // Fable previously matched no branch and silently fell through to sonnet
 // pricing — a ~3x underestimate that let fable turns slip past the daily
 // budget enforcement. Callers should pass the SERVED model (streamChat's
@@ -767,12 +769,12 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 function estimateCostCents(usage, model) {
   const inputPer1k = model?.includes('fable') ? 0.010
     : model?.includes('opus') ? 0.005
-      : model?.includes('sonnet') ? 0.003
+      : model?.includes('sonnet') ? 0.002
         : model?.includes('haiku') ? 0.001
           : 0.003;
   const outputPer1k = model?.includes('fable') ? 0.050
     : model?.includes('opus') ? 0.025
-      : model?.includes('sonnet') ? 0.015
+      : model?.includes('sonnet') ? 0.010
         : model?.includes('haiku') ? 0.005
           : 0.015;
 
