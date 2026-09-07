@@ -445,13 +445,20 @@ test('reconnecting reconciles the snapshot against the real session', () => {
 test('every way out of a session clears the snapshot', () => {
   // Leaving it behind would let the next offline boot paint a signed-in
   // shell for an account that logged out — a worse bug than the original.
-  assert.match(SETTINGS, /clearSessionSnapshot/);
+  //
+  // Both sign-out paths reach it through _dropCachedSession now (#1524),
+  // which clears the snapshot AND the rest of the remembered session: the
+  // shell chrome snapshot and the Improve target, which main.tsx re-applies
+  // unconditionally at boot and which would otherwise paint the previous
+  // account's header on the landing page they were just sent to.
+  assert.match(APP, /_dropCachedSession\(\) \{\s*\n\s*App\.clearSessionSnapshot\(\);/);
+  assert.match(SETTINGS, /window\.App\?\._dropCachedSession\?\.\(\)/);
   assert.match(AUTH, /clearSessionSnapshot/);
   // Including the waiting-room logout, which does not go through settings.
   // That screen is React now (#1080 chunk C), so its own fallback path is
   // where the call has to be.
   const waitingLogout = AUTH_WAITING_TSX.slice(AUTH_WAITING_TSX.indexOf('const onLogout'));
-  assert.match(waitingLogout.slice(0, 800), /clearSessionSnapshot/);
+  assert.match(waitingLogout.slice(0, 800), /_dropCachedSession/);
 });
 
 // ── The visible offline state ────────────────────────────────────────
