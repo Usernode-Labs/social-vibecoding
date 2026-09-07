@@ -125,7 +125,13 @@ test('two reasons at once: the pill names the worst and counts the rest', () => 
   const behind = ledger.find((r) => r.key === 'behind');
   assert.ok(behind, '"Behind main" — which never had a box — is a ledger row');
   assert.equal(behind.tone, 'warn');
-  assert.equal(behind.sub, '3 commits');
+  // It is step 1 of the path now (_topicLedgerPath), so the small line under
+  // the label says who acts and when instead of repeating the count, and the
+  // count moves into the sentence where it can carry its unit.
+  assert.equal(behind.step, 1);
+  assert.equal(behind.label, 'Sync with main');
+  assert.equal(behind.sub, 'automatic, now', 'nobody is being asked to do this one');
+  assert.match(behind.text.join(''), /Main has moved 3 commits ahead/);
   assert.ok(ledger.some((r) => r.key === 'console' || r.key === 'console_errors'), 'and so are the console errors');
 });
 
@@ -149,11 +155,17 @@ test('a HARD reason beside a soft one: the heading names the block', () => {
   // On the page: the checks verdict row (with the failing test), then the
   // rows the verdict does not already say.
   const ledger = AppView._proposalDetailsView(pr).ledger;
-  assert.equal(ledger[0].key, 'checks');
-  assert.equal(ledger[0].tone, 'bad');
-  assert.equal(ledger[0].sub, '1 of 1 failing');
-  assert.equal(ledger[0].fails[0].name, 'Feed');
-  assert.ok(ledger.some((r) => r.key === 'behind' && r.sub === '2 commits'));
+  // The path leads with the sync, because that is what happens first — but
+  // the sync here is automatic, so the failing check keeps its full weight
+  // and its own wording: it is still the author's next move.
+  assert.equal(ledger[0].key, 'behind');
+  assert.equal(ledger[0].sub, 'automatic, now');
+  const checks = ledger.find((r) => r.key === 'checks');
+  assert.equal(checks.tone, 'bad');
+  assert.equal(checks.step, 2);
+  assert.equal(checks.sub, 'automatic, after 1');
+  assert.equal(checks.fails[0].name, 'Feed');
+  assert.match(checks.text.join(''), /checks failed/i, 'not demoted to "nothing to do here"');
   assert.ok(ledger.some((r) => r.key === 'console_errors' || r.key === 'console'),
     'console errors are said once, as a row');
 });
