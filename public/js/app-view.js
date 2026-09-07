@@ -9029,6 +9029,15 @@ const AppView = {
   // and the chip would be noise on every row; the server has already
   // withheld a rate for a check with too few observations to judge.
   FLAKE_CHIP_FLOOR: 0.05,
+  _checkReason(r) {
+    const base = (r && r.failureReason) ? String(r.failureReason).slice(0, 500) : null;
+    const runs = r && Number(r.runs);
+    const fails = r && Number(r.fails);
+    if (!Number.isFinite(runs) || runs < 2 || !Number.isFinite(fails) || fails < 1) return base;
+    const lead = `Failed ${fails} of ${runs} runs on this build.`;
+    return base ? `${lead} ${base}` : lead;
+  },
+
   _flakePercent(rate) {
     const n = Number(rate);
     if (!Number.isFinite(n) || n < AppView.FLAKE_CHIP_FLOOR) return null;
@@ -9055,7 +9064,12 @@ const AppView = {
       // nobody could see before; the chip is the whole point of recording
       // pass_count and fail_count.
       flaky: AppView._flakePercent(r && r.flakeRate),
-      reason: (r && r.failureReason) ? String(r.failureReason).slice(0, 500) : null,
+      // A check dispatched several times in one run (its first appearance)
+      // that disagreed with itself is the loudest flake signal there is,
+      // and unlike the lifetime rate it needs no history to read. It leads
+      // the reason, because "it failed" and "it failed once out of three"
+      // call for different next moves.
+      reason: AppView._checkReason(r),
       errors: (Array.isArray(r && r.consoleErrors) ? r.consoleErrors : []).map((e) => ({
         kind: (e && e.kind) ? String(e.kind) : 'console',
         message: String((e && e.message) || '').slice(0, 500),

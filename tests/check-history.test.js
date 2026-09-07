@@ -51,19 +51,19 @@ const tests = (n, from = 0) => Array.from({ length: n }, (_, i) => ({
 
 // ── loadGraduated ──────────────────────────────────────────────────────
 
-test('loadGraduated returns the keys with a long enough run of passes', async () => {
+test('loadGraduated returns the keys that have ever passed', async () => {
   const pool = makePool((text) => (
     /SELECT check_key/.test(text) ? { rows: [{ check_key: 'aaa' }, { check_key: 'bbb' }] } : null
   ));
   const set = await checkHistory.loadGraduated(pool, 7);
   assert.ok(set.has('aaa') && set.has('bbb'));
   assert.equal(set.size, 2);
-  // The bar used to be a single observed pass, which let a check that is
-  // flaky from birth graduate on its first lucky run and then gate every
-  // proposal, permanently, since there is no demotion.
-  assert.match(pool.sql(0), /consecutive_passes, 0\) >= \$2/,
-    'graduation is a run of passes, still derived and never a stored flag');
-  assert.doesNotMatch(pool.sql(0), /first_passed_at IS NOT NULL/);
+  // Every declared check blocks now. This set is the EXEMPTION list running
+  // the other way: a check seen before and never once passing is a legacy
+  // backlog entry, unfinished rather than broken by the proposal in front
+  // of it, and it earns its gate by passing once. Nothing new can enter
+  // that state, because a new check has to pass its first runs to land.
+  assert.match(pool.sql(0), /first_passed_at IS NOT NULL/);
 });
 
 test('an unreadable history makes everything advisory, not everything blocking', async () => {

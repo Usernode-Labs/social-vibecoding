@@ -7,28 +7,40 @@
 // the very next proposal on hundreds of failures it did not cause. So a
 // check's power is EARNED:
 //
-//   * observed passing GRADUATION_PASSES times in a row → BLOCKING. A later
-//     failure blocks the merge, exactly like the 12 always did.
-//   * anything less                                      → ADVISORY. It
-//     runs, its failures show on the card, but they do not block anybody.
+// A DECLARED CHECK BLOCKS. That is the rule, and it is the rule from the
+// moment the check lands, because a pushed test that cannot block is a test
+// that lies about what it guards.
 //
-// The bar used to be ONE pass, and that was the hole: a check that is flaky
-// from birth graduated on its first lucky run and blocked every proposal
-// afterwards, permanently, because there is no demotion. Ten consecutive
-// passes is not proof a check is deterministic — ten clean observations put
-// the 95% upper bound on its failure rate at roughly 3/10, not at zero —
-// but it is a bar a 1-in-20 flake clears about 60% of the time per window
-// rather than 95%, and the ten come from ten different builds on different
-// hosts with different caches, which is where the decorrelation is.
+// Which leaves exactly one exception, and it is a legacy one:
 //
-// There is still no demotion — a graduated check that starts failing STAYS
-// blocking, which is the entire point. What a graduated check that has
-// started failing intermittently now gets is VISIBILITY: `flakeRate` below
-// carries its lifetime fail ratio onto the proposal's checks row.
+//   * never run here before  → BLOCKING, and it runs NEW_CHECK_RUNS times
+//     on that first appearance, each on its own cold load. All of them have
+//     to pass or its own author's proposal is blocked. That is the cheapest
+//     moment to find out a check is wrong or grossly flaky, and the person
+//     it inconveniences is the one who can fix it.
+//   * observed passing at least once → BLOCKING.
+//   * seen, never passed             → ADVISORY. It runs, its failures show
+//     on the card, and it blocks nobody.
 //
-// The promotion path stays automatic: fix an advisory check, let it pass
-// ten runs running, and it is a permanent guard rail with no manifest edit
-// and no ticket.
+// That last case is a backlog, not a policy. The manifest reader used to
+// keep only the first 12 declared checks, so this repo's 229 tail checks
+// had never executed; turning them all on at once with blocking power would
+// have blocked the very next proposal on hundreds of failures it did not
+// cause. A check in that state is unfinished, and it earns its gate by
+// passing once. Nothing NEW can enter that state, because a new check has
+// to pass its first runs to land at all.
+//
+// `consecutive_passes` no longer decides any of this. Its job is the FLAKY
+// tag: a check that has failed and then passed carries one, and sheds it
+// after GRADUATION_PASSES clean runs. Ten is not proof a check is
+// deterministic — ten clean observations put the 95% upper bound on its
+// failure rate near 3/10, not at zero — but it is a run long enough to mean
+// something, spread over ten different builds on different hosts with
+// different caches, which is where the decorrelation is.
+//
+// There is still no demotion. A check that starts failing intermittently
+// STAYS blocking and gets a label, rather than quietly losing the power to
+// guard the thing it guards.
 //
 // Keyed by appManifest.checkKey(name, path) — the same (name+path) pair the
 // reader de-duplicates on. Renaming a check mints a new key and drops it
@@ -51,20 +63,20 @@ const MAX_ROWS_PER_RUN = appManifest.MAX_DECLARED_TESTS;
 // merge. Also the value the schema backfills onto every row that was
 // already graduated under the old one-pass rule, so raising the bar demotes
 // nothing that is gating today.
+// Clean runs that clear the FLAKY tag. No longer a gate.
 const GRADUATION_PASSES = 10;
 
-// How many times a check is run on its FIRST appearance, before it has any
-// history at all. Five solo cold loads catch the grossly flaky and the
-// outright wrong on day one — a check failing 1 run in 5 is caught 67% of
-// the time — and they preload the evidence the flake rate is computed from.
+// How many times a check runs on its FIRST appearance, before it has any
+// history at all. Three solo cold loads, all of which must pass, on the
+// proposal that introduces it. It catches the outright wrong immediately
+// and a 1-in-3 flake about 70% of the time, and it does so on the author's
+// own proposal rather than on a stranger's a week later.
 //
-// They count toward GRADUATION_PASSES, which is the deliberate part and the
-// arguable one: five observations from ONE build share a host, an image and
-// a database clone, so they are not five independent draws and the run of
-// ten they contribute to is weaker than ten across ten builds. The flake
-// chip exists because of exactly that gap. What they are not is five
+// Three, not five: the marginal flake detection from runs four and five is
+// small, and these three share a host, an image and a database clone, so
+// they are not three independent draws. What they are not is three
 // assertions against one page load — see `solo` in capture/capture.js.
-const NEW_CHECK_RUNS = 5;
+const NEW_CHECK_RUNS = 3;
 
 // Ceiling on the extra loads one run will pay for. A proposal that declares
 // twenty new checks at once would otherwise add a hundred navigations to
@@ -79,8 +91,8 @@ async function loadGraduated(pool, appId) {
   try {
     const { rows } = await pool.query(
       `SELECT check_key FROM app_check_history
-        WHERE app_id = $1 AND COALESCE(consecutive_passes, 0) >= $2`,
-      [appId, GRADUATION_PASSES]
+        WHERE app_id = $1 AND first_passed_at IS NOT NULL`,
+      [appId]
     );
     for (const r of rows) out.add(r.check_key);
   } catch (err) {

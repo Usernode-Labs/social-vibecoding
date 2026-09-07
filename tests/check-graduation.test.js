@@ -42,16 +42,29 @@ function fakePool(rows = []) {
   };
 }
 
-test('graduation reads a run of passes, not a single lucky one', async () => {
+test('a declared check blocks, and the one exception is a legacy backlog', async () => {
   const pool = fakePool([{ check_key: 'aa' }]);
   const out = await checkHistory.loadGraduated(pool, 7);
   assert.deepEqual([...out], ['aa']);
   const q = pool.seen.find((s) => /SELECT check_key FROM/.test(s.sql));
-  assert.match(q.sql, /consecutive_passes/, 'the predicate is the run, not first_passed_at');
-  assert.doesNotMatch(q.sql, /first_passed_at IS NOT NULL/,
-    'one observed pass is no longer the bar');
-  assert.deepEqual(q.params, [7, checkHistory.GRADUATION_PASSES]);
-  assert.equal(checkHistory.GRADUATION_PASSES, 10);
+  // "Has ever passed" is not the gate any more, it is the EXEMPTION from
+  // the gate running backwards: a check seen before and never once passing
+  // is unfinished rather than broken by the proposal in front of it. A
+  // check on its FIRST appearance blocks immediately, which visuals decides
+  // from loadSeen, not from here.
+  assert.match(q.sql, /first_passed_at IS NOT NULL/);
+  assert.deepEqual(q.params, [7]);
+});
+
+test('a brand-new check runs three times, each on its own cold load', async () => {
+  assert.equal(checkHistory.NEW_CHECK_RUNS, 3);
+  assert.equal(checkHistory.GRADUATION_PASSES, 10, 'ten clean runs clear the flaky tag');
+  const capture = read('capture/capture.js');
+  assert.match(capture, /function groupTests\(tests, env\) \{/);
+  assert.match(capture, /const solo = all\.filter\(\(t\) => t && t\.solo\);/,
+    'a repeat is exempt from grouping, or it is an assertion against a page load '
+    + 'somebody else already did');
+  assert.match(capture, /for \(const t of solo\) groups\.push\(\[t\]\);/);
 });
 
 test('a failure resets the run, and nothing else about the row', async () => {
@@ -146,4 +159,49 @@ test('the chip prints a rate worth printing, and nothing else', () => {
   });
   assert.equal(v.passes[0].flaky, 20);
   assert.equal(v.passes[0].pass, true);
+});
+
+test('a check that disagrees with itself on its debut does not land', () => {
+  // Three cold runs, and ALL of them have to pass. One failure among them
+  // is the check saying it is not deterministic, and letting it land anyway
+  // is exactly how a flake gets the power to block strangers.
+  const src = read('src/services/visuals.js');
+  assert.match(src, /const pass = fails === 0;/,
+    'all of them, not most of them');
+  assert.match(src, /const flakyRun = passes > 0 && fails > 0;/,
+    'disagreement inside one run needs no history to read');
+  assert.match(src, /if \(d\.repeatOf != null\) continue;/,
+    'a repeat is an observation of a check, not a second row on the card');
+  assert.match(src, /declaredCount: dispatched\.filter\(\(d\) => d\.repeatOf == null\)\.length/,
+    'and it is not a second declared check in the count either');
+});
+
+test('the reason says how many runs disagreed, before it says what broke', () => {
+  const sandbox = {
+    console, relTime: () => 'just now', App: { user: { id: 1 } },
+    Kudos: { renderButton: () => '' }, DOMPurify: { sanitize: (s) => s },
+    document: {
+      getElementById: () => null, querySelector: () => ({ innerHTML: '' }),
+      querySelectorAll: () => ({ forEach() {} }), addEventListener() {},
+      createElement: () => ({ style: {}, classList: { add() {}, remove() {} } }),
+      body: { appendChild() {} }, hidden: false,
+    },
+    fetch: async () => ({ ok: true, json: async () => ({}) }), alert() {},
+    setTimeout, clearTimeout, setInterval, clearInterval, addEventListener() {},
+    localStorage: { getItem: () => null, setItem() {} },
+    location: { search: '', hash: '' }, URLSearchParams,
+  };
+  sandbox.window = sandbox; sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(
+    `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
+    + `${read('public/js/app-view.js')}\n;globalThis.__AppView = AppView;`, sandbox);
+  const AppView = sandbox.__AppView;
+  assert.equal(AppView._checkReason({ runs: 3, fails: 1, failureReason: 'Selector not found' }),
+    'Failed 1 of 3 runs on this build. Selector not found');
+  assert.equal(AppView._checkReason({ runs: 3, fails: 3, failureReason: 'Selector not found' }),
+    'Failed 3 of 3 runs on this build. Selector not found');
+  assert.equal(AppView._checkReason({ runs: 1, fails: 1, failureReason: 'Selector not found' }),
+    'Selector not found', 'one run says nothing about determinism');
+  assert.equal(AppView._checkReason({ runs: 3, fails: 0 }), null);
 });
