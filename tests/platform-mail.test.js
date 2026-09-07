@@ -398,7 +398,15 @@ test('the join mail carries the CODE, the confirm link AND the survey link', asy
   assert.match(msg.text, /rolling basis/i);
   assert.doesNotMatch(msg.text, /September/i);
   assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
-  assert.match(msg.html, /<strong>123456<\/strong>/);
+  // #1516: the code leads the mail, in the same large type the login-code
+  // and resend mails use — not buried in a sentence three paragraphs down.
+  assert.match(msg.html, /font-size:28px[^>]*>123456</);
+  assert.ok(
+    msg.html.indexOf('123456') < msg.html.indexOf('Thanks for joining'),
+    'the code must come before the welcome copy in the HTML part');
+  assert.ok(
+    msg.text.indexOf('123456') < msg.text.indexOf('Thanks for joining'),
+    'the code must come before the welcome copy in the text part');
 });
 
 test('a join mail with no code still renders, and prints no stray placeholder', async () => {

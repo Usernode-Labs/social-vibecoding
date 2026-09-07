@@ -26,9 +26,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const express = require('express');
 
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
+
+const ROOT = path.join(__dirname, '..');
 
 // ── Harness for the route ───────────────────────────────────────────
 
@@ -292,4 +296,24 @@ test('island: first render is the hidden strip, with no data and no store link',
   assert.doesNotMatch(html, /https:\/\/play\.google\.com/);
   // …and names no destination, because none is known yet.
   assert.doesNotMatch(html, /App Store|Google Play|TestFlight/);
+});
+
+// ── The dismissal's lifetime ────────────────────────────────────────
+
+test('#1514: the dismissal is session-scoped, and does not read the old forever key', () => {
+  // The × used to write localStorage, which retired the offer on that device
+  // permanently — including for everyone who tapped it before any store
+  // listing existed. sessionStorage keeps it down for the tab (refreshes
+  // included) and lets the next visit ask once more.
+  //
+  // Asserted on the source because the storage decision is not observable in
+  // a rendered string: the strip's first render is hidden either way.
+  const src = fs.readFileSync(
+    path.join(ROOT, 'frontend/src/features/mobile-install/install-banner.tsx'), 'utf8');
+  assert.match(src, /sessionStorage\.getItem\(DISMISS_KEY\)/);
+  assert.match(src, /sessionStorage\.setItem\(DISMISS_KEY, '1'\)/);
+  // Prose in the doc comment still names the retired store, so this looks for
+  // a CALL rather than the word.
+  assert.doesNotMatch(src, /localStorage\s*\.\s*(get|set)Item/,
+    'reading the retired localStorage entry would pin exactly the people this frees');
 });

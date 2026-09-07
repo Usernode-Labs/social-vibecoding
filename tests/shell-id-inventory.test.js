@@ -363,7 +363,7 @@ const ADDED_IDS = {
   // been published and the strip can never show.
   'mobile-install-banner': 'The phone-browser strip offering the native app (#1372). Sits under #offline-banner and stacks with it.',
   'mobile-install-open': 'The store link. href comes from app_version_configs.update_url via GET /api/public/mobile-app, per OS.',
-  'mobile-install-dismiss': 'Dismisses the strip for good; the answer is kept in localStorage.',
+  'mobile-install-dismiss': 'Dismisses the strip for this session; the answer is kept in sessionStorage, so the next visit is offered the app once more (#1514).',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.
