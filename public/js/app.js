@@ -3604,6 +3604,19 @@ const App = {
     // ...and home last. This is the first converted root that ships
     // VISIBLE, which is why _isScreenVisible below grew a DOM fallback.
     'home-screen',
+    // Messages. The island has owned #messages-screen's `hidden` through
+    // useVisibilityHiddenClass since #1431, which ALSO took this entry out
+    // when Messages became a sheet; #1444 made it a screen again and put it
+    // back in SCREEN_IDS and _showOnlyScreen — everywhere but here. So
+    // _setScreenVisible took the classList path and the class had two
+    // owners: app.js toggled it off, and the hook — which re-applies on
+    // every publish of ANY id and reads an unpublished id as its shipped
+    // (hidden) state — put it back on whichever fetch-driven publish came
+    // next. Six declared checks failed by arrival order on proposals that
+    // had not touched Messages. Listed, app.js publishes and React applies:
+    // one owner. tests/react-screen-ids-consistency.test.js pins the rule
+    // for every screen root at once.
+    'messages-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on
