@@ -340,6 +340,8 @@ export interface DevWorkshopView {
     stale: boolean;
     /** A regeneration is running now. */
     pending: boolean;
+    /** Why the last generation failed, when the fallback is showing because of it. */
+    lastError: string | null;
     /** The shared filter bar is narrowing what the themes hold. */
     filtered: boolean;
   };

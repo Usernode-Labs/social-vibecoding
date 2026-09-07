@@ -1797,7 +1797,11 @@ ${inputJson}`;
     activeClient,
     params: {
       model,
-      max_tokens: 4000,
+      // Every item key comes back in the answer — a 200-item board is a
+      // couple of thousand tokens of keys before a word of prose — so the
+      // budget is generous, and a truncated answer is named below rather
+      // than surfacing as a JSON parse error.
+      max_tokens: 8000,
       system,
       messages: [{ role: 'user', content: user }],
       output_config: { format: { type: 'json_schema', schema: WORKSHOP_THEMES_SCHEMA } },
@@ -1807,6 +1811,9 @@ ${inputJson}`;
     apiKey,
   });
 
+  if (resp.stop_reason === 'max_tokens') {
+    throw new Error('Workshop themes response hit the output limit before it finished');
+  }
   const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
   const text = raw
     .replace(/```(?:json)?/gi, '')

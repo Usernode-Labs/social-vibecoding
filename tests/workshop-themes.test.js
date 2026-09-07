@@ -313,10 +313,72 @@ test('a model failure leaves the previous cache in place and clears the in-fligh
     const out = await svc.getThemes({ pool, app: APP, waitForGeneration: true });
     assert.equal(out.source, 'category');
     assert.equal(out.pending, false);
+    assert.equal(out.lastError, 'boom');
     assert.ok(!svc._inFlightForTests.has(APP.id));
   } finally {
     llm._setClientForTests(prev);
     publicIssues = { issues: [], truncatedList: false };
+  }
+});
+
+test('after a failure the next GET reports it and does not start another generation until the backoff lapses', async () => {
+  publicIssues = { issues: [{ number: 1, title: 'New thing', updatedAt: '2026-09-01T00:00:00Z' }], truncatedList: false };
+  let calls = 0;
+  const prev = llm._setClientForTests({ messages: { create: async () => { calls++; throw new Error('boom'); } } });
+  dispatch([[/FROM app_workshop_themes/i, []]]);
+  try {
+    assert.ok(svc.FAILURE_BACKOFF_MS >= 30 * 1000);
+    // The previous test left a fresh failure behind for APP.id.
+    assert.ok(svc._lastFailureForTests.has(APP.id));
+    const out = await svc.getThemes({ pool, app: APP, waitForGeneration: true });
+    assert.equal(out.source, 'category');
+    assert.equal(out.pending, false);
+    assert.equal(out.lastError, 'boom');
+    await settle();
+    assert.equal(calls, 0, 'no model call inside the failure backoff');
+
+    // Once the backoff lapses a GET tries again — and a success clears the record.
+    svc._lastFailureForTests.set(APP.id, { at: Date.now() - svc.FAILURE_BACKOFF_MS - 1, message: 'boom' });
+    llm._setClientForTests({ messages: { create: async () => {
+      calls++;
+      return {
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 10, output_tokens: 10 },
+        content: [{ type: 'text', text: JSON.stringify({ themes: [{ id: '', name: 'Fresh', description: 'd', saying: 's', items: ['issue:1'] }] }) }],
+      };
+    } } });
+    dispatch([
+      [/FROM app_workshop_themes/i, []],
+      [/INSERT INTO app_workshop_themes/i, [{
+        input_hash: 'h', themes_json: [{ id: 'fresh', name: 'Fresh', description: 'd', saying: 's', items: ['issue:1'] }],
+        source: 'ai', model: 'm', generated_at: '2026-09-02T00:00:00Z',
+      }]],
+    ]);
+    const again = await svc.getThemes({ pool, app: APP, waitForGeneration: true });
+    assert.equal(calls, 1);
+    assert.equal(again.source, 'ai');
+    assert.equal(again.lastError, null);
+    assert.ok(!svc._lastFailureForTests.has(APP.id));
+  } finally {
+    llm._setClientForTests(prev);
+    svc._lastFailureForTests.delete(APP.id);
+    publicIssues = { issues: [], truncatedList: false };
+  }
+});
+
+test('a response cut off at the output limit is a failure, not a partial grouping', async () => {
+  const prev = llm._setClientForTests({ messages: { create: async () => ({
+    stop_reason: 'max_tokens',
+    usage: { input_tokens: 10, output_tokens: 8000 },
+    content: [{ type: 'text', text: '{"themes":[' }],
+  }) } });
+  try {
+    await assert.rejects(
+      () => llm.generateWorkshopThemes({ inputJson: '{}', appName: 'Demo', itemKeys: ['issue:1'] }),
+      /output limit/
+    );
+  } finally {
+    llm._setClientForTests(prev);
   }
 });
 
@@ -355,7 +417,7 @@ test('GET workshop-themes serves the cache shape and no internal fields', async 
     const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/workshop-themes`);
     assert.equal(res.status, 200);
     const body = await res.json();
-    assert.deepEqual(Object.keys(body).sort(), ['generatedAt', 'pending', 'source', 'stale', 'themes']);
+    assert.deepEqual(Object.keys(body).sort(), ['generatedAt', 'lastError', 'pending', 'source', 'stale', 'themes']);
     assert.equal(body.stale, false);
     assert.deepEqual(body.themes[0].items, ['issue:1']);
     assert.equal('inputHash' in body, false);

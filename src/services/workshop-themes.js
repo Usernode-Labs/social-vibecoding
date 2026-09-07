@@ -399,6 +399,25 @@ async function getCached(pool, appId) {
 // One generation per app at a time, process-wide.
 const inFlight = new Set();
 
+// After a failed generation, no retry for this long. Without it a
+// persistent failure (a model outage, an output the sanitiser rejects)
+// would cost one model call per page view: with no cache the cooldown has
+// nothing to measure from, and every GET would start a fresh attempt. The
+// last failure is also what the GET reports, so the page can say why it is
+// still showing the category grouping.
+const FAILURE_BACKOFF_MS = Math.max(
+  parseInt(process.env.WORKSHOP_THEMES_FAILURE_BACKOFF_MS || String(5 * 60 * 1000), 10)
+    || (5 * 60 * 1000),
+  30 * 1000
+);
+// appId → { at: epoch ms, message }
+const lastFailure = new Map();
+
+function backingOff(appId) {
+  const f = lastFailure.get(appId);
+  return !!f && (Date.now() - f.at) < FAILURE_BACKOFF_MS;
+}
+
 function cooldownElapsed(cached) {
   if (!cached || !cached.generatedAt) return true;
   const t = Date.parse(cached.generatedAt);
@@ -446,9 +465,11 @@ async function regenerate({ pool, app, input, hash, cached }) {
         log.warn('workshop-themes', 'spend record failed', { app: app.slug, message: err.message });
       }
     }
+    lastFailure.delete(app.id);
     return shapeRow(rows[0]);
   } catch (err) {
     log.warn('workshop-themes', 'generation failed', { app: app.slug, message: err.message });
+    lastFailure.set(app.id, { at: Date.now(), message: String(err && err.message || err).slice(0, 200) });
     return null;
   } finally {
     inFlight.delete(app.id);
@@ -464,14 +485,19 @@ async function getThemes({ pool, app, waitForGeneration = false }) {
   const { input } = await buildThemeInput(pool, app);
   const hash = fingerprint(input);
   const cached = await getCached(pool, app.id);
+  const lastError = () => {
+    const f = lastFailure.get(app.id);
+    return f ? f.message : null;
+  };
   if (cached && cached.inputHash === hash) {
     return {
       themes: cached.themes, source: cached.source, generatedAt: cached.generatedAt,
       stale: false, pending: inFlight.has(app.id), itemCount: input.items.length,
+      lastError: null,
     };
   }
   let pending = inFlight.has(app.id);
-  if (!pending && llm.isEnabled() && input.items.length && cooldownElapsed(cached)) {
+  if (!pending && llm.isEnabled() && input.items.length && cooldownElapsed(cached) && !backingOff(app.id)) {
     const run = regenerate({ pool, app, input, hash, cached });
     pending = true;
     if (waitForGeneration) {
@@ -479,7 +505,7 @@ async function getThemes({ pool, app, waitForGeneration = false }) {
       if (fresh) {
         return {
           themes: fresh.themes, source: fresh.source, generatedAt: fresh.generatedAt,
-          stale: false, pending: false, itemCount: input.items.length,
+          stale: false, pending: false, itemCount: input.items.length, lastError: null,
         };
       }
       pending = false;
@@ -488,24 +514,25 @@ async function getThemes({ pool, app, waitForGeneration = false }) {
   if (cached) {
     return {
       themes: cached.themes, source: cached.source, generatedAt: cached.generatedAt,
-      stale: true, pending, itemCount: input.items.length,
+      stale: true, pending, itemCount: input.items.length, lastError: lastError(),
     };
   }
   if (IS_STAGING && !llm.isEnabled()) {
     return {
       themes: stagingDemoGrouping(input), source: 'demo', generatedAt: null,
-      stale: true, pending: false, itemCount: input.items.length,
+      stale: true, pending: false, itemCount: input.items.length, lastError: null,
     };
   }
   return {
     themes: fallbackThemes(input), source: 'category', generatedAt: null,
-    stale: true, pending, itemCount: input.items.length,
+    stale: true, pending, itemCount: input.items.length, lastError: lastError(),
   };
 }
 
 module.exports = {
   buildThemeInput, fingerprint, fallbackThemes, stagingDemoGrouping, assignIds, slugify, excerpt,
   getCached, getThemes, regenerate,
-  MIN_INTERVAL_MS,
+  MIN_INTERVAL_MS, FAILURE_BACKOFF_MS,
   _inFlightForTests: inFlight,
+  _lastFailureForTests: lastFailure,
 };
