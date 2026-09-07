@@ -2623,6 +2623,12 @@
       "expectText": "Sync with main"
     },
     {
+      "name": "The path says all of its steps have to clear, not just that they are ordered",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
+      "expectSelector": ".dev-topic-ledger .dev-ledger-path-note",
+      "expectText": "Three steps to a merge. All of them have to clear."
+    },
+    {
       "name": "Each step of the path names who acts and when, under its label",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": ".dev-ledger-row[data-note=\"mergeability\"] .dev-ledger-k small",

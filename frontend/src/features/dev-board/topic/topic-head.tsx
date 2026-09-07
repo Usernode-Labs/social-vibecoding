@@ -303,9 +303,21 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
   return (
     <section className="dev-topic-sheet dev-topic-ledger" data-topic-sheet="ledger">
       <h4 className="dev-topic-h">Where it stands</h4>
+      {d.pathSteps && d.pathSteps > 1 ? (
+        <p className="dev-ledger-path-note">
+          {`${NUMBER_WORD[d.pathSteps] || d.pathSteps} steps to a merge. All of them have to clear.`}
+        </p>
+      ) : null}
       <div className="dev-ledger">
         {d.ledger.map((r) => (
-          <div key={r.key} className={`dev-ledger-row dev-ledger-${r.tone}`} data-note={r.key} {...(r.attrs || {})}>
+          <div
+            key={r.key}
+            className={`dev-ledger-row dev-ledger-${r.tone}`}
+            data-note={r.key}
+            {...(r.step ? { 'data-step': String(r.step) } : {})}
+            {...(r.stepLast ? { 'data-step-last': '' } : {})}
+            {...(r.attrs || {})}
+          >
             <span className="dev-ledger-dot" aria-hidden="true">
               {r.spinner ? <Spinner /> : (r.step ? String(r.step) : LEDGER_GLYPH[r.tone])}
             </span>
@@ -378,6 +390,9 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
     </section>
   );
 }
+
+/** Small counts read better as words in a sentence. */
+const NUMBER_WORD: Record<number, string> = { 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five' };
 
 const LEDGER_GLYPH: Record<string, string> = {
   bad: '✕', warn: '!', ok: '✓', vote: '✓', mute: '·', progress: '◐',

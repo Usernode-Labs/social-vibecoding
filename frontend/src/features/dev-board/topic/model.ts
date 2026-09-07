@@ -179,6 +179,8 @@ export interface LedgerRow {
    * glyph.
    */
   step?: number | null;
+  /** True on the last step, so the rail stops there instead of running on. */
+  stepLast?: boolean;
   label: string;
   /**
    * The small line under the label. Two jobs: a count ("1 of 463 failing"),
@@ -215,6 +217,13 @@ export interface ProposalDetails {
   meta: { href?: string | null; parts: TextRun[] }[];
   /** The ledger the head draws; the fields below are the material it is built from. */
   ledger: LedgerRow[];
+  /**
+   * How many of the ledger's rows are numbered steps of the merge path, or
+   * null when there is no path to draw. Numbering says the steps are
+   * ORDERED; the caption this feeds says they are a GATE — every one of
+   * them has to clear before the proposal merges.
+   */
+  pathSteps?: number | null;
   /** The circular "?" beside the meta line. */
   help: boolean;
   /** A prose note under the meta line. */

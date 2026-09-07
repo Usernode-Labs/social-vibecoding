@@ -172,6 +172,37 @@ test('with nothing to sync the ledger is left exactly as it was', () => {
   assert.equal(find(rows, 'checks').label, 'Checks');
 });
 
+test('the path is drawn as a pipeline, not just as three numbers', () => {
+  // Numbering says the steps are ORDERED. The rail between the dots and the
+  // caption over them say they are a GATE: all of them have to clear.
+  const AppView = makeAppView();
+  const d = AppView._proposalDetailsView(CONFLICTED);
+  assert.equal(d.pathSteps, 3, 'the caption knows how many steps there are');
+  const steps = d.ledger.filter((r) => r.step);
+  // plain(): the rows come from the vm sandbox, so their arrays carry that
+  // realm's Array prototype and deepStrictEqual compares prototypes too.
+  assert.deepEqual(plain(steps.map((r) => !!r.stepLast)), [false, false, true],
+    'only the last step closes the rail');
+
+  // With no path there is no caption and no rail to draw.
+  const clean = AppView._proposalDetailsView({
+    ...CONFLICTED,
+    freshness: { mergeability: 'clean', behindBy: 0, mergeabilityFiles: [] },
+  });
+  assert.equal(clean.pathSteps, null);
+  assert.equal(clean.ledger.filter((r) => r.stepLast).length, 0);
+});
+
+test('the rail is drawn behind the dots and open at both ends', () => {
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-ledger-row\[data-step\] \.dev-ledger-dot \{ position: relative; z-index: 1; \}/,
+    'the dots occlude the rail rather than sitting beside it');
+  assert.match(css, /\.dev-ledger-row\[data-step="1"\]::before \{ content: none; \}/,
+    'nothing precedes step 1');
+  assert.match(css, /\.dev-ledger-row\[data-step-last\]::after \{ content: none; \}/,
+    'and nothing follows the last');
+});
+
 test('the row keys the declared checks select on are untouched', () => {
   const AppView = makeAppView();
   const keys = rowsOf(AppView, CONFLICTED).map((r) => r.key);

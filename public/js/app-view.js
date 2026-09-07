@@ -8037,7 +8037,11 @@ const AppView = {
         label: labels[n.key] || 'Note', text: n.parts, foot: [],
       });
     }
-    return AppView._topicLedgerPath(pr, rows);
+    const path = AppView._topicLedgerPath(pr, rows);
+    // The caption under the heading. Numbering says the steps are ordered;
+    // this says they are a gate — every one of them has to clear.
+    d.pathSteps = path.filter((r) => r.step).length || null;
+    return path;
   },
 
   // ── The path a blocked proposal takes ────────────────────────────────
@@ -8152,7 +8156,12 @@ const AppView = {
     const at0 = Math.min(...path.map((r) => rows.indexOf(r)));
     for (const r of path) rows.splice(rows.indexOf(r), 1);
     rows.splice(at0, 0, ...path);
-    path.forEach((r, i) => { r.step = i + 1; });
+    path.forEach((r, i) => {
+      r.step = i + 1;
+      // The rail between the dots is drawn per row, so the last one has to
+      // know not to draw its lower half into empty space.
+      if (i === path.length - 1) r.stepLast = true;
+    });
     return rows;
   },
 
