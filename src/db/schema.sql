@@ -4702,6 +4702,7 @@ CREATE TABLE IF NOT EXISTS native_session_attempts (
     CHECK (chain_id ~ '^utc1[023456789acdefghjklmnpqrstuvwxyz]+$'),
   request_digest             CHAR(64) NOT NULL
     CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+  walletless_supported       BOOLEAN NOT NULL DEFAULT FALSE,
   state                      VARCHAR(16) NOT NULL DEFAULT 'ticketed'
     CHECK (state IN ('ticketed', 'exchanged', 'revoked')),
   created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -4711,6 +4712,10 @@ CREATE TABLE IF NOT EXISTS native_session_attempts (
     REFERENCES native_session_web_incarnations(id, user_id) ON DELETE CASCADE,
   CHECK (updated_at >= created_at)
 );
+-- TODO(remove-build-1250-compat): Drop decoder negotiation when all supported
+-- mobile builds accept account:null. Existing attempts keep the safe fallback.
+ALTER TABLE native_session_attempts
+  ADD COLUMN IF NOT EXISTS walletless_supported BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS native_session_attempts_user_idx
   ON native_session_attempts (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS native_session_attempts_incarnation_idx
