@@ -52,6 +52,16 @@
 
   const ROUTES = Object.keys(SCREEN_IDS);
 
+  // The pages a `?return_to=` may send somebody to once they have signed in.
+  //
+  // Matched on the PATHNAME, never on the whole string. The MCP consent
+  // request IS its query string — client id, redirect uri, PKCE challenge,
+  // state — so an exact-string allowlist could not carry it, which is how
+  // that flow ended up smuggling its return target in a fragment nothing
+  // reads. The pathname is still the thing that decides the destination, so
+  // the open-redirect property is unchanged.
+  const RETURN_TO_PATHS = ['/cli/authorize', '/connect/authorize'];
+
   // Screen transitions come from the platform's native kit via the
   // PlatformUI seam; when the kit failed to load the mutation just runs
   // without animation.
@@ -139,6 +149,27 @@
       if (!fullHash) return;
       if (AuthScreens.routeFromHash(fullHash.replace('#', ''))) return;
       AuthScreens._pendingHash = fullHash;
+    },
+
+    // A `return_to` value this platform will actually navigate to, or ''.
+    //
+    // Resolved against this origin and then matched by pathname, so an
+    // allowed page keeps the query string it was asked for while everything
+    // that is not a plain same-origin absolute path is refused: an absolute
+    // URL, a protocol-relative '//host', a scheme like javascript:, and a
+    // traversal that climbs out all fail the check rather than becoming an
+    // open redirect. The fragment is dropped — neither allowed page uses
+    // one, and forwarding it would widen this for nothing.
+    returnToUrl(value) {
+      const raw = String(value || '');
+      if (!raw.startsWith('/') || raw.startsWith('//')) return '';
+      let url;
+      try {
+        url = new URL(raw, window.location.origin);
+      } catch (_) { return ''; }
+      if (url.origin !== window.location.origin) return '';
+      if (!RETURN_TO_PATHS.includes(url.pathname)) return '';
+      return url.pathname + url.search;
     },
 
     deepLinkUrl(target) {
@@ -255,17 +286,18 @@
     // OTP set-password, wallet verify, activation-code register). The
     // session cookie is set; boot the authed shell in place.
     async finishLogin() {
-      // The only login-return target accepted by the platform. Keeping
-      // this exact and relative prevents open redirects. CLI authorize is
-      // a separate document by design — real navigation stays.
+      // The login-return targets accepted by the platform. Both are separate
+      // documents by design — real navigation stays.
       try {
         const params = new URLSearchParams(location.search);
         const values = params.getAll('return_to');
         if (values.length === 1 &&
-            [...params.keys()].every((k) => k === 'return_to') &&
-            values[0] === '/cli/authorize') {
-          window.location.href = '/cli/authorize';
-          return;
+            [...params.keys()].every((k) => k === 'return_to')) {
+          const target = AuthScreens.returnToUrl(values[0]);
+          if (target) {
+            window.location.href = target;
+            return;
+          }
         }
       } catch (_) {}
 
