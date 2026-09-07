@@ -140,7 +140,12 @@ function Row({ view }: { view: RowView }): ReactNode {
         }}
       >
         {view.added ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" /> : null}
-        {view.added ? 'Added' : 'Add'}
+        {/* #1553: "Add" alone never said add to WHAT. Every other surface that
+            offers this already spells out the destination — the detail page's
+            button, the app-chip menu, this button's own title attribute — so
+            the row stops being the one place it is a guess. "Added" stays
+            short: it is a state, and the row it sits on says which app. */}
+        {view.added ? 'Added' : 'Add to Your apps'}
       </button>
         </>
       )}
