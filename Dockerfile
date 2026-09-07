@@ -56,10 +56,16 @@ FROM node:22-alpine
 # daemon (see src/services/docker.js — `execFile('docker', [...])`).
 # That needs the docker CLI inside the container; the daemon itself
 # is reached via a bind-mounted /var/run/docker.sock from the host.
+# docker-cli-buildx is the BuildKit half of that CLI, and it is a SEPARATE
+# Alpine package: `docker-cli` alone gives a CLI that answers every
+# DOCKER_BUILDKIT=1 build with "BuildKit is enabled but the buildx
+# component is missing or broken", which is what #1746 taught the builder
+# to fall back from. Installing it is what makes #1736's BuildKit path the
+# one that actually runs; the fallback stays as the net under it.
 # git is for the import-existing flow's `git clone` of foreign repos.
 # postgresql-client lets DB administration work over the normal Postgres
 # Service/network connection in both Docker and Kubernetes modes.
-RUN apk add --no-cache docker-cli git postgresql-client
+RUN apk add --no-cache docker-cli docker-cli-buildx git postgresql-client
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --production
