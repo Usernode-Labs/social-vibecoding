@@ -507,6 +507,29 @@ test('the build steps render as a line and a step row, live and finished', () =>
   assert.match(read('public/css/app.css'), /\.dev-ledger-build-step\.is-now \{/);
 });
 
+test('a pending run says what a pending sync will do to it', () => {
+  const AppView = makeAppView();
+  const base = { check_state: 'pending', check_phase: 'testing', checks_checked_at: new Date().toISOString() };
+  const lines = (pr) => AppView._checksStatusNotes(pr)[0].rows.map((r) => r.parts[0]);
+  const behind = lines({ ...base, behind_main: 3 });
+  assert.ok(behind.some((l) => /Main has moved 3 commits ahead\. This run is judged against the commit before that, so when the platform syncs this proposal the run starts again on the synced commit\./.test(l)),
+    'the checks row says the sync ends this run — not left to be inferred from the Behind main pill');
+  assert.ok(lines({ ...base, behind_main: 1 }).some((l) => /Main has moved 1 commit ahead/.test(l)), 'singular');
+  assert.ok(!lines({ ...base, behind_main: 0 }).some((l) => /Main has moved/.test(l)), 'nothing to say when it is level with main');
+  assert.ok(!lines(base).some((l) => /Main has moved/.test(l)));
+  // A verdict is not a run in flight: no forecast on a finished one.
+  const done = AppView._checksStatusNotes({ check_state: 'passing', behind_main: 3, test_results: [] });
+  assert.ok(!JSON.stringify(done).includes('Main has moved'));
+});
+
+test('a clean sync does not carry the commit pin out from under a run in flight', () => {
+  const src = read('src/services/sync-main.js');
+  assert.match(src, /const runInFlight = session\.check_state === 'pending';/);
+  assert.match(src, /const carryChecks = result\.syncResult === 'clean' && !runInFlight;/);
+  // The re-kick is the existing non-carry path, so a pending row now takes it.
+  assert.match(src, /if \(!carryChecks\) \{\n\s+await kickChecksForSyncedHead\(config, pool, session, nextSha\);/);
+});
+
 test('the board card and the running badge carry the live count', () => {
   const AppView = makeAppView();
   const badge = AppView.checksBadgeHtml({ status: 'promoted', check_state: 'pending', checks_progress: { ran: 12, passed: 12, failed: 0, expected: 523 } });

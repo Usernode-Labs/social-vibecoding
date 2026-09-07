@@ -8,12 +8,15 @@ function mode(config) {
   return value;
 }
 
-async function build(config, { app, revision, environment, sessionId, sourceDir, dockerImage }) {
+// `onProgress(image)` reports the image build as it goes, in the runtime's
+// own terms: kpack lifecycle phases with their times on kubernetes, the
+// builder's step counter on docker. See each module for the shape.
+async function build(config, { app, revision, environment, sessionId, sourceDir, dockerImage, onProgress = null }) {
   if (mode(config) === 'docker') {
-    await docker.buildImage(sourceDir, dockerImage);
+    await docker.buildImage(sourceDir, dockerImage, {}, { onProgress });
     return { runtimeKind: 'docker', imageRef: dockerImage, buildRef: null };
   }
-  return kubernetes.createBuild(config, { app, revision, environment, sessionId, sourceDir });
+  return kubernetes.createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress });
 }
 
 async function cleanupFailedBuilds(config) {
