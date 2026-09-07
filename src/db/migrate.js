@@ -5644,6 +5644,18 @@ async function seedStagingFeaturedApps(pool) {
 
   const FEATURED_SEED_COUNT = 3;
   try {
+    // #1523: explicitly synthetic fixtures for captures and the reversible
+    // Discover-add check. Never certify a production-cloned app as tested.
+    await pool.query(
+      `UPDATE apps SET icon_emoji = '🧩',
+         main_sha = '0000000000000000000000000000000000000001',
+         directory_review_status = 'working', directory_reviewed_at = NOW(),
+         directory_reviewed_sha = '0000000000000000000000000000000000000001'
+       WHERE slug IN ('staging-demo-puzzle-chain', 'staging-demo-word-garden',
+                      'staging-demo-pixel-racer')
+         AND created_by = (SELECT id FROM users WHERE username = 'staging-demo-user')
+         AND directory_review_status = 'unreviewed'`
+    );
     // Bail if an earlier boot (or an admin, on a long-lived preview)
     // already curated the list — re-seeding would fight their ordering.
     const { rows: existing } = await pool.query('SELECT 1 FROM featured_apps LIMIT 1');

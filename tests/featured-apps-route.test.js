@@ -88,12 +88,14 @@ let appsBySlug = {};
 let featuredRows = [];
 let availableRows = [];
 let queries = [];
+let failReviewUpdate = false;
 
 const fakeQuery = async (sql, params) => {
   const s = String(sql).replace(/\s+/g, ' ').trim();
   queries.push({ sql: s, params });
+  if (failReviewUpdate && /^UPDATE apps SET directory_review_status/.test(s)) throw new Error('database unavailable');
   if (/^BEGIN|^COMMIT|^ROLLBACK/.test(s)) return { rows: [] };
-  if (/SELECT id, self_hosted FROM apps WHERE slug/.test(s)) {
+  if (/SELECT id, self_hosted, .*FROM apps WHERE slug/.test(s)) {
     const row = appsBySlug[params[0]];
     return row ? { rows: [row] } : { rows: [] };
   }
@@ -125,9 +127,9 @@ function startServer() {
 const FULL_ADMIN = { id: 1, username: 'admin', isAdmin: true, canAdminWrite: true };
 const VIEW_ONLY = { id: 2, username: 'viewer', isAdmin: true, canAdminWrite: false };
 
-async function put(server, body) {
+async function put(server, body, endpoint = '/api/admin/featured-apps') {
   const res = await fetch(
-    `http://127.0.0.1:${server.address().port}/api/admin/featured-apps`,
+    `http://127.0.0.1:${server.address().port}${endpoint}`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -139,10 +141,14 @@ async function put(server, body) {
 
 function reset() {
   queries = [];
+  failReviewUpdate = false;
+  const ready = { status: 'running', icon_emoji: '🧩', main_sha: 'a'.repeat(40),
+    last_deploy_at: '2026-09-01T12:00:00.000Z', directory_review_status: 'working',
+    directory_reviewed_at: '2026-09-01T13:00:00.000Z', directory_reviewed_sha: 'a'.repeat(40) };
   appsBySlug = {
-    alpha: { id: 11, self_hosted: false },
-    beta: { id: 12, self_hosted: false },
-    gamma: { id: 13, self_hosted: false },
+    alpha: { ...ready, id: 11, self_hosted: false },
+    beta: { ...ready, id: 12, self_hosted: false },
+    gamma: { ...ready, id: 13, self_hosted: false },
     'usernode-self': { id: 1, self_hosted: true },
   };
   featuredRows = [];
@@ -180,6 +186,100 @@ test('PUT rewrites the whole list in order, in one transaction', async () => {
   } finally {
     server.close();
   }
+});
+
+test('featuring rejects unreviewed, stale, demo, broken, unavailable and iconless apps without rewriting', async () => {
+  currentUser = FULL_ADMIN;
+  const server = await startServer();
+  try {
+    for (const override of [
+      { directory_review_status: 'unreviewed' }, { directory_review_status: 'demo' },
+      { directory_review_status: 'broken' }, { status: 'error' }, { icon_emoji: null },
+      { main_sha: 'b'.repeat(40) }, { last_deploy_at: '2026-09-02T12:00:00.000Z' },
+    ]) {
+      reset(); Object.assign(appsBySlug.alpha, override);
+      const res = await put(server, { slugs: ['alpha'] });
+      assert.equal(res.status, 400, JSON.stringify(override));
+      assert.match(res.body.error, /Review alpha/);
+      assert.ok(queries.some((q) => q.sql === 'ROLLBACK'));
+      assert.ok(!queries.some((q) => /DELETE|INSERT/.test(q.sql)));
+    }
+  } finally { server.close(); }
+});
+
+const review = (server, body, slug = 'alpha') => put(server, body, `/api/admin/apps/${slug}/directory-review`);
+const workingReview = () => ({ status: 'working', confirmWorking: true,
+  mainSha: appsBySlug.alpha.main_sha, lastDeployAt: appsBySlug.alpha.last_deploy_at });
+
+test('directory reviews require a write admin and explicit working attestation', async () => {
+  reset(); const server = await startServer();
+  try {
+    for (const user of [null, { id: 3 }, VIEW_ONLY]) {
+      currentUser = user;
+      assert.equal((await review(server, workingReview())).status, 403);
+    }
+    currentUser = FULL_ADMIN;
+    for (const body of [{}, { status: 'ready' }, { status: 'working' }, { status: 'working', confirmWorking: 'true' }]) {
+      assert.equal((await review(server, body)).status, 400);
+    }
+    assert.equal(queries.length, 0, 'no SQL before authorization and validation');
+  } finally { server.close(); }
+});
+
+test('working review validates the exact deployment, icon and status under a row lock', async () => {
+  currentUser = FULL_ADMIN;
+  const server = await startServer();
+  try {
+    for (const override of [{ icon_emoji: null }, { status: 'creating' }, { main_sha: null }]) {
+      reset(); Object.assign(appsBySlug.alpha, override);
+      assert.equal((await review(server, workingReview())).status, 400);
+      assert.ok(!queries.some((q) => /^UPDATE/.test(q.sql)));
+    }
+    reset();
+    for (const override of [{ mainSha: 'b'.repeat(40) }, { lastDeployAt: '2026-09-01T11:00:00Z' },
+      { lastDeployAt: 'invalid' }, { lastDeployAt: undefined }]) {
+      const res = await review(server, { ...workingReview(), ...override });
+      assert.equal(res.status, 409);
+      assert.match(res.body.error, /changed while you were reviewing/);
+    }
+    assert.ok(!queries.some((q) => /^UPDATE/.test(q.sql)));
+    assert.equal((await review(server, workingReview(), 'ghost')).status, 404);
+    assert.equal((await review(server, workingReview(), 'usernode-self')).status, 404);
+    const res = await review(server, workingReview());
+    assert.equal(res.status, 200);
+    assert.ok(queries.some((q) => /FROM apps WHERE slug = \$1 FOR UPDATE/.test(q.sql)));
+    const update = queries.find((q) => /^UPDATE apps/.test(q.sql));
+    assert.deepEqual(update.params, [11, 'working']);
+    assert.match(update.sql, /ELSE NOW\(\)/);
+    assert.match(update.sql, /ELSE main_sha/);
+    assert.equal(queries.at(-1).sql, 'COMMIT');
+  } finally { server.close(); }
+});
+
+test('demo/broken classification and clearing a review do not need a running deployment', async () => {
+  currentUser = FULL_ADMIN;
+  const server = await startServer();
+  try {
+    for (const status of ['demo', 'broken', 'unreviewed']) {
+      reset(); Object.assign(appsBySlug.alpha, { status: 'error', icon_emoji: null, main_sha: null });
+      assert.equal((await review(server, { status })).status, 200);
+      const update = queries.find((q) => /^UPDATE apps/.test(q.sql));
+      assert.deepEqual(update.params, [11, status]);
+      assert.match(update.sql, /WHEN \$2 = 'unreviewed' THEN NULL/);
+    }
+  } finally { server.close(); }
+});
+
+test('a failed review rolls back with a useful error and never reports success', async () => {
+  reset(); currentUser = FULL_ADMIN; failReviewUpdate = true;
+  const server = await startServer();
+  try {
+    const res = await review(server, workingReview());
+    assert.equal(res.status, 500);
+    assert.equal(res.body.error, 'Could not save the directory review.');
+    assert.equal(queries.at(-1).sql, 'ROLLBACK');
+    assert.ok(!queries.some((q) => q.sql === 'COMMIT'));
+  } finally { server.close(); failReviewUpdate = false; }
 });
 
 test('PUT with an empty array clears the list (the row hides for everyone)', async () => {
@@ -316,7 +416,7 @@ test('GET returns display-ordered featured rows plus what is available', async (
   reset();
   currentUser = FULL_ADMIN;
   featuredRows = [
-    { slug: 'alpha', name: 'Alpha', status: 'running', icon_emoji: '🎯', icon_image_id: null, sort_order: 0 },
+    { ...appsBySlug.alpha, slug: 'alpha', name: 'Alpha', icon_emoji: '🎯', icon_image_id: null, sort_order: 0 },
     { slug: 'beta', name: 'Beta', status: 'running', icon_emoji: null, icon_image_id: 'abc123', sort_order: 1 },
   ];
   availableRows = [
@@ -333,6 +433,11 @@ test('GET returns display-ordered featured rows plus what is available', async (
     // Server-built icon URL — the client never assembles ids into paths.
     assert.equal(body.featured[1].icon_url, '/app-icons/abc123');
     assert.equal(body.featured[0].icon_url, null);
+    assert.equal(body.featured[0].directory.tier, 'ready');
+    assert.equal(body.featured[0].directory_review_status, 'working');
+    assert.equal(body.featured[0].main_sha, appsBySlug.alpha.main_sha);
+    assert.equal(body.featured[0].last_deploy_at, appsBySlug.alpha.last_deploy_at);
+    assert.equal(body.available[0].directory.state, 'missing_icon');
     assert.deepEqual(body.available.map((a) => a.slug), ['gamma']);
   } finally {
     server.close();

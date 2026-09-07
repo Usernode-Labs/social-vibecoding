@@ -2555,6 +2555,15 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS screenshot_device_scale SMALLINT NOT N
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_emoji VARCHAR(32);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_image_id VARCHAR(32);
 
+-- #1523: an admin's directory review, independent of container health and
+-- of the staging-only `demo` fixture flag. Existing apps remain unreviewed.
+-- A positive review is valid only for its deployed SHA and until the next
+-- deployment; demos/broken classifications persist until explicitly reviewed.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS directory_review_status VARCHAR(16)
+  NOT NULL DEFAULT 'unreviewed' CHECK (directory_review_status IN ('unreviewed', 'working', 'demo', 'broken'));
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS directory_reviewed_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS directory_reviewed_sha VARCHAR(40);
+
 -- Fork lineage. NULL for normally-created apps; for a fork it stores a
 -- REFERENCE ONLY to the source app: {"appId": <id>, "slug": "<slug>"}.
 -- The source's display name is deliberately NOT persisted here — it is

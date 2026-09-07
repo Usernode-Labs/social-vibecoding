@@ -115,7 +115,8 @@ const Home = {
       // fetches now.
       // ?demo=1 rides on /api/apps: staging injects the icon-demo
       // tiles there (routes/apps.js demoIconApps). No-op in production.
-      const demoQS = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+      const params = new URLSearchParams(location.search);
+      const demoQS = params.get('demo') === '1' ? `?demo=1${params.get('curation') === '1' ? '&curation=1' : ''}` : '';
       const res = await fetch(`/api/apps${demoQS}`);
       if (!res.ok) throw new Error('Failed to load apps');
       const { apps } = await res.json();
@@ -278,6 +279,13 @@ const Home = {
   // How many admin-featured tiles the "Featured apps" row shows.
   FEATURED_LIMIT: 6,
 
+  // The API derives this from an explicit review of the current deployment,
+  // not from active-user counts or the staging-only `demo` fixture flag.
+  isDiscoveryReady(app) {
+    return !!app && app.directory?.tier === 'ready' && app.status === 'running'
+      && !app.self_hosted && !!(app.icon_url || app.icon_emoji);
+  },
+
   // The featured row's contents for this viewer: admin-curated apps
   // (the `featured` flag served by GET /api/apps) that are NOT already
   // in "Your apps" — those are one screen-section up, so repeating
@@ -292,12 +300,13 @@ const Home = {
   // invisible to the before/after screenshots and to every declared check.
   // Pure UI state: it changes one derived list at render time, writes
   // nothing, and is not env-gated, so it works in production immediately.
+
   featuredApps(apps) {
     try {
       if (new URLSearchParams(location.search).get('shot') === 'discover-empty') return [];
     } catch (err) { /* ignore */ }
     return (apps || [])
-      .filter((a) => a && a.featured
+      .filter((a) => a && a.featured && Home.isDiscoveryReady(a)
         && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
       .sort((x, y) => {
         const xo = x.featured_order == null ? Infinity : x.featured_order;
@@ -326,20 +335,17 @@ const Home = {
   // "Popular" asks.) parseInt because the count arrives as a STRING — it is a
   // Postgres bigint and, unlike open_prs, the serializer doesn't coerce it.
   //
-  // Four exclusions, each load-bearing:
+  // Only currently reviewed working apps with icons qualify. Also exclude:
   //   * `featured` — the lane above already offers those.
   //   * isYours — the whole point is apps you don't have yet.
-  //   * status 'error' — a broken app is not a discovery target.
-  //   * self_hosted — the platform app itself is visible only to admins, so
-  //     including it would make the lane read differently per viewer.
   // And a floor of one active user: an app nobody uses is not "popular",
   // and padding the lane out with zero-user rows would misrepresent it.
   // Pure — unit-tested in tests/home-find-more.test.js.
   popularApps(apps) {
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
     return (apps || [])
-      .filter((a) => a && !a.featured && !a.self_hosted
-        && a.status !== 'error' && users(a) >= 1
+      .filter((a) => a && !a.featured && Home.isDiscoveryReady(a)
+        && users(a) >= 1
         && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
       .sort((x, y) => users(y) - users(x))
       .slice(0, Home.POPULAR_LIMIT);

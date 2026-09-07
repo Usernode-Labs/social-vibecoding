@@ -125,6 +125,8 @@ const app = (over) => ({
   slug: 'some-app',
   name: 'Some App',
   status: 'running',
+  icon_emoji: '🧩',
+  directory: { tier: 'ready', state: 'working', label: 'Reviewed working' },
   is_collaborator: false,
   is_favorited: false,
   favorite_order: null,
@@ -134,6 +136,21 @@ const app = (over) => ({
 });
 
 // ── featuredApps selection ────────────────────────────────────────
+
+test('discovery requires a current review and a real icon, not just popularity or featuring', () => {
+  const Home = makeHome();
+  const candidates = [
+    app({ slug: 'ready', active_users: 1 }),
+    app({ slug: 'no-icon', icon_emoji: null, active_users: 100 }),
+    app({ slug: 'not-running', status: 'creating', active_users: 100 }),
+    ...['unreviewed', 'outdated', 'demo', 'broken'].map((state) => app({
+      slug: state, active_users: 100, directory: { state, tier: state === 'outdated' || state === 'unreviewed' ? 'unreviewed' : 'more' },
+    })),
+  ];
+  assert.deepEqual(Home.popularApps(candidates).map((a) => a.slug), ['ready']);
+  assert.deepEqual(Home.featuredApps(candidates.map((a) => ({ ...a, featured: true }))).map((a) => a.slug), ['ready']);
+  assert.equal(Home.isDiscoveryReady(app({ demo: true })), true, 'staging inertness is not an editorial demo classification');
+});
 
 test('featuredApps: only featured rows, ordered by featured_order', () => {
   const Home = makeHome();

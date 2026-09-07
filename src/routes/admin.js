@@ -20,6 +20,7 @@ const mail = require('../services/mail');
 const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
+const discoveryCuration = require('../services/discovery-curation');
 const {
   accountRecovery,
   withTransaction,
@@ -838,14 +839,18 @@ function adminRoutes(config) {
   router.get('/api/admin/featured-apps', async (_req, res) => {
     try {
       const { rows: featured } = await pool.query(
-        `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id, fa.sort_order
+        `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id, fa.sort_order,
+                a.main_sha, a.last_deploy_at, a.directory_review_status,
+                a.directory_reviewed_at, a.directory_reviewed_sha
            FROM featured_apps fa
            JOIN apps a ON a.id = fa.app_id
           WHERE NOT a.self_hosted
           ORDER BY fa.sort_order ASC, a.name ASC`
       );
       const { rows: available } = await pool.query(
-        `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id
+        `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id,
+                a.main_sha, a.last_deploy_at, a.directory_review_status,
+                a.directory_reviewed_at, a.directory_reviewed_sha
            FROM apps a
           WHERE NOT a.self_hosted
             AND NOT EXISTS (SELECT 1 FROM featured_apps f WHERE f.app_id = a.id)
@@ -860,11 +865,68 @@ function adminRoutes(config) {
         icon_emoji: r.icon_emoji || null,
         icon_url: r.icon_image_id ? `/app-icons/${r.icon_image_id}` : null,
         sort_order: r.sort_order ?? null,
+        main_sha: r.main_sha || null,
+        last_deploy_at: r.last_deploy_at || null,
+        directory_review_status: r.directory_review_status || 'unreviewed',
+        directory: discoveryCuration.describe(r),
       });
       res.json({ featured: featured.map(shape), available: available.map(shape) });
     } catch (err) {
       log.error('admin', 'Read featured apps failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Review the exact version the admin opened. The row lock and deployment
+  // snapshot check prevent a deploy during review from certifying untested
+  // code. This never launches a probe or changes app access/visibility.
+  router.put('/api/admin/apps/:slug/directory-review', requireAdminWrite, async (req, res) => {
+    const { status, confirmWorking, mainSha, lastDeployAt } = req.body || {};
+    if (!discoveryCuration.REVIEW_STATES.has(status)) {
+      return res.status(400).json({ error: 'Choose unreviewed, working, demo, or broken.' });
+    }
+    if (status === 'working' && confirmWorking !== true) {
+      return res.status(400).json({ error: 'Confirm that you tested the app’s main flow before marking it working.' });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT id, self_hosted, status, main_sha, last_deploy_at, icon_emoji, icon_image_id
+           FROM apps WHERE slug = $1 FOR UPDATE`, [req.params.slug]
+      );
+      const app = rows[0];
+      if (!app || app.self_hosted) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (status === 'working') {
+        if (app.status !== 'running' || !app.main_sha || !discoveryCuration.hasIcon(app)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'A reviewed working app must be running, have a deployed version, and have an image or emoji icon.' });
+        }
+        if (mainSha !== app.main_sha || lastDeployAt === undefined
+          || (lastDeployAt !== null && discoveryCuration.timestamp(lastDeployAt) === null)
+          || discoveryCuration.timestamp(lastDeployAt) !== discoveryCuration.timestamp(app.last_deploy_at)) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'The app changed while you were reviewing it. Refresh and test the current version.' });
+        }
+      }
+      await client.query(
+        `UPDATE apps SET directory_review_status = $2,
+           directory_reviewed_at = CASE WHEN $2 = 'unreviewed' THEN NULL ELSE NOW() END,
+           directory_reviewed_sha = CASE WHEN $2 = 'unreviewed' THEN NULL ELSE main_sha END
+         WHERE id = $1`, [app.id, status]
+      );
+      await client.query('COMMIT');
+      log.info('admin', 'Directory review updated', { by: req.user.username, slug: req.params.slug, status, sha: app.main_sha });
+      return res.json({ ok: true });
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+      log.error('admin', 'Directory review failed', { message: err.message });
+      return res.status(500).json({ error: 'Could not save the directory review.' });
+    } finally {
+      client.release();
     }
   });
 
@@ -897,7 +959,9 @@ function adminRoutes(config) {
       const ids = [];
       for (const slug of slugs) {
         const { rows } = await client.query(
-          'SELECT id, self_hosted FROM apps WHERE slug = $1',
+          `SELECT id, self_hosted, status, main_sha, last_deploy_at, icon_emoji, icon_image_id,
+                  directory_review_status, directory_reviewed_at, directory_reviewed_sha
+             FROM apps WHERE slug = $1 FOR UPDATE`,
           [slug]
         );
         if (!rows.length) {
@@ -907,6 +971,10 @@ function adminRoutes(config) {
         if (rows[0].self_hosted) {
           await client.query('ROLLBACK');
           return res.status(400).json({ error: `The platform app cannot be featured: ${slug}` });
+        }
+        if (discoveryCuration.describe(rows[0]).tier !== 'ready') {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `Review ${slug} as working and add an icon before featuring it.` });
         }
         ids.push(rows[0].id);
       }
