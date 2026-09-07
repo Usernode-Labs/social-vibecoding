@@ -11402,6 +11402,11 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   margin-left: 6px; font-size: 10px; font-weight: 700; color: var(--accent); background: var(--accent-tint);
   padding: 1px 5px; border-radius: 6px; vertical-align: middle;
 }
+/* A card the server has themes for but has not placed yet: on its way, not unfit. */
+.dev-ws-placing {
+  margin-left: 6px; font-size: 10px; font-weight: 600; color: var(--text-muted);
+  border: 1px dashed currentColor; padding: 0 5px; border-radius: 6px; vertical-align: middle; opacity: .8;
+}
 .dev-ws-rowwrap-open > .dev-ws-row { border-radius: 12px 12px 0 0; }
 .dev-ws-rowwrap-open > .dev-feed-entry { border-radius: 0 0 22px 22px; margin-top: 2px; }
 .dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
