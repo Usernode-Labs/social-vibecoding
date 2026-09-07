@@ -27,8 +27,10 @@
     return code === 'native_session_ticket_expired' ||
       code === 'native_session_attempt_revoked' ||
       code === 'native_session_attempt_conflict' ||
-      // TODO(native-walletless-compat): Drop a pre-hotfix walletless replay so
-      // a later attempt can provision a compatible wallet when one is available.
+      // Drop a walletless replay refused for an older decoder so a later attempt
+      // can provision a compatible wallet when one is available.
+      // TODO(remove-build-1250-compat): Remove this classification together with
+      // the server's wallet-required refusal once 1250-era builds are unsupported.
       code === 'native_session_wallet_required' ||
       code === 'native_session_credential_revoked' ||
       code === 'native_session_credential_expired';
@@ -309,11 +311,23 @@
       return Promise.resolve(false);
     },
 
-    async _prepareNativeHandoff(attempt, userId, generation) {
+    async _prepareNativeHandoff(attempt, userId, generation, info) {
+      const headers = { 'Content-Type': 'application/json' };
+      // Existing public discovery metadata; native protocol-2 DTOs stay closed.
+      // TODO(remove-build-1250-compat): Remove these headers with the server's
+      // temporary decoder gate once 1250-era apps are no longer supported.
+      if (typeof info.appVersion === 'string' &&
+          info.appVersion.trim() === info.appVersion && /^[0-9.]{1,32}$/.test(info.appVersion)) {
+        headers['Usernode-Native-App-Version'] = info.appVersion;
+      }
+      if (typeof info.buildNumber === 'string' &&
+          info.buildNumber.trim() === info.buildNumber && /^[0-9]{1,10}$/.test(info.buildNumber)) {
+        headers['Usernode-Native-App-Build'] = info.buildNumber;
+      }
       const response = await fetch(NativeChrome._HANDOFF_ENDPOINT, {
         method: 'POST',
         credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           protocol: 2,
           attemptId: attempt.attemptId,
@@ -372,7 +386,7 @@
         const attempt = NativeChrome._attemptFor(userId);
         lease.attemptId = attempt.attemptId;
         await NativeChrome._prepareNativeHandoff(
-          attempt, userId, generation
+          attempt, userId, generation, info
         );
         if (!NativeChrome._isCurrentRealm(userId, generation)) return null;
         const result = await bridge.establishNativeSession({

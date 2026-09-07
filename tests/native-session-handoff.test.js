@@ -249,6 +249,51 @@ test('protocol 2 sends one exact native-only handoff transaction',
     );
   });
 
+test('handoff forwards existing app build metadata without widening native requests or attempt storage', async () => {
+  for (const metadata of [{ appVersion: '0.4.0', buildNumber: '1250' },
+    { appVersion: '0.4.0', buildNumber: '1252' },
+    { appVersion: '0.4.1', buildNumber: '1' },
+    { appVersion: '0.5.0', buildNumber: '1' },
+    { appVersion: '1.0.0', buildNumber: '1' }, {},
+    { appVersion: null, buildNumber: null },
+    { appVersion: '0.4.0\n', buildNumber: '1252\n' },
+    { appVersion: 'bad\r\nheader', buildNumber: 'bad\r\nheader' }]) {
+    const loaded = loadNativeChrome({ info: {
+      version: 5, sessionLifecycleProtocol: 2,
+      capabilities: ['establishNativeSession'], ...metadata,
+    } });
+    loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+    loaded.sandbox.App.user = { id: 41 };
+    await loaded.NativeChrome.establishCurrentSession();
+    const { headers, body } = loaded.calls.fetch[0].options;
+    assert.equal(headers['Usernode-Native-App-Version'],
+      ['0.4.0', '0.4.1', '0.5.0', '1.0.0'].includes(metadata.appVersion) ? metadata.appVersion : undefined);
+    assert.equal(headers['Usernode-Native-App-Build'],
+      ['0.4.0', '0.4.1', '0.5.0', '1.0.0'].includes(metadata.appVersion) ? metadata.buildNumber : undefined);
+    assert.deepEqual(Object.keys(JSON.parse(body)), ['protocol', 'attemptId', 'desiredRuntime']);
+    assert.deepEqual(Object.keys(loaded.calls.establish[0]), ['attemptId', 'desiredRuntime']);
+    assert.deepEqual(Object.keys(JSON.parse(loaded.storage.get(loaded.NativeChrome._ATTEMPT_STORAGE_KEY))),
+      ['protocol', 'userId', 'attemptId', 'desiredRuntime']);
+  }
+});
+
+test('1252 walletless establishment admits the authenticated participant', async () => {
+  const loaded = loadNativeChrome({
+    info: { version: 5, sessionLifecycleProtocol: 2,
+      capabilities: ['establishNativeSession'], appVersion: '0.4.0', buildNumber: '1252' },
+    establishImpl: async (payload) => ({
+      ...establishResult(payload, '41'),
+      identity: { participantId: '41', accountId: null, address: null },
+    }),
+  });
+  loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+  loaded.sandbox.App.user = { id: 41 };
+  const result = await loaded.NativeChrome.establishCurrentSession();
+  assert.equal(result.identity.accountId, null);
+  assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
+  assert.equal(loaded.sandbox.App.user.id, 41);
+});
+
 test('concurrent calls share one lease and a recreated WebView replays its attempt',
   async () => {
     const shared = new Map();
