@@ -292,6 +292,23 @@ function TokenCard({ token }: { token: any }): ReactNode {
       </div>
     );
   }
+  // #1552: no allocation yet says so, in words. A blurred 0 behind a
+  // "Reveal" button is a build-up to nothing, and it is the state most
+  // people are in.
+  if (token.empty) {
+    return (
+      <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4">
+        <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">
+          Token allocation
+        </div>
+        <div className="text-sm text-zinc-500 dark:text-zinc-400">
+          Nothing allocated to you yet. Allocations are made per season, from
+          the season&rsquo;s pool, and are provisional and subject to the
+          program terms.
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="rounded-2xl bg-white dark:bg-zinc-900 p-4">
       <div className="text-[0.9375rem] text-zinc-500 dark:text-zinc-400 mb-1">
@@ -304,7 +321,11 @@ function TokenCard({ token }: { token: any }): ReactNode {
         {token.amount}
       </div>
       <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
-        Allocations are provisional and subject to the program terms.
+        {/* What the number IS, before what it is subject to. The old card
+            said only the second half, so the figure was a quantity of
+            something the reader had to guess at. */}
+        Your share of the season&rsquo;s token pool. Allocations are
+        provisional and subject to the program terms.
       </div>
       {token.revealed ? null : (
         <Button
