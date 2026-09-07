@@ -184,14 +184,14 @@ function env(over = {}) {
 
 test('installOffer: an iPhone browser is offered the App Store URL', () => {
   const { installOffer } = loadTsx('frontend/src/features/mobile-install/detect.ts');
-  assert.deepEqual(installOffer(env()), { os: 'ios', url: IOS_URL });
+  assert.deepEqual(installOffer(env()), { kind: 'store', os: 'ios', url: IOS_URL });
 });
 
 test('installOffer: an Android browser is offered the Play URL', () => {
   const { installOffer } = loadTsx('frontend/src/features/mobile-install/detect.ts');
   assert.deepEqual(
     installOffer(env({ ua: ANDROID, maxTouchPoints: 5 })),
-    { os: 'android', url: PLAY_URL },
+    { kind: 'store', os: 'android', url: PLAY_URL },
   );
 });
 
@@ -199,7 +199,8 @@ test('installOffer: iPadOS reports itself as a Mac, and is still iOS', () => {
   // iPadOS 13+ ships the desktop Safari UA verbatim. Touch points are the
   // only thing separating it from a real Mac.
   const { installOffer } = loadTsx('frontend/src/features/mobile-install/detect.ts');
-  assert.deepEqual(installOffer(env({ ua: IPAD, maxTouchPoints: 5 })), { os: 'ios', url: IOS_URL });
+  assert.deepEqual(installOffer(env({ ua: IPAD, maxTouchPoints: 5 })),
+    { kind: 'store', os: 'ios', url: IOS_URL });
 });
 
 test('installOffer: a desktop Mac and a Windows PC get nothing', () => {
@@ -227,14 +228,29 @@ test('installOffer: suppressed once dismissed', () => {
   assert.equal(installOffer(env({ dismissed: true })), null);
 });
 
-test('installOffer: suppressed when that OS has no published listing', () => {
-  // The state production is in today: an iOS URL may exist while Android has
-  // none, and an Android visitor must not be shown a dead control.
+test('installOffer: no listing for that OS falls back to the home screen (#1513)', () => {
+  // It used to return null, and the strip stayed inert. That was right while
+  // the only thing it could say was "get the app on the App Store", and wrong
+  // once you notice the platform is already an installable PWA: the manifest
+  // and the service worker were never waiting on a store review.
+  //
+  // The per-OS rule is what matters and it is unchanged in substance: an
+  // Android visitor is never handed the iOS URL. They are offered the home
+  // screen instead of nothing.
   const { installOffer } = loadTsx('frontend/src/features/mobile-install/detect.ts');
-  assert.equal(installOffer(env({ ua: ANDROID, urls: { ios: IOS_URL, android: null } })), null);
+  assert.deepEqual(
+    installOffer(env({ ua: ANDROID, urls: { ios: IOS_URL, android: null } })),
+    { kind: 'a2hs', os: 'android' },
+  );
   assert.deepEqual(
     installOffer(env({ ua: IPHONE, urls: { ios: IOS_URL, android: null } })),
-    { os: 'ios', url: IOS_URL },
+    { kind: 'store', os: 'ios', url: IOS_URL },
+  );
+  // Neither listing published — production's state today — is an offer on
+  // both, and it names no store.
+  assert.deepEqual(
+    installOffer(env({ ua: IPHONE, urls: { ios: null, android: null } })),
+    { kind: 'a2hs', os: 'ios' },
   );
 });
 
@@ -246,12 +262,18 @@ test('installOffer: suppressed before the URLs have loaded', () => {
 test('installOffer: only http(s) destinations are offered', () => {
   // update_url is admin-supplied free text. It is rendered as an anchor href,
   // so a javascript: value would be a self-inflicted XSS on every mobile page.
+  //
+  // A refused URL is now the same case as no URL: the home-screen offer, which
+  // has no href at all. What must never happen is the bad value reaching a
+  // `store` offer, since that is the only branch that becomes an anchor.
   const { installOffer } = loadTsx('frontend/src/features/mobile-install/detect.ts');
   for (const bad of ['javascript:alert(1)', 'data:text/html,<script>', 'itms-apps://x', '  ']) {
-    assert.equal(
-      installOffer(env({ urls: { ios: bad, android: null } })), null,
+    const offer = installOffer(env({ urls: { ios: bad, android: null } }));
+    assert.deepEqual(
+      offer, { kind: 'a2hs', os: 'ios' },
       `expected ${JSON.stringify(bad)} to be refused as an install URL`,
     );
+    assert.equal(offer.url, undefined, 'a refused URL never reaches an href');
   }
 });
 
@@ -296,6 +318,56 @@ test('island: first render is the hidden strip, with no data and no store link',
   assert.doesNotMatch(html, /https:\/\/play\.google\.com/);
   // …and names no destination, because none is known yet.
   assert.doesNotMatch(html, /App Store|Google Play|TestFlight/);
+});
+
+// ── The home-screen offer (#1513) ───────────────────────────────────
+
+test('#1513: the a2hs steps are instructions, one per OS, and name no store', () => {
+  const { A2HS_STEPS, STORE_LABEL } = loadTsx('frontend/src/features/mobile-install/detect.ts');
+  assert.deepEqual(Object.keys(A2HS_STEPS).sort(), ['android', 'ios']);
+  // iOS Safari exposes no install API and Android's beforeinstallprompt is
+  // not guaranteed to fire, so both are directions to a menu item.
+  assert.match(A2HS_STEPS.ios, /Share.*Add to Home Screen/i);
+  assert.match(A2HS_STEPS.android, /menu.*Add to Home screen/i);
+  for (const os of ['ios', 'android']) {
+    assert.ok(!A2HS_STEPS[os].includes(STORE_LABEL[os]),
+      'the home-screen path must not name a store');
+  }
+});
+
+test('#1513: the control is a button when there is nowhere to link to', () => {
+  const src = fs.readFileSync(
+    path.join(ROOT, 'frontend/src/features/mobile-install/install-banner.tsx'), 'utf8');
+  const branch = src.slice(src.indexOf("offer && offer.kind === 'a2hs' ?"));
+  const button = branch.slice(0, branch.indexOf('</Button>'));
+  // Composed from the shell's own primary button rather than hand-written, so
+  // a restyle reaches it (tests/shell-primitive-adoption.test.js enforces the
+  // rule; this pins that THIS control obeys it).
+  assert.match(button, /<Button/);
+  assert.match(button, /variant="default"/);
+  assert.match(button, /ink="solid"/);
+  assert.doesNotMatch(button, /bg-violet-600/, 'the fill comes from the variant');
+  assert.match(button, /id="mobile-install-open"/);
+  assert.match(button, /type="button"/);
+  assert.match(button, /aria-expanded=\{showSteps\}/,
+    'it discloses, so it says so');
+  assert.doesNotMatch(button, /href=/, 'there is no destination');
+  // The store branch keeps its anchor and its safe rel.
+  const anchorBranch = src.slice(src.indexOf('<a\n          id="mobile-install-open"'));
+  assert.match(anchorBranch.slice(0, 400), /rel="noopener noreferrer"/);
+});
+
+test('#1513: the first render is still the hidden, offer-less strip', () => {
+  // The island rule: no data at first render, so the prerender matches.
+  const html = renderComponent(
+    'frontend/src/features/mobile-install/install-banner.tsx',
+    'MobileInstallBanner',
+  );
+  assert.match(html, /class="hidden /);
+  assert.doesNotMatch(html, /Add it to your home screen/);
+  assert.doesNotMatch(html, /Add to Home Screen\./);
+  // `offer === null` is the "Get the app" placeholder, unchanged.
+  assert.match(html, /Get the app/);
 });
 
 // ── The dismissal's lifetime ────────────────────────────────────────

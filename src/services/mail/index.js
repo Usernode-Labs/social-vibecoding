@@ -425,11 +425,28 @@ async function sendPasswordResetMail(config, email, token) {
   });
 }
 
+/**
+ * "Your Usernode access is ready" — the one mail whose whole job is a link.
+ *
+ * #1545: the destination is a QUERY, not a fragment. It was
+ * `/#signup`, and the report was that following it from a desktop mail client
+ * landed on the home page while the same mail worked from a phone. That is
+ * the signature of a link rewriter: a fragment is client-side only, so a
+ * scanner or tracker that rebuilds the URL has nothing to lose by dropping
+ * `#signup`, and what arrives is a bare `/`. Query strings survive that,
+ * because a rewriter has to carry them to reconstruct the address at all.
+ *
+ * `AuthScreens.enter()` already honoured `?signup=1` as "a pre-SPA link
+ * form"; it now honours `?login=1` the same way, and rewrites either to its
+ * hash route on arrival, so the address bar ends up exactly where the old
+ * link pointed. The fragment spelling still works for anything that already
+ * has one.
+ */
 async function sendWaitlistReleaseMail(config, email, { hasAccount = false } = {}) {
   await send(config, {
     kind: 'waitlist_released',
     to: email,
-    url: `${PRODUCTION_ORIGIN}/#${hasAccount ? 'login' : 'signup'}`,
+    url: `${PRODUCTION_ORIGIN}/?${hasAccount ? 'login' : 'signup'}=1`,
     hasAccount,
   });
 }

@@ -139,8 +139,11 @@ export function init() {
       clearTimeout(closeTimer);
       firstFeedback = moment;
       pendingFirstFeedback = null;
-      feedbackText.disabled = true;
-      feedbackTitle.disabled = true;
+      // readOnly, not disabled: disabling these two drops focus and takes
+      // the keyboard down with it, which is the bug #1757 fixed on the send
+      // paths. This path was added separately and kept the old writes, so
+      // the two changes were green apart and red together.
+      setComposerLocked(true);
       feedbackBtn.disabled = true;
       const hasBoard = typeof moment.appSlug === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(moment.appSlug);
       firstFix.disabled = !hasBoard || !moment.canFix || !Number.isSafeInteger(moment.issueNumber) || moment.issueNumber <= 0;
@@ -886,7 +889,12 @@ export function init() {
           if (moment && Number(moment.userId) === Number(App.user?.id)) {
             const open = !document.getElementById('feedback-modal').classList.contains('hidden');
             if (!open) App.openFeedbackModal({ firstFeedback: moment });
-            else if (feedbackText.disabled) showFirstFeedback(moment, 'Your saved feedback has been sent.');
+            // `readOnly`, because that is what the lock is made of now.
+            // This read still probed `disabled` after #1757 stopped setting
+            // it, so it was permanently false: a flush that landed on an
+            // already-sent composer took the "someone is typing" branch and
+            // the confirmation never appeared.
+            else if (feedbackText.readOnly) showFirstFeedback(moment, 'Your saved feedback has been sent.');
             else pendingFirstFeedback = moment; // Keep the draft being typed intact.
           }
         },
@@ -1102,14 +1110,13 @@ export function init() {
       presentation += 1;
       clearTimeout(closeTimer);
       firstFeedback = null;
+      // Every open hands back an editable composer (showFirstFeedback re-locks).
+      setComposerLocked(false);
       firstSuccess?.classList.add('hidden');
       feedbackForm?.classList.remove('hidden');
       // Opening a queued success must not consume a failed outbox draft or
       // start screenshot/title probes behind the confirmation.
       if (opts.firstFeedback && showFirstFeedback(opts.firstFeedback, 'Your saved feedback has been sent.')) return;
-      // Reset any "Submitted" lock from a prior session so a returning
-      // user can file another piece of feedback without reloading.
-      setComposerLocked(false);
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
       // #1603: a refusal from a previous open never greets the next one.

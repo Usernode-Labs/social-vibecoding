@@ -86,6 +86,20 @@ export interface CheckRow {
   advisory: boolean;
   name: string;
   path?: string | null;
+  /**
+   * Percent of this check's recorded runs that failed, or null when it has
+   * never failed, has too little history to judge, or is reliable enough
+   * that the chip would be noise. A graduated check keeps blocking when it
+   * starts failing intermittently — that is deliberate, there is no
+   * demotion — so this chip is the only thing that says it is doing so.
+   */
+  flaky?: number | null;
+  /**
+   * True when this row is GREEN only because a retry passed. The reason
+   * line is kept for it, which the renderer otherwise drops for a pass:
+   * the failure happened, it just did not reproduce.
+   */
+  keepReason?: boolean;
   reason?: string | null;
   errors?: { kind: string; message: string; source?: string | null }[];
 }

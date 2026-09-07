@@ -3822,8 +3822,15 @@ const AppView = {
                 label: node.textContent.replace(/\s+/g, ' ').trim(),
               };
             }
+            // #1615: the TITLE, by name. This read `querySelector('span')`,
+            // which was the title only by accident of source order — the row
+            // now has a glyph and a text-column wrapper, and either one
+            // arriving first would have labelled the sheet row wrongly or
+            // emptied it. `[data-plus-title]` is what board-frame.tsx marks.
+            const titleEl = node.querySelector('[data-plus-title]')
+              || node.querySelector('span');
             return {
-              label: (node.querySelector('span')?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+              label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
               handler: () => node.click(),
             };
           }),
@@ -9025,6 +9032,31 @@ const AppView = {
   // weight: a BLOCKING failure is why the merge is stuck, an ADVISORY failure
   // is a check that has never been seen passing (it reports, it does not
   // block), and a pass is context. Ordered by that weight, and the passes —
+  // A flake rate worth printing. Below the floor a check reads as reliable
+  // and the chip would be noise on every row; the server has already
+  // withheld a rate for a check with too few observations to judge.
+  FLAKE_CHIP_FLOOR: 0.05,
+  _checkReason(r) {
+    const base = (r && r.failureReason) ? String(r.failureReason).slice(0, 500) : null;
+    const runs = r && Number(r.runs);
+    const fails = r && Number(r.fails);
+    if (!Number.isFinite(runs) || runs < 2 || !Number.isFinite(fails) || fails < 1) return base;
+    // A check that failed and then passed when asked again is not blocking
+    // this merge, and the row is green — but it is the single most useful
+    // thing on the page for whoever owns that check, so it says so rather
+    // than swallowing the failure to keep the panel tidy.
+    const lead = (r && r.passedOnRetry)
+      ? `Failed ${fails} of ${runs} runs on this build, then passed when re-run.`
+      : `Failed ${fails} of ${runs} runs on this build.`;
+    return base ? `${lead} ${base}` : lead;
+  },
+
+  _flakePercent(rate) {
+    const n = Number(rate);
+    if (!Number.isFinite(n) || n < AppView.FLAKE_CHIP_FLOOR) return null;
+    return Math.min(99, Math.round(n * 100));
+  },
+
   // the bulk — fold away so the block opens on what someone has to act on.
   _checksVerdictView(pr) {
     if (!pr) return null;
@@ -9039,7 +9071,21 @@ const AppView = {
       advisory: !(r && r.status === 'pass') && !!(r && r.advisory),
       name: String((r && r.name) || 'test'),
       path: (r && r.path) ? String(r.path) : null,
-      reason: (r && r.failureReason) ? String(r.failureReason).slice(0, 500) : null,
+      // The share of this check's recorded runs that failed, as a percent,
+      // or null when it has never failed or has too little history to say.
+      // A check that gates a merge while failing one run in six is the one
+      // nobody could see before; the chip is the whole point of recording
+      // pass_count and fail_count.
+      flaky: AppView._flakePercent(r && r.flakeRate),
+      // A check dispatched several times in one run (its first appearance)
+      // that disagreed with itself is the loudest flake signal there is,
+      // and unlike the lifetime rate it needs no history to read. It leads
+      // the reason, because "it failed" and "it failed once out of three"
+      // call for different next moves.
+      reason: AppView._checkReason(r),
+      // A row that passed only after a retry keeps its reason line, which
+      // the verdict view otherwise drops for anything green.
+      keepReason: !!(r && r.passedOnRetry),
       errors: (Array.isArray(r && r.consoleErrors) ? r.consoleErrors : []).map((e) => ({
         kind: (e && e.kind) ? String(e.kind) : 'console',
         message: String((e && e.message) || '').slice(0, 500),
