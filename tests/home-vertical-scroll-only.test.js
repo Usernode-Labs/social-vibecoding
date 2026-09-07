@@ -114,3 +114,76 @@ test('a 44px tap target on a 16px control cannot fit the feed gutter', () => {
     + 'if this ever stops being true the overflow-x rule is still correct, '
     + 'but this test no longer explains why it is load-bearing');
 });
+
+// ── …and nothing inside the feed may deny that axis (#1762) ────────────
+//
+// The rule above makes the feed scroll one way. This is the other half of
+// the same claim, and it is the half that was actually broken: a DESCENDANT
+// can take the feed's axis away from it. `touch-action` is not a preference
+// about which direction an element would like — it is the complete set of
+// gestures the browser may run for a touch that STARTS on it, intersected
+// down the ancestor chain, so a nested horizontal rail declaring `pan-x`
+// denies the vertical pan outright rather than passing it up to #home-screen.
+//
+// Discover's card rail did exactly that, under a comment asserting the
+// opposite ("a VERTICAL drag still reaches the page"). Two rails of ~13rem
+// cards is most of the Discover block, so a finger landing on a card could
+// not scroll the page at all.
+
+/** Every `touch-action` DECLARATION in app.css, with the selector it is in. */
+function touchActionRules() {
+  // Comments first, and not as a nicety: this file explains its touch-action
+  // rules at length, quoting the values, so a scan over the raw text finds
+  // prose and reports it as a rule.
+  const src = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  const out = [];
+  let from = 0;
+  for (;;) {
+    const i = src.indexOf('touch-action:', from);
+    if (i < 0) break;
+    from = i + 'touch-action:'.length;
+    const open = src.lastIndexOf('{', i);
+    const end = src.indexOf(';', i);
+    if (open < 0 || end < 0) continue;
+    // The selector is whatever sits between the previous block and this one's
+    // brace — enough to name the rule in a failure message and to tell a
+    // `.home-` element from anything else.
+    const head = src.slice(0, open);
+    const start = Math.max(head.lastIndexOf('}'), head.lastIndexOf('{'));
+    const selector = src.slice(start + 1, open).replace(/\s+/g, ' ').trim();
+    out.push({ selector, value: src.slice(i + 'touch-action:'.length, end).trim() });
+  }
+  return out;
+}
+
+/** Does this value still let the browser pan the page vertically? */
+const allowsPanY = (v) => /\bpan-y\b/.test(v) || v === 'auto' || v === 'manipulation';
+
+test('the Discover rail keeps its own axis without taking the feed’s', () => {
+  const RAIL = rule('.home-discover-rail');
+  assert.match(RAIL, /overflow-x:\s*auto/, 'it is still a horizontal scroller');
+  const declared = RAIL.match(/touch-action:\s*([^;]+);/);
+  assert.ok(declared, '.home-discover-rail states a touch-action');
+  const value = declared[1].trim();
+  assert.ok(allowsPanY(value),
+    `touch-action: ${value} denies the vertical pan for every touch that `
+    + 'starts on a Discover card — it does not hand it to #home-screen. That '
+    + 'is #1762: the whole rail became a band the page could not be scrolled '
+    + 'from.');
+  assert.ok(/\bpan-x\b/.test(value) || value === 'auto',
+    'and the rail still gets the axis it actually scrolls on');
+});
+
+test('no rule on a home-feed element denies the vertical pan', () => {
+  // The same trap, generalised, so it cannot come back on the next rail.
+  // Scoped to `.home-` selectors: the sheets a thousand lines up narrow
+  // touch-action deliberately and correctly (the switcher's sheet has no
+  // vertical scroller at all), and this is not a claim about them.
+  const offenders = touchActionRules()
+    .filter((r) => /(^|[\s,>+~])\.home-/.test(r.selector))
+    .filter((r) => !allowsPanY(r.value))
+    .map((r) => `${r.selector} { touch-action: ${r.value} }`);
+  assert.deepEqual(offenders, [],
+    'a home-feed element that omits pan-y takes the feed’s own gesture away '
+    + 'from every touch that starts on it');
+});

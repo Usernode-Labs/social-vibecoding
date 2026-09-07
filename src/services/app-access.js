@@ -51,6 +51,7 @@ const NON_SECRET_APP_COLUMNS = [
   'collab_visibility', 'view_visibility', 'approver_policy',
   'approvals_required', 'screenshot_device_scale', 'icon_emoji',
   'icon_image_id', 'forked_from', 'admin_usernames',
+  'directory_review_status', 'directory_reviewed_at', 'directory_reviewed_sha',
 ];
 
 // `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list

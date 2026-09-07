@@ -125,6 +125,8 @@ const app = (over) => ({
   slug: 'some-app',
   name: 'Some App',
   status: 'running',
+  icon_emoji: '🧩',
+  directory: { tier: 'ready', state: 'working', label: 'Reviewed working' },
   is_collaborator: false,
   is_favorited: false,
   favorite_order: null,
@@ -134,6 +136,21 @@ const app = (over) => ({
 });
 
 // ── featuredApps selection ────────────────────────────────────────
+
+test('discovery requires a current review and a real icon, not just popularity or featuring', () => {
+  const Home = makeHome();
+  const candidates = [
+    app({ slug: 'ready', active_users: 1 }),
+    app({ slug: 'no-icon', icon_emoji: null, active_users: 100 }),
+    app({ slug: 'not-running', status: 'creating', active_users: 100 }),
+    ...['unreviewed', 'outdated', 'demo', 'broken'].map((state) => app({
+      slug: state, active_users: 100, directory: { state, tier: state === 'outdated' || state === 'unreviewed' ? 'unreviewed' : 'more' },
+    })),
+  ];
+  assert.deepEqual(Home.popularApps(candidates).map((a) => a.slug), ['ready']);
+  assert.deepEqual(Home.featuredApps(candidates.map((a) => ({ ...a, featured: true }))).map((a) => a.slug), ['ready']);
+  assert.equal(Home.isDiscoveryReady(app({ demo: true })), true, 'staging inertness is not an editorial demo classification');
+});
 
 test('featuredApps: only featured rows, ordered by featured_order', () => {
   const Home = makeHome();
@@ -206,12 +223,16 @@ test('_wireDiscoveryCards binds each badge once, however often the lane re-runs 
   const Home = makeHome();
   let toggles = 0;
   Home.toggleAdded = () => { toggles += 1; };
+  // BY TYPE, since #1763: the badge carries two listeners now — its click,
+  // and the pointerdown guard that keeps a press on ⊕ from arming the lane's
+  // drag recognizer. Both are bound through the same WeakSet, so both are the
+  // claim this test makes.
   const mkBtn = (cls, slug) => {
-    const handlers = [];
+    const handlers = {};
     return {
       className: cls,
       dataset: { slug, added: 'false' },
-      addEventListener: (_t, fn) => handlers.push(fn),
+      addEventListener: (t, fn) => { (handlers[t] || (handlers[t] = [])).push(fn); },
       handlers,
     };
   };
@@ -231,9 +252,18 @@ test('_wireDiscoveryCards binds each badge once, however often the lane re-runs 
   // changes the effect's key while React keeps the very same element.
   Home._wireDiscoveryCards(lane);
   Home._wireDiscoveryCards(lane);
-  assert.equal(badge.handlers.length, 1, 'one listener, not two');
-  badge.handlers[0]({ stopPropagation: () => {} });
+  assert.equal(badge.handlers.click.length, 1, 'one listener, not two');
+  assert.equal(badge.handlers.pointerdown.length, 1, 'and one guard, not two');
+  badge.handlers.click[0]({ stopPropagation: () => {} });
   assert.equal(toggles, 1, 'so one tap is one toggle');
+
+  // The guard's whole job: the kit's recognizer listens for pointerdown on the
+  // LANE and takes the first card that contains the target, so a press on the
+  // badge is a press on the card unless the event stops here (#1763). On
+  // desktop it arms after 6px, which is inside the slop of an ordinary click.
+  let stopped = 0;
+  badge.handlers.pointerdown[0]({ stopPropagation: () => { stopped += 1; } });
+  assert.equal(stopped, 1, 'a press on ⊕ never reaches the lane');
 });
 
 test('featuredApps: a hidden member app IS offered again (#618)', () => {
@@ -670,9 +700,8 @@ test('GET /api/apps joins featured_apps and serializes both flags', () => {
 });
 
 test('staging seeds featured rows both ways (boot seed + ?demo=1 tiles)', () => {
-  // featured_apps is new, so a prod-cloned staging DB has no rows: the
-  // home row, the browse ordering and the admin list would all be empty
-  // in every PR preview without these.
+  // Boot fixtures must work with a cloned featured list as well as an
+  // empty one; request-time demo tiles cannot exercise real add/remove.
   const migrate = read('src/db/migrate.js');
   assert.match(migrate, /async function seedStagingFeaturedApps\(pool\)/);
   assert.match(migrate, /await seedStagingFeaturedApps\(pool\)/);
@@ -687,4 +716,81 @@ test('staging seeds featured rows both ways (boot seed + ?demo=1 tiles)', () => 
   // Request-time demo tiles for the ?demo=1 path.
   assert.match(APPS_ROUTE, /staging-demo-featured/);
   assert.match(APPS_ROUTE, /featured: true/);
+});
+
+function stagingFeaturedSeed(env = 'staging') {
+  const migrate = read('src/db/migrate.js');
+  const source = migrate.slice(
+    migrate.indexOf('async function seedStagingFeaturedApps(pool)'),
+    migrate.indexOf('// Per-user app-quota fixtures')
+  );
+  return vm.runInNewContext(`${source}\nseedStagingFeaturedApps;`, {
+    process: { env: { USERNODE_ENV: env } },
+    log: { info() {}, warn(_area, _message, error) { assert.fail(error.message); } },
+  });
+}
+
+for (const prepopulated of [false, true]) {
+  test(`staging Discover has addable reviewed fixtures with an ${prepopulated ? 'existing' : 'empty'} featured list`, async () => {
+    const curation = require('../src/services/discovery-curation');
+    const real = app({ id: 1, slug: 'real-cloned-app', directory_review_status: 'unreviewed', active_users: 10 });
+    const fixtures = ['puzzle-chain', 'word-garden', 'pixel-racer'].map((name, i) => app({
+      id: i + 2, slug: `staging-demo-${name}`, directory_review_status: 'unreviewed', active_users: 0,
+    }));
+    const featured = new Map(prepopulated ? [[real.id, 7]] : []);
+    const pool = { async query(raw, params = []) {
+      const sql = raw.replace(/\s+/g, ' ').trim();
+      // Model just the fixture persistence; the actual Home selection and
+      // review classification below execute production code.
+      if (sql.startsWith('UPDATE apps SET icon_emoji')) {
+        assert.match(sql, /created_by = \(SELECT id FROM users WHERE username = 'staging-demo-user'\)/);
+        assert.match(sql, /AND directory_review_status = 'unreviewed'/);
+        for (const fixture of fixtures) {
+          if (fixture.directory_review_status !== 'unreviewed') continue;
+          Object.assign(fixture, {
+            icon_emoji: '🧩', main_sha: '0000000000000000000000000000000000000001',
+            directory_review_status: 'working', directory_reviewed_at: '2026-09-07T12:00:00Z',
+            directory_reviewed_sha: '0000000000000000000000000000000000000001',
+          });
+        }
+        return { rows: [] };
+      }
+      if (sql === 'SELECT 1 FROM featured_apps LIMIT 1') {
+        return { rows: featured.size ? [{ exists: 1 }] : [] };
+      }
+      if (sql.startsWith('SELECT id FROM apps')) {
+        assert.match(sql, /created_by = \(SELECT id FROM users WHERE username = 'staging-demo-user'\)/);
+        assert.match(sql, /AND directory_review_status = 'working'/);
+        return { rows: fixtures.filter((a) => a.directory_review_status === 'working') };
+      }
+      if (sql.startsWith('INSERT INTO featured_apps')) {
+        assert.match(sql, /COALESCE\(MAX\(sort_order\), -1\) \+ 1/);
+        assert.match(sql, /ON CONFLICT \(app_id\) DO NOTHING/);
+        if (!featured.has(params[0])) featured.set(params[0], Math.max(-1, ...featured.values()) + 1);
+        return { rows: [] };
+      }
+      assert.fail(`Unexpected seed query: ${sql}`);
+    } };
+    const seed = stagingFeaturedSeed();
+    await seed(pool);
+    const first = [...featured];
+    await seed(pool);
+    assert.deepEqual([...featured], first, 'reboot preserves existing positions without duplicates');
+    if (prepopulated) assert.equal(featured.get(real.id), 7, 'cloned ordering is preserved');
+    assert.equal(real.directory_review_status, 'unreviewed', 'no real app is certified by the seed');
+    const apps = [real, ...fixtures].map((a) => ({
+      ...a, directory: curation.describe(a), featured: featured.has(a.id), featured_order: featured.get(a.id),
+    }));
+    const Home = makeHome();
+    const offered = Home.featuredApps(apps);
+    assert.deepEqual(offered.map((a) => a.slug), fixtures.map((a) => a.slug));
+    assert.ok(offered.every((a) => !a.demo && !Home.isYours(a)),
+      'real DB-backed fixtures must remain available to the Discover add/remove check');
+  });
+}
+
+test('staging discovery fixtures never write outside staging', async () => {
+  for (const env of ['production', 'local', undefined]) {
+    await stagingFeaturedSeed(env === undefined ? '' : env)({ query() { assert.fail(`seed ran in ${env}`); } });
+  }
 });

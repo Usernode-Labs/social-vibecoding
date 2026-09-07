@@ -162,6 +162,24 @@ const ROLES = [
   { label: 'admin viewing a private app', user: { id: 300, username: 'admin', isAdmin: true }, visibility: 'private', collaborators: [] },
 ];
 
+test('#1523: list and detail publish the same deployment-aware directory classification', async () => {
+  appRow = makeAppRow({ icon_emoji: '🧩', main_sha: 'a'.repeat(40),
+    directory_review_status: 'working', directory_reviewed_sha: 'a'.repeat(40),
+    directory_reviewed_at: '2026-09-01T13:00:00.000Z', last_deploy_at: '2026-09-01T12:00:00.000Z' });
+  collaboratorIds = new Set(); currentUser = { id: 999, username: 'viewer' };
+  const server = await startServer();
+  try {
+    for (const [status, tier] of [['working', 'ready'], ['demo', 'more'], ['broken', 'more'], ['unreviewed', 'unreviewed']]) {
+      appRow.directory_review_status = status;
+      const list = await fetch(`http://127.0.0.1:${server.address().port}/api/apps`).then((r) => r.json());
+      const detail = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/private-notes`).then((r) => r.json());
+      const listed = list.apps.find((a) => a.slug === appRow.slug);
+      assert.equal(listed.directory.tier, tier);
+      assert.deepEqual(listed.directory, detail.app.directory);
+    }
+  } finally { server.close(); }
+});
+
 for (const role of ROLES) {
   test(`GET /api/apps list never exposes secrets to ${role.label}`, async () => {
     appRow = makeAppRow({ view_visibility: role.visibility, created_by: 100 });

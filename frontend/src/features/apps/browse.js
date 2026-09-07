@@ -61,6 +61,7 @@ const Browse = {
   // default and the store's initial value; the persisted / URL choice is
   // applied on screen ENTRY, never during render — see _applyInitialSort.
   _sort: 'recommended',
+  _moreExpanded: false,
   _searchDebounce: null,
   // Slug of the app whose detail page is showing; null = the list level.
   _slug: null,
@@ -129,6 +130,10 @@ const Browse = {
   // the caller runs Browse.syncChrome() inside the screen transition
   // instead (#979 — see _syncChrome).
   open(slug, opts) {
+    if (!Browse._open) {
+      // Pure disclosure state for review captures; no requests or writes.
+      Browse._moreExpanded = new URLSearchParams(location.search).get('shot') === 'browse-more';
+    }
     Browse._open = true;
     Browse._chromeSuspended = !!(opts && opts.chrome === false);
     Browse._slug = slug || null;
@@ -307,7 +312,8 @@ const Browse = {
   // shows the adds made here even before its own reload.
   async _load() {
     try {
-      const demoQS = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+      const params = new URLSearchParams(location.search);
+      const demoQS = params.get('demo') === '1' ? `?demo=1${params.get('curation') === '1' ? '&curation=1' : ''}` : '';
       const res = await fetch(`/api/apps${demoQS}`);
       if (!res.ok) throw new Error('Failed to load apps');
       const { apps } = await res.json();
@@ -400,6 +406,20 @@ const Browse = {
     Browse.render();
   },
 
+  // Unreviewed is not the same as broken. Apps with icons that have not yet
+  // been reviewed remain visible below the reviewed group; explicit demos,
+  // failures, and apps still needing setup/icon work go under Show more.
+  directoryTier(app) {
+    if (Home.isDiscoveryReady(app)) return 'ready';
+    if (app?.directory?.tier === 'more' || app?.status === 'error') return 'more';
+    return 'unreviewed';
+  },
+
+  toggleMore() {
+    Browse._moreExpanded = !Browse._moreExpanded;
+    Browse.render();
+  },
+
   // Sorting REORDERS, it never filters: every order returns the same set of
   // rows, so a switch can't make an app disappear. (Deliberately unlike the
   // home screen's Popular lane, which drops zero-user apps.)
@@ -446,9 +466,12 @@ const Browse = {
     };
 
     const cmp = {
-      // Featured first (by the admin's featured_order, ascending), then
-      // everything else by number of users — the shipped ordering, unchanged.
+      // Reviewed apps first. Within each quality tier, preserve the admin's
+      // featured order and then rank by users. Popularity is not verification.
       recommended: (x, y) => {
+        const tiers = { ready: 0, unreviewed: 1, more: 2 };
+        const tier = tiers[Browse.directoryTier(x)] - tiers[Browse.directoryTier(y)];
+        if (tier) return tier;
         const fx = featuredRank(x);
         const fy = featuredRank(y);
         if (fx !== fy) return fx - fy;
@@ -546,6 +569,7 @@ const Browse = {
     const isAdded = Home.isYours(app);
     return {
       app,
+      directoryTier: Browse.directoryTier(app),
       slug: app.slug,
       name: app.name || app.slug,
       meta: Browse.metaLine(app, Browse._sort),
@@ -579,6 +603,10 @@ const Browse = {
       // Republished on every list render so the <select> and the
       // #browse-list[data-sort] anchor can never lag the rows they describe.
       sort: Browse._sort,
+      // Search and explicit numeric sorts always include every matching app.
+      // Returning from a detail page keeps the user's disclosure choice.
+      curated: Browse._sort === 'recommended' && !query,
+      moreExpanded: Browse._moreExpanded,
       error: false,
       empty: rows.length
         ? null
