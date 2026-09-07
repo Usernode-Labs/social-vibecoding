@@ -2681,6 +2681,12 @@
       "expectText": "Programme users"
     },
     {
+      "name": "Admin Users explains what excluding a user from ranking does (#1558)",
+      "path": "/#admin/users",
+      "expectSelector": "#admin-topo-u-ranking-help",
+      "expectText": "non-podium"
+    },
+    {
       "name": "Admin Waitlist is a first-class menu section (#1179)",
       "path": "/#admin/waitlist",
       "expectSelector": "#admin-topo-content"
