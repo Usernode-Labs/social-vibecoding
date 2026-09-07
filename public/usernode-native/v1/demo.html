@@ -694,6 +694,8 @@
         if (unDemo === 'panel') openPanel('right', 5);
         else if (unDemo === 'action-sheet') document.getElementById('action-sheet-btn').click();
         else if (unDemo === 'adaptive-menu') document.getElementById('adaptive-menu-btn').click();
+        // `ptr-hold` is handled by the pull-to-refresh section below,
+        // which owns the handle it has to call refresh() on.
       } catch (e) { /* no URL API — nothing to open */ }
 
       // ── Toasts ─────────────────────────────────────────────────────
@@ -743,11 +745,39 @@
         ptrList.insertBefore(row, ptrList.firstChild);
       }
       for (var i = 0; i < 12; i++) addPtrRow('Feed item');
-      unNative.attachPullToRefresh(ptrList, function () {
+      // ?un-demo=ptr-hold parks the spinner at its resting pose so the
+      // state issue #1526 was reported against has a navigable address:
+      // a never-settling onRefresh (the same trick App._refreshOrReload
+      // uses to hold the spinner through a version reload) plus a
+      // programmatic handle.refresh() at load, so the puck holds
+      // indefinitely instead of retracting ~1.5s in. Pure UI state — no
+      // writes, no env gate.
+      var ptrHold = false;
+      try {
+        ptrHold = new URLSearchParams(window.location.search).get('un-demo') === 'ptr-hold';
+      } catch (e) { /* no URL API — ordinary demo */ }
+      var ptrHandle = unNative.attachPullToRefresh(ptrList, function () {
+        if (ptrHold) return new Promise(function () { /* never settles */ });
         return new Promise(function (resolve) {
           setTimeout(function () { addPtrRow('Fresh item ✨'); resolve(); }, 1000);
         });
       });
+      if (ptrHold && ptrHandle.refresh) {
+        // Bring the list into frame — a capture of this state is only
+        // useful if the resting puck is actually on screen. Scroll the
+        // PAGE explicitly rather than calling scrollIntoView(): that
+        // scrolls every scrollable ancestor, and the list's wrapper is
+        // one (overflow:hidden is still programmatically scrollable), so
+        // it would slide the clip layer up out of its own clip window.
+        // Scrolling AWAY from the top is safe — the window-mode PTR
+        // above only engages from a resting scrollTop of 0.
+        var ptrSection = ptrList.closest('section');
+        if (ptrSection) {
+          var sectionTop = ptrSection.getBoundingClientRect().top + window.scrollY;
+          window.scrollTo(0, Math.max(0, sectionTop - 80));
+        }
+        ptrHandle.refresh();
+      }
 
       // Window-scroller PTR: pull the whole page down from the very top.
       // No topEl here on purpose — #demo-header is sticky INSIDE the

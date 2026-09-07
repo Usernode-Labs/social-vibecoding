@@ -778,6 +778,44 @@ test('deleting a user requires typing the exact identifier before the button ena
   assert.ok(!/querySelectorAll/.test(src), 'and no cross-copy wiring pass is needed');
 });
 
+// ─── The ranking control says what it does (#1558) ────────────────────────
+
+test('the ranking control names the leaderboard, not the database flag', () => {
+  const src = fs.readFileSync(path.join(REACT_DIR, 'programme-users.tsx'), 'utf8');
+  // "Toggle podium" named the column in the users table and told the reader
+  // nothing about what pressing it does. Both directions are spelled out
+  // now, and the label states the resulting action rather than a toggle.
+  // Comments are stripped: the rename's own commentary quotes the old label.
+  assert.ok(!/Toggle podium/i.test(stripAllComments(src)), 'the old label is gone');
+  assert.match(src, /'Include in ranking'/, 'the excluded row offers to put the user back on the board');
+  assert.match(src, /'Exclude from ranking'/, '...and a ranked row offers to take them off it');
+  // The hook is NOT renamed: it is the row identifier the console's own
+  // tests and any external automation select on, and it tracks the
+  // exclude_podium column, which this change deliberately leaves alone.
+  assert.match(src, /data-toggle-podium=\{u\.id\}/, 'the row hook is unchanged');
+  assert.match(src, /toggle-exclude-podium/, '...and so is the route it PATCHes');
+
+  // A hover title on each direction, plus a helper line that is visible
+  // without hovering anything — the tooltip is unreachable on a phone.
+  assert.match(src, /const RANKING_TITLE = \{/, 'both tooltips are defined together');
+  assert.match(src, /title=\{u\.exclude_podium \? RANKING_TITLE\.include : RANKING_TITLE\.exclude\}/,
+    'and the row picks the one describing what the press will do');
+  assert.match(src, /id="admin-topo-u-ranking-help"/, 'the always-visible helper line is rendered');
+  assert.match(src, /const RANKING_HELP = /, 'and its copy is a named constant');
+  // Every surface the flag touches is named in one place or another: the
+  // points and listing it does NOT remove, and the three things it does.
+  for (const claim of ['non-podium', 'top three', 'dash']) {
+    assert.ok(RegExp(claim, 'i').test(src), `the copy states the "${claim}" consequence`);
+  }
+
+  // The column header stopped naming the flag too, and both of its values
+  // read as states of the leaderboard.
+  assert.match(src, /label: 'Ranking'/, 'the column is headed Ranking');
+  assert.match(src, /\? <span className="text-amber-800 dark:text-amber-400">Excluded<\/span>/,
+    'an excluded row still stands out down a long column');
+  assert.match(src, /: 'Ranked'\)/, '...and the ordinary state is spelled out instead of a dash');
+});
+
 // ─── Challenges live inside the season-event detail view ──────────────────
 
 test('challenges are managed nested under a season-event detail view, not a top-level tab', () => {

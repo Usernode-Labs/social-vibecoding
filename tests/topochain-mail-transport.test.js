@@ -22,8 +22,9 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const transport = require(path.join(ROOT, 'src/services/topochain/mail-transport.js'));
-const { sendOtpMail, sendWaitlistJoinMail, sendWaitlistReleaseMail } =
-  require(path.join(ROOT, 'src/services/topochain/mailer.js'));
+const {
+  sendOtpMail, sendWaitlistJoinMail, sendWaitlistCodeMail, sendWaitlistReleaseMail,
+} = require(path.join(ROOT, 'src/services/topochain/mailer.js'));
 
 const FULL_ENV = {
   TOPOCHAIN_MAIL_API_URL: 'https://mail.example.invalid/send',
@@ -179,6 +180,28 @@ test('a first join carries the stage-2 profile link; a re-join carries none', as
   );
 });
 
+test('sendWaitlistCodeMail passes kind:"waitlist_code" through the shim', async () => {
+  // The shim is what src/routes/public-api.js requires, so a sender that
+  // exists in src/services/mail/ but is missing from this re-export is a
+  // TypeError at the first resend, not at boot.
+  const seen = [];
+  const cfg = { topochainMailTransport: { send: async (m) => { seen.push(m); } } };
+  await sendWaitlistCodeMail(cfg, 'a@b.invalid', { code: '424242', moreToken: 'a'.repeat(48) });
+  await sendWaitlistCodeMail(cfg, 'a@b.invalid', { code: null, moreToken: 'a'.repeat(48) });
+  assert.equal(seen[0].kind, 'waitlist_code');
+  assert.equal(seen[0].code, '424242');
+  assert.match(seen[0].confirmUrl, /\/api\/public\/waitlist\/confirm\/a{48}$/);
+  // The already-confirmed shape: no code, so no confirm link either, and a
+  // pointer to where they stand instead.
+  assert.equal(seen[1].code, null);
+  assert.equal(seen[1].confirmUrl, null);
+  assert.match(seen[1].statusUrl, /#more\/a{48}$/);
+
+  // And the transport can actually render it — an unknown kind throws here.
+  const msg = transport.buildMessage('waitlist_code', seen[0]);
+  assert.match(msg.text, /424242/);
+});
+
 test('sendWaitlistReleaseMail passes kind:"waitlist_released" and a signup/login link', async () => {
   const seen = [];
   const cfg = { topochainMailTransport: { send: async (m) => { seen.push(m); } } };
@@ -197,6 +220,7 @@ test('all senders swallow a throwing transport and resolve', async () => {
   // above these must be unable to tell delivery apart from non-delivery.
   assert.equal(await sendOtpMail(boom, 'a@b.invalid', '1'), undefined);
   assert.equal(await sendWaitlistJoinMail(boom, 'a@b.invalid'), undefined);
+  assert.equal(await sendWaitlistCodeMail(boom, 'a@b.invalid', { code: '1' }), undefined);
   assert.equal(await sendWaitlistReleaseMail(boom, 'a@b.invalid', { hasAccount: false }), undefined);
 });
 

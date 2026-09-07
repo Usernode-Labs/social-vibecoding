@@ -11994,6 +11994,16 @@ async function seedStagingPlatformMail(pool) {
     // OWN actions produce here.
     { kind: 'otp', to: 'staging-demo-user@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
     { kind: 'waitlist_joined', to: 'staging-demo-waitlist@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
+    // A REQUESTED code, from POST /api/public/waitlist/resend or a re-join.
+    // Its own kind because waitlist_joined is capped at one per address per
+    // day, which is the thing a resend exists to work around. Seeded so the
+    // admin mail log shows the kind at all in a preview: without a row, a
+    // reviewer cannot tell the filter has a value for it.
+    { kind: 'waitlist_code', to: 'staging-demo-waitlist@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
+    // The throttled shape of the same kind: what a sixth request in a day
+    // records. It delivers nothing and counts toward nothing, and the log is
+    // the only place that is visible.
+    { kind: 'waitlist_code', to: 'staging-demo-throttled@example.invalid', provider: 'log', status: 'suppressed_rate_limit', error: 'another waitlist_code mail went to this address 12s ago' },
     // What production looks like when it works.
     { kind: 'waitlist_released', to: 'staging-demo-released@example.invalid', provider: 'gmail', status: 'sent', error: null },
     // The same kind, addressed to the ADMITTED waitlist fixture (900502).

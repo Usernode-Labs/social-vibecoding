@@ -171,6 +171,40 @@ test('a waitlist confirmation goes out once a day per address', () => {
   }).allowed, true);
 });
 
+test('a requested code is not swallowed by the join mail\'s daily cap', () => {
+  // The bug the separate kind exists to prevent: reusing waitlist_joined for
+  // a resend means the second send of the day is recorded
+  // suppressed_rate_limit and silently dropped, which is precisely the
+  // situation somebody pressing "send a new code" is already in.
+  const joined = [{ status: 'sent', created_at: new Date(T0 - 2 * 60 * 1000) }];
+  assert.equal(rateLimit.decide({
+    kind: 'waitlist_joined', now: T0, recipientHistory: joined,
+  }).allowed, false);
+  assert.equal(rateLimit.decide({
+    kind: 'waitlist_code', now: T0, recipientHistory: joined,
+  }).allowed, true, 'a different kind keeps its own history');
+});
+
+test('requested codes are one a minute, five a day, per address', () => {
+  const at = (msAgo) => ({ status: 'sent', created_at: new Date(T0 - msAgo) });
+  // The minute gap the endpoint's advertised cooldown corresponds to.
+  assert.equal(rateLimit.decide({
+    kind: 'waitlist_code', now: T0, recipientHistory: [at(30 * 1000)],
+  }).allowed, false);
+  assert.equal(rateLimit.decide({
+    kind: 'waitlist_code', now: T0, recipientHistory: [at(61 * 1000)],
+  }).allowed, true);
+  // And the ceiling that bounds a determined one. Four earlier sends, the
+  // most recent well outside the gap, so only the daily count can refuse it.
+  const four = [2, 3, 4, 5].map((h) => at(h * 60 * 60 * 1000));
+  assert.equal(rateLimit.decide({
+    kind: 'waitlist_code', now: T0, recipientHistory: four,
+  }).allowed, true, 'the fifth of the day is allowed');
+  assert.equal(rateLimit.decide({
+    kind: 'waitlist_code', now: T0, recipientHistory: [...four, at(6 * 60 * 60 * 1000)],
+  }).allowed, false, 'the sixth is not');
+});
+
 test('the global ceiling outranks every per-recipient allowance', () => {
   const d = rateLimit.decide({ kind: 'otp', now: T0, globalCount: 300, maxPerHour: 300 });
   assert.equal(d.allowed, false);
@@ -391,6 +425,63 @@ test('a re-join carries neither link and no stray "undefined"', async () => {
   assert.doesNotMatch(msg.text, /undefined|null/);
   assert.equal(msg.text.includes('Confirm this email address'), false);
   assert.equal(msg.text.includes('Want in sooner?'), false);
+});
+
+test('a requested code mail carries the code and the one-click link', async () => {
+  const seen = [];
+  await mail.sendWaitlistCodeMail(
+    { mailTransport: { send: async (m) => { seen.push(m); } } },
+    'a@b.invalid', { code: '424242', moreToken: 'c'.repeat(48) });
+  assert.equal(seen[0].kind, 'waitlist_code');
+  assert.match(seen[0].confirmUrl, /\/api\/public\/waitlist\/confirm\/c{48}$/);
+  // No stage-2 survey link: this mail answers one question, and the offer
+  // belongs to the join and to the screen after confirming.
+  assert.equal(seen[0].statusUrl, null);
+
+  const msg = templates.buildMessage('waitlist_code', seen[0]);
+  assert.match(msg.text, /confirmation code is 424242/);
+  assert.match(msg.text, /15 minutes/);
+  // Issuing a code invalidates the previous one, and somebody with two
+  // mails open needs to be told which to type.
+  assert.match(msg.text, /earlier code has stopped working/i);
+  assert.ok(msg.text.includes(seen[0].confirmUrl));
+  assert.doesNotMatch(msg.text, /undefined|null/);
+  assert.ok(msg.html.includes('424242'));
+  // Not a second welcome: this is a code somebody asked for, and greeting
+  // them again would misread the moment.
+  assert.doesNotMatch(msg.text, /welcome/i);
+});
+
+test('an already-confirmed address is told so in the mail, and only there', async () => {
+  // The single place the platform ever resolves the membership question.
+  // The HTTP response cannot, so the inbox has to — it belongs to the
+  // address itself, which is why saying it here leaks nothing.
+  const seen = [];
+  await mail.sendWaitlistCodeMail(
+    { mailTransport: { send: async (m) => { seen.push(m); } } },
+    'a@b.invalid', { code: null, moreToken: 'c'.repeat(48) });
+  assert.equal(seen[0].code, null);
+  assert.equal(seen[0].confirmUrl, null, 'no code means nothing to confirm with');
+  assert.match(seen[0].statusUrl, /#more\/c{48}$/);
+
+  const msg = templates.buildMessage('waitlist_code', seen[0]);
+  assert.match(msg.subject, /already confirmed/i);
+  assert.match(msg.text, /already confirmed/i);
+  assert.doesNotMatch(msg.text, /undefined|null/);
+  assert.doesNotMatch(msg.text, /15 minutes/, 'there is no code, so there is no expiry to quote');
+  assert.ok(msg.text.includes(seen[0].statusUrl));
+});
+
+test('a requested code mail renders with neither link', async () => {
+  const seen = [];
+  await mail.sendWaitlistCodeMail(
+    { mailTransport: { send: async (m) => { seen.push(m); } } },
+    'a@b.invalid', { code: '424242' });
+  assert.equal(seen[0].confirmUrl, null);
+  const msg = templates.buildMessage('waitlist_code', seen[0]);
+  assert.doesNotMatch(msg.text, /undefined|null/);
+  assert.doesNotMatch(msg.text, /one click/i);
+  assert.match(msg.text, /confirmation code is 424242/);
 });
 
 test('the password-reset mail carries the reset link and no secrets beyond it', async () => {
@@ -718,9 +809,10 @@ test('the staging mail fixture only writes when USERNODE_ENV=staging', async () 
     process.env.USERNODE_ENV = 'staging';
     await seedStagingPlatformMail(pool);
     const inserts = seen.filter((s) => /INSERT INTO mail_deliveries/.test(s));
-    assert.equal(inserts.length, 9,
+    assert.equal(inserts.length, 11,
       'one row per status the card renders, plus three admin_test rows, plus '
-      + 'the admission mail behind the admitted waitlist fixture');
+      + 'the admission mail behind the admitted waitlist fixture, plus the '
+      + 'delivered and throttled shapes of a requested waitlist code');
     for (const sql of inserts) {
       assert.match(sql, /WHERE NOT EXISTS/, 'a re-boot must not grow the table');
     }
