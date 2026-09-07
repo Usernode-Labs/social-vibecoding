@@ -976,6 +976,11 @@
       "expectSelector": "#app-list.un-reordering .home-item-displaced[style*=\"translate\"]"
     },
     {
+      "name": "A Discover card can be dragged onto the launcher grid, which previews the drop (?shot=discover-drag)",
+      "path": "/?demo=1&shot=discover-drag",
+      "expectSelector": "#home-body:has(.home-discover-rail .app-card.un-reorder-slot) #app-list.un-reordering #home-grid-overlay .home-grid-cell--on"
+    },
+    {
       "name": "App tiles carry no user count and no status dot",
       "path": "/?demo=1",
       "expectSelector": "#app-list .app-card:not(:has(.users-badge)):not(:has(.status-dot))"
