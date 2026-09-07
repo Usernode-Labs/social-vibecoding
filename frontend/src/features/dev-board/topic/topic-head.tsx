@@ -306,7 +306,9 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
       <div className="dev-ledger">
         {d.ledger.map((r) => (
           <div key={r.key} className={`dev-ledger-row dev-ledger-${r.tone}`} data-note={r.key} {...(r.attrs || {})}>
-            <span className="dev-ledger-dot" aria-hidden="true">{r.spinner ? <Spinner /> : LEDGER_GLYPH[r.tone]}</span>
+            <span className="dev-ledger-dot" aria-hidden="true">
+              {r.spinner ? <Spinner /> : (r.step ? String(r.step) : LEDGER_GLYPH[r.tone])}
+            </span>
             <span className="dev-ledger-k">
               {r.label}
               {r.sub ? <small>{r.sub}</small> : null}
@@ -315,13 +317,15 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
               {r.text.length ? <span className="dev-ledger-text"><Runs parts={r.text} /></span> : null}
               {r.progress ? <Progress p={r.progress} /> : null}
               {r.roster ? <Roster r={r.roster} /> : null}
-              {(r.foot || []).map((f, i) => <span key={i} className="dev-ledger-foot"><Runs parts={f} /></span>)}
-              {(r.warnFoot || []).map((f, i) => (
-                <span key={`w${i}`} className="dev-ledger-foot dev-ledger-foot-warn text-amber-800 dark:text-amber-400"><Runs parts={f} /></span>
-              ))}
-              {r.list && r.list.length ? (
-                <ul className="dev-ledger-list">
-                  {r.list.map((it, j) => (
+              {/* One ordered sequence: a line, or the list its previous line
+                  introduced. Rendering every list after every line put the
+                  conflicting files three sentences below "Changed on both
+                  sides:" — see LedgerRow.foot in model.ts. */}
+              {(r.foot || []).map((f, i) => (Array.isArray(f) ? (
+                <span key={i} className="dev-ledger-foot"><Runs parts={f} /></span>
+              ) : (
+                <ul key={i} className="dev-ledger-list">
+                  {f.list.map((it, j) => (
                     <li key={j} className={(it.kind || it.mono) ? 'font-mono' : undefined}>
                       {it.kind ? <span className="opacity-70">{`[${it.kind}] `}</span> : null}
                       {it.code ? <code className="font-mono">{it.code}</code> : null}
@@ -330,7 +334,10 @@ export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
                     </li>
                   ))}
                 </ul>
-              ) : null}
+              )))}
+              {(r.warnFoot || []).map((f, i) => (
+                <span key={`w${i}`} className="dev-ledger-foot dev-ledger-foot-warn text-amber-800 dark:text-amber-400"><Runs parts={f} /></span>
+              ))}
               {r.fails && r.fails.length ? (
                 <ul className="dev-ledger-fails">
                   {r.fails.map((c) => <CheckRowView key={c.key} r={c} />)}

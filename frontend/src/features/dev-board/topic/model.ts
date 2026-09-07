@@ -172,17 +172,32 @@ export interface LedgerRow {
   key: string;
   tone: 'bad' | 'warn' | 'ok' | 'vote' | 'mute' | 'progress';
   spinner?: boolean;
+  /**
+   * Its position in the path a blocked proposal takes, drawn in the dot in
+   * place of the tone glyph. Set only when there is a sync step to order
+   * the others against (`_topicLedgerPath`); a row with no step keeps its
+   * glyph.
+   */
+  step?: number | null;
   label: string;
-  /** The small line under the label: "1 of 463 failing", "14 commits". */
+  /**
+   * The small line under the label. Two jobs: a count ("1 of 463 failing"),
+   * or, on a numbered step, who acts and when — "snait, now",
+   * "automatic, after 1".
+   */
   sub?: string | null;
   /** The sentence, in the primary ink. */
   text: TextRun[];
-  /** Follow-on lines, muted. */
-  foot?: TextRun[][];
+  /**
+   * Follow-on material under the sentence, muted and IN ORDER: a text run
+   * array is a line, `{ list }` is a bulleted mono list. One ordered array
+   * for the same reason `NoteRow` above is one — a lines-then-list shape
+   * renders both in the wrong order, silently, which is exactly what the
+   * ledger did to the conflicting-file list until it carried lists here.
+   */
+  foot?: (TextRun[] | { list: NoteItem[] })[];
   /** Follow-on lines in the attention tone — the admins-list and locked-app rules. */
   warnFoot?: TextRun[][];
-  /** A mono list — conflicting files, missing variables, console errors. */
-  list?: NoteItem[] | null;
   /** The checks row's failing tests, listed; and its passing ones, folded. */
   fails?: CheckRow[] | null;
   passes?: CheckRow[] | null;

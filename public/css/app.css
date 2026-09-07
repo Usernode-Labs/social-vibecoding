@@ -10998,7 +10998,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-vote .dev-ledger-dot { background: var(--accent-tint); color: var(--accent); }
 .dev-ledger-progress .dev-ledger-dot { background: var(--state-progress-bg); color: var(--state-progress); }
 .dev-ledger-mute .dev-ledger-dot { background: var(--state-neutral-bg); color: var(--state-neutral); }
-.dev-ledger-k { font-weight: 600; white-space: nowrap; }
+/* The label track is a fixed 118px, so `nowrap` sent anything longer than
+   about two short words straight across the gap and into the value column —
+   "Conflicts with main" overlapped its own sentence. Labels wrap now; they
+   are two or three words, so this costs a second line only in the cases
+   that were previously broken. */
+.dev-ledger-k { font-weight: 600; white-space: normal; overflow-wrap: break-word; }
 .dev-ledger-k small {
   display: block;
   font-size: 12px;
