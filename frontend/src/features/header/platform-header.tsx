@@ -43,7 +43,7 @@ import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
 import { AppSwitcherChip } from './app-switcher-chip';
 import { ImproveButton } from '../improve/improve-button';
-import { improveStore } from '../improve/improve-store.js';
+import { boardHref, improveStore } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
 // ── The bundle's boot seam ────────────────────────────────────────────
 //
@@ -129,14 +129,26 @@ function homeHref(): string {
  *
  *   Board / Activity   →  the app itself. They are the app's dev surface, and
  *                         the app is what you were looking at before it.
- *   The general chat   →  the Board. It is reached from a card there.
- *   A topic (issue,    →  the Board. `activeAppView` already counts a topic
+ *   The general chat   →  the board. It is reached from a card there.
+ *   A topic (issue,    →  the board. `activeAppView` already counts a topic
  *   proposal, gov,        as the Board for the view strip's purposes; a card
  *   shared session)       opened full-screen is still the board's content.
  *   A dev session      →  wherever it was opened from — see `sessionOrigin`
  *                         in ../improve/improve-store.js — falling back to
- *                         the Board on a cold deep link, which is where the
+ *                         the board on a cold deep link, which is where the
  *                         session's own card lives.
+ *
+ * ── "The board" is TWO screens, and the arrow has to pick ──────────────
+ *
+ * Workshop and Board are one screen in two layouts, and the layout IS the
+ * route. So the three rows above that read "the board" cannot spell one:
+ * `#app/<slug>/board` sent a viewer who had opened an issue from the Workshop
+ * to the Kanban board — a screen they had not been on — and, because that
+ * route applies its own layout, rewrote their stored preference to kanban as
+ * it went. `boardView` (published with the route by `Improve.setTab`) names
+ * the layout that was on screen when the sub-view was entered, and
+ * `boardHref` turns it into the matching address for this arrow and for a
+ * session's captured origin alike.
  *
  * ── The self-hosted exception ──────────────────────────────────────────
  *
@@ -152,10 +164,12 @@ function appRouteUpHref(
   subTab: string | null,
   selfHosted: boolean,
   sessionOrigin: string | null,
+  boardView: string,
 ): string | null {
   if (!slug || tab !== 'dev') return null;
-  if (subTab === 'sessions') return sessionOrigin || `#app/${slug}/board`;
-  if (subTab === 'chat' || subTab === 'topic') return `#app/${slug}/board`;
+  const board = boardHref(slug, boardView);
+  if (subTab === 'sessions') return sessionOrigin || board;
+  if (subTab === 'chat' || subTab === 'topic') return board;
   // The Board and the Activity feed themselves: up is the app.
   if (subTab === 'forum') return selfHosted ? null : `#app/${slug}/app`;
   return null;
@@ -184,10 +198,10 @@ export function PlatformHeader() {
   // sites agreeing by convention.
   const {
     slug: backSlug, tab: backTab, subTab: backSubTab,
-    selfHosted, sessionOrigin,
+    selfHosted, sessionOrigin, boardView,
   } = useStoreState(improveStore);
   const routeUp = appRouteUpHref(
-    backSlug, backTab, backSubTab, selfHosted, sessionOrigin,
+    backSlug, backTab, backSubTab, selfHosted, sessionOrigin, boardView,
   );
   // An app route that has a level above it wins over the imperative call;
   // everything else keeps whatever the last setBackIcon() published, which on
