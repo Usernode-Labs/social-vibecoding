@@ -114,19 +114,63 @@ function parseDockerBuildLine(line) {
 // `onProgress(image)`: `{ phase, index, total, detail }` per step line the
 // builder prints (see parseDockerBuildLine), read off the child's stdout and
 // stderr as they stream. The run is still judged from the exit code.
+// BuildKit, with a way back.
+//
+// The preview image is built by the CLASSIC builder today — `Step 6/36` in
+// the output is its format — which runs every stage in file order. This
+// repo's Dockerfile has two INDEPENDENT stages, `shell` and `css`, each
+// with its own `npm ci`, and the classic builder runs the second only after
+// the first has finished. BuildKit builds them concurrently, skips stages
+// nothing depends on, and commits layers through a faster snapshotter,
+// which is what a build whose small COPY steps cost as much as its large
+// ones is actually waiting on.
+//
+// `--progress=plain` is not cosmetic: BuildKit's default renderer redraws
+// with ANSI control sequences, which is not a stream of lines and would
+// leave the build-step progress (services/staging.js) blind. Plain mode
+// emits `#7 [shell 4/9] RUN npm ci` per step, which parseDockerBuildLine
+// already reads, on stderr — observed here alongside stdout.
+//
+// STAGING_BUILDKIT=0 turns it off without a code change. And a daemon that
+// cannot do BuildKit at all is not a broken fleet: the narrow matcher below
+// recognises that refusal specifically — not a failing Dockerfile — and the
+// build is retried once on the classic builder. Anything else throws as it
+// always did.
+function buildKitEnabled() {
+  const v = String(process.env.STAGING_BUILDKIT ?? '1').trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'off');
+}
+
+// Deliberately narrow: only the daemon/CLI saying it cannot do BuildKit.
+// A Dockerfile that fails to build must NOT be retried under another
+// builder — it would fail twice, take double the time, and report the
+// second failure.
+function buildKitUnavailable(err) {
+  const text = `${(err && err.stderr) || ''}\n${(err && err.message) || ''}`.toLowerCase();
+  return /buildkit is enabled but the buildkit component is inoperable/.test(text)
+    || /buildkit not supported by daemon/.test(text)
+    || /failed to solve.*buildkit.*not supported/.test(text)
+    || /unknown flag: --progress/.test(text);
+}
+
 async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null } = {}) {
   const buildArgFlags = Object.entries(buildArgs).flatMap(
     ([k, v]) => ['--build-arg', `${k}=${v}`]
   );
-  log.info('docker', 'Building image', { context: contextPath, tag, buildArgs });
+  const wantBuildKit = buildKitEnabled();
+  log.info('docker', 'Building image', { context: contextPath, tag, buildArgs, buildKit: wantBuildKit });
   const startedAt = Date.now();
-  try {
+  const runBuild = (useBuildKit) => {
     const promise = execFileAsync(
       'docker',
-      ['build', ...buildArgFlags, '-t', tag, contextPath],
+      ['build', ...buildArgFlags, ...(useBuildKit ? ['--progress=plain'] : []), '-t', tag, contextPath],
       // Generous maxBuffer so a chatty build still yields a usable log
       // tail instead of a bare "maxBuffer exceeded" error (#416).
-      { timeout: 5 * 60 * 1000, maxBuffer: 8 * 1024 * 1024 }
+      {
+        timeout: 5 * 60 * 1000,
+        maxBuffer: 8 * 1024 * 1024,
+        env: { ...process.env, DOCKER_BUILDKIT: useBuildKit ? '1' : '0' },
+      }
     );
     if (typeof onProgress === 'function' && promise.child) {
       const observe = (line) => {
@@ -136,7 +180,20 @@ async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null 
       if (promise.child.stdout) attachLineObserver(promise.child.stdout, observe);
       if (promise.child.stderr) attachLineObserver(promise.child.stderr, observe);
     }
-    await promise;
+    return promise;
+  };
+  let usedBuildKit = wantBuildKit;
+  try {
+    try {
+      await runBuild(wantBuildKit);
+    } catch (err) {
+      if (!wantBuildKit || !buildKitUnavailable(err)) throw err;
+      log.warn('docker', 'BuildKit unavailable on this daemon — rebuilding with the classic builder', {
+        tag, err: err.message,
+      });
+      usedBuildKit = false;
+      await runBuild(false);
+    }
   } catch (err) {
     // Attach the build output tail so deploy callers can persist a
     // diagnosable apps.last_failure record (see services/deploy-failure).
@@ -148,8 +205,8 @@ async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null 
     throw err;
   }
   const durationMs = Date.now() - startedAt;
-  log.info('docker', 'Image built', { tag, durationMs });
-  return { durationMs };
+  log.info('docker', 'Image built', { tag, durationMs, buildKit: usedBuildKit });
+  return { durationMs, buildKit: usedBuildKit };
 }
 
 // Linux caps a hostname at HOST_NAME_MAX (64 bytes) and runc's
@@ -844,6 +901,8 @@ module.exports = {
   execShellStdin,
   buildImage,
   parseDockerBuildLine,
+  buildKitEnabled,
+  buildKitUnavailable,
   attachLineObserver,
   runContainer,
   runOneShot,

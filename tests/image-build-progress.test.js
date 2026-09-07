@@ -238,6 +238,78 @@ test('a runtime that reports no phases gets no phase row invented for it', () =>
   assert.equal(bp.bar, null, 'a lifecycle has no counter to draw a bar from');
 });
 
+test('the preview image builds with BuildKit, and falls back rather than failing the fleet', async () => {
+  // The classic builder runs the Dockerfile's two independent stages one
+  // after the other; BuildKit runs them together. The risk of the swap is a
+  // daemon that cannot do it — which must cost one retry, not every preview.
+  const cp = require('child_process');
+  const util = require('node:util');
+  const cpPath = require.resolve('child_process');
+  const dockerPath = require.resolve('../src/services/docker');
+  const origCp = require.cache[cpPath];
+  const origDocker = require.cache[dockerPath];
+  const calls = [];
+  let failFirstWith = null;
+  const fakeExecFile = (cmd, args, opts = {}) => {
+    calls.push({ cmd, args, buildkit: (opts.env || {}).DOCKER_BUILDKIT });
+    const child = { stdout: null, stderr: null };
+    const p = (calls.length === 1 && failFirstWith)
+      ? Promise.reject(Object.assign(new Error('build failed'), { stderr: failFirstWith }))
+      : Promise.resolve({ stdout: '', stderr: '' });
+    p.child = child;
+    return p;
+  };
+  fakeExecFile[util.promisify.custom] = fakeExecFile;
+  require.cache[cpPath] = {
+    id: cpPath, filename: cpPath, loaded: true, paths: [], exports: { ...cp, execFile: fakeExecFile },
+  };
+  delete require.cache[dockerPath];
+  try {
+    const docker = require(dockerPath);
+    // Default: BuildKit, with plain progress so the output stays parseable.
+    const out = await docker.buildImage('/ctx', 'img:1');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].buildkit, '1');
+    assert.ok(calls[0].args.includes('--progress=plain'), 'the redrawing renderer would blind the step observer');
+    assert.equal(out.buildKit, true);
+
+    // A daemon without BuildKit: ONE retry on the classic builder.
+    calls.length = 0;
+    failFirstWith = 'ERROR: BuildKit is enabled but the buildkit component is inoperable';
+    const fell = await docker.buildImage('/ctx', 'img:2');
+    assert.equal(calls.length, 2, 'retried once');
+    assert.deepEqual(calls.map((c) => c.buildkit), ['1', '0']);
+    assert.ok(!calls[1].args.includes('--progress=plain'), 'the classic builder is not given a BuildKit flag');
+    assert.equal(fell.buildKit, false);
+
+    // A BROKEN DOCKERFILE is not a builder problem: it must fail once.
+    calls.length = 0;
+    failFirstWith = 'ERROR: failed to solve: process "/bin/sh -c npm ci" did not complete successfully: exit code 1';
+    await assert.rejects(docker.buildImage('/ctx', 'img:3'), (err) => {
+      assert.equal(err.buildFailed, true, 'still carries the diagnosable tail');
+      return true;
+    });
+    assert.equal(calls.length, 1, 'a failing build is never built twice');
+
+    assert.equal(docker.buildKitUnavailable({ stderr: 'buildkit not supported by daemon' }), true);
+    assert.equal(docker.buildKitUnavailable({ stderr: 'npm ERR! code ELIFECYCLE' }), false);
+    assert.equal(docker.buildKitUnavailable({}), false);
+  } finally {
+    if (origCp) require.cache[cpPath] = origCp; else delete require.cache[cpPath];
+    delete require.cache[dockerPath];
+    if (origDocker) require.cache[dockerPath] = origDocker;
+  }
+});
+
+test('BuildKit can be turned off without a code change', () => {
+  const src = read('src/services/docker.js');
+  assert.match(src, /const v = String\(process\.env\.STAGING_BUILDKIT \?\? '1'\)/);
+  assert.match(src, /DOCKER_BUILDKIT: useBuildKit \? '1' : '0'/);
+  // BuildKit's own step format is the one the observer already reads.
+  assert.deepEqual(require('../src/services/docker').parseDockerBuildLine('#7 [shell 4/9] RUN npm ci --ignore-scripts'),
+    { index: 4, total: 9, phase: 'shell', detail: 'RUN npm ci --ignore-scripts' });
+});
+
 test('the four-step pipeline draws as a segmented bar', () => {
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.match(tsx, /className="dev-ledger-build-bar"/);
