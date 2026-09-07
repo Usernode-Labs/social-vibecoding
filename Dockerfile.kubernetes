@@ -8,6 +8,7 @@ RUN npm ci --ignore-scripts
 WORKDIR /build
 COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
+COPY src/services/countries.json ./src/services/countries.json
 RUN node frontend/scripts/build-shell.mjs
 
 # Compile Tailwind only after the current shell has been prerendered because
