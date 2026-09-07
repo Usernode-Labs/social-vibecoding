@@ -32,30 +32,45 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const checkHistory = require('../src/services/check-history');
+
+const ROOT = path.join(__dirname, '..');
 
 const DSN = process.env.TEST_DATABASE_URL
   || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@localhost:5432/postgres';
 
-// The column types are copied from src/db/schema.sql deliberately: the bug is
-// a mismatch between what the VALUES list resolves to and what the column
-// declares, so a test table with looser types would not reproduce it.
-const DDL = `
-  CREATE TABLE app_check_history (
-    id              BIGSERIAL PRIMARY KEY,
-    app_id          INTEGER NOT NULL,
-    check_key       VARCHAR(64) NOT NULL,
-    check_name      TEXT,
-    check_path      TEXT,
-    first_passed_at TIMESTAMPTZ,
-    last_passed_at  TIMESTAMPTZ,
-    last_failed_at  TIMESTAMPTZ,
-    last_seen_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    pass_count      INTEGER NOT NULL DEFAULT 0,
-    fail_count      INTEGER NOT NULL DEFAULT 0,
-    UNIQUE (app_id, check_key)
-  )`;
+// The column types have to be the REAL ones: the bug is a mismatch between
+// what the VALUES list resolves to and what the column declares, so a test
+// table with looser types would not reproduce it.
+//
+// The table, DERIVED from src/db/schema.sql rather than copied from it.
+//
+// This used to be a hand-written replica, and it drifted the moment the real
+// table grew a column: recordRun started writing `consecutive_passes`, the
+// replica did not have it, postgres refused the statement, recordRun
+// swallowed the error and returned 0 — which is the exact failure mode this
+// whole file exists to catch, reproduced by the file itself. A local run
+// could not see it either, because it skips without a server.
+//
+// So the DDL is read: the CREATE TABLE block, then every ALTER and UPDATE
+// the schema applies to this table, in file order. The foreign key is the
+// one thing dropped, because the test schema has no `apps` table to point
+// at.
+const SCHEMA_SQL = fs.readFileSync(path.join(ROOT, 'src/db/schema.sql'), 'utf8');
+const DDL = (() => {
+  const start = SCHEMA_SQL.indexOf('CREATE TABLE IF NOT EXISTS app_check_history');
+  if (start < 0) throw new Error('app_check_history is not in schema.sql any more');
+  const end = SCHEMA_SQL.indexOf(');', start) + 2;
+  const create = SCHEMA_SQL.slice(start, end)
+    .replace('IF NOT EXISTS ', '')
+    .replace(/\s*REFERENCES apps\(id\) ON DELETE CASCADE/, '');
+  const alters = SCHEMA_SQL.match(/^ALTER TABLE app_check_history[^;]*;/gm) || [];
+  const updates = SCHEMA_SQL.match(/^UPDATE app_check_history[^;]*;/gm) || [];
+  return [create, ...alters, ...updates].join('\n');
+})();
 
 // Connect, or report why not. Never throws — an unreachable server is a skip.
 async function connect() {
@@ -185,4 +200,55 @@ test('every parameter in the VALUES list carries an explicit cast', async () => 
   assert.deepEqual(uncast, [],
     'a bare parameter in a sub-SELECT VALUES list resolves to text, and the '
     + 'INSERT target is not text: ' + valuesList.replace(/\s+/g, ' ').trim());
+});
+
+test('the streak column is what the planner says it is', async (t) => {
+  // Only a real planner can tell you whether the CASE over EXCLUDED does
+  // what the string looks like it does. The column carries the flaky tag's
+  // exit now, so a silent reset or a silent double-count would be invisible
+  // until a check either never shed its label or shed it early.
+  const conn = await connect();
+  if (!conn) return t.skip('the pg driver is not installed in this environment');
+  if (conn.error) return t.skip(`no postgres reachable at ${DSN}: ${conn.error}`);
+  const { client } = conn;
+  try {
+    await withSchema(client, async () => {
+      const streak = async () => {
+        const { rows } = await client.query(
+          'SELECT consecutive_passes FROM app_check_history WHERE app_id = 9 AND check_key = $1', ['k']
+        );
+        return rows.length ? Number(rows[0].consecutive_passes) : null;
+      };
+      const run = (r) => checkHistory.recordRun(client, 9, [{ checkKey: 'k', name: 'n', path: '/', ...r }]);
+
+      await run({ passed: true });
+      assert.equal(await streak(), 1, 'one observation, one');
+      await run({ passed: true });
+      assert.equal(await streak(), 2, 'and it extends');
+      await run({ passed: false });
+      assert.equal(await streak(), 0, 'a failure starts it again from nothing');
+      await run({ passed: true });
+      assert.equal(await streak(), 1);
+
+      // A check on its first appearance arrives as one row carrying all of
+      // its runs, so the counts have to add rather than count as one.
+      await run({ passes: 3, fails: 0 });
+      assert.equal(await streak(), 4, 'three passes are three, not one');
+      // And one failure among them ends the streak however many passes came
+      // with it — which is the debut rule, expressed in SQL.
+      await run({ passes: 2, fails: 1 });
+      assert.equal(await streak(), 0);
+
+      const { rows: got } = await client.query(
+        'SELECT pass_count, fail_count, first_passed_at, last_failed_at'
+        + '  FROM app_check_history WHERE app_id = 9 AND check_key = $1', ['k']
+      );
+      assert.equal(Number(got[0].pass_count), 8, 'every observation counted');
+      assert.equal(Number(got[0].fail_count), 2);
+      assert.ok(got[0].first_passed_at, 'and no failure ever clears the first pass');
+      assert.ok(got[0].last_failed_at);
+    });
+  } finally {
+    await client.end().catch(() => {});
+  }
 });
