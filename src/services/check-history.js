@@ -53,6 +53,24 @@ const MAX_ROWS_PER_RUN = appManifest.MAX_DECLARED_TESTS;
 // nothing that is gating today.
 const GRADUATION_PASSES = 10;
 
+// How many times a check is run on its FIRST appearance, before it has any
+// history at all. Five solo cold loads catch the grossly flaky and the
+// outright wrong on day one — a check failing 1 run in 5 is caught 67% of
+// the time — and they preload the evidence the flake rate is computed from.
+//
+// They count toward GRADUATION_PASSES, which is the deliberate part and the
+// arguable one: five observations from ONE build share a host, an image and
+// a database clone, so they are not five independent draws and the run of
+// ten they contribute to is weaker than ten across ten builds. The flake
+// chip exists because of exactly that gap. What they are not is five
+// assertions against one page load — see `solo` in capture/capture.js.
+const NEW_CHECK_RUNS = 5;
+
+// Ceiling on the extra loads one run will pay for. A proposal that declares
+// twenty new checks at once would otherwise add a hundred navigations to
+// its own gate.
+const MAX_NEW_CHECK_REPEATS = 40;
+
 // Every check this app has ever been seen passing. One query per checks
 // run; a few hundred rows is nothing.
 async function loadGraduated(pool, appId) {
@@ -156,7 +174,14 @@ async function recordRun(pool, appId, rows) {
     for (const r of capped) {
       if (!r || !r.checkKey) continue;
       const base = params.length;
-      params.push(r.checkKey, String(r.name || ''), String(r.path || ''), !!r.passed);
+      // Counts, not a boolean: a check on its first appearance runs
+      // NEW_CHECK_RUNS times and lands here as one row carrying all of
+      // them. A single observation is just passes=1 or fails=1, which is
+      // what every caller but that one sends.
+      const passes = Number.isInteger(r.passes) ? r.passes : (r.passed ? 1 : 0);
+      const fails = Number.isInteger(r.fails) ? r.fails : (r.passed ? 0 : 1);
+      if (passes <= 0 && fails <= 0) continue;
+      params.push(r.checkKey, String(r.name || ''), String(r.path || ''), passes, fails);
       // EVERY column carries an explicit cast, not just `passed`.
       //
       // A bind parameter inside a sub-SELECT's VALUES list has nothing to
@@ -174,7 +199,7 @@ async function recordRun(pool, appId, rows) {
       // five were load-bearing.
       values.push(
         `($1::int, $${base + 1}::text, $${base + 2}::text, `
-        + `$${base + 3}::text, $${base + 4}::boolean)`
+        + `$${base + 3}::text, $${base + 4}::int, $${base + 5}::int)`
       );
     }
     if (!values.length) return 0;
@@ -184,15 +209,17 @@ async function recordRun(pool, appId, rows) {
           first_passed_at, last_passed_at, last_failed_at, last_seen_at,
           pass_count, fail_count, consecutive_passes)
        SELECT v.app_id, v.check_key, v.check_name, v.check_path,
-              CASE WHEN v.passed THEN NOW() ELSE NULL END,
-              CASE WHEN v.passed THEN NOW() ELSE NULL END,
-              CASE WHEN v.passed THEN NULL ELSE NOW() END,
+              CASE WHEN v.passes > 0 THEN NOW() ELSE NULL END,
+              CASE WHEN v.passes > 0 THEN NOW() ELSE NULL END,
+              CASE WHEN v.fails > 0 THEN NOW() ELSE NULL END,
               NOW(),
-              CASE WHEN v.passed THEN 1 ELSE 0 END,
-              CASE WHEN v.passed THEN 0 ELSE 1 END,
-              CASE WHEN v.passed THEN 1 ELSE 0 END
+              v.passes,
+              v.fails,
+              -- One failure anywhere in the run ends the streak, however
+              -- many passes came with it.
+              CASE WHEN v.fails > 0 THEN 0 ELSE v.passes END
          FROM (VALUES ${values.join(', ')})
-              AS v(app_id, check_key, check_name, check_path, passed)
+              AS v(app_id, check_key, check_name, check_path, passes, fails)
        ON CONFLICT (app_id, check_key) DO UPDATE SET
          check_name = EXCLUDED.check_name,
          check_path = EXCLUDED.check_path,
@@ -209,7 +236,8 @@ async function recordRun(pool, appId, rows) {
          -- it again from nothing". It is the only reason a check that
          -- passes nine times and fails once does not gate.
          consecutive_passes = CASE WHEN EXCLUDED.consecutive_passes > 0
-           THEN COALESCE(h.consecutive_passes, 0) + 1 ELSE 0 END`,
+           THEN COALESCE(h.consecutive_passes, 0) + EXCLUDED.consecutive_passes
+           ELSE 0 END`,
       params
     );
     await pool.query(
@@ -222,6 +250,28 @@ async function recordRun(pool, appId, rows) {
     log.warn('check-history', 'Run record failed (non-fatal)', { appId, err: err.message });
     return 0;
   }
+}
+
+// Every check this app has any record of, graduated or not. What it is for
+// is the opposite of loadGraduated: a check ABSENT from this set has never
+// run here, so this run is its first and it earns the repeat treatment.
+async function loadSeen(pool, appId) {
+  const out = new Set();
+  if (!pool || !appId) return out;
+  try {
+    const { rows } = await pool.query(
+      'SELECT check_key FROM app_check_history WHERE app_id = $1', [appId]
+    );
+    for (const r of rows) out.add(r.check_key);
+  } catch (err) {
+    // Fail toward NO repeats: an unreadable history must not turn every
+    // check in the suite into five.
+    log.warn('check-history', 'Seen-set load failed — no first-run repeats this run', {
+      appId, err: err.message,
+    });
+    return null;
+  }
+  return out;
 }
 
 // Lifetime flake rate per check, for the proposal's checks row.
@@ -263,8 +313,11 @@ async function loadFlakeRates(pool, appId) {
 
 module.exports = {
   loadGraduated,
+  loadSeen,
   loadFlakeRates,
   GRADUATION_PASSES,
+  NEW_CHECK_RUNS,
+  MAX_NEW_CHECK_REPEATS,
   MIN_OBSERVATIONS,
   hasHistory,
   bootstrapIfEmpty,

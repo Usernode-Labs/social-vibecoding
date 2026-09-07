@@ -747,16 +747,16 @@
     {
       "source": "src/services/check-history.js",
       "kind": "structural-template",
-      "fingerprint": "73bb2c779f8c52b9b224",
+      "fingerprint": "1dfaa6c9adb884fed818",
       "count": 1,
-      "preview": "`INSERT INTO app_check_history (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, consecutive_passes) VALUES ${values.jo"
+      "preview": "`INSERT INTO app_check_history AS h (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_failed_at, last_seen_at, pass_count, fail_"
     },
     {
       "source": "src/services/check-history.js",
       "kind": "structural-template",
-      "fingerprint": "b796f00cf7135d106d1c",
+      "fingerprint": "73bb2c779f8c52b9b224",
       "count": 1,
-      "preview": "`INSERT INTO app_check_history AS h (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_failed_at, last_seen_at, pass_count, fail_"
+      "preview": "`INSERT INTO app_check_history (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, consecutive_passes) VALUES ${values.jo"
     },
     {
       "source": "src/services/conflict-resolver.js",

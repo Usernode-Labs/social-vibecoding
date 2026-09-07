@@ -136,7 +136,10 @@ test('recordRun upserts one row per check and prunes', async () => {
   const upsert = pool.sql(0);
   assert.match(upsert, /INSERT INTO app_check_history/);
   assert.match(upsert, /ON CONFLICT \(app_id, check_key\) DO UPDATE SET/);
-  assert.deepEqual(pool.calls[0].params, [5, 'k0', 'a', '/a', true, 'k1', 'b', '/b', false]);
+  // Counts rather than a boolean, because a check on its first appearance
+  // runs several times and arrives as one row carrying all of them. A
+  // single observation is passes=1 / fails=0, or the reverse.
+  assert.deepEqual(pool.calls[0].params, [5, 'k0', 'a', '/a', 1, 0, 'k1', 'b', '/b', 0, 1]);
   assert.match(pool.sql(1), /DELETE FROM app_check_history/, 'stale rows age out');
   assert.equal(pool.calls[1].params[1], checkHistory.PRUNE_AFTER_DAYS);
 });

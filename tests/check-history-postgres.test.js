@@ -175,7 +175,13 @@ test('every parameter in the VALUES list carries an explicit cast', async () => 
   const valuesList = sql.slice(sql.indexOf('FROM (VALUES'), sql.indexOf('AS v('));
   assert.ok(valuesList.includes('$1::int'), 'app_id is an integer column, not text');
 
-  const uncast = (valuesList.match(/\$\d+(?!::)/g) || []);
+  // Match each parameter TOGETHER with its optional cast, rather than
+  // looking ahead from a bare `$\d+`. `\d+` is greedy but backtracks: on
+  // `$10::int` it tries `10`, sees `::`, backs off to `1`, sees `0`, and
+  // reports a false "uncast $1". The suite only grew past nine parameters
+  // when a row started carrying pass and fail counts, so the bug sat here
+  // reading green for as long as every row fit in single digits.
+  const uncast = (valuesList.match(/\$\d+(?:::[a-z]+)?/g) || []).filter((m) => !m.includes('::'));
   assert.deepEqual(uncast, [],
     'a bare parameter in a sub-SELECT VALUES list resolves to text, and the '
     + 'INSERT target is not text: ' + valuesList.replace(/\s+/g, ' ').trim());
