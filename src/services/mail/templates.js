@@ -33,6 +33,12 @@ const HTML_SHELL = (body) =>
 const p = (s) => `<p>${s}</p>`;
 const link = (url) => `<a href="${esc(url)}">${esc(url)}</a>`;
 
+// A one-time code, set big enough to read at arm's length and to copy by
+// eye off a phone. Three mails carry one and all three render it this way;
+// #1516 asked for the join mail to stop being the odd one out.
+const codeBlock = (code) =>
+  `<p style="font-size:28px;font-weight:600;letter-spacing:4px">${esc(code)}</p>`;
+
 function otp(payload) {
   const code = payload.code;
   return {
@@ -41,7 +47,7 @@ function otp(payload) {
       + 'It expires in 10 minutes. If you did not request it, you can ignore this email.',
     html: HTML_SHELL(
       p('Your Usernode login code is:')
-      + `<p style="font-size:28px;font-weight:600;letter-spacing:4px">${esc(code)}</p>`
+      + codeBlock(code)
       + p('It expires in 10 minutes. If you did not request it, you can ignore this email.')
     ),
   };
@@ -72,29 +78,38 @@ function waitlistJoined(payload) {
   const confirmUrl = payload.confirmUrl || null;
   const surveyUrl = payload.url || null;
 
-  let text = 'Thanks for joining the Usernode waitlist.\n\n'
-    + "We'll email you at this address as soon as your access is ready.\n\n"
-    + 'Early access opens in small groups, with more groups opening on a '
-    + 'rolling basis after that.';
-  let html = p('Thanks for joining the Usernode waitlist.')
-    + p("We'll email you at this address as soon as your access is ready.")
-    + p('Early access opens in small groups, with more groups opening on a '
-      + 'rolling basis after that.');
+  let text = '';
+  let html = '';
 
-  // The code comes first. On a phone, leaving for the mail app and coming
-  // back loses the WebView's place, so typing six digits beats following a
-  // link; on desktop the link below is still one click. Either confirms
+  // #1516: the code LEADS the mail. Somebody opening this on a phone is
+  // here to type six digits, and the welcome above them was three
+  // paragraphs to scroll past first — so the ask comes first, in the same
+  // large type `otp` and `waitlistCode` already use, and the thank-you
+  // follows it. On a phone, leaving for the mail app and coming back loses
+  // the WebView's place, so typing the code beats following a link; on
+  // desktop the one-click link below is still one click. Either confirms
   // the same row.
   //
   // Confirming is now what puts somebody ON the list rather than a tidy-up
   // afterwards, so the copy asks for it plainly instead of mentioning it in
   // passing.
   if (payload.code) {
-    text += '\n\nConfirm your email\n'
-      + `Your verification code is ${payload.code}. It works for 15 minutes.`;
+    text += 'Confirm your email\n'
+      + `Your verification code is ${payload.code}. It works for 15 minutes.\n\n`;
     html += p('<strong>Confirm your email</strong>')
-      + p(`Your verification code is <strong>${payload.code}</strong>. It works for 15 minutes.`);
+      + codeBlock(payload.code)
+      + p('It works for 15 minutes.');
   }
+
+  text += 'Thanks for joining the Usernode waitlist.\n\n'
+    + "We'll email you at this address as soon as your access is ready.\n\n"
+    + 'Early access opens in small groups, with more groups opening on a '
+    + 'rolling basis after that.';
+  html += p('Thanks for joining the Usernode waitlist.')
+    + p("We'll email you at this address as soon as your access is ready.")
+    + p('Early access opens in small groups, with more groups opening on a '
+      + 'rolling basis after that.');
+
   if (confirmUrl) {
     text += '\n\nOr confirm this email address in one click:\n'
       + confirmUrl;
@@ -146,7 +161,7 @@ function waitlistCode(payload) {
     + 'It works for 15 minutes.\n\n'
     + 'Any earlier code has stopped working, so use this one.';
   let html = p('Your Usernode waitlist confirmation code is:')
-    + `<p style="font-size:28px;font-weight:600;letter-spacing:4px">${esc(payload.code)}</p>`
+    + codeBlock(payload.code)
     + p('It works for 15 minutes. Any earlier code has stopped working, so use this one.');
   if (confirmUrl) {
     text += '\n\nOr confirm this email address in one click:\n' + confirmUrl;
