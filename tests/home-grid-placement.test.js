@@ -1527,6 +1527,29 @@ test('the reveal is one-shot: the next paint does not re-open the grid', () => {
   assert.equal(Home._appsExpanded, false);
 });
 
+test('a stationary touch lift opens context without placing; movement continues as a drag', () => {
+  const { Home, attachCalls } = makeHome();
+  const list = { querySelectorAll: () => [], appendChild: () => {} };
+  const item = { dataset: { slug: 'a' } };
+  Home._attachGridPlacement(list, true);
+  const { opts } = attachCalls[0];
+  const events = [];
+  Home._cardPointerType = 'touch';
+  Home.openCardMenu = (slug, anchor) => events.push(['open', slug, anchor]);
+  Home.closeCardMenu = () => events.push(['close']);
+  Home._showGridOverlay = () => events.push(['overlay']);
+  Home._targetCellFor = () => ({ col: 1, row: 0 });
+  opts.onLift(item);
+  assert.deepEqual(events, [['open', 'a', item]]);
+  assert.equal(opts.cellFromPoint(20, 20, {}), null);
+  assert.equal(opts.cellFromPoint(23, 24, {}), null, 'finger jitter does not place');
+  assert.equal(events.length, 1);
+  assert.deepEqual(opts.cellFromPoint(40, 20, {}), { col: 1, row: 0 });
+  assert.deepEqual(events.slice(1), [['close'], ['overlay']]);
+  assert.equal(Home._contextLift, null);
+  opts.onSettle(true);
+  assert.equal(Home._dragActive, false);
+});
 
 // ── Dragging an app IN from Discover (#1763) ──────────────────────────
 //
@@ -1737,7 +1760,7 @@ test('?shot=discover-drag enters the incoming state, not a lookalike of it', () 
   // outlines rather than the real drop would leave both asserting nothing.
   const shot = HOME_SRC.slice(
     HOME_SRC.indexOf('_maybeShowShotIncoming() {'),
-    HOME_SRC.indexOf('\n  // Kit-era long-press actions menu'));
+    HOME_SRC.indexOf('\n  // Long-press actions for search/demo tiles'));
 
   // The preview is computed through the SAME _incoming item the gesture uses,
   // so the link cannot drift into describing a drop the recognizer would not

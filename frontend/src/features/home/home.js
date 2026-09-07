@@ -931,7 +931,19 @@ const Home = {
     const cols = Home.currentCols();
     Home._placementHandle = window.unNative.attachGridPlacement(listEl, {
       itemSelector: '.app-card[data-yours]:not([data-demo])',
-      cellFromPoint: (x, y, info) => Home._targetCellFor(x, y, info, cols),
+      cellFromPoint: (x, y, info) => {
+        // The kit owns the touch sequence. A stationary lift is a context
+        // menu, not a layout write; movement turns that same lift into a drag.
+        if (Home._contextLift) {
+          if (!Home._contextLift.origin) Home._contextLift.origin = { x, y };
+          const start = Home._contextLift.origin;
+          if (Math.hypot(x - start.x, y - start.y) <= 10) return null;
+          Home.closeCardMenu();
+          Home._showGridOverlay(listEl, cols, Home._contextLift.item);
+          Home._contextLift = null;
+        }
+        return Home._targetCellFor(x, y, info, cols);
+      },
       // canPlace runs first on every cell change and onHover right after, and
       // both need the SAME displacement plan — so compute it once and memo it
       // for the paint. Recomputing would risk the highlight describing a
@@ -939,7 +951,13 @@ const Home = {
       canPlace: (item, cell) => !!Home._planFor(item, cell, cols),
       onLift: (item) => {
         Home._dragActive = true;
-        Home._showGridOverlay(listEl, cols, item);
+        if (Home._cardPointerType === 'touch') {
+          Home._contextLift = { item, origin: null };
+          Home.openCardMenu(item.dataset.slug, item);
+        } else {
+          Home.closeCardMenu();
+          Home._showGridOverlay(listEl, cols, item);
+        }
       },
       onHover: (item, cell, ok) => { Home._previewDrop(item, cell, ok, cols); },
       // The release spring's destination. Same memoised plan again: the tile
@@ -947,6 +965,7 @@ const Home = {
       rectForCell: (item, cell) => Home._rectForCell(item, cell, cols),
       onPlace: (item, cell) => { Home._onGridPlace(item, cell, cols); },
       onSettle: () => {
+        Home._contextLift = null;
         Home._dragActive = false;
         Home._hideGridOverlay();
         if (Home._reloadPending) {
@@ -966,6 +985,8 @@ const Home = {
       try { Home._placementHandle.detach(); } catch {}
       Home._placementHandle = null;
     }
+    Home._contextLift = null;
+    Home.closeCardMenu();
   },
 
   // ── Dragging an app IN from Discover (#1763) ───────────────────────
@@ -1452,9 +1473,8 @@ const Home = {
     requestAnimationFrame(() => {
       Home._shotMenuPending = false;
       if (Home._shotMenuDone) return; // a render that raced us already won
-      // Prefer the grid's own "…" trigger: a real anchor element is what
-      // lets the desktop popover toggle closed on a re-click.
-      const btn = listEl.querySelector('.card-menu-btn');
+      // The tile itself is the menu anchor now; there is no launcher badge.
+      const btn = listEl.querySelector('.app-card[data-slug]');
       let slug = btn && btn.dataset.slug;
       let anchor = btn;
       // #929: a fresh checks database has an EMPTY "Your apps" grid, so
@@ -1866,13 +1886,8 @@ const Home = {
       ? `<p class="app-card-status ${isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}"${failureTip}>${statusLabel}</p>`
       : '';
 
-    // Hamburger actions-menu trigger, rendered as a round badge
-    // overlapping the icon's top-right corner — always in that spot
-    // (secondary actions live in the popover it opens; see
-    // openCardMenu). Retry on errored cards is the one inline
-    // exception: the card's primary recovery action pins to the
-    // card's top-right corner (creator-or-full-admin, same gate as
-    // before — view-only admins excluded, issue #311).
+    // Launcher actions open from the tile context menu. Retry remains an
+    // inline recovery action for creators/full admins on errored apps.
     const showRetry = !discovery && isError
       && (App.user?.canAdminWrite || App.user?.id === app.created_by);
     const isLocked = !!app.locked;
@@ -1895,11 +1910,8 @@ const Home = {
           ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
           : '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>'
       }</button>`;
-    // The "…" actions menu trigger. One markup, two corners: it owns the
-    // icon's top-RIGHT corner on the home grid (where it is the card's only
-    // badge), and moves to the top-LEFT on a discovery grid so the add
-    // badge keeps the primary right-hand spot and the two never overlap.
-    // (The fork tag sits bottom-left, so top-left is free.)
+    // Discovery keeps its explicit menu beside the add badge. Launcher
+    // tiles use long press / right click instead (#1616).
     const hamburgerHtml = (corner) => `
       <button class="card-menu-btn absolute -top-1.5 ${corner} w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
     // Discovery grids show BOTH: the add/remove badge as the primary
@@ -1912,7 +1924,7 @@ const Home = {
     const wantsMenu = !!(opts && opts.menu) && !app.demo;
     const menuBadgeHtml = discovery
       ? `${addBadgeHtml}${wantsMenu ? hamburgerHtml('-left-1.5') : ''}`
-      : hamburgerHtml('-right-1.5');
+      : '';
     const retryHtml = showRetry
       ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
       : '';
@@ -1933,7 +1945,7 @@ const Home = {
     // alone — same attribute-safe extra step the failure tooltip takes.
     const nameAttr = escapeHtml(String(app.name || '')).replace(/"/g, '&quot;');
 
-    // Layout: icon first at the top (hamburger badged on its corner),
+    // Layout: icon first at the top,
     // the name centered below it, then the status warning when present
     // (the status dot and the active-users badge that used to flank the
     // name are both gone — a launcher tile is an icon and a label).
@@ -3158,18 +3170,14 @@ const Home = {
     const items = Home.menuItemsFor(app);
     if (!items.length) return;
 
-    // Rich build-info header is a desktop-popover affordance; the
-    // touch action sheet falls back to the plain title. The kit menu
-    // owns positioning, dismissal and focus; disabled rows render
-    // inert in the popover and are omitted from the sheet; keepOpen
-    // items (Check for updates) flip their label in place via the row
-    // element the popover hands the handler (null on the sheet path —
-    // run() already copes).
+    // A tile's context stays anchored to the tile on every platform.
+    // The kit owns clamping/flipping, dismissal, focus and menu navigation;
+    // keeping the popover on touch also preserves metadata and disabled rows.
     const headerEl = document.createElement('div');
     headerEl.className = 'card-menu-header';
     headerEl.innerHTML = Home.renderMenuHeaderHtml(app);
     const anchorIsEl = !!(anchor && typeof anchor.getBoundingClientRect === 'function');
-    const menu = PlatformUI.menu({
+    const menu = PlatformUI.popover({
       anchorEl: anchorIsEl ? anchor : undefined,
       anchorRect: anchorIsEl ? undefined : anchor,
       title: app.name || app.slug,
@@ -3183,6 +3191,7 @@ const Home = {
         handler: (btn) => i.run(btn || null),
       })),
     });
+    if (!menu) return;
     Home._menu = menu;
     menu.then(() => {
       if (Home._menu === menu) Home._menu = null;
@@ -4162,40 +4171,62 @@ const Home = {
     Home._incoming = null;
   },
 
-  // Kit-era long-press actions menu for cards the kit reorder does NOT
-  // own (non-"Your apps" cards). Joins the kit's gesture arbiter at
-  // fire time — if the touch is already claimed (swipe, PTR, a reorder
-  // lift), the menu backs off, so the two long-presses can't fight.
+  // Long-press actions for search/demo tiles and pen input. Placed touch
+  // tiles use the kit's own lift callback above, so only one recognizer
+  // claims a touch. Return teardown for React remounts and view changes.
   _wireCardLongPressMenu(card) {
-    card.addEventListener('pointerdown', (e) => {
-      if (e.pointerType !== 'touch' || e.button !== 0) return;
+    let cleanup = () => {};
+    const onDown = (e) => {
+      cleanup();
+      if ((e.pointerType !== 'touch' && e.pointerType !== 'pen') || e.button !== 0 || e.isPrimary === false) return;
       if (e.target.closest('.card-menu-btn') || e.target.closest('.retry-btn')) return;
+      // Placed touch tiles share the kit's lift/drag sequence above. Pen and
+      // search/demo tiles have no touch placement recognizer to do the hold.
+      if (e.pointerType === 'touch' && card.hasAttribute('data-yours')
+          && !card.hasAttribute('data-demo') && Home._placementHandle) return;
       const startX = e.clientX;
       const startY = e.clientY;
+      let opened = false;
       let timer = setTimeout(() => {
         timer = null;
         const g = PlatformUI.gestures();
-        if (g && !g.claim('touch', 'home-card-menu')) return;
+        if (g && !g.claim(e.pointerType === 'touch' ? 'touch' : e.pointerId, 'home-card-menu')) return;
         // Eat the synthetic click the browser fires on finger lift so
         // releasing the long-press doesn't also open the app.
         Home._suppressClick = true;
-        setTimeout(() => { Home._suppressClick = false; }, 700);
-        Home.openCardMenu(card.dataset.slug, card.getBoundingClientRect());
-      }, 350);
-      const cleanup = () => {
+        opened = true;
+        Home.openCardMenu(card.dataset.slug, card);
+      }, 400);
+      cleanup = () => {
         if (timer) { clearTimeout(timer); timer = null; }
-        card.removeEventListener('pointermove', onMove);
-        card.removeEventListener('pointerup', cleanup);
-        card.removeEventListener('pointercancel', cleanup);
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onEnd);
+        window.removeEventListener('pointercancel', onEnd);
+        // Arm expiry at RELEASE, so holding for several seconds cannot
+        // outlive the click guard. A quick tap on another tile still works.
+        if (opened) setTimeout(() => { Home._suppressClick = false; }, 0);
       };
       const onMove = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
         // Movement before the timer fires means scrolling — bail.
-        if (Math.abs(ev.clientX - startX) > 10 || Math.abs(ev.clientY - startY) > 10) cleanup();
+        if (Math.abs(ev.clientX - startX) > 10 || Math.abs(ev.clientY - startY) > 10) {
+          if (opened) {
+            Home.closeCardMenu();
+            window.removeEventListener('pointermove', onMove);
+          } else cleanup();
+        }
       };
-      card.addEventListener('pointermove', onMove);
-      card.addEventListener('pointerup', cleanup);
-      card.addEventListener('pointercancel', cleanup);
-    });
+      const onEnd = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
+        if (ev.type === 'pointercancel' && opened) Home.closeCardMenu();
+        cleanup();
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onEnd);
+      window.addEventListener('pointercancel', onEnd);
+    };
+    card.addEventListener('pointerdown', onDown);
+    return () => { cleanup(); card.removeEventListener('pointerdown', onDown); };
   },
 
   // NOTE: the legacy hand-rolled pointer drag (_onCardPointerDown, ~500
