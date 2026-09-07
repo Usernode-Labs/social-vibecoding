@@ -6623,6 +6623,46 @@ const DevChat = {
   },
 
   /**
+   * The question groups the chips on screen are drawn from, or null (#1601).
+   *
+   * Every Q/A interaction goes through this: the chip tap, the escape hatch,
+   * the number stepper and its typed commit, "Send answers" and "Use the
+   * suggested defaults". It was CALLED in five places and DEFINED in none, so
+   * each of them threw `DevChat._qaCurrentGroups is not a function` at the
+   * first line and the whole quick-check step was a dead end — which is what
+   * "selecting use the suggested defaults does nothing, send answers does
+   * nothing, not able to continue" was.
+   *
+   * The rule is `_buildChatView`'s `wantsQa`, restated so the two cannot
+   * disagree about WHICH message is being answered: the chips render on the
+   * last non-system message when that message is the assistant's, carries a
+   * non-empty `suggestions` array, and the session is one the viewer can still
+   * act in. Anything else renders no chips, and this answers null so the
+   * handlers return instead of acting on a question nobody can see.
+   *
+   * It returns the RAW `msg.suggestions`, not `_qaSpec`'s view of them: the
+   * handlers index `groups[gi].answers[ai]` expecting plain answer strings,
+   * while the spec maps each answer to a `{ text, suggested, selected }`
+   * object for rendering.
+   */
+  _qaCurrentGroups() {
+    const session = DevChat.currentSession;
+    if (!session || (session.status !== 'active' && session.status !== 'promoted')) return null;
+    const messages = DevChat.messages || [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (!msg || msg.role === 'system') continue;
+      // The last non-system row. If the viewer has already replied it is
+      // theirs, the chips are gone, and there is nothing to answer.
+      if (msg.role === 'user') return null;
+      return Array.isArray(msg.suggestions) && msg.suggestions.length
+        ? msg.suggestions
+        : null;
+    }
+    return null;
+  },
+
+  /**
    * One group's answer, whichever way it was given. Typing wins over a
    * tapped chip because the two are mutually exclusive above, and a stepper
    * group has no chips to compete with.
