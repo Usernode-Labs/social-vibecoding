@@ -92,6 +92,8 @@ export function BrowseScreen() {
     detail: any;
     showClear?: boolean;
     sort: string;
+    curated: boolean;
+    moreExpanded: boolean;
   };
   const onDetail = state.level === 'detail';
 
@@ -213,7 +215,7 @@ export function BrowseScreen() {
         >
           {state.error
             ? <div className="p-4 text-red-400 text-sm">Failed to load apps</div>
-            : <BrowseRows rows={state.rows} />}
+            : <BrowseRows rows={state.rows} curated={state.curated} moreExpanded={state.moreExpanded} />}
         </div>
         <div
           id="browse-empty"
