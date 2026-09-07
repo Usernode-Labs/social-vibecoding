@@ -227,6 +227,19 @@ test('flush: a 500 keeps the message, counts one attempt and backs off', async (
   assert.ok(rec.nextAttemptAt >= before + FQ.backoffMs(1), 'waits out the backoff before retrying');
 });
 
+test('flush: carries the first-feedback destination into the completion callback', async () => {
+  const FQ = load();
+  const firstFeedback = { userId: 7, appSlug: 'platform-app', issueNumber: 41, canFix: true };
+  let completion;
+  FQ.init({ onFlushed: result => { completion = result; } });
+  await FQ.enqueue(entry());
+  stubFetch({ status: 200, body: { firstFeedback } });
+  const result = await FQ.flush('test');
+  assert.deepEqual(result.filed[0].firstFeedback, firstFeedback);
+  assert.deepEqual(completion.filed[0].firstFeedback, firstFeedback);
+  assert.deepEqual(await FQ.pending(), []);
+});
+
 test('flush: a 401 retries without ageing the record out', async () => {
   const FQ = load();
   await FQ.enqueue(entry());

@@ -12,6 +12,8 @@ const registry = require('../agents/registry');
 const turnLifecycle = require('./turn-lifecycle');
 const branchNames = require('./branch-names');
 const llmTelemetry = require('./llm-telemetry');
+const liveAgentSpend = require('./live-agent-spend');
+const workerProgress = require('./worker-progress');
 
 const WORKER_IMAGE = 'usernode-worker:latest';
 // Per-session worker container resource limits. Read from env (mirrored
@@ -90,7 +92,8 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // v8 adds the separate complete user-prompt fallback for optimized resumed
 // builds. A v7 runner would retry a stale --resume with the compact prompt and
 // no scout history, so every older warm container must be replaced first.
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v8';
+// v9: refresh warm workers so run-cc.sh emits partial usage events (#1600).
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v9';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -423,6 +426,10 @@ function noteCodexToolCompletion(state, event) {
 }
 
 function applyStreamEvent(event, onProgress, state) {
+  liveAgentSpend.observe(state.liveSpend, event);
+  if (state.hostSessionId && state.liveSpendEnabled) {
+    workerProgress.setSpend(state.hostSessionId, liveAgentSpend.snapshot(state.liveSpend));
+  }
   const observeDiagnostics = state.telemetryDiagnosticsEnabled === true;
   // Claude's init event is the only content-free source for the configured
   // tool/MCP/skill/agent surface. Some wrappers put the CLI event under
@@ -743,6 +750,8 @@ function newWatchState() {
     turnId: null,
     lastResultText: '',
     costUsd: 0,
+    liveSpend: liveAgentSpend.createTracker(),
+    liveSpendEnabled: false,
     // Claude's result event is the evidence that a zero cost is known rather
     // than the legacy state default. Telemetry reads this flag only; billing
     // continues to consume costUsd exactly as before.
@@ -2510,6 +2519,8 @@ async function execInWorker(sessionId, {
 
     const state = newWatchState();
     state.turnId = durableTurnId;
+    state.liveSpendEnabled = isClaude && mode !== 'sync';
+    workerProgress.setSpend(sessionId, null);
     state.hostSessionId = sessionId;
     state.hostContainerName = containerName;
     state.providerDispatched = true;
@@ -3082,6 +3093,8 @@ async function resumeTurnFromJournal(sessionId, {
   });
   const state = newWatchState();
   state.turnId = turnId || null;
+  state.liveSpendEnabled = agentBackend === 'claude_code' && meta?.activeTurnMode !== 'sync';
+  workerProgress.setSpend(sessionId, null);
   state.hostSessionId = sessionId;
   state.hostContainerName = containerName;
   // An executing/tail phase proves dispatch. A legacy dispatch_pending row
