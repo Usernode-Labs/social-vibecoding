@@ -60,7 +60,12 @@
 
 import { useRef } from 'react';
 
-import { ChatIcon, ChevronRightIcon } from '@/components/ui/icons';
+import type { ReactNode } from 'react';
+
+import {
+  AppWindowIcon, ChatIcon, ChevronRightIcon, GitHubIcon, KeyIcon,
+  LightBulbIcon, PencilSparklesIcon, PencilSquareIcon, UserGroupIcon,
+} from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from './view-mode-store';
@@ -115,12 +120,69 @@ function PlusMenuHeading({
   );
 }
 
-/** The shared row shell for every `data-plus` action. */
+/**
+ * The shared row shell for every `data-plus` action.
+ *
+ * #1615: the same shape as the app chip's menu — a leading glyph, `gap-3`,
+ * `px-5`, a 44px floor and that menu's hover tint — so the two lists in this
+ * shell read as one kind of thing. What it deliberately does NOT copy is the
+ * chip menu's single-line row: every action here has a subtitle explaining
+ * what it does ("Renames are proposals, applied once voted in"), and those
+ * lines are the reason this menu is legible at all.
+ *
+ * The row's title carries `data-plus-title`, and `AppView._wirePlusMenu` reads
+ * THAT for its touch action sheet. It used to take `querySelector('span')` —
+ * the first span in the row — which was the title only by accident of source
+ * order, and any wrapper introduced above it (this layout needs one for the
+ * text column) would have handed every sheet row the wrong label, or none.
+ */
 const PLUS_ROW_CLS =
-  'w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
+  'w-full text-left flex items-start gap-3 px-5 py-2.5 min-h-[44px] '
+  + 'hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors';
 const PLUS_ROW_DIVIDER_CLS = ' border-t border-zinc-200 dark:border-zinc-800';
+const PLUS_ICON_CLS = 'shrink-0 mt-0.5 w-5 h-5 text-zinc-500 dark:text-zinc-400';
 const PLUS_TITLE_CLS = 'block text-sm font-medium text-zinc-800 dark:text-zinc-200';
 const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
+
+/**
+ * One `data-plus` action, as the row shell above.
+ *
+ * The action and the divider come in spelled exactly as the markup spells
+ * them, rather than as an `action` string and a boolean. Two reasons, and the
+ * second is why it is worth the slightly odd prop name: the source stays
+ * greppable per row, which is how tests/dev-plus-menu.test.js and
+ * tests/pr-import-menu.test.js locate each one and prove its gate (they read
+ * this file's TEXT and compare positions, so no example row name appears in
+ * this comment); and the divider EXPRESSIONS stay visible at the call site,
+ * where the condition ("does the members row render above me?") is the
+ * interesting part.
+ */
+function PlusRow({
+  'data-plus': action, icon, title, sub, dividerCls = '', titleNode,
+}: {
+  'data-plus': string;
+  icon: ReactNode;
+  title?: string;
+  sub: ReactNode;
+  dividerCls?: string;
+  /** For the one row whose title carries a legacy-owned leaf beside it. */
+  titleNode?: ReactNode;
+}): ReactNode {
+  return (
+    <button
+      data-plus={action}
+      className={PLUS_ROW_CLS + dividerCls}
+    >
+      {icon}
+      <span className="min-w-0 flex-1">
+        {titleNode ?? (
+          <span data-plus-title className={PLUS_TITLE_CLS}>{title}</span>
+        )}
+        <span className={PLUS_SUB_CLS}>{sub}</span>
+      </span>
+    </button>
+  );
+}
 
 /**
  * `#dev-body`'s initial content, as a constant string — see the header.
@@ -318,89 +380,97 @@ export function DevBoardFrame({
             {readOnly ? null : (
               <>
                 <PlusMenuHeading label="Build a change" groupKey="build" divider={false} />
-                <button data-plus="proposal" className={PLUS_ROW_CLS}>
-                  <span className={PLUS_TITLE_CLS}>Propose a change</span>
-                  <span className={PLUS_SUB_CLS}>
-                    Start a dev session. You pick where it is built, and can change that
-                    any time
-                  </span>
-                </button>
+                <PlusRow
+                  data-plus="proposal"
+                  icon={<PencilSparklesIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                  title="Propose a change"
+                  sub={'Start a dev session. You pick where it is built, and can change that any time'}
+                />
                 {canCollaborate ? (
-                  <button
+                  <PlusRow
                     data-plus="import-pr"
-                    className={PLUS_ROW_CLS + PLUS_ROW_DIVIDER_CLS}
-                  >
-                    <span className={PLUS_TITLE_CLS}>Import Feature from a PR</span>
-                    <span className={PLUS_SUB_CLS}>
-                      Your computer &middot; your own tools. You have already built it, so
-                      there is no chat for this one
-                    </span>
-                  </button>
+                    icon={<GitHubIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                    title="Import Feature from a PR"
+                    sub={(
+                      <>
+                        Your computer &middot; your own tools. You have already built it, so
+                        there is no chat for this one
+                      </>
+                    )}
+                    dividerCls={PLUS_ROW_DIVIDER_CLS}
+                  />
                 ) : null}
-                <button data-plus="issue" className={PLUS_ROW_CLS + PLUS_ROW_DIVIDER_CLS}>
-                  <span className={PLUS_TITLE_CLS}>New issue</span>
-                  <span className={PLUS_SUB_CLS}>
-                    Report a problem or idea without building it yourself
-                  </span>
-                </button>
+                <PlusRow
+                  data-plus="issue"
+                  icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                  title="New issue"
+                  sub="Report a problem or idea without building it yourself"
+                  dividerCls={PLUS_ROW_DIVIDER_CLS}
+                />
                 <PlusMenuHeading
                   label="Settings &amp; rules"
                   groupKey="settings"
                   divider={true}
                 />
                 {showsMembers ? (
-                  <button data-plus="members" className={PLUS_ROW_CLS}>
+                  <>
                     {selfHosted ? (
-                      <>
-                        <span className={PLUS_TITLE_CLS}>Proposal approvals</span>
-                        <span className={PLUS_SUB_CLS}>
-                          Who approves proposals and how many approvals are needed
-                        </span>
-                      </>
+                      <PlusRow
+                        data-plus="members"
+                        icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                        title="Proposal approvals"
+                        sub="Who approves proposals and how many approvals are needed"
+                      />
                     ) : (
-                      <>
-                        <span className={PLUS_TITLE_CLS}>Members &amp; visibility</span>
-                        <span className={PLUS_SUB_CLS}>Who can build and see this app</span>
-                      </>
+                      <PlusRow
+                        data-plus="members"
+                        icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                        title="Members &amp; visibility"
+                        sub="Who can build and see this app"
+                      />
                     )}
-                  </button>
+                  </>
                 ) : null}
-                <button
+                <PlusRow
                   data-plus="rename"
-                  className={PLUS_ROW_CLS + (showsMembers ? PLUS_ROW_DIVIDER_CLS : '')}
-                >
-                  <span className={PLUS_TITLE_CLS}>App display name</span>
-                  <span className={PLUS_SUB_CLS}>
-                    Renames are proposals, applied once voted in
-                  </span>
-                </button>
-                <button data-plus="secrets" className={PLUS_ROW_CLS + PLUS_ROW_DIVIDER_CLS}>
-                  <span className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    {selfHosted ? 'Platform variables' : 'App secrets'}
-                    {/* Filled by AppView.refreshDevChatSecretsState() — a
-                        legacy-owned leaf, so it renders empty and React never
-                        writes its text again. */}
+                  icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                  title="App display name"
+                  sub="Renames are proposals, applied once voted in"
+                  dividerCls={showsMembers ? PLUS_ROW_DIVIDER_CLS : ''}
+                />
+                <PlusRow
+                  data-plus="secrets"
+                  icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                  titleNode={(
                     <span
-                      id="dc-secrets-state"
-                      className="text-xs font-normal text-zinc-500 dark:text-zinc-500"
-                    ></span>
-                  </span>
-                  <span className={PLUS_SUB_CLS}>
-                    {selfHosted
-                      ? "The platform's own env, applied on its next deploy"
-                      : 'Set or update secret values'}
-                  </span>
-                </button>
+                      data-plus-title
+                      className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200"
+                    >
+                      {selfHosted ? 'Platform variables' : 'App secrets'}
+                      {/* Filled by AppView.refreshDevChatSecretsState() — a
+                          legacy-owned leaf, so it renders empty and React never
+                          writes its text again. */}
+                      <span
+                        id="dc-secrets-state"
+                        className="text-xs font-normal text-zinc-500 dark:text-zinc-500"
+                      ></span>
+                    </span>
+                  )}
+                  sub={selfHosted
+                    ? "The platform's own env, applied on its next deploy"
+                    : 'Set or update secret values'}
+                  dividerCls={PLUS_ROW_DIVIDER_CLS}
+                />
               </>
             )}
             {selfHosted ? null : (
-              <button
+              <PlusRow
                 data-plus="fork"
-                className={PLUS_ROW_CLS + (readOnly ? '' : PLUS_ROW_DIVIDER_CLS)}
-              >
-                <span className={PLUS_TITLE_CLS}>Fork this app</span>
-                <span className={PLUS_SUB_CLS}>Stand up your own independent copy</span>
-              </button>
+                icon={<AppWindowIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title="Fork this app"
+                sub="Stand up your own independent copy"
+                dividerCls={readOnly ? '' : PLUS_ROW_DIVIDER_CLS}
+              />
             )}
           </div>
         </div>

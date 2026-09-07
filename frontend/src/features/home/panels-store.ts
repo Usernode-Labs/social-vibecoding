@@ -129,6 +129,7 @@ export interface ChallengesView {
    * area's own label into an ellipsis on a phone. `season` draws it now.
    */
   summary: string | null;
+  onboardingNote?: string | null;
   /** Null between seasons, and on the empty block. */
   season: SeasonView | null;
   total: number;
