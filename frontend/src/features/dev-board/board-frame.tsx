@@ -64,7 +64,7 @@ import type { ReactNode } from 'react';
 
 import {
   AppWindowIcon, ChatIcon, ChevronRightIcon, GitHubIcon, KeyIcon,
-  LightBulbIcon, PencilSparklesIcon, PencilSquareIcon, UserGroupIcon,
+  PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
@@ -368,7 +368,7 @@ export function DevBoardFrame({
             title={
               readOnly
                 ? 'Fork this app'
-                : 'Propose a change, file an issue, or manage this app'
+                : 'Import a PR or manage this app'
             }
           >
             +
@@ -379,38 +379,27 @@ export function DevBoardFrame({
           >
             {readOnly ? null : (
               <>
-                <PlusMenuHeading label="Build a change" groupKey="build" divider={false} />
-                <PlusRow
-                  data-plus="proposal"
-                  icon={<PencilSparklesIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                  title="Propose a change"
-                  sub={'Start a dev session. You pick where it is built, and can change that any time'}
-                />
+                {/* New change and Give feedback live in Improve (#1490). */}
                 {canCollaborate ? (
-                  <PlusRow
-                    data-plus="import-pr"
-                    icon={<GitHubIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                    title="Import Feature from a PR"
-                    sub={(
-                      <>
-                        Your computer &middot; your own tools. You have already built it, so
-                        there is no chat for this one
-                      </>
-                    )}
-                    dividerCls={PLUS_ROW_DIVIDER_CLS}
-                  />
+                  <>
+                    <PlusMenuHeading label="Import a change" groupKey="build" divider={false} />
+                    <PlusRow
+                      data-plus="import-pr"
+                      icon={<GitHubIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                      title="Import Feature from a PR"
+                      sub={(
+                        <>
+                          Your computer &middot; your own tools. You have already built it, so
+                          there is no chat for this one
+                        </>
+                      )}
+                    />
+                  </>
                 ) : null}
-                <PlusRow
-                  data-plus="issue"
-                  icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
-                  title="New issue"
-                  sub="Report a problem or idea without building it yourself"
-                  dividerCls={PLUS_ROW_DIVIDER_CLS}
-                />
                 <PlusMenuHeading
                   label="Settings &amp; rules"
                   groupKey="settings"
-                  divider={true}
+                  divider={canCollaborate}
                 />
                 {showsMembers ? (
                   <>

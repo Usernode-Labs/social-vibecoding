@@ -116,11 +116,11 @@ test('import-pr item renders for a collaborator', () => {
   const gated = FRAME_SRC.slice(start, end);
   assert.ok(gated.includes('data-plus="import-pr"'), 'import-pr item present');
   assert.ok(gated.includes('Import Feature from a PR'), 'label present');
-  // Sits directly under "Propose a change".
-  assert.ok(FRAME_SRC.indexOf('data-plus="proposal"') < FRAME_SRC.indexOf('data-plus="import-pr"'),
-    'import-pr renders after the proposal item');
-  assert.ok(FRAME_SRC.indexOf('data-plus="import-pr"') < FRAME_SRC.indexOf('data-plus="issue"'),
-    'import-pr renders before the issue item');
+  // The whole import group is conditional, so hiding the row cannot leave
+  // an empty heading. New changes start in Improve, not in this menu (#1490).
+  assert.ok(gated.includes('label="Import a change"'), 'heading shares the row gate');
+  assert.ok(FRAME_SRC.indexOf('data-plus="import-pr"') < FRAME_SRC.indexOf('groupKey="settings"'),
+    'import-pr renders before the settings group');
   // …and the prop is fed from appData.can_collaborate, read in the module.
   assert.match(
     VIEW_SRC,

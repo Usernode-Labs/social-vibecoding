@@ -1079,16 +1079,27 @@
       "expectSelector": "[data-plus=\"import-pr\"]"
     },
     {
-      "name": "The Dev '+' menu separates starting work from managing the app (#1086)",
+      "name": "The Dev '+' menu separates importing work from managing the app (#1490)",
       "path": "/?demo=1&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu [data-plus-group=\"build\"] ~ [data-plus-group=\"settings\"]",
-      "expectText": "Build a change"
+      "expectText": "Import a change"
     },
     {
-      "name": "Starting a change no longer asks where before it asks what (#1086)",
+      "name": "Improve keeps the New change action after deduplicating the '+' menu (#1490)",
+      "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
+      "expectSelector": "#improve-panel[data-open] #improve-row-new-session",
+      "expectText": "New change"
+    },
+    {
+      "name": "Improve keeps Give feedback after deduplicating the '+' menu (#1490)",
+      "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
+      "expectSelector": "#improve-panel[data-open] #improve-row-feedback",
+      "expectText": "Give feedback"
+    },
+    {
+      "name": "The Dev '+' menu retains PR import without duplicating Improve actions (#1490)",
       "path": "/?demo=1&shot=plus-menu#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu button[data-plus=\"proposal\"]",
-      "expectText": "you pick where it is built, and can change that any time"
+      "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"], [data-plus=\"issue\"])) [data-plus=\"import-pr\"]"
     },
     {
       "name": "Custom category chip renders on a Dev card (#780)",
@@ -1300,7 +1311,7 @@
     {
       "name": "Dev \"+\" menu still opens the anchored dropdown on desktop (#929)",
       "path": "/?shot=plus-menu#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu:not(.hidden) button[data-plus=\"proposal\"]"
+      "expectSelector": "#dev-plus-menu:not(.hidden) button[data-plus=\"rename\"]"
     },
     {
       "name": "Waitlist survey lives on its own #waitlist screen",
