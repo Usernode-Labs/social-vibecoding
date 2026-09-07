@@ -555,8 +555,8 @@ test('rowView: an app-store row — icon, name, meta, Add state', () => {
   // The whole app record rides the descriptor, because the icon tile and the
   // chip strip are shared decisions (app-card.js) the row does not re-make.
   assert.equal(fresh.app.slug, 'fresh');
-  // Added rows read "Added", fresh ones "Add" — the flag is the descriptor's,
-  // the two labels are browse-list.tsx's.
+  // Added rows read "Added", fresh ones "Add to Your apps" (#1553) — the flag
+  // is the descriptor's, the two labels are browse-list.tsx's.
   assert.equal(fresh.added, false);
   assert.equal(rowFor(state, 'mine').added, true);
   assert.match(rowFor(state, 'mine').addTitle, /Tap to remove/);
@@ -1220,6 +1220,17 @@ test('browse.js is a bundle module the #browse-screen island imports', () => {
     'the string builders belong to the surfaces that are still legacy');
   assert.match(read('frontend/src/features/apps/browse-list.tsx'),
     /from '\.\/app-card-view'/);
+});
+
+test('#1553: the row button names the destination, like every other surface', () => {
+  // "Add" alone did not say add to WHAT, and this row was the only place the
+  // platform left that a guess — the detail page's button, the app-chip menu
+  // and this button's own title attribute all spell out "Your apps".
+  const listSrc = read('frontend/src/features/apps/browse-list.tsx');
+  assert.match(listSrc, /'Added' : 'Add to Your apps'/);
+  assert.doesNotMatch(listSrc, /'Added' : 'Add'/);
+  // The state label stays short: the row it sits on already says which app.
+  assert.match(listSrc, /view\.added \? 'Added'/);
 });
 
 // ── app.js routing ───────────────────────────────────────────────

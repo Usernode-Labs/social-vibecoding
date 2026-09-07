@@ -1480,7 +1480,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         // Historically the single largest phase of the whole run: a full
         // logical dump/restore of the app's database. See
         // db-manager.privateDataExclusions for what shrank it.
-        traceStep('clone', 'Preview database cloned', { durationMs: buildTimings.cloneMs });
+        traceStep('clone', 'Preview database cloned', {
+          durationMs: buildTimings.cloneMs,
+          // 'template' is the file-level copy of the app's staging template;
+          // 'direct' is the dump/restore of the live database. The one that
+          // also refreshed the template paid the direct cost this run.
+          via: buildTimings.cloneVia || undefined,
+          templateRefreshed: buildTimings.templateRefreshed || undefined,
+        });
       }
       if (buildTimings.healthMs != null) {
         traceStep('staging_health', 'Preview answered its healthcheck', { durationMs: buildTimings.healthMs });
@@ -1831,6 +1838,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // written so a late timer can never broadcast 'pending' after it.
     const progress = makeChecksProgressState({
       expected: tests.length,
+      // The build half, finished, rides every testing-half snapshot.
+      build: buildProgressFromTimings(stagingResult && stagingResult.timings),
       flush: (snap) => {
         setChecksProgress(pool, session.id, commitHash, snap).catch(() => {});
         notifyChecksProgress(session.id, commitHash, snap, 'testing', trigger);
@@ -2458,7 +2467,10 @@ async function setChecksProgress(pool, sessionId, commitSha, progress) {
 // to learn a second one: `checkState: 'pending'` plus a `progress` block.
 // A client that patches from the event gets a live bar; one that refetches
 // gets the same numbers from the row.
-function notifyChecksProgress(sessionId, commitSha, progress, phase = null, trigger = null) {
+// `commitSha` and `trigger` are OMITTED from the event when the caller
+// passes undefined (a build-step tick knows neither), so a client that
+// patches its row from the event keeps what it has instead of nulling it.
+function notifyChecksProgress(sessionId, commitSha, progress, phase = null, trigger) {
   try {
     const event = {
       type: 'checks_ready',
@@ -2466,9 +2478,9 @@ function notifyChecksProgress(sessionId, commitSha, progress, phase = null, trig
       sessionId,
       checkState: 'pending',
       failingCount: progress && Number.isInteger(progress.failed) ? progress.failed : 0,
-      commitSha: commitSha || null,
+      ...(commitSha === undefined ? {} : { commitSha: commitSha || null }),
       checkPhase: normalizeCheckPhase(phase),
-      checkTrigger: normalizeCheckTrigger(trigger),
+      ...(trigger === undefined ? {} : { checkTrigger: normalizeCheckTrigger(trigger) }),
       progress: progress || null,
     };
     sessionBus.publish(sessionId, event);
@@ -2477,6 +2489,55 @@ function notifyChecksProgress(sessionId, commitSha, progress, phase = null, trig
   } catch (err) {
     log.warn('visuals', 'checks_progress notify failed', { sessionId, err: err.message });
   }
+}
+
+// The build half's progress: which step the staging build is on, and how
+// long the finished ones took. Merged INTO checks_progress rather than
+// replacing it, guarded only by the pending state (the build runs before
+// the row's commit pin is necessarily settled), and carried through the
+// testing half by makeChecksProgressState so the ledger can keep saying
+// how long the build took beside the checks bar.
+//   { step: 'source_fetch'|'image_build'|'clone'|'health'|'done',
+//     startedAt, steps: [{ key, ms, via? }], totalMs? }
+const BUILD_STEP_KEYS = ['source_fetch', 'image_build', 'clone', 'health'];
+
+async function setChecksBuildProgress(pool, sessionId, build) {
+  if (!pool || !sessionId || !build) return false;
+  const res = await pool.query(
+    `UPDATE chat_sessions
+        SET checks_progress = COALESCE(checks_progress, '{}'::jsonb)
+                              || jsonb_build_object('build', $2::jsonb, 'updatedAt', $3::text)
+      WHERE id = $1
+        AND check_state = 'pending'`,
+    [sessionId, JSON.stringify(build), new Date().toISOString()]
+  );
+  return !!(res && res.rowCount);
+}
+
+function notifyChecksBuildProgress(sessionId, build) {
+  notifyChecksProgress(sessionId, undefined, { build: build || null }, 'building', undefined);
+}
+
+// The finished build, from the timings staging.js threads out, in the same
+// shape the live steps use — so the testing half's snapshots carry it.
+function buildProgressFromTimings(timings) {
+  if (!timings || typeof timings !== 'object') return null;
+  const steps = [];
+  const push = (key, ms, extra) => {
+    if (Number.isFinite(ms)) steps.push({ key, ms: Math.round(ms), ...(extra || {}) });
+  };
+  push('source_fetch', timings.sourceFetchMs);
+  push('image_build', timings.imageBuildMs, Array.isArray(timings.imagePhases) && timings.imagePhases.length
+    ? { phases: timings.imagePhases.map((ph) => ({ name: String(ph.name), ms: Number.isFinite(ph.ms) ? Math.round(ph.ms) : null })) }
+    : null);
+  push('clone', timings.cloneMs, timings.cloneVia ? { via: timings.cloneVia } : null);
+  push('health', timings.healthMs);
+  if (!steps.length) return null;
+  return {
+    step: 'done',
+    steps,
+    ...(Number.isFinite(timings.totalMs) ? { totalMs: Math.round(timings.totalMs) } : {}),
+  };
 }
 
 // Minimum gap between two persisted/broadcast snapshots for one run. A pool
@@ -2490,13 +2551,17 @@ const CHECKS_PROGRESS_MIN_GAP_MS = 1000;
 // `done` from either side flushes at once. `close()` drops any pending
 // timer and makes every later observation a no-op: the verdict write that
 // follows it must be the last thing anyone hears about this run.
-function makeChecksProgressState({ expected, flush, minGapMs = CHECKS_PROGRESS_MIN_GAP_MS }) {
+function makeChecksProgressState({ expected, flush, minGapMs = CHECKS_PROGRESS_MIN_GAP_MS, build = null }) {
   const tracker = makeChecksProgressTracker(expected);
   let unit = null;
   let lastFlushAt = 0;
   let timer = null;
   let closed = false;
-  const snapshot = () => ({ ...tracker.snapshot(), ...(unit ? { unit } : {}) });
+  const snapshot = () => ({
+    ...tracker.snapshot(),
+    ...(unit ? { unit } : {}),
+    ...(build ? { build } : {}),
+  });
   const doFlush = () => {
     timer = null;
     if (closed) return;
@@ -2618,6 +2683,7 @@ module.exports = {
   storeChecksSkipped,
   setChecksPending,
   notifyChecksPending, makeChecksProgressTracker, makeChecksProgressState, setChecksProgress, notifyChecksProgress,
+  setChecksBuildProgress, notifyChecksBuildProgress, buildProgressFromTimings, BUILD_STEP_KEYS,
   checksAlreadyDecided,
   normalizeCheckTrigger,
   CHECK_TRIGGERS,

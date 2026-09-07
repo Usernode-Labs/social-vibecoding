@@ -1,6 +1,7 @@
 /**
  * #improve-views — the app's three views as ONE segmented control:
- * App | Workshop | Board.
+ * App | Workshop | Board, plus an inert fourth segment while you are inside a
+ * change (#1598).
  *
  * ── What it replaced, and why ──────────────────────────────────────────
  *
@@ -127,23 +128,32 @@ export const IMPROVE_VIEW_IDS = {
 } as const;
 
 /**
- * Which of the three the current view is, or null.
+ * Which view the strip is currently on, or null.
  *
  * `topic` counts as the Board: a card opened full-screen is still the board's
  * content, and the segment going blank when you tap a card read as the
- * navigation losing its place. The general chat (`chat`) and a dev session
- * (`sessions`) are neither, and select nothing — they are reached from a
- * notification or a card, not from this strip.
+ * navigation losing its place.
+ *
+ * A dev session (`sessions`) answers `session` (#1598). It is not one of the
+ * three destinations — it is reached from a card or a notification, never from
+ * this strip — but answering null left a segmented control with nothing
+ * selected, which reads as a broken control rather than as "you are somewhere
+ * else". The strip grows a fourth, inert segment for exactly as long as you
+ * are in one; see AppViewTabs.
+ *
+ * The general chat (`chat`) still selects nothing. It is a different kind of
+ * place and giving it a segment here is its own decision, not this one's.
  */
 export function activeAppView(
   tab: string | null,
   subTab: string | null,
   mode: string,
-): 'app' | 'workshop' | 'board' | null {
+): 'app' | 'workshop' | 'board' | 'session' | null {
   if (tab !== 'dev') return 'app';
   if (subTab === 'forum' || subTab === 'topic') {
     return mode === 'kanban' ? 'board' : 'workshop';
   }
+  if (subTab === 'sessions') return 'session';
   return null;
 }
 
@@ -201,6 +211,31 @@ export function AppViewTabs({ ids, onNavigate, className }: {
       >
         <span className="min-w-0 truncate">Board</span>
       </a>
+      {/*
+          #1598: where you actually are, when that is a change rather than one
+          of the three destinations.
+
+          A `<span>`, not a control: it is the segment you are already on, and
+          a fourth button that does nothing is worse than no fourth button. It
+          exists for exactly as long as you are in a session, so the strip
+          never carries a segment you cannot get back to — and outside one the
+          control is the three it has always been.
+
+          It is appended LAST and carries no id. Last, because the declared
+          check that pins the order selects `[data-context-row="app"] ~
+          [data-context-row="workshop"] ~ [data-context-row="board"]`; no id,
+          because a conditional element is not in the built document and the
+          shell's id inventory is a list of the ones that are.
+      */}
+      {active === 'session' ? (
+        <span
+          data-context-row="session"
+          aria-current="page"
+          className={segClass(true)}
+        >
+          <span className="min-w-0 truncate">Change</span>
+        </span>
+      ) : null}
     </div>
   );
 }

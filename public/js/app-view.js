@@ -4930,10 +4930,14 @@ const AppView = {
   //
   // Themes come from the server (GET /api/apps/:slug/workshop-themes —
   // services/workshop-themes.js): a list of { id, name, saying, items }
-  // where `items` are keys in the vocabulary _workshopItemKey speaks. The
-  // grouping is DATA about the board, never the board itself: a card the
-  // themes do not name still renders, under "Not yet grouped", and a card
-  // the themes name but the board no longer has is simply not drawn.
+  // where `items` are keys in the vocabulary _workshopItemKey speaks, plus
+  // `unplaced` (the cards the server's placer could not fit) and `coverage`.
+  // The grouping is DATA about the board, never the board itself: a card
+  // the themes do not name still renders — under "Being placed" while the
+  // server is on its way to it, under "Not yet grouped" once it declined —
+  // and a card the themes name but the board no longer has is simply not
+  // drawn. The viewer's own private sessions never reach the server, so
+  // they are placed here, by the issue they link.
 
   WORKSHOP_SEEN_KEY: 'workshopSeen',
   // Rows per lane per theme before "+N more · Open on Board".
@@ -5003,22 +5007,29 @@ const AppView = {
     return null;
   },
 
-  // The current app's themes, or null while none have arrived.
+  // The current app's themes, or null while none have arrived — a fetch
+  // that failed counts as none, not as themes that name nothing.
   _workshopThemeData() {
     const t = AppView._workshopThemes;
     const slug = (typeof App !== 'undefined' && App.currentApp) || '';
-    return t && t.slug === slug ? t : null;
+    return t && t.slug === slug && !t.failed ? t : null;
   },
 
   // Whether a card is in a theme — the `theme` filter's predicate. With no
   // themes loaded the filter cannot be applied, and an unappliable filter
-  // must widen rather than hide: it returns true.
-  _workshopThemeHas(themeId, itemKey) {
+  // must widen rather than hide: it returns true. A card the themes do not
+  // name is in the theme its linked issue is in — the rule that places the
+  // viewer's own private sessions on the Workshop, so "Open on Board" from
+  // a theme shows the same rows the theme did.
+  _workshopThemeHas(themeId, itemKey, item) {
     const t = AppView._workshopThemeData();
     if (!t || !themeId) return true;
     const theme = (t.themes || []).find((x) => x.id === themeId);
     if (!theme) return true;
-    return !!itemKey && (theme.items || []).indexOf(itemKey) !== -1;
+    const items = theme.items || [];
+    if (itemKey && items.indexOf(itemKey) !== -1) return true;
+    const linked = Array.isArray(item && item.linked_issues) ? item.linked_issues : [];
+    return linked.some((n) => items.indexOf(`issue:${parseInt(n, 10)}`) !== -1);
   },
 
   _workshopThemeName(themeId) {
@@ -5040,15 +5051,17 @@ const AppView = {
   // regeneration is pending server-side so a freshly grouped board arrives
   // without a reload. Throttled per slug: the board's WS-driven reloads call
   // _loadDevFeed freely, and the themes endpoint rebuilds the server's input
-  // each time.
-  async _loadWorkshopThemes(slug, attempt) {
+  // each time. `opts.force` is the `workshop_update` broadcast's: the server
+  // just wrote a grouping, so the throttle and any running chain yield.
+  async _loadWorkshopThemes(slug, attempt, opts) {
     if (!slug) return;
     const n = attempt || 0;
+    const force = !!(opts && opts.force);
     const cur = AppView._workshopThemes;
-    if (!n && cur && cur.slug === slug && !cur.pending && (Date.now() - (cur.at || 0)) < 60000) return;
+    if (!n && !force && cur && cur.slug === slug && !cur.pending && (Date.now() - (cur.at || 0)) < 60000) return;
     // A chain is already polling this slug: let it finish rather than
     // starting a second one beside it.
-    if (!n && cur && cur.slug === slug && cur.pending && AppView._workshopPollTimer != null) return;
+    if (!n && !force && cur && cur.slug === slug && cur.pending && AppView._workshopPollTimer != null) return;
     if (AppView._workshopPollTimer != null) {
       clearTimeout(AppView._workshopPollTimer);
       AppView._workshopPollTimer = null;
@@ -5058,18 +5071,31 @@ const AppView = {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/workshop-themes${AppView._demoQS()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      const cov = data.coverage && typeof data.coverage === 'object' ? data.coverage : null;
       next = {
         slug,
         themes: Array.isArray(data.themes) ? data.themes : [],
         source: data.source || null,
         generatedAt: data.generatedAt || null,
+        discoveredAt: data.discoveredAt || null,
         stale: !!data.stale,
         pending: !!data.pending,
+        pendingStage: data.pendingStage === 'discovery' || data.pendingStage === 'placement' ? data.pendingStage : null,
         lastError: typeof data.lastError === 'string' && data.lastError ? data.lastError : null,
+        coverage: cov ? {
+          total: Number(cov.total) || 0, placed: Number(cov.placed) || 0,
+          unplaced: Number(cov.unplaced) || 0, pending: Number(cov.pending) || 0,
+        } : null,
+        unplaced: Array.isArray(data.unplaced) ? data.unplaced.map(String) : [],
         at: Date.now(),
       };
     } catch {
-      next = { slug, themes: [], source: null, generatedAt: null, stale: false, pending: false, lastError: null, at: Date.now() };
+      // A failed fetch names no themes: `failed` keeps _workshopThemeData
+      // from reading an empty list as "the themes cover nothing".
+      next = {
+        slug, themes: [], source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false,
+        pendingStage: null, lastError: null, coverage: null, unplaced: [], failed: true, at: Date.now(),
+      };
     }
     if (typeof App !== 'undefined' && App.currentApp !== slug) return;
     AppView._workshopThemes = next;
@@ -5080,6 +5106,16 @@ const AppView = {
         AppView._loadWorkshopThemes(slug, n + 1);
       }, AppView.WORKSHOP_POLL_MS[n]);
     }
+  },
+
+  // A `workshop_update` over the WS (App.handleWorkshopUpdate): the server
+  // placed cards into themes or re-drafted them for this app. Re-fetch
+  // now, past the per-slug throttle — the board's own data did not move,
+  // only its grouping.
+  applyWorkshopUpdate(data) {
+    const slug = (typeof App !== 'undefined' && App.currentApp) || '';
+    if (!slug || (data && data.appSlug && data.appSlug !== slug)) return;
+    AppView._loadWorkshopThemes(slug, 0, { force: true });
   },
 
   // "Open on Board" from a theme: narrow the board to that theme and go
@@ -5114,7 +5150,10 @@ const AppView = {
     const ctx = { slug, canPost: !!AppView.appData?.can_collaborate };
     const empty = {
       votes: { count: 0, rows: [] }, since: null, welcome: null, discussion: null, themes: [],
-      meta: { source: null, generatedAt: null, stale: false, pending: false, lastError: null, filtered: false },
+      meta: {
+        source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
+        lastError: null, coverage: null, placing: 0, filtered: false,
+      },
       autoExpand: null,
     };
     if (!AppView._devDataReady) return { loading: true, emptyNote: null, ...empty, ...ctx };
@@ -5142,6 +5181,21 @@ const AppView = {
     for (const t of themeDefs) {
       for (const k of (t.items || [])) if (!themeOf.has(k)) themeOf.set(k, t.id);
     }
+    // The cards the server's placer declined; every other card the server
+    // can see and has not named is on its way into a theme.
+    const unplacedSet = new Set(tData ? (tData.unplaced || []) : []);
+    const placingPossible = !!(tData && tData.source === 'ai');
+    // The viewer's own private sessions never reach the server (the row is
+    // app-wide), so they are placed here: by the issue they link, in the
+    // theme that issue sits in.
+    const linkedTheme = (item) => {
+      const arr = Array.isArray(item && item.linked_issues) ? item.linked_issues : [];
+      for (const raw of arr) {
+        const id = themeOf.get(`issue:${parseInt(raw, 10)}`);
+        if (id) return id;
+      }
+      return null;
+    };
     const baseline = AppView._workshopBaseline(slug);
     const weekAgo = Date.now() - 7 * 86400000;
 
@@ -5232,14 +5286,21 @@ const AppView = {
     const themes = themeDefs.map((d) => mkTheme(d, false));
     const byId = new Map(themes.map((t) => [t.id, t]));
     // While no themes have arrived the one group is everything; once they
-    // have, the remainder is what they did not name.
+    // have, the remainder is what they did not name — titled below, once
+    // it is known whether those cards are on their way or were declined.
     const rest = mkTheme(tData
       ? { id: 'ungrouped', name: 'Not yet grouped', description: 'Items the themes do not name yet.' }
       : { id: 'ungrouped', name: 'Everything on the board', description: '' }, true);
+    let placingCount = 0;
     for (const e of entries) {
       if (e.lane === 'done') continue;
-      const id = e.itemKey ? themeOf.get(e.itemKey) : null;
+      let id = e.itemKey ? themeOf.get(e.itemKey) : null;
+      if (!id && e.kind === 'my-session') id = linkedTheme(e.item);
       const theme = (id && byId.get(id)) || rest;
+      if (theme === rest && placingPossible && e.kind !== 'my-session' && e.itemKey && !unplacedSet.has(e.itemKey)) {
+        e.row.placing = true;
+        placingCount += 1;
+      }
       const lane = theme.lanes.find((l) => l.key === e.lane);
       theme.counts[e.lane] += 1;
       if (e.row.fresh) theme.counts.fresh += 1;
@@ -5254,7 +5315,21 @@ const AppView = {
       return t;
     };
     const drawn = themes.filter((t) => t.lanes.some((l) => l.rows.length)).map(finish);
-    if (rest.lanes.some((l) => l.rows.length)) drawn.push(finish(rest));
+    if (rest.lanes.some((l) => l.rows.length)) {
+      if (tData) {
+        const restCount = rest.lanes.reduce((n, l) => n + l.rows.length + l.more, 0);
+        rest.placing = placingCount;
+        if (placingCount && placingCount === restCount) {
+          rest.name = 'Being placed';
+          rest.description = 'New cards are placed into a theme within a minute or two of arriving.';
+        } else if (placingCount) {
+          rest.description = `Cards the themes do not cover yet; ${placingCount} of them ${placingCount === 1 ? 'is' : 'are'} being placed now. They count towards the next re-draft.`;
+        } else {
+          rest.description = 'Cards the themes do not cover yet. They count towards the next re-draft of the themes.';
+        }
+      }
+      drawn.push(finish(rest));
+    }
 
     // ── Since your last visit / welcome ──
     let since = null;
@@ -5315,9 +5390,13 @@ const AppView = {
       meta: {
         source: tData ? tData.source : null,
         generatedAt: tData ? tData.generatedAt : null,
+        discoveredAt: (tData && tData.discoveredAt) || null,
         stale: !!(tData && tData.stale),
         pending: !!(tData && tData.pending),
+        pendingStage: tData && tData.pending ? (tData.pendingStage || null) : null,
         lastError: (tData && tData.lastError) || null,
+        coverage: (tData && tData.coverage) || null,
+        placing: placingCount,
         filtered: filtering,
       },
       autoExpand,
@@ -5908,7 +5987,7 @@ const AppView = {
       const themeKind = kind === 'session'
         ? (it && it.row_type === undefined && it.pr_number != null && it.status === 'merged' ? 'merged' : 'shared-session')
         : kind;
-      if (!AppView._workshopThemeHas(f.theme, AppView._workshopItemKey(themeKind, it))) return false;
+      if (!AppView._workshopThemeHas(f.theme, AppView._workshopItemKey(themeKind, it), it)) return false;
     }
     return true;
   },
@@ -8506,7 +8585,8 @@ const AppView = {
     const ran = n(p.ran); const passed = n(p.passed); const failed = n(p.failed);
     const expected = Number.isInteger(p.expected) && p.expected > 0 ? p.expected : null;
     const unit = AppView._unitSuiteProgressView(p.unit);
-    if (!ran && !expected && !unit) return null;
+    const build = AppView._buildProgressView(p.build);
+    if (!ran && !expected && !unit && !build) return null;
     const of = expected ? ` of ${expected}` : '';
     const bits = [`${ran}${of} run`, `${passed} passed`];
     if (failed) bits.push(`${failed} failed`);
@@ -8517,10 +8597,116 @@ const AppView = {
         ? `${ran} of ${expected} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`
         : `${ran} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`;
     if (unit && !sub) sub = unit.sub;
+    if (build && !sub && !build.done) sub = build.sub;
     return {
-      bar: { ran, passed, failed, expected, done: !!p.done, unit: unit ? unit.bar : null },
-      sub, sentence, unit,
+      bar: { ran, passed, failed, expected, done: !!p.done, unit: unit ? unit.bar : null, build: build ? build.steps : null },
+      sub, sentence, unit, build,
     };
+  },
+
+  // The build half, step by step: fetch the branch, build the image, clone
+  // the database, start the preview. Live while "Preview building…" (the
+  // current step is named, the finished ones carry their time) and kept
+  // through the testing half as one line saying what the build cost.
+  BUILD_STEP_COPY: {
+    source_fetch: { label: 'fetch branch', doing: 'fetching the branch', done: 'branch fetched' },
+    image_build: { label: 'build image', doing: 'building the preview image', done: 'image built' },
+    clone: { label: 'clone database', doing: 'cloning the database', done: 'database cloned' },
+    health: { label: 'start preview', doing: 'starting the preview', done: 'preview started' },
+  },
+  _fmtMs(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m ${s % 60}s`;
+  },
+  _buildProgressView(b) {
+    if (!b || typeof b !== 'object') return null;
+    const keys = ['source_fetch', 'image_build', 'clone', 'health'];
+    const doneSteps = Array.isArray(b.steps) ? b.steps.filter((s) => s && keys.includes(s.key)) : [];
+    const current = typeof b.step === 'string' ? b.step : null;
+    const done = current === 'done';
+    // The image build's own progress (see _imageProgressView): live under
+    // the running "build image" step, and as the finished step's phases.
+    const image = current === 'image_build' ? AppView._imageProgressView(b.image) : null;
+    const steps = keys.map((key) => {
+      const copy = AppView.BUILD_STEP_COPY[key];
+      const rec = doneSteps.find((s) => s.key === key);
+      const state = rec ? 'done' : (key === current ? 'now' : 'todo');
+      const via = rec && rec.via === 'template' ? ' (from template)' : '';
+      const step = { key, label: copy.label + via, ms: rec && Number.isFinite(rec.ms) ? rec.ms : null, state };
+      if (key === 'image_build') {
+        if (image) { step.phases = image.phases; step.detail = image.detail; }
+        else if (rec && Array.isArray(rec.phases) && rec.phases.length) {
+          step.phases = rec.phases.map((ph) => ({ name: String(ph.name), ms: Number.isFinite(ph.ms) ? ph.ms : null, state: 'done' }));
+        }
+      }
+      return step;
+    });
+    const parts = doneSteps.map((s) => {
+      const copy = AppView.BUILD_STEP_COPY[s.key];
+      const via = s.via === 'template' ? ' from template' : '';
+      // The image step names its phases so a slow build says which phase
+      // it spent the time in.
+      const phases = s.key === 'image_build' && Array.isArray(s.phases) && s.phases.length
+        ? `: ${s.phases.filter((ph) => Number.isFinite(ph.ms)).map((ph) => `${ph.name} ${AppView._fmtMs(ph.ms)}`).join(', ')}`
+        : '';
+      return `${copy.done}${via} (${AppView._fmtMs(s.ms)}${phases})`;
+    });
+    let sentence;
+    let sub;
+    if (done) {
+      const total = Number.isFinite(b.totalMs) ? b.totalMs : doneSteps.reduce((n, s) => n + (s.ms || 0), 0);
+      sentence = `Preview built in ${AppView._fmtMs(total)}: ${parts.join(', ')}.`;
+      sub = `built in ${AppView._fmtMs(total)}`;
+    } else {
+      const copy = current && AppView.BUILD_STEP_COPY[current];
+      let doing = copy ? copy.doing : 'building';
+      if (image && image.doing) doing = `${doing} (${image.doing})`;
+      sentence = parts.length
+        ? `Preview build: ${parts.join(', ')}, now ${doing}.`
+        : `Preview build: ${doing}.`;
+      sub = `build: ${doing}`;
+    }
+    return { steps, sentence, sub, done, current, image };
+  },
+
+  // Inside the "build image" step. On the cluster the image is a buildpack
+  // build whose lifecycle phases (prepare, analyze, detect, restore, build,
+  // export) come with their own times, and the running phase's last log
+  // line is the detail; on docker it is the builder's step counter. Copy
+  // says which and never guesses a phase list it was not given.
+  IMAGE_PHASE_COPY: {
+    prepare: 'fetching source', analyze: 'analyzing the last image', detect: 'detecting buildpacks',
+    restore: 'restoring cached layers', build: 'running the buildpacks', export: 'exporting the image',
+    completion: 'finishing',
+  },
+  _imageProgressView(img) {
+    if (!img || typeof img !== 'object') return null;
+    const phase = typeof img.phase === 'string' ? img.phase : null;
+    const donePhases = Array.isArray(img.phases) ? img.phases.filter((ph) => ph && typeof ph.name === 'string') : [];
+    const detail = typeof img.detail === 'string' && img.detail.trim() ? img.detail.trim().slice(0, 160) : null;
+    const hasCounter = Number.isInteger(img.index) && Number.isInteger(img.total) && img.total > 0;
+    // The phase row: the finished ones (with their times), the running one,
+    // and, when the list is the known lifecycle, the ones still ahead.
+    const known = ['prepare', 'analyze', 'detect', 'restore', 'build', 'export'];
+    const names = donePhases.map((ph) => ph.name);
+    if (phase && !names.includes(phase) && phase !== 'completion') names.push(phase);
+    const lifecycle = names.every((n) => known.includes(n));
+    const order = lifecycle ? known.filter((n) => names.includes(n) || known.indexOf(n) > known.indexOf(names[names.length - 1] || 'prepare')) : names;
+    const phases = order.map((name) => {
+      const rec = donePhases.find((ph) => ph.name === name);
+      return { name, ms: rec && Number.isFinite(rec.ms) ? rec.ms : null, state: rec ? 'done' : (name === phase ? 'now' : 'todo') };
+    });
+    let doing = null;
+    if (hasCounter) {
+      doing = `step ${img.index} of ${img.total}${phase ? ` in ${phase}` : ''}${detail ? `: ${detail}` : ''}`;
+    } else if (phase) {
+      const copy = AppView.IMAGE_PHASE_COPY[phase] || `${phase} phase`;
+      doing = `${copy}${detail ? `: ${detail}` : ''}`;
+    } else if (detail) {
+      doing = detail;
+    }
+    return { phase, phases, detail, doing, index: hasCounter ? img.index : null, total: hasCounter ? img.total : null };
   },
 
   // The repo unit suite (`npm test`) runs in its own container alongside the
@@ -8608,6 +8794,22 @@ const AppView = {
       // nothing at all, so legacy rows are unchanged.
       const why = AppView._checksTriggerCopy(pr.check_trigger);
       if (why) rows.push({ t: 'line', parts: [why], weight: 'foot' });
+      // What happens to THIS run if main moves first. Three rows used to
+      // describe the same proposal without any of them saying which acts
+      // first: the checks row said a run was going, the "Behind main" pill
+      // said a sync was coming, and neither said that the sync ends the run.
+      // It does: a sync moves the commit this run is judged against, so the
+      // run in flight is restarted on the synced commit. Say it here, on the
+      // row the reader is watching, rather than leaving it to be inferred
+      // from two other rows.
+      const behindNow = AppView._freshnessOf(pr).behindBy || 0;
+      if (behindNow > 0) {
+        rows.push({
+          t: 'line',
+          parts: [`Main has moved ${behindNow} commit${behindNow === 1 ? '' : 's'} ahead. This run is judged against the commit before that, so when the platform syncs this proposal the run starts again on the synced commit.`],
+          weight: 'foot',
+        });
+      }
       if (stale) rows.push({ t: 'line', parts: ['If this has been running for a while, the platform re-runs the checks automatically, or re-run them now.'], weight: 'foot' });
       // Live progress, when the run has reported any. `progress` is drawn as
       // a bar by the ledger row; `sub` is the same fact as text under the
@@ -8616,6 +8818,7 @@ const AppView = {
       const progress = AppView._checksProgressView(pr);
       if (progress) {
         const lines = [];
+        if (progress.build) lines.push({ t: 'line', parts: [progress.build.sentence], ...(progress.build.done ? { weight: 'foot' } : {}) });
         if (progress.sentence) lines.push({ t: 'line', parts: [progress.sentence] });
         if (progress.unit) lines.push({ t: 'line', parts: [progress.unit.sentence] });
         rows.splice(1, 0, ...lines);

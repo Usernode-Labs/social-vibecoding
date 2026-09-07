@@ -475,8 +475,18 @@ const CMD = '    ';
 function buildWorkOrder({
   appName, appSlug, upstreamUrl, upstreamSlug, forkUrl, forkCloneUrl, forkRepo,
   forkPageUrl, forkStatus, branch, baseSha, issueNumber, brief, webPath,
-  taskId, agentLabelText, platformRules, targetProposal,
+  taskId, agentLabelText, platformRules, targetProposal, startedFromWalkthrough,
 }) {
+  // Where the connector is added, for the agent that finds it has none. The
+  // page carries the connector URL and the click-by-click steps for both
+  // chat products; the work order only has to point at it.
+  const settingsUrl = (() => {
+    try { return webPath ? `${new URL(webPath).origin}/#settings/connectors` : null; } catch { return null; }
+  })();
+  // Rendered as its own indented line, like a command, so a host that
+  // re-wraps prose still leaves the URL intact and copyable.
+  const connectorsPage = settingsUrl ? [`${CMD}${settingsUrl}`] : [];
+
   // The fork step, and only when there is a fork to make. The one-click
   // GitHub page comes FIRST: an agent with no `gh` is exactly the reader who
   // needs it, and it used to be a footnote below the command it replaces.
@@ -794,7 +804,20 @@ function buildWorkOrder({
     '  declare a secret in dapp.json, how to call the platform\'s LLM proxy or',
     '  file storage, what the centrally hosted native UI kit provides, what the',
     '  automated checks require. Your sandbox cannot reach the Usernode website;',
-    '  connector traffic does not go through your container, so that call works.'
+    '  connector traffic does not go through your container, so that call works.',
+    // The account the paste lands in may never have added the connector at
+    // all — a second Claude or ChatGPT account does not inherit the first
+    // one's. Said here, next to the first thing the connector is needed for,
+    // so "I have no Usernode tools" is a known state with a next step rather
+    // than a dead end; the finishing rules are under WHEN YOU ARE DONE.
+    '- If this session has NO Usernode tools, the connector was never added to',
+    '  the Claude or ChatGPT account you are running in (it is per account, so a',
+    '  second account does not inherit the first one\'s). That is not a reason to',
+    '  stop: the excerpt below is enough to build with, and step 6 under WHEN',
+    '  YOU ARE DONE says how to finish. The user adds it on Usernode at',
+    '  Settings → Connectors, which has the connector URL and the click-by-click',
+    '  steps for Claude and for ChatGPT:',
+    ...connectorsPage
   );
 
   if (hasTask) {
@@ -938,9 +961,29 @@ function buildWorkOrder({
       '   somebody else; say so rather than rewriting the change. Anything',
       '   transient, or one authentication failure: retry once.',
       '',
-      '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, print the branch',
-      '   name you pushed and the proposal id, and tell the user to hand both back',
-      '   to the assistant that started this — it can submit the update for you.',
+      '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Usernode',
+      '   connector was never added to the Claude or ChatGPT account this session',
+      '   runs in — it is per account, so a second account does not inherit the',
+      '   first one\'s. Push the branch anyway; the work is not lost. Then tell the',
+      '   user they can add the connector on Usernode at Settings → Connectors,',
+      '   which has the connector URL and the click-by-click steps:',
+      ...connectorsPage,
+      '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
+      '   if the tools still do not appear in this one.',
+      ...(startedFromWalkthrough
+        ? [
+          '   Otherwise finish from Usernode: the walkthrough that produced this',
+          '   work order checks for the pushed branch when the user returns to that',
+          '   tab, and its Submit button applies the update. Print the branch name',
+          '   and the proposal id so they can confirm it.',
+        ]
+        : [
+          '   Otherwise hand it back: print the branch name you pushed and the',
+          '   proposal id, and tell the user to give both to the assistant that',
+          '   started this — it can submit the update for you. If they started',
+          '   from the Usernode tab instead, that tab checks for the pushed branch',
+          '   and its Submit button applies the update.',
+        ]),
       '',
       // Step 7 and the closing line are the two places where "a proposal the
       // group is voting on" and "somebody's work in progress" genuinely differ:
@@ -1043,11 +1086,34 @@ function buildWorkOrder({
       '   tool returns. Anything transient, or one authentication failure: retry',
       '   once (access tokens are short-lived and your client refreshes them).',
       '',
-      '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, save the patch',
-      `   from step 4 to a \`.patch\` file, print the branch name you pushed, and`,
-      '   tell the user to hand it back to the assistant that started this — they',
-      '   can attach the file, or give it the diff text, and it finishes the same',
-      '   way.',
+      '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Usernode',
+      '   connector was never added to the Claude or ChatGPT account this session',
+      '   runs in — it is per account, so a second account does not inherit the',
+      '   first one\'s. Push the branch anyway; the work is not lost. Then tell the',
+      '   user they can add the connector on Usernode at Settings → Connectors,',
+      '   which has the connector URL and the click-by-click steps:',
+      ...connectorsPage,
+      '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
+      '   if the tools still do not appear in this one.',
+      // How the hand-off started decides who finishes it without a
+      // connector: the browser walkthrough polls for the pushed branch and
+      // its own Submit button does the rest, while a chat assistant has to
+      // be handed the branch (or a patch) back. Both are stated; the one
+      // that applies comes first.
+      ...(startedFromWalkthrough
+        ? [
+          '   Otherwise finish from Usernode: the walkthrough that produced this',
+          '   work order checks for the pushed branch when the user returns to that',
+          '   tab, and its Submit button opens the proposal. Print the branch name',
+          '   so they can confirm it.',
+        ]
+        : [
+          '   Otherwise hand it back: print the branch name you pushed and, in case',
+          '   the push was refused, save the patch from step 4 to a `.patch` file, and',
+          '   tell the user to give both to the assistant that started this — it',
+          '   finishes the same way. If they started from the Usernode tab instead,',
+          '   that tab checks for the pushed branch and its Submit button does it.',
+        ]),
       '',
       // Submitting is not the finish line: checks GATE MERGE, so a proposal
       // with a failing check cannot land however the vote goes. The agent
@@ -1499,6 +1565,7 @@ async function prepareWork(deps, params) {
       brief: trimmedBrief,
       issue_number: Number.isInteger(issueNumber) && issueNumber > 0 ? issueNumber : null,
       target_session_id: update ? update.proposalId : null,
+      client_id: clientId || row.client_id || null,
     },
     app, owner, repo, origin, clientId, clientName, prompts, agent,
     forkStatus, reused: false, targetProposal: update, openProposals,
@@ -1709,6 +1776,9 @@ function renderPreparedTask({
     agentLabelText: agent,
     platformRules: workOrderEssentials(prompts),
     targetProposal: targetProposal || null,
+    // The browser walkthrough registers its jobs under `usernode-web:<agent>`
+    // (routes/dev-flow.js); everything else is a chat assistant's connector.
+    startedFromWalkthrough: String(task.client_id || '').startsWith('usernode-web'),
   });
 
   return {

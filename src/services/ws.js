@@ -1021,9 +1021,32 @@ function pushAppCreationPhase(app) {
   }, { appId: app.id, appSlug: app.slug });
 }
 
+// Board-change listeners (services/workshop-themes.js registers one from
+// server.js). A card arriving on, or leaving, an app's board is what the
+// Workshop's placement stage waits for, and every such change already
+// passes through pushSessionUpdate or pushIssueUpdate — so the hook lives
+// here rather than at the thirty call sites. Listeners are told only which
+// app; they read the board themselves. A listener that throws is logged
+// and never breaks the broadcast.
+const boardChangeListeners = [];
+function onBoardChange(fn) {
+  if (typeof fn === 'function') boardChangeListeners.push(fn);
+}
+function noteBoardChange(data) {
+  if (!data || (data.appId == null && !data.appSlug)) return;
+  for (const fn of boardChangeListeners) {
+    try {
+      fn({ appId: data.appId ?? null, appSlug: data.appSlug ?? null });
+    } catch (err) {
+      log.warn('ws', 'board change listener failed', { message: err.message });
+    }
+  }
+}
+
 function pushSessionUpdate(data) {
   broadcastGlobalScoped({ type: 'session_update', ...data },
     { appId: data.appId, appSlug: data.appSlug });
+  noteBoardChange(data);
 }
 
 // #1038: live working-state for one session (services/session-state.js).
@@ -1090,6 +1113,18 @@ function pushAppUpdate(data) {
 // time instead of only on page reload.
 function pushIssueUpdate(data) {
   broadcastGlobalScoped({ type: 'issue_update', ...data },
+    { appId: data.appId, appSlug: data.appSlug });
+  noteBoardChange(data);
+}
+
+// The Workshop's grouping for an app moved — cards were placed into
+// themes, or the themes were re-drafted (`stage`) — so every open Workshop
+// re-fetches GET /api/apps/:slug/workshop-themes. Same scoping as the
+// board's other fan-outs: the grouping is built from shared-visibility
+// data, so a member of a view-private app may hear about it and nobody
+// else.
+function pushWorkshopUpdate(data) {
+  broadcastGlobalScoped({ type: 'workshop_update', ...data },
     { appId: data.appId, appSlug: data.appSlug });
 }
 
@@ -1198,4 +1233,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushToUser, pushConversationEvent, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
+module.exports = { attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };

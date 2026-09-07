@@ -736,6 +736,13 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_image_ref TE
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_build_ref VARCHAR(253);
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_runtime_kind VARCHAR(32);
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_runtime_name VARCHAR(253);
+-- The commit the preview was actually built from (the clone's HEAD at build
+-- time). A clean platform sync of main carries the checks verdict forward
+-- WITHOUT a rebuild, so the preview can sit a commit behind the head the
+-- row now describes; "Re-run checks" compares this to the head and rebuilds
+-- instead of testing the new head's checks against the old build. NULL for
+-- previews built before this column existed, which keeps the old behaviour.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_commit_sha VARCHAR(64);
 -- LLM-generated PR title shown alongside the PR number across the UI
 -- (dev chat, vote panel, status page). Nullable so old rows predate the
 -- auto-title feature and just fall back to showing "by <user>".
@@ -6260,6 +6267,29 @@ CREATE TABLE IF NOT EXISTS app_workshop_themes (
   model         VARCHAR(64),
   generated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- The grouping became a two-stage pipeline (services/workshop-themes.js):
+-- themes_json now holds theme DEFINITIONS only ([{ id, name, description,
+-- saying, anchors }]) and placements_json the card → theme id map they are
+-- served with, so a card the model skipped is retried, never lost. Rows
+-- written before this carry `items` on the definitions and serve from them
+-- until the first reconcile. input_hash became the key set's digest.
+--   unplaced_json        cards the placer said fit no theme (they count as churn)
+--   discovered_at        when the definitions were last drafted
+--   discovery_key_count  how many cards that draft covered (the drift base)
+--   churn_added/removed  cards added / gone since that draft; a tenth re-drafts
+--   last_error/failed_at the last failed stage, for the footnote and the backoff
+--   last_viewed_at       stamped by GET; the hourly sweep re-checks recent apps
+--   reconcile_started_at the cross-instance lease one reconcile holds
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS placements_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS unplaced_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovered_at TIMESTAMPTZ;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovery_key_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS churn_added INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS churn_removed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_error TEXT;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_failed_at TIMESTAMPTZ;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS reconcile_started_at TIMESTAMPTZ;
 
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,

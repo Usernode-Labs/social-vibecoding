@@ -389,7 +389,7 @@ test('the checks ledger row carries progress and a sub line while pending', () =
   // strict deepEqual treats as a mismatch; compare the plain data.
   const plain = (o) => JSON.parse(JSON.stringify(o));
   const view = AppView._checksProgressView({ checks_progress: { ran: 12, passed: 11, failed: 1, expected: 523 } });
-  assert.deepEqual(plain(view.bar), { ran: 12, passed: 11, failed: 1, expected: 523, done: false, unit: null });
+  assert.deepEqual(plain(view.bar), { ran: 12, passed: 11, failed: 1, expected: 523, done: false, unit: null, build: null });
   assert.equal(view.sub, '12 of 523 run · 11 passed · 1 failed');
   assert.match(view.sentence, /12 of 523 checks have run so far: 11 passed, 1 failed\./);
   assert.equal(AppView._checksProgressView({ checks_progress: null }), null, 'nothing before the first frame');
@@ -399,7 +399,7 @@ test('the checks ledger row carries progress and a sub line while pending', () =
     checks_progress: { ran: 2, passed: 2, failed: 0, expected: 10 },
   });
   assert.equal(notes.length, 1);
-  assert.deepEqual(plain(notes[0].progress), { ran: 2, passed: 2, failed: 0, expected: 10, done: false, unit: null });
+  assert.deepEqual(plain(notes[0].progress), { ran: 2, passed: 2, failed: 0, expected: 10, done: false, unit: null, build: null });
   assert.equal(notes[0].sub, '2 of 10 run · 2 passed');
 });
 
@@ -431,6 +431,103 @@ test('the unit suite (npm test) gets its own line, bar and phase copy', () => {
   assert.equal(lines[1], '2 of 10 checks have run so far: 2 passed.');
   assert.equal(lines[2], 'The repo unit suite (npm test) has run 5 tests so far: 5 passed.');
   assert.equal(notes[0].progress.unit.ran, 5);
+});
+
+// ── 2c. the build half reports its steps ────────────────────────────────
+
+test('setChecksBuildProgress merges into the row while pending; the build event omits what it does not know', async () => {
+  const calls = [];
+  const pool = { query: async (sql, params) => { calls.push({ sql, params }); return { rowCount: 1 }; } };
+  const ok = await visuals.setChecksBuildProgress(pool, 7, { step: 'clone', startedAt: 'x', steps: [{ key: 'image_build', ms: 4200 }] });
+  assert.equal(ok, true);
+  assert.match(calls[0].sql, /COALESCE\(checks_progress, '\{\}'::jsonb\)\s+\|\| jsonb_build_object\('build', \$2::jsonb, 'updatedAt', \$3::text\)/);
+  assert.match(calls[0].sql, /AND check_state = 'pending'/);
+  assert.equal(JSON.parse(calls[0].params[1]).step, 'clone');
+  assert.equal(await visuals.setChecksBuildProgress(pool, 7, null), false);
+  const ws = require('../src/services/ws');
+  const saved = ws.broadcastGlobal;
+  const seen = [];
+  ws.broadcastGlobal = (e) => seen.push(e);
+  try {
+    visuals.notifyChecksBuildProgress(7, { step: 'image_build', startedAt: 'x', steps: [] });
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].checkPhase, 'building');
+    assert.equal('commitSha' in seen[0], false, 'a build tick must not null the client\'s commit pin');
+    assert.equal('checkTrigger' in seen[0], false, 'nor its trigger');
+    assert.equal(seen[0].progress.build.step, 'image_build');
+    visuals.notifyChecksProgress(7, 'abc', { ran: 1, passed: 1, failed: 0 }, 'testing', 'manual-recheck');
+    assert.equal(seen[1].commitSha, 'abc');
+    assert.equal(seen[1].checkTrigger, 'manual-recheck');
+  } finally { ws.broadcastGlobal = saved; }
+});
+
+test('the finished build rides every testing-half snapshot, from the timings staging threads out', () => {
+  const build = visuals.buildProgressFromTimings({ sourceFetchMs: 2100.4, imageBuildMs: 48000, cloneMs: 3900, cloneVia: 'template', healthMs: 6000, totalMs: 60000 });
+  assert.deepEqual(build, { step: 'done', steps: [
+    { key: 'source_fetch', ms: 2100 }, { key: 'image_build', ms: 48000 }, { key: 'clone', ms: 3900, via: 'template' }, { key: 'health', ms: 6000 },
+  ], totalMs: 60000 });
+  assert.equal(visuals.buildProgressFromTimings({}), null);
+  assert.equal(visuals.buildProgressFromTimings(null), null);
+  const state = visuals.makeChecksProgressState({ expected: 2, flush: () => {}, build });
+  assert.deepEqual(state.snapshot().build, build);
+  const src = read('src/services/visuals.js');
+  assert.match(src, /build: buildProgressFromTimings\(stagingResult && stagingResult\.timings\),/);
+  const staging = read('src/services/staging.js');
+  for (const step of ['source_fetch', 'image_build', 'clone', 'health', 'done']) {
+    assert.match(staging, new RegExp(`reportBuildStep\\(config, session, '${step}', timings,`), `the build reports ${step}`);
+  }
+});
+
+test('the build steps render as a line and a step row, live and finished', () => {
+  const AppView = makeAppView();
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  const live = AppView._checksProgressView({ checks_progress: { build: { step: 'clone', startedAt: 'x', steps: [{ key: 'source_fetch', ms: 2000 }, { key: 'image_build', ms: 48000 }] } } });
+  assert.equal(live.build.sentence, 'Preview build: branch fetched (2s), image built (48s), now cloning the database.');
+  assert.equal(live.sub, 'build: cloning the database', 'the build owns the sub line while nothing else has reported');
+  assert.deepEqual(plain(live.bar.build).map((s) => [s.key, s.state, s.ms]), [
+    ['source_fetch', 'done', 2000], ['image_build', 'done', 48000], ['clone', 'now', null], ['health', 'todo', null],
+  ]);
+  const done = AppView._checksProgressView({ checks_progress: { ran: 3, passed: 3, failed: 0, expected: 10,
+    build: { step: 'done', steps: [{ key: 'source_fetch', ms: 2000 }, { key: 'image_build', ms: 48000 }, { key: 'clone', ms: 3900, via: 'template' }, { key: 'health', ms: 6000 }], totalMs: 60000 } } });
+  assert.equal(done.build.sentence, 'Preview built in 1m 0s: branch fetched (2s), image built (48s), database cloned from template (4s), preview started (6s).');
+  assert.equal(done.sub, '3 of 10 run · 3 passed', 'the checks own the sub line once they run');
+  assert.equal(done.bar.build[2].label, 'clone database (from template)');
+  const notes = AppView._checksStatusNotes({ check_state: 'pending', check_phase: 'building', checks_checked_at: new Date().toISOString(),
+    checks_progress: { build: { step: 'image_build', startedAt: 'x', steps: [{ key: 'source_fetch', ms: 1000 }] } } });
+  assert.equal(notes[0].rows[1].parts[0], 'Preview build: branch fetched (1s), now building the preview image.');
+  assert.equal(notes[0].rows[1].weight, undefined, 'the live line is primary ink');
+  const after = AppView._checksStatusNotes({ check_state: 'pending', check_phase: 'testing', checks_checked_at: new Date().toISOString(),
+    checks_progress: { ran: 1, passed: 1, failed: 0, expected: 5, build: { step: 'done', steps: [{ key: 'image_build', ms: 5000 }], totalMs: 5000 } } });
+  assert.equal(after[0].rows[1].weight, 'foot', 'the finished build is a footnote under the live checks line');
+  assert.match(after[0].rows[2].parts[0], /1 of 5 checks have run so far/);
+  const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
+  assert.match(tsx, /\{p\.build && p\.build\.length \? <BuildSteps steps=\{p\.build\} \/> : null\}/);
+  assert.match(tsx, /className="dev-ledger-progress-build" data-build-step=\{now \? now\.key : 'done'\}/);
+  assert.match(read('frontend/src/features/dev-board/topic/model.ts'), /build\?: LedgerBuildStep\[\] \| null;/);
+  assert.match(read('public/css/app.css'), /\.dev-ledger-build-step\.is-now \{/);
+});
+
+test('a pending run says what a pending sync will do to it', () => {
+  const AppView = makeAppView();
+  const base = { check_state: 'pending', check_phase: 'testing', checks_checked_at: new Date().toISOString() };
+  const lines = (pr) => AppView._checksStatusNotes(pr)[0].rows.map((r) => r.parts[0]);
+  const behind = lines({ ...base, behind_main: 3 });
+  assert.ok(behind.some((l) => /Main has moved 3 commits ahead\. This run is judged against the commit before that, so when the platform syncs this proposal the run starts again on the synced commit\./.test(l)),
+    'the checks row says the sync ends this run — not left to be inferred from the Behind main pill');
+  assert.ok(lines({ ...base, behind_main: 1 }).some((l) => /Main has moved 1 commit ahead/.test(l)), 'singular');
+  assert.ok(!lines({ ...base, behind_main: 0 }).some((l) => /Main has moved/.test(l)), 'nothing to say when it is level with main');
+  assert.ok(!lines(base).some((l) => /Main has moved/.test(l)));
+  // A verdict is not a run in flight: no forecast on a finished one.
+  const done = AppView._checksStatusNotes({ check_state: 'passing', behind_main: 3, test_results: [] });
+  assert.ok(!JSON.stringify(done).includes('Main has moved'));
+});
+
+test('a clean sync does not carry the commit pin out from under a run in flight', () => {
+  const src = read('src/services/sync-main.js');
+  assert.match(src, /const runInFlight = session\.check_state === 'pending';/);
+  assert.match(src, /const carryChecks = result\.syncResult === 'clean' && !runInFlight;/);
+  // The re-kick is the existing non-carry path, so a pending row now takes it.
+  assert.match(src, /if \(!carryChecks\) \{\n\s+await kickChecksForSyncedHead\(config, pool, session, nextSha\);/);
 });
 
 test('the board card and the running badge carry the live count', () => {

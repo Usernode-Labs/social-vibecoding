@@ -37,7 +37,10 @@ export const EMPTY_WORKSHOP_VIEW: DevWorkshopView = {
   welcome: null,
   discussion: null,
   themes: [],
-  meta: { source: null, generatedAt: null, stale: false, pending: false, lastError: null, filtered: false },
+  meta: {
+    source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
+    lastError: null, coverage: null, placing: 0, filtered: false,
+  },
   autoExpand: null,
 };
 
