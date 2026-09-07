@@ -1640,6 +1640,16 @@ html, body {
   overflow-x: hidden;
 }
 
+/* A held launcher tile can select nearby text (such as Discover) even when
+   the tile itself is non-selectable. Protect the whole launcher content
+   before the long-press timer fires. The search field is outside #home-body
+   so its text selection and editing callout remain available. */
+#home-body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 /* ── The home ground ───────────────────────────────────────
    The launcher's own wallpaper, ported layer for layer from the homescreen
    design's Figma export (a 402x874 phone frame): a warm cream page, a fine
