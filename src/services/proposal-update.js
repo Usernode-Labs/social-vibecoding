@@ -1215,10 +1215,17 @@ async function advanceAppRepoBranch(ctx) {
     log.info('proposal-update', 'advanced an imported proposal on its app-repo branch', {
       sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
       headSha: verified.headSha, votesCleared: applied ? votesCleared : 0, synced,
+      votesClearing: applied ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'), votesAtRisk: votesCleared,
     });
     return {
       ...landed,
       votesCleared: applied ? votesCleared : 0,
+      // `votesCleared` is what THIS call cleared. On the mirror path the head
+      // is advanced by the next pr-import sweep, which is when the tally
+      // resets — so a 0 here with votesClearing 'on_sync' means "not yet",
+      // not "never". votesAtRisk is the count that will go.
+      votesClearing: applied ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'),
+      votesAtRisk: votesCleared,
       checksRerun: applied,
       previewRebuilding: applied,
     };
@@ -1302,6 +1309,7 @@ async function advanceAppRepoBranch(ctx) {
   log.info('proposal-update', 'advanced a proposal from its author\'s fork', {
     sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
     headSha: verified.headSha, votesCleared: settled ? votesCleared : 0,
+    votesClearing: settled ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'), votesAtRisk: votesCleared,
   });
 
   return {
@@ -1310,6 +1318,8 @@ async function advanceAppRepoBranch(ctx) {
     // write and are only reported cleared when the reconciliation that
     // clears them ran.
     votesCleared: settled ? votesCleared : 0,
+    votesClearing: settled ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'),
+    votesAtRisk: votesCleared,
     checksRerun: settled,
     previewRebuilding: settled,
   };

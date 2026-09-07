@@ -267,10 +267,18 @@ async function runContainer(name, {
 // container exists. Stdin has no such cap. The write is fire-and-forget
 // with an error swallow: if the container dies before draining stdin the
 // EPIPE must not mask the real (exit-code) failure.
+// `onStdoutLine(line)`: called with each complete stdout line AS IT ARRIVES,
+// on top of the buffered result. The run is still judged from the buffered
+// stdout when the process exits — this is an observer, not a second parser
+// — so a listener that throws or is slow cannot change a verdict. Chunk
+// boundaries fall anywhere, so lines are re-assembled here and the trailing
+// partial is flushed at exit. Used to surface per-check progress while a
+// capture container is running, which the buffered result cannot do.
 async function runOneShot(name, {
   image, env = {}, memory = '1g', cpus = '1',
   timeoutMs = 240000, maxBuffer = 128 * 1024 * 1024,
   salvagePartial = false, stdinPayload = null, cmd = null,
+  onStdoutLine = null,
 }) {
   const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   const args = [
@@ -295,6 +303,9 @@ async function runOneShot(name, {
       promise.child.stdin.on('error', () => {});
       promise.child.stdin.end(stdinPayload);
     }
+    if (typeof onStdoutLine === 'function' && promise.child && promise.child.stdout) {
+      attachLineObserver(promise.child.stdout, onStdoutLine);
+    }
     return promise;
   };
   try {
@@ -318,6 +329,27 @@ async function runOneShot(name, {
     if (salvaged) return salvaged;
     throw err;
   }
+}
+
+// Feed a readable's bytes to `onLine` one complete line at a time. Node's
+// execFile keeps its own copy for the buffered result; this only listens.
+// Exported for the tests, which drive it with a PassThrough.
+function attachLineObserver(readable, onLine) {
+  let carry = '';
+  const emit = (line) => {
+    try { onLine(line); } catch { /* an observer must never break the run */ }
+  };
+  readable.on('data', (chunk) => {
+    carry += chunk.toString('utf8');
+    let nl;
+    while ((nl = carry.indexOf('\n')) !== -1) {
+      emit(carry.slice(0, nl));
+      carry = carry.slice(nl + 1);
+    }
+  });
+  readable.on('end', () => {
+    if (carry.length) { emit(carry); carry = ''; }
+  });
 }
 
 // Recover the partial stdout from a timed-out / buffer-exceeded execFile
@@ -771,6 +803,7 @@ module.exports = {
   containerHostname,
   execShellStdin,
   buildImage,
+  attachLineObserver,
   runContainer,
   runOneShot,
   startContainer,
