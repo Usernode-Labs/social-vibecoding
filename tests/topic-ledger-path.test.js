@@ -235,3 +235,31 @@ test('the ledger label column can hold the labels it is given', () => {
   assert.match(css, /\.dev-ledger-k \{[^}]*white-space: normal;/);
   assert.doesNotMatch(css, /\.dev-ledger-k \{ font-weight: 600; white-space: nowrap; \}/);
 });
+
+test('the declared checks match what the demo fixture actually renders', () => {
+  // The three browser checks for this change were written against the state
+  // I had in my head rather than the one the mock serves: mk() defaults
+  // every demo proposal to check_state 'passing', so 9000034 conflicts with
+  // main while its checks are GREEN. That is the interesting case — one
+  // step outstanding, one cleared — and asserting the demoted wording on it
+  // could never have passed. This pins the fixture's real shape so the
+  // declared checks and the code cannot drift apart again silently.
+  const AppView = makeAppView();
+  AppView._proposalsCtx = { majority: 4, activeUsers: 9, locked: false };
+  const d = AppView._proposalDetailsView({
+    id: 9000034, status: 'promoted', username: 'staging-tester', source: 'native',
+    check_state: 'passing', test_results: [{ name: 'App loads', status: 'pass', path: '/' }],
+    yes_count: 3, no_count: 0, votes_required: 4,
+    behind_main: 8, freshness_behind_by: 8, mergeability: 'conflict',
+    mergeability_files: ['a.js', 'b.js', 'c.js', 'd.js', 'e.js', 'f.js', 'g.js'],
+    mergeability_files_complete: true,
+  });
+  assert.equal(d.pathSteps, 3);
+  assert.equal(d.pathLeft, 2, 'the caption says "Two still to clear."');
+  const steps = d.ledger.filter((r) => r.step);
+  assert.deepEqual(plain(steps.map((r) => [r.key, !!r.stepDone])),
+    [['mergeability', false], ['checks', true], ['votes', false]]);
+  assert.equal(find(d.ledger, 'checks').sub, 'automatic, after 1');
+  assert.match(find(d.ledger, 'mergeability').text.join(''),
+    /Main has moved 8 commits ahead, and 7 files changed on both sides/);
+});

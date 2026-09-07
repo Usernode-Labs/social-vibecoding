@@ -2611,10 +2611,9 @@
       "expectText": "Main has moved 8 commits ahead, and 7 files changed on both sides"
     },
     {
-      "name": "A conflicted proposal’s checks step says it re-runs itself, instead of reporting a stale verdict",
+      "name": "A step that is already cleared draws a tick instead of its number",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
-      "expectSelector": "[data-note=\"checks\"]",
-      "expectText": "They start themselves once the branch is up to date."
+      "expectSelector": ".dev-ledger-row[data-note=\"checks\"][data-step-done] .dev-ledger-dot"
     },
     {
       "name": "A blocked proposal reads as one ordered path: sync first, then checks, then the vote",
@@ -2623,15 +2622,15 @@
       "expectText": "Sync with main"
     },
     {
-      "name": "The path says all of its steps have to clear, not just that they are ordered",
+      "name": "The path caption counts what is still outstanding, not just how many steps there are",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": ".dev-topic-ledger .dev-ledger-path-note",
-      "expectText": "Three steps to a merge. All of them have to clear."
+      "expectText": "Three steps to a merge. Two still to clear."
     },
     {
       "name": "Each step of the path names who acts and when, under its label",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
-      "expectSelector": ".dev-ledger-row[data-note=\"mergeability\"] .dev-ledger-k small",
+      "expectSelector": ".dev-ledger-row[data-note=\"checks\"] .dev-ledger-k small",
       "expectText": "automatic, after 1"
     },
     {
