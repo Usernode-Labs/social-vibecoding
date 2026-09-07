@@ -21,10 +21,12 @@
 //      someone's chat can never post into it, and the server enforces the
 //      same thing (POST /chat is owner-scoped) — the missing UI is the
 //      second layer, not the only one.
-//   3. AGENT ACTIVITY COLLAPSED BY DEFAULT. The owner's own view opens
-//      these (they're watching a live run); a reader is skimming a
+//   3. AGENT ACTIVITY COLLAPSED BY DEFAULT. A reader is skimming a
 //      finished conversation, so progress logs and raw agent summaries
-//      start closed.
+//      start closed. The owner's own view agrees since #1591 (it used
+//      to open running rows), so this is no longer a divergence — but
+//      it is still stated here, because this renderer emits no `open`
+//      attribute of its own and has no persistence to fall back on.
 //
 // It reuses the dev chat's dc-* classes so a shared transcript reads like
 // the real thing rather than a second visual language.

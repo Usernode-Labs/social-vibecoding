@@ -1,0 +1,316 @@
+// #1591: coding-agent work items (the dc-cc-attached disclosures) render
+// COLLAPSED by default — every kind, every state, the live running row
+// included. A dev session that ran four turns used to open four full progress
+// logs and four summaries at once, pushing the Changes-ready card off screen.
+//
+// Three render branches emit <details class="dc-cc-attached">:
+//   - a status row paired with an attached progressLog  (persist kind ccrun)
+//   - an orphan progressLog row                         (kind ccrunorphan)
+//   - a status row carrying ccOutput                    (kind ccout)
+// Each must emit data-default-open="0" and NO bare `open` attribute, so the
+// log never flashes for a frame before something closes it.
+//
+// The collapsed <summary> is the live readout, so the assertions below pin its
+// contents too: status text, current activity, step count, chevron, duration.
+// Nothing auto-collapses when a run finishes — the default is a constant, not
+// a function of `msg._active` — so a row only ever changes state when the
+// reader taps it, and that choice round-trips through localStorage.
+//
+// This file began as #647's inherited-clone test (inherited rows collapsed,
+// everything else expanded). #1591 subsumed that rule: the collapsed side is
+// now universal. It no longer covers _markInheritedMessages: that pass
+// computed a flag whose only consumer was the inherited-vs-own distinction,
+// and the distinction is gone, so the pass went with it.
+//
+// Harness mirrors tests/dev-chat-changes-ready-card.test.js: load
+// dev-chat.js (a plain browser script) into a vm context with stubbed
+// browser globals, drive renderMessages() against a fake #dc-messages whose
+// innerHTML is captured, and assert on the HTML.
+//
+// Run with: node --test tests/dev-chat-cc-collapse-default.test.js
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const { makeTranscriptBridge } = require('./lib/dev-transcript-html');
+
+const SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
+  'utf8'
+);
+// Loaded alongside dev-chat.js in the browser; supplies the globals the
+// collapsed <summary> depends on (summarizeCcProgress → activity snippet +
+// step count, formatElapsed → the "(took 4m 12s)" suffix). Without it the
+// renderer degrades to empty spans and the summary assertions would pass
+// vacuously.
+const SUMMARY_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'js', 'cc-progress-summary.js'),
+  'utf8'
+);
+
+function makeDevChat() {
+  const store = new Map();
+  // #1078: the rows are a React island. `renderMessages` publishes a view
+  // model instead of writing this element's innerHTML, so the element is only
+  // the portal's host and the markup comes back from the component.
+  const t = makeTranscriptBridge();
+  const messagesEl = {
+    innerHTML: '',
+    querySelectorAll: () => ({ forEach: () => {} }),
+    scrollTop: 0, scrollHeight: 0,
+  };
+  const noopEl = {
+    style: {}, classList: { add: () => {}, remove: () => {}, toggle: () => {} },
+    addEventListener: () => {}, setAttribute: () => {}, removeAttribute: () => {},
+    querySelector: () => null, querySelectorAll: () => ({ forEach: () => {} }),
+    appendChild: () => {}, innerHTML: '', textContent: '',
+  };
+  const sandbox = {
+    console,
+    escapeHtml: (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;'),
+    document: {
+      getElementById: (id) => (id === 'dc-messages' ? messagesEl : null),
+      querySelector: () => null,
+      querySelectorAll: () => ({ forEach: () => {} }),
+      addEventListener: () => {},
+      createElement: () => ({ ...noopEl }),
+      body: { appendChild: () => {} },
+    },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    alert: () => {},
+    PlatformUI: {
+      isTouch: () => false,
+      hasKit: () => false,
+      toast: () => {},
+      alert: async () => ({}),
+      confirm: async () => true,
+      transition: (fn) => fn(),
+      attachScreenFx: () => {},
+      detachScreenFx: () => {},
+      pullToRefresh: () => ({ detach() {} }),
+      swipeActions: () => ({ detach() {} }),
+      gestures: () => null,
+    },
+    navigator: { sendBeacon: () => {} },
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    // A REAL (map-backed) store, not a null stub: the collapse default is
+    // only half the behaviour — the other half is that a tap is remembered,
+    // and _detailsOpen reads this back on every render.
+    localStorage: {
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      setItem: (k, v) => { store.set(k, String(v)); },
+      removeItem: (k) => { store.delete(k); },
+    },
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  sandbox.window.addEventListener = () => {};
+  sandbox.UsernodeReact = { devChat: t.bridge };
+  vm.createContext(sandbox);
+  vm.runInContext(`${SUMMARY_SRC}\n${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
+  const DevChat = sandbox.__DevChat;
+  DevChat.renderMarkdown = (t) => String(t || '');
+  return {
+    DevChat,
+    store,
+    render(messages, session) {
+      DevChat.messages = messages;
+      DevChat.currentSession = session || null;
+      DevChat.renderMessages();
+      return t.html();
+    },
+    rows: () => t.state().rows,
+  };
+}
+
+const activeSession = (over) => ({
+  id: 7, status: 'active', pr_url: null, pr_number: null, ...over,
+});
+
+const PROGRESS_LINES = [
+  '[claude (mode build)]',
+  'Reading public/js/dev-chat.js',
+  '  ⎿ Read: 3152 lines',
+  'Editing public/js/dev-chat.js',
+  '  ⎿ Edit: ok',
+];
+
+// Pull the one <details class="dc-cc-attached"> out of a render so the
+// assertions can't be satisfied by some other element on the page.
+function attachedTag(html) {
+  const m = html.match(/<details class="dc-cc-attached"[^>]*>/);
+  assert.ok(m, 'a dc-cc-attached disclosure was rendered');
+  return m[0];
+}
+
+// React serializes a boolean attribute as `open=""` rather than as the bare
+// `open` the template literal wrote. Same attribute, same DOM property; only
+// the source text differs, so the two guards below match either form.
+function assertCollapsed(tag) {
+  assert.match(tag, /data-default-open="0"/, 'default-open flag is 0');
+  assert.doesNotMatch(tag, /\sopen(=|\s|>)/, 'no open attribute');
+}
+
+
+// ── every coding-agent work item collapses ─────────────────
+
+test('a FINISHED turn (status + attached progressLog) renders COLLAPSED (ccrun)', () => {
+  const { render } = makeDevChat();
+  const html = render([
+    { id: 101, role: 'system', content: 'Claude Code is running...', durationMs: 252000 },
+    { id: 102, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES },
+  ], activeSession());
+
+  assertCollapsed(attachedTag(html));
+  assert.match(html, /data-persist-id="101:ccrun"/, 'persist id keyed off the status row');
+  // The summary is the whole readout while the body is closed.
+  assert.match(html, /Claude Code is running/, 'status text still in the summary');
+  // Chips now, so the `· ` separators are gone: the gap between chips is
+  // the gap.
+  assert.match(html, /class="dc-cc-chips"/, 'the facts are a chip row');
+  assert.match(html, /class="dc-cc-current">Editing public\/js\/dev-chat\.js</, 'activity snippet still in the summary');
+  assert.match(html, /class="dc-cc-steps">2 steps</, 'step counter still in the summary');
+  assert.match(html, /dc-cc-attached-chevron/, 'chevron affordance still rendered');
+  assert.match(html, /\(took [^)]+\)/, 'duration still shown on the summary');
+  assert.match(html, /dc-cc-attached-log/, 'the log body is still rendered, just closed');
+});
+
+test('a LIVE (_active) turn renders COLLAPSED too, summary still ticking', () => {
+  const { render } = makeDevChat();
+  const html = render([
+    { id: 501, role: 'system', content: 'Claude Code is running...', _active: true },
+    { id: 502, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES },
+  ], activeSession());
+
+  const tag = attachedTag(html);
+  assertCollapsed(tag);
+  // Everything a watcher needs lives OUTSIDE the collapsed body, which is the
+  // premise the whole change rests on.
+  assert.match(html, /dc-status-spinner-arc/, 'live row keeps its arc spinner');
+  assert.match(html, /class="dc-cc-current">Editing public\/js\/dev-chat\.js</, 'current activity on the summary');
+  assert.match(html, /class="dc-cc-steps">2 steps</, 'step count on the summary');
+  assert.match(html, /class="dc-cc-phase">/, 'phase label on the summary');
+});
+
+test('a ccOutput row renders COLLAPSED (ccout)', () => {
+  const { render } = makeDevChat();
+  const html = render([
+    {
+      id: 201, role: 'system', content: 'Claude Code finished',
+      ccOutput: 'Added the thing.\n\n- one\n- two', durationMs: 198000,
+    },
+  ], activeSession());
+
+  assertCollapsed(attachedTag(html));
+  assert.match(html, /data-persist-id="201:ccout"/, 'ccout persist id');
+  assert.match(html, /dc-cc-attached-md/, 'the markdown body is still present, just collapsed');
+});
+
+test('an ORPHAN progressLog row renders COLLAPSED (ccrunorphan)', () => {
+  const { render } = makeDevChat();
+  // A lone progress row with no pairable predecessor/successor status line.
+  const html = render([
+    { id: 301, role: 'user', content: 'do the thing' },
+    { id: 302, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES },
+  ], activeSession());
+
+  assertCollapsed(attachedTag(html));
+  assert.match(html, /data-persist-id="302:ccrunorphan"/, 'orphan persist id');
+});
+
+test('inherited and own-turn rows now collapse alike (#647 subsumed by #1591)', () => {
+  const { render } = makeDevChat();
+  const html = render([
+    { id: 701, role: 'system', content: 'Claude Code is running...', inherited: true },
+    { id: 702, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES, inherited: true },
+    { id: 703, role: 'assistant', content: 'This session was cloned from an auto session that ran unattended on GitHub issue #42.' },
+    { id: 704, role: 'user', content: 'tweak it' },
+    { id: 705, role: 'system', content: 'Claude Code is running...' },
+    { id: 706, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES },
+  ], activeSession());
+
+  const tags = html.match(/<details class="dc-cc-attached"[^>]*>/g) || [];
+  assert.equal(tags.length, 2, 'both runs render a disclosure');
+  for (const tag of tags) assertCollapsed(tag);
+});
+
+test('a session of four turns opens nothing at all', () => {
+  const { render } = makeDevChat();
+  const messages = [];
+  for (let turn = 0; turn < 4; turn++) {
+    const base = 1000 + turn * 10;
+    messages.push({ id: base, role: 'user', content: 'turn ' + turn });
+    messages.push({ id: base + 1, role: 'system', content: 'Claude Code is running...', durationMs: 90000 });
+    messages.push({ id: base + 2, role: 'system', content: 'Claude Code progress', progressLog: PROGRESS_LINES });
+    messages.push({ id: base + 3, role: 'system', content: 'Claude Code finished', ccOutput: 'Did it.' });
+  }
+  const html = render(messages, activeSession());
+
+  const tags = html.match(/<details class="dc-cc-attached"[^>]*>/g) || [];
+  assert.equal(tags.length, 8, 'four turns, two disclosures each');
+  for (const tag of tags) assertCollapsed(tag);
+});
+
+// ── the tap is remembered ──────────────────────────────────
+//
+// The collapse default is only useful if reopening a row sticks. The stored
+// map is a DELTA against the default (1 = opened something default-closed),
+// so a stored 1 is exactly what these rows can now carry.
+
+test('_detailsToggled stores the reader opening a row, and clears it on close', () => {
+  const { DevChat, store } = makeDevChat();
+  DevChat.currentSession = activeSession();
+  const key = 'dc-details-v1:7';
+  const id = '101:ccrun';
+
+  assert.equal(DevChat._detailsOpen(id, false), false, 'closed with nothing stored');
+
+  DevChat._detailsToggled(id, false, true);
+  assert.deepEqual(JSON.parse(store.get(key)), { [id]: 1 }, 'opening a default-closed row stores a 1');
+  assert.equal(DevChat._detailsOpen(id, false), true, 'and reads back open');
+
+  DevChat._detailsToggled(id, false, false);
+  assert.deepEqual(JSON.parse(store.get(key)), {}, 'closing it again drops the delta rather than storing a 0');
+  assert.equal(DevChat._detailsOpen(id, false), false);
+});
+
+test('a stored 0 from before #1591 still resolves closed (no migration needed)', () => {
+  const { DevChat, store } = makeDevChat();
+  DevChat.currentSession = activeSession();
+  // Under the old default these rows were open, so the only delta a reader
+  // could leave behind was a 0. It agrees with the new default, so it is
+  // inert — nothing needs rewriting in anyone localStorage.
+  store.set('dc-details-v1:7', JSON.stringify({ '101:ccrun': 0, '201:ccout': 0 }));
+  assert.equal(DevChat._detailsOpen('101:ccrun', false), false);
+  assert.equal(DevChat._detailsOpen('201:ccout', false), false);
+});
+
+test('a stored 1 from before #1591 still resolves open (an inherited row a reader had opened)', () => {
+  const { DevChat, store } = makeDevChat();
+  DevChat.currentSession = activeSession();
+  store.set('dc-details-v1:7', JSON.stringify({ '101:ccrun': 1 }));
+  assert.equal(DevChat._detailsOpen('101:ccrun', false), true);
+});
+
+// ── already-collapsed disclosures are untouched ────────────
+
+test('cclog / mayorraw / ccfull disclosures still render without `open`', () => {
+  const { render } = makeDevChat();
+  const html = render([
+    { id: 801, role: 'system', content: 'Claude Code log', ccLog: 'some raw log' },
+    { id: 802, role: 'assistant', content: '[CHAT_ONLY] thinking out loud' },
+    { id: 803, role: 'assistant', model: 'claude-code/opus', content: 'First para.\n\nAnd a much longer remainder that trips hasMore.' },
+  ], activeSession());
+
+  const logs = html.match(/<details class="dc-cc-log"[^>]*>/g) || [];
+  assert.ok(logs.length >= 3, 'cclog + mayorraw + ccfull all render');
+  for (const tag of logs) {
+    assert.doesNotMatch(tag, /\sopen(\s|>)/, 'stays closed by default');
+    assert.doesNotMatch(tag, /data-default-open/, 'no default-open flag added');
+  }
+});

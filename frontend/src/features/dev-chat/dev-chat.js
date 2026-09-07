@@ -6819,16 +6819,24 @@ const DevChat = {
 
   // Should a Claude Code disclosure (dc-cc-attached) start expanded?
   //
-  // NO — none of them, which is now the whole rule. It used to be "everything
-  // open except rows inherited from a cloned auto session" (#647), on the
-  // argument that the live-run log is meant to be watched.
+  // #1591: NO — never, for any of the three families (ccrun, ccrunorphan,
+  // ccout), which is now the whole rule. It used to be "everything open
+  // except rows inherited from a cloned auto session" (#647), on the
+  // argument that the live-run log is meant to be watched — which meant a
+  // session with four turns put four full progress logs and four summaries
+  // on screen at once and the Changes-ready card sat below all of them.
   //
-  // That argument belonged to a summary that could not carry the run. It is a
-  // card now, and its header holds exactly what the log was watched FOR: the
-  // file being edited, the step count, the elapsed timer, the phase, and the
-  // AI guess with its countdown. The log underneath is the detail behind
+  // That argument belonged to a summary that could not carry the run. It is
+  // a card now, and its header holds exactly what the log was watched FOR:
+  // the file being edited, the step count, the elapsed timer, the phase, and
+  // the AI guess with its countdown. The log underneath is the detail behind
   // those facts, and at 60-215 lines it is the largest thing in the
-  // transcript by an order of magnitude.
+  // transcript by an order of magnitude. That readout was authored FOR this
+  // state (see summarizeCcProgress in public/js/cc-progress-summary.js,
+  // whose `currentLabel` is documented as "the most recent line worth
+  // showing in the collapsed summary", and whose terminal-phase handling
+  // exists so the collapsed card ends on "Finished" rather than freezing on
+  // "Pushing").
   //
   // #647 had already found this and fixed it for one case. Its note is worth
   // reading in full: two inherited logs plus a summary "burying the spec
@@ -6838,9 +6846,16 @@ const DevChat = {
   // reader wants eleven of them. This is #647's finding applied where it
   // always applied.
   //
-  // Anyone who opens one keeps it open: _applyDetailsPersistence round-trips
-  // the flag per message through localStorage, so being wrong here costs one
-  // click, once, on the run you actually care about.
+  // The alternative — keep the streaming row open and collapse it when the
+  // turn ends — was rejected: it yanks content out from under a reader
+  // mid-sentence, and it interacts badly with the delta-based persistence
+  // below (opening a running row MATCHES the default, so the delta is
+  // deleted, and the row would then close itself when the run finished).
+  // Because this is a constant rather than a function of `msg._active`, a
+  // row's open state only ever changes when the user taps it — anyone who
+  // opens one keeps it open: _applyDetailsPersistence round-trips the flag
+  // per message through localStorage, so being wrong here costs one click,
+  // once, on the run you actually care about.
   //
   // It takes the message and ignores it. This is the seam every disclosure
   // asks, and a caller that keeps passing its row is what makes a future
