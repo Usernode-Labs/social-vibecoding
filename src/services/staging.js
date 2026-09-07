@@ -145,18 +145,51 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
 // checks progress row and event (services/visuals.js). Best-effort and
 // lazy-required: the build must never fail, or wait, on a status write,
 // and visuals requires this module at load.
-function reportBuildStep(config, session, step, timings, startedAt) {
+function reportBuildStep(config, session, step, timings, startedAt, image = null) {
   try {
     const visuals = require('./visuals');
     const build = {
       step,
       startedAt: new Date(startedAt).toISOString(),
       steps: visuals.buildProgressFromTimings(timings)?.steps || [],
+      ...(image ? { image } : {}),
       ...(Number.isFinite(timings.totalMs) ? { totalMs: Math.round(timings.totalMs) } : {}),
     };
     visuals.setChecksBuildProgress(getPool(config), session.id, build).catch(() => {});
     visuals.notifyChecksBuildProgress(session.id, build);
   } catch { /* status only */ }
+}
+
+// The image build's own progress, inside the "build image" step: the
+// runtime reports each phase or step line as it happens, and this hands it
+// on at most once a second (a build prints many lines a second), with the
+// trailing one always delivered.
+const IMAGE_PROGRESS_MIN_GAP_MS = 1000;
+function makeImageProgressReporter(config, session, timings, startedAt) {
+  let last = null;
+  let lastAt = 0;
+  let timer = null;
+  const flush = () => {
+    timer = null;
+    lastAt = Date.now();
+    reportBuildStep(config, session, 'image_build', timings, startedAt, last);
+  };
+  return {
+    report(image) {
+      if (!image || typeof image !== 'object') return;
+      last = { ...(last || {}), ...image };
+      const gap = Date.now() - lastAt;
+      if (gap >= IMAGE_PROGRESS_MIN_GAP_MS) {
+        if (timer) { clearTimeout(timer); timer = null; }
+        flush();
+      } else if (!timer) {
+        timer = setTimeout(flush, IMAGE_PROGRESS_MIN_GAP_MS - gap);
+        if (typeof timer.unref === 'function') timer.unref();
+      }
+    },
+    close() { if (timer) { clearTimeout(timer); timer = null; } },
+    last() { return last; },
+  };
 }
 
 async function buildAndDeployStagingInner(config, session, app, commitHash) {
@@ -346,15 +379,30 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       '-C', cloneDir, 'rev-parse', 'HEAD',
     ], { timeout: 5000 });
     const resolvedRevision = (revisionOut || '').trim();
-    const build = await applicationRuntime.build(config, {
-      app,
-      revision: resolvedRevision,
-      environment: 'staging',
-      sessionId: session.id,
-      sourceDir: cloneDir,
-      dockerImage: imageName,
-    });
+    const imageProgress = makeImageProgressReporter(config, session, timings, imageBuildStartedAt);
+    let build;
+    try {
+      build = await applicationRuntime.build(config, {
+        app,
+        revision: resolvedRevision,
+        environment: 'staging',
+        sessionId: session.id,
+        sourceDir: cloneDir,
+        dockerImage: imageName,
+        onProgress: imageProgress.report,
+      });
+    } finally {
+      imageProgress.close();
+    }
     timings.imageBuildMs = Date.now() - imageBuildStartedAt;
+    // The phases with their times, for the finished build's record: the
+    // kpack pod's own stamps, or the last docker step counter.
+    const finalImage = build && Array.isArray(build.phases) && build.phases.length
+      ? { phases: build.phases }
+      : imageProgress.last();
+    if (finalImage && Array.isArray(finalImage.phases) && finalImage.phases.length) {
+      timings.imagePhases = finalImage.phases;
+    }
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
 
     // 3. Clone the production database. cloneDatabase creates a fresh
@@ -924,6 +972,7 @@ async function rebuildProductionInner(config, app) {
 }
 
 module.exports = {
+  _makeImageProgressReporterForTest: makeImageProgressReporter,
   buildAndDeployStaging,
   hasInFlightBuild,
   previewDisplayState,

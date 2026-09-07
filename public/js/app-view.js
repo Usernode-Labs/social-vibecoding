@@ -8625,17 +8625,32 @@ const AppView = {
     const doneSteps = Array.isArray(b.steps) ? b.steps.filter((s) => s && keys.includes(s.key)) : [];
     const current = typeof b.step === 'string' ? b.step : null;
     const done = current === 'done';
+    // The image build's own progress (see _imageProgressView): live under
+    // the running "build image" step, and as the finished step's phases.
+    const image = current === 'image_build' ? AppView._imageProgressView(b.image) : null;
     const steps = keys.map((key) => {
       const copy = AppView.BUILD_STEP_COPY[key];
       const rec = doneSteps.find((s) => s.key === key);
       const state = rec ? 'done' : (key === current ? 'now' : 'todo');
       const via = rec && rec.via === 'template' ? ' (from template)' : '';
-      return { key, label: copy.label + via, ms: rec && Number.isFinite(rec.ms) ? rec.ms : null, state };
+      const step = { key, label: copy.label + via, ms: rec && Number.isFinite(rec.ms) ? rec.ms : null, state };
+      if (key === 'image_build') {
+        if (image) { step.phases = image.phases; step.detail = image.detail; }
+        else if (rec && Array.isArray(rec.phases) && rec.phases.length) {
+          step.phases = rec.phases.map((ph) => ({ name: String(ph.name), ms: Number.isFinite(ph.ms) ? ph.ms : null, state: 'done' }));
+        }
+      }
+      return step;
     });
     const parts = doneSteps.map((s) => {
       const copy = AppView.BUILD_STEP_COPY[s.key];
       const via = s.via === 'template' ? ' from template' : '';
-      return `${copy.done}${via} (${AppView._fmtMs(s.ms)})`;
+      // The image step names its phases so a slow build says which phase
+      // it spent the time in.
+      const phases = s.key === 'image_build' && Array.isArray(s.phases) && s.phases.length
+        ? `: ${s.phases.filter((ph) => Number.isFinite(ph.ms)).map((ph) => `${ph.name} ${AppView._fmtMs(ph.ms)}`).join(', ')}`
+        : '';
+      return `${copy.done}${via} (${AppView._fmtMs(s.ms)}${phases})`;
     });
     let sentence;
     let sub;
@@ -8645,13 +8660,53 @@ const AppView = {
       sub = `built in ${AppView._fmtMs(total)}`;
     } else {
       const copy = current && AppView.BUILD_STEP_COPY[current];
-      const doing = copy ? copy.doing : 'building';
+      let doing = copy ? copy.doing : 'building';
+      if (image && image.doing) doing = `${doing} (${image.doing})`;
       sentence = parts.length
         ? `Preview build: ${parts.join(', ')}, now ${doing}.`
         : `Preview build: ${doing}.`;
       sub = `build: ${doing}`;
     }
-    return { steps, sentence, sub, done, current };
+    return { steps, sentence, sub, done, current, image };
+  },
+
+  // Inside the "build image" step. On the cluster the image is a buildpack
+  // build whose lifecycle phases (prepare, analyze, detect, restore, build,
+  // export) come with their own times, and the running phase's last log
+  // line is the detail; on docker it is the builder's step counter. Copy
+  // says which and never guesses a phase list it was not given.
+  IMAGE_PHASE_COPY: {
+    prepare: 'fetching source', analyze: 'analyzing the last image', detect: 'detecting buildpacks',
+    restore: 'restoring cached layers', build: 'running the buildpacks', export: 'exporting the image',
+    completion: 'finishing',
+  },
+  _imageProgressView(img) {
+    if (!img || typeof img !== 'object') return null;
+    const phase = typeof img.phase === 'string' ? img.phase : null;
+    const donePhases = Array.isArray(img.phases) ? img.phases.filter((ph) => ph && typeof ph.name === 'string') : [];
+    const detail = typeof img.detail === 'string' && img.detail.trim() ? img.detail.trim().slice(0, 160) : null;
+    const hasCounter = Number.isInteger(img.index) && Number.isInteger(img.total) && img.total > 0;
+    // The phase row: the finished ones (with their times), the running one,
+    // and, when the list is the known lifecycle, the ones still ahead.
+    const known = ['prepare', 'analyze', 'detect', 'restore', 'build', 'export'];
+    const names = donePhases.map((ph) => ph.name);
+    if (phase && !names.includes(phase) && phase !== 'completion') names.push(phase);
+    const lifecycle = names.every((n) => known.includes(n));
+    const order = lifecycle ? known.filter((n) => names.includes(n) || known.indexOf(n) > known.indexOf(names[names.length - 1] || 'prepare')) : names;
+    const phases = order.map((name) => {
+      const rec = donePhases.find((ph) => ph.name === name);
+      return { name, ms: rec && Number.isFinite(rec.ms) ? rec.ms : null, state: rec ? 'done' : (name === phase ? 'now' : 'todo') };
+    });
+    let doing = null;
+    if (hasCounter) {
+      doing = `step ${img.index} of ${img.total}${phase ? ` in ${phase}` : ''}${detail ? `: ${detail}` : ''}`;
+    } else if (phase) {
+      const copy = AppView.IMAGE_PHASE_COPY[phase] || `${phase} phase`;
+      doing = `${copy}${detail ? `: ${detail}` : ''}`;
+    } else if (detail) {
+      doing = detail;
+    }
+    return { phase, phases, detail, doing, index: hasCounter ? img.index : null, total: hasCounter ? img.total : null };
   },
 
   // The repo unit suite (`npm test`) runs in its own container alongside the
@@ -8739,6 +8794,22 @@ const AppView = {
       // nothing at all, so legacy rows are unchanged.
       const why = AppView._checksTriggerCopy(pr.check_trigger);
       if (why) rows.push({ t: 'line', parts: [why], weight: 'foot' });
+      // What happens to THIS run if main moves first. Three rows used to
+      // describe the same proposal without any of them saying which acts
+      // first: the checks row said a run was going, the "Behind main" pill
+      // said a sync was coming, and neither said that the sync ends the run.
+      // It does: a sync moves the commit this run is judged against, so the
+      // run in flight is restarted on the synced commit. Say it here, on the
+      // row the reader is watching, rather than leaving it to be inferred
+      // from two other rows.
+      const behindNow = AppView._freshnessOf(pr).behindBy || 0;
+      if (behindNow > 0) {
+        rows.push({
+          t: 'line',
+          parts: [`Main has moved ${behindNow} commit${behindNow === 1 ? '' : 's'} ahead. This run is judged against the commit before that, so when the platform syncs this proposal the run starts again on the synced commit.`],
+          weight: 'foot',
+        });
+      }
       if (stale) rows.push({ t: 'line', parts: ['If this has been running for a while, the platform re-runs the checks automatically, or re-run them now.'], weight: 'foot' });
       // Live progress, when the run has reported any. `progress` is drawn as
       // a bar by the ledger row; `sub` is the same fact as text under the

@@ -91,20 +91,52 @@ const STAGING_STOP_GRACE_SEC = 2;
 // grace — i.e. Docker had to SIGKILL. Slack absorbs docker CLI overhead.
 const FORCE_KILL_SLACK_MS = 400;
 
-async function buildImage(contextPath, tag, buildArgs = {}) {
+// One line of `docker build` output, as progress: the classic builder's
+// `Step 4/31 : RUN npm ci` and BuildKit's `#7 [shell 4/9] RUN npm ci` both
+// carry a step counter and the instruction. Null for any other line.
+function parseDockerBuildLine(line) {
+  const l = String(line || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
+  let m = /^Step (\d+)\/(\d+) : (.*)$/.exec(l);
+  if (m) return { index: parseInt(m[1], 10), total: parseInt(m[2], 10), phase: null, detail: m[3].trim() };
+  m = /^#\d+ \[([^\]]*?)(?:\s+(\d+)\/(\d+))?\] (.*)$/.exec(l);
+  if (m) {
+    const stage = (m[1] || '').trim() || null;
+    return {
+      index: m[2] ? parseInt(m[2], 10) : null,
+      total: m[3] ? parseInt(m[3], 10) : null,
+      phase: stage,
+      detail: m[4].trim(),
+    };
+  }
+  return null;
+}
+
+// `onProgress(image)`: `{ phase, index, total, detail }` per step line the
+// builder prints (see parseDockerBuildLine), read off the child's stdout and
+// stderr as they stream. The run is still judged from the exit code.
+async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null } = {}) {
   const buildArgFlags = Object.entries(buildArgs).flatMap(
     ([k, v]) => ['--build-arg', `${k}=${v}`]
   );
   log.info('docker', 'Building image', { context: contextPath, tag, buildArgs });
   const startedAt = Date.now();
   try {
-    await execFileAsync(
+    const promise = execFileAsync(
       'docker',
       ['build', ...buildArgFlags, '-t', tag, contextPath],
       // Generous maxBuffer so a chatty build still yields a usable log
       // tail instead of a bare "maxBuffer exceeded" error (#416).
       { timeout: 5 * 60 * 1000, maxBuffer: 8 * 1024 * 1024 }
     );
+    if (typeof onProgress === 'function' && promise.child) {
+      const observe = (line) => {
+        const step = parseDockerBuildLine(line);
+        if (step) onProgress(step);
+      };
+      if (promise.child.stdout) attachLineObserver(promise.child.stdout, observe);
+      if (promise.child.stderr) attachLineObserver(promise.child.stderr, observe);
+    }
+    await promise;
   } catch (err) {
     // Attach the build output tail so deploy callers can persist a
     // diagnosable apps.last_failure record (see services/deploy-failure).
@@ -811,6 +843,7 @@ module.exports = {
   containerHostname,
   execShellStdin,
   buildImage,
+  parseDockerBuildLine,
   attachLineObserver,
   runContainer,
   runOneShot,
