@@ -88,6 +88,7 @@ import { AppGrid } from './app-grid';
 import { AppsMore } from './apps-more';
 import { ChallengesSection, CreateSection, DiscoverSection } from './panels/sections';
 import { SectionHeading } from './panels/ui';
+import { WelcomeBanner } from './welcome-banner';
 import { WidgetStrip } from './widget-strip';
 
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -170,6 +171,13 @@ export function HomeScreen() {
           in the grid now, so nothing below the grid is anchored any more.)
       */}
       <div id="home-body" className="home-column home-body-fill">
+        {/*
+            #1561: the once-per-account explainer. Above everything, because
+            it is the thing a first-time viewer needs before the grid means
+            anything; always in the document and `hidden` until its effect
+            says otherwise, which is what keeps the prerender byte-identical.
+        */}
+        <WelcomeBanner />
         {/*
             iOS in-app only: the "Usernode widget" editing strip, mirroring
             the pinned grid the homescreen widget renders. It lives ABOVE the
