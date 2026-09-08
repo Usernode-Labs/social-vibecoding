@@ -10844,9 +10844,19 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 :is(.dev-card-dense, .dev-card-topic) .dev-card-badges { margin-top: 8px; gap: 4px 6px; }
 :is(.dev-card-dense, .dev-card-topic) .dev-card-badges.dev-card-status {
   min-height: 0;
-  /* 30 (bar) + 4 (gap) + 22 (the facts row, whose tallest member is now a
-     control: the preview pill and, in the Workshop, the Open card toggle). */
-  max-height: 56px;
+  /* THREE flex lines, not two: `.dev-card-band-break` is a full-width,
+     zero-height item that forces the wrap, and it takes a line of its own
+     WITH a row gap on each side. So the sum is 30 (bar) + 4 + 0 (break) + 4
+     + 22 (the facts row, whose tallest member is a control: the preview
+     pill and, in the Workshop, the Open card toggle) = 60.
+
+     Measured, not derived: 56 was 30 + 4 + 22, the break forgotten, and the
+     band clipped its own last 4px. It was 52 before that and clipping 5,
+     which nobody saw because the facts line was flat text and the loss fell
+     in the descender space under it. A 22px pill puts its bottom edge there
+     instead, and a control with its bottom edge shaved is the bug report
+     that found this. */
+  max-height: 60px;
 }
 .dev-card-band-break { flex-basis: 100%; height: 0; }
 /* The bar: 30px, r14, no outline (the wash is the surface), and its label
@@ -11597,7 +11607,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dev-ws-strip, .dev-ws-theme { background-color: var(--dc-sheet); }
 }
-.dev-ws-strip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+/* CENTRE, not baseline. Baseline was right while the only thing beside the
+   eyebrow was a 22px pill; with a 30px ring in the line the eyebrow's
+   baseline aligned to the bottom of the ring and the two read as two rows. */
+.dev-ws-strip-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dev-ws-strip-text { margin: 0; font-size: 14px; color: var(--text-primary); }
 /* ── The Workshop's orientation pane ─────────────────────────
    "Since your last visit" moved inside "Where the app is": the description
@@ -11613,6 +11626,21 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    Dev screen and in a weight nothing else there wears. `.gc-vote-btn` is the
    platform's small action pill and is already what this screen uses. */
 .dev-ws-lane-btn { margin: 2px 0 0 4px; }
+/* The offer under a lane's heading, where the heading states the fact. */
+.dev-ws-lane-note { margin: -2px 0 6px 16px; font-size: 12px; color: var(--text-muted); }
+/* ── "What needs you": the ring, and the way to put it down ──
+   The pane stated a debt in the warning tint with no way to close it. The
+   ring is the home screen's Challenges primitive saying the same thing as
+   progress, and the × stores the OWED COUNT so the pane comes back by itself
+   the moment that number changes. */
+.dev-ws-needs-end { display: inline-flex; align-items: center; gap: 6px; }
+.dev-ws-vote-ring { width: 30px; height: 30px; }
+.dev-ws-needs-close {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border: 0; border-radius: 999px;
+  background: none; color: var(--text-muted); cursor: pointer; padding: 0;
+}
+.dev-ws-needs-close:hover { background: var(--state-neutral-bg); color: var(--text-primary); }
 .dev-ws-pill {
   display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px;
   font-size: 12px; font-weight: 600; white-space: nowrap;
@@ -11754,7 +11782,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   background: var(--dc-sheet);
   color: var(--text-primary); font: inherit; cursor: pointer;
 }
-.dev-ws-row:hover { background: var(--state-neutral-bg); border-color: var(--border); }
+/* The hover FILL is the card's, applied as the card applies it: the same
+   `hover:bg-zinc-50 dark:hover:bg-zinc-800` utilities, on the row itself
+   (workshop.tsx). Two sizes of one object hovering to two different greys is
+   the same mismatch as two icons or two chip styles, and hard-coding the
+   colour here could not have fixed it — `zinc` is overridden in
+   tailwind.config.js, so a hex copied from the stock palette would be a
+   third grey rather than the card's. Only the border stays here. */
+.dev-ws-row:hover { border-color: var(--border); }
 .dev-ws-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The row's icon is the CARD's icon, to the pixel: the same 22px box with no
    tile and no fill, and the same 18px glyph. It used to be a 28px tinted
