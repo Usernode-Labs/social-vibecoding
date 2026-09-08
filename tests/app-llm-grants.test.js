@@ -16,6 +16,10 @@ const poolMod = require('../src/db/pool');
 
 const state = {
   userLimit: 2500,
+  // #1788: the weekly cap, off by default (0 = "does not apply") so every
+  // pre-existing case here stays a daily-only account.
+  weeklyLimit: 0,
+  weeklyOverride: null,
   hasIdentity: false,
   identityLookupError: false,
   apiKeyEnc: null,
@@ -29,13 +33,19 @@ const state = {
 function mockQuery(sql, params) {
   if (/EXISTS \([\s\S]*user_social_identities/.test(sql)) {
     if (state.identityLookupError) throw new Error('identity store unavailable');
-    return { rows: [{ daily_limit_cents: state.userLimit, has_social_identity: state.hasIdentity }] };
+    return {
+      rows: [{
+        daily_limit_cents: state.userLimit,
+        weekly_limit_cents: state.weeklyOverride,
+        has_social_identity: state.hasIdentity,
+      }],
+    };
   }
-  if (/SELECT daily_limit_cents FROM users/.test(sql)) {
-    return { rows: [{ daily_limit_cents: state.userLimit }] };
+  if (/SELECT daily_limit_cents(?:, weekly_limit_cents)? FROM users/.test(sql)) {
+    return { rows: [{ daily_limit_cents: state.userLimit, weekly_limit_cents: state.weeklyOverride }] };
   }
   if (/SELECT value FROM platform_settings/.test(sql)) {
-    return { rows: [{ value: '2500' }] };
+    return { rows: [{ value: String(params[0] === limits.KEY_WEEKLY ? state.weeklyLimit : 2500) }] };
   }
   if (/SELECT id, name, slug FROM apps WHERE slug/.test(sql)) {
     const app = state.apps.get(params[0]);
@@ -142,6 +152,8 @@ beforeEach(() => {
   limits.invalidate();
   state.grants.clear();
   state.userLimit = 2500;
+  state.weeklyLimit = 0;
+  state.weeklyOverride = null;
   state.hasIdentity = false;
   state.identityLookupError = false;
   state.apiKeyEnc = null;
@@ -402,5 +414,48 @@ test('an entitlement lookup outage still permits an explicitly consented BYOK gr
     });
     assert.equal(res.status, 200);
     assert.equal((await res.json()).grant.dailyCapCents, 250);
+  });
+});
+
+// ── #1788: a weekly-only account can still consent to an app ────────────
+//
+// The per-app cap is validated against the user's own allowance, and that
+// allowance used to be one number. With a daily cap of 0 now meaning "this
+// cap does not apply" rather than "blocked", reading only the daily figure
+// would leave a user with a healthy weekly allowance unable to grant an
+// app any cap at all.
+
+test('with the daily cap switched off, the weekly allowance is the cap ceiling', async () => {
+  state.userLimit = 0;         // admin switched the daily cap off
+  state.weeklyOverride = 5000; // $50 for the week
+  await withServer(async (base) => {
+    const ok = await fetch(`${base}/api/me/llm-grants`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appSlug: 'demo-app', dailyCapCents: 5000 }),
+    });
+    assert.equal(ok.status, 200, 'the weekly allowance is a real allowance');
+
+    const tooBig = await fetch(`${base}/api/me/llm-grants`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appSlug: 'demo-app', dailyCapCents: 5001 }),
+    });
+    assert.equal(tooBig.status, 400, 'and it is still a bound, not a bypass');
+    const body = await tooBig.json();
+    assert.match(body.error, /\$50\.00/);
+  });
+});
+
+test('with BOTH caps switched off there is nothing to grant', async () => {
+  state.userLimit = 0;
+  state.weeklyOverride = 0;
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/api/me/llm-grants`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appSlug: 'demo-app', dailyCapCents: 100 }),
+    });
+    assert.equal(res.status, 400, 'no allowance, no per-app cap to carve out of it');
   });
 });

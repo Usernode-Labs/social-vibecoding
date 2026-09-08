@@ -75,6 +75,7 @@ function LimitsSection() {
   const dis = !canWrite;
 
   const [user, setUser] = useState('');
+  const [weekly, setWeekly] = useState('');
   const [global, setGlobal] = useState('');
   const [system, setSystem] = useState('');
   const [limitsStatus, setLimitsStatus] = useState<Status | null>(null);
@@ -93,6 +94,7 @@ function LimitsSection() {
 
   const fillLimits = useCallback((data: any) => {
     setUser(console_().centsToDollars(data.user_daily_limit_cents));
+    setWeekly(console_().centsToDollars(data.user_weekly_limit_cents));
     setGlobal(console_().centsToDollars(data.global_daily_limit_cents));
     setSystem(console_().centsToDollars(data.system_tokens_daily_limit_cents));
   }, []);
@@ -135,9 +137,11 @@ function LimitsSection() {
     const body: Record<string, number> = {};
     try {
       const u = console_().parseDollarsToCents('Default per-user', user.trim());
+      const w = console_().parseDollarsToCents('Default per-user weekly', weekly.trim());
       const g = console_().parseDollarsToCents('Global', global.trim());
       const s = console_().parseDollarsToCents('System tokens', system.trim());
       if (u !== null) body.user = u;
+      if (w !== null) body.weekly = w;
       if (g !== null) body.global = g;
       if (s !== null) body.system = s;
       if (!Object.keys(body).length) throw new Error('Provide at least one value.');
@@ -200,11 +204,14 @@ function LimitsSection() {
       <div className={`${AdminUI.card} p-4`}>
         <div className="flex items-center justify-between mb-3">
           <h2 className={AdminUI.cardTitle}>LLM Spend Limits</h2>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">USD · resets midnight UTC</span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">USD · daily resets midnight UTC, weekly Monday 00:00 UTC</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
           <MoneyField id="admin-limit-user" label="Default per-user daily cap" placeholder="25.00"
             value={user} onChange={setUser} disabled={dis} />
+          <MoneyField id="admin-limit-weekly" label="Default per-user weekly cap" placeholder="175.00"
+            title="Enforced on top of the daily cap. Set either to 0 to switch that window off; with both at 0 the account has no allowance."
+            value={weekly} onChange={setWeekly} disabled={dis} />
           <MoneyField id="admin-limit-global" label="Global daily cap" placeholder="200.00"
             value={global} onChange={setGlobal} disabled={dis} />
           <MoneyField id="admin-limit-system" label="System tokens daily cap" placeholder="25.00"
@@ -214,6 +221,8 @@ function LimitsSection() {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             Per-user overrides live in the Users section; these are the platform defaults.
+            A cap set to 0 switches that window off. With both the daily and the weekly
+            cap at 0, the account has no AI allowance at all.
           </p>
           {canWrite ? (
             <button id="admin-save-limits-btn" type="button" className={AdminUI.btn.primary}

@@ -2,6 +2,11 @@
 
 const log = require('./logger');
 const turnEffects = require('./turn-effects');
+// #1788: the weekly cap reuses the platform's existing week boundary
+// (Monday 00:00 UTC) rather than inventing a second one. This helper is
+// the same one the weekly kudos allowance and the leaderboard's "week"
+// window use, and it agrees with Postgres date_trunc('week', ...).
+const { weekStartUtc } = require('./leaderboard-users');
 
 // Daily LLM-spend caps. Both values live in `platform_settings` and are
 // admin-tunable from /admin (see src/routes/admin.js endpoints
@@ -20,6 +25,12 @@ const KEY_GLOBAL = 'global_daily_limit_cents';
 // resolution turns. Lives in platform_settings like the other two and
 // is admin-tunable from /admin. Defaults to $25/day (2500 cents).
 const KEY_SYSTEM = 'system_tokens_daily_limit_cents';
+// #1788: per-user WEEKLY cap, layered on top of the daily one. Same
+// storage (platform_settings), same 10s cache, same per-user override
+// pattern (users.weekly_limit_cents, NULL = platform default). Either cap
+// set to 0 — or missing — means "this cap does not apply"; see
+// resolveCaps() for the full four-way table.
+const KEY_WEEKLY = 'user_weekly_limit_cents';
 
 const CREDIT_POLICY_LEGACY = 'legacy';
 const CREDIT_POLICY_TIERED = 'tiered';
@@ -42,6 +53,22 @@ const LOW_BALANCE_PCT = 80;
 function dailyResetAt() {
   const reset = new Date();
   reset.setUTCHours(24, 0, 0, 0);
+  return reset.toISOString();
+}
+
+// Human-readable names for the two boundaries. Every sentence the product
+// says about a reset comes from one of these, so a message can never
+// promise midnight when the weekly cap is what actually bound the turn.
+const DAILY_RESET_LABEL = 'midnight UTC';
+const WEEKLY_RESET_LABEL = 'Monday 00:00 UTC';
+
+// The weekly counterpart of dailyResetAt(): the NEXT Monday 00:00 UTC.
+// Derived from weekStartUtc so the reset instant and the SQL window can
+// never drift apart — start of this week plus exactly seven days.
+function weeklyResetAt(now = new Date()) {
+  const start = weekStartUtc(now);
+  const reset = new Date(`${start}T00:00:00.000Z`);
+  reset.setUTCDate(reset.getUTCDate() + 7);
   return reset.toISOString();
 }
 
@@ -96,6 +123,14 @@ async function getDefaultUserLimitCents(pool) {
   return readSettingCents(pool, KEY_USER, 2500);
 }
 
+// #1788: the platform-default weekly cap. The fallback is seven times the
+// daily fallback, matching what the schema seeds on a fresh deploy — so a
+// platform_settings read failure degrades to the same allowance the row
+// would have held rather than to an accidental cut-off.
+async function getDefaultUserWeeklyLimitCents(pool) {
+  return readSettingCents(pool, KEY_WEEKLY, 17500);
+}
+
 // #361: the system-tokens daily cap (cents). Same 10s-cached read as the
 // other two caps; admin writes call invalidate(KEY_SYSTEM).
 async function getSystemTokensLimitCents(pool) {
@@ -119,26 +154,32 @@ function identityCreditPolicy() {
 async function getUserCreditEntitlement(pool, userId) {
   const policy = identityCreditPolicy();
   if (policy === CREDIT_POLICY_LEGACY) {
+    let row = null;
     try {
       const { rows } = await pool.query(
-        'SELECT daily_limit_cents FROM users WHERE id = $1',
+        'SELECT daily_limit_cents, weekly_limit_cents FROM users WHERE id = $1',
         [userId]
       );
-      const override = rows[0]?.daily_limit_cents;
-      if (override != null && Number.isFinite(Number(override)) && Number(override) >= 0) {
-        return {
-          policy,
-          tier: 'override',
-          source: 'admin_override',
-          limitCents: Number(override),
-          verificationRequired: false,
-          entitlementAvailable: true,
-        };
-      }
+      row = rows[0] || null;
     } catch (err) {
       log.warn('limits', 'user override read failed; using legacy default', {
         userId, err: err.message,
       });
+    }
+    // #1788: the weekly allowance is resolved independently of the daily
+    // one — a user may hold an override for either, both or neither.
+    const weekly = await resolveWeeklyEntitlement(pool, row);
+    const override = row?.daily_limit_cents;
+    if (override != null && Number.isFinite(Number(override)) && Number(override) >= 0) {
+      return {
+        policy,
+        tier: 'override',
+        source: 'admin_override',
+        limitCents: Number(override),
+        verificationRequired: false,
+        entitlementAvailable: true,
+        ...weekly,
+      };
     }
     return {
       policy,
@@ -147,12 +188,14 @@ async function getUserCreditEntitlement(pool, userId) {
       limitCents: await getDefaultUserLimitCents(pool),
       verificationRequired: false,
       entitlementAvailable: true,
+      ...weekly,
     };
   }
 
   try {
     const { rows } = await pool.query(
       `SELECT u.daily_limit_cents,
+              u.weekly_limit_cents,
               EXISTS (
                 SELECT 1
                   FROM user_social_identities usi
@@ -164,6 +207,7 @@ async function getUserCreditEntitlement(pool, userId) {
     );
     const row = rows[0];
     if (!row) throw new Error('user not found');
+    const weekly = await resolveWeeklyEntitlement(pool, row);
     const override = row.daily_limit_cents;
     if (override != null && Number.isFinite(Number(override)) && Number(override) >= 0) {
       return {
@@ -173,6 +217,7 @@ async function getUserCreditEntitlement(pool, userId) {
         limitCents: Number(override),
         verificationRequired: false,
         entitlementAvailable: true,
+        ...weekly,
       };
     }
     if (row.has_social_identity) {
@@ -183,6 +228,7 @@ async function getUserCreditEntitlement(pool, userId) {
         limitCents: TIER_ONE_LIMIT_CENTS,
         verificationRequired: false,
         entitlementAvailable: true,
+        ...weekly,
       };
     }
     return {
@@ -192,6 +238,7 @@ async function getUserCreditEntitlement(pool, userId) {
       limitCents: 0,
       verificationRequired: true,
       entitlementAvailable: true,
+      ...weekly,
     };
   } catch (err) {
     log.warn('limits', 'identity entitlement read failed; refusing platform credits', {
@@ -204,8 +251,87 @@ async function getUserCreditEntitlement(pool, userId) {
       limitCents: 0,
       verificationRequired: false,
       entitlementAvailable: false,
+      // Eligibility could not be read at all, so nothing is granted on
+      // either axis — checkBudget refuses before any cap arithmetic runs.
+      weeklyLimitCents: 0,
+      weeklySource: 'unavailable',
     };
   }
+}
+
+// #1788: per-user weekly allowance + where it came from, resolved from the
+// same `users` row the daily entitlement read. Mirrors the daily override
+// rule exactly: an explicit non-negative value wins, NULL falls back to the
+// platform default. A missing row (read failure) also falls back, which is
+// the non-punitive direction — an unreadable override must not silently
+// become a cut-off.
+async function resolveWeeklyEntitlement(pool, row) {
+  const override = row?.weekly_limit_cents;
+  if (override != null && Number.isFinite(Number(override)) && Number(override) >= 0) {
+    return { weeklyLimitCents: Number(override), weeklySource: 'admin_override' };
+  }
+  return {
+    weeklyLimitCents: await getDefaultUserWeeklyLimitCents(pool),
+    weeklySource: 'default',
+  };
+}
+
+// #1788: the whole daily/weekly interaction, in one place, so checkBudget,
+// getBudgetSnapshot, the worker Anthropic proxy and the app LLM proxy can
+// never disagree about it. Four cases:
+//
+//   daily > 0, weekly > 0  → both apply; the turn stops at whichever is
+//                            exhausted first.
+//   daily 0/unset          → weekly only. No daily ceiling at all: the
+//                            week's allowance may be spent in one day.
+//   weekly 0/unset         → daily only. Today's behaviour, unchanged.
+//   both 0/unset           → NOTHING applies, so nothing is granted. With
+//                            no ceiling of either kind the safe reading is
+//                            "no platform credits", not "unlimited".
+//
+// The zero-means-disabled reinterpretation is deliberately scoped to caps
+// an admin actually set: only `admin_override` and `default` sources may be
+// switched off that way. An identity-derived 0 (tiered policy, unverified
+// account) keeps applying, so a weekly allowance can never unlock credits
+// that identity verification is meant to gate.
+function resolveCaps(entitlement = {}) {
+  const dailyLimitCents = Number(entitlement.limitCents) || 0;
+  const dailySource = entitlement.source;
+  const dailyOptional = dailySource === 'admin_override' || dailySource === 'default';
+
+  const weeklyLimitCents = Number(entitlement.weeklyLimitCents) || 0;
+  const weeklySource = entitlement.weeklySource;
+  const weeklyOptional = weeklySource === 'admin_override' || weeklySource === 'default';
+
+  return {
+    dailyApplies: dailyOptional ? dailyLimitCents > 0 : true,
+    dailyLimitCents,
+    dailySource: dailySource || null,
+    weeklyApplies: weeklyOptional ? weeklyLimitCents > 0 : false,
+    weeklyLimitCents,
+    weeklySource: weeklySource || null,
+  };
+}
+
+// Week-to-date platform-key spend for one user (cents), over the current
+// Monday-00:00-UTC week. Reads the SAME daily ledger the daily cap reads —
+// llm_usage is one row per (user_id, date), so a weekly figure is a sum,
+// not a second table. BYOK spend is excluded, exactly as it is daily.
+async function getWeeklySpentCents(pool, userId, { now = new Date() } = {}) {
+  const { rows } = await pool.query(
+    `SELECT COALESCE(SUM(total_cost_cents), 0) AS total
+       FROM llm_usage
+      WHERE user_id = $1 AND date >= $2`,
+    [userId, weekStartUtc(now)]
+  );
+  return parseFloat(rows[0]?.total || 0);
+}
+
+// The per-user weekly cap actually in force (cents), for the two proxies'
+// cached gates. 0 means "no weekly cap applies".
+async function getEffectiveUserWeeklyLimitCents(pool, userId) {
+  const caps = resolveCaps(await getUserCreditEntitlement(pool, userId));
+  return caps.weeklyApplies ? caps.weeklyLimitCents : 0;
 }
 
 async function getEffectiveUserLimitCents(pool, userId) {
@@ -229,13 +355,14 @@ async function checkBudget(pool, userId) {
     };
   }
   const globalLimit = await getGlobalLimitCents(pool);
+  const caps = resolveCaps(entitlement);
 
   const { rows: userRows } = await pool.query(
     'SELECT total_cost_cents FROM llm_usage WHERE user_id = $1 AND date = CURRENT_DATE',
     [userId]
   );
   const userSpent = parseFloat(userRows[0]?.total_cost_cents || 0);
-  if (userSpent >= userLimit) {
+  if (caps.dailyApplies && userSpent >= userLimit) {
     if (entitlement.verificationRequired) {
       return {
         error: 'Connect GitHub or X in Settings to unlock $10.00/day of Usernode credits.',
@@ -244,8 +371,42 @@ async function checkBudget(pool, userId) {
       };
     }
     return {
-      error: `Daily limit reached ($${(userLimit / 100).toFixed(2)}). Resets at midnight UTC.`,
+      error: `Daily limit reached ($${(userLimit / 100).toFixed(2)}). Resets at ${DAILY_RESET_LABEL}.`,
       reason: 'user_limit',
+      ...entitlement,
+    };
+  }
+
+  // #1788: the weekly ceiling, checked after the daily one so a user who is
+  // out on BOTH is told about the shorter wait first.
+  let weeklySpent = 0;
+  if (caps.weeklyApplies) {
+    try {
+      weeklySpent = await getWeeklySpentCents(pool, userId);
+    } catch (err) {
+      // Same tolerance the rest of this gate has for a bookkeeping read:
+      // an unreadable ledger must not turn into a refusal. The proxies'
+      // mid-stream kill still bounds runaway spend.
+      log.warn('limits', 'weekly spend read failed; allowing turn', {
+        userId, err: err.message,
+      });
+    }
+    if (weeklySpent >= caps.weeklyLimitCents) {
+      return {
+        error: `Weekly limit reached ($${(caps.weeklyLimitCents / 100).toFixed(2)}). Resets ${WEEKLY_RESET_LABEL}.`,
+        reason: 'weekly_limit',
+        ...entitlement,
+      };
+    }
+  }
+
+  // Neither cap applies. Not "unlimited" — an account with no ceiling of
+  // any kind has no allowance to draw on, so it fails closed. BYOK still
+  // works: resolveBillingPath resolves the user's own key after this gate.
+  if (!caps.dailyApplies && !caps.weeklyApplies) {
+    return {
+      error: 'No AI allowance is configured for this account. An admin can set a daily or weekly cap in the admin console.',
+      reason: 'no_allowance',
       ...entitlement,
     };
   }
@@ -272,6 +433,11 @@ async function checkBudget(pool, userId) {
     globalLimit,
     userRemaining: userLimit - userSpent,
     globalRemaining: globalLimit - globalSpent,
+    weeklyLimit: caps.weeklyApplies ? caps.weeklyLimitCents : null,
+    weeklySpent,
+    weeklyRemaining: caps.weeklyApplies
+      ? Math.max(0, caps.weeklyLimitCents - weeklySpent)
+      : null,
   };
 }
 
@@ -286,10 +452,12 @@ async function checkBudget(pool, userId) {
 // spend went to the user's own key and no cap has ever counted it (#119).
 async function getBudgetSnapshot(pool, userId) {
   const entitlement = await getUserCreditEntitlement(pool, userId);
+  const caps = resolveCaps(entitlement);
   const limitCents = entitlement.limitCents;
   let spentCents = 0;
   let byokCents = 0;
   let hasByokKey = false;
+  let weeklySpentCents = 0;
   try {
     const { rows } = await pool.query(
       `SELECT COALESCE(lu.total_cost_cents, 0) AS total_cost_cents,
@@ -310,6 +478,28 @@ async function getBudgetSnapshot(pool, userId) {
     // spent" — the limit itself is still accurate.
     log.warn('limits', 'budget snapshot read failed', { userId, err: err.message });
   }
+  if (caps.weeklyApplies) {
+    try {
+      weeklySpentCents = await getWeeklySpentCents(pool, userId);
+    } catch (err) {
+      log.warn('limits', 'weekly snapshot read failed', { userId, err: err.message });
+    }
+  }
+
+  // #1788: report the BINDING cap in the fields the client already reads.
+  // The meter, the drawer row and the warning banner all key off
+  // limitCents/spentCents/remainingCents, and public/js/credit-options.js
+  // maps limitCents === 0 to the red "exhausted" state — so a user whose
+  // daily cap is deliberately switched off must never see a literal 0 here
+  // while their weekly allowance still has headroom. Whichever applicable
+  // cap has the least room left is the one that will actually stop the next
+  // turn, so that is the one worth showing.
+  const dailyRemaining = Math.max(0, limitCents - spentCents);
+  const weeklyRemaining = Math.max(0, caps.weeklyLimitCents - weeklySpentCents);
+  const weeklyBinds = caps.weeklyApplies
+    && (!caps.dailyApplies || weeklyRemaining < dailyRemaining);
+  const capWindow = weeklyBinds ? 'weekly' : (caps.dailyApplies ? 'daily' : 'none');
+
   return {
     creditPolicy: entitlement.policy,
     tier: entitlement.tier,
@@ -317,14 +507,26 @@ async function getBudgetSnapshot(pool, userId) {
     verificationRequired: entitlement.verificationRequired,
     entitlementAvailable: entitlement.entitlementAvailable,
     tierLimitCents: TIER_ONE_LIMIT_CENTS,
-    limitCents,
-    spentCents,
-    remainingCents: Math.max(0, limitCents - spentCents),
+    limitCents: weeklyBinds ? caps.weeklyLimitCents : limitCents,
+    spentCents: weeklyBinds ? weeklySpentCents : spentCents,
+    remainingCents: weeklyBinds ? weeklyRemaining : dailyRemaining,
     byokCents,
     hasByokKey,
-    // Midnight UTC, matching the boundary checkBudget's message promises.
-    resetsAt: dailyResetAt(),
+    // The boundary the binding cap actually resets on, matching the
+    // sentence checkBudget's message promises for that same cap.
+    resetsAt: weeklyBinds ? weeklyResetAt() : dailyResetAt(),
     lowBalancePct: LOW_BALANCE_PCT,
+    // #1788: which window the figures above describe, and the breakdown
+    // behind them, so a caller that wants both can have both.
+    capWindow,
+    windowLabel: weeklyBinds ? 'This week' : 'Today',
+    resetLabel: weeklyBinds ? WEEKLY_RESET_LABEL : DAILY_RESET_LABEL,
+    dailyApplies: caps.dailyApplies,
+    dailyLimitCents: limitCents,
+    dailySpentCents: spentCents,
+    weeklyApplies: caps.weeklyApplies,
+    weeklyLimitCents: caps.weeklyLimitCents,
+    weeklySpentCents,
   };
 }
 
@@ -563,14 +765,22 @@ async function recordSystemSpend(pool, costCents) {
 module.exports = {
   getGlobalLimitCents,
   getDefaultUserLimitCents,
+  getDefaultUserWeeklyLimitCents,
   getSystemTokensLimitCents,
   checkSystemBudget,
   recordSystemSpend,
   getEffectiveUserLimitCents,
+  getEffectiveUserWeeklyLimitCents,
+  getWeeklySpentCents,
+  resolveCaps,
   getUserCreditEntitlement,
   identityCreditPolicy,
   getBudgetSnapshot,
   dailyResetAt,
+  weeklyResetAt,
+  weekStartUtc,
+  DAILY_RESET_LABEL,
+  WEEKLY_RESET_LABEL,
   LOW_BALANCE_PCT,
   checkBudget,
   loadUserApiKey,
@@ -581,6 +791,7 @@ module.exports = {
   invalidate,
   KEY_USER,
   KEY_GLOBAL,
+  KEY_WEEKLY,
   KEY_SYSTEM,
   CREDIT_POLICY_LEGACY,
   CREDIT_POLICY_TIERED,

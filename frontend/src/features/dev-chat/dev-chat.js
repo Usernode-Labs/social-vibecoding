@@ -1395,13 +1395,21 @@ const DevChat = {
     };
   },
 
-  // True when the page carries ?demo=1. The server only honours it in
-  // staging (see the demo branch on GET /api/budget in routes/sessions.js),
-  // so this is safe to send always — same pattern as Settings._cliTokensDemo.
-  _budgetDemo() {
+  // The page's ?demo= value, when it is one the budget route answers:
+  // '1' (the daily allowance spent) or, since #1788, 'weekly-out' (the
+  // weekly one spent). The server only honours either in staging (see the
+  // demo branches on GET /api/budget in routes/sessions.js), so this is
+  // safe to send always — same pattern as Settings._cliTokensDemo.
+  _budgetDemoValue() {
     try {
-      return new URLSearchParams(window.location.search).get('demo') === '1';
-    } catch { return false; }
+      const v = new URLSearchParams(window.location.search).get('demo');
+      return (v === '1' || v === 'weekly-out') ? v : null;
+    } catch { return null; }
+  },
+
+  // True when the page carries a demo budget flag of either spelling.
+  _budgetDemo() {
+    return !!DevChat._budgetDemoValue();
   },
 
   async refreshBudget() {
@@ -1426,7 +1434,7 @@ const DevChat = {
       // ?demo=1 passthrough so a staging reviewer can see the exhausted
       // state (red meter + three-route banner) without burning a real
       // daily allowance. Strictly a no-op in production.
-      const res = await fetch(`/api/budget${DevChat._budgetDemo() ? '?demo=1' : ''}`);
+      const res = await fetch(`/api/budget${DevChat._budgetDemo() ? `?demo=${DevChat._budgetDemoValue()}` : ''}`);
       if (res.ok) DevChat.budget = await res.json();
     } catch {}
     DevChat.renderBudget();
@@ -1448,7 +1456,9 @@ const DevChat = {
       role: 'assistant',
       content: '',
       creditsCard: {
-        error: 'Daily limit reached ($20.00). Resets at midnight UTC.',
+        error: DevChat._creditWindow().weekly
+          ? 'Weekly limit reached ($175.00). Resets Monday 00:00 UTC.'
+          : 'Daily limit reached ($20.00). Resets at midnight UTC.',
         hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
         globalOut: DevChat._globalBudgetOut(),
         verificationRequired: false,
@@ -1488,6 +1498,31 @@ const DevChat = {
     const state = DevChat._creditState();
     if (!CO || !state) return '';
     return CO.resetSentence(state);
+  },
+
+  // #1788: the allowance runs over two windows now (daily and weekly) and
+  // the server reports whichever one is BINDING in the legacy
+  // limit/spent/remaining fields. Every sentence that used to hardcode
+  // "today" / "daily" asks here instead, so the meter, its tooltip and the
+  // banner all name the window the numbers actually describe.
+  _creditWindow() {
+    const b = DevChat.budget || {};
+    const weekly = b.capWindow === 'weekly';
+    return {
+      weekly,
+      // "Today: …" / "This week: …"
+      label: b.windowLabel || (weekly ? 'This week' : 'Today'),
+      // "…left today" / "…left this week"
+      when: weekly ? 'this week' : 'today',
+      // "your $20.00 platform daily limit"
+      limitNoun: weekly ? 'weekly limit' : 'daily limit',
+      // "your free daily AI credits"
+      creditsNoun: weekly ? 'free weekly AI credits' : 'free daily AI credits',
+      // Fallback for the reset sentence when CreditOptions is absent.
+      resetFallback: weekly
+        ? 'Resets Monday 00:00 UTC.'
+        : 'Resets at midnight UTC.',
+    };
   },
 
   renderBudget() {
@@ -1614,11 +1649,12 @@ const DevChat = {
         parts.push({ text: ' · ', className: muted });
         parts.push({ text: `your key $${byok}`, className: 'text-emerald-700 dark:text-emerald-400' });
       }
+      const win = DevChat._creditWindow();
       return {
-        title: `Today: $${spent} of your $${limit} platform daily limit`
+        title: `${win.label}: $${spent} of your $${limit} platform ${win.limitNoun}`
           + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
-          + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. `
-          + (resetTip || 'Resets at midnight UTC.'),
+          + `. The ${win.limitNoun} is used first; your key (…${last4}) takes over once it runs out. `
+          + (resetTip || win.resetFallback),
         parts,
       };
     }
@@ -1630,9 +1666,10 @@ const DevChat = {
     // pair — just unmistakably red, with the tooltip pointing at the
     // BYOK escape hatch. The banner carries the wordy explanation.
     if (DevChat._creditsExhausted()) {
+      const winOut = DevChat._creditWindow();
       return {
-        title: `Your free daily AI credits are used up. ${
-          resetTip || 'Resets at midnight UTC.'} Or add your own Anthropic API key in Settings to keep working now.`,
+        title: `Your ${winOut.creditsNoun} are used up. ${
+          resetTip || winOut.resetFallback} Or add your own Anthropic API key in Settings to keep working now.`,
         parts: [
           { text: `$${spent}`, className: 'text-red-700 font-semibold dark:text-red-400' },
           { text: `/$${limit}`, className: 'text-red-700 dark:text-red-400' },
@@ -1641,9 +1678,10 @@ const DevChat = {
     }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
     const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
+    const winOk = DevChat._creditWindow();
     return {
-      title: `Today: $${spent} of your $${limit} free daily AI credits. ${
-        resetTip || 'Resets at midnight UTC.'}`,
+      title: `${winOk.label}: $${spent} of your $${limit} ${winOk.creditsNoun}. ${
+        resetTip || winOk.resetFallback}`,
       parts: [
         { text: `$${spent}`, className: color },
         { text: `/$${limit}`, className: muted },
@@ -1727,9 +1765,11 @@ const DevChat = {
       tone: 'red',
       icon: 'warn',
       lead: userOut
-        ? 'You\u2019ve used up today\u2019s free AI credits.'
+        ? `You\u2019ve used up ${DevChat._creditWindow().when === 'this week'
+          ? 'this week\u2019s' : 'today\u2019s'} free AI credits.`
         : 'The platform\u2019s shared daily AI budget is used up.',
-      reset: DevChat._creditResetSentence() || 'Free credits reset at midnight UTC.',
+      reset: DevChat._creditResetSentence()
+        || `Free credits reset ${DevChat._creditWindow().weekly ? 'Monday 00:00 UTC' : 'at midnight UTC'}.`,
       tail: ' Or keep working right now ' + (DevChat._externalFlowsAvailable()
         ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
         : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'),
@@ -2098,7 +2138,8 @@ const DevChat = {
     const reset = DevChat._creditResetSentence();
     const lead = DevChat._globalBudgetOut()
       ? 'The platform\u2019s shared daily AI budget is used up.'
-      : 'You\u2019ve used up today\u2019s free AI credits.';
+      : `You\u2019ve used up ${DevChat._creditWindow().weekly
+        ? 'this week\u2019s' : 'today\u2019s'} free AI credits.`;
     return reset ? `${lead} ${reset}` : lead;
   },
 
