@@ -74,6 +74,11 @@ function workshopThemesRoutes(config) {
         // placer (`unplaced`, also named by key), and not yet placed.
         coverage: result.coverage || null,
         unplaced: Array.isArray(result.unplaced) ? result.unplaced : [],
+        // Two sentences on the week just gone and what is in flight, written
+        // by the model on the same reconcile that drafted the themes. Null
+        // with no model, before the first draft, or when that call failed —
+        // the client derives a sentence from the counts instead.
+        digest: result.digest || null,
       });
     } catch (err) {
       log.error('workshop-themes', 'GET failed', { message: err.message });

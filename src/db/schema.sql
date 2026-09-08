@@ -6393,6 +6393,14 @@ ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_failed_at TIMESTAMPTZ;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS reconcile_started_at TIMESTAMPTZ;
+-- The Workshop's status paragraph: two sentences on the week just gone and
+-- what is in flight, written by the same model that drafts the themes, from
+-- the same snapshot, on the same reconcile. Kept HERE rather than in its own
+-- table so it can never describe a board the themes beside it were not
+-- drafted against. Empty when no model is configured or the call failed: the
+-- client falls back to a sentence derived from the counts.
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_text TEXT;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_at TIMESTAMPTZ;
 
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,
