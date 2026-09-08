@@ -563,20 +563,39 @@ export function WaitlistScreen() {
         <h1 className={hiddenLast(joined, 'mt-1 text-2xl font-bold')}>
           Join the waitlist
         </h1>
+        {/*
+            #1541: the same four facts, as a lead and a list.
+
+            This was two paragraphs of roughly seventy-five words, and the
+            report was simply that the screen is too much reading. Nothing has
+            been dropped: what the place is, who built the apps, what the chain
+            and the share mean, and how access opens are all still here. They
+            are four separate claims, and a reader scanning for "what is this
+            and what does joining cost me" was having to take them as prose.
+        */}
         <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
-          Usernode Social Vibecoding is a place where users describe the app
-        they want in chat, an AI builds it, and the community votes the
-        changes in. Every app in the directory was built here by the people
-        who use it. They run on the Usernode chain, and contributors own a
-        share of what they build.
+          Describe the app you want in chat, an AI builds it, and the group
+        votes the changes in.
         </p>
-        <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
-          Platform access opens in batches. Join the waitlist and we'll email
-        you when your spot opens. The public apps are open to everyone right
-        now.
-          <span className="font-medium text-zinc-700 dark:text-zinc-200">
-            Just your email to join.
-          </span>
+        <ul
+          className={hiddenLast(
+            joined,
+            'mt-3 space-y-1.5 text-sm text-zinc-500 dark:text-zinc-400 list-disc pl-5',
+          )}
+        >
+          <li>
+            Every app in the directory was built here, by the people who use it.
+          </li>
+          <li>
+            They run on the Usernode chain, and contributors own a share of what
+          they build.
+          </li>
+          <li>
+            Access opens in batches. The public apps are open to everyone now.
+          </li>
+        </ul>
+        <p className={hiddenLast(joined, 'mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
+          Just your email to join.
         </p>
         {/*
             Stage-1 waitlist survey (two-stage waitlist, ported from the
