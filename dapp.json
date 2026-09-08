@@ -2405,8 +2405,9 @@
       "expectSelector": "#settings-screen:not(.hidden) #settings-section-content"
     },
     {
-      "name": "Settings groups its section menu under headings",
-      "path": "/#settings",
+      "name": "Settings groups its menu under headings and offers the test alert (#1795)",
+      "path": "/#settings/alerts",
+      "expectSelector": "#settings-root:has(#settings-nav-desktop h2) [data-settings-section=\"alerts\"]:not(.hidden) #devchat-alerts-test",
       "expectText": "AI & agents"
     },
     {

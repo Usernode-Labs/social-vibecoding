@@ -33,7 +33,7 @@ export function AlertsSection() {
           Play a sound, and notify me when the app is in the background
         </SwitchRow>
         <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          When you're in the app a soft chime plays; when the app is backgrounded or closed you get a system notification instead. Your browser or device may ask permission to show notifications the first time.
+          When you're in the app a soft chime plays. A browser can show notifications while its tab stays open. To receive push notifications with the mobile app backgrounded or closed, enable Activity notifications on your phone and Developer sessions below. The test queues a phone push with a 10-second delay so you can switch away.
         </p>
         <button
           id="devchat-alerts-test"
