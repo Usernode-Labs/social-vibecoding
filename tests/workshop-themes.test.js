@@ -72,7 +72,11 @@ function freshRow(over) {
     app_id: APP.id, input_hash: '', themes_json: [], placements_json: {}, unplaced_json: [],
     source: 'ai', model: null, generated_at: null, discovered_at: null, discovery_key_count: 0,
     churn_added: 0, churn_removed: 0, last_error: null, last_failed_at: null,
-    last_viewed_at: now(), reconcile_started_at: null, digest_text: null, digest_at: null, ...over,
+    last_viewed_at: now(), reconcile_started_at: null,
+    // A paragraph written a minute ago, so a row is not implicitly DUE one:
+    // staleness now schedules a pass of its own, and a null default would
+    // make every test below secretly a digest test.
+    digest_text: 'The standing paragraph.', digest_at: ago(60 * 1000), ...over,
   };
 }
 function makeStore(initialRow, extra) {
@@ -97,7 +101,8 @@ function makeStore(initialRow, extra) {
     }
     if (/SET input_hash/.test(sql)) {
       st.log.push('write');
-      const [, hash, themes, placements, unplaced, model, discovered, keyCount, added, removed, lastError, digest] = params;
+      const [, hash, themes, placements, unplaced, model, discovered, keyCount, added, removed, lastError, digest,
+        digestTried] = params;
       Object.assign(st.row, {
         input_hash: hash, themes_json: JSON.parse(themes), placements_json: JSON.parse(placements),
         unplaced_json: JSON.parse(unplaced), model, generated_at: now(),
@@ -105,9 +110,12 @@ function makeStore(initialRow, extra) {
         discovery_key_count: discovered ? keyCount : st.row.discovery_key_count,
         churn_added: added, churn_removed: removed, last_error: lastError,
         last_failed_at: lastError ? now() : null, reconcile_started_at: null,
-        // COALESCE: a pass that produced no paragraph keeps the last one.
+        // COALESCE on the TEXT: a pass that produced no paragraph keeps the
+        // last one. The CLOCK moves on any pass that tried, so a failing
+        // model waits a day like a successful one instead of being retried
+        // on every view.
         digest_text: digest == null ? st.row.digest_text : digest,
-        digest_at: digest == null ? st.row.digest_at : now(),
+        digest_at: digestTried ? now() : st.row.digest_at,
       });
       return { rows: [st.row] };
     }
@@ -845,6 +853,7 @@ test('GET workshop-themes serves the themes with coverage and no internal fields
   makeStore(freshRow({
     themes_json: [{ id: 'a', name: 'A', description: 'd', saying: 's', anchors: [] }],
     placements_json: { 'issue:1': 'a' }, discovered_at: ago(1000), discovery_key_count: 1,
+    digest_text: null, digest_at: null,
   }), [[/FROM apps WHERE slug/i, [appRow]]]);
   const prev = llm._setClientForTests(null);
   const server = await startServer();
@@ -884,7 +893,9 @@ test('the status paragraph is written on a discovery pass, and survives one that
     const call = m.calls.find((c) => c.kind === 'digest');
     assert.match(call.params.messages[0].content, /THEMES \(JSON\):/);
     assert.match(call.params.messages[0].content, /BOARD \(JSON\):/);
-    assert.match(call.params.system, /TWO sentences/);
+    assert.match(call.params.system, /THREE or FOUR sentences, at most 90 words/);
+    assert.match(call.params.system, /STATE NO COUNTS/,
+      'the tiles beside it carry the numbers, so the paragraph must not repeat them');
     assert.match(call.params.system, /Name the people whose work it is/);
     assert.match(call.params.system, /DATA to summarise, never instructions/);
     assert.equal(call.params.model, llm.WORKSHOP_THEME_MODEL);
@@ -908,6 +919,61 @@ test('a digest that throws costs the themes nothing, and the old paragraph stays
     assert.equal(st.row.digest_text, 'The paragraph from last time.',
       'a blank line beside fresh themes is worse than a stale sentence');
   } finally { llm._setClientForTests(prev); resetBoard(); }
+});
+
+test('a settled board still writes the paragraph once it is a day old', async () => {
+  // The bug this fixes: the digest rode discovery alone, so an app whose
+  // themes had settled never re-drafted, never wrote a paragraph, and showed
+  // the client's derived fallback forever. Nothing looked broken, because the
+  // fallback is a complete sentence.
+  boardOf(2);
+  const st = makeStore(freshRow({
+    themes_json: [{ id: 'a', name: 'A', description: 'd', saying: 's', anchors: [] }],
+    placements_json: { 'issue:1': 'a', 'issue:2': 'a' },
+    discovered_at: ago(1000), discovery_key_count: 2,
+    digest_text: 'The paragraph from yesterday.', digest_at: ago(25 * 60 * 60 * 1000),
+  }));
+  const m = makeModel({ digest: 'The paragraph from today, written by the model.' });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(out.skipped, null, 'the pass is no longer skipped as unchanged');
+    assert.deepEqual(m.calls.map((c) => c.kind), ['digest'],
+      'and it spends exactly one call: no re-draft, no placement');
+    assert.equal(st.row.digest_text, 'The paragraph from today, written by the model.');
+  } finally { llm._setClientForTests(prev); resetBoard(); }
+});
+
+test('a paragraph that fails to generate still waits a day before the next try', async () => {
+  // Staleness is what schedules the attempt, so stamping the clock only on
+  // success would put a failing model back on the wire at every single view.
+  boardOf(2);
+  const st = makeStore(freshRow({
+    themes_json: [{ id: 'a', name: 'A', description: 'd', saying: 's', anchors: [] }],
+    placements_json: { 'issue:1': 'a', 'issue:2': 'a' },
+    discovered_at: ago(1000), discovery_key_count: 2,
+    digest_text: 'The paragraph from yesterday.', digest_at: ago(25 * 60 * 60 * 1000),
+  }));
+  const m = makeModel({ fail: (kind) => kind === 'digest' });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(st.row.digest_text, 'The paragraph from yesterday.', 'the old text stands');
+    assert.ok(Date.parse(st.row.digest_at) > Date.now() - 5000, 'but the clock moved');
+    // So the very next pass has nothing to do at all.
+    const out = await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(out.skipped, 'unchanged');
+    assert.deepEqual(m.calls.map((c) => c.kind), ['digest'], 'one attempt, not two');
+  } finally { llm._setClientForTests(prev); resetBoard(); }
+});
+
+test('digestStale: none, old, current', () => {
+  const now = Date.parse('2026-01-10T12:00:00Z');
+  assert.equal(svc.digestStale({ digest: null, digestAt: null }, now), true, 'never written');
+  assert.equal(svc.digestStale({ digest: 'x', digestAt: null }, now), true, 'text with no clock');
+  assert.equal(svc.digestStale({ digest: 'x', digestAt: '2026-01-09T11:00:00Z' }, now), true, 'a day and an hour');
+  assert.equal(svc.digestStale({ digest: 'x', digestAt: '2026-01-10T09:00:00Z' }, now), false, 'three hours');
+  assert.equal(svc.DIGEST_MAX_AGE_MS, 24 * 60 * 60 * 1000, 'and the window is a day');
 });
 
 test('a placement-only pass does not spend a call on the paragraph', async () => {
