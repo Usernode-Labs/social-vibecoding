@@ -51,6 +51,45 @@ test('the same treatment on the resend mail', () => {
   assert.equal(confirm.text, 'Confirm my email');
 });
 
+test('the status-code mail leads with the code and offers one action (#1538)', () => {
+  // Same six digits, different errand: a confirmed address asking to read
+  // where it stands. The code stays first for the same reason it is first
+  // everywhere else, and the single button goes to a query spelling (#1545),
+  // never to a capability token.
+  const STATUS = 'https://x.invalid/?status=1';
+  const { html, text, subject } = templates.buildMessage('waitlist_code',
+    { code: '424242', confirmed: true, statusUrl: STATUS });
+
+  assert.match(subject, /status code/i, 'the subject says what the code is for');
+  assert.match(html, /font-size:28px[^>]*>424242</, 'the code is the code block');
+  assert.ok(html.indexOf('424242') < html.indexOf(STATUS), 'and it comes first');
+
+  const links = anchors(html);
+  assert.equal(links.length, 1, 'one action, not a choice of two');
+  assert.equal(links[0].href, STATUS);
+  assert.equal(links[0].text, 'Check my status');
+  assert.match(links[0].attrs, /padding:11px 20px/, 'styled as a control');
+
+  // No confirm link: there is nothing left to confirm, and a mail nobody
+  // asked for must not carry a capability anyone can act on.
+  assert.doesNotMatch(html, /waitlist\/confirm\//);
+  assert.doesNotMatch(text, /Confirm my email/);
+  // The text part still carries the address for a reader with no HTML.
+  assert.match(text, /https:\/\/x\.invalid\/\?status=1/);
+  // And it says the older code is dead, because it is.
+  assert.match(text, /earlier code has stopped working/i);
+});
+
+test('the status-code mail renders without a link at all', () => {
+  // statusUrl is derived, so a deployment without an origin to build one
+  // from must still get a usable mail rather than "undefined".
+  const { html, text } = templates.buildMessage('waitlist_code',
+    { code: '424242', confirmed: true });
+  assert.equal(anchors(html).length, 0);
+  assert.doesNotMatch(text, /undefined|null/);
+  assert.match(text, /424242/);
+});
+
 test('the access-ready mail names its action too', () => {
   const create = templates.buildMessage('waitlist_released',
     { url: 'https://x.invalid/?signup=1', hasAccount: false });

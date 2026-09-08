@@ -12249,6 +12249,41 @@ async function seedStagingPlatformMail(pool) {
       ['staging-demo-waitlist-admitted@example.invalid', DEMO_ADMITTED_TOKEN]
     );
 
+    // A live verification code for the two CONFIRMED addresses, so a
+    // tester can exercise #1538's check-my-status read without a mailbox.
+    // Both of those addresses end in .invalid, so the code mail this
+    // flow would normally send can never actually be delivered — the
+    // seeded literal is the only way in, and it is the whole reason the
+    // staging preview can show the confirmed and admitted panels at all.
+    //
+    // Not a shortcut through the real check: the app still hashes what
+    // was typed and bcrypt.compares it against this row, still counts
+    // attempts, still consumes the row on success. Only the code's VALUE
+    // is known. Nothing outside staging is touched, and the two rows are
+    // for fake identities, never whoever opened the preview.
+    //
+    // Idempotent by the same existence check issueVerificationCode's
+    // uniqueness rests on: one unconsumed row per address. Consuming it
+    // (which the tester does on the first successful read) leaves the
+    // next boot free to seed a fresh one, so the fixture heals rather
+    // than accumulating duplicates.
+    const DEMO_STATUS_CODE = '000000';
+    const demoCodeHash = await bcrypt.hash(DEMO_STATUS_CODE, 10);
+    for (const email of [
+      'staging-demo-waitlist-confirmed@example.invalid',
+      'staging-demo-waitlist-admitted@example.invalid',
+    ]) {
+      await pool.query(
+        `INSERT INTO waitlist_verification_codes (email, code_hash, expires_at)
+         SELECT $1::text, $2::text, NOW() + INTERVAL '30 days'
+          WHERE NOT EXISTS (
+            SELECT 1 FROM waitlist_verification_codes
+             WHERE email = $1::text AND consumed_at IS NULL
+          )`,
+        [email, demoCodeHash]
+      );
+    }
+
     log.info('migrate', 'Staging platform-mail fixture seeded', {
       deliveries: ROWS.length,
     });

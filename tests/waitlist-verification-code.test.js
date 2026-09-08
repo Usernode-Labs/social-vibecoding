@@ -65,6 +65,7 @@ function makePool(state) {
         email,
         answers: answers ? JSON.parse(answers) : null,
         more_token: moreToken || null,
+        submitted_at: new Date(),
         confirmed_at: null,
         released_at: null,
         linked_user_id: null,
@@ -124,10 +125,18 @@ function makePool(state) {
       const s = state.signups.get(email);
       if (!s) return { rowCount: 0, rows: [] };
       s.confirmed_at = s.confirmed_at || new Date();
+      // The whole state tuple, matching the RETURNING #1538 widened: the
+      // confirm route derives its status block straight off this row.
       return {
         rowCount: 1,
         rows: [{
-          id: s.id, email: s.email, confirmed_at: s.confirmed_at, more_token: s.more_token,
+          id: s.id,
+          email: s.email,
+          submitted_at: s.submitted_at,
+          confirmed_at: s.confirmed_at,
+          released_at: s.released_at,
+          linked_user_id: s.linked_user_id,
+          more_token: s.more_token,
         }],
       };
     }
@@ -277,6 +286,50 @@ test('the link and the code stamp the same row, and the first wins', async () =>
   const byCode = await confirmSignupByCode(pool, 'a@example.com', code);
   assert.ok(byCode);
   assert.equal(state.signups.get('a@example.com').confirmed_at, first);
+});
+
+// ─── 4b. A code for an ALREADY-confirmed row (#1538) ──────────────────
+//
+// Check-my-status runs this path on every use: whoever asks to read their
+// status has confirmed already, so the code they type lands on a row whose
+// confirmed_at is set. That has to be a normal read, not a re-confirmation
+// and not a refusal.
+
+test('a code authenticates an already-confirmed row without moving confirmed_at', async () => {
+  const { pool, state } = fixture();
+  await joinWaitlist(pool, { email: 'a@example.com' });
+
+  const first = await issueVerificationCode(pool, 'a@example.com');
+  await confirmSignupByCode(pool, 'a@example.com', first);
+  const stamped = state.signups.get('a@example.com').confirmed_at;
+  assert.ok(stamped);
+
+  // A second code, minted for a status read rather than a confirmation.
+  const again = await issueVerificationCode(pool, 'a@example.com');
+  const row = await confirmSignupByCode(pool, 'a@example.com', again);
+  assert.ok(row, 'a confirmed row still authenticates');
+  assert.equal(state.signups.get('a@example.com').confirmed_at, stamped,
+    'the FIRST timestamp is the true one; a status read must not restamp it');
+});
+
+test('the confirm read carries the whole state tuple, not just the token', async () => {
+  // #1538 widened the RETURNING so the route can answer "where do I stand"
+  // off this one row. A second round trip would be a second chance for the
+  // two answers to disagree.
+  const { pool, state } = fixture();
+  await joinWaitlist(pool, { email: 'a@example.com' });
+  const signup = state.signups.get('a@example.com');
+  signup.released_at = new Date();
+  signup.linked_user_id = 900001;
+
+  const code = await issueVerificationCode(pool, 'a@example.com');
+  const row = await confirmSignupByCode(pool, 'a@example.com', code);
+  assert.ok(row);
+  for (const field of ['submitted_at', 'confirmed_at', 'released_at', 'linked_user_id', 'more_token']) {
+    assert.ok(field in row, `${field} is missing from the confirm read`);
+  }
+  assert.equal(row.linked_user_id, 900001);
+  assert.ok(row.released_at);
 });
 
 // ─── 5. The by-address lookup the resend endpoint decides on ──────────
