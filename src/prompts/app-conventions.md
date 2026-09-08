@@ -1910,13 +1910,14 @@ page's in-page viewer, and the staging preview alike):
 | `geolocation` | `navigator.geolocation.getCurrentPosition()` |
 | `clipboard-write` | `navigator.clipboard.writeText()` |
 | `pointer-lock` | `element.requestPointerLock()` |
+| `microphone` | `navigator.mediaDevices.getUserMedia({ audio: true })` |
 
 Delegation is not a grant. The browser still prompts the user the first
 time your app asks, per origin, and they can refuse. Always handle the
 error path.
 
-**Everything else is not delegated**, `camera`, `microphone`,
-`display-capture`, `midi`, `payment` and `xr-spatial-tracking` among them.
+**Everything else is not delegated**, `camera`, `display-capture`, `midi`,
+`payment` and `xr-spatial-tracking` among them.
 The failure mode is worth knowing because it is so easy to misread: an
 undelegated capability is not refused with a distinct error and it does not
 prompt. `getCurrentPosition` and friends reject in a couple of
@@ -1932,6 +1933,11 @@ const allowed = !policy || policy.allowsFeature('geolocation');
 // `allowed` is true where the browser does not expose the API to ask,
 // so treat it as "try it and see" rather than a guarantee.
 ```
+
+This is the sanctioned pre-check, and it is worth using even for a
+capability that IS on the list above: it tells "you were never asked" apart
+from "you said no", and only the second is worth sending someone to a device
+permission screen for.
 
 If your app needs a capability that is not on the list, that is a missing
 platform capability, not something to work around in the app: see

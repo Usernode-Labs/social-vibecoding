@@ -249,7 +249,7 @@ export function StagingOverlay(): ReactNode {
           ref={iframeRef}
           className="absolute inset-0 w-full h-full border-0"
           style={{ background: "#08080f" }}
-          allow="pointer-lock; geolocation"
+          allow="pointer-lock; geolocation; microphone"
         >
         </iframe>
         {/*
