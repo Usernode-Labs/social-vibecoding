@@ -579,6 +579,18 @@
       "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:not(:checked):not(:disabled)"
     },
     {
+      "name": "First feedback is congratulated in a lasting confirmation (#1583)",
+      "path": "/?shot=feedback-first#app/usernode-2d5619/dev",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-first-success:not(.hidden)",
+      "expectText": "Congratulations on your first feedback!"
+    },
+    {
+      "name": "First feedback offers an editable fix and this app's board (#1583)",
+      "path": "/?shot=feedback-first#app/usernode-2d5619/dev",
+      "expectSelector": "#feedback-first-success:not(.hidden):has(#feedback-first-fix:not(:disabled)) #feedback-first-board:not(:disabled)",
+      "expectText": "Try a fix yourself"
+    },
+    {
       "name": "The bounty checkbox is disabled once the weekly allowance is spent (#964)",
       "path": "/?shot=feedback-spent",
       "expectSelector": "#feedback-bounty-row:not(.hidden) #feedback-bounty-checkbox:disabled"
@@ -664,6 +676,12 @@
       "name": "Proposal page, round three: the topic card (with its bar), the ledger (checks, votes) and About are sheets on the strip",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
       "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic[data-edge] .dev-card-badges > .dev-status-pill-block) + .dev-topic-ledger:has(.dev-ledger-row[data-note=\"checks\"] ~ .dev-ledger-row[data-note=\"votes\"]) + .dev-topic-about"
+    },
+    {
+      "name": "About this change is two labelled halves, with the technical one collapsed",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
+      "expectSelector": "#gc-thread-head .dev-topic-about > .dev-topic-sub + .dev-topic-about-body ~ details.dev-topic-details:not([open]) > .dev-topic-details-summary",
+      "expectText": "Technical details"
     },
     {
       "name": "Issue page, round three: GitHub ends the meta line, and the Discussion sheet follows the card",
@@ -929,6 +947,18 @@
       "expectText": "Browse all apps"
     },
     {
+      "name": "Directory leads with reviewed apps and keeps demos under Show more (#1523)",
+      "path": "/?demo=1&curation=1&sort=recommended#apps",
+      "expectSelector": "#browse-list:has([data-slug=\"directory-sample-working\"][data-directory-state=\"working\"]):not(:has(.browse-row[data-slug=\"directory-sample-demo\"])) button[aria-controls=\"browse-more-apps\"][aria-expanded=\"false\"]",
+      "expectText": "Reviewed working apps"
+    },
+    {
+      "name": "Show more keeps demo and broken directory apps reachable (#1523)",
+      "path": "/?demo=1&curation=1&sort=recommended&shot=browse-more#apps",
+      "expectSelector": "#browse-more-apps:has([data-directory-state=\"demo\"]) [data-directory-state=\"broken\"]",
+      "expectText": "Show less"
+    },
+    {
       "name": "With nothing featured, Discover shows its compact note (?shot=discover-empty)",
       "path": "/?demo=1&shot=discover-empty",
       "expectSelector": "#home-body [data-panel-slot=\"discover\"][data-featured=\"0\"] .home-panel-browse",
@@ -962,6 +992,11 @@
       "name": "Dragging shows the grid and previews what gets pushed (?shot=home-grid)",
       "path": "/?demo=1&shot=home-grid",
       "expectSelector": "#app-list.un-reordering .home-item-displaced[style*=\"translate\"]"
+    },
+    {
+      "name": "A Discover card can be dragged onto the launcher grid, which previews the drop (?shot=discover-drag)",
+      "path": "/?demo=1&shot=discover-drag",
+      "expectSelector": "#home-body:has(.home-discover-rail .app-card.un-reorder-slot) #app-list.un-reordering #home-grid-overlay .home-grid-cell--on"
     },
     {
       "name": "App tiles carry no user count and no status dot",
@@ -1044,16 +1079,27 @@
       "expectSelector": "[data-plus=\"import-pr\"]"
     },
     {
-      "name": "The Dev '+' menu separates starting work from managing the app (#1086)",
+      "name": "The Dev '+' menu separates importing work from managing the app (#1490)",
       "path": "/?demo=1&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu [data-plus-group=\"build\"] ~ [data-plus-group=\"settings\"]",
-      "expectText": "Build a change"
+      "expectText": "Import a change"
     },
     {
-      "name": "Starting a change no longer asks where before it asks what (#1086)",
+      "name": "Improve keeps the New change action after deduplicating the '+' menu (#1490)",
+      "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
+      "expectSelector": "#improve-panel[data-open] #improve-row-new-session",
+      "expectText": "New change"
+    },
+    {
+      "name": "Improve keeps Give feedback after deduplicating the '+' menu (#1490)",
+      "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
+      "expectSelector": "#improve-panel[data-open] #improve-row-feedback",
+      "expectText": "Give feedback"
+    },
+    {
+      "name": "The Dev '+' menu retains PR import without duplicating Improve actions (#1490)",
       "path": "/?demo=1&shot=plus-menu#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu button[data-plus=\"proposal\"]",
-      "expectText": "you pick where it is built, and can change that any time"
+      "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"], [data-plus=\"issue\"])) [data-plus=\"import-pr\"]"
     },
     {
       "name": "Custom category chip renders on a Dev card (#780)",
@@ -1253,9 +1299,9 @@
       "expectSelector": ".un-popover[data-surface=\"opaque\"]"
     },
     {
-      "name": "Home card actions menu opens as an action sheet on touch (#929)",
+      "name": "Home card actions stay anchored to the tile on touch (#1616)",
       "path": "/?demo=1&shot=card-menu&un-platform=ios",
-      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
+      "expectSelector": ".un-popover .card-menu-header .card-menu-title"
     },
     {
       "name": "Dev \"+\" menu opens as an action sheet on touch (#929)",
@@ -1265,7 +1311,7 @@
     {
       "name": "Dev \"+\" menu still opens the anchored dropdown on desktop (#929)",
       "path": "/?shot=plus-menu#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu:not(.hidden) button[data-plus=\"proposal\"]"
+      "expectSelector": "#dev-plus-menu:not(.hidden) button[data-plus=\"rename\"]"
     },
     {
       "name": "Waitlist survey lives on its own #waitlist screen",
@@ -1307,6 +1353,20 @@
       "name": "Waitlist confirm step drops the join pitch",
       "path": "/?shot=waitlist-joined",
       "expectSelector": "#auth-waitlist-screen h1.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist acknowledges the saved signup before confirmation (#1528)",
+      "path": "/?shot=waitlist-joined",
+      "expectSelector": "#waitlist-joined h2:not(.hidden)",
+      "expectText": "You're on the waitlist!",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist email confirmation is explicitly step 2 (#1528)",
+      "path": "/?shot=waitlist-joined",
+      "expectSelector": "#waitlist-confirm:not(.hidden) label[for=\"waitlist-code\"]",
+      "expectText": "Step 2 of 2 · Confirm your email",
       "allowConsoleErrors": true
     },
     {
@@ -2605,16 +2665,33 @@
       "expectText": "Preview unavailable"
     },
     {
-      "name": "Freshness (#1442): a proposal that conflicts with main says so on its detail screen",
+      "name": "Freshness (#1442): a conflicted proposal folds behind-main and the conflict into one sync step",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": "#gc-thread-head [data-note=\"mergeability\"]",
-      "expectText": "This proposal no longer merges into main on its own."
+      "expectText": "Main has moved 8 commits ahead, and 7 files changed on both sides"
     },
     {
-      "name": "Freshness (#1442): the predicted conflict names the files changed on both sides",
+      "name": "A step that is already cleared draws a tick instead of its number",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
-      "expectSelector": "[data-note=\"mergeability\"] li.font-mono",
-      "expectText": "Changed on both sides:"
+      "expectSelector": ".dev-ledger-row[data-note=\"checks\"][data-step-done] .dev-ledger-dot"
+    },
+    {
+      "name": "A blocked proposal reads as one ordered path: sync first, then checks, then the vote",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
+      "expectSelector": ".dev-topic-ledger .dev-ledger-row[data-note=\"mergeability\"] ~ .dev-ledger-row[data-note=\"checks\"] ~ .dev-ledger-row[data-note=\"votes\"]",
+      "expectText": "Sync with main"
+    },
+    {
+      "name": "The path caption counts what is still outstanding, not just how many steps there are",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
+      "expectSelector": ".dev-topic-ledger .dev-ledger-path-note",
+      "expectText": "Three steps to a merge. Two still to clear."
+    },
+    {
+      "name": "Each step of the path names who acts and when, under its label",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
+      "expectSelector": ".dev-ledger-row[data-note=\"checks\"] .dev-ledger-k small",
+      "expectText": "automatic, after 1"
     },
     {
       "name": "Freshness (#1442): a conflicting proposal shows a blocked pill, not a plain tally",
@@ -2989,8 +3066,23 @@
     },
     {
       "name": "Back from a dev session is the header's own arrow, a real link at the Board (#1036, Streamlined Concept)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/board\"]"
+    },
+    {
+      "name": "…and a cold session link opened by a Workshop viewer goes back to the Workshop",
+      "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/workshop\"]"
+    },
+    {
+      "name": "Back from an issue returns to the layout it was opened from: the Workshop",
+      "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev/issues/900014",
+      "expectSelector": "a#back-btn[aria-label=\"Back\"][href=\"#app/usernode-2d5619/workshop\"]"
+    },
+    {
+      "name": "…and from the Board it is still the Board",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev/issues/900014",
+      "expectSelector": "a#back-btn[aria-label=\"Back\"][href=\"#app/usernode-2d5619/board\"]"
     },
     {
       "name": "The bar's two edges: nothing to leave by on Home, and the bell left of Improve",
@@ -3168,7 +3260,7 @@
     },
     {
       "name": "Browse draws the first-letter fallback tile for a seeded app (#1120)",
-      "path": "/#apps",
+      "path": "/?sort=recommended&shot=browse-more#apps",
       "expectSelector": "#browse-list .browse-row .app-icon-tile[data-icon=\"letter\"]",
       "expectText": "Staging demo app — letter tile"
     },

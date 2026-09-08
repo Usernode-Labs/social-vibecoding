@@ -274,6 +274,14 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  'feedback-form': 'The existing feedback form is hidden while the first-feedback confirmation is visible (#1583).',
+  'feedback-first-success': 'Persistent first-feedback confirmation inside the existing feedback dialog (#1583).',
+  'feedback-first-title': 'Accessible heading congratulating the first feedback submission (#1583).',
+  'feedback-first-notice': 'Preserves the successful filing and optional bounty outcome in the first-feedback confirmation (#1583).',
+  'feedback-first-fix': 'Starts an editable fix draft for the feedback issue (#1583).',
+  'feedback-first-fix-note': 'Explains the fix draft or the collaboration access requirement (#1583).',
+  'feedback-first-board': 'Opens the board of the app that received the feedback (#1583).',
+  'feedback-first-done': 'Dismisses the first-feedback confirmation without starting work (#1583).',
   'improve-working-dot': 'What is left on #improve-btn once the session COUNT moved to the bell (#1610): a bare 8px emerald pulse, rendered only while a dev session the viewer can see is mid-turn. It carries no text and no count, because that is the distinction the move was about — a count is an event waiting to be read and belongs where reading happens, while "a turn is running right now" is a live fact about this button that needs no dismissal. Top-right, so it cannot hide under the bottom-left outbox dot.',
   'wallet-recovery-modal': 'Native-only recovery for a pre-merge email wallet when authoritative session admission reports that the seeded wallet pool is empty. Opened ONLY from Settings → Usernode app → connection ("Connect existing wallet"); it used to open itself on every failed admission attempt, which is the pop-up that was reported.',
   // ── Home area labels: the block chrome moved above the card ──────
@@ -362,7 +370,7 @@ const ADDED_IDS = {
   // these ids are present here even on a build where no store listing has
   // been published and the strip can never show.
   'mobile-install-banner': 'The phone-browser strip offering the native app (#1372). Sits under #offline-banner and stacks with it.',
-  'mobile-install-open': 'The store link. href comes from app_version_configs.update_url via GET /api/public/mobile-app, per OS.',
+  'mobile-install-open': 'The strip\'s primary control. An anchor to the store when a listing is published for this OS (href from app_version_configs.update_url via GET /api/public/mobile-app); a button revealing the Add-to-Home-Screen steps when none is (#1513).',
   'mobile-install-dismiss': 'Dismisses the strip for this session; the answer is kept in sessionStorage, so the next visit is offered the app once more (#1514).',
   // #1561 — the once-per-account welcome on Home. A new account lands on a
   // launcher grid of other people's apps with nothing on the screen saying

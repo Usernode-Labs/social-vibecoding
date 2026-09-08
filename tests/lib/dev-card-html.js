@@ -217,6 +217,9 @@ function hasAction(model, fn, ...args) {
 const budgets = () => ({ ACTION_PRIMARY_MAX: mod().ACTION_PRIMARY_MAX, BADGE_MAX: mod().BADGE_MAX });
 
 module.exports = {
+  // The minimal card a topic head needs, for tests that care about the
+  // sheet BELOW the card rather than the card itself.
+  BLANK_CARD,
   actionHtml,
   proposalBodyHtml,
   previewHtml,

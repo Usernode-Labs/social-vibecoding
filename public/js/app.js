@@ -1231,7 +1231,7 @@ const App = {
     if (shot !== 'feedback' && shot !== 'feedback-spent'
         && shot !== 'feedback-offline' && shot !== 'feedback-queued'
         && shot !== 'feedback-capture-failed'
-        && shot !== 'feedback-required') return;
+        && shot !== 'feedback-required' && shot !== 'feedback-first') return;
     const spent = shot === 'feedback-spent';
     // #1054: the two offline variants. `feedback-offline` is the dialog as a
     // disconnected user meets it (the hint, and Submit reading "Save for
@@ -1280,6 +1280,7 @@ const App = {
         },
       }]);
     }
+    if (shot === 'feedback-first') window.FeedbackQueue?.seedDisplayOnly?.([]);
     if (offline) {
       try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
     }
@@ -1323,6 +1324,16 @@ const App = {
           Kudos.Budget.refresh = () => Promise.resolve();
         }
         App.openFeedbackModal();
+        if (shot === 'feedback-first') {
+          let firstTries = App.IMPROVE_SHOT_TRIES;
+          const showFirst = () => {
+            const success = document.getElementById('feedback-first-success');
+            if (success && !success.classList.contains('hidden')) return;
+            App._simulateFirstFeedback?.();
+            if (--firstTries > 0) setTimeout(showFirst, App.IMPROVE_SHOT_INTERVAL_MS);
+          };
+          setTimeout(showFirst, 50);
+        }
         if (captureFailed) {
           const text = document.getElementById('feedback-text');
           // Assigned, not typed: dispatching `input` would start the live
@@ -2149,6 +2160,40 @@ const App = {
     }
   },
 
+  /**
+   * Slugs a status broadcast has already made us re-pull the app list for.
+   *
+   * A creation emits many `app_status` messages (one per phase), and without
+   * this the first one would be followed by another list fetch on every
+   * subsequent phase for the same app.
+   */
+  _listedNewApps: new Set(),
+
+  /**
+   * A status arrived for an app with NO card on the home grid (#1547).
+   *
+   * That is the just-created app: the grid was loaded before it existed, so
+   * nothing on My Apps represents it. Closing the creation dialog therefore
+   * left the build with no visible trace at all until it finished, which is
+   * exactly the report — the dialog is "dismissing a report, not cancelling
+   * anything" (create-app.tsx), and the screen behind it did not say so.
+   *
+   * One list pull per slug puts the tile there, and the tile already knows how
+   * to say "Spinning up..." for a creating app (Home.renderAppCard). Every
+   * later phase for that slug then takes the `if (card)` branch above, which
+   * keeps `data-status` current with no further fetching.
+   *
+   * Deliberately not gated on which screen is showing: Home.load() is the
+   * same call the running/error branch makes, the payload is one request, and
+   * gating it would mean the grid is stale the moment somebody navigates back
+   * to it mid-build — which is the bug wearing a different hat.
+   */
+  _listNewlyCreatedApp(slug) {
+    if (!slug || App._listedNewApps.has(slug)) return;
+    App._listedNewApps.add(slug);
+    if (window.Home && typeof Home.load === 'function') Home.load();
+  },
+
   handleAppStatusUpdate(data) {
     // The create dialog's progress view, if one is open on this app.
     // Forwarded unconditionally — the store drops messages for apps it
@@ -2174,6 +2219,8 @@ const App = {
       if (data.status === 'running' || data.status === 'error') {
         Home.load();
       }
+    } else {
+      App._listNewlyCreatedApp(data.slug);
     }
 
     // Update app view if we're looking at this app

@@ -513,6 +513,10 @@ function parseTests(stdout) {
       loadStatus,
       consoleErrors: Array.isArray(payload.consoleErrors) ? payload.consoleErrors : [],
       failureReason: typeof payload.failureReason === 'string' ? payload.failureReason : '',
+      // Set on a frame that is a SECOND OPINION on another check rather
+      // than a check of its own: the container re-ran a failure on its own
+      // cold document. Names the index it is a retry of.
+      retryOf: Number.isInteger(payload.retryOf) ? payload.retryOf : null,
     });
     i += 2;
   }
@@ -668,14 +672,66 @@ function classifyTests(frames, expectedCount, options) {
   let advisoryFailures = 0;
   let passed = 0;
 
+  // A check on its first appearance is dispatched NEW_CHECK_RUNS times, as
+  // one primary entry plus repeats pointing back at it. The repeats are not
+  // rows — the card shows one line per declared check, as it always has —
+  // they are extra OBSERVATIONS of it, and every one of them has to pass.
+  // A check that passes twice and fails once on its debut is flaky, and
+  // saying so on the proposal that introduces it is the whole point.
+  const repeatsOf = new Map();
   for (const d of dispatched) {
+    if (d.repeatOf == null) continue;
+    if (!repeatsOf.has(d.repeatOf)) repeatsOf.set(d.repeatOf, []);
+    repeatsOf.get(d.repeatOf).push(d);
+  }
+  // Retries are not dispatched — the container decides at runtime which
+  // failures to ask again — so they arrive only as frames, each naming the
+  // check it is a second opinion on.
+  const retriesOf = new Map();
+  for (const f of parsed) {
+    if (!Number.isInteger(f.retryOf)) continue;
+    if (!retriesOf.has(f.retryOf)) retriesOf.set(f.retryOf, []);
+    retriesOf.get(f.retryOf).push(f);
+  }
+
+  for (const d of dispatched) {
+    if (d.repeatOf != null) continue;
     const frame = byIndex.get(Number(d.index) || 0);
     const graduated = !!d.graduated;
     if (!frame) {
       (graduated ? missingGraduated : missingAdvisory).push(d);
       continue;
     }
-    const pass = frame.status === 'pass';
+    // Every observation of this check in this run: its own frame, plus one
+    // per first-appearance repeat that reported.
+    const observed = [frame];
+    for (const r of (repeatsOf.get(Number(d.index) || 0) || [])) {
+      const f = byIndex.get(Number(r.index) || 0);
+      if (f) observed.push(f);
+    }
+    const retried = retriesOf.get(Number(d.index) || 0) || [];
+    for (const f of retried) observed.push(f);
+    const passes = observed.filter((f) => f.status === 'pass').length;
+    const fails = observed.length - passes;
+    // Two rules, and the difference is who asked for the extra runs.
+    //
+    // DEBUT repeats are dispatched up front, before anything is known: all
+    // of them have to pass, because one failure among them is the check
+    // saying it is not deterministic and letting it land anyway is how a
+    // flake gets the power to block strangers.
+    //
+    // RETRIES are asked for BECAUSE the check already failed. Any pass
+    // among them means the failure was not reproducible, so the check did
+    // not really fail — but it did not really pass either, which is what
+    // the flaky tag and the reset streak are for. Demanding all of them
+    // would make the retry pointless; ignoring the failure entirely would
+    // lose the only evidence that the check is unreliable.
+    const passedOnRetry = retried.length > 0 && retried.some((f) => f.status === 'pass');
+    const pass = passedOnRetry || fails === 0;
+    // Disagreement inside one run is the loudest flake signal there is, and
+    // unlike the lifetime rate it needs no history to read.
+    const flakyRun = passes > 0 && fails > 0;
+    const worst = pass ? frame : (observed.find((f) => f.status !== 'pass') || frame);
     if (pass) passed += 1;
     else if (graduated) blockingFailures += 1;
     else advisoryFailures += 1;
@@ -684,12 +740,27 @@ function classifyTests(frames, expectedCount, options) {
       name: String(frame.name || d.name || '').slice(0, CONSOLE_MAX_MSG_LEN),
       path: String(frame.path || d.path || '').slice(0, CONSOLE_MAX_MSG_LEN),
       status: pass ? 'pass' : 'fail',
+      // What this run actually observed, so history records three passes as
+      // three rather than as one, and the card can say "1 of 3 runs failed".
+      runs: observed.length,
+      passes,
+      fails,
+      flakyRun,
+      // It failed, it was asked again, and it answered differently. The
+      // merge is not blocked on it — and nobody has to wonder why the run
+      // is green when the log shows a failure.
+      passedOnRetry,
       // The card renders advisory rows muted with a chip rather than
       // rewriting the name, so the check reads identically whichever power
       // it currently has.
       advisory: pass ? false : !graduated,
-      consoleErrors: normalizeConsoleErrors(frame.consoleErrors),
-      failureReason: pass ? '' : String(frame.failureReason || '').slice(0, CONSOLE_MAX_MSG_LEN),
+      // How often this check has failed across its whole recorded life.
+      // Carried on PASSING rows too: a check that passes today and failed
+      // four times last week is the one worth knowing about, and a chip
+      // that only ever appears beside a red row would never say so.
+      flakeRate: d.flakeRate != null ? d.flakeRate : null,
+      consoleErrors: normalizeConsoleErrors(worst.consoleErrors),
+      failureReason: pass ? '' : String(worst.failureReason || '').slice(0, CONSOLE_MAX_MSG_LEN),
     });
   }
 
@@ -699,7 +770,7 @@ function classifyTests(frames, expectedCount, options) {
     return {
       state: 'error', results: extraRows.slice(),
       blockingCount: 0, advisoryCount: 0, passingCount: 0,
-      ranCount: 0, declaredCount: dispatched.length,
+      ranCount: 0, declaredCount: dispatched.filter((d) => d.repeatOf == null).length,
     };
   }
   if (!rows.length && !dispatched.length && !extraRows.length) {
@@ -722,7 +793,7 @@ function classifyTests(frames, expectedCount, options) {
       results: rows.concat(extraRows),
       errorDetail: `${missingGraduated.length} merge-blocking check${missingGraduated.length === 1 ? '' : 's'} produced no result: ${names.join(', ')}${more}`,
       blockingCount: blockingFailures, advisoryCount: advisoryFailures, passingCount: passed,
-      ranCount: rows.length, declaredCount: dispatched.length,
+      ranCount: rows.length, declaredCount: dispatched.filter((d) => d.repeatOf == null).length,
     };
   }
 
@@ -758,7 +829,7 @@ function classifyTests(frames, expectedCount, options) {
     advisoryCount: advisoryFailures,
     passingCount: passed,
     ranCount: rows.length,
-    declaredCount: dispatched.length,
+    declaredCount: dispatched.filter((d) => d.repeatOf == null).length,
   };
 }
 
@@ -1812,14 +1883,56 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         // First run for this app pre-graduates the head the merge gate used
         // to enforce, so turning this on never OPENS a gate that was closed.
         await checkHistory.bootstrapIfEmpty(pool, app.id, declaredTests);
-        const graduated = await checkHistory.loadGraduated(pool, app.id);
+        const passedOnce = await checkHistory.loadGraduated(pool, app.id);
+        // Cosmetic, and loaded beside the gating set so it costs one more
+        // query per run rather than one per check. A check with no failures
+        // in its whole history is simply absent from the map.
+        const flakes = await checkHistory.loadFlakeRates(pool, app.id);
+        // A check absent from this has never run against this app, so this
+        // run is its first. Null means the read failed, and then nothing is
+        // treated as new: an unreadable history must not turn every check
+        // in the suite into three.
+        const seen = await checkHistory.loadSeen(pool, app.id);
         dispatched = tests.map((t) => {
           const key = appManifest.checkKey(t.name, t.path);
+          const flake = flakes.get(key);
+          const firstRun = !!seen && !seen.has(key);
           return {
             index: t.index, checkKey: key, name: t.name, path: t.path,
-            graduated: graduated.has(key),
+            // A declared check blocks. The one exception is the legacy
+            // backlog: seen before, never once passing. Those are
+            // unfinished rather than broken-by-this-proposal, and they earn
+            // their gate by passing once. Nothing new can enter that state,
+            // because a new check has to pass its first runs to land.
+            graduated: passedOnce.has(key) || firstRun,
+            firstRun,
+            flakeRate: (flake && flake.rate != null) ? flake.rate : null,
           };
         });
+        // The first-appearance repeats. Each is its own dispatch entry with
+        // its own index and its own cold load (`solo`), and each reports a
+        // real verdict — a check that passes twice and fails once on its
+        // debut has told everyone something worth knowing before it ever
+        // gates a stranger's proposal.
+        const extras = [];
+        for (const d of dispatched) {
+          if (!d.firstRun) continue;
+          for (let i = 1; i < checkHistory.NEW_CHECK_RUNS; i++) extras.push(d);
+        }
+        for (const d of extras.slice(0, checkHistory.MAX_NEW_CHECK_REPEATS)) {
+          const base = tests[d.index];
+          if (!base) continue;
+          const index = tests.length;
+          tests.push({ ...base, index, solo: true });
+          dispatched.push({ ...d, index, repeatOf: d.index, solo: true });
+        }
+        if (extras.length) {
+          log.info('visuals', 'First-appearance repeats dispatched', {
+            sessionId: session.id,
+            newChecks: dispatched.filter((d) => d.firstRun && !d.repeatOf).length,
+            extraLoads: Math.min(extras.length, checkHistory.MAX_NEW_CHECK_REPEATS),
+          });
+        }
       } catch (err) {
         log.warn('visuals', 'Check-history lookup failed — legacy gating for this run', {
           sessionId: session.id, err: err.message,
@@ -2079,8 +2192,17 @@ async function captureForSession(config, session, app, commitHash, stagingResult
             for (const r of checksResult.results) {
               const d = byIndex.get(r.index);
               if (!d) continue;
+              // Counts, because a check on its first appearance was observed
+              // NEW_CHECK_RUNS times and all of them are evidence. classify
+              // folded the repeats into this one row, so they arrive here as
+              // `passes` / `fails` rather than as separate rows — which also
+              // keeps one conflict target per check in the upsert.
               historyRows.push({
-                checkKey: d.checkKey, name: d.name, path: d.path, passed: r.status === 'pass',
+                checkKey: d.checkKey,
+                name: d.name,
+                path: d.path,
+                passes: Number.isInteger(r.passes) ? r.passes : (r.status === 'pass' ? 1 : 0),
+                fails: Number.isInteger(r.fails) ? r.fails : (r.status === 'pass' ? 0 : 1),
               });
             }
           }

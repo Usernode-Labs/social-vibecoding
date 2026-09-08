@@ -33,6 +33,28 @@
 import { createStore } from '../../lib/plain-store.js';
 
 /**
+ * The Dev screen's board, as an href, in the LAYOUT named.
+ *
+ * Workshop and Board are one screen in two layouts and the layout IS the
+ * route — `/workshop` and `/board`, mapped back to a layout by the alias
+ * block in app.js's `restoreFromHash`, which also applies it. So "go to the
+ * board" is not a fixed address, and the two places that answer it have to
+ * agree: `Improve._routeHref` (what a session captures as its origin) and
+ * `appRouteUpHref` in ../header/platform-header.tsx (where the back arrow
+ * points from a topic or the general chat). One expression, imported by both.
+ *
+ * Anything that is not 'kanban' is the Workshop, matching
+ * `AppView._getViewMode()`'s own terminal fallback.
+ *
+ * @param {string} slug
+ * @param {string} boardView  'workshop' | 'kanban'
+ * @returns {string}
+ */
+export function boardHref(slug, boardView) {
+  return `#app/${slug}/${boardView === 'kanban' ? 'board' : 'workshop'}`;
+}
+
+/**
  * One row in the panel's list. TWO KINDS share this shape (#1417):
  *
  *   'session'  a chat_sessions row — a real dev session with a container, a
@@ -91,6 +113,7 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {boolean} working
  * @property {'idle'|'deploying'|'stale'} versionState
  * @property {'forum'|'chat'|'sessions'|'topic'|null} subTab
+ * @property {'workshop'|'kanban'} boardView
  * @property {number|null} previewSessionId
  * @property {string|null} previewUrl
  * @property {boolean} previewActive
@@ -207,6 +230,24 @@ const INITIAL = {
    * the header's eye needs to know whether it is looking at a SESSION.
    */
   subTab: null,
+  /**
+   * WHICH LAYOUT THE DEV SCREEN IS IN — 'workshop' or 'kanban'.
+   *
+   * Read by the header's back arrow on the sub-views that are reached FROM
+   * the board: a topic (an issue, a proposal, a governance proposal, a shared
+   * session) and the general chat. Those pointed unconditionally at
+   * `#app/<slug>/board`, which sent a viewer who had opened a card from the
+   * Workshop to the Kanban board instead of back where they were — and,
+   * because that route APPLIES its layout, quietly rewrote their stored
+   * preference to kanban on the way.
+   *
+   * Republished with `tab` and `subTab` from App.switchTab, so it names the
+   * layout that was on screen when the sub-view was entered. It is a MIRROR
+   * of `AppView._getViewMode()`, which stays the source of truth; the initial
+   * value here is that function's own fallback rather than a stored one,
+   * because a store INITIAL is what the prerender renders.
+   */
+  boardView: 'workshop',
   /**
    * WHERE THE OPEN DEV SESSION WAS ENTERED FROM, as an href — or null.
    *

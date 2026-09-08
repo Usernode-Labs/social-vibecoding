@@ -380,8 +380,10 @@ test('"back out of an issue / proposal / governance topic" rides the header anch
   // than by an imperative call — pinned properly in tests/header-back-home.js;
   // named here so this file's map of "who owns back" stays complete.
   assert.match(read('frontend/src/features/header/platform-header.tsx'),
-    /subTab === 'chat' \|\| subTab === 'topic'\) return `#app\/\$\{slug\}\/board`/,
-    'the header points a topic page at its Board');
+    /subTab === 'chat' \|\| subTab === 'topic'\) return board;/,
+    'the header points a topic page at its board — `board` and not a literal '
+    + '`/board`, because Workshop and Board are one screen in two layouts and '
+    + 'the arrow has to name the one the reader came from');
 });
 
 test('no in-page back control is left anywhere in the Dev area', () => {

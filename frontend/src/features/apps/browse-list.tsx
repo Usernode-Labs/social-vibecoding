@@ -27,10 +27,12 @@ import type { ReactNode } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
 import { ListRow } from '@/components/ui/grouped-list';
+import { Button } from '@/components/ui/button';
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type RowView = {
   app: Record<string, any>;
+  directoryTier?: 'ready' | 'unreviewed' | 'more';
   slug: string;
   name: string;
   meta: string;
@@ -92,6 +94,7 @@ function Row({ view }: { view: RowView }): ReactNode {
       className={`browse-row ${view.openable ? 'cursor-pointer' : 'cursor-default'}`}
       data-slug={view.slug}
       data-demo={view.demo ? 'true' : undefined}
+      data-directory-state={view.app.directory?.state}
       onPointerDown={warm}
       onMouseEnter={warm}
       inset="none"
@@ -116,6 +119,9 @@ function Row({ view }: { view: RowView }): ReactNode {
       )}
       subtitle={(
         <>
+          {view.app.directory?.label ? (
+            <span className="block text-xs text-zinc-600 dark:text-zinc-400">{view.app.directory.label}</span>
+          ) : null}
           <span className="block truncate">{view.meta}</span>
           {hasAppPills(view.app) ? (
             <span className="mt-1 flex flex-wrap items-center gap-1">
@@ -153,7 +159,48 @@ function Row({ view }: { view: RowView }): ReactNode {
   );
 }
 
-export function BrowseRows({ rows }: { rows: RowView[] | null }): ReactNode {
+export function BrowseRows({ rows, curated = false, moreExpanded = false }: {
+  rows: RowView[] | null;
+  curated?: boolean;
+  moreExpanded?: boolean;
+}): ReactNode {
   if (!rows) return null;
-  return <>{rows.map((view) => <Row key={view.slug} view={view} />)}</>;
+  const renderRows = (items: RowView[]) => items.map((view) => <Row key={view.slug} view={view} />);
+  if (!curated) return <>{renderRows(rows)}</>;
+  const ready = rows.filter((view) => view.directoryTier === 'ready');
+  const unreviewed = rows.filter((view) => view.directoryTier !== 'ready' && view.directoryTier !== 'more');
+  const more = rows.filter((view) => view.directoryTier === 'more');
+  const heading = 'md:col-span-full px-3 pt-3 pb-1 text-sm font-semibold text-zinc-700 dark:text-zinc-300';
+  return (
+    <>
+      {ready.length ? <h2 className={heading}>Reviewed working apps</h2> : null}
+      {renderRows(ready)}
+      {unreviewed.length ? <h2 className={heading}>Not yet reviewed</h2> : null}
+      {renderRows(unreviewed)}
+      {more.length ? (
+        <>
+          <div className="md:col-span-full p-3">
+            <p className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">
+              Demos and apps needing fixes, setup, or an icon are still available below and in search.
+            </p>
+            <Button
+              type="button"
+              variant="neutral"
+              ink="neutral"
+              aria-expanded={moreExpanded}
+              aria-controls="browse-more-apps"
+              onClick={() => controller()?.toggleMore()}
+            >
+              {moreExpanded ? 'Show less' : `Show more (${more.length})`}
+            </Button>
+          </div>
+          <div id="browse-more-apps" className={moreExpanded
+            ? 'md:col-span-full md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3'
+            : 'hidden'}>
+            {moreExpanded ? renderRows(more) : null}
+          </div>
+        </>
+      ) : null}
+    </>
+  );
 }

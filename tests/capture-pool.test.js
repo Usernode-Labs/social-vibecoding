@@ -266,6 +266,10 @@ test('checks on the same URL share one navigation but keep their own verdicts', 
     concurrency: 4, testTimeoutMs: 20000,
     // #gone never appears; a tight ceiling keeps this dispatch-shape test fast.
     assertMaxMs: 100, assertPollMs: 25,
+    // Check `b` fails, so the retry pass would legitimately add three more
+    // navigations of its own. This test is about the shape of the MAIN
+    // dispatch; the retry pass has its own test below.
+    env: { ...process.env, TEST_RETRY_RUNS: '0' },
   });
   const { frames, done } = read();
   const gotos = log.filter((e) => e.call === 'goto');
@@ -280,6 +284,71 @@ test('checks on the same URL share one navigation but keep their own verdicts', 
   assert.equal(result.ran, 4, 'the sentinel counts checks, not navigations');
   assert.equal(done.ran, '4');
   assert.equal(done.expected, '4');
+});
+
+test('a failed check is asked again, alone, and the retries say what they are', async () => {
+  // The retry pass, in the container. A check that failed is re-run on its
+  // own cold document — not as another assertion against a page somebody
+  // already loaded, which is what grouping would otherwise make of it.
+  const read = collect();
+  const log = [];
+  const browser = makeBrowser({ log, mode: 'ok', missingSelectors: ['#gone'] });
+  // Eight checks over two documents, one of them failing. One in eight is
+  // comfortably under the ceiling that says "this is the change, not
+  // flakiness" — with a two-check suite a single failure is fifty percent
+  // and nothing would be asked again, which is the cap working.
+  const tests = [
+    { index: 0, name: 'a', path: '/shared', url: 'http://staging/shared', expectSelector: '#here' },
+    { index: 1, name: 'b', path: '/shared', url: 'http://staging/shared', expectSelector: '#gone' },
+    { index: 2, name: 'c', path: '/shared', url: 'http://staging/shared' },
+    { index: 3, name: 'd', path: '/shared', url: 'http://staging/shared' },
+    { index: 4, name: 'e', path: '/other', url: 'http://staging/other' },
+    { index: 5, name: 'f', path: '/other', url: 'http://staging/other' },
+    { index: 6, name: 'g', path: '/other', url: 'http://staging/other' },
+    { index: 7, name: 'h', path: '/other', url: 'http://staging/other' },
+  ];
+  const result = await runTests(browser, tests, {
+    concurrency: 4, testTimeoutMs: 20000, assertMaxMs: 100, assertPollMs: 25,
+    env: { ...process.env, TEST_RETRY_RUNS: '3' },
+  });
+  const { frames, done } = read();
+
+  // Two navigations for the two documents, then one per retry.
+  assert.equal(log.filter((e) => e.call === 'goto').length, 5);
+
+  const retries = frames.filter((f) => f.retryOf != null);
+  assert.equal(retries.length, 3, 'the failing check, three more times');
+  assert.deepEqual([...new Set(retries.map((f) => f.retryOf))], [1],
+    'and only the failing one');
+  assert.ok(retries.every((f) => f.index >= 1000000),
+    'from a base that cannot collide with a declared index, which emitTest would drop');
+
+  // The sentinel still counts declared checks. The platform reads these two
+  // to decide whether every check reported, and a retry is a second opinion
+  // on a check it already has, not another check.
+  assert.equal(result.ran, 8);
+  assert.equal(done.ran, '8');
+  assert.equal(done.expected, '8');
+});
+
+test('a suite that is mostly red is the change, and nothing is asked again', async () => {
+  const read = collect();
+  const log = [];
+  const browser = makeBrowser({ log, mode: 'ok', missingSelectors: ['#gone'] });
+  const tests = [
+    { index: 0, name: 'a', path: '/a', url: 'http://staging/a', expectSelector: '#gone' },
+    { index: 1, name: 'b', path: '/b', url: 'http://staging/b', expectSelector: '#gone' },
+    { index: 2, name: 'c', path: '/c', url: 'http://staging/c' },
+  ];
+  await runTests(browser, tests, {
+    concurrency: 4, testTimeoutMs: 20000, assertMaxMs: 100, assertPollMs: 25,
+    env: { ...process.env, TEST_RETRY_RUNS: '3' },
+  });
+  const { frames } = read();
+  assert.equal(frames.filter((f) => f.retryOf != null).length, 0,
+    'two of three red is well past the ceiling: asking again would only make '
+    + 'a broken change a slow broken change');
+  assert.equal(log.filter((e) => e.call === 'goto').length, 3);
 });
 
 test('a failed navigation fails every check that shared the URL', async () => {
@@ -300,10 +369,11 @@ test('a failed navigation fails every check that shared the URL', async () => {
 });
 
 test('a hung group fails all its unreported checks on the scaled deadline', async () => {
-  // The group deadline is testTimeoutMs + 1s per extra check (assertions
-  // are cheap but not free). Two checks share the slow URL, so the budget
-  // here is 120 + 1000 = 1120ms — the 2s hang must be cut off at that
-  // deadline, and BOTH slow-URL checks must get a "did not finish" frame.
+  // The group deadline is testTimeoutMs for the checks, testTimeoutMs again
+  // for the group's one navigation, and 1s per extra check (assertions are
+  // cheap but not free). Two checks share the slow URL, so the budget here is
+  // 120 + 120 + 1000 = 1240ms — the 2s hang must be cut off at that deadline,
+  // and BOTH slow-URL checks must get a "did not finish" frame.
   const read = collect();
   const browser = makeBrowser({ delays: { 'http://staging/slow': 2000 } });
   const tests = [
@@ -947,4 +1017,33 @@ test('the suite deadline leaves headroom inside the container run timeout', () =
     'the suite budget must expire before the container is killed');
   assert.ok(runTimeout - testsDeadlineMs({}) >= 120000,
     'and with enough room left for the media pass that runs before it');
+});
+
+test('a group budgets its one navigation, so a lone check can outlast NAV_TIMEOUT_MS', () => {
+  // The bug this pins: `perTestMs` is the PER-CHECK wall clock, but the group
+  // budget spent it on the cold load, the settle AND the first check's
+  // assertion together. Only checks PAST the first bought more time, so a
+  // group of one — 146 of this repo's 236 declared routes — had to fit a
+  // navigation into a budget that allowed nothing for it, while the runner's
+  // own comment calls the navigation the expensive part and each extra check
+  // milliseconds.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'capture/capture.js'), 'utf8');
+  const formula = src.slice(src.indexOf('const groupBudgetMs = perTestMs'));
+  assert.match(formula.slice(0, 240), /\+ navBudgetMs/,
+    'the navigation every group performs has its own term');
+  assert.match(src, /const navBudgetMs = Number\(o\.navBudgetMs\) > 0 \? Number\(o\.navBudgetMs\) : perTestMs;/,
+    'defaulted to perTestMs so it scales with the knob callers already tune');
+
+  // The property that makes a slow load REPORTABLE. NAV_TIMEOUT_MS bounds the
+  // navigation; while it exceeded the group's whole budget the group race
+  // always resolved first, so a page that was merely slow came back as "did
+  // not finish within 25s" — which cannot tell a load that never landed from
+  // an assertion that failed. A lone group's ceiling must now clear it.
+  const navTimeout = Number(/const NAV_TIMEOUT_MS = (\d+);/.exec(src)[1]);
+  const perTest = testTimeoutMs({});
+  const loneGroupBudget = perTest + perTest; // one check, one cohort
+  assert.ok(loneGroupBudget > navTimeout,
+    `a single-check group gets ${loneGroupBudget}ms, which must exceed NAV_TIMEOUT_MS ${navTimeout}ms`);
 });

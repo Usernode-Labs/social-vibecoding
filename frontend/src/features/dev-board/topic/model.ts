@@ -86,6 +86,20 @@ export interface CheckRow {
   advisory: boolean;
   name: string;
   path?: string | null;
+  /**
+   * Percent of this check's recorded runs that failed, or null when it has
+   * never failed, has too little history to judge, or is reliable enough
+   * that the chip would be noise. A graduated check keeps blocking when it
+   * starts failing intermittently — that is deliberate, there is no
+   * demotion — so this chip is the only thing that says it is doing so.
+   */
+  flaky?: number | null;
+  /**
+   * True when this row is GREEN only because a retry passed. The reason
+   * line is kept for it, which the renderer otherwise drops for a pass:
+   * the failure happened, it just did not reproduce.
+   */
+  keepReason?: boolean;
   reason?: string | null;
   errors?: { kind: string; message: string; source?: string | null }[];
 }
@@ -172,17 +186,38 @@ export interface LedgerRow {
   key: string;
   tone: 'bad' | 'warn' | 'ok' | 'vote' | 'mute' | 'progress';
   spinner?: boolean;
+  /**
+   * Its position in the path a blocked proposal takes, drawn in the dot in
+   * place of the tone glyph. Set only when there is a sync step to order
+   * the others against (`_topicLedgerPath`); a row with no step keeps its
+   * glyph.
+   */
+  step?: number | null;
+  /**
+   * True once this step is CLEARED — its checkbox draws a tick instead of
+   * its number. Only checks and votes can reach it; the sync step is on the
+   * path only while it is outstanding.
+   */
+  stepDone?: boolean;
   label: string;
-  /** The small line under the label: "1 of 463 failing", "14 commits". */
+  /**
+   * The small line under the label. Two jobs: a count ("1 of 463 failing"),
+   * or, on a numbered step, who acts and when — "snait, now",
+   * "automatic, after 1".
+   */
   sub?: string | null;
   /** The sentence, in the primary ink. */
   text: TextRun[];
-  /** Follow-on lines, muted. */
-  foot?: TextRun[][];
+  /**
+   * Follow-on material under the sentence, muted and IN ORDER: a text run
+   * array is a line, `{ list }` is a bulleted mono list. One ordered array
+   * for the same reason `NoteRow` above is one — a lines-then-list shape
+   * renders both in the wrong order, silently, which is exactly what the
+   * ledger did to the conflicting-file list until it carried lists here.
+   */
+  foot?: (TextRun[] | { list: NoteItem[] })[];
   /** Follow-on lines in the attention tone — the admins-list and locked-app rules. */
   warnFoot?: TextRun[][];
-  /** A mono list — conflicting files, missing variables, console errors. */
-  list?: NoteItem[] | null;
   /** The checks row's failing tests, listed; and its passing ones, folded. */
   fails?: CheckRow[] | null;
   passes?: CheckRow[] | null;
@@ -200,6 +235,15 @@ export interface ProposalDetails {
   meta: { href?: string | null; parts: TextRun[] }[];
   /** The ledger the head draws; the fields below are the material it is built from. */
   ledger: LedgerRow[];
+  /**
+   * How many of the ledger's rows are numbered steps of the merge path, or
+   * null when there is no path to draw. Numbering says the steps are
+   * ORDERED; the caption this feeds says they are a GATE — every one of
+   * them has to clear before the proposal merges.
+   */
+  pathSteps?: number | null;
+  /** How many of those steps are still outstanding, for the same caption. */
+  pathLeft?: number | null;
   /** The circular "?" beside the meta line. */
   help: boolean;
   /** A prose note under the meta line. */

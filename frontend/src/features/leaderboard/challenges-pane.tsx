@@ -57,6 +57,7 @@ const controller = () => (window as {
   TopochainChallenges?: {
     _openIdx(idx: number): void;
     _toStandings(): void;
+    _toOnboarding(eventId: number): void;
     _moreBreakdown(): void;
     closeChallengeDetail(): void;
     closeUserProfile(): void;
@@ -84,7 +85,7 @@ type GridView =
   | { kind: 'loading' }
   | { kind: 'error'; message: string }
   | { kind: 'empty' }
-  | { kind: 'cards'; summary: string; groups: GroupView[] };
+  | { kind: 'cards'; summary: string; notice?: string; onboardingEventId?: number | null; groups: GroupView[] };
 
 type EntryRow = { key: string; userId: number; name: string; nonPodium: boolean; points: string };
 
@@ -189,6 +190,17 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
       >
         {view.summary}
       </p>
+      {view.notice ? (
+        <p className="mb-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">{view.notice}</p>
+      ) : null}
+      {view.onboardingEventId != null ? (
+        <button
+          className="mb-3 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
+          onClick={() => controller()?._toOnboarding(view.onboardingEventId!)}
+        >
+          Go to onboarding challenges
+        </button>
+      ) : null}
       {/*
           Fragment, not a wrapping <div>: the two grids and the subheading
           between them were siblings in the string this replaces, and a
