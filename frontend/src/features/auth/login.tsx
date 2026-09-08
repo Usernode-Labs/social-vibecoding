@@ -198,7 +198,52 @@ function currentShot(): string | null {
   }
 }
 
-/** The `#signup/<address>` segment, or null if it is not an address. */
+/**
+ * The `?t=` invite token from a waitlist-release link (#1548).
+ *
+ * The mail carries a TOKEN rather than the address. A fragment would be
+ * dropped by link rewriters — that is the bug #1545 fixed on this same mail —
+ * and the address in a query would put an email in server logs and referrers,
+ * which for a waitlist is the membership fact itself.
+ *
+ * `more_token` is already an unguessable capability delivered to that address,
+ * and `/api/public/waitlist/more/:token` already resolves it and already
+ * returns the email, so nothing new is minted or exposed.
+ */
+function inviteTokenFromQuery(): string | null {
+  try {
+    const t = new URLSearchParams(location.search).get('t');
+    return t && /^[A-Za-z0-9_-]{8,128}$/.test(t) ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve an invite token to its address. Null on anything unexpected: a
+ * prefill is a convenience, and the screen is perfectly usable without it.
+ */
+async function inviteEmailFromToken(token: string): Promise<string | null> {
+  try {
+    const res = await fetch(`/api/public/waitlist/more/${encodeURIComponent(token)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const email = typeof data?.email === 'string' ? data.email.trim().toLowerCase() : '';
+    return email.includes('@') && email.length <= 255 ? email : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `#signup/<address>` segment, or null if it is not an address.
+ *
+ * Kept after #1548 moved the MAIL to a token, because the `signup-code-sent`
+ * screenshot state still uses it: a check URL cannot carry a live token, and
+ * the shot has to paint without a network round trip to stay deterministic.
+ * Harmless as a general entry point too — it prefills a field, and the code
+ * still only goes to the address that was typed.
+ */
 function inviteFromSegment(seg?: string | null): string | null {
   if (!seg) return null;
   let decoded: string;
@@ -446,7 +491,11 @@ export function LoginScreen() {
         // #signup/<address> from a waitlist-release email. Prefill by ref
         // (the field is uncontrolled); the send itself is in the effect
         // below, so it is not fired from inside a router callback.
-        const invited = inviteFromSegment(seg);
+        // #1548: the address arrives either as the shot's hash segment or,
+        // in the real mail, as a token that has to be resolved. Everything
+        // downstream is identical, so the shared tail runs in both cases —
+        // once synchronously, once when the lookup lands.
+        const applyInvite = (invited: string | null) => {
         if (invited && otpEmailInput.current) otpEmailInput.current.value = invited;
         // Two ways to already be past the send, and both paint the code step
         // HERE rather than from an effect: showOtpView() above has just reset
@@ -473,6 +522,17 @@ export function LoginScreen() {
           setCooldownUntil(until > Date.now() ? until : 0);
         }
         setInviteEmail(invited);
+        };
+        const segEmail = inviteFromSegment(seg);
+        const token = segEmail ? null : inviteTokenFromQuery();
+        if (token) {
+          // Asynchronous, and that is fine: the send is in an effect keyed on
+          // `inviteEmail`, so it fires when the address lands rather than
+          // needing to be known inside this router callback.
+          void inviteEmailFromToken(token).then(applyInvite);
+        } else {
+          applyInvite(segEmail);
+        }
       }
       // Wallet detection runs once, the first time the screen appears (needs
       // the native bridge; quietly does nothing on desktop web).

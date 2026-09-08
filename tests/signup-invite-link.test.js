@@ -27,15 +27,42 @@ const LOGIN_TSX = 'frontend/src/features/auth/login.tsx';
 
 // ─── the link and the route that receives it ────────────────────────
 
-test('the release link carries the address as a route segment, not a query', () => {
+test('#1548: the release link carries a TOKEN in a query, not the address', () => {
   const js = read('src/services/mail/index.js');
-  // AuthScreens.routeFromHash splits a hash route on '/', so a ?email=
-  // query in the fragment would never reach a handler. Same reason
-  // #reset-password/<token> is shaped this way.
-  assert.match(js, /#signup\/\$\{encodeURIComponent\(email\)\}/,
-    'the no-account link must url-encode the address into a segment');
-  assert.match(js, /hasAccount\s*\?\s*`\$\{PRODUCTION_ORIGIN\}\/#login`/,
-    'somebody who already has an account still goes to #login');
+  // Two things this must not be, and both were tried:
+  //
+  //   A FRAGMENT is client-side only, so a link rewriter rebuilding the URL
+  //   drops it. That is the bug #1545 fixed on this exact mail — it landed on
+  //   the home page from a desktop client and worked from a phone.
+  //
+  //   THE ADDRESS IN A QUERY survives the rewriter but puts an email into
+  //   server logs and referrers. For a waitlist, membership is precisely the
+  //   fact people would not want there.
+  assert.ok(js.includes('/?signup=1${moreToken'),
+    'the no-account link is a query and carries the token');
+  assert.ok(js.includes('&t=${encodeURIComponent(moreToken)}'),
+    'the token is url-encoded, never interpolated raw');
+  assert.ok(js.includes('/?login=1'),
+    'somebody who already has an account still goes to the sign-in link');
+  // Comments stripped first. The reasoning above lives at the site it
+  // applies to, and that prose necessarily quotes the shape it forbids — a
+  // scan over the whole file flags its own explanation.
+  const code = js
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '');
+  assert.doesNotMatch(code, /#signup\//, 'no fragment a rewriter is free to drop');
+  // The token must be optional: a signup row without one still gets a usable
+  // link rather than `&t=undefined`.
+  assert.ok(js.includes("` : ''}`"), 'absent token degrades to a plain signup link');
+});
+
+test('#1548: the release path supplies the token it promises', () => {
+  // The mail can only carry a token the caller hands it, so the release
+  // query has to return one and the admin route has to pass it on.
+  assert.match(read('src/services/waitlist.js'), /RETURNING w\.id, w\.email, w\.released_at, w\.linked_user_id, w\.more_token,/,
+    'releaseWaitlistSignup returns more_token');
+  assert.match(read('src/routes/topochain/admin/waitlist.js'), /moreToken: released\.more_token \|\| null,/,
+    'the release route passes it to the mail');
 });
 
 test('signup is a login-screen route and the segment reaches the screen', () => {
@@ -51,13 +78,23 @@ test('signup is a login-screen route and the segment reaches the screen', () => 
 
 // ─── arriving from the link ─────────────────────────────────────────
 
-test('the screen decodes the segment and refuses anything but an address', () => {
+test('#1548: the screen resolves the token, and still refuses a non-address', () => {
   const tsx = read(LOGIN_TSX);
-  assert.match(tsx, /decodeURIComponent\(seg\)/, 'the segment arrives url-encoded');
-  // A malformed segment throws out of decodeURIComponent, and a segment
-  // that is not an address must not be posted to the OTP endpoint.
-  assert.match(tsx, /function inviteFromSegment/);
+  // The token is read from the query and resolved through the endpoint that
+  // already exists for it. Nothing new is minted: more_token is already an
+  // unguessable capability delivered to that address, and
+  // /api/public/waitlist/more/:token already returns the email.
+  assert.match(tsx, /function inviteTokenFromQuery/);
+  assert.match(tsx, /function inviteEmailFromToken/);
+  assert.match(tsx, /waitlist\/more\/\$\{encodeURIComponent\(token\)\}/,
+    'resolved through the existing rate-limited endpoint');
+  // Whatever comes back is still validated before it can reach the OTP
+  // endpoint: a prefill is a convenience, not a reason to trust a response.
   assert.match(tsx, /includes\('@'\)/, 'only an address prefills and sends');
+  // The segment form stays for the screenshot state, which cannot carry a
+  // live token and must paint without a network round trip.
+  assert.match(tsx, /function inviteFromSegment/);
+  assert.match(tsx, /decodeURIComponent\(seg\)/);
 });
 
 test('the code is requested once per address per tab, not once per load', () => {

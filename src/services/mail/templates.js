@@ -206,13 +206,6 @@ function waitlistJoined(payload) {
   return { subject: "You're on the Usernode waitlist 🎉", text, html };
 }
 
-// Waitlist release. The no-account link carries the released address, and
-// opening it asks for a sign-in code straight away, so say so: the recipient
-// should be expecting a second email rather than hunting for a button. The
-// 10-minute figure must match OTP_TTL_MS in src/services/email-signup.js.
-const RELEASE_CODE_NOTE = 'Opening the link emails you a 6-digit code to sign in with. '
-  + 'The code expires in 10 minutes, and you can ask for a new one at any time.';
-
 // A REQUESTED confirmation code (POST /api/public/waitlist/resend, and the
 // re-join branch of POST /api/public/waitlist). Separate from
 // waitlist_joined because the join mail is a welcome that happens to carry
@@ -258,6 +251,13 @@ function waitlistCode(payload) {
   return { subject: 'Your Usernode waitlist confirmation code', text, html };
 }
 
+// Waitlist release. The no-account link carries the released address, and
+// opening it asks for a sign-in code straight away, so say so: the recipient
+// should be expecting a second email rather than hunting for a button. The
+// 10-minute figure must match OTP_TTL_MS in src/services/email-signup.js.
+const RELEASE_CODE_NOTE = 'Opening the link emails you a 6-digit code to sign in with. '
+  + 'The code expires in 10 minutes, and you can ask for a new one at any time.';
+
 function waitlistReleased(payload) {
   const url = payload.url;
   const text = payload.hasAccount
@@ -279,6 +279,9 @@ function waitlistReleased(payload) {
       // #1540: this mail is one link with a sentence around it, so the link
       // is the button rather than a URL printed mid-paragraph.
       + button(url, payload.hasAccount ? 'Sign in' : 'Create my account')
+      // #1548: the no-account link now sends a code the moment it is opened,
+      // so say so here. Somebody who is not told to expect a SECOND email
+      // goes hunting for a button that is not there.
       + (payload.hasAccount ? '' : p(RELEASE_CODE_NOTE))
     ),
   };

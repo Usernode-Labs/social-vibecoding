@@ -428,31 +428,48 @@ async function sendPasswordResetMail(config, email, token) {
 /**
  * "Your Usernode access is ready" — the one mail whose whole job is a link.
  *
- * #1545: an existing account's link is a QUERY, not a fragment. It was
- * `/#login`, and the report was that following it from a desktop mail client
+ * #1545: the destination is a QUERY, not a fragment. It was
+ * `/#signup`, and the report was that following it from a desktop mail client
  * landed on the home page while the same mail worked from a phone. That is
  * the signature of a link rewriter: a fragment is client-side only, so a
  * scanner or tracker that rebuilds the URL has nothing to lose by dropping
- * it, and what arrives is a bare `/`. A query string survives that, because
- * a rewriter has to carry it to reconstruct the address at all.
- * `AuthScreens.enter()` already honoured `?login=1` as "a pre-SPA link
- * form" and rewrites it to its hash route on arrival, so the address bar
- * ends up exactly where the old link pointed.
+ * `#signup`, and what arrives is a bare `/`. Query strings survive that,
+ * because a rewriter has to carry them to reconstruct the address at all.
  *
- * #1548: the no-account link still carries the released address as a
- * `#signup/<url-encoded>` segment, the same way `#reset-password/<token>`
- * and `#more/<token>` carry theirs, so the signup screen can prefill it and
- * ask for a code without a second step. That link keeps its fragment on
- * purpose, for the same reason those two do: the address IS the route
- * segment, and a `?signup=1` query has nowhere to put it.
+ * `AuthScreens.enter()` already honoured `?signup=1` as "a pre-SPA link
+ * form"; it now honours `?login=1` the same way, and rewrites either to its
+ * hash route on arrival, so the address bar ends up exactly where the old
+ * link pointed. The fragment spelling still works for anything that already
+ * has one.
  */
-async function sendWaitlistReleaseMail(config, email, { hasAccount = false } = {}) {
+async function sendWaitlistReleaseMail(config, email, { hasAccount = false, moreToken = null } = {}) {
   await send(config, {
     kind: 'waitlist_released',
     to: email,
+    // #1548: carry a TOKEN so the signup screen can prefill the address and
+    // send the code without a second step.
+    //
+    // Not the address itself, and not a fragment, which were the two obvious
+    // options and are both wrong here:
+    //
+    //   A FRAGMENT is client-side only, so a link rewriter reconstructing the
+    //   URL drops it. That is exactly the bug #1545 fixed on this same mail:
+    //   it landed on the home page from a desktop client and worked from a
+    //   phone. A prefill carried in `#signup/<address>` would silently vanish
+    //   for the very people that fix was for.
+    //
+    //   THE ADDRESS IN A QUERY survives rewriters but puts an email in a URL,
+    //   which means server logs and referrers. For a waitlist, membership is
+    //   the fact people would least want landing there.
+    //
+    // `more_token` is already an unguessable capability delivered to this
+    // address, and GET /api/public/waitlist/more/:token already resolves it
+    // (rate-limited, scan-limited) and already returns the email. So this
+    // needs no new endpoint and no new secret: the query survives the
+    // rewriter, and what travels is a token the recipient already holds.
     url: hasAccount
       ? `${PRODUCTION_ORIGIN}/?login=1`
-      : `${PRODUCTION_ORIGIN}/#signup/${encodeURIComponent(email)}`,
+      : `${PRODUCTION_ORIGIN}/?signup=1${moreToken ? `&t=${encodeURIComponent(moreToken)}` : ''}`,
     hasAccount,
   });
 }
