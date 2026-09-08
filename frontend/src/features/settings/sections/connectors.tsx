@@ -127,6 +127,50 @@ export function ConnectorsSection() {
           </Button>
         </div>
         {/*
+            #1607: the walkthroughs below are six and seven steps, and the
+            complaint was that reading them is the cost. These two links hand
+            the same job to the assistant that is going to use the connector:
+            they open a NEW chat pre-loaded with the server URL and the two
+            facts people get wrong (dynamic client registration, so there is
+            no client secret to hunt for; and the exact name `usernode`, per
+            #1218), and ask it to walk the reader through one step at a time.
+
+            They do not REPLACE the steps below, and the request's hope that
+            they would is worth answering plainly: an assistant in a chat
+            cannot click through Claude's or ChatGPT's own settings UI. What
+            it can do is answer "where is that button" without the reader
+            re-reading a wall of prose, which is the back-and-forth the
+            request is actually about. So this is a shortcut past the reading,
+            not a replacement for the reference.
+
+            The href is built at click time from the LIVE #connector-url value
+            by Settings._renderConnectors(), never hardcoded, so a fork or a
+            config change cannot stale it — the same rule the prose below
+            follows. Nothing secret travels: the connector URL is
+            `${origin}/mcp`, a public endpoint, and auth is OAuth inside the
+            product rather than anything carried in a link.
+        */}
+        <div className="mb-3 flex flex-wrap gap-2">
+          <a
+            id="connector-open-claude"
+            href="https://claude.ai/new"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-[44px] sm:min-h-[36px] items-center rounded-md border border-zinc-200 dark:border-zinc-700 px-3 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+          >
+            Set it up in Claude
+          </a>
+          <a
+            id="connector-open-chatgpt"
+            href="https://chatgpt.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-[44px] sm:min-h-[36px] items-center rounded-md border border-zinc-200 dark:border-zinc-700 px-3 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+          >
+            Set it up in ChatGPT
+          </a>
+        </div>
+        {/*
             #1289: the one-line "Settings → Connectors, paste the URL" summary
             assumed both products still bury custom MCP servers one menu deep,
             and it skipped every step a first-time user actually stalls on —

@@ -1679,7 +1679,36 @@
       // The connector URL is derived from the origin the SPA is served
       // from, so a self-hosted fork shows its own.
       const urlField = document.getElementById('connector-url');
-      if (urlField) urlField.value = `${window.location.origin}/mcp`;
+      const connectorUrl = `${window.location.origin}/mcp`;
+      if (urlField) urlField.value = connectorUrl;
+
+      // #1607: the "set it up in <product>" links open a new chat pre-loaded
+      // with the job. Built HERE, from the same derived origin the field
+      // shows, so a fork or a config change cannot leave a hardcoded URL
+      // behind — the rule the written steps already follow by pointing back
+      // at #connector-url rather than naming a host.
+      //
+      // The prompt carries the two things people get wrong: that Usernode
+      // uses dynamic client registration (so there is no client ID or secret
+      // to go looking for), and the exact name `usernode`, which is what
+      // Claude Code builds its permission rules from (#1218) and which one
+      // account once mistyped, silently missing every rule the platform
+      // ships.
+      //
+      // Deliberately short. It is a query string, and nothing secret is in
+      // it: the connector URL is a public endpoint and the authorisation
+      // happens through OAuth inside the product, not in this link.
+      const chatPrompt = `I want to add a custom MCP connector. The server URL is ${connectorUrl}`
+        + ' and it uses dynamic client registration, so there is no client ID or secret to enter.'
+        + ' Name it exactly "usernode". Walk me through it one step at a time and tell me what to click.';
+      const chatLinks = [
+        ['connector-open-claude', 'https://claude.ai/new?q='],
+        ['connector-open-chatgpt', 'https://chatgpt.com/?q='],
+      ];
+      for (const [id, base] of chatLinks) {
+        const link = document.getElementById(id);
+        if (link) link.href = `${base}${encodeURIComponent(chatPrompt)}`;
+      }
 
       this._connectorLoadId = (this._connectorLoadId || 0) + 1;
       const loadId = this._connectorLoadId;
