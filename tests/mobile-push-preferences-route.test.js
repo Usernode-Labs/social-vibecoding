@@ -121,3 +121,74 @@ test('settings API rejects unknown categories, malformed values, and unauthentic
     anonymous.server.close();
   }
 });
+
+function testAlertPool({ preferences = [], deliveries = [{ id: 42 }], fail = false } = {}) {
+  const calls = [];
+  return { calls, connect: async () => ({
+    release() { calls.push({ sql: 'release' }); },
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes('FROM mobile_push_preferences')) return { rows: preferences };
+      if (sql.includes('INSERT INTO notifications')) {
+        if (fail) throw new Error('database unavailable');
+        return { rows: [{ id: 123 }] };
+      }
+      if (sql.includes('FROM mobile_push_deliveries')) return { rows: deliveries };
+      return { rows: [] };
+    },
+  }) };
+}
+
+test('test alert queues only for the authenticated recipient and rate-limits repeated requests', async () => {
+  const pool = testAlertPool();
+  const { server, baseUrl } = await start(pool);
+  try {
+    const send = () => fetch(`${baseUrl}/api/me/test-alert`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: 999, kind: 'mention', delayMs: 0 }),
+    });
+    const response = await send();
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('cache-control'), /no-store/);
+    assert.deepEqual(await response.json(), { queued: true, notificationId: 123, delayMs: 10000 });
+    const insert = pool.calls.find((call) => call.sql.includes('INSERT INTO notifications'));
+    assert.deepEqual(insert.params, [7]);
+    assert.match(insert.sql, /'test_alert'/);
+    assert.ok(pool.calls.some((call) => call.sql === 'COMMIT'));
+    await send();
+    await send();
+    assert.equal((await send()).status, 429);
+    assert.equal(pool.calls.filter((call) => call.sql.includes('INSERT INTO notifications')).length, 3);
+  } finally { server.close(); }
+});
+
+test('test alert reports setup failures and rolls back instead of claiming it was sent', async () => {
+  for (const [options, reason] of [
+    [{ preferences: [{ category: 'developer_sessions', enabled: false }] }, 'preference_disabled'],
+    [{ deliveries: [] }, 'no_eligible_device'],
+  ]) {
+    const pool = testAlertPool(options);
+    const { server, baseUrl } = await start(pool);
+    try {
+      const response = await fetch(`${baseUrl}/api/me/test-alert`, { method: 'POST' });
+      assert.deepEqual(await response.json(), { queued: false, reason, delayMs: 10000 });
+      assert.ok(pool.calls.some((call) => call.sql === 'ROLLBACK'));
+      assert.ok(!pool.calls.some((call) => call.sql === 'COMMIT'));
+    } finally { server.close(); }
+  }
+});
+
+test('test alert rejects anonymous calls and rolls back database failures', async () => {
+  for (const authenticated of [false, true]) {
+    const pool = testAlertPool({ fail: true });
+    const { server, baseUrl } = await start(pool, { authenticated });
+    try {
+      const response = await fetch(`${baseUrl}/api/me/test-alert`, { method: 'POST' });
+      assert.equal(response.status, authenticated ? 500 : 401);
+      if (authenticated) {
+        assert.ok(pool.calls.some((call) => call.sql === 'ROLLBACK'));
+        assert.equal(pool.calls.at(-1).sql, 'release');
+      } else assert.equal(pool.calls.length, 0);
+    } finally { server.close(); }
+  }
+});

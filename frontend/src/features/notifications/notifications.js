@@ -592,6 +592,11 @@ const Notifications = {
     // branch below that actually routes calls _dismissSheetForNav() first —
     // a no-op when no sheet is presented.
     Notifications._markOneRead(id);
+    if (item.kind === 'test_alert') {
+      Notifications._dismissSheetForNav();
+      window.location.hash = '#settings/alerts';
+      return;
+    }
     // Platform conversations are never routed through an app tab. Prefer the
     // React bridge because it re-renders even when this is the current hash;
     // the hash fallback keeps native exact-notification opens functional
@@ -1531,6 +1536,11 @@ function rowView(n) {
     icon: null,
     segments: [],
   };
+
+  if (n.kind === 'test_alert') {
+    return { ...base, label: 'Usernode test alert', icon: '🔔',
+      segments: [{ t: 'text', v: 'You requested a push notification test. Open Alerts settings to try again.' }] };
+  }
 
   if (CONVERSATION_NOTIF_KINDS.has(n.kind)) {
     const conversation = n.conversationTitle || 'Messages';
