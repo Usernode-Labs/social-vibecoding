@@ -786,11 +786,21 @@ const DIGEST_RETRY_MS = 60 * 60 * 1000;
  * stamps the clock and keeps the previous text. `digestError` says whether
  * that last attempt failed, and picks the window: an hour after a failure,
  * a day after a success. Never attempted at all is due now.
+ *
+ * A row with NO text and NO error is never a success, whatever its clock
+ * says. The day's window is earned by a paragraph the page can show; the
+ * hour by a failure that was recorded. Neither is there, so it is due now.
+ * This is the state a row is left in by the code that ran before
+ * `digest_error` existed: it stamped the clock on every attempt and could
+ * not record that the attempt got nothing, so a fresh clock, no text and no
+ * error read as "written an hour ago" and the page kept its worked-out
+ * sentence for a day.
  */
 function digestStale(row, now = Date.now()) {
   if (!row) return true;
   const at = Date.parse(row.digestAt || '');
   if (!Number.isFinite(at)) return true;
+  if (!row.digest && !row.digestError) return true;
   const window = row.digestError ? DIGEST_RETRY_MS : DIGEST_MAX_AGE_MS;
   return now - at >= window;
 }
