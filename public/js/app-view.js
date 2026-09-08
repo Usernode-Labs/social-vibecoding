@@ -6531,6 +6531,40 @@ const AppView = {
   // precedence order: the busy spinner, MergeStatus's lifecycle descriptor
   // (rendered by the card's `ms` badge variant, which is badgeHtml's shell
   // as data), and the plain paused chip.
+  // The Underway card's meta lines. The subtitle, plus — when checks are
+  // failing — WHICH ones (#1766).
+  //
+  // The chip above already says "Checks failing · 3". Bruno's report is that
+  // the three have no names anywhere in the UI, so the only way to learn them
+  // was to read test_results out of the API by hand. The server now sends a
+  // bounded summary (summarizeFailingChecks), derived from the same rows the
+  // coding agent has always been handed in its prompt.
+  //
+  // Two names, then a count. A card is a pointer, not the ledger: the whole
+  // list belongs on the topic page, and three lines of check titles in a
+  // launcher row would push the card past the thing it exists to be.
+  _sessionCardMeta(s, subtitle) {
+    const meta = [{ t: 'text', s: subtitle }];
+    const f = s && s.failing_checks;
+    if (!f || !f.total || !Array.isArray(f.rows) || !f.rows.length) return meta;
+    const shown = f.rows.slice(0, 2).map((r) => r.name).filter(Boolean);
+    if (!shown.length) return meta;
+    const rest = f.total - shown.length;
+    const names = shown.join(' · ') + (rest > 0 ? ` · +${rest} more` : '');
+    meta.push({
+      t: 'text',
+      s: `Failing: ${names}`,
+      // The full first reason, where a pointer cannot carry it. Advisory
+      // rows are named too but marked, because they do not block the merge
+      // and a reviewer counting them as blockers reads a held-up merge that
+      // is not held up.
+      title: f.rows
+        .map((r) => `${r.advisory ? '[advisory] ' : ''}${r.name} — ${r.reason}`)
+        .join('\n'),
+    });
+    return meta;
+  },
+
   _sessionStatusTagSpec(s) {
     if (AppView._sessionBusy(s)) {
       return {
@@ -6666,6 +6700,22 @@ const AppView = {
         act: () => AppView.openTopic('session', s.id),
       });
     }
+    // #1766: the second half of the report — "there is no way to re-run them
+    // either from the UI". _recheckAction already exists and is already
+    // owner/admin gated, already refuses when the state is passing, and
+    // already disables itself mid-request; it was simply never offered on an
+    // Underway card, only on the promoted topic page. So an owner watching
+    // their own session fail could see the verdict and do nothing about it
+    // without leaving the board.
+    const recheck = AppView._recheckAction(s);
+    if (recheck && !recheck.disabled) {
+      menu.push({
+        label: 'Re-run checks',
+        icon: 'refresh',
+        title: recheck.title,
+        act: () => AppView.castRecheck(s.id),
+      });
+    }
     if (!imported) {
       menu.push({
         label: 'Archive',
@@ -6696,7 +6746,7 @@ const AppView = {
       // The clamp can hide the end of a long title, so the truncating
       // element itself carries the full text.
       title: { text: label, title: label },
-      meta: [{ t: 'text', s: subtitle }],
+      meta: AppView._sessionCardMeta(s, subtitle),
       pill: null,
       linked: [],
       badges: [

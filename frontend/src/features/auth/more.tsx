@@ -742,11 +742,15 @@ export function MoreScreen() {
         <h1 className={hiddenLast(saved, 'mt-1 text-2xl font-bold')}>
           Want in sooner?
         </h1>
+        {/*
+            #1541: two sentences, from four. The middle one said the same
+            thing twice ("the answers we actually read" and "worth more than
+            the order you signed up in"), and "every one is optional" is
+            already the label directly above this heading.
+        */}
         <p className={hiddenLast(saved, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
-          Four more questions, about three minutes. These are the answers we
-        actually read when we pick the next group, so they&rsquo;re worth more
-        than the order you signed up in. Every one is optional, and you can
-        come back and add to this any time.
+          Four questions, about three minutes. These are what we read when we
+        pick the next group, and you can come back and add to them any time.
         </p>
         {/* Bad/expired token state — also hosts the rate-limited copy */}
         <div
