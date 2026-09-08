@@ -495,7 +495,8 @@ function stagingDemoGrouping(input) {
 
 const ROW_COLUMNS = `app_id, input_hash, themes_json, placements_json, unplaced_json, source, model,
           generated_at, discovered_at, discovery_key_count, churn_added, churn_removed,
-          last_error, last_failed_at, last_viewed_at, reconcile_started_at`;
+          last_error, last_failed_at, last_viewed_at, reconcile_started_at,
+          digest_text, digest_at`;
 
 function shapeRow(r) {
   if (!r) return null;
@@ -517,6 +518,8 @@ function shapeRow(r) {
     lastFailedAt: r.last_failed_at || null,
     lastViewedAt: r.last_viewed_at || null,
     reconcileStartedAt: r.reconcile_started_at || null,
+    digest: r.digest_text || null,
+    digestAt: r.digest_at || null,
   };
 }
 
@@ -574,13 +577,19 @@ async function writeRow(pool, appId, next) {
             discovery_key_count = CASE WHEN $7::boolean THEN $8::integer ELSE discovery_key_count END,
             churn_added = $9, churn_removed = $10,
             last_error = $11, last_failed_at = CASE WHEN $11::text IS NULL THEN NULL ELSE NOW() END,
+            -- A digest is written only when this pass produced one. A pass
+            -- that did not (no model, the call failed, nothing changed) keeps
+            -- the last one rather than blanking the paragraph: a stale
+            -- sentence beside fresh themes is worth more than no sentence.
+            digest_text = COALESCE($12::text, digest_text),
+            digest_at = CASE WHEN $12::text IS NULL THEN digest_at ELSE NOW() END,
             reconcile_started_at = NULL
       WHERE app_id = $1
       RETURNING ${ROW_COLUMNS}`,
     [
       appId, next.inputHash, JSON.stringify(next.themes), JSON.stringify(next.placements),
       JSON.stringify(next.unplaced), next.model || null, !!next.discovered, next.discoveryKeyCount,
-      next.churnAdded, next.churnRemoved, next.lastError || null,
+      next.churnAdded, next.churnRemoved, next.lastError || null, next.digest || null,
     ]
   );
   return shapeRow(rows[0]);
@@ -721,6 +730,30 @@ async function discover({ pool, app, input, previous }) {
   return { themes: assignIds(result.themes, previous), model: result.model };
 }
 
+// The status paragraph. Written from the SAME snapshot and the same themes
+// this pass just settled on, so the sentence and the grouping beside it can
+// never describe different boards. Failure is not the reconcile's failure:
+// the paragraph is one line on a lander and the themes are the product, so a
+// digest that throws is logged, the previous one is kept, and the pass
+// carries on. Only ever attempted on a pass that re-drafted the themes —
+// between drafts nothing about the board's shape has moved enough to say
+// anything new, and it would be a Sonnet call per placement batch.
+async function makeDigest({ pool, app, input, themes }) {
+  try {
+    const out = await llm.generateWorkshopDigest({
+      inputJson: JSON.stringify(input),
+      themesJson: JSON.stringify(themes.map((t) => ({ id: t.id, name: t.name, description: t.description }))),
+      appName: app.name || app.slug,
+      telemetryContext: { pool, appId: app.id },
+    });
+    await recordSpend(pool, app, out.usage, out.model);
+    return out.digest || null;
+  } catch (err) {
+    log.warn('workshop-themes', 'digest failed', { app: app.slug, message: err.message });
+    return null;
+  }
+}
+
 // Place `keys` into `themes`, a batch at a time. A batch the model answers
 // incompletely is asked again for what it skipped; a batch that fails
 // outright is left for the next reconcile (`failed`) and the error is the
@@ -858,11 +891,13 @@ async function reconcile({ pool, app, reason }) {
       result.failed = out.failed.length;
     }
 
+    const digest = next.discovered ? await makeDigest({ pool, app, input, themes }) : null;
+
     await writeRow(pool, app.id, {
       inputHash: fingerprintKeys(keys), themes, placements: next.placements,
       unplaced: [...next.unplaced], model, discovered: next.discovered,
       discoveryKeyCount: next.discoveryKeyCount, churnAdded: next.churnAdded,
-      churnRemoved: next.churnRemoved, lastError,
+      churnRemoved: next.churnRemoved, lastError, digest,
     });
     leased = false;
     notify(app, why ? 'discovery' : 'placement');
@@ -973,10 +1008,12 @@ async function getThemes({ pool, app }) {
       return {
         themes: stagingDemoGrouping(input), source: 'demo', generatedAt: null, discoveredAt: null,
         stale: true, pending: false, pendingStage: null, lastError: null, coverage: null, unplaced: [],
+        digest: 'Staging demo: the model\u2019s two sentences on the week just gone and what is in flight would sit here.',
       };
     }
     return {
       themes: fallbackThemes(input), source: 'category', generatedAt: null, discoveredAt: null,
+      digest: null,
       stale: true, pending, pendingStage: pending ? 'discovery' : null,
       lastError: enabled && row ? row.lastError : null, coverage: null, unplaced: [],
     };
@@ -1008,6 +1045,7 @@ async function getThemes({ pool, app }) {
     lastError: row.lastError,
     coverage: { total: keys.length, placed: placedCount, unplaced: unplacedKeys.length, pending: pendingCount },
     unplaced: unplacedKeys,
+    digest: row.digest || null,
   };
 }
 

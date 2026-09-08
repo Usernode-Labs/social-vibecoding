@@ -206,28 +206,58 @@ function FoldedRow({
 }
 
 /**
- * The unfolded row: the Activity entry, byte-compatible with the feed's —
- * `.dev-feed-entry` wraps the dense card, the GitHub preview slot and the
- * app thread, so app.css's sheet treatment and the module's two fillers
- * find exactly the markup they expect.
+ * The hooks the delegated `#dev-body` handler opens a card full-screen on.
+ * They come off the model for the OPEN card, and only there — see below.
  */
+const OPEN_HOOKS = [
+  'data-issue-row', 'data-proposal-row', 'data-gov-row',
+  'data-shared-session-row', 'data-session-chip', 'data-discussion-row',
+];
+
+/**
+ * The open row: the SAME card the Board draws, at the size the Board draws
+ * it, with the comment slot and the thread under it.
+ *
+ * It used to be a hybrid — the compressed row stayed above and this card had
+ * its head, meta line and status band hidden so as not to repeat it — which
+ * made the open state a third object belonging to neither. The row is a
+ * compressed representation OF this card, so opening one swaps it for the
+ * card whole rather than growing a chimera.
+ *
+ * ── Why the hooks come off ────────────────────────────────────────────
+ *
+ * `AppView._wireDevBody`'s click handler is bound on `#dev-body` itself and
+ * opens the item full-screen when the click lands inside `[data-issue-row]`
+ * (or its four siblings). This component renders through a PORTAL, so React's
+ * listener sits at the shell's root — above `#dev-body` — and a synthetic
+ * `stopPropagation` here would run after that handler had already navigated.
+ * Removing the attributes is what actually stops it: `closest()` finds
+ * nothing, the handler falls through, and the wrapper's own click can toggle.
+ * The full-screen route is not lost — it is the "Open card" link below, whose
+ * href is read off the model before the hooks are stripped.
+ */
+function withoutOpenHooks(card: DevCardModel): DevCardModel {
+  const attrs: Record<string, string> = { ...(card.attrs || {}) };
+  for (const k of OPEN_HOOKS) delete attrs[k];
+  return { ...card, attrs };
+}
+
 function UnfoldedRow({
   row, slug, canPost,
 }: { row: CardRow; slug: string; canPost: boolean }): ReactNode {
   const href = openHref(slug, row.card);
   return (
     <div className="dev-feed-entry dev-ws-sheet" data-ws-sheet={row.key}>
-      <DevCard model={row.card} />
+      <DevCard model={withoutOpenHooks(row.card)} />
       {row.commentsFor != null ? (
         <div className="dev-feed-comments" data-comments-for={String(row.commentsFor)}></div>
       ) : null}
       {row.thread && slug ? (
         <FeedThread slug={slug} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
       ) : null}
-      {/* No Collapse button: the head above is the toggle, in both directions,
-          and a second control that only ever undoes the first one is a thing
-          to learn rather than a thing to use. What is left here is the one
-          action the fold cannot do — leaving for the card's own page. */}
+      {/* No Collapse button: the card itself toggles. What is left here is the
+          one thing the fold cannot do, and the reason the hooks above could
+          be removed — leaving for the card's own page. */}
       {href ? (
         <div className="dev-ws-sheet-actions">
           <a href={href} className="dev-ws-link">Open card ›</a>
@@ -308,10 +338,33 @@ function voteSpecs(card: DevCardModel): { yes: ActionSpec; no: ActionSpec } | nu
 function CardRowView({
   row, slug, canPost, open, onToggle,
 }: { row: CardRow; slug: string; canPost: boolean; open: boolean; onToggle: () => void }): ReactNode {
+  // EITHER the compressed row OR the card — never both. The two are one item
+  // at two sizes, and drawing them together is what made the open state read
+  // as a panel hanging off a row.
+  //
+  // Clicking the open card closes it. Everything interactive inside it is
+  // excluded by the same guard the delegated handler uses, plus the thread's
+  // composer and the chips that are real buttons: a click on Vote, on the ⋯,
+  // on "Closes #12" or in the reply box must do its own job and nothing else.
+  //
+  // The handler goes on the wrapper rather than on a div around the sheet:
+  // the sheet is a DIRECT child of `.dev-ws-rowwrap-open`, and a declared
+  // check selects it that way. An intermediate element to hang onClick on
+  // is invisible in a diff and breaks that selector.
   return (
-    <div className={open ? 'dev-ws-rowwrap dev-ws-rowwrap-open' : 'dev-ws-rowwrap'}>
-      <FoldedRow row={row} open={open} onToggle={onToggle} />
-      {open ? <UnfoldedRow row={row} slug={slug} canPost={canPost} /> : null}
+    <div
+      className={open ? 'dev-ws-rowwrap dev-ws-rowwrap-open' : 'dev-ws-rowwrap'}
+      onClick={open ? (e) => {
+        const el = e.target as HTMLElement | null;
+        if (el && el.closest('a, button, input, textarea, select, form, [data-attr-chip], [data-issue-chip]')) return;
+        onToggle();
+      } : undefined}
+    >
+      {open ? (
+        <UnfoldedRow row={row} slug={slug} canPost={canPost} />
+      ) : (
+        <FoldedRow row={row} open={open} onToggle={onToggle} />
+      )}
     </div>
   );
 }
@@ -518,6 +571,17 @@ function pace(d: Dash): string {
 }
 
 /**
+ * The app in two sentences, written by the model on the same reconcile that
+ * drafted the themes — from the same board snapshot, so the paragraph and the
+ * grouping under it can never describe different boards. `describe()` below is
+ * what runs when there is none: no model configured, no draft yet, or that one
+ * call failed. Same relationship the category grouping has to the themes.
+ */
+function summarise(d: Dash): string {
+  return d.summary || describe(d);
+}
+
+/**
  * The app, described rather than counted.
  *
  * This pane used to read "63 open · 4 waiting on votes · 20 shipped this week"
@@ -565,19 +629,30 @@ export function DevWorkshop(): ReactNode {
   // Which themes are unfolded, keyed by id. The FIRST theme opens by
   // default: a lander whose every theme is shut is a list of headings.
   // Seeded once the first real publish lands, then the viewer's.
-  const [openThemes, setOpenThemes] = useState<Record<string, boolean> | null>(null);
+  // Seeded FROM the publish, not from an effect: `autoExpand` is how the
+  // `?shot=` deep links reach a theme now that every one starts shut, and an
+  // effect would paint the closed state first. Nothing hydrates this component
+  // — it mounts client-side into a legacy host and is absent from the
+  // prerendered shell — so there is no mismatch to cause. The effect below
+  // still handles the case where the themes land after the first paint.
+  const [openThemes, setOpenThemes] = useState<Record<string, boolean> | null>(
+    () => (v.autoExpand ? { [v.autoExpand.theme]: true } : null),
+  );
   // At most one unfolded row per theme (and one for the since strip).
-  const [openRows, setOpenRows] = useState<Record<string, string>>({});
+  const [openRows, setOpenRows] = useState<Record<string, string>>(
+    () => (v.autoExpand && v.autoExpand.key ? { [v.autoExpand.theme]: v.autoExpand.key } : {}),
+  );
   const [sinceOpen, setSinceOpen] = useState(false);
 
   const themes = useMemo(() => sortThemes(v.themes, sortKey), [v.themes, sortKey]);
-  const firstId = themes.length ? themes[0].id : null;
-  const isOpen = (id: string) => (openThemes ? !!openThemes[id] : id === firstId);
+  // Every theme starts SHUT. The first one used to open itself, on the
+  // reasoning that a lander whose every theme is closed is a list of
+  // headings — but a list of headings is exactly what this screen is for,
+  // and opening one of them for you spends the top of the page on whichever
+  // theme happened to sort first rather than on the shape of the whole board.
+  const isOpen = (id: string) => !!(openThemes && openThemes[id]);
   const toggleTheme = (id: string) => {
-    setOpenThemes((cur) => {
-      const base = cur || (firstId ? { [firstId]: true } : {});
-      return { ...base, [id]: !base[id] };
-    });
+    setOpenThemes((cur) => ({ ...(cur || {}), [id]: !(cur && cur[id]) }));
   };
   const toggleRow = (scope: string, key: string) => {
     setOpenRows((cur) => (cur[scope] === key ? { ...cur, [scope]: '' } : { ...cur, [scope]: key }));
@@ -589,8 +664,10 @@ export function DevWorkshop(): ReactNode {
   useEffect(() => {
     if (!v.autoExpand) return;
     const { theme, key } = v.autoExpand;
-    setOpenThemes((cur) => ({ ...(cur || (firstId ? { [firstId]: true } : {})), [theme]: true }));
-    setOpenRows((cur) => ({ ...cur, [theme]: key }));
+    setOpenThemes((cur) => ({ ...(cur || {}), [theme]: true }));
+    // `?shot=themes` names a theme and no row: the lanes are the subject, and
+    // every row in them stays folded.
+    if (key) setOpenRows((cur) => ({ ...cur, [theme]: key }));
   }, [autoKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The two legacy fillers, re-run whenever the set of unfolded entries
@@ -643,7 +720,7 @@ export function DevWorkshop(): ReactNode {
               ? <span className="dev-ws-pill dev-ws-pill-good">{`${v.since.shipped} shipped since`}</span>
               : null}
           </div>
-          <p className="dev-ws-strip-text">{describe(v.dashboard)}</p>
+          <p className="dev-ws-strip-text">{summarise(v.dashboard)}</p>
           {v.since ? (
             <p className="dev-ws-since-line">
               <span>{`Since your last visit, ${relTime(v.since.baseline)}: ${sinceWords(v.since)}`}</span>
@@ -712,7 +789,7 @@ export function DevWorkshop(): ReactNode {
           ) : null}
           {nextUp ? (
             <div className="dev-ws-lane" data-ws-lane="next">
-              <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>Nobody on this one yet</h4>
+              <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>Nobody on this yet, why not give it a try?</h4>
               <CardRowView
                 row={nextUp}
                 slug={slug}

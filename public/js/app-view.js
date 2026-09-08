@@ -728,6 +728,15 @@ const AppView = {
       // It scrolls too, because a before/after capture has to SHOW the row.
       // Pure UI state: one GET the observer would have made anyway, no
       // writes, not env-gated — so the "before" side of a capture works.
+      // Every theme starts shut, so a THEME's contents — the stage lanes and
+      // the folded rows in them — are now only reachable by tapping one. This
+      // is the URL that reaches them: it opens the first theme and stops
+      // there, leaving every row folded, which is what the declared check for
+      // the lanes selects. `feed-comments` below opens a theme AND unfolds a
+      // row inside it, so it cannot stand in for this one.
+      if (shot === 'themes') {
+        AppView._workshopShot = 'themes';
+      }
       if (shot === 'feed-comments') {
         // The Workshop keeps its rows folded; the slot only exists inside an
         // unfolded one, so the view model unfolds the first issue row for
@@ -5406,6 +5415,10 @@ const AppView = {
       busiest: named.length
         ? named.slice().sort((a, b) => b.lastActive - a.lastActive)[0].name
         : null,
+      // The model's two sentences, when there are any. The derived sentence
+      // the client can always build stays the fallback — same relationship
+      // the category grouping has to the drafted themes.
+      summary: (tData && tData.digest) || null,
       // The merged history is paged. With more behind it the two week counts
       // are floors, not totals, and the view has to say so rather than
       // reporting a page as if it were the whole record.
@@ -5438,6 +5451,11 @@ const AppView = {
         }
         if (autoExpand) break;
       }
+    } else if (AppView._workshopShot === 'themes') {
+      // The theme only. An empty `key` names no row, so every row in it stays
+      // folded — which is the state the lanes check is about.
+      const first = drawn.find((t) => t.lanes.some((l) => l.rows.length));
+      if (first) autoExpand = { theme: first.id, key: '' };
     }
 
     const emptyNote = entries.length

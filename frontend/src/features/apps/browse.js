@@ -260,17 +260,13 @@ const Browse = {
     // target handleBack() would take — up to the list, or all the way
     // home when the detail page was opened from a home card's "App
     // details" entry (there is no list behind it to go up to).
-    // AN ARROW ONLY ON THE DETAIL PAGE, and only when a list is behind it.
-    //
-    // Both states used to pass 'arrow': the list is a root screen whose
-    // parent is home, and 'arrow' with no href resolved there. That drew a
-    // chevron promising a level above where there is none — and a detail page
-    // opened from a home card has no list behind it either, so it took the
-    // same fallback. Both are the HOUSE now ('home' draws one rather than
-    // meaning hidden — see features/header/back-button-store.js), which is
-    // the same destination named honestly.
+    // The list and Home are peer destinations in the navigation menu.
+    // Keep their header controls identical instead of inserting a Home icon
+    // and shifting the title whenever the directory opens (#1569). Details
+    // still have a way up: the list's arrow, or the house for a Home entry.
     const upToList = onDetail && Browse._detailOrigin !== 'home';
-    App.setBackIcon(upToList ? 'arrow' : 'home', upToList ? '#apps' : undefined);
+    const backMode = onDetail ? (upToList ? 'arrow' : 'home') : 'none';
+    App.setBackIcon(backMode, upToList ? '#apps' : undefined);
     if (onDetail) {
       const app = Browse.appBySlug(Browse._slug);
       App.setHeaderTitle(app?.name || Browse._slug);

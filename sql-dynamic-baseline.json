@@ -80,6 +80,20 @@
       "preview": "`INSERT INTO token_allocation (id, user_id, season_id, total_points, total_season_tokens, allocated_tokens, description, created_at, updated_at) VALUES (${base}"
     },
     {
+      "source": "src/middleware/auth.js",
+      "kind": "structural-template",
+      "fingerprint": "202f3cd543e04da1dc8d",
+      "count": 1,
+      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platfo"
+    },
+    {
+      "source": "src/middleware/topochain-auth.js",
+      "kind": "structural-template",
+      "fingerprint": "707ac8bf3044e407ae12",
+      "count": 1,
+      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin, ${nativeWebSessionIsLive('s')} AS native_session_valid FROM sessions s JOIN users u ON s.user_id = u.id"
+    },
+    {
       "source": "src/routes/admin.js",
       "kind": "structural-template",
       "fingerprint": "398169416381769c08fe",
@@ -155,6 +169,13 @@
       "fingerprint": "a8b771920b8319e47251",
       "count": 1,
       "preview": "query"
+    },
+    {
+      "source": "src/routes/cli-auth.js",
+      "kind": "structural-template",
+      "fingerprint": "f19dc833c7ff22a7347f",
+      "count": 1,
+      "preview": "`SELECT 1 FROM sessions WHERE token = $1 AND user_id = $2 AND clock_timestamp() < expires_at AND ${nativeWebSessionIsLive('sessions')}`"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -444,6 +465,13 @@
       "preview": "`UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`"
     },
     {
+      "source": "src/routes/status.js",
+      "kind": "structural-template",
+      "fingerprint": "1ae08ea76410c3bc332e",
+      "count": 1,
+      "preview": "`SELECT s.expires_at, u.is_admin, u.username, u.id AS user_id FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = $1 AND ${nativeWebSessionIsLive('"
+    },
+    {
       "source": "src/routes/topochain/admin/app-version-configs.js",
       "kind": "structural-template",
       "fingerprint": "bdc25552a7ad442c2493",
@@ -652,6 +680,13 @@
       "fingerprint": "290ccdd3d61df3eb966d",
       "count": 1,
       "preview": "`SELECT id, type, name, description, starts_at, ends_at, is_active FROM season_events WHERE ${conds.join(' AND ')} ORDER BY starts_at ASC, id ASC`"
+    },
+    {
+      "source": "src/routes/topochain/mobile.js",
+      "kind": "structural-template",
+      "fingerprint": "61c57c9794df3c33690c",
+      "count": 1,
+      "preview": "`SELECT user_id FROM sessions WHERE token = $1 AND user_id = $2 AND expires_at > NOW() AND ${nativeWebSessionIsLive('sessions')} FOR SHARE`"
     },
     {
       "source": "src/routes/topochain/mobile.js",
@@ -1046,6 +1081,20 @@
       "preview": "`SELECT ${columnList} FROM ${table} ORDER BY 1`"
     },
     {
+      "source": "src/services/topochain/native-session-protocol.js",
+      "kind": "structural-template",
+      "fingerprint": "3dc5e15e8d408d0e7773",
+      "count": 1,
+      "preview": "`SELECT token FROM sessions WHERE native_session_incarnation_id = $1 AND user_id = $2 AND expires_at >= $3 AND ${nativeWebSessionIsLive('sessions')} FOR KEY SHA"
+    },
+    {
+      "source": "src/services/topochain/native-session-protocol.js",
+      "kind": "structural-template",
+      "fingerprint": "d4d4b0f3f08a9940bfb1",
+      "count": 1,
+      "preview": "`SELECT token, user_id, native_session_incarnation_id, native_session_credential_reference, (SELECT c.attempt_id FROM native_session_credentials c WHERE c.crede"
+    },
+    {
       "source": "src/services/topochain/snapshot-builder.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "8bc6a43a6ca98c6d2fe8",
@@ -1114,6 +1163,13 @@
       "fingerprint": "2e26921bc2eaf7ee6d9c",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.linked_issues, cs.status, cs.created_at, u.username, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.s"
+    },
+    {
+      "source": "src/services/ws.js",
+      "kind": "structural-template",
+      "fingerprint": "47c0995a68c0e5f4afc4",
+      "count": 1,
+      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = $1 AND ${nativeWebSessionIsLive('s')}`"
     }
   ]
 }

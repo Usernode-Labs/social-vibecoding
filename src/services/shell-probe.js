@@ -1,5 +1,5 @@
-// Anonymous-shell probe: figures out, per app, whether its HTML shell is
-// reachable without a platform session. The landing page's app directory
+// Anonymous-app probe: checks the shell and the platform-convention API
+// gate without a session. The landing page's app directory
 // uses this to gray out "account required" apps instead of letting an
 // anonymous visitor tap through into a 401.
 //
@@ -8,17 +8,25 @@
 // cookies and NO Sec-Fetch-Dest header, exactly like an anonymous
 // browser hitting the app subdomain, and classify the response:
 //
-//   2xx                      -> 'public'  (echo / lastwin style open shell)
+//   2xx                      -> check the app's /api/ gate before opening
 //   401 / 403                -> 'gated'   (scaffold's "Open in Usernode" page)
 //   3xx off-origin           -> 'gated'   (bounce to the platform login)
 //   3xx same-origin          -> followed (<= 3 hops), then classified
 //   anything else / timeout  -> 'unknown' (never claim public on a guess)
 //
+// A static index can return 200 before the app's auth middleware runs
+// (#1522, WorkQuest). A second, read-only GET /api/ catches the scaffold's
+// deny-by-default API middleware without crawling endpoints or executing
+// client-side JavaScript. 401/403 or an off-origin redirect means gated. A missing API (404)
+// is fine for static apps; other failures remain unknown. This is a
+// conservative convention check, not a proof that arbitrary app-specific
+// login flows or optional authenticated features work anonymously.
+//
 // Results land on apps.anon_shell + anon_shell_checked_at (schema.sql).
 // The sweep runs every SWEEP_INTERVAL_MS and re-probes an app when it has
 // never been probed, was deployed since its last probe, or its result is
-// older than RECHECK_AFTER_MS — so fresh deploys converge within one
-// sweep tick without hooking every deploy call site.
+// older than RECHECK_AFTER_MS. Boot also refreshes positive verdicts so an
+// older shell-only result does not remain unlocked for another hour.
 
 const http = require('http');
 const log = require('./logger');
@@ -29,8 +37,9 @@ const PROBE_TIMEOUT_MS = 5000;
 const MAX_REDIRECT_HOPS = 3;
 const SWEEP_INTERVAL_MS = 5 * 60 * 1000;
 const RECHECK_AFTER_MS = 60 * 60 * 1000;
-// Probes are cheap (one intra-network GET) but keep the fan-out bounded
-// anyway so a 200-app fleet doesn't burst 200 sockets on one tick.
+// Probes are cheap (at most two intra-network GETs before redirects), but
+// keep the fan-out bounded so a 200-app fleet doesn't burst 200 sockets
+// on one tick.
 const SWEEP_CONCURRENCY = 4;
 
 let intervalHandle = null;
@@ -56,7 +65,7 @@ function classifyResponse(statusCode, location, currentUrl) {
     // Off-origin redirect = the app is punting anonymous traffic somewhere
     // else (in practice: the platform's login). Same-origin = internal
     // routing (e.g. / -> /home.html); follow it and judge the destination.
-    if (next.host !== cur.host) return 'gated';
+    if (next.origin !== cur.origin) return 'gated';
     return { follow: next.toString() };
   }
   return 'unknown';
@@ -79,9 +88,8 @@ function fetchShell(url) {
   });
 }
 
-// Full probe for one URL: follows same-origin redirects up to
-// MAX_REDIRECT_HOPS, returns 'public' | 'gated' | 'unknown'.
-async function probeUrl(url) {
+// One endpoint: follows same-origin redirects up to MAX_REDIRECT_HOPS.
+async function probeEndpoint(url, { allowMissing = false } = {}) {
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECT_HOPS; hop++) {
     let res;
@@ -90,11 +98,21 @@ async function probeUrl(url) {
     } catch {
       return 'unknown';
     }
+    if (allowMissing && res.statusCode === 404) return 'public';
     const verdict = classifyResponse(res.statusCode, res.location, current);
     if (typeof verdict === 'string') return verdict;
     current = verdict.follow;
   }
   return 'unknown';
+}
+
+// A successful document alone does not establish anonymous usability.
+// Keep this check in the probe, so every directory consumer gets the same
+// verdict and previously misclassified apps converge on the regular sweep.
+async function probeUrl(url) {
+  const shell = await probeEndpoint(url);
+  if (shell !== 'public') return shell;
+  return probeEndpoint(new URL('/api/', url).toString(), { allowMissing: true });
 }
 
 async function probeApp(pool, app) {
@@ -114,7 +132,7 @@ async function probeApp(pool, app) {
 // Apps worth (re-)probing this tick. Only running, platform-hosted,
 // view-public apps: self-hosted containers aren't on our network, and
 // view-private apps never appear on the landing page anyway.
-async function selectDueApps(pool) {
+async function selectDueApps(pool, refreshPublic = false) {
   const { rows } = await pool.query(
     `SELECT id, slug, anon_shell FROM apps
       WHERE status = 'running'
@@ -124,9 +142,12 @@ async function selectDueApps(pool) {
           anon_shell_checked_at IS NULL
           OR last_deploy_at > anon_shell_checked_at
           OR anon_shell_checked_at < NOW() - ($1 * INTERVAL '1 millisecond')
+          OR ($2::boolean AND anon_shell = 'public' AND anon_shell_checked_at <= NOW())
         )
       ORDER BY anon_shell_checked_at ASC NULLS FIRST`,
-    [RECHECK_AFTER_MS]
+    // Future stamps belong to the container-free staging fixtures. Do not
+    // invalidate those while refreshing real, previously public apps.
+    [RECHECK_AFTER_MS, refreshPublic]
   );
   return rows;
 }
@@ -136,7 +157,7 @@ async function sweep(config) {
   sweepInFlight = true;
   try {
     const pool = getPool(config);
-    const due = await selectDueApps(pool);
+    const due = await selectDueApps(pool, lastSweepAt === null);
     if (due.length) {
       log.info('shell-probe', 'Probing app shells', { count: due.length });
     }

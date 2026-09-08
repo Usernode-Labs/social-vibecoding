@@ -147,8 +147,10 @@ const ViewerRegion = memo(function ViewerRegion() {
  * required" caption; tapping one remembers the app deep link and routes to
  * #signup, so the account flow lands the user in the app they wanted.
  */
-function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp) => void }) {
-  const gated = !!app.requires_login;
+export function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp) => void }) {
+  // Only an explicit public verdict unlocks a tile. Missing/stale client
+  // metadata must not turn an unknown app into an anonymous launch (#1522).
+  const gated = app.requires_login !== false;
   const label = app.name || app.slug;
   return (
     <div
@@ -316,6 +318,16 @@ export function LandingScreen() {
 
   const openLandingApp = useCallback(
     (app: PublicApp) => {
+      // Guard the actual viewer entry, not only tile clicks: the legacy
+      // bridge calls this opener too. Never mount a gated app's frame.
+      if (app.requires_login !== false) {
+        (legacy().AuthScreens?.rememberDeepLink as undefined | ((h: string) => void))?.(
+          '/app/' + encodeURIComponent(app.slug || ''),
+        );
+        location.hash = '#signup';
+        return;
+      }
+      if (!app.url) return;
       const viewer = byId('app-viewer');
       const scroller = byId('auth-landing-scroll');
       if (!viewer || !scroller) return;
@@ -520,7 +532,7 @@ export function LandingScreen() {
       /* ignore */
     }
     // First app the directory would actually open: not gated, has a URL.
-    const target = st.appsList.find((a) => a && !a.requires_login && a.url);
+    const target = st.appsList.find((a) => a && a.requires_login === false && a.url);
     if (!target) { bail('no-target'); return; }
     // `st.appsReady` settles when the FETCH does; the tiles appear when React
     // commits the state it set, which is a tick or more later. So wait for
@@ -659,14 +671,7 @@ export function LandingScreen() {
    */
   const onTileClick = useCallback(
     (app: PublicApp) => {
-      if (app.requires_login) {
-        (legacy().AuthScreens?.rememberDeepLink as undefined | ((h: string) => void))?.(
-          '/app/' + encodeURIComponent(app.slug || ''),
-        );
-        location.hash = '#signup';
-        return;
-      }
-      if (app.url) live.current.openLandingApp(app);
+      live.current.openLandingApp(app);
     },
     [],
   );

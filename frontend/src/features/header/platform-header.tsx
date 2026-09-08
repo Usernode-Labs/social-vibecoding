@@ -414,10 +414,10 @@ export function PlatformHeader() {
                 #1443 retired the house on the grounds that the chip's menu
                 carries a Home row an inch to its right — true, and the cost
                 was that the app itself, Profile, Settings, Admin and Messages
-                offered nothing in the bar at all. "Every page should have a
-                back or a home button, except Home" is the rule now, and this
-                anchor is the whole of it: chevron where there is a level
-                above, house where there is not, hidden only on Home.
+                offered nothing in the bar at all. Those screens keep a back
+                or home button. Home and the top-level Browse list share the
+                same root header (#1569), so only those two hide this slot;
+                their navigation menu still provides the route between them.
             */}
           <a
             id="back-btn"

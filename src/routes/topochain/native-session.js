@@ -13,6 +13,7 @@ const {
   NativeSessionProtocolError,
 } = require('../../services/topochain/native-session-protocol');
 const { HANDOFF_TTL_MS } = require('../../services/topochain/native-session-crypto');
+const { restoreNativeWebSession } = require('../../services/topochain/native-web-session');
 
 const HANDOFF_PATH = '/api/v4/mobile/auth/native-establish-handoff';
 const TICKET_PATH = '/api/v4/mobile/auth/native-establish-ticket';
@@ -31,6 +32,29 @@ function nativeSessionRoutes(config) {
   const router = Router();
   const pool = getPool(config);
   const protocol = new NativeSessionProtocol({ pool, config });
+
+  router.post('/api/v4/mobile/auth/restore-web-session', mobileTokenAuth(config), async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const body = req.body;
+    if (!body || Object.keys(body).sort().join(',') !== 'currentSessionToken,protocol'
+        || body.protocol !== 2
+        || (body.currentSessionToken !== null
+          && (typeof body.currentSessionToken !== 'string' || !/^[a-f0-9]{64}$/.test(body.currentSessionToken)))) {
+      return fail(res, 422, 'Invalid web session recovery request.');
+    }
+    try {
+      const data = await restoreNativeWebSession(pool, {
+        userId: req.user.id, auth: req.mobileAuth, currentSessionToken: body.currentSessionToken,
+      });
+      return res.json({ success: true, data });
+    } catch (error) {
+      if (error instanceof NativeSessionProtocolError) {
+        return fail(res, error.status, error.message, { code: error.code });
+      }
+      log.error('native-session-v2', 'Web session recovery failed', { message: error.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
 
   router.post(HANDOFF_PATH, async (req, res) => {
     try {

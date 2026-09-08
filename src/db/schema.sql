@@ -2562,10 +2562,10 @@ BEGIN
 END $$;
 
 -- Anonymous-shell probe result (landing-page app directory).
---   anon_shell: whether the app's own HTML shell serves without a
---     platform session. 'public' = anonymous GET / returns 2xx (echo /
---     lastwin style), 'gated' = it 401s or bounces to the platform (the
---     scaffold default), 'unknown' = never probed or unclassifiable.
+--   anon_shell: whether the app's shell and conventional API gate permit
+--     anonymous access. 'public' = GET / succeeds and GET /api/ succeeds
+--     or has no route (404, e.g. a static app). 'gated' = either requires
+--     authentication, 'unknown' = never probed or unclassifiable.
 --     Written ONLY by services/shell-probe.js; consumed by
 --     GET /api/public/apps as `requires_login` (anything not 'public').
 --     'unknown' renders as account-required — the safe default, matching
@@ -4935,6 +4935,11 @@ CREATE TABLE IF NOT EXISTS native_session_credentials (
   CHECK (revoked_at IS NULL OR revoked_at >= created_at)
 );
 
+-- A restored web session is authority only while this exact native lease is
+-- live. Keep the incarnation too, for exact attempt replay and web logout.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS native_session_credential_reference
+  VARCHAR(47) REFERENCES native_session_credentials(credential_reference) ON DELETE CASCADE;
+
 -- Existing databases received an unnamed auto-generated CHECK that also
 -- admitted the retired `mobile_logout` value. Replace it without rewriting
 -- revoked audit history. `NOT VALID` still rejects that value on every new or
@@ -6393,6 +6398,14 @@ ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_failed_at TIMESTAMPTZ;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS reconcile_started_at TIMESTAMPTZ;
+-- The Workshop's status paragraph: two sentences on the week just gone and
+-- what is in flight, written by the same model that drafts the themes, from
+-- the same snapshot, on the same reconcile. Kept HERE rather than in its own
+-- table so it can never describe a board the themes beside it were not
+-- drafted against. Empty when no model is configured or the call failed: the
+-- client falls back to a sentence derived from the counts.
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_text TEXT;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_at TIMESTAMPTZ;
 
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,
