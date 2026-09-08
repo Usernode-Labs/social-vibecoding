@@ -52,6 +52,7 @@ import { TopicBodySections } from '../topic/topic-head';
 import type { DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import type { TopicBody } from '../topic/model';
 import { CardSkeleton } from '../card/skeleton';
+import { ProgressRing } from '@/components/ui/progress-ring';
 
 type CardRow = Extract<ListRow, { t: 'card' }>;
 type SortKey = 'people' | 'activity' | 'open';
@@ -197,7 +198,9 @@ function FoldedRow({
     <div
       role="button"
       tabIndex={0}
-      className={open ? 'dev-ws-row dev-ws-row-open' : 'dev-ws-row'}
+      // The hover fill comes from the CARD's own utilities, so the two sizes
+      // of one item cannot drift apart on it. app.css keeps the border.
+      className={`dev-ws-row hover:bg-zinc-50 dark:hover:bg-zinc-800${open ? ' dev-ws-row-open' : ''}`}
       aria-expanded={open}
       // The card's own left edge, from the card's own function, so the two
       // sizes can never key off different state.
@@ -214,7 +217,7 @@ function FoldedRow({
         <span className="dev-ws-row-title">
           {c.title.text}
           {row.fresh ? <span className="dev-ws-new">new</span> : null}
-          {row.placing ? <span className="dev-ws-placing" title="Being placed into a theme">placing…</span> : null}
+          {row.placing ? <span className="dev-ws-placing" title="Being placed into a category">placing…</span> : null}
         </span>
         <span className="dev-ws-row-meta">
           {n ? <span className="font-mono">{n}</span> : null}
@@ -590,17 +593,24 @@ function ThemeCard({
  * failure if there was one. Each is a fact the viewer can see on the page
  * ("placing…" markers, the trailing group), so the note names it.
  */
-function aiFootnote(meta: DevWorkshopView['meta']): string {
+function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
   const drafted = meta.discoveredAt ? Date.parse(meta.discoveredAt) : NaN;
   const parts: string[] = [
     Number.isFinite(drafted)
-      ? `Themes were drafted ${relTime(drafted)} and are re-drafted daily, or sooner when a tenth of the board changes.`
-      : 'Themes are drafted from the board and re-drafted daily, or sooner when a tenth of the board changes.',
+      ? `Categories were drafted ${relTime(drafted)} and are re-drafted daily, or sooner when a tenth of the board changes.`
+      : 'Categories are drafted from the board and re-drafted daily, or sooner when a tenth of the board changes.',
   ];
+  // Which paragraph is at the top of the page. Without this the two states
+  // are indistinguishable on screen — a model that has never run and one
+  // whose call is failing both leave the derived sentence up there, and the
+  // only way to tell was to read the database.
+  parts.push(written
+    ? 'The summary at the top was written by the model on the same pass.'
+    : 'The summary at the top is worked out from the board; the model writes one on the next draft.');
   const c = meta.coverage;
   if (c && c.pending) parts.push(`${c.pending} new ${c.pending === 1 ? 'card is' : 'cards are'} being placed.`);
   if (c && c.unplaced) {
-    parts.push(`${c.unplaced} ${c.unplaced === 1 ? 'card did' : 'cards did'} not fit a theme and ${c.unplaced === 1 ? 'waits' : 'wait'} for the next draft.`);
+    parts.push(`${c.unplaced} ${c.unplaced === 1 ? 'card did' : 'cards did'} not fit a category and ${c.unplaced === 1 ? 'waits' : 'wait'} for the next draft.`);
   }
   if (meta.lastError) parts.push(`The last attempt failed (${meta.lastError}); it is retried shortly.`);
   return parts.join(' ');
@@ -714,48 +724,42 @@ function summarise(d: Dash): string {
 }
 
 /**
- * The app, described rather than counted — what is LEFT to say once the tiles
- * have said the numbers.
+ * The derived sentence — what the pane says when the model has not written
+ * one.
  *
- * This used to be the whole pane's text: "63 open items across 11 themes,
- * most of the movement in X. 20 landed this week... 4 proposals are waiting
- * on votes and 19 open items have nobody on them." Every count in it is now a
- * tile directly above, so repeating them in prose is worse than saying
- * nothing: a reader who has already read "58 open" gets no second fact, and
- * the sentence buries the one thing that is not a tile.
+ * Round four cut this down to the two things the tiles cannot show and let
+ * it return an EMPTY string when it could say neither, on the reasoning that
+ * a blank beats prose repeating the numbers directly above it. That was
+ * right about the duplication and wrong about the outcome: the model
+ * paragraph is written on a reconcile pass, an app can sit for a long time
+ * without one, and what a reader actually got was a pane with a heading, four
+ * tiles and nothing that reads like a sentence — which looks like a broken
+ * feature rather than a deliberate silence.
  *
- * What is left is the two things a tile cannot show — where the movement is,
- * and whether the week is faster or slower than the last. When neither can be
- * said honestly this returns an EMPTY string and the paragraph is not
- * rendered at all. That is the right outcome, not a hole: the tiles are the
- * state, and an app with no model configured should not get a sentence
- * fabricated for it out of the same four numbers.
+ * So the full sentence is back, as the FALLBACK only. When the model has
+ * written a paragraph that paragraph stands alone and states no counts (the
+ * prompt spends most of its length on that). When it has not, this repeats
+ * two of the tiles and is worth it, because the alternative is a blank.
+ *
+ * The footnote at the bottom of the lander says which of the two is on
+ * screen, so "the summarizer looks broken" and "no draft yet" are
+ * distinguishable without reading the database.
  */
 function describe(d: Dash): string {
   const parts: string[] = [];
-  if (d.busiest) parts.push(`Most of the movement is in ${d.busiest}.`);
-  const trend = paceTrend(d);
-  if (trend) parts.push(trend);
+  const scale = `${d.open} open ${d.open === 1 ? 'item' : 'items'}`
+    + (d.themes ? ` across ${d.themes} ${d.themes === 1 ? 'category' : 'categories'}` : '');
+  parts.push(d.busiest ? `${scale}, most of the movement in ${d.busiest}.` : `${scale}.`);
+  parts.push(pace(d));
+  const waiting: string[] = [];
+  if (d.votesWaiting) {
+    waiting.push(`${d.votesWaiting} ${d.votesWaiting === 1 ? 'proposal is' : 'proposals are'} waiting on votes`);
+  }
+  if (d.unclaimed) {
+    waiting.push(`${d.unclaimed} open ${d.unclaimed === 1 ? 'item has nobody on it' : 'items have nobody on them'}`);
+  }
+  if (waiting.length) parts.push(`${waiting.join(' and ').replace(/^./, (c) => c.toUpperCase())}.`);
   return parts.join(' ');
-}
-
-/**
- * The week-over-week read, and only when there IS one to give.
- *
- * `pace()` above is the full sentence, kept for the theme footers and for
- * anywhere the count is not already on screen. Here the count is a tile, so
- * this returns the COMPARISON alone and nothing when the history cannot
- * support one.
- */
-function paceTrend(d: Dash): string {
-  if (d.partial) return '';
-  const n = d.shippedWeek;
-  const p = d.shippedPrevWeek;
-  if (!n && !p) return 'Nothing has landed in the last fortnight.';
-  if (!p) return n ? 'It is the first week in a fortnight anything landed.' : '';
-  if (n > p) return `That is up from ${p} the week before.`;
-  if (n < p) return `That is down from ${p} the week before.`;
-  return 'That is the same as the week before.';
 }
 
 /** "1 change landed, 2 new proposals" — what moved while you were away. */
@@ -767,6 +771,44 @@ function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
     s.proposed ? `${s.proposed} new ${s.proposed === 1 ? 'proposal' : 'proposals'}` : null,
   ].filter(Boolean);
   return bits.length ? bits.join(', ') : `${s.rows.length} things moved`;
+}
+
+/**
+ * The vote badge: a ring, and the count in words beside it.
+ *
+ * It was "4 to vote on" in the warning tint, which stated a debt. The ring
+ * says the same population as PROGRESS — how many of the app's open
+ * proposals this viewer has answered — using the primitive the home
+ * screen's Challenges block uses.
+ *
+ * The words are back beside it because a ring alone is a fraction with no
+ * subject: "0/5" does not say what the five are, and a reader should not
+ * have to hover a donut to find out. The ring carries the shape of the
+ * answer, the sentence carries its meaning.
+ *
+ * There is no × any more. A count that can be closed is a count somebody
+ * stops seeing while it is still true, and this one is the whole reason the
+ * pane exists.
+ */
+function VoteRing({ owed, total }: { owed: number; total: number }): ReactNode {
+  const done = Math.max(0, total - owed);
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return (
+    <span className="dev-ws-needs-end">
+      {owed ? (
+        <span className="dev-ws-needs-count">
+          {`${owed} ${owed === 1 ? 'proposal needs' : 'proposals need'} your vote`}
+        </span>
+      ) : null}
+      <ProgressRing
+        className="dev-ws-vote-ring"
+        pct={pct}
+        label={`${done}/${total}`}
+        title={`${done} of ${total} open proposals voted on`}
+        arcClassName={owed ? 'stroke-amber-500' : 'stroke-emerald-500'}
+      />
+    </span>
+  );
 }
 
 export function DevWorkshop(): ReactNode {
@@ -794,8 +836,14 @@ export function DevWorkshop(): ReactNode {
   // and navigate, which left the lander and changed the view mode to read a
   // list the strip was already showing the top of.
   const [allVotes, setAllVotes] = useState(false);
+  const [allMine, setAllMine] = useState(false);
 
   const themes = useMemo(() => sortThemes(v.themes, sortKey), [v.themes, sortKey]);
+  // Named categories only — "Not yet grouped" is a holding pen, not one of
+  // them. Counted here so the label can agree with itself: it read
+  // "1 themes" before, which is the kind of thing a reader trusts a screen
+  // slightly less for.
+  const countOfThemes = themes.filter((t) => !t.ungrouped).length;
   // Every theme starts SHUT. The first one used to open itself, on the
   // reasoning that a lander whose every theme is closed is a list of
   // headings — but a list of headings is exactly what this screen is for,
@@ -905,6 +953,43 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
+      {/* ── Yours, first ──
+          The first question a returning member has is about their OWN work,
+          and the lander answered every other one before it: what the app is
+          doing, what the group needs, what nobody has picked up. A
+          half-finished session of theirs was somewhere down inside a theme,
+          under a heading about the theme. */}
+      {v.mine && v.mine.rows.length ? (
+        <section className="dev-ws-strip" data-ws-mine="">
+          <div className="dev-ws-strip-head">
+            <span className="dev-ws-eyebrow">What you are working on</span>
+          </div>
+          <div className="dev-ws-lane" data-ws-lane="mine">
+            {(allMine ? v.mine.rows : v.mine.rows.slice(0, v.mine.shown)).map((row) => (row.t === 'card' ? (
+              <CardRowView
+                key={row.key}
+                row={row}
+                slug={slug}
+                canPost={canPost}
+                open={openRows.mine === row.key}
+                onToggle={() => toggleRow('mine', row.key)}
+              />
+            ) : null))}
+            {v.mine.rows.length > v.mine.shown ? (
+              <button
+                type="button"
+                className="gc-vote-btn dev-ws-lane-btn"
+                aria-expanded={allMine}
+                data-ws-mine-more=""
+                onClick={() => setAllMine(!allMine)}
+              >
+                {allMine ? 'Show fewer' : `${v.mine.count - v.mine.shown} more of yours`}
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       {/* ── One pane: what needs a person ──
           Voting on somebody else's work and picking up nobody's are the same
           offer — "here is what you could do with five minutes" — and they were
@@ -917,9 +1002,7 @@ export function DevWorkshop(): ReactNode {
         >
           <div className="dev-ws-strip-head">
             <span className="dev-ws-eyebrow">What needs you</span>
-            {v.votes.count
-              ? <span className="dev-ws-pill dev-ws-pill-warn">{`${v.votes.count} to vote on`}</span>
-              : null}
+            {v.votes.total ? <VoteRing owed={v.votes.count} total={v.votes.total} /> : null}
           </div>
           {v.votes.rows.length ? (
             <div className="dev-ws-lane" data-ws-lane="votes">
@@ -951,7 +1034,11 @@ export function DevWorkshop(): ReactNode {
           ) : null}
           {nextUp ? (
             <div className="dev-ws-lane" data-ws-lane="next">
-              <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>Nobody on this yet, why not give it a try?</h4>
+              {/* The heading states the fact; the line under it makes the
+                  offer. "Why not give it a try?" did both at once and coaxed
+                  while it did — a lander does not need to wheedle. */}
+              <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>Nobody has picked this up</h4>
+              <p className="dev-ws-lane-note">Free to take, if you want to try solving an issue.</p>
               <CardRowView
                 row={nextUp}
                 slug={slug}
@@ -972,16 +1059,16 @@ export function DevWorkshop(): ReactNode {
         <>
           <div className="dev-ws-sort">
             <span className="dev-ws-eyebrow">
-              {`${themes.filter((t) => !t.ungrouped).length} themes`}
+              {`${countOfThemes} ${countOfThemes === 1 ? 'category' : 'categories'}`}
               {v.meta.source === 'category' ? ' · grouped by category for now' : ''}
               {v.meta.source === 'demo' ? ' · staging demo grouping' : ''}
               {v.meta.pending
                 ? (v.meta.pendingStage === 'placement'
                   ? ' · placing new cards…'
-                  : (v.meta.source === 'ai' ? ' · re-drafting themes…' : ' · drafting themes…'))
+                  : (v.meta.source === 'ai' ? ' · re-drafting categories…' : ' · drafting categories…'))
                 : ''}
             </span>
-            <div className="dev-ws-sort-opts" role="group" aria-label="Order themes">
+            <div className="dev-ws-sort-opts" role="group" aria-label="Order categories">
               {SORTS.map((s) => (
                 <button
                   key={s.key}
@@ -1015,13 +1102,13 @@ export function DevWorkshop(): ReactNode {
               of the board it holds. */}
           <div className="dev-ws-foot-note">
             {v.meta.source === 'ai'
-              ? aiFootnote(v.meta)
+              ? aiFootnote(v.meta, !!(v.dashboard && v.dashboard.summary))
               : v.meta.source === 'demo'
-                ? 'Staging demo grouping: in production the themes are drafted by the model from the board.'
+                ? 'Staging demo grouping: in production the categories are drafted by the model from the board.'
                 : v.meta.pending
-                  ? 'Themes are being drafted from the board now. They replace this grouping when they land.'
+                  ? 'Categories are being drafted from the board now. They replace this grouping when they land.'
                   : v.meta.lastError
-                    ? `The last attempt to draft themes failed (${v.meta.lastError}). Items stay grouped by their voted category until the next attempt.`
+                    ? `The last attempt to draft categories failed (${v.meta.lastError}). Items stay grouped by their voted category until the next attempt.`
                     : 'No AI model is configured, so items are grouped by their voted category.'}
           </div>
         </>

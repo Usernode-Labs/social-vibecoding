@@ -36,6 +36,7 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const APP_VIEW_SRC = read('public/js/app-view.js');
 const WORKSHOP = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+const CARD_TSX = read('frontend/src/features/dev-board/card/dev-card.tsx');
 const CSS = read('public/css/app.css');
 const VIEW_TABS = read('frontend/src/features/improve/view-tabs.tsx');
 const dapp = JSON.parse(read('dapp.json'));
@@ -391,45 +392,41 @@ test('the theme filter narrows by membership, and widens when it cannot be appli
 
 // ── the follow-up to #1787: two panes, and a described app ───────────
 
-test('the app is described, not counted', () => {
+test('the numbers are tiles, and the pane always has a sentence under them', () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12', 'issue:13'] }]);
   const html = workshopHtml(AppView);
-  // It used to read "3 open · 1 waiting on votes · 1 shipped this week" —
-  // three numbers and no sentence, which gives the size of the board and
-  // nothing about it. A theme earns its place here by SAYING what it is
-  // about; the app itself was the one thing on the lander that did not.
-  // The four numbers are TILES. They were prose, which is the slowest way to
-  // read four integers and the reason the sentence never got to say anything
-  // else.
+  // Four integers read out as prose is the slowest form they can take, so
+  // they are tiles.
   assert.match(html, /data-ws-dash-cell="open"><b>3<\/b>open items/);
   assert.match(html, /data-ws-dash-cell="shipped"><b>1<\/b>shipped this week/);
   assert.match(html, /data-ws-dash-cell="votes"><b>1<\/b>waiting on a vote/);
   assert.match(html, /data-ws-dash-cell="unclaimed"><b>2<\/b>with nobody on them/);
-  assert.ok(!html.includes('open items across'), 'and the prose does not repeat them');
-  assert.ok(!html.includes('waiting on votes and'), 'nor these');
 
-  // What is left for the sentence is what a tile cannot show. Here that is
-  // the week-over-week read; NOT "most of the movement in Theming", because
-  // the seeded theme is two open issues nobody has touched, which is the
-  // absence of movement.
-  assert.match(html, /It is the first week in a fortnight anything landed\./);
-  assert.ok(!html.includes('most of the movement'), 'an unearned superlative is not printed');
+  // And the derived sentence is back UNDER them. Round four trimmed it to
+  // the two things a tile cannot show and let it render nothing when it
+  // could say neither — right about the duplication, wrong about the
+  // outcome: an app can sit a long time with no model paragraph, and a
+  // heading over four tiles and no sentence reads as a broken feature
+  // rather than a deliberate silence.
+  assert.match(html, /class="dev-ws-strip-text">3 open items across 1 category\./);
+  assert.ok(!html.includes('most of the movement'),
+    'but still no unearned superlative: two untouched issues are the absence of movement');
 });
 
-test('with nothing qualitative to say, the pane is tiles and no sentence at all', () => {
+test('the derived sentence says something even when it can compare nothing', () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
-  // A paged history refuses to compare weeks, and a board with no theme in
-  // flight has no busiest. Both silent, so there is nothing left to write —
-  // and a fabricated sentence built out of the same four numbers on the tiles
-  // above would be worse than the gap.
+  // A paged history refuses to compare weeks and this board has no busiest,
+  // so the two clauses round four kept are both silent. The pane still has
+  // a sentence.
   AppView._mergedHasMore = true;
   const html = workshopHtml(AppView);
-  assert.match(html, /data-ws-dash-cell="open"/, 'the tiles still carry the state');
-  assert.ok(!html.includes('dev-ws-strip-text'), 'and the paragraph is not rendered');
+  assert.match(html, /data-ws-dash-cell="open"/, 'the tiles carry the state');
+  assert.match(html, /class="dev-ws-strip-text">[^<]+/, 'and the paragraph is rendered');
+  assert.match(html, /At least 1 change landed this week\./, 'a floor, and no rate');
 });
 
 test('a paged merge history states a floor and no rate at all', () => {
@@ -454,7 +451,7 @@ test('a paged merge history states a floor and no rate at all', () => {
   AppView._mergedHasMore = false;
   const whole = workshopHtml(AppView);
   assert.match(whole, /data-ws-dash-cell="shipped"><b>1<\/b>/, 'no marker');
-  assert.match(whole, /It is the first week in a fortnight anything landed\./);
+  assert.match(whole, /1 change landed this week, the first in a fortnight\./);
 });
 
 test('busiest names the theme that is MOVING, and stays quiet without a clear leader', () => {
@@ -499,10 +496,16 @@ test('the model\'s paragraph is what the pane says, when there is one', () => {
   // …and the derived sentence is what runs when there is none: no model, no
   // draft yet, or a call that failed. Same relationship the category grouping
   // has to the drafted themes.
-  assert.ok(!html.includes('first week in a fortnight'), 'the derived one stands down');
+  assert.ok(!html.includes('open items across'), 'the derived one stands down');
+  // And the footnote says which of the two is on screen, so "the summarizer
+  // looks broken" and "no draft yet" are distinguishable without reading the
+  // database.
+  assert.match(html, /The summary at the top was written by the model on the same pass\./);
 
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
-  assert.match(workshopHtml(AppView), /It is the first week in a fortnight anything landed\./);
+  const derived = workshopHtml(AppView);
+  assert.match(derived, /3 open items across 1 category\./);
+  assert.match(derived, /The summary at the top is worked out from the board; the model writes one on the next draft\./);
 });
 
 test('themes all start collapsed, and a deep link is what opens one', () => {
@@ -521,7 +524,7 @@ test('themes all start collapsed, and a deep link is what opens one', () => {
   AppView._workshopShot = 'themes';
   const open = workshopHtml(AppView);
   assert.match(open, /dev-ws-theme dev-ws-theme-open/);
-  assert.match(open, /data-ws-lane="open"[\s\S]{0,400}?class="dev-ws-row"/);
+  assert.match(open, /data-ws-lane="open"[\s\S]{0,400}?class="dev-ws-row[^"]*"/);
   assert.ok(!open.includes('dev-feed-entry'), 'the theme only: every row in it stays folded');
   const check = dapp.tests.find((t) => /dev-ws-theme-body/.test(t.expectSelector || ''));
   assert.match(check.path, /shot=themes/);
@@ -549,7 +552,11 @@ test('needs-your-vote and the unclaimed suggestion are one pane', () => {
   const html = workshopHtml(AppView);
   assert.match(html, /<section class="dev-ws-strip" data-ws-votes="" data-ws-next="">/);
   assert.match(html, /data-ws-lane="votes"[\s\S]*?Needs your vote/);
-  assert.match(html, /data-ws-lane="next"[\s\S]*?Nobody on this yet, why not give it a try\?/);
+  // The heading states the fact; the offer is the line under it. "Why not
+  // give it a try?" did both at once and coaxed while it did.
+  assert.match(html, /data-ws-lane="next"[\s\S]*?Nobody has picked this up/);
+  assert.match(html, /class="dev-ws-lane-note">Free to take, if you want to try solving an issue\./);
+  assert.ok(!html.includes('why not give it a try'), 'and the coaxing is gone');
   // The declared check walks [data-ws-votes] to a votes lane to a vote button;
   // merging the containers must not break that chain.
   assert.match(html, /data-ws-votes=""[\s\S]*?data-ws-lane="votes"[\s\S]*?class="dev-ws-row-trailing"><button[^>]*class="dev-vote-btn"/);
@@ -798,7 +805,7 @@ test('"Shipped this week" opens folded, so a theme opens on what still needs som
   assert.match(html, /<span class="dev-ws-lane-n">1<\/span>/,
     'but the count rides in the heading, so the fold never hides how much is in there');
   // Every other lane is unaffected.
-  assert.match(html, /data-ws-lane="open"[\s\S]{0,400}?class="dev-ws-row"/);
+  assert.match(html, /data-ws-lane="open"[\s\S]{0,400}?class="dev-ws-row[^"]*"/);
 });
 
 // ── #1787: a filter changed ON THE WORKSHOP has to stick ─────────────
@@ -905,7 +912,7 @@ test('the Workshop renders its strips, its themes and its folded rows', () => {
   // Short rows, not cards: the folded row with the card's own Vote button
   // INSIDE it, at the trailing edge — which is why the row is a div with the
   // button role and not a <button>.
-  assert.match(html, /<div role="button" tabindex="0" class="dev-ws-row"[^>]*data-ws-row="vote:proposal:34"[\s\S]*?<span class="dev-ws-row-trailing"><button [^>]*class="dev-vote-btn"/,
+  assert.match(html, /<div role="button" tabindex="0" class="dev-ws-row[^"]*"[^>]*data-ws-row="vote:proposal:34"[\s\S]*?<span class="dev-ws-row-trailing"><button [^>]*class="dev-vote-btn"/,
     'a vote row is the folded row with the vote button inside it');
   assert.ok(!/<button[^>]*>[^<]*<button/.test(html), 'and no button nests in a button');
   assert.ok(!/data-ws-votes[\s\S]*?gc-vote-item/.test(html.slice(0, html.indexOf('data-ws-next'))),
@@ -920,7 +927,7 @@ test('the Workshop renders its strips, its themes and its folded rows', () => {
   // The first theme opens by default, and its rows are folded disclosures
   // that carry NO card-open hook — the delegated #dev-body handler must not
   // see one on the row.
-  assert.match(html, /<div role="button" tabindex="0" class="dev-ws-row"[^>]*data-ws-row="issue:12"/);
+  assert.match(html, /<div role="button" tabindex="0" class="dev-ws-row[^"]*"[^>]*data-ws-row="issue:12"/);
   assert.ok(!/<div role="button"[^>]*data-issue-row/.test(html), 'the folded row is not an issue-row hook');
   assert.match(html, /data-ws-lane="review"/);
   assert.match(html, /data-ws-lane="shipped"/);
@@ -939,8 +946,8 @@ test('a folded row wears the card\u2019s own edge, number and glyph, and no chev
   // type's amber, a proposal mid-checks wears its bar's tone. The row used to
   // carry that colour as a tinted icon tile the card does not have, so one
   // item opened on a different mark at each size.
-  assert.match(html, /class="dev-ws-row"[^>]*data-edge="attention"[^>]*data-ws-row="issue:12"/);
-  assert.match(html, /class="dev-ws-row"[^>]*data-edge="neutral"[^>]*data-ws-row="proposal:34"/);
+  assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-edge="attention"[^>]*data-ws-row="issue:12"/);
+  assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-edge="neutral"[^>]*data-ws-row="proposal:34"/);
   assert.match(CSS, /\.dev-ws-row\[data-edge="vote"\]\s+\{ --dev-edge: var\(--accent\); \}/);
   assert.match(CSS, /\.dev-ws-row \{[^}]*inset var\(--dev-edge-w\) 0 0 color-mix/,
     'drawn as the card draws it: an inset shadow at the same width, not a border');
@@ -955,7 +962,7 @@ test('a folded row wears the card\u2019s own edge, number and glyph, and no chev
   assert.match(CSS, /\.dev-ws-row > \.dev-card-icon > svg \{ width: 18px; height: 18px; \}/);
 
   // And no chevron: it promises a destination the row does not have.
-  const rows = html.split('class="dev-ws-row"').slice(1);
+  const rows = html.split('data-ws-row="').slice(1);
   assert.ok(rows.length, 'there are folded rows to check');
   for (const r of rows) {
     assert.ok(!r.slice(0, r.indexOf('</div>')).includes('dev-ws-chev'), 'a folded row draws no chevron');
@@ -974,7 +981,7 @@ test('the card\u2019s facts line keeps its chips instead of flattening them', ()
     'and so is the dot that stood in for the gap between pills');
   assert.match(CSS, /\.dev-card-status > \.dev-badge \{\s*height: 19px;/);
   // The band reserves two rows and clips; the taller facts row moves the cap.
-  assert.match(CSS, /max-height: 56px;/);
+  assert.match(CSS, /max-height: 60px;/);
   // And the controls that now share that line are sized to it. A 28px pill
   // overflowed the cap and lost its own bottom edge — which a screenshot
   // caught and no assertion would have.
@@ -1025,6 +1032,122 @@ test('the open card collapses on a click at the card, not at what it opened', ()
   assert.match(view, /el\.closest\(/, 'and it is a closest() test, not a target equality one');
 });
 
+test('the vote badge is a ring AND the count in words, and cannot be closed', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._proposals = [
+    { id: 71, pr_number: 71, pr_title: 'A', status: 'promoted', username: 'carol', user_id: 9,
+      created_at: at(3), promoted_at: at(3), linked_issues: [], my_vote: 'yes' },
+    { id: 72, pr_number: 72, pr_title: 'B', status: 'promoted', username: 'carol', user_id: 9,
+      created_at: at(3), promoted_at: at(3), linked_issues: [], my_vote: null },
+    { id: 73, pr_number: 73, pr_title: 'C', status: 'promoted', username: 'carol', user_id: 9,
+      created_at: at(3), promoted_at: at(3), linked_issues: [], my_vote: null },
+  ];
+  const v = AppView._workshopView();
+  assert.equal(v.votes.count, 2);
+  assert.equal(v.votes.total, 3);
+
+  const html = workshopHtml(AppView);
+  // The ring carries the shape of the answer; the sentence carries its
+  // meaning. "0/5" alone is a fraction with no subject, and a reader should
+  // not have to hover a donut to learn what the five are.
+  assert.match(html, /class="[^"]*dev-ws-vote-ring/);
+  assert.match(html, /1\/3/, 'answered of votable');
+  assert.match(html, /class="dev-ws-needs-count">2 proposals need your vote</);
+  assert.match(html, /aria-label="1 of 3 open proposals voted on"/);
+
+  // And no ×. A count that can be closed is a count somebody stops seeing
+  // while it is still true, and this one is why the pane exists.
+  assert.ok(!html.includes('data-ws-needs-close'), 'the dismissal is gone');
+  assert.ok(!WORKSHOP.includes('ws-needs-you-dismissed'), 'and so is the key it wrote');
+  assert.ok(!WORKSHOP.includes('XIcon'), 'and the icon it used');
+});
+
+test('one proposal needing a vote is singular', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const html = workshopHtml(AppView);
+  assert.match(html, /1 proposal needs your vote</);
+});
+
+test('the viewer\u2019s own work in flight leads the lander', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  // A session of mine, a proposal of mine, and one of somebody else's.
+  AppView._mySessions = [{ id: 51, session_title: 'Bottom tabs', pr_number: null, last_activity_at: at(0) }];
+  AppView._proposals = [
+    { id: 61, pr_number: 61, pr_title: 'Mine', status: 'promoted', username: 'me', user_id: 1,
+      created_at: at(2), promoted_at: at(2), last_message_at: at(2), linked_issues: [], my_vote: null },
+    { id: 62, pr_number: 62, pr_title: 'Theirs', status: 'promoted', username: 'carol', user_id: 9,
+      created_at: at(1), promoted_at: at(1), last_message_at: at(1), linked_issues: [], my_vote: null },
+  ];
+  const v = AppView._workshopView();
+  assert.equal(v.mine.count, 2, 'my session and my proposal, not theirs');
+  // And the vote strip does not repeat it. "Waiting on you" asks whether you
+  // have voted, not whose it is, so a promoted proposal of your own answered
+  // both panes and appeared twice, one under the other.
+  assert.ok(!plain(v.votes.rows).some((r) => r.key.includes('proposal:61')),
+    'your own proposal is not also owed a vote from you');
+  assert.equal(v.votes.count, 1, 'only theirs');
+  assert.equal(v.mine.shown, AppView.WORKSHOP_MINE_MAX);
+  assert.deepEqual(plain(v.mine.rows).map((r) => r.key), ['mine:my-session:51', 'mine:proposal:61'],
+    'most recently active first, and keyed apart from the same card elsewhere');
+
+  const html = workshopHtml(AppView);
+  // Above "Needs your vote": the first question a returning member has is
+  // about their OWN work, and the lander answered every other one first.
+  assert.ok(html.indexOf('data-ws-mine') < html.indexOf('data-ws-votes'), 'and it leads');
+  assert.match(html, /data-ws-lane="mine"/);
+  assert.match(html, /What you are working on/);
+
+  // Unfiltered, exactly like the vote strip: a filter that hid your own work
+  // would hide the one thing on this screen you cannot find another way.
+  AppView._kanbanFilters = { ...AppView._kanbanFilters, q: 'nothing matches this' };
+  assert.equal(AppView._workshopView().mine.count, 2, 'a search does not hide your own work');
+});
+
+test('a card\u2019s own actions join Open card on the facts line, in the Workshop only', () => {
+  // "The same line as open card", and open card only exists here. A board
+  // card sits in a ~165px kanban column, its actions fold into the overflow
+  // menu by measuring the band they are in, and that measurement is
+  // meaningless inside a content-width group at the end of a wrapping line.
+  const src = CARD_TSX;
+  assert.match(src, /const inlineActions = !!statusLead;/);
+  assert.match(src, /const bandPrimary = inlineActions \? \[\] : primary;/,
+    'the board keeps its own action row');
+  assert.match(src, /\{inlineActions \? primary\.map\(\(a\) => <ActionButton key=\{a\.key\} a=\{a\} \/>\) : null\}/);
+});
+
+test('the end group is facts-line content, so it never rides the bar\u2019s line', () => {
+  // A proposal with a bar and a vote but NO chips had no band break at all,
+  // which put Open card and Preview on the bar's own line, wedged beside the
+  // vote. The break asks whether the facts line has anything on it, and the
+  // end group is something on it.
+  assert.match(CARD_TSX,
+    /const factsVisible = linked\.length > 0 \|\| kept\.length > 0 \|\| \(m\.chatCount \|\| 0\) > 0 \|\| !!statusEnd;/);
+  assert.match(CARD_TSX, /const brk = \(m\.pill \|\| voteBtn\) && factsVisible/);
+});
+
+test('one hover for both sizes, and a facts line that is not clipped', () => {
+  // The row took `--state-neutral-bg` and the card took `hover:bg-zinc-50`,
+  // so two sizes of one object hovered to two different greys. Hard-coding
+  // the colour in app.css could not have fixed it: `zinc` is overridden in
+  // tailwind.config.js, so a hex from the stock palette would be a THIRD
+  // grey. The row wears the card's own utilities instead.
+  assert.match(WORKSHOP, /className=\{`dev-ws-row hover:bg-zinc-50 dark:hover:bg-zinc-800/);
+  assert.ok(!/\.dev-ws-row:hover \{[^}]*background:/.test(CSS), 'app.css no longer sets the fill');
+  assert.match(CSS, /\.dev-ws-row:hover \{ border-color: var\(--border\); \}/, 'only the border');
+
+  // The band clips at THREE flex lines, not two: `.dev-card-band-break` is a
+  // zero-height full-width item that takes a line of its own with a row gap
+  // on each side. 30 + 4 + 0 + 4 + 22 = 60. At 56 the controls that share
+  // the facts line lost their bottom edge; at 52, before them, the flat text
+  // lost descender space and nobody noticed.
+  assert.match(CSS, /max-height: 60px;/);
+  assert.match(CSS, /\.dev-card-band-break \{ flex-basis: 100%; height: 0; \}/,
+    'the break is still what forces the wrap, and still costs a line');
+});
+
 test('"N more waiting on you" reveals them here, not on a filtered board', () => {
   const AppView = makeAppView();
   seed(AppView);
@@ -1041,7 +1164,9 @@ test('"N more waiting on you" reveals them here, not on a filtered board', () =>
 
   const html = workshopHtml(AppView);
   const strip = html.slice(html.indexOf('data-ws-lane="votes"'), html.indexOf('data-ws-lane="next"'));
-  assert.equal((strip.match(/class="dev-ws-row"/g) || []).length, 3, 'three drawn to begin with');
+  // `data-ws-row`, not the class: `dev-ws-rowwrap` starts with the same
+  // characters, so a class-prefix match counts every row twice.
+  assert.equal((strip.match(/data-ws-row="/g) || []).length, 3, 'three drawn to begin with');
   assert.match(html, /data-ws-votes-more="" aria-expanded="false"|aria-expanded="false" data-ws-votes-more=""/);
   assert.match(html, />2 more waiting on you</);
 
@@ -1064,13 +1189,13 @@ test('the footnote says what is actually happening to the category grouping', ()
   });
   AppView._workshopThemes = cat({ pending: true });
   let html = workshopHtml(AppView);
-  assert.match(html, /drafting themes…/, 'pending on the category grouping says so in the eyebrow');
-  assert.match(html, /Themes are being drafted from the board now\./);
-  assert.ok(!html.includes('regrouping…'), 'and does not claim a regroup of themes that do not exist yet');
+  assert.match(html, /drafting categories…/, 'pending on the category grouping says so in the eyebrow');
+  assert.match(html, /Categories are being drafted from the board now\./);
+  assert.ok(!html.includes('regrouping…'), 'and does not claim a regroup of categories that do not exist yet');
 
   AppView._workshopThemes = cat({ lastError: 'boom' });
   html = workshopHtml(AppView);
-  assert.match(html, /The last attempt to draft themes failed \(boom\)\./);
+  assert.match(html, /The last attempt to draft categories failed \(boom\)\./);
 
   AppView._workshopThemes = cat({});
   html = workshopHtml(AppView);
@@ -1080,8 +1205,9 @@ test('the footnote says what is actually happening to the category grouping', ()
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }],
     { pending: true, pendingStage: 'placement', coverage: { total: 4, placed: 1, unplaced: 0, pending: 3 } });
   html = workshopHtml(AppView);
-  assert.match(html, /placing new cards…/, 'pending placement on real themes says so');
-  assert.match(html, /Themes were drafted \d+[hd] ago and are re-drafted daily, or sooner when a tenth of the board changes\. 3 new cards are being placed\./);
+  assert.match(html, /placing new cards…/, 'pending placement on real categories says so');
+  assert.match(html, /Categories were drafted \d+[hd] ago and are re-drafted daily, or sooner when a tenth of the board changes\./);
+  assert.match(html, /3 new cards are being placed\./);
   // The name is preceded by the theme's glyph now (#1787); the pin is still
   // on the COPY, which is what these four states are about.
   assert.match(html, /<div class="dev-ws-theme-name">(?:<span class="dev-ws-theme-icon[^>]*>[^<]*<\/span>)?Being placed<\/div>/);
@@ -1093,8 +1219,9 @@ test('the footnote says what is actually happening to the category grouping', ()
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }],
     { pending: true, pendingStage: 'discovery', unplaced: ['issue:13', 'session:34', 'session:78'], coverage: { total: 4, placed: 1, unplaced: 3, pending: 0 }, lastError: 'placement: boom' });
   html = workshopHtml(AppView);
-  assert.match(html, /re-drafting themes…/, 'a pending discovery on real themes is a re-draft');
-  assert.match(html, /3 cards did not fit a theme and wait for the next draft\. The last attempt failed \(placement: boom\); it is retried shortly\./);
+  assert.match(html, /re-drafting categories…/, 'a pending discovery on real categories is a re-draft');
+  assert.match(html, /3 cards did not fit a category and wait for the next draft\./);
+  assert.match(html, /The last attempt failed \(placement: boom\); it is retried shortly\./);
   assert.match(html, /<div class="dev-ws-theme-name">(?:<span class="dev-ws-theme-icon[^>]*>[^<]*<\/span>)?Not yet grouped<\/div>/);
   assert.ok(!html.includes('dev-ws-placing'), 'declined cards wear no marker');
 });

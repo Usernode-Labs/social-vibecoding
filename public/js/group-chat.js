@@ -588,12 +588,13 @@ const GroupChat = {
     const editedAt = msg.editedAt || msg.edited_at;
     const q = meta.quote;
     const atts = meta.attachments;
+    const stamp = GroupChat._stamp(msg.createdAt || msg.created_at);
     return {
       id: msg.id == null ? null : Number(msg.id),
       kind,
       username,
-      time: new Date(msg.createdAt || msg.created_at)
-        .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      time: stamp.text,
+      timeTitle: stamp.title,
       bodyHtml: kind === 'message' ? renderMessageBody(msg.content) : '',
       systemText: kind === 'message' ? '' : String(msg.content == null ? '' : msg.content),
       mine: msg.userId === App.user?.id || msg.user_id === App.user?.id,
@@ -1313,15 +1314,51 @@ const GroupChat = {
     return !!(window.matchMedia && window.matchMedia('(hover: none)').matches);
   },
 
-  // Full-precision timestamp for the "edited" marker's tooltip, e.g.
-  // "edited Jun 16, 2026, 2:41 PM". Reuses the same locale approach as the
-  // per-message time.
-  _editedTitle(ts) {
-    const d = new Date(ts);
-    if (isNaN(d.getTime())) return 'edited';
-    const date = d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+  // When a message was posted, in the two forms a row needs (#1808).
+  //
+  // The transcript used to stamp the time of day alone, so a row read
+  // "02:41 PM" whether it landed ten minutes ago or in March, and scrolling
+  // a discussion back answered everything except when. The date is added
+  // once it stops being today's, and the year once it stops being this
+  // one — spending words only where they carry information, because a date
+  // repeated down every row is noise the eye learns to skip.
+  //
+  //   today             02:41 PM
+  //   earlier this year Jun 16, 02:41 PM
+  //   an earlier year   Jun 16, 2025, 02:41 PM
+  //
+  // `title` never elides, so an abbreviated row is one hover from certain.
+  //
+  // frontend/src/lib/timestamp.ts carries the same table for the React
+  // surfaces; this file is a legacy IIFE outside that bundle and cannot
+  // import it. tests/message-timestamp.test.js pins the two together.
+  _stamp(ts, now) {
+    // An optimistic row reaches here before the server has stamped it, and
+    // neither "Invalid Date" nor a 1970 date belongs in front of a reader —
+    // `new Date(null)` is the epoch rather than an invalid date, so the
+    // nullish case is turned away before parsing.
+    const d = new Date(ts == null ? NaN : ts);
+    if (isNaN(d.getTime())) return { text: '', title: '' };
+    const today = now || new Date();
     const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    return `edited ${date}, ${time}`;
+    const title = d.toLocaleString([], {
+      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+    const sameDay = d.getFullYear() === today.getFullYear()
+      && d.getMonth() === today.getMonth()
+      && d.getDate() === today.getDate();
+    if (sameDay) return { text: time, title };
+    const date = d.toLocaleDateString([], d.getFullYear() === today.getFullYear()
+      ? { month: 'short', day: 'numeric' }
+      : { year: 'numeric', month: 'short', day: 'numeric' });
+    return { text: `${date}, ${time}`, title };
+  },
+
+  // Full-precision timestamp for the "edited" marker's tooltip, e.g.
+  // "edited Jun 16, 2026, 02:41 PM".
+  _editedTitle(ts) {
+    const { title } = GroupChat._stamp(ts);
+    return title ? `edited ${title}` : 'edited';
   },
 
   // `_renderEditBtn` lived here — the desktop hover pencil for your own

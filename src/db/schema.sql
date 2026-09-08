@@ -107,19 +107,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL
 -- it on; the deployment gate still applies on top.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS session_bridge_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Home-screen panels the viewer has dismissed (issue #911) — the keys of
--- the cards that sit on the home screen next to the app grid ('challenges'
--- today; see PANEL_REGISTRY in src/routes/home-panels.js, the only reader
--- and writer of this column). ABSENCE MEANS VISIBLE: an empty array — the
--- default for every existing and future row — means every panel in the
--- registry shows, which is what makes the challenges card default-on for
--- everyone with no backfill. Written only through
--- POST /api/home-panels/:key/visibility, which validates the key against
--- the registry, so the array can never accumulate unknown values. Called
--- "panels" and not "widgets" deliberately: the client half,
--- frontend/src/features/home/home.js, already uses "widget" for the iOS
--- home-screen widget's pinned app grid.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DEFAULT '{}';
+-- Home sections are permanent (#1801). Remove the obsolete preference from
+-- existing databases; IF EXISTS also makes fresh installs and repeat boots safe.
+ALTER TABLE users DROP COLUMN IF EXISTS home_panels_hidden;
 
 -- RETIRED — superseded by the `user_home_layout` table (free-form home-grid
 -- placement). It used to hold an iOS-homescreen-style drag position per
@@ -128,9 +118,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DE
 -- (column, row) cells per breakpoint instead, and holes are a first-class
 -- concept a card-count can't represent.
 --
--- The column is LEFT IN PLACE, unread and unwritten: this file is
--- append-only (it has no DROP COLUMN anywhere) and a dead JSONB default of
--- '{}' costs nothing. Nothing may read it — see user_home_layout below.
+-- This separate legacy placement field is left in place, unread and
+-- unwritten. Nothing may read it — see user_home_layout below.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panel_positions JSONB NOT NULL DEFAULT '{}';
 
 -- Platform-level user language preference (issue #757). A BCP-47 language

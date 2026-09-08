@@ -7,6 +7,7 @@ import { edit, react, setReply, toggleSaved } from './store';
 import type { ConversationMessage } from './types';
 import { fileSize, fullTime, MessageMarkdown, ObjectCard, UserAvatar } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { messageStamp } from '../../lib/timestamp';
 
 const REACTIONS = ['👍', '❤️', '😂', '🎉', '😮', '😢', '🙏', '🔥'];
 type ReportReason = 'harassment' | 'spam' | 'threats' | 'hate' | 'sexual_content' | 'other';
@@ -88,7 +89,9 @@ export function MessageRow({ message, conversationId, shape = 'row' }: { message
     longPress.current = null;
   }
 
-  const time = new Date(message.createdAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  // The time of day for today's messages, prefixed with the date once it is
+  // not today's (#1808). `fullTime` on the title never elides.
+  const time = messageStamp(message.createdAt, { hour: 'numeric' }).text;
 
   // The quoted reply, the body and the inline editor: the part of the
   // message that goes INSIDE the bubble, or stands as the row's text.
