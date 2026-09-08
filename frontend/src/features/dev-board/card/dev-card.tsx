@@ -727,7 +727,9 @@ function ExtraRow({ x }: { x: ExtraSpec }): ReactNode {
 }
 
 /** The whole card. `m.attrs` carries the outer element's data-*, role and title. */
-export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
+export function DevCard(
+  { model: m, statusLead }: { model: DevCardModel; statusLead?: ReactNode },
+): ReactNode {
   const attrs: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(m.attrs || {})) {
     // `tabindex` must reach React by its DOM-property name or React warns —
@@ -782,15 +784,23 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
   const previewSpec = m.actionPreview
     || (m.rail.preview ? { ...m.rail.preview, iconOnly: false } : null);
   const bandPreview = previewSpec ? <Preview spec={previewSpec} /> : null;
+  // `statusLead` is a caller's own control, immediately LEFT of the preview
+  // at the same right-hand end. The Workshop puts its "Open card" toggle
+  // there (#1787 round four) so the two controls that are about seeing more
+  // of this item sit together, rather than one on the card and one in a
+  // strip of its own under it.
+  const statusEnd = statusLead || bandPreview ? (
+    <span className="dev-card-status-end">{statusLead}{bandPreview}</span>
+  ) : null;
   const statusBody = (
     <>
       {badgeRow}
-      {bandPreview ? <span className="dev-card-status-end">{bandPreview}</span> : null}
+      {statusEnd}
     </>
   );
   const statusRow = dense ? (
-    <div className="dev-card-badges dev-card-status" data-empty={statusHasContent || bandPreview ? undefined : '1'}>{statusBody}</div>
-  ) : (statusHasContent || bandPreview ? <div className="dev-card-badges">{statusBody}</div> : null);
+    <div className="dev-card-badges dev-card-status" data-empty={statusHasContent || statusEnd ? undefined : '1'}>{statusBody}</div>
+  ) : (statusHasContent || statusEnd ? <div className="dev-card-badges">{statusBody}</div> : null);
 
   const primary = bandActions.slice(0, ACTION_PRIMARY_MAX);
   const hasActions = primary.length > 0;

@@ -2497,7 +2497,19 @@ const AppView = {
 
   _findTopicItem() {
     const t = AppView._devTopic;
-    if (!t) return null;
+    return t ? AppView._findItem(t.kind, t.id) : null;
+  },
+
+  /**
+   * One item, by kind and id — the lookup `_findTopicItem` has always done,
+   * with the current topic no longer baked into it.
+   *
+   * The Workshop needs the same resolution for a row it is expanding IN
+   * PLACE, where there is no `_devTopic` and must not be one: opening a
+   * card inline is not navigation.
+   */
+  _findItem(kind, id) {
+    const t = { kind, id };
     if (t.kind === 'issue') {
       return (AppView._ghIssues || []).find((i) => i.number === t.id) || null;
     }
@@ -2696,8 +2708,50 @@ const AppView = {
     // is purely about not discarding typed text. Only save/cancel clear it.
 
     // The head is `features/dev-board/topic/topic-head.tsx` — the card and
-    // everything under it. This builds the two halves of its view model and
-    // publishes; nothing here writes markup.
+    // everything under it. `_topicViewFor` builds the two halves of its view
+    // model; nothing here writes markup.
+    const built = AppView._topicViewFor(t.kind, item);
+    if (!built) return;
+    const { card, body } = built;
+
+    const react = AppView._reactDevBoard();
+    if (react) {
+      // Mounted per paint, into the host the thread panel owns. The store
+      // flushes synchronously, so the head is in the DOM for the loads below
+      // — exactly as it was after the innerHTML assignment this replaced.
+      react.mountTopicHead(head);
+      react.publishTopicHead({ card, body });
+    }
+    // The Explore pills read `aiEnabledStore` now, so the DOM pass that used
+    // to dim them per paint is gone; this refreshes the one fact they read.
+    AppView._refreshAiAvailability();
+    AppView._fillKudosHosts(head);
+    if (t.kind === 'issue') AppView._loadIssueComments(item);
+    if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
+    // An auto-expanded transcript (arrived via "Read chat") loads straight
+    // away; every other one loads when it is opened.
+    if (body.transcript && body.transcript.expanded) {
+      AppView._loadSessionTranscript(body.transcript.id);
+    }
+  },
+
+  /**
+   * The topic screen's two halves — the full-width card, and everything
+   * under it — for one item.
+   *
+   * Lifted out of `_renderTopicHead` so the Workshop can draw the same thing
+   * INSIDE a folded row it has unfolded (#1787 round four): "Open card" used
+   * to leave the lander for a screen the reader then had to come back from,
+   * and every part of that screen except the comment threads — which the
+   * Workshop's sheet already carries — fits under the card in place.
+   *
+   * Pure apart from the caches it reads. It publishes nothing and loads
+   * nothing: the side effects stayed with the caller, because a card opened
+   * inline wants a different set of them.
+   */
+  _topicViewFor(kind, item) {
+    if (!item) return null;
+    const t = { kind };
     let card;
     let body;
     if (t.kind === 'issue') {
@@ -2770,26 +2824,7 @@ const AppView = {
     // capsule), and the detail actions join its one action line.
     AppView._topicCard(card, t.kind, item, body);
     body.aboutTitle = { issue: 'About this issue', proposal: 'About this change', session: 'About this session', gov: 'About this proposal' }[t.kind] || 'About';
-
-    const react = AppView._reactDevBoard();
-    if (react) {
-      // Mounted per paint, into the host the thread panel owns. The store
-      // flushes synchronously, so the head is in the DOM for the loads below
-      // — exactly as it was after the innerHTML assignment this replaced.
-      react.mountTopicHead(head);
-      react.publishTopicHead({ card, body });
-    }
-    // The Explore pills read `aiEnabledStore` now, so the DOM pass that used
-    // to dim them per paint is gone; this refreshes the one fact they read.
-    AppView._refreshAiAvailability();
-    AppView._fillKudosHosts(head);
-    if (t.kind === 'issue') AppView._loadIssueComments(item);
-    if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
-    // An auto-expanded transcript (arrived via "Read chat") loads straight
-    // away; every other one loads when it is opened.
-    if (body.transcript && body.transcript.expanded) {
-      AppView._loadSessionTranscript(body.transcript.id);
-    }
+    return { card, body };
   },
 
   // #1045: the ONE rule for whether a proposal row offers the "Explore in
@@ -5147,17 +5182,6 @@ const AppView = {
     location.hash = `#app/${slug}/board`;
   },
 
-  // "N more waiting on you": the board, narrowed to the proposals this
-  // viewer has not voted on.
-  openBoardNeedingVote() {
-    const slug = App.currentApp;
-    if (!slug) return;
-    AppView._kanbanFilters = AppView._loadKanbanFilters(slug);
-    AppView._kanbanFilters.needsVote = true;
-    AppView._saveKanbanFilters(slug);
-    location.hash = `#app/${slug}/board`;
-  },
-
   // Nobody is on this issue: no live claim, no session working it, nobody
   // assigned. `in_progress` is the server's own composition of the first two
   // (routes/issues.js composeInProgress), already expiry-filtered, so this
@@ -5200,6 +5224,35 @@ const AppView = {
     const second = ranked[1] ? ranked[1].n : 0;
     if (second && top.n < second * AppView.WORKSHOP_BUSIEST_RATIO) return null;
     return top.name;
+  },
+
+  /**
+   * The topic body for one card, for the Workshop to draw UNDER that card
+   * without leaving the lander (#1787 round four).
+   *
+   * `key` is the card's own model key (`proposal:34`, `issue:1575`), which
+   * is what the row already carries. Returns only the half that goes below
+   * the card — the Workshop is already drawing the card itself, and drawing
+   * it twice is the hybrid this whole line of work exists to stop being.
+   *
+   * `comments` is forced OFF. The topic screen's GitHub thread mounts into
+   * `#dev-issue-comments`, a singleton id, and the Workshop's sheet already
+   * carries both that thread and the app thread above this point. Asking
+   * for a second host would give the page two nodes with one id and the
+   * loader would fill whichever it found first.
+   */
+  _workshopCardBody(key) {
+    const at = String(key || '').indexOf(':');
+    if (at < 0) return null;
+    const kind = key.slice(0, at);
+    const rest = key.slice(at + 1);
+    const id = kind === 'issue' ? Number(rest) : Number(rest);
+    if (!Number.isFinite(id)) return null;
+    const item = AppView._findItem(kind, id);
+    if (!item) return null;
+    const built = AppView._topicViewFor(kind, item);
+    if (!built) return null;
+    return { ...built.body, comments: false };
   },
 
   _issueUnclaimed(it) {
@@ -5329,9 +5382,16 @@ const AppView = {
       if (AppView._devCardMatches(x.kind, x.item, { needsVote: true })) owed.push(x);
     }
     const voteRow = (card) => ({ t: 'card', key: `vote:${card.key}`, card });
+    // EVERY owed row, not the first few. "N more waiting on you" used to send
+    // the viewer to the Board with a filter set — it left the lander, it
+    // changed the view mode, and Back was the only way home, all to read a
+    // list the lander was already showing the top of. It expands in place
+    // now (#1787 round four), so the component needs the rest to reveal;
+    // `shown` is the cap it draws until somebody asks for them.
     const votes = {
       count: owed.length,
-      rows: owed.slice(0, AppView.WORKSHOP_VOTES_MAX).map((x) => voteRow(
+      shown: AppView.WORKSHOP_VOTES_MAX,
+      rows: owed.map((x) => voteRow(
         x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)
       )),
     };

@@ -466,6 +466,31 @@ function Transcript({ t }: { t: TranscriptSection }): ReactNode {
 export function TopicHead(): ReactNode {
   const { card, body } = useStoreState(topicHeadStore);
   if (!card || !body) return null;
+  return (
+    <div className="dev-topic">
+      <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
+        <DevCard model={card} />
+      </div>
+      <TopicBodySections body={body} />
+    </div>
+  );
+}
+
+/**
+ * Everything the topic screen draws BELOW its card: the ledger, the About
+ * sheet, the transcript, and the host the GitHub thread mounts into.
+ *
+ * Split out of `TopicHead` so the Workshop can render the same sections
+ * under a row it has unfolded (#1787 round four) — same components, same
+ * order, same view model, from `AppView._workshopCardBody`. It takes the
+ * body as a PROP rather than reading `topicHeadStore`, because that store
+ * holds the one topic the screen is on and an inline expansion is not
+ * navigation: two readers of one store would fight over it.
+ *
+ * The Workshop passes `comments: false`, so the singleton
+ * `#dev-issue-comments` host below is emitted on the topic screen only.
+ */
+export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
   const a = body.actions;
   // The About sheet: the words, the before/after tiles — open, they are the
   // most useful thing on the page for a voter — the PR body as a disclosure
@@ -483,10 +508,7 @@ export function TopicHead(): ReactNode {
   const tiles = a && a.visuals ? a.visuals : null;
   const hasAbout = !!(summaryHtml || issueHtml || tiles || body.proposalBody || body.note);
   return (
-    <div className="dev-topic">
-      <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
-        <DevCard model={card} />
-      </div>
+    <>
       {body.details ? <LedgerView d={body.details} /> : null}
       {hasAbout ? (
         <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about">
@@ -518,6 +540,6 @@ export function TopicHead(): ReactNode {
       {/* The GitHub thread's host (issue-comments.tsx mounts into it), last
           so app.css can run it into the Discussion sheet below the head. */}
       {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
-    </div>
+    </>
   );
 }

@@ -717,9 +717,9 @@
       "expectText": "Claim this issue"
     },
     {
-      "name": "A Workshop row unfolds into the Activity sheet: the card, its thread, the send disc",
+      "name": "A Workshop row unfolds into the card, its Open-card toggle, its thread and the send disc",
       "path": "/?demo=1&shot=feed-comments#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
+      "expectSelector": "#dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item.dev-card-dense[data-edge]:has(.dev-card-status > .dev-card-status-end > button[data-ws-open-card]) ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
     },
     {
       "name": "Dev board: an issue card with no pills drops its status band instead of reserving an empty row (#1139)",

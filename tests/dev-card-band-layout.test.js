@@ -467,7 +467,7 @@ test('#1139: a flagged-empty status band is hidden, not merely collapsed', () =>
   const cap = rule('.dev-card-status + .gc-card-actions');
   assert.match(cap, /max-height: 24px/, 'the action-band cap still exists…');
   assert.match(CARD_TSX,
-    /className="dev-card-badges dev-card-status" data-empty=\{statusHasContent \|\| bandPreview \? undefined : '1'\}/,
+    /className="dev-card-badges dev-card-status" data-empty=\{statusHasContent \|\| statusEnd \? undefined : '1'\}/,
     '…and the card still emits the band either way, flag or no flag');
 });
 
