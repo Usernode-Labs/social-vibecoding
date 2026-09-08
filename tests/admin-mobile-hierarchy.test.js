@@ -201,7 +201,7 @@ test('the back button has both icons and one named toggle', () => {
   assert.match(body, /back-btn/, 'it toggles the anchor itself');
   // 'none' is what hides the slot now — NOT 'home', which draws a house.
   // The distinction is the whole point: a screen that publishes the default
-  // gets a way out, and only Home publishes 'none'.
+  // gets a way out, while the Home and Browse roots publish 'none' (#1569).
   assert.match(body, /slot === 'none'/,
     "the anchor hides on 'none' alone");
   assert.match(body, /setAttribute\('href'/, 'and retargets the anchor (#1036)');
@@ -215,8 +215,8 @@ test('the back button has both icons and one named toggle', () => {
   assert.ok(!exit.slice(0, exit.indexOf('\n  },')).includes('setBackIcon'),
     '_exitAdminConsole leaves the icon to _showOnlyScreen');
   const swap = appJs.slice(appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {'));
-  assert.match(swap.slice(0, swap.indexOf('\n  },')), /App\.setBackIcon\('home'\)/,
-    '_showOnlyScreen restores the home icon on every screen swap');
+  assert.match(swap.slice(0, swap.indexOf('\n  },')), /App\.setBackIcon\(revealId === 'home-screen' \|\| revealId === 'browse-screen' \? 'none' : 'home'\)/,
+    '_showOnlyScreen restores Home on secondary screens and hides it on the Home/Browse roots');
 });
 
 test('the admin gate runs before the already-open route() shortcut', () => {

@@ -88,6 +88,7 @@ function loadNativeChrome({
   fetchImpl,
   establishImpl,
   prepareForLoginImpl,
+  restoreImpl,
   sharedAttemptStorage,
 } = {}) {
   const calls = {
@@ -154,6 +155,7 @@ function loadNativeChrome({
       return handle;
     },
     clearTimeout,
+    setInterval() { return 0; },
   };
   sandbox.usernode = {
     isNative,
@@ -168,6 +170,7 @@ function loadNativeChrome({
       }
       return establishResult(payload, sandbox.App.user.id.toString());
     },
+    async restoreWebSession() { return restoreImpl(); },
     async prepareForLogin() {
       calls.prepareForLogin += 1;
       if (prepareForLoginImpl) return prepareForLoginImpl();
@@ -677,3 +680,81 @@ test('waiting-session expiry delegates null publication to App.enterAnonymous',
       body.indexOf("location.hash = '#login'")
     );
   });
+
+const recoveryInfo = { version: 5, sessionLifecycleProtocol: 2, capabilities: ['restoreWebSession'] };
+const recoveredWebSession = { status: 'restored', protocol: 2, userId: '41',
+  attemptId: 'nsa_' + Buffer.alloc(32, 11).toString('base64url') };
+
+test('web recovery restores exact replay metadata after browser storage loss and coalesces renewal', async () => {
+  const gate = deferred();
+  let calls = 0;
+  const { NativeChrome } = loadNativeChrome({ info: recoveryInfo,
+    restoreImpl: () => { calls++; return gate.promise; } });
+  const first = NativeChrome.restoreWebSession();
+  assert.equal(NativeChrome.restoreWebSession(), first);
+  gate.resolve(recoveredWebSession);
+  assert.equal(await first, true);
+  assert.equal(NativeChrome._readStoredAttempt().attemptId, recoveredWebSession.attemptId);
+  assert.equal(await NativeChrome.restoreWebSession(), false);
+  assert.equal(calls, 1);
+  assert.equal(await NativeChrome.restoreWebSession({ force: true }), true);
+  assert.equal(calls, 2);
+});
+
+test('logout waits for admitted recovery but its late result cannot republish the old attempt', async () => {
+  const gate = deferred();
+  const { NativeChrome } = loadNativeChrome({ info: recoveryInfo, restoreImpl: () => gate.promise });
+  const recovery = NativeChrome.restoreWebSession();
+  const rejected = assert.rejects(recovery, /superseded/);
+  await settle();
+  const preflight = NativeChrome.prepareWebLogout();
+  let settled = false;
+  preflight.webRecoverySettled.then(() => { settled = true; });
+  await settle();
+  assert.equal(settled, false);
+  gate.resolve(recoveredWebSession);
+  await rejected;
+  await preflight.webRecoverySettled;
+  assert.equal(NativeChrome._readStoredAttempt(), null);
+  assert.equal(await NativeChrome.restoreWebSession(), false);
+});
+
+test('transient native recovery failure preserves replay metadata and permits retry', async () => {
+  let fail = true;
+  const { NativeChrome } = loadNativeChrome({ info: recoveryInfo, restoreImpl: async () => {
+    if (fail) throw new Error('offline');
+    return recoveredWebSession;
+  } });
+  const prior = NativeChrome._attemptFor('41');
+  await assert.rejects(NativeChrome.restoreWebSession(), /offline/);
+  assert.equal(NativeChrome._readStoredAttempt().attemptId, prior.attemptId);
+  fail = false;
+  assert.equal(await NativeChrome.restoreWebSession(), true);
+});
+
+function recoveryReader(restore, responses) {
+  const sandbox = { NativeChrome: { restoreWebSession: restore }, App: {}, fetch: async () => responses.shift() };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  const start = appSource.indexOf('  async _fetchSession()');
+  const end = appSource.indexOf('  async _fetchWebSession()', start);
+  vm.runInContext(`Object.assign(App, {${appSource.slice(start, end)}});`, sandbox);
+  sandbox.App._fetchWebSession = sandbox.fetch;
+  return sandbox.App;
+}
+
+test('boot retries web authentication once after successful native restoration', async () => {
+  const ok = response({ user: { id: 41 } });
+  const calls = [];
+  const reader = recoveryReader(async (options) => { calls.push(options.force); return true; },
+    [response({}, { ok: false, status: 401 }), ok]);
+  assert.equal(await reader._fetchSession(), ok);
+  assert.deepEqual(calls, [true]);
+});
+
+test('boot preserves a valid web session on native failure, and treats failed recovery of an expired cookie as unknown', async () => {
+  const restore = async () => { throw new Error('native unreachable'); };
+  const ok = response({ user: { id: 41 } });
+  assert.equal(await recoveryReader(restore, [ok])._fetchSession(), ok);
+  await assert.rejects(recoveryReader(restore, [response({}, { ok: false, status: 401 })])._fetchSession(), /unreachable/);
+});
