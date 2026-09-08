@@ -107,18 +107,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL
 -- it on; the deployment gate still applies on top.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS session_bridge_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Home-screen panels the viewer has dismissed (issue #911) — the keys of
--- the cards that sit on the home screen next to the app grid ('challenges'
--- today; see PANEL_REGISTRY in src/routes/home-panels.js, the only reader
--- and writer of this column). ABSENCE MEANS VISIBLE: an empty array — the
--- default for every existing and future row — means every panel in the
--- registry shows, which is what makes the challenges card default-on for
--- everyone with no backfill. Written only through
--- POST /api/home-panels/:key/visibility, which validates the key against
--- the registry, so the array can never accumulate unknown values. Called
--- "panels" and not "widgets" deliberately: the client half,
--- frontend/src/features/home/home.js, already uses "widget" for the iOS
--- home-screen widget's pinned app grid.
+-- RETIRED (#1801): home sections are permanent. Legacy hidden preferences
+-- are no longer read or written. Keep the column for rolling deployments and
+-- the append-only schema; restoring sections requires no per-account update.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DEFAULT '{}';
 
 -- RETIRED — superseded by the `user_home_layout` table (free-form home-grid

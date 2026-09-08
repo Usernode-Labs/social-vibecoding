@@ -1450,15 +1450,8 @@
       }
     },
 
-    // `_renderHomePanelsSection()`, `_toggleHomePanel()` and
-    // `_saveHomePanelVisibility()` lived here: #911's one-checkbox-per-widget
-    // list, built from GET /api/home-panels's `registry` + `hidden`, and the
-    // POST that wrote a toggle back. THE UI OVERHAUL made Discover,
-    // Challenges and Create app FIXED sections of the home screen rather than
-    // draggable, hideable widgets, so there is nothing left to show or hide
-    // from a settings page. The visibility endpoint is untouched and the ⋮
-    // menu on a block still writes it (HomePanels.setHidden) — what went is
-    // the second, list-shaped way in.
+    // Home sections are permanent (#1801); the old widget visibility
+    // settings, menu and endpoint are retired together.
 
     _renderLanguageSection() {
       const select = document.getElementById('settings-locale');

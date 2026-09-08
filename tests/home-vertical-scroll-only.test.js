@@ -29,10 +29,8 @@
 // outside of a target that still extends 12px past a 16px button on that
 // side.
 //
-// The arithmetic IS pinned, though, because it is the reason the rule cannot
-// be dropped as belt and braces: as long as the kit's target is wider than
-// twice the feed's gutter, the overhang is off-viewport by construction on
-// every phone.
+// The original hide-menu control is now retired (#1801). The feed must
+// still contain horizontal overflow from any remaining or future content.
 //
 // Run with: node --test tests/home-vertical-scroll-only.test.js
 
@@ -43,9 +41,7 @@ const path = require('node:path');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const CSS = read('public/css/app.css');
-const NATIVE_CSS = read('public/usernode-native/v1/native.css');
 const HOME = read('frontend/src/features/home/index.tsx');
-const PANEL_UI = read('frontend/src/features/home/panels/ui.tsx');
 
 /** A rule's body, by exact selector text (multi-line selectors included). */
 function rule(selector) {
@@ -85,35 +81,8 @@ test('the screen root still declares only its vertical scroll in markup', () => 
     '#home-screen is still the y-axis scroller');
 });
 
-// ── The arithmetic that makes the rule load-bearing ────────────────────
-
-test('a 44px tap target on a 16px control cannot fit the feed gutter', () => {
-  // The kit's hit box: centred on the control, at least 44px each way.
-  const target = NATIVE_CSS.slice(NATIVE_CSS.indexOf('.un-touch-target::after'));
-  const body = target.slice(0, target.indexOf('\n}'));
-  const min = body.match(/width:\s*max\(100%,\s*(\d+)px\)/);
-  assert.ok(min, '.un-touch-target::after states a minimum width');
-  assert.match(body, /left:\s*50%/, 'and it is centred on the control…');
-  assert.match(body, /transform:\s*translate\(-50%/, '…so it overhangs both sides');
-  const hit = Number(min[1]);
-
-  // The control: the ⋮ component for a home area label. It is not mounted
-  // since the homescreen design, but it is the un-touch-target control the
-  // label is built to take, so its width is still the number the rule below
-  // has to explain.
-  const btn = PANEL_UI.slice(PANEL_UI.indexOf('home-panel-menu'));
-  const w = btn.match(/\bw-(\d+)\b/);
-  assert.ok(w, 'the ⋮ states its width in Tailwind steps');
-  const controlPx = Number(w[1]) * 4;
-
-  // The gutter: the sections are px-3 inside the feed.
-  const overhang = (hit - controlPx) / 2;
-  const gutterPx = 3 * 4;
-  assert.ok(overhang > gutterPx,
-    `the hit box overhangs ${overhang}px and the gutter is ${gutterPx}px — `
-    + 'if this ever stops being true the overflow-x rule is still correct, '
-    + 'but this test no longer explains why it is load-bearing');
-});
+// The arithmetic test for the former 16px hide-menu control was retired
+// with that unused component (#1801). Keep the feed overflow contract above.
 
 // ── …and nothing inside the feed may deny that axis (#1762) ────────────
 //

@@ -17,8 +17,8 @@
 //      real progressbar with truthful aria values.
 //   5. Organiser text is escaped for BOTH text and attribute contexts —
 //      goals land inside aria-label="…", so & < > alone is not enough.
-//   6. Nothing is rendered when there is nothing to say: signed out, no
-//      data, panel hidden, or (for non-admins) no open challenges.
+//   6. Signed-out and unloaded sections stay absent. Signed-in sections
+//      ignore legacy hidden preferences and show their empty states.
 //
 // Loads the module in a vm sandbox with the stub DOM idiom of
 // tests/home-find-more.test.js — no browser.
@@ -197,10 +197,6 @@ function paintHosts(sandbox, hosts) {
   }
   return hosts.map((h) => h.innerHTML).join('');
 }
-
-// Menu rows come back from the vm realm, whose Array fails deepStrictEqual's
-// prototype check — compare the labels as one string instead.
-const labels = (items) => Array.from(items, (i) => i.label).join(' | ');
 
 const challenge = (over = {}) => ({
   id: 1,
@@ -789,7 +785,7 @@ test('expanding stops the rows list clipping, and there is no cap left to lift',
   assert.doesNotMatch(css, /--home-panel-max-h:/);
 });
 
-test('render: the heading names its area and carries the ⋮ — the counter is the ring', () => {
+test('render: the heading names its area — the counter is the ring', () => {
   const { html } = renderWith({
     registry: [], hidden: [], panels: [panel({ total: 6, done: 1, points_remaining: 3900 })],
   });
@@ -801,8 +797,7 @@ test('render: the heading names its area and carries the ⋮ — the counter is 
   assert.match(html, /Challenges/);
   // The ⋮ followed the title out too, and then LEFT: the homescreen design's
   // area rows are label + link and nothing else, so no heading renders it now
-  // (PanelMenuButton stays in ui.tsx for whatever surface takes "Hide widget"
-  // over). Nothing else may quietly bring it back into the card either.
+  // and hiding is retired. Nothing may bring it back into the card either.
   assert.doesNotMatch(html, /home-panel-menu/, 'no ⋮ anywhere in the block');
 
   // THE COUNTER IS NOT. "· 1 of 6 · 3,900 pts left" rode here at 12px —
@@ -850,7 +845,7 @@ test('the ring omits its arc at zero, and drops the second line with no points',
 // the label down with it. Anything else here would be a label over a gap.
 const blocksOf = (html) => html.replace(/<h2 class="home-area-label[\s\S]*?<\/h2>/g, '');
 
-test('render: nothing at all when signed out, unloaded, or hidden', () => {
+test('render: nothing at all when signed out or unloaded', () => {
   // Signed out. Every host stays blockless AND hidden — an empty <section>
   // with its px-3 pb-3 padding would still be a gap in the stack.
   const out = renderWith({ registry: [], hidden: [], panels: [panel()] },
@@ -864,10 +859,6 @@ test('render: nothing at all when signed out, unloaded, or hidden', () => {
   const unloaded = renderWith(null);
   assert.equal(blocksOf(unloaded.html), '');
 
-  // Dismissed by this viewer: the server omits it from `panels`.
-  const hiddenOut = renderWith({ registry: [{ key: 'challenges', title: 'Challenges' }], hidden: ['challenges'], panels: [] });
-  assert.equal(blocksOf(hiddenOut.html), '');
-  assert.ok(hiddenOut.host('challenges')._classes.has('hidden'));
 });
 
 // #947 reversed the admin-only empty box. It is now a COMPACT block that
@@ -914,17 +905,25 @@ test('render: an empty payload clears the in-place expanded flag', () => {
   assert.match(paintHosts(sandbox, hosts), /No challenges are running right now/);
 });
 
-test('setHidden drops the panel optimistically and restores it on failure', async () => {
-  const out = renderWith(
-    { registry: [{ key: 'challenges', title: 'Challenges' }], hidden: [], panels: [panel()] });
-  assert.match(out.html, /Report a reproducible bug/);
-
-  out.sandbox.fetch = async () => ({ ok: false, json: async () => ({}) });
-  const ok = await out.HP.setHidden('challenges', true);
-  assert.equal(ok, false);
-  assert.deepEqual(out.HP._data.hidden, [], 'a failed write must not look like it stuck');
-  assert.match(out.host('challenges').innerHTML, /Report a reproducible bug/,
-    'the block is back in its own host, not just in the data');
+test('render: stale hidden metadata cannot suppress fixed sections (#1801)', () => {
+  const registry = [
+    { key: 'challenges', title: 'Challenges' },
+    { key: 'discover', title: 'Discover' },
+    { key: 'create', title: 'Create app' },
+  ];
+  // An old server omitted hidden panels from its payload. The new client
+  // still renders their empty/marker state rather than removing the sections.
+  for (const panels of [[], [panel()]]) {
+    const out = renderWith({ registry, hidden: ['challenges', 'create'], panels },
+      { home: { canCreate: () => false } });
+    for (const key of ['challenges', 'discover', 'create']) {
+      assert.ok(!out.host(key)._classes.has('hidden'), `${key} remains visible`);
+      assert.match(out.host(key).innerHTML, new RegExp(`data-panel="${key}"`));
+    }
+    assert.match(out.host('challenges').innerHTML,
+      panels.length ? /Report a reproducible bug/ : /No challenges are running right now/);
+    assert.match(out.host('create').innerHTML, /data-create-enabled="false"/);
+  }
 });
 
 // ── Container shape: one bordered block PER SECTION ───────────────
@@ -1141,8 +1140,7 @@ test('the create block renders regardless of app quota', () => {
     'the registry takes no viewer argument — presence is never permission-gated');
 });
 
-// A hidden widget is genuinely absent; an un-buildable one still renders if
-// the registry knows it (that is how the marker widgets work at all).
+// A fixed section still renders when an old response omits its payload.
 test('panelFor prefers a built payload and falls back to the registry', () => {
   const { HP } = makeHomePanels();
   HP._data = {
@@ -1153,34 +1151,9 @@ test('panelFor prefers a built payload and falls back to the registry', () => {
     hidden: ['challenges'],
     panels: [],
   };
-  assert.equal(HP.panelFor('challenges'), null, 'hidden means absent');
+  assert.equal(HP.panelFor('challenges').title, 'Challenges', 'legacy hidden metadata is ignored');
   assert.equal(HP.panelFor('create').title, 'Create app', 'marker widget still renders');
   assert.equal(HP.panelFor('nope'), null, 'unknown key renders nothing');
-});
-
-test('Discover cannot be hidden, from either end', async () => {
-  const { HP, sandbox } = makeHomePanels();
-  const calls = [];
-  sandbox.fetch = async (url) => { calls.push(url); return { ok: true, json: async () => ({}) }; };
-  HP._data = {
-    registry: [
-      { key: 'discover', title: 'Discover', removable: false },
-      { key: 'create', title: 'Create app', removable: true },
-    ],
-    hidden: [],
-    panels: [],
-  };
-  assert.equal(HP.isRemovable('discover'), false);
-  assert.equal(HP.isRemovable('create'), true);
-  // The client refuses the write outright — no request is even attempted.
-  assert.equal(await HP.setHidden('discover', true), false);
-  assert.equal(calls.length, 0);
-  // ...and its menu carries no Hide row to reach it with.
-  assert.doesNotMatch(labels(HP.menuItems('discover')), /Hide widget/);
-  assert.match(labels(HP.menuItems('create')), /Hide widget/);
-  // The server refuses it too — the client guard is UX, not the enforcement.
-  assert.match(ROUTE, /removable === false && req\.body && req\.body\.hidden === true/);
-  assert.match(ROUTE, /This widget cannot be hidden/);
 });
 
 test('home.js places every item at an explicit cell, with no flow fallback', () => {
@@ -1376,88 +1349,16 @@ test('the block wires no drag recognizer of its own', () => {
   }
 });
 
-// ── The widget menu ───────────────────────────────────────────────
-//
-// Replaces the bare ✕: a destructive control with no undo, one press away on
-// a block whose whole job is to sit quietly on the home screen.
+// ── Retired visibility controls (#1801) ─────────────────────────────
 
-test('the ⋮ is not rendered, and the bare ✕ it replaced did not come back', () => {
-  // The homescreen design took the ⋮ out of the area headings. The component
-  // keeps its menu semantics for whatever mounts it next; what the rendered
-  // shell must NOT do is fall back to the destructive one-press ✕.
-  const { html } = renderWith({ registry: [], hidden: [], panels: [panel()] });
-  assert.doesNotMatch(html, /home-panel-menu/, 'no ⋮ in the rendered headings');
-  assert.doesNotMatch(html, /home-panel-hide/, 'the ✕ is gone, not merely restyled');
+test('retired hide controls and their client mutation code are absent', () => {
+  const { html, HP } = renderWith({ registry: [], hidden: [], panels: [panel()] });
+  assert.doesNotMatch(html, /home-panel-menu|home-panel-hide/);
+  for (const method of ['setHidden', 'openMenu', 'menuItems', 'isRemovable']) {
+    assert.equal(HP[method], undefined, `${method} retired`);
+  }
   const [, ui] = PANEL_SOURCES.find(([n]) => n.endsWith('ui.tsx'));
-  const btn = ui.slice(ui.indexOf('home-panel-menu'), ui.indexOf('</button>', ui.indexOf('home-panel-menu')));
-  assert.match(btn, /un-touch-target/, 'the component still pads a small glyph out to a finger');
-  assert.match(btn, /aria-haspopup="menu"/);
-  assert.match(btn, /aria-label="Widget options"/);
-});
-
-test('the menu offers the destination and a deliberate hide', () => {
-  const { HP, sandbox } = makeHomePanels();
-  HP._data = { registry: [{ key: 'challenges', title: 'Challenges' }], hidden: [], panels: [panel()] };
-
-  const items = HP.menuItems('challenges');
-  // Joined rather than deep-equalled: the module runs in a vm realm, so its
-  // arrays fail deepStrictEqual's prototype check. BOTH destinations are here
-  // (#980) — the widget has two, and each row names the screen it opens.
-  assert.equal(labels(items), 'Open challenges | Open leaderboard | Hide widget');
-  assert.equal(items[2].destructive, true, 'hiding is the destructive row');
-  assert.ok(!items[0].destructive);
-  assert.ok(!items[1].destructive);
-
-  // Both destination rows are real hash navigations, so the device back
-  // gesture returns here.
-  items[0].handler();
-  assert.equal(sandbox.location.hash, '#leaderboard/challenges');
-  items[1].handler();
-  assert.equal(sandbox.location.hash, '#leaderboard');
-
-  // The last row is exactly what the ✕ did — persisted, and still restorable
-  // from Settings → Home screen widgets.
-  const calls = [];
-  sandbox.fetch = async (url) => { calls.push(url); return { ok: true, json: async () => ({}) }; };
-  items[2].handler();
-  assert.equal(Array.from(HP._data.hidden).join(), 'challenges');
-  assert.deepEqual(calls, ['/api/home-panels/challenges/visibility']);
-
-  // A future widget with no destination still gets a working menu rather
-  // than a row that goes nowhere.
-  assert.equal(labels(HP.menuItems('future-widget')), 'Hide widget');
-});
-
-test('openMenu goes through the kit\'s ADAPTIVE menu — one call site, both idioms', () => {
-  const { HP, sandbox } = makeHomePanels();
-  HP._data = { registry: [], hidden: [], panels: [panel()] };
-  const anchor = { tagName: 'BUTTON' };
-
-  // The repo wrapper is preferred (platform-ui.js: "New menu call sites
-  // should use PlatformUI.menu()"), and it is the kit's action-sheet-on-touch
-  // / anchored-popover-on-desktop menu underneath — no branching here.
-  const seen = [];
-  sandbox.PlatformUI = { menu: (o) => { seen.push(o); return Promise.resolve(null); } };
-  HP.openMenu('challenges', anchor);
-  assert.equal(seen.length, 1);
-  assert.equal(seen[0].anchorEl, anchor, 'the anchor is what makes it a popover on desktop');
-  assert.equal(seen[0].title, 'Challenges', 'the sheet needs a heading; a popover ignores it');
-  assert.equal(labels(seen[0].items), 'Open challenges | Open leaderboard | Hide widget');
-  assert.match(read('public/js/platform-ui.js'), /unNative[\s\S]{0,400}?\.menu\(/);
-
-  // Kit but no wrapper (a page that loads native.js directly).
-  delete sandbox.PlatformUI;
-  const direct = [];
-  sandbox.unNative = { menu: (o) => { direct.push(o); return Promise.resolve(null); } };
-  HP.openMenu('challenges', anchor);
-  assert.equal(direct.length, 1);
-
-  // No kit at all: send the press where the rows go rather than swallowing
-  // it. Hiding stays reachable in Settings.
-  delete sandbox.unNative;
-  sandbox.location.hash = '';
-  HP.openMenu('challenges', anchor);
-  assert.equal(sandbox.location.hash, '#leaderboard/challenges');
+  assert.doesNotMatch(ui, /PanelMenuButton|Widget options/);
 });
 
 // ── Height cap ────────────────────────────────────────────────────
@@ -1669,7 +1570,7 @@ test('home.js loads the panels once per TTL and paints them on every render', ()
 // checkboxes for showing or hiding each widget — an affordance that only made
 // sense while the blocks were optional furniture a viewer arranged. They are
 // three fixed areas of the screen now, in a fixed order, so there is nothing
-// to toggle; the ⋮ menu on a block is still the way to dismiss one.
+// to toggle or dismiss (#1801).
 test('Settings no longer offers the Home screen widgets section', () => {
   // Code-shaped, not the bare name: the comment recording what was removed
   // (and why the endpoint stayed) is the one mention that should survive.
@@ -1679,12 +1580,11 @@ test('Settings no longer offers the Home screen widgets section', () => {
   assert.doesNotMatch(SETTINGS, /settings-home-panels-list/);
   assert.equal(INDEX.indexOf('data-settings-section="home-panels"'), -1);
   assert.equal(INDEX.indexOf('id="settings-home-panels-list"'), -1);
-  // The per-user hidden set stays — the ⋮ menu still writes it, and the
-  // server still filters `panels` by it (see setHidden above).
-  assert.match(ROUTE, /home_panels_hidden/);
+  // The legacy column remains, but the API no longer reads or writes it.
+  assert.doesNotMatch(ROUTE.replace(/^\s*\/\/.*$/gm, ''), /home_panels_hidden/);
 });
 
-test('the per-user hidden set defaults to "everything visible"', () => {
+test('the retired visibility column is retained without a destructive migration', () => {
   assert.match(SCHEMA, /home_panels_hidden TEXT\[\] NOT NULL DEFAULT '\{\}'/);
 });
 
