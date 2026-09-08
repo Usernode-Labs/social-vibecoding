@@ -11408,6 +11408,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 #dev-topic-thread .gc-msg-self > .min-w-0 { background: var(--accent-tint); }
+/* The editor needs the row's available width, not the bubble's intrinsic
+   text width. Save and Cancel clear data-editing and restore bubble sizing. */
+#dev-topic-thread .gc-msg[data-editing="1"] > .min-w-0 {
+  flex: 1 1 0%;
+  max-width: 100%;
+}
 #dev-topic-thread .gc-msg > .min-w-0 > .flex { gap: 6px; margin-bottom: 2px; }
 #dev-topic-thread .gc-msg > .min-w-0 > .flex > .truncate { font-size: 14px; }
 #dev-topic-thread .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 12.5px; }
