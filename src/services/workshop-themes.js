@@ -483,7 +483,7 @@ function stagingDemoGrouping(input) {
     id: `staging-demo-${i + 1}`,
     name,
     description: 'A staging-only grouping of real board items, dealt out to show the Workshop\'s shape.',
-    saying: 'Staging demo: what people are asking for in this theme would be summarised here by the model.',
+    saying: 'Staging demo: what people are asking for in this category would be summarised here by the model.',
     icon: STAGING_THEME_ICONS[i] || '',
     items: [],
   }));
