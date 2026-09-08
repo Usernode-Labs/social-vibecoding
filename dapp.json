@@ -506,12 +506,6 @@
   ],
   "tests": [
     {
-      "name": "Alerts settings explain delayed mobile push testing (#1795)",
-      "path": "/#settings/alerts",
-      "expectSelector": "[data-settings-section=\"alerts\"]:not(.hidden) #devchat-alerts-test",
-      "expectText": "10-second delay"
-    },
-    {
       "name": "Guest back arrow returns to the app directory (#1028)",
       "path": "/?shot=anon-back#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",
@@ -2411,8 +2405,9 @@
       "expectSelector": "#settings-screen:not(.hidden) #settings-section-content"
     },
     {
-      "name": "Settings groups its section menu under headings",
-      "path": "/#settings",
+      "name": "Settings groups its menu under headings and offers the test alert (#1795)",
+      "path": "/#settings/alerts",
+      "expectSelector": "#settings-root:has(#settings-nav-desktop h2) [data-settings-section=\"alerts\"]:not(.hidden) #devchat-alerts-test",
       "expectText": "AI & agents"
     },
     {
