@@ -380,6 +380,11 @@ let _sink = (s) => process.stdout.write(s);
 function setFrameSink(fn) {
   _sink = fn || ((s) => process.stdout.write(s));
   _emittedTests.clear();
+  // The retry pass reads both of these, so a run that inherited another
+  // run's verdicts would ask the wrong checks again — or, worse, skip a
+  // failing one because a previous run had recorded it passing.
+  _testStatus.clear();
+  _retryOf.clear();
 }
 
 function emit(kind, media, status, buf, index, fellback) {
@@ -423,13 +428,27 @@ function emitConsole(index, errors, loadStatus) {
 // First writer wins and the straggler is dropped, so a slow check can never
 // contradict its own recorded verdict.
 const _emittedTests = new Set();
+// index -> pass|fail, so the retry pass below knows what to ask again about
+// without re-parsing its own output.
+const _testStatus = new Map();
+// A retry's index -> the index of the check it is a second opinion on. Held
+// here rather than threaded through every emitTest call site, of which there
+// are four, so a retry frame cannot be emitted without saying what it is a
+// retry OF.
+const _retryOf = new Map();
 function emitTest(index, status, loadStatus, payload) {
   const key = Number(index) || 0;
   if (_emittedTests.has(key)) return false;
   _emittedTests.add(key);
-  const json = JSON.stringify(payload || {});
+  const verdict = status === 'pass' ? 'pass' : 'fail';
+  _testStatus.set(key, verdict);
+  const of = _retryOf.get(key);
+  // In the base64 payload, not the header: the header's attributes are a
+  // fixed shape older platforms parse positionally-ish, and an unknown key
+  // in the JSON is ignored by any reader that does not know about it.
+  const json = JSON.stringify(of == null ? (payload || {}) : { ...(payload || {}), retryOf: of });
   _sink(
-    `__USERNODE_TEST__ index=${index || 0} status=${status === 'pass' ? 'pass' : 'fail'} loadStatus=${loadStatus || 0}\n`
+    `__USERNODE_TEST__ index=${index || 0} status=${verdict} loadStatus=${loadStatus || 0}\n`
   );
   _sink(Buffer.from(json, 'utf8').toString('base64'));
   _sink('\n__USERNODE_TEST_END__\n');
@@ -951,6 +970,24 @@ function groupTestsByUrl(tests) {
 // grouping with one env flip on the host, no deploy.
 const HASH_GROUP_CAP = 6;
 
+// ── Retrying a failed check ─────────────────────────────────────────────
+// Retry indices come from a high base so they can never collide with a
+// declared check's index, which is its array position. emitTest is keyed by
+// index and refuses a second frame for one, so a retry that reused an index
+// would be silently dropped.
+const RETRY_INDEX_BASE = 1000000;
+const RETRY_RUNS = 3;
+// At most this many failing checks are asked again in one run.
+const RETRY_MAX_CHECKS = 10;
+// And none are, when this fraction of the suite is red: that is the change.
+const RETRY_SKIP_FRACTION = 0.25;
+
+function retryRuns(env) {
+  const raw = parseInt((env || {}).TEST_RETRY_RUNS, 10);
+  if (!Number.isFinite(raw) || raw < 0) return RETRY_RUNS;
+  return Math.min(10, raw);
+}
+
 function hashGroupCap(env) {
   const raw = parseInt((env || {}).TEST_HASH_GROUP_CAP, 10);
   if (!Number.isFinite(raw) || raw < 1) return HASH_GROUP_CAP;
@@ -1074,9 +1111,26 @@ function groupTestsByDocument(tests, opts) {
 
 // The dispatch-time entry point: document grouping unless the kill-switch is
 // set, in which case the historical per-URL grouping.
+//
+// A `solo` check is exempt from BOTH. It is one of the repeat runs a check
+// gets on its first appearance, and the whole value of a repeat is that it
+// is an independent observation — its own cold document, its own module
+// init, its own first paint. Grouped, five repeats would share one
+// navigation and become five assertions against a single loaded page, which
+// says nothing about the flake class that actually bites here: a console
+// error on load. Each solo check is therefore its own group, paying a full
+// navigation on purpose. Nothing else in the suite is affected: they are
+// pulled out before grouping and appended after, so a normal run groups
+// exactly as it did.
 function groupTests(tests, env) {
-  if (!groupByDocument(env)) return groupTestsByUrl(tests);
-  return groupTestsByDocument(tests, { cap: hashGroupCap(env) });
+  const all = Array.isArray(tests) ? tests : [];
+  const solo = all.filter((t) => t && t.solo);
+  const shared = solo.length ? all.filter((t) => !(t && t.solo)) : all;
+  const groups = groupByDocument(env)
+    ? groupTestsByDocument(shared, { cap: hashGroupCap(env) })
+    : groupTestsByUrl(shared);
+  for (const t of solo) groups.push([t]);
+  return groups;
 }
 
 // Load the document and establish the same readiness condition as
@@ -1464,6 +1518,33 @@ async function runTests(browser, tests, opts) {
   const o = opts || {};
   const concurrency = Math.max(1, Number(o.concurrency) || 8);
   const perTestMs = Number(o.testTimeoutMs) > 0 ? Number(o.testTimeoutMs) : 25000;
+  // The one navigation every group performs, budgeted explicitly.
+  //
+  // It never was. `perTestMs` is documented as the PER-CHECK wall clock, and
+  // the group budget spent it on the whole group — cold load, settle and the
+  // first check's assertion together — while GROUP_EXTRA_CHECK_MS gave each
+  // check past the first its own second. So a group of TWO had a spare second
+  // of slack for the navigation and a group of ONE had none, even though the
+  // comment on GROUP_EXTRA_CHECK_MS names "the navigation + settle sleeps" as
+  // the expensive part and each extra check as milliseconds. That is backwards:
+  // the cost the whole group shares is the one the formula omitted, and 146 of
+  // this repo's 236 routes carry a single check.
+  //
+  // The second, worse consequence was diagnostic. NAV_TIMEOUT_MS (30s) bounds
+  // the navigation, and it EXCEEDED a lone group's entire 25s budget, so the
+  // group race always resolved first: a load that was merely slow could not
+  // report as a navigation timeout, only as "did not finish within 25s" — a
+  // message that cannot distinguish a page that never loaded from an assertion
+  // that failed. Budgeting the navigation separately puts the group ceiling
+  // above NAV_TIMEOUT_MS, so the navigation gets to fail as itself.
+  //
+  // Sized at perTestMs rather than at NAV_TIMEOUT_MS: it scales with the one
+  // knob callers already tune (TEST_TIMEOUT_MS, and the suites here), and
+  // 25s + 25s clears the 30s navigation bound with room for the settle. These
+  // are CAPS, not sleeps — a healthy group still finishes in seconds and never
+  // reaches this — so the cost is paid only by pages that are genuinely stuck,
+  // and a stuck navigation is itself bounded by NAV_TIMEOUT_MS.
+  const navBudgetMs = Number(o.navBudgetMs) > 0 ? Number(o.navBudgetMs) : perTestMs;
   const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 570000;
   const now = typeof o.now === 'function' ? o.now : () => Date.now();
 
@@ -1486,9 +1567,10 @@ async function runTests(browser, tests, opts) {
   let ran = 0;
   let hitDeadline = false;
 
-  const runOne = async (group) => {
+  const runOne = async (group, { counts = true } = {}) => {
     const cohortCount = cohortsOf(group).length;
     const groupBudgetMs = perTestMs
+      + navBudgetMs
       + GROUP_EXTRA_CHECK_MS * (group.length - 1)
       + GROUP_EXTRA_COHORT_MS * Math.max(0, cohortCount - 1);
     let timer = null;
@@ -1527,7 +1609,7 @@ async function runTests(browser, tests, opts) {
         });
       }
     }
-    ran += group.length;
+    if (counts) ran += group.length;
   };
 
   // Every group straight through the pool — with per-group contexts there
@@ -1547,6 +1629,52 @@ async function runTests(browser, tests, opts) {
   for (let i = 0; i < lanes; i += 1) workers.push(worker());
   await Promise.all(workers);
 
+  // ── Retry pass ────────────────────────────────────────────────────────
+  //
+  // A check that failed is asked again, up to RETRY_RUNS times, each on its
+  // own cold document (`solo`). If any of those passes, the platform reads
+  // this run as a pass for that check and tags it flaky: it keeps every bit
+  // of its power to block, it just stops blocking on a coin flip. If they
+  // all fail it is a real failure and nothing here changed that.
+  //
+  // Two caps, because a broken change must not become a slow broken change.
+  // A quarter of the suite red is the CHANGE, not flakiness, and asking a
+  // hundred checks again would triple the run at its least useful moment.
+  const retries = retryRuns(env);
+  const failedPrimaries = retries > 0
+    ? list.filter((t) => _testStatus.get(Number(t.index) || 0) === 'fail')
+    : [];
+  const tooManyRed = failedPrimaries.length > list.length * RETRY_SKIP_FRACTION;
+  if (failedPrimaries.length && !tooManyRed && !hitDeadline) {
+    const asking = failedPrimaries.slice(0, RETRY_MAX_CHECKS);
+    const retryGroups = [];
+    let nextIndex = RETRY_INDEX_BASE;
+    for (const t of asking) {
+      for (let i = 0; i < retries; i += 1) {
+        const index = nextIndex; nextIndex += 1;
+        _retryOf.set(index, Number(t.index) || 0);
+        retryGroups.push([{ ...t, index, solo: true }]);
+      }
+    }
+    let rCursor = 0;
+    const retryWorker = async () => {
+      for (;;) {
+        if (rCursor >= retryGroups.length) return;
+        if ((now() - startedAt) >= budgetMs) { hitDeadline = true; return; }
+        const group = retryGroups[rCursor];
+        rCursor += 1;
+        await runOne(group, { counts: false });
+      }
+    };
+    const retryLanes = Math.min(concurrency, retryGroups.length);
+    const retryWorkers = [];
+    for (let i = 0; i < retryLanes; i += 1) retryWorkers.push(retryWorker());
+    await Promise.all(retryWorkers);
+  }
+
+  // `ran` and `expected` still count DECLARED checks only. A retry is a
+  // second opinion on a check the suite already ran, not another check, and
+  // the platform's "did every check report?" arithmetic reads these two.
   emitTestsDone(ran, list.length, hitDeadline);
   return { ran, expected: list.length, deadline: hitDeadline };
 }

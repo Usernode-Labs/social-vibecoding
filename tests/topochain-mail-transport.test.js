@@ -208,8 +208,15 @@ test('sendWaitlistReleaseMail passes kind:"waitlist_released" and a signup/login
   await sendWaitlistReleaseMail(cfg, 'a@b.invalid', { hasAccount: false });
   await sendWaitlistReleaseMail(cfg, 'a@b.invalid', { hasAccount: true });
   assert.equal(seen[0].kind, 'waitlist_released');
-  assert.match(seen[0].url, /#signup$/, 'no account yet → the link lands on account creation');
-  assert.match(seen[1].url, /#login$/, 'existing account → the link lands on sign-in');
+  // #1545: a QUERY, not a fragment. Following `/#signup` from a desktop mail
+  // client landed on the home page while the same mail worked from a phone —
+  // a link rewriter rebuilding the URL drops a fragment and keeps a query.
+  // AuthScreens.enter() turns either spelling into the same hash route.
+  assert.match(seen[0].url, /\/\?signup=1$/, 'no account yet → account creation');
+  assert.match(seen[1].url, /\/\?login=1$/, 'existing account → sign-in');
+  for (const m of seen) {
+    assert.doesNotMatch(m.url, /#/, 'nothing a link rewriter is free to drop');
+  }
 });
 
 // ─── the always-success contract survives a broken transport ────────────

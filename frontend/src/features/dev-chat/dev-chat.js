@@ -1324,6 +1324,7 @@ const DevChat = {
   // dev chat tab shows a fresh session list instead of re-rendering the
   // previous app's session.
   reset() {
+    DevChat._stopSpendPolling();
     // #161: leaving the app (home / different app) while a turn is
     // running counts as leaving the session — arm its completion
     // notification before the state below is dropped.
@@ -1549,6 +1550,26 @@ const DevChat = {
   // thresholds, the wording, the dollar formatting, the reset sentence, and
   // the limit-first billing rule — and the component only draws them.
   _budgetPillView() {
+    const view = DevChat._settledBudgetPillView();
+    const spend = DevChat._liveSpend;
+    if (!spend || DevChat._isOpenRouterSession()
+        || Number(spend.sessionId) !== Number(DevChat.currentSession?.id)) return view;
+    return {
+      title: view.title,
+      parts: [...view.parts,
+        ...(view.parts.length ? [{ text: ' · ', className: 'text-zinc-500 dark:text-zinc-400' }] : []),
+        {
+          text: `this turn ${spend.estimated ? '~' : ''}$${(spend.costCents / 100).toFixed(2)}`,
+          className: 'text-zinc-500 dark:text-zinc-400',
+          title: spend.estimated
+            ? 'Estimated token spend so far. Updates while Claude Code works; final usage determines billing.'
+            : 'Token spend reported by Claude Code for this turn.',
+        },
+      ],
+    };
+  },
+
+  _settledBudgetPillView() {
     const NONE = { title: null, parts: [] };
     const muted = 'text-zinc-500 dark:text-zinc-400';
     // An OpenRouter session bills the user's own provider key, so the
@@ -3146,6 +3167,7 @@ const DevChat = {
     const switchingSession = !DevChat.currentSession
       || Number(DevChat.currentSession.id) !== Number(sessionId);
     if (switchingSession) {
+      DevChat._stopSpendPolling();
       // #771: a docked staging preview belongs to the session we're
       // leaving — close it so session A's preview can't render beside
       // session B's chat.
@@ -4596,6 +4618,8 @@ const DevChat = {
 
   _setStreamingUI(streaming, phase = null, { stoppable = true } = {}) {
     DevChat._composerBusy = !!streaming;
+    if (streaming) DevChat._startSpendPolling();
+    else DevChat._stopSpendPolling();
     if (streaming) DevChat._streamingPhase = phase;
     else DevChat._streamingPhase = null;
     // #1378: kept alongside the phase so every repaint that only knows the
@@ -5058,6 +5082,55 @@ const DevChat = {
     DevChat._hideActivity();
   },
 
+  // Read the same authorized status snapshot used for reconnects. No credit
+  // writes or per-token network requests; one bounded request every 3s.
+  _liveSpend: null,
+  _spendPollTimer: null,
+  _spendPollSession: null,
+  _spendPollGeneration: 0,
+
+  _applyLiveSpend(payload, sessionId) {
+    if (Number(DevChat.currentSession?.id) !== Number(sessionId)) return;
+    const spend = payload?.busy ? payload.spend : null;
+    DevChat._liveSpend = spend && Number.isFinite(spend.costCents) && spend.costCents > 0
+      ? { sessionId, costCents: spend.costCents, estimated: spend.estimated !== false } : null;
+    DevChat.renderBudget();
+  },
+
+  _startSpendPolling() {
+    const sessionId = DevChat.currentSession?.id;
+    if (!sessionId || DevChat._isOpenRouterSession()) return;
+    if (DevChat._spendPollTimer && DevChat._spendPollSession === sessionId) return;
+    DevChat._stopSpendPolling();
+    DevChat._spendPollSession = sessionId;
+    const generation = DevChat._spendPollGeneration;
+    let pending = false;
+    const poll = async () => {
+      // The reconnect poll already fetches the exact same snapshot.
+      if (pending || DevChat._progressPollTimer) return;
+      pending = true;
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/status`);
+        if (!res.ok) return;
+        const payload = await res.json();
+        if (generation !== DevChat._spendPollGeneration) return;
+        DevChat._applyLiveSpend(payload, sessionId);
+      } catch { /* preserve the last observation through transient failures */ }
+      finally { pending = false; }
+    };
+    DevChat._spendPollTimer = setInterval(poll, 3000);
+  },
+
+  _stopSpendPolling() {
+    if (DevChat._spendPollTimer) clearInterval(DevChat._spendPollTimer);
+    DevChat._spendPollTimer = null;
+    DevChat._spendPollSession = null;
+    DevChat._spendPollGeneration += 1;
+    const hadSpend = !!DevChat._liveSpend;
+    DevChat._liveSpend = null;
+    if (hadSpend) DevChat.renderBudget();
+  },
+
   _progressPollTimer: null,
 
   _startProgressPolling(sessionId, initialProgress, initialMetadata = null) {
@@ -5071,10 +5144,14 @@ const DevChat = {
     }
 
     DevChat._progressPollTimer = setInterval(async () => {
+      const spendGeneration = DevChat._spendPollGeneration;
       try {
         const res = await fetch(`/api/sessions/${sessionId}/status`);
         if (!res.ok) return;
         const payload = await res.json();
+        if (Number(DevChat.currentSession?.id) !== Number(sessionId) || !DevChat.isStreaming
+            || spendGeneration !== DevChat._spendPollGeneration) return;
+        DevChat._applyLiveSpend(payload, sessionId);
         const { busy, progress, estimate, stopping, stoppable } = payload;
         // #907: a machine can attach or detach mid-turn; keep the chip honest.
         DevChat._applyRunnerState(payload);
@@ -6584,6 +6661,46 @@ const DevChat = {
     const parsed = parseFloat(String(input.value || '').replace(/[^\d.-]/g, ''));
     if (Number.isFinite(parsed)) DevChat._qaNumber[gi] = Math.max(num.min, parsed);
     DevChat.renderMessages();
+  },
+
+  /**
+   * The question groups the chips on screen are drawn from, or null (#1601).
+   *
+   * Every Q/A interaction goes through this: the chip tap, the escape hatch,
+   * the number stepper and its typed commit, "Send answers" and "Use the
+   * suggested defaults". It was CALLED in five places and DEFINED in none, so
+   * each of them threw `DevChat._qaCurrentGroups is not a function` at the
+   * first line and the whole quick-check step was a dead end — which is what
+   * "selecting use the suggested defaults does nothing, send answers does
+   * nothing, not able to continue" was.
+   *
+   * The rule is `_buildChatView`'s `wantsQa`, restated so the two cannot
+   * disagree about WHICH message is being answered: the chips render on the
+   * last non-system message when that message is the assistant's, carries a
+   * non-empty `suggestions` array, and the session is one the viewer can still
+   * act in. Anything else renders no chips, and this answers null so the
+   * handlers return instead of acting on a question nobody can see.
+   *
+   * It returns the RAW `msg.suggestions`, not `_qaSpec`'s view of them: the
+   * handlers index `groups[gi].answers[ai]` expecting plain answer strings,
+   * while the spec maps each answer to a `{ text, suggested, selected }`
+   * object for rendering.
+   */
+  _qaCurrentGroups() {
+    const session = DevChat.currentSession;
+    if (!session || (session.status !== 'active' && session.status !== 'promoted')) return null;
+    const messages = DevChat.messages || [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (!msg || msg.role === 'system') continue;
+      // The last non-system row. If the viewer has already replied it is
+      // theirs, the chips are gone, and there is nothing to answer.
+      if (msg.role === 'user') return null;
+      return Array.isArray(msg.suggestions) && msg.suggestions.length
+        ? msg.suggestions
+        : null;
+    }
+    return null;
   },
 
   /**

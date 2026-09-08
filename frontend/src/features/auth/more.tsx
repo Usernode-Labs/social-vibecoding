@@ -123,6 +123,60 @@ function autoGrow(el: HTMLTextAreaElement | null | undefined): void {
   if (el.scrollHeight > 0) el.style.height = `${el.scrollHeight}px`;
 }
 
+/**
+ * The typed answers, parked across the OAuth round trip (#1533).
+ *
+ * Connecting GitHub / X / LinkedIn opens the provider in a NEW tab (#1532),
+ * and that tab comes back to `#more/<token>?connect=<outcome>` — a cold
+ * re-entry of this screen. The fields here are uncontrolled refs read only at
+ * submit (see the header), so the landing tab paints an empty form: somebody
+ * three minutes into the questions carries on where the provider left them,
+ * and finds nothing they had typed.
+ *
+ * Parked in `sessionStorage` under the token, so two signups in one browser
+ * cannot read each other's draft and nothing outlives the tab. Every access is
+ * wrapped: Safari throws on storage in private mode, and a draft is never
+ * worth failing a screen over.
+ *
+ * What comes back is only ever used to fill a field the SERVER left empty —
+ * see `restoreDraft`. A stored answer always wins over a parked one, which is
+ * what stops a stale draft overwriting something already saved.
+ */
+const DRAFT_PREFIX = 'usernode:waitlist-more-draft:';
+
+type MoreDraft = Record<string, string>;
+
+function draftKey(token: string | null): string | null {
+  return token ? `${DRAFT_PREFIX}${token}` : null;
+}
+
+function saveDraft(token: string | null, draft: MoreDraft): void {
+  const key = draftKey(token);
+  if (!key) return;
+  try {
+    sessionStorage.setItem(key, JSON.stringify(draft));
+  } catch { /* private mode, or storage denied */ }
+}
+
+function readDraft(token: string | null): MoreDraft | null {
+  const key = draftKey(token);
+  if (!key) return null;
+  try {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as MoreDraft) : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearDraft(token: string | null): void {
+  const key = draftKey(token);
+  if (!key) return;
+  try { sessionStorage.removeItem(key); } catch { /* nothing to clear */ }
+}
+
 /** `GET /api/public/waitlist/more/<token>`. Every field is optional. */
 interface MoreAnswers {
   made_url?: string;
@@ -455,15 +509,69 @@ export function MoreScreen() {
     setStatus('ready');
   }, [render]);
 
+  /**
+   * Every free-text field, as one flat object (#1533). Chip and select state
+   * is deliberately absent: those live in React state, which the landing tab
+   * does not have either, but they are one tap to re-pick where a paragraph
+   * is not.
+   */
+  const snapshotDraft = useCallback((): MoreDraft => ({
+    made_url: madeUrl.current?.value || '',
+    made_note: madeNote.current?.value || '',
+    group_name: groupName.current?.value || '',
+    group_need: groupNeed.current?.value || '',
+    loss_product: lossProduct.current?.value || '',
+    loss_story: lossStory.current?.value || '',
+    farcaster: farcaster.current?.value || '',
+    discord: discord.current?.value || '',
+    telegram: telegram.current?.value || '',
+    other_handle: other.current?.value || '',
+  }), []);
+
+  /**
+   * Fill EMPTY fields from a parked draft, and only empty ones.
+   *
+   * The load path has just written whatever the server holds. A stored answer
+   * is the authoritative one — it survived a save — so a parked draft may only
+   * fill what the server left blank. That is the same "live text always wins"
+   * rule the feedback dialog's rescue follows, and it is what stops a stale
+   * draft from undoing an edit made on another device.
+   */
+  const restoreDraft = useCallback(() => {
+    const draft = readDraft(token.current);
+    if (!draft) return;
+    const fields: Array<[string, React.RefObject<HTMLInputElement | HTMLTextAreaElement | null>]> = [
+      ['made_url', madeUrl], ['made_note', madeNote],
+      ['group_name', groupName], ['group_need', groupNeed],
+      ['loss_product', lossProduct], ['loss_story', lossStory],
+      ['farcaster', farcaster], ['discord', discord],
+      ['telegram', telegram], ['other_handle', other],
+    ];
+    for (const [key, ref] of fields) {
+      const el = ref.current;
+      const parked = draft[key];
+      if (el && parked && !el.value.trim()) el.value = parked;
+    }
+    autoGrow(groupNeed.current);
+    autoGrow(lossStory.current);
+    // Read once. A draft that has been handed back must not keep returning
+    // over answers the reader has since deleted on purpose.
+    clearDraft(token.current);
+  }, []);
+
   const moreOnShow = useCallback(
     (value?: string) => {
       token.current = value || null;
       // Reopening the link from the waitlist mail is a visit to the FORM. A
       // previous save in this tab must not be what a later show paints.
       setSaved(false);
-      void loadMore();
+      // #1533: the parked draft is handed back AFTER the load, never before —
+      // the load writes what the server holds, and the draft may only fill
+      // what it left empty. Coming back from a connect round trip is exactly
+      // this path, since the callback re-enters the screen.
+      void loadMore().then(restoreDraft);
     },
-    [loadMore],
+    [loadMore, restoreDraft],
   );
 
   const toggleTool = useCallback((key: string) => {
@@ -558,6 +666,9 @@ export function MoreScreen() {
           // back, so tell it these questions have been answered — otherwise it
           // keeps inviting you to answer them.
           markSurveyAnswered(value);
+          // #1533: the answers are stored now, so the parked copy is stale by
+          // definition and must not come back over a later edit.
+          clearDraft(value);
         } else {
           setMsg({
             text: (data && data.error) || 'Something went wrong. Try again.',
@@ -631,11 +742,15 @@ export function MoreScreen() {
         <h1 className={hiddenLast(saved, 'mt-1 text-2xl font-bold')}>
           Want in sooner?
         </h1>
+        {/*
+            #1541: two sentences, from four. The middle one said the same
+            thing twice ("the answers we actually read" and "worth more than
+            the order you signed up in"), and "every one is optional" is
+            already the label directly above this heading.
+        */}
         <p className={hiddenLast(saved, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
-          Four more questions, about three minutes. These are the answers we
-        actually read when we pick the next group, so they&rsquo;re worth more
-        than the order you signed up in. Every one is optional, and you can
-        come back and add to this any time.
+          Four questions, about three minutes. These are what we read when we
+        pick the next group, and you can come back and add to them any time.
         </p>
         {/* Bad/expired token state — also hosts the rate-limited copy */}
         <div
@@ -881,9 +996,15 @@ export function MoreScreen() {
                         so saving from EITHER tab afterwards stores it. The
                         `rel` is not optional: `target="_blank"` without it
                         hands the opened page a live `window.opener`.
+
+                        #1533 parks the typed answers on the way out, which is
+                        what the tab that LANDS finds: it re-enters the screen
+                        cold, and without the draft it paints an empty form
+                        beside the account it just connected.
                     */
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={() => saveDraft(token.current, snapshotDraft())}
                   >
                     {'Connect ' + label}
                   </a>

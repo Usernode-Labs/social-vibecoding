@@ -491,6 +491,29 @@ export function LandingScreen() {
       return pred();
     };
     const isOpen = () => !viewer.classList.contains('hidden');
+    /**
+     * Stamp WHY the script gave up (#1755).
+     *
+     * Every bail below used to be a bare `return`, which left
+     * `data-anon-back` unset. The assertion can then never become true, so
+     * the runner polls it to its 25s per-check cap and reports `Check did not
+     * finish within 25s` — the same sentence whichever step failed, about a
+     * page that may be perfectly healthy. That verdict is unactionable, and
+     * "re-run it" was the only tool anyone had.
+     *
+     * Stamping a non-`done` value changes nothing about what passes: the
+     * assertion requires `data-anon-back="done"` and still gets it only from
+     * the happy path. What it buys is a verdict that arrives IMMEDIATELY, on
+     * a settled DOM, naming the step.
+     *
+     * The `-slow` suffix separates the two questions that matter and used to
+     * be indistinguishable: a step that genuinely failed, versus one that ran
+     * out of the overall budget because the container was overloaded. The
+     * first is a bug in the guest back path; the second is capacity.
+     */
+    const bail = (reason: string) => {
+      viewer.setAttribute('data-anon-back', Date.now() >= deadline ? `${reason}-slow` : reason);
+    };
     try {
       await st.appsReady;
     } catch {
@@ -498,20 +521,21 @@ export function LandingScreen() {
     }
     // First app the directory would actually open: not gated, has a URL.
     const target = st.appsList.find((a) => a && !a.requires_login && a.url);
-    if (!target) return;
+    if (!target) { bail('no-target'); return; }
     // `st.appsReady` settles when the FETCH does; the tiles appear when React
     // commits the state it set, which is a tick or more later. So wait for
     // the element, like every other step here waits on DOM state — reading
     // "not committed yet" as "no directory" and returning is how this shot
     // finished without ever stamping the marker below.
-    if (!(await until(() => !!landingTileFor(target.slug), 2000))) return;
+    if (!(await until(() => !!landingTileFor(target.slug), 2000))) { bail('no-tile'); return; }
     for (let cycle = 0; cycle < 2; cycle++) {
+      const c = `c${cycle + 1}`;
       // POLL for the tile: `appsReady` resolves when the FETCH lands, but the
       // tiles appear one React commit later, so a synchronous lookup here found
       // nothing and bailed — the reason this shot had never once stamped.
-      if (!(await until(() => !!landingTileFor(target.slug), 5000))) return;
+      if (!(await until(() => !!landingTileFor(target.slug), 5000))) { bail(`no-tile-${c}`); return; }
       landingTileFor(target.slug)?.click();
-      if (!(await until(isOpen, 5000))) return;
+      if (!(await until(isOpen, 5000))) { bail(`open-timeout-${c}`); return; }
       // Let the zoom-in settle before backing out, so each cycle exercises a
       // fully-open viewer rather than a mid-transition one.
       await wait(140);
@@ -519,7 +543,7 @@ export function LandingScreen() {
       // The stamp below is the assertion's subject: a close that never lands
       // means the guest back path is genuinely broken, so bail WITHOUT
       // stamping rather than start cycle two against an open viewer.
-      if (!(await until(() => !isOpen(), 8000))) return;
+      if (!(await until(() => !isOpen(), 8000))) { bail(`close-timeout-${c}`); return; }
       // Let the marker entry's history.back() popstate drain before the next
       // cycle pushes a fresh entry — a human cannot re-open in under 80ms.
       await wait(80);

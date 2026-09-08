@@ -58,9 +58,7 @@
  * element (no `style` prop is passed), so there is no writer to race.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-
-import { Bars3Icon } from '@/components/ui/icons';
+import { useCallback, useEffect, useRef } from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -82,7 +80,7 @@ function AppIcon({ icon }: { icon: IconView }) {
     // w-full/h-full, not a fixed size: the tile draws a 1px hairline border
     // and the image fills the CONTENT box so it stays flush inside the ring
     // rather than being cropped by it (same note as AppCard.iconTileFor).
-    return <img src={icon.src} alt="" className="w-full h-full object-cover" />;
+    return <img src={icon.src} alt="" draggable={false} className="w-full h-full object-cover" />;
   }
   if (icon.kind === 'emoji') return <span className="text-3xl leading-none">{icon.emoji}</span>;
   return <>{icon.letter}</>;
@@ -139,11 +137,12 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
     wired.add(el);
     const N = controller();
     N?._wirePrewarm?.(el);
-    // The placement recognizer owns long-press-lift-drag on every card it
-    // matches; the long-press ACTIONS menu survives only where it does not —
-    // the search view (no layout to write) and inert staging demo tiles.
-    if (!yours || app.demo) N?._wireCardLongPressMenu?.(el);
   }, [app.demo, yours]);
+
+  useEffect(() => {
+    if (!node.current) return;
+    return controller()?._wireCardLongPressMenu?.(node.current);
+  }, [app.slug, app.demo, yours]);
 
   // See the header note: the cell is an attribute so the CSSOM cannot fold
   // `grid-column` + `grid-row` into a `grid-area` shorthand. Layout effect,
@@ -173,8 +172,35 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
       data-slug={app.slug}
       data-status={app.status}
       data-locked={String(app.locked)}
+      tabIndex={0}
+      role="button"
+      aria-label={app.name}
+      aria-haspopup="menu"
+      title={`${app.name}. Hold or right-click for app actions`}
       {...(app.demo ? { 'data-demo': 'true' } : null)}
       {...(yours ? { 'data-yours': 'true' } : null)}
+      onPointerDownCapture={(e) => {
+        if ((e.target as HTMLElement).closest('.retry-btn')) { e.stopPropagation(); return; }
+        const N = controller();
+        if (N) N._cardPointerType = e.pointerType;
+      }}
+      onPointerCancel={() => { controller()?.closeCardMenu?.(); }}
+      onContextMenu={(e) => {
+        if ((e.target as HTMLElement).closest('.retry-btn')) return;
+        e.preventDefault();
+        // Mobile browsers may emit contextmenu during the same held touch.
+        if (!controller()?._menu) controller()?.openCardMenu?.(app.slug, e.currentTarget);
+      }}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+          e.preventDefault();
+          controller()?.openCardMenu?.(app.slug, e.currentTarget);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (!e.repeat && app.clickable) (window as any).App?.navigateToApp(app.slug);
+        }
+      }}
       onClick={(e) => {
         const N = controller();
         // A completed drag (or a long-press that opened the menu) ends with
@@ -182,7 +208,7 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
         // after pointerup — eat it so the gesture doesn't also open the app.
         if (N?._suppressClick) { N._suppressClick = false; return; }
         const t = e.target as HTMLElement;
-        if (t.closest('.retry-btn') || t.closest('.card-menu-btn')) return;
+        if (t.closest('.retry-btn')) return;
         if (!app.clickable) return;
         (window as any).App?.navigateToApp(app.slug);
       }}
@@ -215,23 +241,6 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
         >
           <AppIcon icon={app.icon} />
         </div>
-        <button
-          className="card-menu-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors"
-          data-slug={app.slug}
-          title="App actions"
-          aria-label="App actions"
-          aria-haspopup="menu"
-          onClick={(e) => {
-            e.stopPropagation();
-            // The ELEMENT, not a rect: the kit popover toggles closed on a
-            // re-click against the same anchor and manages its aria-expanded.
-            // (openCardMenu also accepts a rect — that is what the long-press
-            // path in home.js hands it, where there is no button to anchor to.)
-            controller()?.openCardMenu?.(app.slug, e.currentTarget);
-          }}
-        >
-          <Bars3Icon className="w-3.5 h-3.5" aria-hidden="true" />
-        </button>
         {app.forkName ? (
           <span
             className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm"
@@ -296,6 +305,13 @@ export function AppGrid() {
     if (el) { N?._maybeOpenShotMenu?.(el); }
     N?._searchReveal?.sync?.();
     if (el) N?._maybeShowShotGrid?.(el);
+    // Its sibling for the drag that starts in a Discover rail (#1763). Called
+    // from HERE as well as from the lane's own effect for the reason the grid
+    // shot is called from here at all: #app-list renders a className, so every
+    // commit takes `un-reordering` back off it, and the overlay a shot painted
+    // before this commit is no longer a rendering of a lift. It finds the rail
+    // itself — a repaint of the grid is not one of the panels.
+    N?._maybeShowShotIncoming?.();
   });
 
   return (

@@ -39,18 +39,13 @@
  * steps you are on. Two steps, not three — the stage-2 survey is offered after
  * both and counting it would make an optional thing look required.
  *
- * ── Confirming is what puts you on the list ──────────────────────────
+ * ── Joining first, confirmation second (#1528) ───────────────────────
  *
- * Submitting the form used to say "You're on the list 🎉" and offer the
- * stage-2 questions immediately, with confirmation an afterthought below
- * them. It read as done, so the address never had to prove it could receive
- * mail — and an unconfirmed row is one we cannot release to.
- *
- * Now the POST buys a code and nothing else: `joined` says "check your
- * email", and both the list-place copy and the offer live behind
- * `confirmed`. The row is still written on the POST — it has to be, to hold
- * the code and to keep the address unique — so this is a change in what the
- * screen CLAIMS and what it unlocks, not in the write model.
+ * A successful POST saves the signup, so acknowledge that before asking for
+ * the code. Email confirmation is an explicit second step: it proves we can
+ * reach the address before releasing access. The optional survey offer stays
+ * behind `confirmed`. Returning code entry has no join response to acknowledge
+ * and keeps its own heading. None of this changes the write or release model.
  *
  * ── Screenshot state ─────────────────────────────────────────────────
  *
@@ -343,9 +338,7 @@ export function WaitlistScreen() {
         });
         const data = await res.json().catch(() => null);
         if (res.ok) {
-          // Joined: swap the form for the success state, and offer stage 2
-          // right away when this was a first join (the email carries the same
-          // link for anyone who stops here).
+          // A saved signup gets its acknowledgement before the confirm step.
           setMsg(null);
           setJoined(true);
           // Lower-cased to match the stored form: the server normalizes before
@@ -356,9 +349,7 @@ export function WaitlistScreen() {
           // there. On a REAL join only: the `?shot=` states have to paint a
           // settled state for the declared checks, and a focus ring is not one.
           window.setTimeout(() => code.current?.focus({ preventScroll: true }), 0);
-          // The token is kept but the offer stays down: nothing is offered
-          // until the address is confirmed, because until then there is no
-          // list place to move up.
+          // Keep the token for the optional survey, offered after confirmation.
           const token = (data && data.more_token) || null;
           if (token) setMoreToken(token);
           // A code just went out, on this path as much as on the resend one
@@ -559,7 +550,9 @@ export function WaitlistScreen() {
           {confirmed
             ? 'All done'
             : joined
-              ? 'Step 2 of 2 · Confirm your email'
+              ? codeOnly
+                ? 'Step 2 of 2 · Confirm your email'
+                : 'Step 1 complete · Joined the waitlist'
               : 'Step 1 of 2 · Your email'}
         </p>
         {/*
@@ -570,20 +563,39 @@ export function WaitlistScreen() {
         <h1 className={hiddenLast(joined, 'mt-1 text-2xl font-bold')}>
           Join the waitlist
         </h1>
+        {/*
+            #1541: the same four facts, as a lead and a list.
+
+            This was two paragraphs of roughly seventy-five words, and the
+            report was simply that the screen is too much reading. Nothing has
+            been dropped: what the place is, who built the apps, what the chain
+            and the share mean, and how access opens are all still here. They
+            are four separate claims, and a reader scanning for "what is this
+            and what does joining cost me" was having to take them as prose.
+        */}
         <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
-          Usernode Social Vibecoding is a place where users describe the app
-        they want in chat, an AI builds it, and the community votes the
-        changes in. Every app in the directory was built here by the people
-        who use it. They run on the Usernode chain, and contributors own a
-        share of what they build.
+          Describe the app you want in chat, an AI builds it, and the group
+        votes the changes in.
         </p>
-        <p className={hiddenLast(joined, 'mt-3 text-sm text-zinc-500 dark:text-zinc-400')}>
-          Platform access opens in batches. Join the waitlist and we'll email
-        you when your spot opens. The public apps are open to everyone right
-        now.
-          <span className="font-medium text-zinc-700 dark:text-zinc-200">
-            Just your email to join.
-          </span>
+        <ul
+          className={hiddenLast(
+            joined,
+            'mt-3 space-y-1.5 text-sm text-zinc-500 dark:text-zinc-400 list-disc pl-5',
+          )}
+        >
+          <li>
+            Every app in the directory was built here, by the people who use it.
+          </li>
+          <li>
+            They run on the Usernode chain, and contributors own a share of what
+          they build.
+          </li>
+          <li>
+            Access opens in batches. The public apps are open to everyone now.
+          </li>
+        </ul>
+        <p className={hiddenLast(joined, 'mt-3 text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
+          Just your email to join.
         </p>
         {/*
             Stage-1 waitlist survey (two-stage waitlist, ported from the
@@ -708,17 +720,17 @@ export function WaitlistScreen() {
           </button>
         </p>
         {/*
-            Success state: joined. Stage 2 is offered straight away —
-            people are most willing to keep answering right after they
-            commit; the join email carries the same link for anyone who
-            stops here.
+            Acknowledge the saved signup first, then present confirmation.
+            Returning code entry has no new join to acknowledge.
         */}
         <div id="waitlist-joined" className={hiddenFirst(!joined, 'mt-8')}>
-          <p className={hiddenLast(confirmed, 'text-sm font-medium text-zinc-700 dark:text-zinc-200')}>
-            Check your email
-          </p>
+          <h2 className={hiddenLast(confirmed, 'text-2xl font-bold')}>
+            {codeOnly ? 'Confirm your email' : "You're on the waitlist!"}
+          </h2>
           <p className={hiddenLast(confirmed, 'mt-1 text-sm text-zinc-500 dark:text-zinc-400')}>
-            One more step. Confirm your address and you&rsquo;re on the list.
+            {codeOnly
+              ? 'Confirm your address so we can email you when access opens.'
+              : 'Your signup is saved. Next, confirm your email so we can let you know when your spot opens.'}
           </p>
           {/*
               Confirming by code, for the phone: leaving for the mail app and
@@ -731,7 +743,7 @@ export function WaitlistScreen() {
               htmlFor="waitlist-code"
               className="block text-sm font-medium text-zinc-700 dark:text-zinc-200"
             >
-              Confirm your email
+              Step 2 of 2 · Confirm your email
             </label>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">
               {codeOnly && !sentTo
