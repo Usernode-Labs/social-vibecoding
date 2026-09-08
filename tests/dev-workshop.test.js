@@ -388,6 +388,107 @@ test('the theme filter narrows by membership, and widens when it cannot be appli
   assert.equal(AppView._kanbanFilters.theme, null);
 });
 
+// ── the follow-up to #1787: two panes, and a described app ───────────
+
+test('the app is described, not counted', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12', 'issue:13'] }]);
+  const html = workshopHtml(AppView);
+  // It used to read "3 open · 1 waiting on votes · 1 shipped this week" —
+  // three numbers and no sentence, which gives the size of the board and
+  // nothing about it. A theme earns its place here by SAYING what it is
+  // about; the app itself was the one thing on the lander that did not.
+  assert.match(html, /3 open items across 1 theme, most of the movement in Theming\./);
+  assert.match(html, /landed this week/);
+  assert.match(html, /1 proposal is waiting on votes and 2 open items have nobody on them\./);
+  assert.ok(!/>\d+ open · /.test(html), 'the bare number line is gone');
+});
+
+test('where-the-app-is and since-your-last-visit are one pane', () => {
+  const store = {};
+  store['workshopSeen:demo-app'] = String(Date.now() - 3 * 86400000);
+  const AppView = makeAppView({ localStorage: store });
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
+  const html = workshopHtml(AppView);
+  // Both hooks ride on ONE section — they were two strips asking one question.
+  assert.match(html, /<section class="dev-ws-strip" data-ws-since="" data-ws-dashboard="">/);
+  assert.match(html, /class="dev-ws-since-line"/);
+  // A colon for a label and its value, never an em dash (#1389).
+  assert.match(html, /Since your last visit, 3d ago: 1 change landed/);
+  // The description leads; the personal line is a footnote to it.
+  assert.ok(html.indexOf('dev-ws-strip-text') < html.indexOf('dev-ws-since-line'));
+});
+
+test('needs-your-vote and the unclaimed suggestion are one pane', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const html = workshopHtml(AppView);
+  assert.match(html, /<section class="dev-ws-strip" data-ws-votes="" data-ws-next="">/);
+  assert.match(html, /data-ws-lane="votes"[\s\S]*?Needs your vote/);
+  assert.match(html, /data-ws-lane="next"[\s\S]*?Nobody on this one yet/);
+  // The declared check walks [data-ws-votes] to a votes lane to a vote button;
+  // merging the containers must not break that chain.
+  assert.match(html, /data-ws-votes=""[\s\S]*?data-ws-lane="votes"[\s\S]*?class="dev-ws-row-trailing"><button[^>]*class="dev-vote-btn"/);
+});
+
+test('a quiet theme is not told it has never been built in', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12', 'issue:13', 'session:78'] }]);
+  const html = workshopHtml(AppView);
+  // "nobody building yet" said something the data cannot know: the condition
+  // is only that nothing is in flight RIGHT NOW, so a theme that shipped a
+  // dozen changes read identically to one nobody has ever touched.
+  assert.ok(!html.includes('nobody building yet'));
+  assert.match(html, /1 shipped this week, nothing in flight now/);
+
+  // …and with nothing shipped either, it says only what it knows.
+  AppView._merged = [];
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
+  assert.match(workshopHtml(AppView), /1 involved · nothing in flight right now/);
+});
+
+// ── the stylesheet has to PARSE, not merely contain the right text ───
+
+test('no comment in app.css closes early, and no rule has prose for a selector', () => {
+  // #1793 shipped an open-state block whose comment carried a second
+  // terminator. The comment closed four lines early, the prose that followed
+  // became a qualified rule's prelude — and a prelude runs to the first brace,
+  // so it swallowed the three rules under it as one invalid selector and the
+  // browser dropped all of them. The open row kept its four corners and the
+  // entry kept its own frosted ring: the two boxes the block was written to
+  // remove, shipped as the fix for them.
+  //
+  // Every other CSS assertion in this file is a regex over the TEXT, so they
+  // all matched while the browser was discarding the rules. These two look at
+  // the structure instead.
+  const stripped = CSS.replace(/\/\*[\s\S]*?\*\//g, ' ');
+  assert.ok(!stripped.includes('*/'),
+    'a comment terminator outside a comment means an earlier comment closed before it meant to');
+
+  const bad = [];
+  let depth = 0;
+  let buf = '';
+  for (const ch of stripped) {
+    if (ch === '{') {
+      if (depth === 0 && /[`—]/.test(buf)) bad.push(buf.trim().replace(/\s+/g, ' ').slice(0, 70));
+      depth += 1;
+      buf = '';
+    } else if (ch === '}') {
+      depth = Math.max(0, depth - 1);
+      buf = '';
+    } else if (depth === 0) {
+      buf += ch;
+    }
+  }
+  // A backtick or an em dash is prose. Neither can appear in a CSS selector,
+  // and both are everywhere in this file's comments — so one in a prelude is
+  // a comment that leaked into the cascade.
+  assert.deepEqual(bad, [], 'these selectors are prose, so the rules under them are being dropped');
+});
+
 // ── #1787: the dashboard, and the one thing to pick up ───────────────
 
 test('the dashboard reads a rate, not just a count, and says when it is a floor', () => {
@@ -458,8 +559,14 @@ test('the strips are ordered for a returning member: since, then state, then wha
   assert.ok(order.every((i) => i >= 0), `every strip is drawn: ${JSON.stringify(order)}`);
   assert.deepEqual(order.slice().sort((a, b) => a - b), order,
     'what changed, where the app is, what needs you, what you could take');
-  assert.match(html, /<button type="button" class="dev-ws-link" aria-expanded="false">Show<\/button>/,
-    'the dashboard opens folded — a lander that opens on statistics has buried what it is for');
+  // The dashboard's own Show/Hide is gone: the numbers it revealed are in the
+  // description now, so there was nothing left behind the toggle. The one
+  // disclosure left in the pane is the "since" rows, and it wears the
+  // platform's small action pill rather than an unsized text link (#1787).
+  assert.ok(!/class="dev-ws-link"[^>]*aria-expanded/.test(html), 'no unsized text link toggles this pane');
+  assert.match(html, /<button type="button" class="gc-vote-btn" aria-expanded="false">Show 3<\/button>/,
+    'the since disclosure is a standard control');
+  assert.ok(!html.includes('waiting on votes ·'), 'and the bare number line is gone');
 });
 
 // ── #1787: the row is the card, folded ───────────────────────────────
@@ -483,8 +590,10 @@ test('a folded row carries the card\'s status band, in the tone the pill already
   // The band is clipped to one line for the same reason the dense card's is:
   // a row that grew with its state would break the column's rhythm.
   assert.match(CSS, /\.dev-ws-row-band \{[^}]*max-height: 18px;[^}]*overflow: hidden;/);
-  assert.match(CSS, /\.dev-ws-row-open \.dev-ws-row-band \{ display: none; \}/,
-    'and it stands down when the card below is showing the real one');
+  // It does NOT stand down when the row opens any more — see the open-state
+  // test below. The head is identical in both sizes, and the duplicate is the
+  // card's band, not this one.
+  assert.ok(!/\.dev-ws-row-open \.dev-ws-row-band \{ display: none/.test(CSS));
 });
 
 test('an open row grows the same card rather than painting a second one under it', () => {
@@ -493,15 +602,20 @@ test('an open row grows the same card rather than painting a second one under it
   // de-duplication is CSS, not markup.
   const unfolded = WORKSHOP.slice(WORKSHOP.indexOf('function UnfoldedRow'), WORKSHOP.indexOf('function Lane'));
   assert.match(unfolded, /<DevCard model=\{row\.card\} \/>/);
-  assert.match(CSS, /\.dev-ws-rowwrap-open > \.dev-feed-entry > \.gc-vote-item \.dev-card-head,\n\.dev-ws-rowwrap-open > \.dev-feed-entry > \.gc-vote-item \.dev-card-meta \{ display: none; \}/,
-    'the repeated title and meta line are hidden, not removed');
+  assert.match(CSS, /\.dev-ws-rowwrap-open > \.dev-feed-entry > \.gc-vote-item \.dev-card-head,\n\.dev-ws-rowwrap-open > \.dev-feed-entry > \.gc-vote-item \.dev-card-meta,\n\.dev-ws-rowwrap-open > \.dev-feed-entry > \.gc-vote-item \.dev-card-status \{ display: none; \}/,
+    'the head, the meta line AND the status band are hidden — the row above shows all three');
   // …and the sheet treatment is overridden under the id it was set with, or
   // the body keeps its own 26px ring and reads as the second card again.
   assert.match(CSS, /#dev-workshop \.dev-ws-rowwrap-open > \.dev-feed-entry \{/);
   assert.match(CSS, /#dev-workshop \.dev-ws-rowwrap-open > \.dev-feed-entry > div:is\(\.dev-card-dense\) \{/);
-  // The status band inside the open card STAYS: the vote button rides in it.
-  assert.ok(!/\.dev-ws-rowwrap-open[^\n]*\.dev-card-status \{ display: none/.test(CSS),
-    'hiding it would take voting away from an opened proposal');
+  // Hiding the card's band is only safe because the VOTE moved to the row:
+  // FoldedRow renders it for any card that has one, so it is present folded
+  // and open, and nothing about the head changes between the two.
+  assert.match(WORKSHOP, /const specs = voteSpecs\(c\);/);
+  assert.match(WORKSHOP, /const trailing = specs \? <VoteButton yes=\{specs\.yes\} no=\{specs\.no\} \/> : null;/);
+  assert.ok(!/<button[^>]*onClick=\{onCollapse\}/.test(WORKSHOP),
+    'and the Collapse button is gone — the head is the toggle, in both directions');
+  assert.ok(!/onCollapse/.test(WORKSHOP), 'its prop went with it');
 });
 
 test('a theme head counts its people AND how much is still open in it', () => {
