@@ -855,6 +855,32 @@ export function LandingScreen() {
               Join the waitlist
             </a>
             {/*
+                The way back for somebody who already joined, on a device that
+                knows nothing about it (#1538). It goes to the same code-entry
+                step the waitlist screen's own "Already joined?" link opens,
+                which is where an emailed code is typed and where the status
+                comes back. Hidden alongside the CTA for a session: they are
+                already in the queue and can read their own state from the
+                waiting room.
+            */}
+            <p
+              className={hiddenLast(
+                session,
+                'mt-3 text-sm text-zinc-500 dark:text-zinc-400',
+              )}
+            >
+              {'Already joined? '}
+              <a
+                id="landing-status-link"
+                href="#waitlist?confirm=1"
+                data-offline-disabled=""
+                className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+                onClick={onLeaveCta}
+              >
+                Check your status
+              </a>
+            </p>
+            {/*
                 Swapped in for the link when a (waiting-room) session exists —
                 they're already on the list, so pointing them at the join form
                 again is noise.

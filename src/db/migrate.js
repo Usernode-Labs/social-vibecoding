@@ -96,6 +96,7 @@ async function migrate(config) {
   await seedStagingHomeLayout(pool, config);
   await seedStagingViewOnlyAdmin(pool);
   await seedStagingWalletUsers(pool);
+  await seedStagingEmailCodeAccounts(pool);
   await seedStagingPublicApiContributors(pool);
   await seedStagingVisuals(pool);
   await seedStagingLeaderboardProfile(pool);
@@ -1194,6 +1195,95 @@ async function seedStagingAdminConsoleData(pool) {
     log.info('db', 'Admin-console staging fixtures seeded');
   } catch (err) {
     log.warn('db', 'Admin-console staging fixtures failed', { message: err.message });
+  }
+}
+
+// Email-code sign-in fixtures (issue #1586). Verifying an email code now
+// branches on the account's credential state, and none of those states are
+// reachable in a staging preview by clicking: `mobile_otp_codes` is
+// table-level `staging:private` (so it arrives EMPTY) and `users.password` is
+// scrubbed in the clone, so no cloned account has a password anybody knows.
+// Seed three obviously-fake accounts, one per branch a tester can drive from
+// the sign-in screen:
+//
+//   staging-code-signin@usernode.test  password set + email confirmed
+//                                      → THE FIX: a code signs you straight in
+//   staging-code-setup@usernode.test   no password yet
+//                                      → the unchanged password-setup step,
+//                                        which also stamps the confirmation
+//   staging-code-legacy@usernode.test  password set, email NEVER confirmed
+//                                      → routed to the password form instead
+//
+// The two password-bearing accounts share one documented literal,
+// `staging-code-password`, so a tester can also sign in the ordinary way and
+// compare. `has_platform_access` is TRUE on all three or signing in lands on
+// the waitlist instead of the platform.
+//
+// Staging mail is the log-only transport, so the tester reads the code out of
+// the platform log rather than a mailbox.
+//
+// Idempotent via fixed ids + ON CONFLICT DO NOTHING, and the credential states
+// are RE-PINNED on every boot: completing the flow mutates them by design
+// (setup gains a password, legacy would gain a confirmation), so without the
+// pin each fixture is testable exactly once per staging database. Strictly a
+// no-op outside staging.
+async function seedStagingEmailCodeAccounts(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    const knownHash = await bcrypt.hash('staging-code-password', 12);
+    const unusableHash = await bcrypt.hash(
+      crypto.randomBytes(32).toString('hex'),
+      12
+    );
+
+    await pool.query(
+      `INSERT INTO users
+         (id, username, password, email, email_confirmed, email_confirmed_at,
+          password_set, is_admin, has_platform_access)
+       VALUES
+         (900130, 'staging-code-signin@usernode.test', $1,
+          'staging-code-signin@usernode.test', TRUE, NOW(), TRUE, FALSE, TRUE),
+         (900131, 'staging-code-setup@usernode.test', $2,
+          'staging-code-setup@usernode.test', FALSE, NULL, FALSE, FALSE, TRUE),
+         (900132, 'staging-code-legacy@usernode.test', $1,
+          'staging-code-legacy@usernode.test', FALSE, NULL, TRUE, FALSE, TRUE)
+       ON CONFLICT (id) DO NOTHING`,
+      [knownHash, unusableHash]
+    );
+
+    await pool.query(
+      `UPDATE users
+          SET password = $1, email_confirmed = TRUE, email_confirmed_at = NOW(),
+              password_set = TRUE, has_platform_access = TRUE
+        WHERE id = 900130`,
+      [knownHash]
+    );
+    await pool.query(
+      `UPDATE users
+          SET password = $1, email_confirmed = FALSE, email_confirmed_at = NULL,
+              password_set = FALSE, has_platform_access = TRUE
+        WHERE id = 900131`,
+      [unusableHash]
+    );
+    await pool.query(
+      `UPDATE users
+          SET password = $1, email_confirmed = FALSE, email_confirmed_at = NULL,
+              password_set = TRUE, has_platform_access = TRUE
+        WHERE id = 900132`,
+      [knownHash]
+    );
+    // A previous run of the flow may have left a continuation behind; drop it
+    // so each fixture starts from the state its branch describes.
+    await pool.query(
+      'DELETE FROM web_signup_sessions WHERE user_id IN (900130, 900131, 900132)'
+    );
+
+    log.info('db', 'Staging email-code sign-in fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging email-code sign-in fixtures seeding failed', {
+      message: err.message,
+    });
   }
 }
 
@@ -12158,6 +12248,41 @@ async function seedStagingPlatformMail(pool) {
         WHERE email = $1`,
       ['staging-demo-waitlist-admitted@example.invalid', DEMO_ADMITTED_TOKEN]
     );
+
+    // A live verification code for the two CONFIRMED addresses, so a
+    // tester can exercise #1538's check-my-status read without a mailbox.
+    // Both of those addresses end in .invalid, so the code mail this
+    // flow would normally send can never actually be delivered — the
+    // seeded literal is the only way in, and it is the whole reason the
+    // staging preview can show the confirmed and admitted panels at all.
+    //
+    // Not a shortcut through the real check: the app still hashes what
+    // was typed and bcrypt.compares it against this row, still counts
+    // attempts, still consumes the row on success. Only the code's VALUE
+    // is known. Nothing outside staging is touched, and the two rows are
+    // for fake identities, never whoever opened the preview.
+    //
+    // Idempotent by the same existence check issueVerificationCode's
+    // uniqueness rests on: one unconsumed row per address. Consuming it
+    // (which the tester does on the first successful read) leaves the
+    // next boot free to seed a fresh one, so the fixture heals rather
+    // than accumulating duplicates.
+    const DEMO_STATUS_CODE = '000000';
+    const demoCodeHash = await bcrypt.hash(DEMO_STATUS_CODE, 10);
+    for (const email of [
+      'staging-demo-waitlist-confirmed@example.invalid',
+      'staging-demo-waitlist-admitted@example.invalid',
+    ]) {
+      await pool.query(
+        `INSERT INTO waitlist_verification_codes (email, code_hash, expires_at)
+         SELECT $1::text, $2::text, NOW() + INTERVAL '30 days'
+          WHERE NOT EXISTS (
+            SELECT 1 FROM waitlist_verification_codes
+             WHERE email = $1::text AND consumed_at IS NULL
+          )`,
+        [email, demoCodeHash]
+      );
+    }
 
     log.info('migrate', 'Staging platform-mail fixture seeded', {
       deliveries: ROWS.length,

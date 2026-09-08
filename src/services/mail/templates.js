@@ -212,13 +212,20 @@ function waitlistJoined(payload) {
 // a code, is capped at one per address per day, and re-sending it would
 // tell somebody they had "joined" a list they joined weeks ago.
 //
-// Two shapes, and the branch is the ONLY place the platform ever discloses
-// whether an address is already confirmed. The endpoint answers the same
-// words to everyone; the inbox belongs to the address itself, so it is the
-// one channel where saying "you are already confirmed" leaks nothing.
+// Three shapes, and the branch is the ONLY place the platform ever
+// discloses whether an address is already confirmed. The endpoint answers
+// the same words to everyone; the inbox belongs to the address itself, so
+// it is the one channel where saying "you are already confirmed" leaks
+// nothing.
+//
+// `payload.confirmed` picks between the two code shapes. A confirmed
+// address asking for a code is check-my-status (#1538), so the mail is a
+// status code and its one button carries NO capability token — a code you
+// type is the thing that survives a mail scanner rewriting links (#1545),
+// and moving away from mailed magic links is the direction #1531 wants.
 function waitlistCode(payload) {
-  // Already confirmed: no code is minted, so there is nothing to type. The
-  // useful answer is where to look at where they stand.
+  // Minting failed for an already-confirmed address: there is no code to
+  // type, so the useful answer is where to look at where they stand.
   if (!payload.code) {
     const statusUrl = payload.statusUrl || null;
     let text = 'You asked for a new confirmation code for the Usernode waitlist.\n\n'
@@ -232,6 +239,24 @@ function waitlistCode(payload) {
       html += p(`Check where you stand: ${link(statusUrl)}`);
     }
     return { subject: 'Your Usernode waitlist address is already confirmed', text, html };
+  }
+
+  // The status-code shape: same six digits, different errand.
+  if (payload.confirmed) {
+    const statusUrl = payload.statusUrl || null;
+    let text = `Your Usernode waitlist status code is ${payload.code}. `
+      + 'It works for 15 minutes.\n\n'
+      + 'Any earlier code has stopped working, so use this one.';
+    let html = p('Your Usernode waitlist status code is:')
+      + codeBlock(payload.code)
+      + p('It works for 15 minutes. Any earlier code has stopped working, so use this one.');
+    if (statusUrl) {
+      text += '\n\nEnter it here:\n' + statusUrl;
+      html += button(statusUrl, 'Check my status');
+    }
+    text += '\n\nIf you did not ask for this, you can ignore this email.';
+    html += p('If you did not ask for this, you can ignore this email.');
+    return { subject: 'Your Usernode waitlist status code', text, html };
   }
 
   const confirmUrl = payload.confirmUrl || null;

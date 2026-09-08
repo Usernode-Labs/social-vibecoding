@@ -1391,7 +1391,7 @@
       "name": "Waitlist step 1 offers a way back to the code entry",
       "path": "/?shot=waitlist-step1",
       "expectSelector": "#waitlist-enter-code",
-      "expectText": "Enter your confirmation code",
+      "expectText": "Check your status",
       "allowConsoleErrors": true
     },
     {
@@ -1424,6 +1424,67 @@
       "path": "/?shot=waitlist-confirmed",
       "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-confirmed-email:not(.hidden)",
       "expectText": "Registered with",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Landing offers the check-my-status way in (#1538)",
+      "path": "/?shot=anon#landing",
+      "expectSelector": "#landing-status-link[href=\"#waitlist?confirm=1\"]",
+      "expectText": "Check your status",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Confirmed status reads off the row, not a fixed sentence (#1538)",
+      "path": "/?shot=waitlist-status",
+      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-status-pill:not(.hidden)",
+      "expectText": "On the waitlist",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "A fresh confirmation still celebrates (#1538)",
+      "path": "/?shot=waitlist-confirmed",
+      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-confirmed-headline:not(.hidden)",
+      "expectText": "on the list",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "A status read-back states it once, without the congratulations (#1538)",
+      "path": "/?shot=waitlist-status",
+      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-confirmed-headline.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "A waiting signup reading its status is still offered the way up (#1538)",
+      "path": "/?shot=waitlist-status",
+      "expectSelector": "#waitlist-more-offer:not(.hidden)",
+      "expectText": "Want in sooner?",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Admitted status says so on the check-my-status panel (#1538)",
+      "path": "/?shot=waitlist-admitted",
+      "expectSelector": "#waitlist-confirmed:not(.hidden) #waitlist-status-pill:not(.hidden)",
+      "expectText": "You're in",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Admitted status offers the one thing there is to do (#1538)",
+      "path": "/?shot=waitlist-admitted",
+      "expectSelector": "#waitlist-status-action:not(.hidden)[href=\"#signup\"]",
+      "expectText": "Create my account",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Admitted status dates the signup instead of ranking it (#1538)",
+      "path": "/?shot=waitlist-admitted",
+      "expectSelector": "#waitlist-status-since:not(.hidden)",
+      "expectText": "On the list since",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Admitted status drops the move-up offer (#1538)",
+      "path": "/?shot=waitlist-admitted",
+      "expectSelector": "#waitlist-more-offer.hidden",
       "allowConsoleErrors": true
     },
     {
@@ -3090,6 +3151,12 @@
       "path": "/?shot=password-recovery-sent#login",
       "expectSelector": "#recovery-view:not(.hidden) #recovery-email-status.bg-green-100:not(.hidden)",
       "expectText": "a reset link is on its way"
+    },
+    {
+      "name": "Email-code sign-in routes a password account to the password form (#1586)",
+      "path": "/?shot=email-code-password-account#login",
+      "expectSelector": "#auth-login-screen:not(.hidden) #login-form:not(.hidden) #login-error:not(.hidden)",
+      "expectText": "signs in with a password"
     },
     {
       "name": "An invite link opens the code step with its own address, not an empty field (#1548)",
