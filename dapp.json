@@ -3092,6 +3092,12 @@
       "expectText": "a reset link is on its way"
     },
     {
+      "name": "Email-code sign-in routes a password account to the password form (#1586)",
+      "path": "/?shot=email-code-password-account#login",
+      "expectSelector": "#auth-login-screen:not(.hidden) #login-form:not(.hidden) #login-error:not(.hidden)",
+      "expectText": "signs in with a password"
+    },
+    {
       "name": "An invite link opens the code step with its own address, not an empty field (#1548)",
       "path": "/?shot=signup-code-sent#signup/demo%40example.invalid",
       "expectSelector": "#auth-login-screen:not(.hidden) #otp-view:not(.hidden) #otp-step-code:not(.hidden) #otp-email-echo",
