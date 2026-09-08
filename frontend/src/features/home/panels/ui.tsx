@@ -21,7 +21,6 @@ import type { ReactNode } from 'react';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
-  EllipsisVerticalIcon,
 } from '@/components/ui/icons';
 
 import type { PanelStamps } from '../panels-store';
@@ -132,7 +131,7 @@ export function tintOf(key: string): string {
  * area title rather than a caption, with the area's link beside it at 14px
  * semibold in the brand periwinkle (--brand-ink) and no glyph in front of it.
  * The row's shape is label + link: the ⋮ that used to ride here is gone
- * (see PanelMenuButton).
+ * Section hiding is retired (#1801).
  */
 export function SectionHeading({ children, action }: {
   children: ReactNode;
@@ -147,40 +146,10 @@ export function SectionHeading({ children, action }: {
 }
 
 /**
- * The ⋮ that opens a block's own menu (hide this widget, and the rows
- * HomePanels.menuItems builds for it).
- *
- * NOT RENDERED since the homescreen design: the design's area rows are label
- * + link and nothing else, so the Discover and Challenges headings dropped it.
- * The component and HomePanels.openMenu stay — "Hide widget" has no other
- * affordance yet, and whichever surface takes that over (an edit mode, a
- * settings row) can mount this or call openMenu directly. `data-panel-key`
- * names which block it acts on.
- */
-export function PanelMenuButton({ panelKey }: { panelKey: string }) {
-  return (
-    <button
-      type="button"
-      className="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-[color:var(--brand-ink)] opacity-60 hover:opacity-100 leading-none"
-      data-panel-key={panelKey}
-      aria-haspopup="menu"
-      title="Widget options"
-      aria-label="Widget options"
-      onClick={(e) => {
-        e.stopPropagation();
-        panels()?.openMenu?.(panelKey, e.currentTarget);
-      }}
-    >
-      <EllipsisVerticalIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-    </button>
-  );
-}
-
-/**
  * Discover's one destination — the `#apps` directory.
  *
  * Lifted out of DiscoverPanel with the rest of the block's chrome, so the
- * section heading can render it beside the ⋮. Same id, same classes, same
+ * section heading can render it beside the label. Same id, same classes, same
  * hash navigation: `#home-browse-btn` is selected on from dapp.json.
  */
 export function BrowseLink() {
