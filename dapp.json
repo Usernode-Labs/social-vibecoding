@@ -2860,6 +2860,12 @@
       "expectText": "a reset link is on its way"
     },
     {
+      "name": "Email-code sign-in routes a password account to the password form (#1586)",
+      "path": "/?shot=email-code-password-account#login",
+      "expectSelector": "#auth-login-screen:not(.hidden) #login-form:not(.hidden) #login-error:not(.hidden)",
+      "expectText": "signs in with a password"
+    },
+    {
       "name": "Back from a dev session is the header's own arrow, a real link at the Board (#1036, Streamlined Concept)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/board\"]"

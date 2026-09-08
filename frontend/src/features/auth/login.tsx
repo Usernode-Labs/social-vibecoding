@@ -132,6 +132,15 @@ const SENT_BOX =
 const SENT_MSG =
   'If that address matches an account, a reset link is on its way. It expires in 30 minutes.';
 
+/**
+ * The fallback for the two branches where a correct email code cannot sign you
+ * in (issue #1586), and the copy `?shot=email-code-password-account` paints.
+ * Kept in step with `PASSWORD_REQUIRED_MESSAGE` in
+ * `src/services/email-signup.js`, which is what a real refusal carries.
+ */
+const PASSWORD_ACCOUNT_MSG =
+  'This account signs in with a password. Enter it below to continue.';
+
 /** The pre-email copy the frozen markup shipped, and its replacement. */
 const ADMIN_LEAD_SHIPPED =
   "Accounts here have no email on file, so a password can't be reset automatically from the web.";
@@ -337,6 +346,14 @@ export function LoginScreen() {
         // checks. Display-only, no writes, works in every environment.
         setEmailResetStatus(shot === 'password-recovery-sent' ? SENT_MSG : null);
       }
+      // `?shot=email-code-password-account#login`: the state an email code
+      // hands you when the account can only sign in with its password
+      // (issue #1586) — the base form carrying the server's explanation.
+      // Reached by typing a code in production, so the link is display-only
+      // and writes nothing, which keeps it working in every environment.
+      if (!openSignup && shot === 'email-code-password-account') {
+        setLoginError(PASSWORD_ACCOUNT_MSG);
+      }
       // Wallet detection runs once, the first time the screen appears (needs
       // the native bridge; quietly does nothing on desktop web).
       if (!st.walletDetectRan) {
@@ -427,7 +444,10 @@ export function LoginScreen() {
     if (blockedOffline(setOtpError)) return;
     setOtpStatus('Verifying...');
     try {
-      const res = await fetch('/api/auth/otp/verify', {
+      // Verification can now mint an ordinary session (an account that already
+      // has a password is signed straight in), so it crosses the session-mint
+      // boundary like /api/auth/login does — issue #1586.
+      const res = await fetchSessionMint('/api/auth/otp/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
@@ -436,25 +456,36 @@ export function LoginScreen() {
       const data = await res.json();
       setOtpStatus(null);
       if (!res.ok || !data.ok) {
-        // The server's one generic message covers wrong/expired codes — and
-        // also accounts that already have a password (they must use the
-        // password form instead). Say both. NOT on a 429: the limiter's
-        // message already says exactly how long to wait, and appending a
-        // guess about the account's state to a throttle is misleading.
+        // A correct code the server will not sign in with (an admin account,
+        // or one whose email address was never confirmed) is not a mistyped
+        // code: carry the address over to the password form rather than
+        // leaving the person on a step that cannot succeed.
+        if (data.code === 'password_required' || data.code === 'admin_password_required') {
+          showLoginBaseView();
+          if (username.current) username.current.value = st.otpEmail || '';
+          setLoginError(data.error || PASSWORD_ACCOUNT_MSG);
+          return;
+        }
+        // NOT on a 429: the limiter's message already says exactly how long
+        // to wait.
         setOtpError(
           res.status === 429
             ? data.error || 'Too many code attempts. Try again shortly.'
-            : (data.error || 'Invalid or expired code.') +
-              ' If your account already has a password, sign in with it instead.',
+            : data.error || 'Invalid or expired code.',
         );
         return;
       }
+      if (data.next === 'signed-in') {
+        setOtpStatus('Signed in!');
+        finishLogin();
+        return;
+      }
       otpShowStep('password');
-    } catch {
+    } catch (error) {
       setOtpStatus(null);
-      setOtpError('Network error');
+      setOtpError(sessionMintFailureMessage(error));
     }
-  }, [otpShowStep, st]);
+  }, [otpShowStep, showLoginBaseView, st]);
 
   const onOtpSetPassword = useCallback(async () => {
     setOtpError(null);
@@ -907,7 +938,8 @@ export function LoginScreen() {
             </h2>
             <div id="otp-step-email" className={hiddenFirst(otpStep !== 'email', 'space-y-3')}>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                We'll email you a 6-digit code. New here? This also creates your account.
+                We'll email you a 6-digit code to sign in. New here? This also
+                creates your account.
               </p>
               <div>
                 <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">

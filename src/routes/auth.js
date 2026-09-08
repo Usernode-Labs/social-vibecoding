@@ -97,6 +97,11 @@ const SIGNUP_COOKIE = 'usernode_signup';
 // though its transaction also revokes the user's older server sessions.
 const SESSION_MINT_PATHS = [
   '/api/auth/login',
+  // Verifying an email code signs an already-established account straight in,
+  // so it mints a session and belongs here. `/api/auth/otp/request` does not:
+  // the wallet-recovery dialog and the mobile wallet-claim flow both request
+  // codes while signed in, and a mint guard there would break claiming.
+  '/api/auth/otp/verify',
   '/api/auth/otp/set-password',
   '/api/auth/register',
   '/api/auth/wallet-verify',
@@ -281,9 +286,38 @@ function authRoutes(config) {
 
   router.post('/api/auth/otp/verify', otpVerifyLimiter, async (req, res) => {
     try {
-      const verified = await emailSignup.verifyCode(pool, req.body?.email, req.body?.code);
+      const verified = await emailSignup.verifyCode(
+        pool,
+        req.body?.email,
+        req.body?.code,
+        { createSession }
+      );
+      if (verified.next === 'signed-in') {
+        // The account already has a password, so there is nothing to set up.
+        // Clear any stale continuation and hand back the ordinary web session,
+        // shaped exactly like /api/auth/login's response.
+        clearSignupCookie(res);
+        createSessionCookie(res, verified.session.token, verified.session.expiresAt);
+        log.info('email-signup', 'Email code signed an existing account in', {
+          userId: verified.userId,
+          next: 'signed-in',
+        });
+        return res.json({
+          ok: true,
+          next: 'signed-in',
+          user: {
+            id: verified.user.id,
+            username: verified.user.username,
+            ...roleFields(verified.user.isAdmin, verified.user.adminReadonly),
+          },
+        });
+      }
       createSignupCookie(res, verified.signupToken, verified.expiresAt);
-      return res.json({ ok: true });
+      log.info('email-signup', 'Email code verified, password setup pending', {
+        userId: verified.userId,
+        next: 'set-password',
+      });
+      return res.json({ ok: true, next: 'set-password' });
     } catch (error) {
       if (error instanceof emailSignup.EmailSignupError) {
         return res.status(422).json({ error: error.message, code: error.code });

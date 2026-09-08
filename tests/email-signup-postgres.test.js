@@ -187,7 +187,7 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
         body: JSON.stringify({ email: 'new.user@example.com', code }),
       });
       assert.equal(verify.status, 200);
-      assert.deepEqual(await verify.json(), { ok: true });
+      assert.deepEqual(await verify.json(), { ok: true, next: 'set-password' });
       const signupCookie = cookieValue(verify.headers, 'usernode_signup');
       assert.match(signupCookie, /^[0-9a-f]{64}$/);
       assert.match(verify.headers.get('set-cookie'), /HttpOnly/i);
@@ -335,6 +335,238 @@ test('real PostgreSQL web signup keeps authority in HttpOnly cookies', async (t)
       else delete require.cache[poolPath];
       delete require.cache[authPath];
       delete require.cache[mobilePath];
+    }
+  });
+});
+
+// Issue #1586. `verifyCode()` used to answer a correct code with the same
+// generic `invalid_or_expired_code` a WRONG code gets whenever the matched
+// account had `password_set` — which is every account the flow itself had
+// ever completed, so email sign-in worked exactly once per person. These four
+// cases pin the branch table that replaced that single gate.
+test('an email code branches on the account it matches (#1586)', async (t) => {
+  await withDatabase(t, async (pool) => {
+    const poolPath = require.resolve('../src/db/pool');
+    const authPath = require.resolve('../src/routes/auth');
+    const limitsPath = require.resolve('../src/middleware/rate-limits');
+    const mail = require('../src/services/mail');
+    const originalPool = require.cache[poolPath];
+    const originalSend = mail.sendOtpMail;
+    const originalPrune = mail.pruneDeliveries;
+    let code = null;
+    require.cache[poolPath] = {
+      exports: { getPool: () => pool },
+      loaded: true,
+      id: poolPath,
+      filename: poolPath,
+      paths: originalPool ? originalPool.paths : [],
+    };
+    mail.sendOtpMail = async (_config, _email, value) => { code = value; };
+    mail.pruneDeliveries = async () => {};
+    delete require.cache[authPath];
+    // The auth limiters are module-level singletons with one shared store, so
+    // this file's other test has already spent part of the OTP-request budget
+    // for 127.0.0.1. Re-require them for a fresh set of buckets.
+    delete require.cache[limitsPath];
+
+    const { authRoutes } = require('../src/routes/auth');
+    const app = express();
+    app.use(express.json());
+    app.use(cookieParser());
+    app.use(authRoutes({}));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    const base = `http://127.0.0.1:${server.address().port}`;
+
+    // Ask for a code and hand back the one the mail transport was given.
+    const freshCode = async (email) => {
+      code = null;
+      const res = await fetch(`${base}/api/auth/otp/request`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      assert.equal(res.status, 200);
+      assert.match(code, /^[0-9]{6}$/);
+      return code;
+    };
+    const verify = (email, value) => fetch(`${base}/api/auth/otp/verify`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, code: value }),
+    });
+    const seed = async (email, columns) => {
+      const { rows } = await pool.query(
+        `INSERT INTO users (username, password, email, ${Object.keys(columns).join(', ')})
+         VALUES ($1, 'unused', $1, ${Object.keys(columns).map((_, i) => `$${i + 2}`).join(', ')})
+         RETURNING id`,
+        [email, ...Object.values(columns)],
+      );
+      return rows[0].id;
+    };
+
+    try {
+      // ── The fix: password set AND email confirmed → signed straight in ──
+      const signInId = await seed('has.password@example.com', {
+        email_confirmed: true, password_set: true, is_admin: false,
+      });
+      const signedIn = await verify(
+        'has.password@example.com',
+        await freshCode('has.password@example.com'),
+      );
+      assert.equal(signedIn.status, 200);
+      const signedInBody = await signedIn.json();
+      assert.equal(signedInBody.ok, true);
+      assert.equal(signedInBody.next, 'signed-in');
+      assert.equal(signedInBody.user.id, signInId);
+      assert.equal(signedInBody.user.username, 'has.password@example.com');
+      // Shaped like /api/auth/login's response, so the client can finish the
+      // same way it does after a password sign-in.
+      assert.equal(signedInBody.user.isAdmin, false);
+
+      const sessionCookie = cookieValue(signedIn.headers, 'session');
+      assert.match(sessionCookie, /^[0-9a-f]{64}$/);
+      assert.match(signedIn.headers.get('set-cookie'), /HttpOnly/i);
+      assert.equal((await pool.query(
+        'SELECT user_id FROM sessions WHERE token = $1',
+        [sessionCookie],
+      )).rows[0].user_id, signInId);
+      // No password to set up, so no continuation is handed out at all.
+      assert.equal(cookieValue(signedIn.headers, 'usernode_signup'), '');
+      assert.equal((await pool.query(
+        'SELECT COUNT(*)::int AS count FROM web_signup_sessions WHERE user_id = $1',
+        [signInId],
+      )).rows[0].count, 0);
+
+      // ── Password set, email NEVER confirmed → routed to the password form ──
+      const legacyId = await seed('unconfirmed@example.com', {
+        email_confirmed: false, password_set: true, is_admin: false,
+      });
+      const refused = await verify(
+        'unconfirmed@example.com',
+        await freshCode('unconfirmed@example.com'),
+      );
+      assert.equal(refused.status, 422);
+      const refusedBody = await refused.json();
+      assert.equal(refusedBody.code, 'password_required');
+      assert.match(refusedBody.error, /signs in with a password/);
+      assert.equal((await pool.query(
+        'SELECT COUNT(*)::int AS count FROM sessions WHERE user_id = $1',
+        [legacyId],
+      )).rows[0].count, 0);
+      // Refusing does not confirm the address behind the person's back.
+      assert.equal((await pool.query(
+        'SELECT email_confirmed FROM users WHERE id = $1',
+        [legacyId],
+      )).rows[0].email_confirmed, false);
+
+      // ── An admin account is never signed in by a code ──────────────────
+      const adminId = await seed('admin@example.com', {
+        email_confirmed: true, password_set: true, is_admin: true,
+      });
+      const adminRefused = await verify(
+        'admin@example.com',
+        await freshCode('admin@example.com'),
+      );
+      assert.equal(adminRefused.status, 422);
+      assert.equal((await adminRefused.json()).code, 'admin_password_required');
+      assert.equal((await pool.query(
+        'SELECT COUNT(*)::int AS count FROM sessions WHERE user_id = $1',
+        [adminId],
+      )).rows[0].count, 0);
+
+      // ── A correct code is consumed on every branch, refusals included ──
+      assert.equal((await pool.query(
+        `SELECT COUNT(*)::int AS count FROM mobile_otp_codes
+          WHERE consumed_at IS NULL
+            AND email IN ('has.password@example.com', 'unconfirmed@example.com',
+                          'admin@example.com')`,
+      )).rows[0].count, 0);
+
+      // ── Verifying mints a session, so it sits behind the mint boundary ──
+      const whileSignedIn = await fetch(`${base}/api/auth/otp/verify`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `session=${sessionCookie}`,
+        },
+        body: JSON.stringify({ email: 'has.password@example.com', code: '000000' }),
+      });
+      assert.equal(whileSignedIn.status, 409);
+      assert.equal((await whileSignedIn.json()).code, 'logout_required');
+      // Requesting one does NOT: the wallet-recovery dialog and the mobile
+      // wallet-claim flow both ask for a code while signed in.
+      const requestWhileSignedIn = await fetch(`${base}/api/auth/otp/request`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `session=${sessionCookie}`,
+        },
+        body: JSON.stringify({ email: 'has.password@example.com' }),
+      });
+      assert.equal(requestWhileSignedIn.status, 200);
+
+      // ── The regression itself: a SECOND code for an account the flow
+      //    already completed signs in instead of reading as mistyped ──────
+      const firstVerify = await verify(
+        'twice@example.com',
+        await freshCode('twice@example.com'),
+      );
+      assert.equal(firstVerify.status, 200);
+      assert.equal((await firstVerify.json()).next, 'set-password');
+      const signupCookie = cookieValue(firstVerify.headers, 'usernode_signup');
+      const setPassword = await fetch(`${base}/api/auth/otp/set-password`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `usernode_signup=${signupCookie}`,
+        },
+        body: JSON.stringify({
+          password: 'correct horse battery staple',
+          passwordConfirmation: 'correct horse battery staple',
+        }),
+      });
+      assert.equal(setPassword.status, 200);
+      const createdId = (await setPassword.json()).user.id;
+
+      const secondVerify = await verify(
+        'twice@example.com',
+        await freshCode('twice@example.com'),
+      );
+      assert.equal(secondVerify.status, 200);
+      const secondBody = await secondVerify.json();
+      assert.equal(secondBody.next, 'signed-in');
+      assert.equal(secondBody.user.id, createdId);
+
+      // ── The password-less branch is unchanged, and stamps the address ──
+      const setupId = await seed('no.password@example.com', {
+        email_confirmed: false, password_set: false, is_admin: false,
+      });
+      const setup = await verify(
+        'no.password@example.com',
+        await freshCode('no.password@example.com'),
+      );
+      assert.equal(setup.status, 200);
+      assert.deepEqual(await setup.json(), { ok: true, next: 'set-password' });
+      assert.match(cookieValue(setup.headers, 'usernode_signup'), /^[0-9a-f]{64}$/);
+      assert.equal((await pool.query(
+        'SELECT COUNT(*)::int AS count FROM web_signup_sessions WHERE user_id = $1',
+        [setupId],
+      )).rows[0].count, 1);
+      // Reading the code proves the mailbox, so the confirmation is stamped
+      // here — which stops the row ageing into the refusal branch above.
+      assert.equal((await pool.query(
+        'SELECT email_confirmed FROM users WHERE id = $1',
+        [setupId],
+      )).rows[0].email_confirmed, true);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      mail.sendOtpMail = originalSend;
+      mail.pruneDeliveries = originalPrune;
+      if (originalPool) require.cache[poolPath] = originalPool;
+      else delete require.cache[poolPath];
+      delete require.cache[authPath];
+      delete require.cache[limitsPath];
     }
   });
 });
