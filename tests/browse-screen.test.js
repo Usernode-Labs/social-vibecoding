@@ -906,13 +906,10 @@ test('showDetail / showList publish the level, which drives both containers', ()
 
   Browse.showList();
   assert.equal(state.level, 'list');
-  // THE LIST GETS THE HOUSE, not the chevron. It used to pass 'arrow' with no
-  // href, which resolved to home — the right destination drawn as the wrong
-  // glyph, a chevron promising a level above a root screen that has none.
-  // 'home' draws a house and goes to the same place
-  // (features/header/back-button-store.js).
-  assert.equal(chrome.backIcon, 'home');
-  assert.equal(chrome.backHref, undefined, 'and with no href, which means home');
+  // #1569: the list shares Home's root header; only detail pages need the
+  // extra back slot. Home remains a destination in the shared menu.
+  assert.equal(chrome.backIcon, 'none');
+  assert.equal(chrome.backHref, undefined);
   assert.equal(chrome.title, 'All apps');
 });
 
@@ -938,6 +935,7 @@ test('handleBack goes HOME when the detail page was entered from home', () => {
   Browse.noteDetailOrigin('home');
   Browse.showDetail('a');
   assert.equal(Browse._detailOrigin, 'home');
+  assert.equal(chrome.backIcon, 'home', 'a detail opened from Home keeps its Home button');
   assert.equal(Browse.handleBack(), true, 'still claims the button');
   assert.equal(chrome.wentHome, 1, 'leaves the screen instead of showing the list');
   assert.equal(location.hash, '',

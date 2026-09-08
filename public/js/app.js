@@ -3612,13 +3612,6 @@ const App = {
         if (App._inSettings) App._exitSettings();
             if (App._inBrowse) App._exitBrowse();
         App._showOnlyScreen('home-screen');
-        // Home is the one screen with no way out in the bar, and this is the
-        // branch a COLD BOOT at `/` takes (an empty hash is an unrecognised
-        // one), not just a bad address — so it is as load-bearing as the one
-        // in navigateHome. Same reason it is not a classList write any more:
-        // #back-btn's className is React's, and _showOnlyScreen has just
-        // published the 'home' default that would draw a house here.
-        App.setBackIcon('none');
         App.setHeaderTitle('Social Vibecoding');
         // Home has no Improve target: clear whatever screen published one, or
         // the header button would outlive the app it was about (the lingering
@@ -3737,9 +3730,9 @@ const App = {
     'settings-screen', 'messages-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
-  // `keepAlso`), and hand the header's back chevron back to its default
-  // "home" meaning — the incoming module's own chrome sync flips it to
-  // 'arrow' afterwards when it owns a level-2 view.
+  // `keepAlso`), and publish the incoming screen's default back slot.
+  // Home and the Browse list share a root header (#1569); other screens
+  // keep the Home button. A module's chrome sync supplies a drill-in's arrow.
   //
   // *** CALL THIS INSIDE THE PlatformUI.transition CALLBACK, NEVER
   // BEFORE IT. *** A View Transition captures the OUTGOING page at the
@@ -3770,7 +3763,9 @@ const App = {
     // show and the router says home is, and the router is the one that is
     // right. See Home.publishImproveTarget, whose gate reads both.
     App._revealedScreen = revealId;
-    App.setBackIcon('home');
+    // Publish the final root state directly. Showing a house and then hiding
+    // it in a per-screen callback shifts the shared title slot unnecessarily.
+    App.setBackIcon(revealId === 'home-screen' || revealId === 'browse-screen' ? 'none' : 'home');
   },
 
   // The screen root _showOnlyScreen last revealed, or null before the first
@@ -4136,9 +4131,9 @@ const App = {
   // No permission gate: the grid is built from GET /api/apps, which is
   // already visibility-filtered per viewer, and restoreFromHash's
   // anonymous-shell branch bounced a signed-out visitor to login before
-  // this can run. The header's back button goes home; the browser/OS back
-  // gesture returns here from an app opened out of this grid, because the
-  // screen has its own hash entry.
+  // this can run. The top-level header matches Home, which stays accessible
+  // through the navigation menu. Browser/OS back returns here from an app
+  // opened out of this grid, because the screen has its own hash entry.
   navigateToBrowse(slug) {
     // Already mounted: this is an in-screen level change (#apps ↔
     // #apps/<slug>, the back button, a hand-typed hash), not a screen
@@ -4810,15 +4805,6 @@ const App = {
     PlatformUI.transition(() => {
       AppView.close();
       App._showOnlyScreen('home-screen', ['app-view']);
-      // HOME IS THE ONE SCREEN WITH NO BUTTON. _showOnlyScreen publishes the
-      // 'home' default a line above — right for every other screen and wrong
-      // for this one — so this is the single 'none' caller in the shell.
-      //
-      // It was a raw `classList.add('hidden')` on #back-btn until now, which
-      // is a write into React-owned DOM: it held only until the header island
-      // next rendered from its own props, and it could not express the new
-      // three-state slot at all.
-      App.setBackIcon('none');
       // …and the GitHub / Share rows retire with the panel's target, rather
       // than being hidden one by one as drawer rows were. This clears the
       // app's target; the line below immediately republishes home's own.
@@ -4879,10 +4865,9 @@ const App = {
     const arrow = mode === 'arrow';
     // THREE modes now (features/header/back-button-store.js): 'arrow' is a
     // level up, 'home' is the house, and 'none' hides the slot outright.
-    // 'none' has exactly one caller — navigateHome — because Home is the one
-    // screen with nowhere to go. Everything else keeps the default it always
-    // passed, and the default now DRAWS something, which is the whole change:
-    // a screen gets a way out by existing rather than by remembering to ask.
+    // Home and the top-level Browse list use 'none' for their shared root
+    // header (#1569). Other screens keep the default Home button, or an arrow
+    // when they have a level above them.
     const slot = arrow ? 'arrow' : (mode === 'none' ? 'none' : 'home');
     const target = href || (window.NavLink ? NavLink.homeHref() : '/');
     // The slot is React's (features/header/platform-header.tsx), so its

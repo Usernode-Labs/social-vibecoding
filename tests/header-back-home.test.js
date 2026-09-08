@@ -1,4 +1,4 @@
-// "Every page should have a back or a home button, except the Home screen."
+// Back/home buttons on secondary screens; a shared Home/Browse root header (#1569).
 //
 // ── What the bar looked like before ────────────────────────────────────
 //
@@ -12,9 +12,9 @@
 //
 // ── The three modes, and why 'home' was redefined rather than added to ──
 //
-//   'none'   hidden. Home only.
+//   'none'   hidden. Home and the Browse list (#1569).
 //   'home'   the house, to home. THE DEFAULT — `_showOnlyScreen` publishes it
-//            on every screen swap, so a screen gets a way out by existing.
+//            on other screen swaps, so secondary screens keep a way out.
 //   'arrow'  the chevron, one level UP to its own href.
 //
 // ~40 call sites already spelled the default 'home', and every one of them
@@ -91,27 +91,27 @@ test('setBackIcon maps the three modes and toggles both glyphs', () => {
   assert.match(body, /back-icon-home'\)\?\.classList\.toggle\('hidden', arrow\)/);
 });
 
-// ── 2. Home is the only screen with nothing ────────────────────────────
+// ── 2. Home and Browse share one root-header rule ──────────────────────
 
-test("BOTH ways into Home publish 'none' — a cold boot is one of them", () => {
+test('Home and Browse get their root back state from the shared screen reveal', () => {
   // navigateHome is the obvious one. The other is the unrecognised-hash
   // branch of restoreFromHash, and it is not an edge case: an EMPTY hash is
   // an unrecognised one, so `/` takes it on every cold boot. Miss it and the
   // most-visited screen in the product is the one with the bug.
-  const calls = [...APP_JS.matchAll(/App\.setBackIcon\('none'\)/g)];
-  assert.equal(calls.length, 2,
-    `expected exactly two 'none' publishes (navigateHome and the cold-boot / `
-    + `unrecognised-hash branch); found ${calls.length}`);
+  const at = APP_JS.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
+  const body = APP_JS.slice(at, APP_JS.indexOf('\n  },', at));
+  assert.match(body, /App\.setBackIcon\(revealId === 'home-screen' \|\| revealId === 'browse-screen' \? 'none' : 'home'\)/,
+    'one rule owns both roots, including cold boots and history navigation');
+  assert.doesNotMatch(APP_JS, /App\.setBackIcon\('none'\)/,
+    'no per-entry override briefly shows the house before hiding it');
 
   for (const [label, anchor] of [
     ['navigateHome', "App._showOnlyScreen('home-screen', ['app-view']);"],
     ['the cold-boot branch', "App._showOnlyScreen('home-screen');"],
+    ['Browse entry', "App._showOnlyScreen('browse-screen');"],
   ]) {
     const at = APP_JS.indexOf(anchor);
-    assert.ok(at > 0, `${label} must reveal the home screen`);
-    assert.match(APP_JS.slice(at, at + 900), /App\.setBackIcon\('none'\)/,
-      `${label} must publish 'none' AFTER the reveal — _showOnlyScreen `
-      + "publishes the 'home' default, which would draw a house on Home");
+    assert.ok(at > 0, `${label} must reveal its root through the shared helper`);
   }
 
   // And neither writes the class by hand any more: #back-btn's className is
