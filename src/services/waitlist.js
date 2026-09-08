@@ -340,7 +340,7 @@ async function releaseWaitlistSignup(pool, signupId) {
      UPDATE waitlist_signups w
         SET released_at = COALESCE(w.released_at, NOW())
       WHERE w.id = $1
-      RETURNING w.id, w.email, w.released_at, w.linked_user_id,
+      RETURNING w.id, w.email, w.released_at, w.linked_user_id, w.more_token,
                 (SELECT prev.released_at FROM prev) IS NULL AS newly_released`,
     [signupId]
   );
