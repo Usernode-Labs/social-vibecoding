@@ -38,3 +38,12 @@ hackathon-data/
 .opencode/opencode.jsonc.lock
 .opencode/opencode.jsonc.lock.*
 .opencode/.opencode.jsonc.tmp-*
+
+# Scratch renders. A coding agent checking a layout writes a throwaway page
+# or screenshot beside the source, and one of those (a 274KB `__r6.png`) was
+# swept into a proposal by a `git add -A` and merged. The double underscore
+# is the convention for those files; this makes the mistake unrepeatable
+# rather than something the next author has to remember not to make.
+__*.png
+__*.html
+public/__*.html
