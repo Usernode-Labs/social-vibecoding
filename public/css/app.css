@@ -11635,12 +11635,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    the moment that number changes. */
 .dev-ws-needs-end { display: inline-flex; align-items: center; gap: 6px; }
 .dev-ws-vote-ring { width: 30px; height: 30px; }
-.dev-ws-needs-close {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border: 0; border-radius: 999px;
-  background: none; color: var(--text-muted); cursor: pointer; padding: 0;
-}
-.dev-ws-needs-close:hover { background: var(--state-neutral-bg); color: var(--text-primary); }
+/* The count in words beside the ring. Muted and small: the ring is the
+   figure, this is what the figure is about. */
+.dev-ws-needs-count { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 .dev-ws-pill {
   display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px;
   font-size: 12px; font-weight: 600; white-space: nowrap;

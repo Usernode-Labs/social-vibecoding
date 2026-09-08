@@ -5092,7 +5092,7 @@ const AppView = {
   _workshopThemeName(themeId) {
     const t = AppView._workshopThemeData();
     const theme = t && (t.themes || []).find((x) => x.id === themeId);
-    return theme ? theme.name : 'Theme';
+    return theme ? theme.name : 'Category';
   },
 
   // While a regeneration is pending server-side, the re-fetch schedule in
@@ -5478,7 +5478,7 @@ const AppView = {
     // have, the remainder is what they did not name — titled below, once
     // it is known whether those cards are on their way or were declined.
     const rest = mkTheme(tData
-      ? { id: 'ungrouped', name: 'Not yet grouped', description: 'Items the themes do not name yet.' }
+      ? { id: 'ungrouped', name: 'Not yet grouped', description: 'Items the categories do not name yet.' }
       : { id: 'ungrouped', name: 'Everything on the board', description: '' }, true);
     let placingCount = 0;
     for (const e of entries) {
@@ -5510,11 +5510,11 @@ const AppView = {
         rest.placing = placingCount;
         if (placingCount && placingCount === restCount) {
           rest.name = 'Being placed';
-          rest.description = 'New cards are placed into a theme within a minute or two of arriving.';
+          rest.description = 'New cards are placed into a category within a minute or two of arriving.';
         } else if (placingCount) {
-          rest.description = `Cards the themes do not cover yet; ${placingCount} of them ${placingCount === 1 ? 'is' : 'are'} being placed now. They count towards the next re-draft.`;
+          rest.description = `Cards the categories do not cover yet; ${placingCount} of them ${placingCount === 1 ? 'is' : 'are'} being placed now. They count towards the next re-draft.`;
         } else {
-          rest.description = 'Cards the themes do not cover yet. They count towards the next re-draft of the themes.';
+          rest.description = 'Cards the categories do not cover yet. They count towards the next re-draft of the categories.';
         }
       }
       drawn.push(finish(rest));
