@@ -1593,6 +1593,125 @@ html, body {
   overscroll-behavior-y: none;
 }
 
+/* #1518: browser toolbars follow document scrolling. The bridge selects one
+   pageable surface at a time; native/installed apps, chats and app iframes
+   retain the bounded shell above. Clip horizontal hit-area overhang without
+   making these pages into nested vertical scroll containers again. */
+html[data-browser-scroller] {
+  height: auto;
+  min-height: 100%;
+  overflow-x: clip;
+  overflow-y: auto;
+}
+html[data-browser-scroller] body {
+  --browser-banner-h: 0px;
+  height: auto !important; /* the generated body's fixed-shell inline height */
+  min-height: 100dvh;
+  overflow: visible;
+  isolation: isolate;
+  background: var(--home-ground) !important;
+}
+/* Body padding reserves these fixed strips at the start of a page. Sticky
+   headers must keep reserving them after that padding scrolls away. */
+html[data-browser-scroller] body.has-install-strip {
+  --browser-banner-h: var(--install-strip-h);
+}
+html[data-browser-scroller] body.is-offline {
+  --browser-banner-h: var(--offline-strip-h);
+}
+html[data-browser-scroller] body.is-offline.has-install-strip {
+  --browser-banner-h: calc(var(--offline-strip-h) + var(--install-strip-h));
+}
+/* Keep the ambient wallpaper viewport-sized as the document grows. Its star
+   continues to track the active scroller via wallpaper-scroll.ts. A fixed
+   layer also works on iOS, where background-attachment: fixed does not. */
+html[data-browser-scroller] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--home-wallpaper);
+}
+html[data-browser-scroller="home-screen"] #home-screen,
+html[data-browser-scroller="browse-screen"] #browse-screen,
+html[data-browser-scroller="leaderboard-screen"] #leaderboard-screen,
+html[data-browser-scroller="profile-screen"] #profile-screen,
+html[data-browser-scroller="settings-screen"] #settings-screen,
+html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll,
+html[data-browser-scroller="dev-forum-scroll"] #dev-forum-scroll,
+html[data-browser-scroller="auth-login-screen"] #auth-login-screen,
+html[data-browser-scroller="auth-register-screen"] #auth-register-screen,
+html[data-browser-scroller="auth-waiting-screen"] #auth-waiting-screen,
+html[data-browser-scroller="auth-waitlist-screen"] #auth-waitlist-screen,
+html[data-browser-scroller="auth-more-screen"] #auth-more-screen {
+  flex: none;
+  height: auto;
+  overflow-x: clip;
+  overflow-y: visible;
+}
+html[data-browser-scroller^="auth-"] body :is(
+  #auth-landing-screen, #auth-login-screen, #auth-register-screen,
+  #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen
+):not(.hidden) {
+  position: relative;
+  inset: auto;
+  min-height: calc(100dvh - var(--browser-banner-h));
+}
+/* The anonymous overlay covered the signed-in shell, including any screen
+   painted from the last-session snapshot. In document flow those roots must
+   leave the layout too, so visitors see only the anonymous page. */
+html[data-browser-scroller^="auth-"] :is(
+  #platform-header, #home-screen, #browse-screen, #leaderboard-screen,
+  #profile-screen, #settings-screen, #messages-screen, #admin-screen, #app-view
+) {
+  display: none;
+}
+html[data-browser-scroller] :is(#platform-header, #landing-header) {
+  position: sticky;
+  top: var(--browser-banner-h);
+  z-index: 30;
+  background: color-mix(in srgb, var(--home-ground) 92%, transparent) !important;
+  backdrop-filter: blur(12px);
+}
+html[data-browser-scroller="browse-screen"] #browse-search-bar {
+  top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top));
+}
+html[data-browser-scroller^="auth-"] :is(
+  #auth-login-screen, #auth-register-screen, #auth-waiting-screen
+) > .min-h-full {
+  min-height: calc(100dvh - var(--browser-banner-h));
+}
+/* These screens are already below the strips in document flow. The bounded
+   shell's separate offset on the corner Back link would count them twice. */
+html[data-browser-scroller^="auth-"] body.is-offline [data-auth-back] {
+  top: calc(env(safe-area-inset-top, 0px) + 1rem) !important;
+}
+html[data-browser-scroller="dev-forum-scroll"] :is(#app-view, #app-content),
+html[data-browser-scroller="dev-forum-scroll"] #app-content > div {
+  flex: none !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+/* During a tile zoom the outgoing page remains in document flow until the
+   animation ends. Give the incoming app its final viewport bounds while
+   both are painted, rather than measuring a zero-height flex child. */
+html[data-browser-scroller]:not([data-browser-scroller="dev-forum-scroll"]) #app-view {
+  position: fixed;
+  top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top) - .5rem);
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: auto !important;
+}
+html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
+  position: fixed;
+  top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top));
+  bottom: 0;
+  left: 0;
+  right: 0;
+}
+
 /* The home feed scroller: contain overscroll so a pull that starts on
    a short list can't chain to the browser's own refresh gesture. The
    anonymous landing scroller (the inner wrapper, not the fixed overlay
@@ -2988,6 +3107,10 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   flex-direction: column;
   min-height: 100%;
   padding-bottom: var(--platform-safe-bottom);
+}
+html[data-browser-scroller="home-screen"] .home-body-fill {
+  /* The header overlaps its content by .5rem (its rounded lower edge). */
+  min-height: calc(100dvh - var(--browser-banner-h) - var(--platform-header-h) - var(--platform-safe-top) + .5rem);
 }
 
 /* NOTE: .home-bottom-anchor is gone with the two trailing sections it

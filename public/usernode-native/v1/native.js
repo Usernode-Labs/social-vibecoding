@@ -1240,6 +1240,8 @@
   //                 or conditionally-rendered header stays correct.
   //   opts.top    — a fixed anchor offset in px, when there is no element
   //                 to measure.
+  //   opts.getScrollTop — optional offset reader when the content's scroll
+  //                 owner can change without replacing its gesture target.
   //   (default)   — element mode: the scroller's own top edge within its
   //                 parent (i.e. below whatever chrome sits above it);
   //                 window mode: the safe-area top inset.
@@ -1348,6 +1350,9 @@
     var armed = false;
 
     function scrollTop() {
+      // A shell page may grow into the document in a browser while this
+      // recognizer stays attached to its content (and disappears with it).
+      if (opts && typeof opts.getScrollTop === 'function') return opts.getScrollTop();
       return windowMode ? (window.scrollY || 0) : scrollEl.scrollTop;
     }
 
@@ -2684,7 +2689,8 @@
    * visible), pass `outEl` — the outgoing screen element, or a function
    * returning it: zoom-in hides it (inline display) for the synchronous
    * pre-paint destination measurement so `el` measures its SETTLED
-   * rect, then restores it before pinning; without it the zoom would
+   * rect, then restores it and the document's scroll offset before pinning;
+   * without it the zoom would
    * animate to the shared-layout rect and snap at the end. zoom-out
    * ignores `outEl`. When the zoom can't run (no usable source rect,
    * reduced motion, missing el) it falls back to opts.fallback ('push'
@@ -2798,9 +2804,20 @@
       var target;
       if (outEl && outEl !== el && outEl.style) {
         var savedOutDisplay = outEl.style.display;
-        outEl.style.display = 'none';
-        target = el.getBoundingClientRect();
-        outEl.style.display = savedOutDisplay;
+        // Hiding a document-scrolling page can temporarily shrink the root
+        // and clamp its offset to zero. Restore it before paint, too: this
+        // measurement must not move the outgoing page or erase its position.
+        var page = document.scrollingElement || document.documentElement;
+        var pageTop = page.scrollTop;
+        var pageLeft = page.scrollLeft;
+        try {
+          outEl.style.display = 'none';
+          target = el.getBoundingClientRect();
+        } finally {
+          outEl.style.display = savedOutDisplay;
+          page.scrollTop = pageTop;
+          page.scrollLeft = pageLeft;
+        }
       } else {
         target = el.getBoundingClientRect();
       }

@@ -65,6 +65,20 @@ test('the launcher at rest reads as unscrolled: rest is the parked search bar', 
   assert.equal(doc.props['--home-star-y'], '0px');
 });
 
+test('the wallpaper follows document scrolling on mobile web', () => {
+  const { doc, apply } = boot({
+    'home-search-bar': { offsetHeight: 52 },
+    'home-screen': { scrollTop: 0 },
+  });
+  doc.documentElement.dataset = { browserScroller: 'home-screen' };
+  doc.scrollingElement = { scrollTop: 172 };
+  apply();
+  assert.equal(doc.props['--home-star-y'], '-120px');
+  doc.scrollingElement.scrollTop = 252;
+  doc.listeners.scroll.fn({ target: doc });
+  assert.equal(doc.props['--home-star-y'], '-200px');
+});
+
 test('scrolling the launcher moves the star up by the distance past rest', () => {
   const { doc } = boot({
     'home-search-bar': { offsetHeight: 52 },

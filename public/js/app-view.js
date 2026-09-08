@@ -2169,7 +2169,8 @@ const AppView = {
     // topic/session/chat sub-views. Every back-navigation re-enters
     // renderDevView, so this single point covers the Back buttons,
     // browser back/forward, and programmatic navigation alike.
-    const outgoingScroll = document.getElementById('dev-forum-scroll');
+    const outgoingFeed = document.getElementById('dev-forum-scroll');
+    const outgoingScroll = window.PlatformUI?.scrollElement?.(outgoingFeed) || outgoingFeed;
     if (outgoingScroll) AppView._saveFeedScroll(App.currentApp, outgoingScroll.scrollTop);
 
     // Leaving whatever thread surface was open: drop the live render
@@ -2388,7 +2389,8 @@ const AppView = {
     const savedScroll = AppView._getFeedScroll(App.currentApp);
     if (savedScroll > 0) {
       requestAnimationFrame(() => {
-        const container = document.getElementById('dev-forum-scroll');
+        const feed = document.getElementById('dev-forum-scroll');
+        const container = window.PlatformUI?.scrollElement?.(feed) || feed;
         if (!container) return;
         const top = AppView._clampScrollTop(savedScroll, container.scrollHeight, container.clientHeight);
         container.scrollTo({ top, behavior: 'instant' });
