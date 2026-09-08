@@ -1266,13 +1266,15 @@
     },
 
     _scrollTop() {
-      const el = document.getElementById('settings-screen');
+      const screen = document.getElementById('settings-screen');
+      const el = window.PlatformUI?.scrollElement?.(screen) || screen;
       return el ? el.scrollTop : 0;
     },
 
     // A pushed screen starts at the top; a pop restores where the menu was.
     _restoreScroll() {
-      const el = document.getElementById('settings-screen');
+      const screen = document.getElementById('settings-screen');
+      const el = window.PlatformUI?.scrollElement?.(screen) || screen;
       if (!el) return;
       el.scrollTop = (Settings._isMobile() && Settings._level === 1)
         ? Settings._menuScrollTop

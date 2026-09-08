@@ -51,6 +51,21 @@ function makeSandbox({ kit } = {}) {
 
 // ── 1. Kit-absent fallback ─────────────────────────────────────────────
 
+test('pull-to-refresh reads the active page offset after its scroller changes', () => {
+  let options;
+  const { kit } = stubKit();
+  kit.attachPullToRefresh = (el, refresh, opts) => { options = opts; return { detach() {} }; };
+  const { PlatformUI, sandbox } = makeSandbox({ kit });
+  const screen = { scrollTop: 0 };
+  PlatformUI.pullToRefresh(screen, async () => {});
+  assert.equal(options.getScrollTop(), 0);
+  const page = { scrollTop: 420 };
+  sandbox.UsernodeBrowserScroll = { scrollElement: () => page };
+  assert.equal(options.getScrollTop(), 420, 'a downward swipe mid-page must remain a scroll');
+  page.scrollTop = 0;
+  assert.equal(options.getScrollTop(), 0, 'refresh arms only once the page reaches the top');
+});
+
 test('kit absent: toast logs to console and returns null', () => {
   const { PlatformUI, calls } = makeSandbox();
   const handle = PlatformUI.toast('Saved');

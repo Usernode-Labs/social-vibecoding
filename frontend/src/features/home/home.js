@@ -432,7 +432,11 @@ const Home = {
       const grid = document.getElementById('app-list');
       const screen = document.getElementById('home-screen');
       if (!grid || !screen) return last;
-      const viewport = screen.clientHeight;
+      const scroller = window.PlatformUI?.scrollElement?.(screen) || screen;
+      const pageScroll = scroller !== screen;
+      const viewport = pageScroll
+        ? scroller.clientHeight - (screen.getBoundingClientRect().top + scroller.scrollTop)
+        : screen.clientHeight;
       if (!viewport) return last;
       const cs = getComputedStyle(grid);
       const cell = parseFloat(cs.gridAutoRows) || 0;
@@ -447,7 +451,7 @@ const Home = {
       const resting = (bar && bar.offsetHeight) || 0;
       const top = grid.getBoundingClientRect().top
         - screen.getBoundingClientRect().top
-        + screen.scrollTop
+        + (pageScroll ? 0 : screen.scrollTop)
         - resting;
       const room = (viewport * Home.APPS_VIEWPORT_FRACTION) - top;
       // n rows occupy n cells and the n-1 gaps between them.
@@ -1359,7 +1363,10 @@ const Home = {
     _scrollWired: false,
     _rafPending: false,
 
-    screenEl() { return document.getElementById('home-screen'); },
+    screenEl() {
+      const el = document.getElementById('home-screen');
+      return window.PlatformUI?.scrollElement?.(el) || el;
+    },
     barEl() { return document.getElementById('home-search-bar'); },
 
     // Screenshot-state deep link (?shot=home-search): the revealed bar
@@ -1416,7 +1423,7 @@ const Home = {
     _wireScroll(screen) {
       if (Home._searchReveal._scrollWired) return;
       Home._searchReveal._scrollWired = true;
-      screen.addEventListener('scroll', () => {
+      const markOnScroll = () => {
         if (Home._searchReveal._rafPending) return;
         Home._searchReveal._rafPending = true;
         const run = () => {
@@ -1425,7 +1432,11 @@ const Home = {
         };
         if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
         else setTimeout(run, 16);
-      }, { passive: true });
+      };
+      // Element scrolling does not bubble; document scrolling has a different
+      // target. Observe both because resizing can change the scrolling owner.
+      document.getElementById('home-screen').addEventListener('scroll', markOnScroll, { passive: true });
+      document.addEventListener('scroll', markOnScroll, { passive: true });
     },
   },
 
