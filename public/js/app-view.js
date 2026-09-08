@@ -3848,41 +3848,14 @@ const AppView = {
     content.addEventListener('click', (e) => {
       if (!e.target.closest('#dev-plus-menu, #dev-plus-btn')) close();
     }, { signal });
-    // proposal/issue/rename/secrets render together in the non-read-only
-    // block; members is conditional within it (see _plusMenuShowsMembers),
-    // so its handler needs an existence check like fork's.
-    const proposalBtn = menu.querySelector('[data-plus="proposal"]');
-    if (proposalBtn) {
-      proposalBtn.addEventListener('click', () => {
-        close();
-        AppView.createProposal();
-      }, { signal });
-    }
-    // "Propose with Claude Code or Codex" USED to be a second row here
-    // (#1049), opening the same session straight onto the flow picker. It
-    // is gone: two rows in one menu that both mean "propose a change" made
-    // the venue a fork in the road before the work existed, and it could
-    // only name two of the six venues. One row starts the session; the
-    // venue selector in the session header says where it will be built and
-    // opens the full list on demand.
-    //
-    // import-pr renders only when can_collaborate, so (like members/fork)
-    // its handler needs an existence check.
+    // New change and Give feedback live in Improve (#1490). This menu keeps
+    // PR import and app management; each row is conditional on viewer/app
+    // permissions, so wire only the rows the frame rendered.
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
     if (importPrBtn) {
       importPrBtn.addEventListener('click', () => {
         close();
         AppView.openImportPrModal();
-      }, { signal });
-    }
-    const issueBtn = menu.querySelector('[data-plus="issue"]');
-    if (issueBtn) {
-      issueBtn.addEventListener('click', () => {
-        close();
-        // Open the shared Send Feedback modal with the dev-context mode:
-        // the open app is preselected as the target (Platform for the
-        // self-hosted app or while the repo doesn't exist yet) — #226.
-        App.openFeedbackModal({ fromDev: true });
       }, { signal });
     }
     const membersBtn = menu.querySelector('[data-plus="members"]');

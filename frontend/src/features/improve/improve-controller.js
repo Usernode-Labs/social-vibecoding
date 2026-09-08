@@ -877,7 +877,7 @@ const Improve = {
     window.App.openFeedbackModal();
   },
 
-  /** "Start a new session" — the Dev "+" menu's "Propose a change" row. */
+  /** New change: the entry point for starting a session on desktop and touch. */
   startSession() {
     Improve.close();
     Improve._withApp(() => window.AppView?.createProposal?.());
