@@ -185,6 +185,69 @@ function enforcePlatformAccessGate(req, res, user) {
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const STAGING_SESSION_DAYS = 7;
 
+// #1416: how long a session survives WITHOUT being used, and the hard ceiling
+// it can never slide past.
+//
+// These two numbers answer different questions and neither works alone. The
+// idle window is what forgets a session on a device nobody comes back to; the
+// cap is what stops a renewed one living forever, which is the whole risk a
+// sliding expiry introduces.
+const SESSION_IDLE_DAYS = 60;
+const SESSION_MAX_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Renew once the session is more than halfway through its idle window. Any
+// threshold works for correctness; this one keeps the write rare (at most one
+// per half-window per session) while leaving a wide margin before expiry.
+const RENEW_AFTER_MS = (SESSION_IDLE_DAYS / 2) * DAY_MS;
+
+/**
+ * Slide a live session's expiry forward, capped at SESSION_MAX_DAYS from the
+ * row's `created_at`.
+ *
+ * Best-effort by design: this runs on the read path of every authenticated
+ * request, and a failure to EXTEND a session is not a reason to fail the
+ * request that was already authorised. A renewal that does not happen costs
+ * the user an earlier sign-in, which is the behaviour before this existed.
+ *
+ * Returns the new expiry when one was written, otherwise null — the return is
+ * for tests; callers fire and forget.
+ */
+async function renewCookieSession(pool, res, token, row) {
+  try {
+    const now = Date.now();
+    const currentExpiry = new Date(row.expires_at).getTime();
+    // Not far enough through the window to be worth a write.
+    if (currentExpiry - now > RENEW_AFTER_MS) return null;
+
+    // A row created before the column existed defaults to the migration's
+    // now(), so the cap is measured from then. That can only bring a ceiling
+    // closer, never push one out.
+    const born = row.created_at ? new Date(row.created_at).getTime() : now;
+    const ceiling = born + SESSION_MAX_DAYS * DAY_MS;
+    const wanted = now + SESSION_IDLE_DAYS * DAY_MS;
+    const next = Math.min(wanted, ceiling);
+    // Already at the ceiling: this session has run its full life and must be
+    // allowed to end. Extending by a second here is what would make the cap
+    // decorative.
+    if (next <= currentExpiry) return null;
+
+    const expiresAt = new Date(next);
+    await pool.query('UPDATE sessions SET expires_at = $1 WHERE token = $2', [expiresAt, token]);
+    // Same attributes as the mint sites, or the refresh would quietly
+    // downgrade the cookie's own protections.
+    res.cookie('session', token, {
+      httpOnly: true,
+      secure: SECURE_COOKIE,
+      sameSite: 'lax',
+      expires: expiresAt,
+    });
+    return expiresAt;
+  } catch (err) {
+    log.warn('auth', 'session renewal failed', { err: err.message });
+    return null;
+  }
+}
+
 // The app row this container is serving, injected by the env builders via
 // services/app-identity-env.js. Iframe identity tokens are app-scoped
 // (audience `usernode:app:<id>`) since the RSA cutover, so verifying one
@@ -210,13 +273,14 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platform_access
+          `SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platform_access
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
           [cookieToken]
         );
 
         if (rows.length > 0 && new Date(rows[0].expires_at) >= new Date()) {
+
           // Staging identity switch: a request that carries a VALID iframe
           // JWT for a DIFFERENT user than the cookie session re-mints as
           // the token's user (replacing the cookie) instead of silently
@@ -287,6 +351,33 @@ function authMiddleware(config) {
             // new signups until an admin releases them off the waitlist.
             hasPlatformAccess: !!rows[0].has_platform_access,
           };
+          // #1416: renew on use, so an ACTIVE session does not expire.
+          //
+          // The window was seven days and absolute, which meant somebody who
+          // opened the app every single day was still signed out every
+          // seventh one. That is the report: on a phone people expect a
+          // native app's behaviour, where being logged out is an event, not
+          // a schedule. Raising the number alone would only move the date.
+          //
+          // Not fired on every request: the write only happens once the
+          // session is past its renewal point, so a busy session costs one
+          // UPDATE per RENEW_AFTER_MS rather than one per call.
+          //
+          // The absolute cap is the other half, and it is why `created_at`
+          // exists. Sliding with no ceiling means a stolen cookie that keeps
+          // being used never dies. With it, idle sessions still fall out
+          // after SESSION_IDLE_DAYS and even a continuously-used one ends at
+          // SESSION_MAX_DAYS from its birth.
+          //
+          // Placed AFTER the staging identity switch above, not before it:
+          // that path replaces the cookie outright, and renewing a session
+          // about to be thrown away would both waste a write and set two
+          // cookies on one response.
+          //
+          // The cookie is re-set alongside the row: the browser copy carries
+          // its own expiry, so extending only the database would leave the
+          // client discarding a session the server still honours.
+          void renewCookieSession(pool, res, cookieToken, rows[0]);
           log.debug('auth', 'Session validated', { userId: req.user.id });
           if (enforcePlatformAccessGate(req, res, req.user)) return;
           return next();
@@ -444,4 +535,4 @@ function redirectOrReject(req, res, next) {
   return res.redirect('/');
 }
 
-module.exports = { authMiddleware };
+module.exports = { authMiddleware, renewCookieSession, SESSION_IDLE_DAYS, SESSION_MAX_DAYS, RENEW_AFTER_MS };

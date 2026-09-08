@@ -276,15 +276,27 @@ test('_routeSearch keeps return_to, which is what makes that strip safe', () => 
   assert.doesNotMatch(m[0], /return_to/, 'and singles out nothing else');
 });
 
-test('the snapshot outliving the cookie is why that path is ordinary', () => {
-  // Pinned so the hazard stays visible: while the snapshot lives longer than
-  // the session, there is a window in which a returning visitor boots authed
-  // against a cookie the server has already forgotten.
+test('the session now outlives the snapshot, which closes that window (#1416)', () => {
+  // This assertion used to run the other way, and the reversal is the point.
+  //
+  // While the snapshot outlived the session there was a window in which a
+  // returning visitor booted AUTHED against a cookie the server had already
+  // forgotten: the client believed a cached identity that no longer existed,
+  // and only found out at the first 401.
+  //
+  // #1416 raised the session's idle window to 60 days and made it slide on
+  // use, so it is now the longer of the two. A cached snapshot can no longer
+  // outlive the session it describes, and that window is closed rather than
+  // merely documented.
+  //
+  // Pinned in this direction so it cannot drift back silently: shortening the
+  // session below the snapshot age, or lengthening the snapshot past it,
+  // reopens the hazard.
   const snap = APP_SRC.match(/SESSION_SNAPSHOT_MAX_AGE_MS: (\d+) \* 24 \* 60 \* 60 \* 1000/);
   const days = AUTH_ROUTES_SRC.match(/const SESSION_DAYS = (\d+);/);
   assert.ok(snap && days, 'both lifetimes are still declared where expected');
-  assert.ok(Number(snap[1]) > Number(days[1]),
-    'snapshot outlives the session, so the authed-from-snapshot boot is reachable');
+  assert.ok(Number(days[1]) > Number(snap[1]),
+    'the session must outlive the snapshot, or a boot can be authed against a dead cookie');
 });
 
 // ── One returned shape, for both pages ────────────────────────────────

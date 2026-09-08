@@ -158,6 +158,15 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TIMESTAMPTZ NOT NULL
 );
 
+-- #1416: when the session was first minted, so a sliding expiry can still be
+-- capped absolutely. `expires_at` alone cannot express that: renewing it on
+-- use is what stops an active user being logged out, and without a fixed
+-- birthday a renewed session has no end at all, so a stolen cookie that keeps
+-- being used would live forever. DEFAULT now() dates every pre-existing row
+-- from the migration, which is the safe direction: it can only bring a cap
+-- closer, never push one out.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT now();
+
 -- Narrow, HttpOnly-cookie-backed continuation between a successful email
 -- code and first-password setup. This is deliberately not a mobile bearer:
 -- it authorizes exactly one password setup, is stored only as a hash, and is

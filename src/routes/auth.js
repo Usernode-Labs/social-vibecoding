@@ -49,7 +49,11 @@ const { getPlatformApp } = require('../services/platform-app');
 // swap sendPasswordResetMail on the module object.
 const mail = require('../services/mail');
 
-const SESSION_DAYS = 7;
+// #1416: the idle window a freshly-minted session starts with. It matches
+// SESSION_IDLE_DAYS in src/middleware/auth.js, which slides it forward on use
+// and caps it absolutely — mint and renewal have to agree or a new session
+// would start on a different clock from the one that keeps it alive.
+const SESSION_DAYS = 60;
 
 // Email password-reset magic link. The 30-minute figure is repeated in the
 // password_reset mail template copy (src/services/mail/templates.js).
