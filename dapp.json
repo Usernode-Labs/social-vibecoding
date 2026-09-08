@@ -1299,9 +1299,9 @@
       "expectSelector": ".un-popover[data-surface=\"opaque\"]"
     },
     {
-      "name": "Home card actions menu opens as an action sheet on touch (#929)",
+      "name": "Home card actions stay anchored to the tile on touch (#1616)",
       "path": "/?demo=1&shot=card-menu&un-platform=ios",
-      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
+      "expectSelector": ".un-popover .card-menu-header .card-menu-title"
     },
     {
       "name": "Dev \"+\" menu opens as an action sheet on touch (#929)",
@@ -3066,8 +3066,23 @@
     },
     {
       "name": "Back from a dev session is the header's own arrow, a real link at the Board (#1036, Streamlined Concept)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/board\"]"
+    },
+    {
+      "name": "…and a cold session link opened by a Workshop viewer goes back to the Workshop",
+      "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev/sessions/990402",
+      "expectSelector": "a#back-btn:not(.hidden)[href=\"#app/usernode-2d5619/workshop\"]"
+    },
+    {
+      "name": "Back from an issue returns to the layout it was opened from: the Workshop",
+      "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev/issues/900014",
+      "expectSelector": "a#back-btn[aria-label=\"Back\"][href=\"#app/usernode-2d5619/workshop\"]"
+    },
+    {
+      "name": "…and from the Board it is still the Board",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev/issues/900014",
+      "expectSelector": "a#back-btn[aria-label=\"Back\"][href=\"#app/usernode-2d5619/board\"]"
     },
     {
       "name": "The bar's two edges: nothing to leave by on Home, and the bell left of Improve",
