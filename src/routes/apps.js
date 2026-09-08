@@ -1,3 +1,4 @@
+const appAllowance = require('../services/app-allowance');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -16,12 +17,13 @@ const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
-const { appCreateLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
+const discoveryCuration = require('../services/discovery-curation');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -155,7 +157,7 @@ function demoAgo(hours) {
   return new Date(Date.now() - hours * 3600 * 1000).toISOString();
 }
 
-function demoIconApps() {
+function demoIconApps(curation = false) {
   const base = {
     status: 'running',
     self_hosted: false,
@@ -164,6 +166,11 @@ function demoIconApps() {
     view_visibility: 'public',
     created_at: new Date().toISOString(),
     last_deploy_at: new Date().toISOString(),
+    // Synthetic preview reviews, never assigned to real apps.
+    main_sha: '0000000000000000000000000000000000000001',
+    directory_reviewed_sha: '0000000000000000000000000000000000000001',
+    directory_reviewed_at: new Date().toISOString(),
+    directory_review_status: 'working',
     url: null,
     version: null,
     deployProgress: null,
@@ -190,7 +197,7 @@ function demoIconApps() {
     // home.js excludes [data-demo] cards from the kit drag.
     demo: true,
   };
-  return [
+  const apps = [
     { ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮' },
     {
       ...base,
@@ -288,6 +295,18 @@ function demoIconApps() {
       created_at: demoAgo(400 * 24), last_deploy_at: demoAgo(300 * 24),
     },
   ];
+  if (curation) apps.push(
+    { ...base, id: 990031, slug: 'directory-sample-working', name: 'Directory sample working',
+      icon_emoji: '🧩', featured: true, featured_order: -1 },
+    { ...base, id: 990032, slug: 'directory-sample-unreviewed', name: 'Directory sample unreviewed',
+      icon_emoji: '🌱', directory_review_status: 'unreviewed', directory_reviewed_at: null },
+    { ...base, id: 990033, slug: 'directory-sample-demo', name: 'Directory sample demo',
+      icon_emoji: '🎭', directory_review_status: 'demo', active_users: 9999 },
+    { ...base, id: 990034, slug: 'directory-sample-broken', name: 'Directory sample needs fixes',
+      icon_emoji: '🔧', directory_review_status: 'broken', active_users: 9998 },
+    { ...base, id: 990035, slug: 'directory-sample-no-icon', name: 'Directory sample needs an icon' },
+  );
+  return apps.map((app) => ({ ...app, directory: discoveryCuration.describe(app) }));
 }
 
 // SELF-HOSTING.md sub-step 2k: helper for the import-flow guards.
@@ -773,6 +792,7 @@ function appRoutes(config) {
           // Server-built icon URL so the client never assembles ids into
           // paths (and staging demo rows can inject arbitrary sources).
           icon_url: a.icon_image_id ? `/app-icons/${a.icon_image_id}` : null,
+          directory: discoveryCuration.describe(a),
           is_favorited: !!a.is_favorited,
           your_apps_hidden: !!a.your_apps_hidden,
           favorite_order: a.favorite_order ?? null,
@@ -792,7 +812,7 @@ function appRoutes(config) {
       await attachForkLineage(pool, apps);
       // Staging demo tiles for the icon feature (see demoIconApps above).
       if (IS_STAGING && req.query.demo === '1') {
-        apps.unshift(...demoIconApps());
+        apps.unshift(...demoIconApps(req.query.curation === '1'));
       }
       res.json({ apps });
     } catch (err) {
@@ -842,6 +862,29 @@ function appRoutes(config) {
       description: verify.description,
       fullName: verify.fullName,
     });
+  });
+
+  router.get('/api/me/app-allowance', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      res.json(await appAllowance.read(pool, req.user));
+    } catch (err) {
+      log.error('apps', 'App allowance lookup failed', { message: err.message });
+      res.status(500).json({ error: 'Could not load your app allowance. Please try again.' });
+    }
+  });
+
+  router.post('/api/me/app-allowance/request', appAllowanceRequestLimiter, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    if (req.user.canAdminWrite) return res.status(400).json({ error: 'Your account already has unlimited app slots.' });
+    try {
+      res.json(await appAllowance.requestMore(pool, req.user));
+    } catch (err) {
+      log.error('apps', 'App allowance request failed', { message: err.message });
+      res.status(500).json({ error: 'Could not send your request. Please try again.' });
+    }
   });
 
   router.post('/api/apps', drainGuard, appCreateLimiter, async (req, res) => {
@@ -894,34 +937,9 @@ function appRoutes(config) {
     }
 
     try {
-      // Per-user app-creation quota (FULL admins bypass — parity with the
-      // global maxApps bypass below; see users.app_quota in schema.sql).
-      // View-only admins do NOT bypass (issue #311): creating unlimited
-      // apps is an elevated capability, so they create within their own
-      // app_quota like any normal user.
-      // Counts the user's LIVE (non-errored) apps so a deletion frees a
-      // slot. The home screen already hides the create affordance via the
-      // derived canCreateApps boolean (auth/me); this is the real gate.
-      // The count-then-insert race (two concurrent creates both passing)
-      // is acceptable — identical to the maxApps cap below, not worth a
-      // lock for a soft per-user limit.
       if (!req.user?.canAdminWrite) {
-        const quota = req.user?.appQuota ?? 0;
-        const { rows: ownCountRows } = await pool.query(
-          `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
-          [req.user.id]
-        );
-        const liveCount = ownCountRows[0].n;
-        if (quota <= 0 || liveCount >= quota) {
-          log.warn('apps', 'App creation blocked by per-user quota', {
-            userId: req.user.id, liveCount, quota,
-          });
-          return res.status(403).json({
-            error: quota <= 0
-              ? 'You don’t have permission to create apps. Ask an admin to enable app creation for your account.'
-              : `You’ve reached your app limit (${quota}). Ask an admin to raise your quota.`,
-          });
-        }
+        const allowance = await appAllowance.read(pool, req.user);
+        if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
       }
 
       // Enforce global app cap (full admins bypass; view-only admins
@@ -1028,21 +1046,10 @@ function appRoutes(config) {
         return res.status(sourceApp.self_hosted ? 400 : 409).json({ error: readinessError });
       }
 
-      // Per-user quota + global cap — identical gate to POST /api/apps.
+      // The same allowance read as create/import and the account UI.
       if (!req.user?.canAdminWrite) {
-        const quota = req.user?.appQuota ?? 0;
-        const { rows: ownCountRows } = await pool.query(
-          `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
-          [req.user.id]
-        );
-        const liveCount = ownCountRows[0].n;
-        if (quota <= 0 || liveCount >= quota) {
-          return res.status(403).json({
-            error: quota <= 0
-              ? 'You don’t have permission to create apps. Ask an admin to enable app creation for your account.'
-              : `You’ve reached your app limit (${quota}). Ask an admin to raise your quota.`,
-          });
-        }
+        const allowance = await appAllowance.read(pool, req.user);
+        if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
       }
       if (!req.user?.canAdminWrite && config.maxApps > 0) {
         const { rows: countRows } = await pool.query(
@@ -1184,6 +1191,7 @@ function appRoutes(config) {
 
       const appPayload = {
         ...appAccess.stripAppSecrets(appRow),
+        directory: discoveryCuration.describe(appRow),
         last_failure: undefined,
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
           ? appRow.last_failure : null,

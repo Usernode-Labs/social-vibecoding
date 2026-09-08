@@ -475,8 +475,18 @@ const CMD = '    ';
 function buildWorkOrder({
   appName, appSlug, upstreamUrl, upstreamSlug, forkUrl, forkCloneUrl, forkRepo,
   forkPageUrl, forkStatus, branch, baseSha, issueNumber, brief, webPath,
-  taskId, agentLabelText, platformRules, targetProposal,
+  taskId, agentLabelText, platformRules, targetProposal, startedFromWalkthrough,
 }) {
+  // Where the connector is added, for the agent that finds it has none. The
+  // page carries the connector URL and the click-by-click steps for both
+  // chat products; the work order only has to point at it.
+  const settingsUrl = (() => {
+    try { return webPath ? `${new URL(webPath).origin}/#settings/connectors` : null; } catch { return null; }
+  })();
+  // Rendered as its own indented line, like a command, so a host that
+  // re-wraps prose still leaves the URL intact and copyable.
+  const connectorsPage = settingsUrl ? [`${CMD}${settingsUrl}`] : [];
+
   // The fork step, and only when there is a fork to make. The one-click
   // GitHub page comes FIRST: an agent with no `gh` is exactly the reader who
   // needs it, and it used to be a footnote below the command it replaces.
@@ -794,7 +804,20 @@ function buildWorkOrder({
     '  declare a secret in dapp.json, how to call the platform\'s LLM proxy or',
     '  file storage, what the centrally hosted native UI kit provides, what the',
     '  automated checks require. Your sandbox cannot reach the Usernode website;',
-    '  connector traffic does not go through your container, so that call works.'
+    '  connector traffic does not go through your container, so that call works.',
+    // The account the paste lands in may never have added the connector at
+    // all — a second Claude or ChatGPT account does not inherit the first
+    // one's. Said here, next to the first thing the connector is needed for,
+    // so "I have no Usernode tools" is a known state with a next step rather
+    // than a dead end; the finishing rules are under WHEN YOU ARE DONE.
+    '- If this session has NO Usernode tools, the connector was never added to',
+    '  the Claude or ChatGPT account you are running in (it is per account, so a',
+    '  second account does not inherit the first one\'s). That is not a reason to',
+    '  stop: the excerpt below is enough to build with, and step 6 under WHEN',
+    '  YOU ARE DONE says how to finish. The user adds it on Usernode at',
+    '  Settings → Connectors, which has the connector URL and the click-by-click',
+    '  steps for Claude and for ChatGPT:',
+    ...connectorsPage
   );
 
   if (hasTask) {
@@ -938,9 +961,29 @@ function buildWorkOrder({
       '   somebody else; say so rather than rewriting the change. Anything',
       '   transient, or one authentication failure: retry once.',
       '',
-      '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, print the branch',
-      '   name you pushed and the proposal id, and tell the user to hand both back',
-      '   to the assistant that started this — it can submit the update for you.',
+      '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Usernode',
+      '   connector was never added to the Claude or ChatGPT account this session',
+      '   runs in — it is per account, so a second account does not inherit the',
+      '   first one\'s. Push the branch anyway; the work is not lost. Then tell the',
+      '   user they can add the connector on Usernode at Settings → Connectors,',
+      '   which has the connector URL and the click-by-click steps:',
+      ...connectorsPage,
+      '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
+      '   if the tools still do not appear in this one.',
+      ...(startedFromWalkthrough
+        ? [
+          '   Otherwise finish from Usernode: the walkthrough that produced this',
+          '   work order checks for the pushed branch when the user returns to that',
+          '   tab, and its Submit button applies the update. Print the branch name',
+          '   and the proposal id so they can confirm it.',
+        ]
+        : [
+          '   Otherwise hand it back: print the branch name you pushed and the',
+          '   proposal id, and tell the user to give both to the assistant that',
+          '   started this — it can submit the update for you. If they started',
+          '   from the Usernode tab instead, that tab checks for the pushed branch',
+          '   and its Submit button applies the update.',
+        ]),
       '',
       // Step 7 and the closing line are the two places where "a proposal the
       // group is voting on" and "somebody's work in progress" genuinely differ:
@@ -990,10 +1033,26 @@ function buildWorkOrder({
       '',
       '2. SUBMIT IT YOURSELF, through the Usernode connector. Call `submit_work`',
       `   with taskId ${taskRef}, branch set to the name you actually pushed,`,
-      `   agent "${agentValue}", source "work_order", and a short title and`,
-      '   description for the people who will vote on it. It answers with a link',
-      '   to the new proposal — give that link to the user and tell them it is up',
-      '   for the group\'s vote.',
+      `   agent "${agentValue}", source "work_order", and a short title, plus`,
+      '   BOTH pieces of prose described next. It answers with a link to the new',
+      '   proposal — give that link to the user and tell them it is up for the',
+      '   group\'s vote.',
+      // The two-audience rule, at the moment it is acted on. An agent that
+      // sends only `description` produces a proposal whose About sheet shows
+      // a non-technical voter nothing but the diff explained in developer
+      // terms — the common case before `summary` existed, and the reason the
+      // sheet has two sections at all. The charter says the same thing; this
+      // is the copy that gets read, because it sits in the step.
+      '   `summary` is the USER-FACING half and the first thing a voter reads:',
+      '   one to three short sentences of plain everyday English saying what',
+      '   changes for somebody USING the app — what looks different, what they',
+      '   can now do, what stops going wrong. No file names, no identifiers, no',
+      '   code, no developer vocabulary.',
+      '   `description` is the TECHNICAL half: it becomes the pull request body',
+      '   and sits behind a collapsed "Technical details" section, so',
+      '   implementation, trade-offs and testing detail belong there and are not',
+      '   lost. Write the summary from what the person voting would NOTICE, not',
+      '   from what you edited. Not every member of the group is a developer.',
       // Without these two, an imported proposal has no testing metadata at
       // all: the capture step falls back to the app's home page, and the
       // people voting get a before/after pair of a screen the change never
@@ -1043,11 +1102,34 @@ function buildWorkOrder({
       '   tool returns. Anything transient, or one authentication failure: retry',
       '   once (access tokens are short-lived and your client refreshes them).',
       '',
-      '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, save the patch',
-      `   from step 4 to a \`.patch\` file, print the branch name you pushed, and`,
-      '   tell the user to hand it back to the assistant that started this — they',
-      '   can attach the file, or give it the diff text, and it finishes the same',
-      '   way.',
+      '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Usernode',
+      '   connector was never added to the Claude or ChatGPT account this session',
+      '   runs in — it is per account, so a second account does not inherit the',
+      '   first one\'s. Push the branch anyway; the work is not lost. Then tell the',
+      '   user they can add the connector on Usernode at Settings → Connectors,',
+      '   which has the connector URL and the click-by-click steps:',
+      ...connectorsPage,
+      '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
+      '   if the tools still do not appear in this one.',
+      // How the hand-off started decides who finishes it without a
+      // connector: the browser walkthrough polls for the pushed branch and
+      // its own Submit button does the rest, while a chat assistant has to
+      // be handed the branch (or a patch) back. Both are stated; the one
+      // that applies comes first.
+      ...(startedFromWalkthrough
+        ? [
+          '   Otherwise finish from Usernode: the walkthrough that produced this',
+          '   work order checks for the pushed branch when the user returns to that',
+          '   tab, and its Submit button opens the proposal. Print the branch name',
+          '   so they can confirm it.',
+        ]
+        : [
+          '   Otherwise hand it back: print the branch name you pushed and, in case',
+          '   the push was refused, save the patch from step 4 to a `.patch` file, and',
+          '   tell the user to give both to the assistant that started this — it',
+          '   finishes the same way. If they started from the Usernode tab instead,',
+          '   that tab checks for the pushed branch and its Submit button does it.',
+        ]),
       '',
       // Submitting is not the finish line: checks GATE MERGE, so a proposal
       // with a failing check cannot land however the vote goes. The agent
@@ -1499,6 +1581,7 @@ async function prepareWork(deps, params) {
       brief: trimmedBrief,
       issue_number: Number.isInteger(issueNumber) && issueNumber > 0 ? issueNumber : null,
       target_session_id: update ? update.proposalId : null,
+      client_id: clientId || row.client_id || null,
     },
     app, owner, repo, origin, clientId, clientName, prompts, agent,
     forkStatus, reused: false, targetProposal: update, openProposals,
@@ -1709,6 +1792,9 @@ function renderPreparedTask({
     agentLabelText: agent,
     platformRules: workOrderEssentials(prompts),
     targetProposal: targetProposal || null,
+    // The browser walkthrough registers its jobs under `usernode-web:<agent>`
+    // (routes/dev-flow.js); everything else is a chat assistant's connector.
+    startedFromWalkthrough: String(task.client_id || '').startsWith('usernode-web'),
   });
 
   return {
@@ -1930,32 +2016,31 @@ async function inspectPushedBranch(task, branchName, forkRepoName) {
 
 // ── The PR-creation ladder ─────────────────────────────────────────────
 //
-// The whole reason this change exists. `submit_work` has never once
-// succeeded in production: three attempts, all reaching one generic
-// `platform_error` that DISCARDED whatever
-// GitHub actually said. The one structural difference between that call and
-// every same-repo `createPR` in this codebase (all of which succeed daily,
-// including several on the platform's own repo the same afternoon these
-// failed) is the cross-fork `head: "<owner>:<branch>"`.
+// Three rungs, and the order is a decision about who owns the head after
+// the submission — see the branch path in submitWorkLocked for the whole
+// argument. In short:
 //
-// So there are three rungs now, cheapest first:
-//
-//   1. the plain cross-fork create, as before;
-//   2. the same call with an explicit `head_repo` — a bare `owner:branch`
+//   1. a MIRROR — copy the verified branch into the app's own repository and
+//      open a plain same-repo pull request. The head is then a branch the
+//      platform can write, so the auto-sync and the conflict resolver keep
+//      the proposal current when main moves (task 153). This is the rung
+//      that runs for every submission the platform can write;
+//   2. the plain cross-fork create, the FALLBACK when the platform cannot
+//      write the app repository just now: a genuine cross-fork PR shows the
+//      fork as the head on GitHub and the group can still vote on it, but
+//      nobody except its author can bring it up to date;
+//   3. the same call with an explicit `head_repo` — a bare `owner:branch`
 //      makes GitHub SEARCH the base's fork network for a repo owned by that
 //      login, which is ambiguous the moment the user owns two repos in the
-//      network, exactly the case CONFLICT_FORK_SUFFIX creates. One extra
-//      request that either fixes the leading hypothesis outright or rules it
-//      out of the log forever;
-//   3. a MIRROR — copy the verified branch into the app's own repository and
-//      open a plain same-repo pull request, the shape that demonstrably
-//      works on this deployment.
+//      network, exactly the case CONFLICT_FORK_SUFFIX creates.
 //
-// Rung 1 is still preferred, not skipped: a genuine cross-fork PR shows the
-// fork as the head on GitHub, which is better provenance and keeps the
-// contributor's name on the commit list. Preferring it costs at most two
-// failed API calls. `submitted_via` records which rung ran, so "did the
-// missing head_repo turn out to be the whole bug?" becomes a SQL query.
+// The mirror used to be the LAST rung, reached only when both cross-fork
+// creates refused — and `submit_work` had never once succeeded in production
+// until the cross-fork error was made legible: three attempts, all reaching
+// one generic `platform_error` that DISCARDED whatever GitHub actually said.
+// `resolvePullRequest` below is rungs 2 and 3, and the error that survives
+// them names the cause. `submitted_via` records which rung ran, so "how
+// often is the platform's own write path unwell?" is a SQL query.
 async function resolvePullRequest(ctx) {
   const {
     gh, owner, repo, forkOwner, forkRepo, branch, prTitle, prBody,
@@ -2088,16 +2173,9 @@ async function resolvePullRequest(ctx) {
 // GitHub's errors[] is where the actual objection lives — "field: head,
 // code: invalid" is the difference between a resolution problem and a
 // repository policy, and `field: fork_collab` is the one that cost three
-// production runs. One reader, shared by the user-facing refusal and the
-// mirror-fallback log line, so the two can never disagree about what
-// GitHub said.
+// production runs. One reader for the user-facing refusal.
 function firstErrorEntry(desc) {
   return desc && desc.data && Array.isArray(desc.data.errors) ? desc.data.errors[0] : null;
-}
-
-function firstErrorField(desc) {
-  const entry = firstErrorEntry(desc);
-  return entry ? entry.field || entry.resource || null : null;
 }
 
 // The typed, self-diagnosing replacement for the old generic refusal, which
@@ -2324,6 +2402,11 @@ async function submitUpdate(deps, params, proposalId) {
     headSha: result.headSha || null,
     previousHeadSha: result.previousHeadSha || null,
     votesCleared: Number(result.votesCleared) || 0,
+    // When the tally resets: 'now' (this call), 'on_sync' (the next
+    // pr-import sweep advances a mirrored head — the count is votesAtRisk),
+    // or 'none'. Without this, a 0 on the mirror path read as "votes kept".
+    votesClearing: result.votesClearing || (Number(result.votesCleared) > 0 ? 'now' : 'none'),
+    votesAtRisk: Number.isInteger(result.votesAtRisk) ? result.votesAtRisk : (Number(result.votesCleared) || 0),
     checksRerun: result.checksRerun === true,
     previewRebuilding: result.previewRebuilding === true,
     // #1071. A paused session takes the commit but deliberately does NOT
@@ -2813,83 +2896,92 @@ async function submitWorkLocked(deps, params) {
     }
 
     if (!pr) {
-      const outcome = await resolvePullRequest({
-        gh, owner, repo, forkOwner, forkRepo, branch,
-        prTitle: prTitleFor({ title, task, slug }),
-        prBody: prBodyFor({ body, task }),
+      // ── Rung 1: the mirror ─────────────────────────────────────────
+      //
+      // Copy the verified fork branch into the app's own repository and
+      // open a plain same-repo pull request from it. This used to be the
+      // last rung, reached only when both cross-fork creates refused — and
+      // for as long as they did, every connector proposal was a mirror
+      // anyway. Making it the FIRST rung is a choice about who owns the
+      // head afterwards: a `usernode/from-…` branch is one the platform can
+      // write, so when main moves under the proposal the auto-sync and the
+      // conflict resolver bring it up to date the way they do for a native
+      // session. A head in the author's fork cannot be written by anyone
+      // but the author, so a fork-tracked proposal sat at "Conflict
+      // resolution failed" until its author came back (task 153).
+      //
+      // Provenance is verified inside mirrorForkBranch BEFORE anything is
+      // copied — that is where the attribution gate lives for a
+      // platform-written head — and it is the mirror's own refusals
+      // (somebody else's fork, a branch not built on the recorded base, a
+      // branch GitHub does not have) that are handed back verbatim: each
+      // names what to fix, and a cross-fork create would fail on the same
+      // fact with a worse sentence. Only a refusal about the PLATFORM —
+      // no write credential, the copy itself failed, the ancestry check
+      // could not be made — falls through to rungs 2 and 3.
+      const prTitle = prTitleFor({ title, task, slug });
+      const prBody = prBodyFor({ body, task });
+      const mirrored = await externalAgentHead.mirrorForkBranch({
+        gh, githubPublic, owner, repo, forkOwner, forkRepo, branch,
+        expectedLogin: link.login,
         baseSha: task ? task.base_sha : null,
         taskId: task ? task.id : null,
-        expectedLogin: link.login,
-        pushedState: pushed,
       });
-      if (outcome.done) return outcome.done;
-      if (outcome.ok) {
-        pr = outcome.pr;
-        via = outcome.via;
+      if (mirrored.ok) {
+        platformOwnedHead = mirrored;
+        via = 'mirror';
+        try {
+          pr = await gh.createPR(owner, repo, { branch: mirrored.branch, title: prTitle, body: prBody });
+        } catch (err) {
+          await mirrored.cleanup();
+          platformOwnedHead = null;
+          const desc = gh.describeGithubError ? gh.describeGithubError(err) : null;
+          log.error('external-agent-tasks', 'same-repo PR failed for a mirrored head', {
+            owner, repo, taskId: task ? task.id : null, ...(desc || { message: err && err.message }),
+          });
+          return prOpenFailed({ desc, owner, repo, forkOwner, forkRepo, branch });
+        }
+      } else if (mirrored.code !== 'platform_unavailable') {
+        return mirrored;
       } else {
-        // ── Rung 3: the mirror ───────────────────────────────────────
+        // ── Rungs 2 and 3: the cross-fork pull request ─────────────────
         //
-        // Both cross-fork attempts refused. Rather than hand back an
-        // error the user can do nothing with, copy the branch into the
-        // app's own repository and open the plain same-repo pull request
-        // that works. Provenance is verified inside mirrorForkBranch
-        // BEFORE anything is copied — that is where the attribution gate
-        // lives for a platform-written head.
+        // The platform could not write the app repository just now. A
+        // proposal whose head the platform only TRACKS is still a proposal
+        // — the group can review and vote on it, and it merges the same
+        // way — so rather than hand back an error the user can do nothing
+        // with, open the pull request from the fork itself. What is lost
+        // is the automatic sync: the topic page says so, and the author
+        // brings the branch up to date and submits again.
         //
-        // Say out loud that we got here and why. Since cross-fork creates
-        // send `maintainer_can_modify: false`, rung 1 is expected to
-        // succeed and this line should stop appearing entirely — so its
-        // presence is the signal that something new is refusing the fork
-        // head, visible in the log rather than only as a `submitted_via`
-        // value somebody has to go and query.
-        log.info('external-agent-tasks', 'cross-fork create refused — falling back to the mirror', {
+        // Say out loud that we got here and why. With the mirror first this
+        // line should be rare, so its presence in the log is the signal
+        // that the platform's own write path is unwell — visible without
+        // anyone going and querying `submitted_via`.
+        log.warn('external-agent-tasks', 'mirror unavailable — falling back to a cross-fork pull request', {
           owner,
           repo,
           head: `${forkOwner}:${branch}`,
           taskId: task ? task.id : null,
-          // Which rung failed and what GitHub said about it. `desc` is the
-          // describeGithubError shape from the second attempt; the field
-          // GitHub objected to is the part worth reading at a glance.
-          failedRungs: 'branch, branch_head_repo',
-          status: outcome.desc ? outcome.desc.status || null : null,
-          requestId: outcome.desc ? outcome.desc.requestId || null : null,
-          githubField: firstErrorField(outcome.desc),
-          message: outcome.desc ? outcome.desc.message : null,
+          mirrorCode: mirrored.code || null,
+          mirrorMessage: mirrored.message || null,
         });
-        const mirrored = await externalAgentHead.mirrorForkBranch({
-          gh, githubPublic, owner, repo, forkOwner, forkRepo, branch,
-          expectedLogin: link.login,
+        const outcome = await resolvePullRequest({
+          gh, owner, repo, forkOwner, forkRepo, branch,
+          prTitle, prBody,
           baseSha: task ? task.base_sha : null,
           taskId: task ? task.id : null,
+          expectedLogin: link.login,
+          pushedState: pushed,
         });
-        if (!mirrored.ok) {
-          // A refusal with a REASON (someone else's fork, a branch built
-          // off a different base) is the mirror's own answer and is more
-          // useful than GitHub's. Anything else falls back to the typed
-          // GitHub error, which now says what actually happened.
-          if (mirrored.code === 'fork_mismatch' || mirrored.code === 'base_mismatch') return mirrored;
+        if (outcome.done) return outcome.done;
+        if (!outcome.ok) {
           return prOpenFailed({
             desc: outcome.desc, owner, repo, forkOwner, forkRepo, branch,
           });
         }
-        platformOwnedHead = mirrored;
-        via = 'mirror';
-        try {
-          pr = await gh.createPR(owner, repo, {
-            branch: mirrored.branch,
-            title: prTitleFor({ title, task, slug }),
-            body: prBodyFor({ body, task }),
-          });
-        } catch (err) {
-          await mirrored.cleanup();
-          const desc = gh.describeGithubError ? gh.describeGithubError(err) : null;
-          log.error('external-agent-tasks', 'same-repo PR failed for a mirrored head', {
-            owner, repo, ...(desc || { message: err && err.message }),
-          });
-          return prOpenFailed({
-            desc: desc || outcome.desc, owner, repo, forkOwner, forkRepo, branch,
-          });
-        }
+        pr = outcome.pr;
+        via = outcome.via;
       }
     }
   }

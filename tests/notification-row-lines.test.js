@@ -66,6 +66,18 @@ const ROW = {
   appName: 'Notes', appSlug: 'notes', sourceUsername: 'ada',
 };
 
+test('allowance notifications explain the change, request or review outcome', async () => {
+  const changed = await lines({ kind: 'app_quota_changed', detail: '2:4', appName: null });
+  assert.equal(changed.label, 'App allowance changed');
+  assert.equal(changed.subject, '2 → 4 app slots');
+  assert.match(changed.meta, /^Account/);
+  const requested = await lines({ kind: 'app_quota_requested', appName: null });
+  assert.equal(requested.subject, '@ada');
+  assert.match(requested.meta, /^Admin/);
+  const declined = await lines({ kind: 'app_quota_request_declined', appName: null });
+  assert.equal(declined.subject, 'Your app allowance is unchanged.');
+});
+
 /** The row's two copy lines, as plain strings. */
 async function lines(n) {
   const view = (await load())({ ...ROW, ...n });
@@ -211,12 +223,37 @@ test('ScreenRow renders kind, subject, meta — in that order', () => {
 test('the three lines are visually ranked, not three of the same thing', () => {
   const row = SHEET.slice(SHEET.indexOf('function ScreenRow('));
   const body = row.slice(0, row.indexOf('\n}'));
-  assert.match(body, /text-xs font-semibold text-zinc-500 dark:text-zinc-400 truncate/,
-    'the kind is small and semibold — subordinate, but not the meta line');
-  assert.match(body, /block text-sm text-zinc-900 dark:text-zinc-100 truncate/,
+
+  // The SIZES moved onto the Improve rail's scale (text-xs / text-sm) when the
+  // sheet stopped running a bespoke 13-22px ramp beside a panel running
+  // Tailwind's — see the type block in the sheet's header. The RANKING is what
+  // this test is about and it is unchanged: the subject is the only line that
+  // is both larger and heavier than the two around it.
+  assert.match(body, /block text-xs text-zinc-500 dark:text-zinc-400 truncate/,
+    'the kind line is subordinate, in the muted ink');
+  assert.match(body, /block text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate/,
     'the subject carries the strong ink and the larger size');
   assert.match(body, /block text-xs text-zinc-500 truncate/,
     'the meta line stays small and regular');
+
+  // Stated as a relationship too, so a future scale change has to keep the
+  // RANK rather than merely keep three literals that happen to differ.
+  //
+  // Read off the three line spans specifically — `block text-…` — and nothing
+  // else in the row. An earlier cut of this scanned the whole body and matched
+  // the count badge, whose classes are a multi-line concatenation carrying
+  // both `font-semibold` and a muted `text-zinc-500` in different branches of
+  // a ternary. The badge is not one of the three lines and has no rank here.
+  const lines = (body.match(/block text-\S+[^"']*/g) || [])
+    .filter((c) => c.includes('truncate'));
+  assert.equal(lines.length, 3, 'exactly three ranked lines');
+  const strong = lines.filter((c) => /font-semibold/.test(c));
+  assert.equal(strong.length, 1, 'exactly one line carries the strong weight');
+  assert.match(strong[0], /text-zinc-900/, 'and it is the one in the strong ink');
+  const size = (c) => /block (text-\S+)/.exec(c)[1];
+  assert.ok(lines.filter((c) => size(c) === size(strong[0])).length === 1,
+    'the subject must not share its size with the lines it outranks');
+
   // Each line truncates on its own, so a long subject cannot push the app
   // name or the time off the row.
   // Counted on the class strings themselves (`truncate"`), since the prose

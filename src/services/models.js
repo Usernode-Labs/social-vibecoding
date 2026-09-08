@@ -41,7 +41,10 @@ const MODELS = {
   'claude-sonnet-5': {
     label: 'Sonnet 5',
     tier: 'sonnet',
-    outputCostPerMTok: 15,
+    // Sonnet 5 is $2 in / $10 out per MTok; 15 was the 4.6 generation's
+    // rate, carried over when the id moved. services/llm.js's per-1k table
+    // reads the same figures.
+    outputCostPerMTok: 10,
     changeSize: {
       short: 'simple, small changes',
       long: 'One small thing at a time: a text tweak, a colour, a single file.',

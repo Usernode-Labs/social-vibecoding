@@ -208,6 +208,58 @@ const app = (over) => ({
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
+test('#1523: quality outranks featuring/popularity, while explicit sorts and search retain all apps', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._open = true;
+  Browse._apps = [
+    app({ slug: 'demo', name: 'Demo app', active_users: 999, featured: true,
+      directory: { tier: 'more', state: 'demo' } }),
+    app({ slug: 'unreviewed', active_users: 10, directory: { tier: 'unreviewed' } }),
+    app({ slug: 'working', icon_emoji: '🎮', active_users: 1, directory: { tier: 'ready', state: 'working' } }),
+  ];
+  Browse.render();
+  assert.deepEqual(slugs(state), ['working', 'unreviewed', 'demo']);
+  assert.equal(state.curated, true);
+  assert.equal(state.moreExpanded, false);
+  Browse.toggleMore();
+  assert.equal(state.moreExpanded, true);
+  Browse.toggleMore();
+  Browse.setQuery('Demo app', { immediate: true });
+  assert.equal(state.curated, false, 'matching demos are visible without expanding');
+  assert.deepEqual(slugs(state), ['demo']);
+  assert.equal(rowFor(state, 'demo').openable, true, 'real demo apps are still usable');
+  assert.equal(rowFor(state, 'demo').demo, false, 'not a staging-only inert fixture');
+  Browse.setQuery('', { immediate: true });
+  assert.equal(state.curated, true);
+  assert.equal(state.moreExpanded, false);
+  Browse.setSort('users');
+  assert.equal(state.curated, false, 'explicit metric sorts are global, not grouped');
+  assert.deepEqual(slugs(state), ['demo', 'unreviewed', 'working']);
+});
+
+test('#1523: disclosure survives a detail round trip and resets on a new directory visit', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._load = () => {};
+  Browse._apps = [app({ slug: 'demo', directory: { tier: 'more', state: 'demo' } })];
+  Browse.open();
+  Browse.toggleMore();
+  Browse.showDetail('demo');
+  Browse.showList();
+  assert.equal(state.moreExpanded, true);
+  Browse.close(); Browse.open();
+  assert.equal(state.moreExpanded, false);
+});
+
+test('#1523: preview URLs seed only disclosure state and forward the staging fixture opt-in', async () => {
+  const { Browse, state, fetchCalls, storage } = makeBrowse({ search: '?demo=1&curation=1&sort=recommended&shot=browse-more' });
+  Browse.open();
+  await flush();
+  assert.equal(state.moreExpanded, true);
+  assert.ok(fetchCalls.some((c) => c.url === '/api/apps?demo=1&curation=1'));
+  assert.ok(fetchCalls.every((c) => c.method === 'GET'));
+  assert.deepEqual(storage, {}, 'a review URL does not overwrite user preferences');
+});
+
 // ── sortApps: featured first, then the server's activity order ────
 
 test('sortApps: featured rows lead, ordered by featured_order', () => {
@@ -555,8 +607,8 @@ test('rowView: an app-store row — icon, name, meta, Add state', () => {
   // The whole app record rides the descriptor, because the icon tile and the
   // chip strip are shared decisions (app-card.js) the row does not re-make.
   assert.equal(fresh.app.slug, 'fresh');
-  // Added rows read "Added", fresh ones "Add" — the flag is the descriptor's,
-  // the two labels are browse-list.tsx's.
+  // Added rows read "Added", fresh ones "Add to Your apps" (#1553) — the flag
+  // is the descriptor's, the two labels are browse-list.tsx's.
   assert.equal(fresh.added, false);
   assert.equal(rowFor(state, 'mine').added, true);
   assert.match(rowFor(state, 'mine').addTitle, /Tap to remove/);
@@ -1220,6 +1272,17 @@ test('browse.js is a bundle module the #browse-screen island imports', () => {
     'the string builders belong to the surfaces that are still legacy');
   assert.match(read('frontend/src/features/apps/browse-list.tsx'),
     /from '\.\/app-card-view'/);
+});
+
+test('#1553: the row button names the destination, like every other surface', () => {
+  // "Add" alone did not say add to WHAT, and this row was the only place the
+  // platform left that a guess — the detail page's button, the app-chip menu
+  // and this button's own title attribute all spell out "Your apps".
+  const listSrc = read('frontend/src/features/apps/browse-list.tsx');
+  assert.match(listSrc, /'Added' : 'Add to Your apps'/);
+  assert.doesNotMatch(listSrc, /'Added' : 'Add'/);
+  // The state label stays short: the row it sits on already says which app.
+  assert.match(listSrc, /view\.added \? 'Added'/);
 });
 
 // ── app.js routing ───────────────────────────────────────────────

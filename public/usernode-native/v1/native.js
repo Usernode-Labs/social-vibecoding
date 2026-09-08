@@ -20,9 +20,13 @@
  *                                        (element container OR the window
  *                                        scroller; the puck hangs BELOW the
  *                                        app header — opts.topEl / opts.top
- *                                        anchor it under a fixed one — and
- *                                        lingers briefly once onRefresh
- *                                        settles; never throws on bad input)
+ *                                        anchor it under a fixed one —
+ *                                        resting FULLY below that anchor
+ *                                        line with equal space above and
+ *                                        below, and lingers briefly once
+ *                                        onRefresh settles. Returns
+ *                                        { detach(), refresh() }; never
+ *                                        throws on bad input)
  *   unNative.attachGridPlacement(listEl, opts) — free-form placement on a
  *     fixed grid (drop anywhere, holes allowed — the homescreen model;
  *     cellFromPoint(x, y, info) gets the dragged tile's live rect/centre in
@@ -242,6 +246,52 @@
   function decidePtrRelease(input) {
     if (input.pull >= input.threshold) return true;
     return projectDisplacement(input.pull, input.v, input.horizonMs) >= input.threshold;
+  }
+
+  /* ── Pull-to-refresh geometry ─────────────────────────────────────────
+   * Above the Node cut on purpose: the puck's resting pose is arithmetic,
+   * and issue #1526 (a quarter of the spinner sliced off by the header's
+   * edge for two releases) went unnoticed precisely because these numbers
+   * lived down in the DOM half where no unit test could reach them.
+   *
+   * Tuning note (v1 in-place fix): the original COEFF 0.4 / THRESHOLD 70
+   * pair required ~330px of raw finger travel to arm — more than half a
+   * phone screen, so short lists were nearly impossible to refresh. The
+   * pair below arms at ~125px of travel (UIRefreshControl territory)
+   * while keeping the same asymptote, so a deep pull still saturates at
+   * the familiar rubber-band feel.
+   */
+  var PTR_THRESHOLD = 60; // px of displayed pull that arms a refresh
+  var PTR_LIMIT = 150; // rubber-band asymptote
+  var PTR_COEFF = 0.8; // initial resistance slope (~dy/1.25)
+  var PTR_MIN_HOLD_MS = 500; // spinner floor so instant refreshes still read
+  var PTR_SETTLE_HOLD_MS = 500; // linger AFTER onRefresh settles, then retract
+  var PTR_LAYER_H = 240; // clip window the puck travels inside
+
+  // The puck's box, mirroring .un-ptr-puck's width/height in native.css
+  // (cross-checked by a test — the pose math below is meaningless if the
+  // painted box drifts from the constant it is derived from).
+  var PTR_PUCK = 34;
+  // Breathing room above AND below the puck at rest. Everything else is
+  // derived from these two numbers, so the resting state stays balanced
+  // by construction rather than by a hand-tuned coefficient.
+  var PTR_PUCK_GAP = 14;
+  // Where the content holds while refreshing: gap, puck, gap. 62px, just
+  // past PTR_THRESHOLD, so the puck rests at full scale and full opacity
+  // and the content never springs BACKWARDS on commit.
+  var PTR_HOLD = PTR_PUCK + 2 * PTR_PUCK_GAP;
+  // Retracted pose: the whole puck sits above the anchor line, where the
+  // layer's overflow clip hides it.
+  var PTR_PUCK_PARKED = -(PTR_PUCK + 6);
+  // Travel per px of pull, solved so ptrPuckOffset(PTR_HOLD) === the gap.
+  var PTR_PUCK_TRAVEL = (PTR_PUCK_GAP - PTR_PUCK_PARKED) / PTR_HOLD;
+
+  // The puck's top edge, in px relative to the clip layer's top (= the
+  // anchor line). Negative means clipped behind the header — which is the
+  // emerge-from-under-the-bar idiom during the drag (the top crosses the
+  // line at ~43px of pull) and, at rest, the bug this helper fixed.
+  function ptrPuckOffset(pull) {
+    return PTR_PUCK_PARKED + pull * PTR_PUCK_TRAVEL;
   }
 
   // Bottom-sheet release decision. y is the sheet's downward displacement
@@ -660,6 +710,13 @@
     lockIntent: lockIntent,
     decideSwipeRelease: decideSwipeRelease,
     decidePtrRelease: decidePtrRelease,
+    PTR_PUCK: PTR_PUCK,
+    PTR_PUCK_GAP: PTR_PUCK_GAP,
+    PTR_HOLD: PTR_HOLD,
+    PTR_THRESHOLD: PTR_THRESHOLD,
+    PTR_LIMIT: PTR_LIMIT,
+    PTR_LAYER_H: PTR_LAYER_H,
+    ptrPuckOffset: ptrPuckOffset,
     decideSheetRelease: decideSheetRelease,
     GHOST_CLICK_MS: GHOST_CLICK_MS,
     decideBackdropDismiss: decideBackdropDismiss,
@@ -1141,22 +1198,10 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
-   * Pull-to-refresh
+   * Pull-to-refresh — the wiring. The travel geometry (PTR_PUCK,
+   * PTR_PUCK_GAP, PTR_HOLD, ptrPuckOffset, …) lives above the Node cut
+   * so it can be unit-tested; see the "Pull-to-refresh geometry" block.
    * ──────────────────────────────────────────────────────────────────── */
-
-  // Tuning note (v1 in-place fix): the original COEFF 0.4 / THRESHOLD 70
-  // pair required ~330px of raw finger travel to arm — more than half a
-  // phone screen, so short lists were nearly impossible to refresh. The
-  // pair below arms at ~125px of travel (UIRefreshControl territory)
-  // while keeping the same asymptote, so a deep pull still saturates at
-  // the familiar rubber-band feel.
-  var PTR_THRESHOLD = 60; // px of displayed pull that arms a refresh
-  var PTR_HOLD = 56; // px the content holds at while refreshing
-  var PTR_LIMIT = 150; // rubber-band asymptote
-  var PTR_COEFF = 0.8; // initial resistance slope (~dy/1.25)
-  var PTR_MIN_HOLD_MS = 500; // spinner floor so instant refreshes still read
-  var PTR_SETTLE_HOLD_MS = 500; // linger AFTER onRefresh settles, then retract
-  var PTR_LAYER_H = 240; // clip window the puck travels inside
 
   // First element child that is the app's own, skipping kit chrome.
   function firstContentChild(parent) {
@@ -1179,8 +1224,15 @@
   // reads as one. No-op on desktop. Invalid input NEVER throws: it warns
   // once and returns a no-op { detach() }.
   //
+  // Returns { detach(), refresh() }. refresh() starts a refresh without a
+  // gesture (the UIRefreshControl.beginRefreshing() equivalent) and is a
+  // no-op while one is already running.
+  //
   // The puck NEVER paints over the app's header. It lives in a clip layer
-  // whose top edge is the anchor, and it is stacked BENEATH the header:
+  // whose top edge is the anchor, and it is stacked BENEATH the header. At
+  // rest it sits ENTIRELY below that anchor line, with PTR_PUCK_GAP of
+  // space above and below it; during the drag it emerges from under the
+  // bar as the content slides away.
   //
   //   opts.topEl  — an Element (typically the fixed/sticky app header)
   //                 whose bottom edge the puck hangs from. Re-measured on
@@ -1192,7 +1244,7 @@
   //                 parent (i.e. below whatever chrome sits above it);
   //                 window mode: the safe-area top inset.
   function attachPullToRefresh(scrollEl, onRefresh, opts) {
-    var noop = { detach: function () {} };
+    var noop = { detach: function () {}, refresh: function () {} };
     if (platform === 'desktop') return noop;
 
     var windowMode = scrollEl === window || scrollEl === document ||
@@ -1305,7 +1357,7 @@
       var progress = Math.min(1, y / PTR_THRESHOLD);
       puck.style.opacity = String(progress);
       puck.style.transform =
-        'translate(-50%, ' + (y * 0.55 - 40) + 'px) scale(' + (0.5 + 0.5 * progress) + ') ' +
+        'translate(-50%, ' + ptrPuckOffset(y) + 'px) scale(' + (0.5 + 0.5 * progress) + ') ' +
         'rotate(' + y * 2.2 + 'deg)';
       var nowArmed = !refreshing && y >= PTR_THRESHOLD;
       if (nowArmed !== armed) {
@@ -1423,6 +1475,13 @@
     listenEl.addEventListener('touchcancel', onTouchEnd, { passive: true });
 
     return {
+      // Programmatic refresh — the kit's beginRefreshing(). Used by the
+      // demo page's ?un-demo=ptr-hold screenshot state; a no-op while a
+      // refresh is already running.
+      refresh: function () {
+        if (refreshing) return;
+        startRefresh(0);
+      },
       detach: function () {
         listenEl.removeEventListener('touchstart', onTouchStart);
         listenEl.removeEventListener('touchmove', onTouchMove);
@@ -3154,6 +3213,67 @@
 
   var modalStack = []; // Escape dismisses the TOPMOST dismissible modal only
 
+  // Modal/alert cards and the dim over the page are one fade (#1566).
+  // Explicitly commit BOTH starting opacities, including the separately
+  // composited backdrop, before a microtask-origin open can reach its rAF.
+  // Keep the two writes in one frame, and retire the pair only when both
+  // opacity transitions end — never on a child's transition or keyboard top.
+  function animateDialog(card, backdrop, onEntered) {
+    var layers = [card, backdrop];
+    layers.forEach(function (el) { void getComputedStyle(el).opacity; });
+    var closed = false;
+    var frame = requestAnimationFrame(function () {
+      frame = null;
+      if (closed) return;
+      backdrop.style.opacity = '1';
+      card.classList.add('un-in');
+      if (onEntered) onEntered();
+    });
+
+    return {
+      dismiss: function (onExited) {
+        if (closed) return;
+        closed = true;
+        if (frame !== null) cancelAnimationFrame(frame);
+        // A close before the entrance paints has nothing to fade. Reading
+        // both current styles also commits an interrupted entrance before
+        // reversing it, so the browser can shorten both exits consistently.
+        var ended = layers.map(function (el) { return getComputedStyle(el).opacity === '0'; });
+        var fired = false;
+        var timer = null;
+        var handlers = layers.map(function (el, index) {
+          return function (event) {
+            if (event.target !== el || event.propertyName !== 'opacity') return;
+            // An entrance transitionend can already be queued at close.
+            if (getComputedStyle(el).opacity !== '0') return;
+            ended[index] = true;
+            if (ended.every(Boolean)) finish();
+          };
+        });
+        function finish() {
+          if (fired) return;
+          fired = true;
+          if (timer !== null) clearTimeout(timer);
+          layers.forEach(function (el, index) {
+            el.removeEventListener('transitionend', handlers[index]);
+            if (el.parentNode) el.parentNode.removeChild(el);
+          });
+          if (onExited) onExited();
+        }
+        layers.forEach(function (el, index) {
+          el.style.pointerEvents = 'none';
+          el.addEventListener('transitionend', handlers[index]);
+        });
+        card.classList.remove('un-in');
+        backdrop.style.opacity = '0';
+        if (ended.every(Boolean)) finish();
+        // Safety for a hidden document, removed CSS, or a cancelled
+        // transition: longer than the shared 180ms fade, never its clock.
+        else timer = setTimeout(finish, 300);
+      },
+    };
+  }
+
   window.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape' || !modalStack.length) return;
     // A popover open above a modal owns Escape (its own handler
@@ -3189,49 +3309,25 @@
     var closed = false;
     var entry = { dismissible: dismissible, dismiss: dismiss };
     modalStack.push(entry);
+    var fade = animateDialog(card, backdrop, function () {
+      var auto = card.querySelector('[autofocus]');
+      try { (auto || card).focus(); } catch (e) { /* ignore */ }
+    });
 
     function dismiss() {
       if (closed) return;
       closed = true;
       var i = modalStack.indexOf(entry);
       if (i >= 0) modalStack.splice(i, 1);
-      card.classList.remove('un-in');
-      backdrop.style.opacity = '0';
-      // Nothing is clickable while fading out — not the card, not the
-      // dimmed area underneath it.
-      card.style.pointerEvents = 'none';
-      backdrop.style.pointerEvents = 'none';
-      var fired = false;
-      function finish() {
-        if (fired) return;
-        fired = true;
-        if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
-        if (card.parentNode) card.parentNode.removeChild(card);
+      fade.dismiss(function () {
         if (prevFocus && typeof prevFocus.focus === 'function') {
           try { prevFocus.focus(); } catch (e) { /* ignore */ }
         }
         if (opts.onDismiss) opts.onDismiss();
-      }
-      card.addEventListener('transitionend', finish, { once: true });
-      setTimeout(finish, 300); // safety if transitionend never fires
+      });
     }
 
     if (dismissible) onBackdropDismiss(backdrop, function () { dismiss(); });
-
-    // Commit the initial (hidden) style before the entrance class lands.
-    // Without this reflow the browser can coalesce append + class-add
-    // into one style pass and skip the fade entirely — reliably so when
-    // presentModal is called from a microtask (e.g. a MutationObserver
-    // callback), where no paint happens before the rAF below.
-    void card.offsetWidth;
-
-    // Next frame: engage the CSS entrance (scale 1.04 → 1, fade in).
-    requestAnimationFrame(function () {
-      backdrop.style.opacity = '1';
-      card.classList.add('un-in');
-      var auto = card.querySelector('[autofocus]');
-      try { (auto || card).focus(); } catch (e) { /* ignore */ }
-    });
 
     return { el: card, dismiss: dismiss };
   }
@@ -3867,14 +3963,10 @@
           if (settled) return;
           settled = true;
           var value = field ? field.value : undefined;
-          card.classList.remove('un-in');
-          backdrop.style.opacity = '0';
-          setTimeout(function () {
-            if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
-            if (card.parentNode) card.parentNode.removeChild(card);
+          fade.dismiss(function () {
             if (button.handler) button.handler(value);
             resolve({ button: button, value: value });
-          }, 180);
+          });
         });
         row.appendChild(btn);
       });
@@ -3882,15 +3974,7 @@
 
       document.body.appendChild(backdrop);
       document.body.appendChild(card);
-      // Commit the initial (hidden) style before the entrance class lands —
-      // the same coalescing hazard presentModal guards against: without
-      // this reflow a microtask-origin call (e.g. a MutationObserver
-      // callback) can skip the fade + scale entrance entirely.
-      void card.offsetWidth;
-      // Next frame: engage the CSS entrance (scale 1.12 → 1, fade in).
-      requestAnimationFrame(function () {
-        backdrop.style.opacity = '1';
-        card.classList.add('un-in');
+      var fade = animateDialog(card, backdrop, function () {
         if (field) { try { field.focus(); } catch (e) { /* ignore */ } }
       });
     });

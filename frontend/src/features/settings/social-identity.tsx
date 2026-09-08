@@ -7,7 +7,7 @@
  * says is resolved there, in ./social-identity-store.js's shape. This file
  * spells it as markup, class string for class string.
  *
- * ── Two pieces of genuinely local state ───────────────────────────────
+ * ── Local interaction state ──────────────────────────────────────────
  *
  * The Copy control's "Copied" flash and the configuration check's
  * in-flight/verdict line were local variables closed over by a listener,
@@ -15,6 +15,8 @@
  * created. They are `useState` here, which is allowed for exactly the reason
  * AGENTS.md gives: nothing outside React writes anywhere in this subtree, so
  * the region may hold state.
+ * Native Connect launch feedback also stays here. The system browser owns
+ * OAuth; the app reloads its account status when it returns to the foreground.
  *
  * ── The check posts to `/x/check`, for either provider ────────────────
  *
@@ -25,10 +27,11 @@
  * renderer swap's clothes.
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { socialIdentityStore } from './social-identity-store.js';
+import { openNativeSocialConnect, watchSocialConnectReturn } from './native-social-connect.js';
 
 type TierCardView = { title: string; detail: string; tone: 'plain' | 'warn' | 'ok' };
 
@@ -45,6 +48,8 @@ type ProviderRowView = {
   provider: 'github' | 'x';
   name: string;
   heading: string;
+  /** #1557 — the row's own state, as a pill. `null` when not connected. */
+  badge: { text: string; tone: 'emerald' | 'amber' } | null;
   state: { text: string; tone: 'amber' | 'emerald' | 'muted' };
   linkedAt: string | null;
   noToken: string | null;
@@ -75,8 +80,8 @@ const TIER_TONE = {
 /**
  * The Connect control's surface, shared by BOTH spellings of it.
  *
- * The live one is an `<a href>` — the OAuth flow is a top-level navigation,
- * not a fetch — and its ?demo= twin is a disabled `<button>`, because a
+ * The live one is an `<a href>` — normal browsers navigate directly, while
+ * native taps open the system browser — and its ?demo= twin is a disabled `<button>`, because a
  * fixture must not navigate out of itself. They have to render identically,
  * and `@/components/ui/button` cannot spell an anchor (this install is
  * hand-rolled and has no `asChild`), so routing the button through the
@@ -90,6 +95,24 @@ const STATE_TONE = {
   amber: 'text-amber-800 dark:text-amber-400',
   emerald: 'text-emerald-700 dark:text-emerald-400',
   muted: 'text-zinc-500 dark:text-zinc-400',
+};
+
+/*
+ * #1557: the connected badge, in the platform's read-only pill shape.
+ *
+ * A `<span>`, not @/components/ui/chip: that component is a
+ * `<button aria-pressed>` for filter toggles, and announcing a status as a
+ * pressed button is wrong for anyone on a screen reader. Same reasoning, and
+ * the same class run, as the stage-2 survey's verified pill.
+ *
+ * Whole class strings, because Tailwind's extractor is a regex over source
+ * text and a tint assembled at runtime never compiles.
+ */
+const BADGE_BASE =
+  'shrink-0 inline-flex items-center rounded-full px-2 py-0.5 text-[0.65rem] font-medium';
+const BADGE_TONE = {
+  emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+  amber: 'bg-amber-500/10 text-amber-800 dark:text-amber-400',
 };
 
 function TierCard({ tier }: { tier: TierCardView }) {
@@ -234,12 +257,25 @@ function Diagnostics({ view }: { view: DiagnosticsView }) {
 }
 
 function ProviderRow({ row }: { row: ProviderRowView }) {
+  const opening = useRef(false);
+  const [launchStatus, setLaunchStatus] = useState('');
+  const [launchFailed, setLaunchFailed] = useState(false);
   return (
     <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
-            {row.heading}
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 truncate">
+              {row.heading}
+            </div>
+            {row.badge ? (
+              <span
+                id={`${row.provider}-link-badge`}
+                className={`${BADGE_BASE} ${BADGE_TONE[row.badge.tone]}`}
+              >
+                {row.badge.text}
+              </span>
+            ) : null}
           </div>
           <div className={`text-xs mt-1 ${STATE_TONE[row.state.tone]}`}>{row.state.text}</div>
           {row.linkedAt ? (
@@ -257,7 +293,30 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
         <div className="shrink-0 flex flex-wrap justify-end gap-2">
           {row.connect ? (
             row.connect.href ? (
-              <a href={row.connect.href} className={`${CONNECT_SURFACE} hover:bg-violet-500 transition-colors`}>
+              <a href={row.connect.href} className={`${CONNECT_SURFACE} hover:bg-violet-500 transition-colors`}
+                onClick={async (e) => {
+                  const bridge = (window as any).usernode;
+                  if (!bridge?.isNative) return;
+                  e.preventDefault();
+                  if (opening.current) return;
+                  opening.current = true;
+                  setLaunchFailed(false);
+                  setLaunchStatus('Opening your browser…');
+                  try {
+                    await openNativeSocialConnect({
+                      bridge, provider: row.provider,
+                      accountId: (window as any).App?.user?.id,
+                      origin: window.location.origin,
+                    });
+                    setLaunchStatus('Finish connecting in your browser, then return to the app. Sign in with the same Usernode account if asked.');
+                  } catch (err) {
+                    setLaunchFailed(true);
+                    setLaunchStatus((err as Error).message);
+                  } finally {
+                    opening.current = false;
+                  }
+                }}
+              >
                 {row.connect.label}
               </a>
             ) : (
@@ -283,6 +342,11 @@ function ProviderRow({ row }: { row: ProviderRowView }) {
           ) : null}
         </div>
       </div>
+      {launchStatus ? (
+        <p role="status" className={`text-xs mt-2 ${launchFailed ? 'text-red-700 dark:text-red-400' : 'text-zinc-600 dark:text-zinc-400'}`}>
+          {launchStatus}
+        </p>
+      ) : null}
       <AuditNote provider={row.provider} />
       {/*
           A provider that rejects our callback address errors on its own page
@@ -315,5 +379,16 @@ export function SocialIdentityView({ phase, message, tier, providers }: SocialId
 }
 
 export function SocialIdentity() {
+  useEffect(() => {
+    if (!(window as any).usernode?.isNative) return;
+    return watchSocialConnectReturn({
+      win: window, doc: document,
+      refresh: () => {
+        if (document.querySelector('#settings-screen:not(.hidden)')) {
+          return controller()?._loadGithubLink?.();
+        }
+      },
+    });
+  }, []);
   return <SocialIdentityView {...useStoreState<SocialIdentityState>(socialIdentityStore)} />;
 }

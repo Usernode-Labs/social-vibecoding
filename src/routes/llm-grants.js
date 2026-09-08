@@ -22,14 +22,24 @@ async function grantCapacity(pool, userId) {
     [userId]
   );
   const hasApiKey = !!rows[0]?.anthropic_key_enc;
+  // #1788: the allowance is two caps now, and a user whose DAILY cap an
+  // admin switched off may still have a weekly one. Ask resolveCaps which
+  // apply rather than reading entitlement.limitCents alone, or that user
+  // could not grant an app any cap at all despite having credits.
+  // This is only the validation ceiling — the weekly gate in checkBudget
+  // is still what refuses the spend.
+  const caps = limits.resolveCaps(entitlement);
+  const allowanceCents = caps.dailyApplies
+    ? caps.dailyLimitCents
+    : (caps.weeklyApplies ? caps.weeklyLimitCents : 0);
   // An unverified user can still opt an app into their own key. Give that
   // path a conservative $10/day per-app ceiling even though their shared
   // platform allowance is zero. The proxy continues to require allowByok
   // and never exposes the key to the app.
-  const maxCapCents = entitlement.limitCents > 0
-    ? entitlement.limitCents
+  const maxCapCents = allowanceCents > 0
+    ? allowanceCents
     : (hasApiKey ? limits.TIER_ONE_LIMIT_CENTS : 0);
-  return { entitlement, hasApiKey, maxCapCents };
+  return { entitlement, hasApiKey, maxCapCents, allowanceCents };
 }
 
 // Cap validation shared by create + update: a positive integer no
@@ -144,7 +154,9 @@ function llmGrantsRoutes(config) {
       if (!capacity.entitlement.entitlementAvailable && !capacity.hasApiKey) {
         return res.status(503).json({ error: 'Credit eligibility could not be verified. Try again shortly.' });
       }
-      if (capacity.entitlement.limitCents === 0) {
+      // #1788: "no platform credit" means neither cap applies, not just
+      // the daily one (see grantCapacity).
+      if (capacity.allowanceCents === 0) {
         if (!capacity.hasApiKey) {
           const error = capacity.entitlement.verificationRequired
             ? 'Connect GitHub or X to use platform-funded AI, or add your own Anthropic API key.'
@@ -205,7 +217,9 @@ function llmGrantsRoutes(config) {
           code: 'credit_required',
         });
       }
-      if (capacity.entitlement.limitCents === 0) {
+      // #1788: "no platform credit" means neither cap applies, not just
+      // the daily one (see grantCapacity).
+      if (capacity.allowanceCents === 0) {
         // A cap-only PATCH normally leaves allow_byok untouched. Check the
         // stored value before accepting it: after a user disconnects their
         // last social account, an old platform-only grant must not become a

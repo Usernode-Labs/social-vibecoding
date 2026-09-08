@@ -296,6 +296,15 @@ const appCreateLimiter = makeLimiter({
   message: 'You\'ve created a lot of apps recently. Try again in a bit',
 });
 
+// Separate from provisioning so asking for slots never consumes a create attempt.
+const appAllowanceRequestLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  name: 'app-allowance-request',
+  keyByUser: true,
+  message: 'Too many allowance requests. Please try again later.',
+});
+
 // Issue / rename / visibility proposals: 20 / hour / user. Loose enough
 // for normal use but stops spam creation of proposals. Only successful
 // creations count, and full admins are exempt.
@@ -757,6 +766,46 @@ const waitlistCodeConfirmLimiter = makeLimiter({
   message: 'Too many code attempts for that address. Try again in a few minutes.',
 });
 
+// POST /api/public/waitlist/resend mints a code and mails it, so its bucket
+// is guarding an outbound send rather than a guess. Two of them, because the
+// two abuses are different shapes:
+//
+//   * per ADDRESS (5 / 15 min) — the mail-bomb: a distributed caller aiming
+//     an unbounded stream of mail at one inbox. Keyed on the address, so it
+//     holds no matter where the requests come from. It sits just under the
+//     mail throttle's own 5-per-day-per-recipient rule, so the ceiling a
+//     determined caller actually meets is the one that bounds the sending.
+//   * per IP (10 / 15 min) — the sweep: one caller walking a list of
+//     addresses, each of which is under its own limit.
+//
+// Both are silent as far as the caller can tell: a 429 here is the standard
+// limiter body, and it is reached by REQUEST COUNT, never by anything about
+// whether the address is on the list. The endpoint itself answers the same
+// 200 to every branch.
+//
+// The key is a SHA-256 of the normalized address, matching
+// waitlistCodeConfirmLimiter above — limiter keys live in memory as plain
+// strings, and hashing keeps a raw address out of that while still bucketing
+// exactly.
+const waitlistResendLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 5,
+  name: 'waitlist-resend',
+  key: (req) => {
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (!email) return null;
+    return `email:${crypto.createHash('sha256').update(email).digest('hex')}`;
+  },
+  message: 'Too many code requests for that address. Try again in a few minutes.',
+});
+
+const waitlistResendIpLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 10,
+  name: 'waitlist-resend-ip',
+  message: 'Too many code requests from this address. Try again in a few minutes.',
+});
+
 // Exact public-profile reads deliberately have no directory/search endpoint;
 // this IP bucket additionally bounds brute-force username enumeration.
 const publicProfileReadLimiter = makeLimiter({
@@ -834,4 +883,4 @@ const userDirectoryLimiter = makeLimiter({
   message: 'Too many directory lookups. Please slow down.',
 });
 
-module.exports = { userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, mailTestLimiter };
+module.exports = { appAllowanceRequestLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, mailTestLimiter };

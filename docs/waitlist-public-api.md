@@ -432,7 +432,6 @@ Host: social-vibecoding.usernodelabs.org
     },
     "handles": { "discord": "ada#4021" },
     "verified": { "github": "adalovelace" },
-    "admit_together": true,
     "followed_claim": true
   },
   "oauth": { "github": true, "x": true, "linkedin": false },
@@ -462,6 +461,9 @@ Field by field:
   `{}` for a signup that answered nothing. `_version` is the answers
   schema version, currently `3`. Sections are only present once
   something in them has been answered, so treat every key as optional.
+  A record saved before a key was retired still carries it, so `answers`
+  can hold keys this document no longer lists (`invites`,
+  `admit_together`); nothing reads them and no new save can add them.
   `handles` holds self-reported handles; `verified` holds handles proved
   by OAuth, and the two are kept apart deliberately.
   `country` is normally an ISO 3166-1 alpha-2 code, but a signup made
@@ -583,15 +585,17 @@ Content-Type: application/json
 | `loss_story` | string | 800 | What happened. |
 | `farcaster`, `discord`, `telegram` | string | 255 each | Self-reported handles. Stored under `answers.handles`. |
 | `other_handle` | string | 255 | Stored as `answers.handles.other`. |
-| `admit_together` | boolean | | Coerced with `!!`. Whether to admit the group together. |
 | `followed_claim` | boolean | | Coerced with `!!`. A claim that they followed, stored apart from `answers.verified` because no network confirms a follow. |
 
 A string longer than its maximum is treated as absent rather than
 rejected. An unknown enum key is a `422`: optional means "may be
 absent", never "may be anything".
 
-`invites` (an older array of typed addresses) is accepted and silently
-dropped; use the invite link from the full read instead.
+`invites` (an older array of typed addresses) and `admit_together` (an
+older flag asking to be admitted only alongside someone from the same
+link) are accepted and silently dropped rather than rejected. Use the
+invite link from the full read instead of `invites`; nothing reads
+`admit_together`, and admission has never depended on it.
 
 **Example**
 
@@ -609,7 +613,6 @@ dropped; use the invite link from the full read instead.
   "loss_kind": ["shutdown"],
   "loss_story": "Ten years of subscriptions, one announcement.",
   "discord": "ada#4021",
-  "admit_together": true,
   "followed_claim": true
 }
 ```

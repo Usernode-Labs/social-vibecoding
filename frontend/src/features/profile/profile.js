@@ -93,6 +93,19 @@ const Profile = {
   // later refresh landing doesn't reopen it.
   _shotFired: false,
 
+  // ?shot=profile-long-bio — the reviewable state for issue #1612. A bio with
+  // no space in it is the case that used to spill out of the identity card,
+  // and no real account has one, so the screenshots and the declared test
+  // could never reach it by navigating. Display only: it substitutes the bio
+  // in the store snapshot the card renders from and writes nothing, so it is
+  // deliberately NOT staging-gated (an env-gated link would starve the
+  // production-side "before" shot forever) and deliberately not visible to
+  // ./profile-edit-sheet.tsx, which reads `_user()` and could save it.
+  LONG_BIO_SHOT:
+    'Staging demo bio: https://social-vibecoding.usernodelabs.org/app/'
+    + 'a-very-long-unbroken-link-with-no-spaces-in-it-at-all/dev/proposals/1612'
+    + ' and ThisIsOneUnbrokenWordThatIsFarWiderThanTheProfileCardCouldEverBe.',
+
   isOpen() { return Profile._open; },
 
   // Re-exported so the shaping has ONE home (./profile-store.js) while the
@@ -243,7 +256,7 @@ const Profile = {
     profileStore.set({
       open: Profile._open,
       data: Profile._data,
-      user: Profile._user(),
+      user: Profile._shotUser(),
       revealed: Profile._revealed(),
       pendingAvatarUrl: Profile._pendingAvatarUrl,
       pendingRemove: Profile._pendingAvatar === 'remove',
@@ -376,6 +389,19 @@ const Profile = {
   },
 
   hasPendingAvatar() { return Profile._pendingAvatar != null; },
+
+  // The signed-in user as the identity card should render it: the real one,
+  // unless ?shot=profile-long-bio asks for the overflow state above.
+  _shotUser() {
+    const user = Profile._user();
+    let shot = null;
+    try {
+      shot = new URLSearchParams(location.search).get('shot');
+    } catch (err) { /* ignore */ }
+    return shot === 'profile-long-bio'
+      ? { ...user, bio: Profile.LONG_BIO_SHOT }
+      : user;
+  },
 
   // ?shot=profile-edit — a screenshot-state deep link, so the before/after
   // capture and the declared dapp.json test can reach a sheet that plain

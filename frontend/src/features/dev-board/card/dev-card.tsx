@@ -39,15 +39,27 @@
  * a classic script — and tests/dev-status-pill.test.js reads both ends.
  */
 
-import type { KeyboardEvent, ReactNode } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
+import { createPortal } from 'react-dom';
 
 import {
+  CheckIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
   EllipsisHorizontalIcon,
   EyeIcon,
   EyeOffIcon,
   Glyph,
   PencilSquareIcon,
+  XIcon,
 } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -65,6 +77,9 @@ import type {
   StatusPillState,
   TitleSpec,
 } from './model';
+
+/** Layout-timed on the client; a no-op under the server renderer, warning-free. */
+const useIsoLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect;
 
 /** Dispatch a named call back into app-view.js. Unknown names are a no-op. */
 function call(ref: ActionRef | undefined, node?: HTMLElement): void {
@@ -97,13 +112,25 @@ export function fmtCountdown(ms: number): string {
   return `~${m}m`;
 }
 
+/** A vote still being taken: the tally tiers, before either side has won. */
+function isOpenVote(s: StatusPillState): boolean {
+  return (s.key === 'needs_vote' || s.key === 'tally') && s.tone === 'progress';
+}
+
 /** The in-flight arc — `.dc-status-spinner-arc` everywhere on the platform. */
 function Spinner(): ReactNode {
   return <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>;
 }
 
 /**
- * The per-type tinted icon chip (`_devCardIcon`'s markup).
+ * The per-type icon (`_devCardIcon`'s markup).
+ *
+ * On a board card it draws as an 18px GLYPH in the type's colour, not the
+ * 36px tinted tile it used to be: app.css's `.dev-card-dense .dev-card-icon`
+ * strips the tile's box and fill, so the only thing on the card's left edge
+ * is the glyph and every line of the card starts at one x. The tile's
+ * classes stay in the markup — the tint utilities still carry the glyph's
+ * colour, and `rounded-lg` is what a declared check finds the head by.
  *
  * `<Glyph>` rather than a named icon: the path comes out of app-view.js's
  * `DEV_CARD_ICONS` table at render time, which is exactly the case the
@@ -114,7 +141,7 @@ export function CardIcon({ spec }: { spec: CardIconSpec }): ReactNode {
   const glyph = spec.small ? 'w-4 h-4' : 'w-5 h-5';
   return (
     <span
-      className={`${box} rounded-lg ${spec.tint} flex items-center justify-center shrink-0${spec.pulse ? ' animate-pulse' : ''}`}
+      className={`${box} rounded-lg dev-card-icon ${spec.tint} flex items-center justify-center shrink-0${spec.pulse ? ' animate-pulse' : ''}`}
       title={spec.title}
     >
       <Glyph className={glyph} d={spec.path} aria-hidden="true" />
@@ -170,10 +197,14 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
     titleParts.push(`and ${extra} more reason${extra === 1 ? '' : 's'}, open for details`);
   }
   const cd = s.countdown ? (s.reject ? ' gc-reject-countdown' : ' gc-merge-countdown') : '';
+  // An OPEN vote is the bar's own tone on a board card — accent blue, with an
+  // accent fill — where the tier's `progress` violet is kept for the merge
+  // pipeline. app.css keys `.dev-status-pill-vote`; edgeFor mirrors the rule.
+  const vote = !inline && isOpenVote(s) ? ' dev-status-pill-vote' : '';
   const block = inline ? '' : ' dev-status-pill-block';
   return (
     <span
-      className={`gc-vote-count gc-vote-count-${s.tone} dev-status-pill${block}${cd}`}
+      className={`gc-vote-count gc-vote-count-${s.tone} dev-status-pill${block}${vote}${cd}`}
       data-window-ends={s.countdown ? String(s.countdown) : undefined}
       data-label-suffix={s.countdown && s.suffix ? s.suffix : undefined}
       title={titleParts.length ? titleParts.join(' · ') : undefined}
@@ -203,7 +234,14 @@ export function StatusPill({ s, inline }: { s: StatusPillState; inline?: boolean
   );
 }
 
-/** The Preview affordance in its three states (`cardPreviewHtml`'s markup). */
+/**
+ * The Preview affordance in its three states (`cardPreviewHtml`'s markup).
+ *
+ * The labelled form (`iconOnly: false`) is a pill with the eye AND the word:
+ * it is what the board card shows now, at the right end of its action band,
+ * because a 24px eye in the corner was the hardest thing on the card to hit.
+ * The icon-only form is kept for the group-chat rows that still ask for it.
+ */
 export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
   if (spec.state === 'live') {
     return (
@@ -214,7 +252,7 @@ export function Preview({ spec }: { spec: PreviewSpec }): ReactNode {
         title={spec.title}
         onClick={() => call({ fn: 'swapToStagingForSession', args: [spec.sessionId, spec.url] })}
       >
-        {spec.iconOnly ? <EyeIcon aria-hidden="true" /> : 'Preview'}
+        {spec.iconOnly ? <EyeIcon aria-hidden="true" /> : <><EyeIcon aria-hidden="true" />{'Preview'}</>}
       </button>
     );
   }
@@ -361,9 +399,161 @@ export const BADGE_MAX = 4;
 /** And the action band at three text pills (`ACTION_PRIMARY_MAX`). */
 export const ACTION_PRIMARY_MAX = 3;
 
+/**
+ * The card's vote control: one button beside the state bar.
+ *
+ * The Yes/No pair used to be two pills in the action band — two of the three
+ * pills a card could show, on every open proposal, whether or not the reader
+ * meant to vote. They are one button now: "Vote ▾" until the viewer has cast
+ * one, then "✓ Yes ▾" (filled accent) or "✕ No ▾" (blocked tint), and the
+ * caret says it can always be changed. Pressing it opens a two-row picker;
+ * the rows are the SAME two ActionSpecs the pills were (`castVote` /
+ * `castIssueVote`, with the reviewed revision in their args), so the server's
+ * head-revision guard and the tally in each label are untouched.
+ *
+ * The picker is portalled to `document.body` and positioned fixed from the
+ * button's rect, exactly as `_toggleCardMenu` places the ⋯ menu: the kanban
+ * columns scroll sideways, so anything left inside a card would be clipped
+ * by its own column. On touch it hands the two rows to the native action
+ * sheet instead, which is what the ⋯ menu does too.
+ */
+export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const popRef = useRef<HTMLDivElement>(null);
+  const mine: 'yes' | 'no' | null = /\bgc-vote-active\b/.test(yes.cls || '')
+    ? 'yes'
+    : (/\bgc-vote-active\b/.test(no.cls || '') ? 'no' : null);
+  // "Yes (2/3)" → "2/3": the tally rides in the spec's label already.
+  const tally = (a: ActionSpec) => {
+    const m = /\(([^)]*)\)\s*$/.exec(a.label || '');
+    return m ? m[1] : '';
+  };
+  const pick = (a: ActionSpec) => {
+    setOpen(false);
+    call(a.act);
+  };
+  const toggle = (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (open) { setOpen(false); return; }
+    const pu = (window as any).PlatformUI;
+    if (pu && typeof pu.isTouch === 'function' && pu.isTouch() && typeof pu.actionSheet === 'function') {
+      pu.actionSheet({
+        actions: [
+          { label: `✓  Yes${tally(yes) ? ` (${tally(yes)})` : ''}`, handler: () => pick(yes) },
+          { label: `✕  No${tally(no) ? ` (${tally(no)})` : ''}`, handler: () => pick(no) },
+        ],
+      });
+      return;
+    }
+    const r = e.currentTarget.getBoundingClientRect();
+    const w = 168;
+    const h = 84;
+    const left = Math.min(Math.max(8, r.right - w), window.innerWidth - w - 8);
+    let top = r.bottom + 6;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+    setPos({ top: Math.round(top), left: Math.round(left) });
+    setOpen(true);
+  };
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = () => setOpen(false);
+    const onDoc = (ev: Event) => {
+      const t = ev.target as Node | null;
+      if (t && (btnRef.current?.contains(t) || popRef.current?.contains(t))) return;
+      close();
+    };
+    const onKey = (ev: globalThis.KeyboardEvent) => { if (ev.key === 'Escape') close(); };
+    document.addEventListener('click', onDoc, true);
+    document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('click', onDoc, true);
+      document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [open]);
+  const face = mine === 'yes' ? 'Yes' : (mine === 'no' ? 'No' : 'Vote');
+  // A governance apply in flight disables the pair; the one button goes
+  // inert with them, wearing the spec's own explanation.
+  const disabled = !!(yes.disabled || no.disabled);
+  const title = disabled && yes.title ? yes.title : mine
+    ? `You voted ${face}. Press to change your vote.`
+    : `Cast your vote · Yes ${tally(yes)} · No ${tally(no)}`;
+  const popover = open && pos ? createPortal(
+    <div
+      ref={popRef}
+      className="dev-vote-pop"
+      role="menu"
+      style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
+      onClick={(ev) => ev.stopPropagation()}
+    >
+      <button
+        type="button"
+        role="menuitemradio"
+        aria-checked={mine === 'yes'}
+        className="dev-vote-opt dev-vote-opt-yes"
+        title={yes.title}
+        data-act={yes.act?.fn}
+        onClick={() => pick(yes)}
+      >
+        <CheckIcon aria-hidden="true" />
+        {'Yes'}
+        <span className="dev-vote-n">{tally(yes)}</span>
+      </button>
+      <button
+        type="button"
+        role="menuitemradio"
+        aria-checked={mine === 'no'}
+        className="dev-vote-opt dev-vote-opt-no"
+        title={no.title}
+        data-act={no.act?.fn}
+        onClick={() => pick(no)}
+      >
+        <XIcon aria-hidden="true" />
+        {'No'}
+        <span className="dev-vote-n">{tally(no)}</span>
+      </button>
+    </div>,
+    document.body,
+  ) : null;
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        className={`dev-vote-btn${mine ? ` dev-vote-btn-${mine}` : ''}`}
+        data-vote-btn={mine || 'open'}
+        aria-haspopup="menu"
+        aria-expanded={open ? 'true' : undefined}
+        title={title}
+        disabled={disabled}
+        onClick={toggle}
+      >
+        {mine === 'yes' ? <CheckIcon aria-hidden="true" /> : null}
+        {mine === 'no' ? <XIcon aria-hidden="true" /> : null}
+        {face}
+        <ChevronDownIcon className="dev-vote-caret" aria-hidden="true" />
+      </button>
+      {popover}
+    </>
+  );
+}
+
+/** A Yes or No spec — the vote pair the band demotes into `VoteButton`. */
+function isVoteSpec(a: ActionSpec, side: 'yes' | 'no'): boolean {
+  return new RegExp(`\\bgc-vote-btn-${side}\\b`).test(a.cls || '');
+}
+
 /** One action pill; the kudos slot and the Explore pill are its two specials. */
-export function ActionButton({ a }: { a: ActionSpec }): ReactNode {
+export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number; hidden?: boolean }): ReactNode {
   const { enabled } = useStoreState(aiEnabledStore);
+  // `data-fold` marks a pill the one-line band may hide; the first pill and
+  // the kudos host never carry it.
+  const foldAttrs = fold ? { 'data-fold': String(fold), 'data-folded': hidden ? '1' : undefined } : {};
   if (a.kudos != null) {
     // The controller host — `AppView._fillKudosHosts` owns everything below.
     return <span className="contents" data-kudos-host={a.kudos}></span>;
@@ -380,6 +570,7 @@ export function ActionButton({ a }: { a: ActionSpec }): ReactNode {
         type="button"
         className={`gc-vote-btn gc-explore-chat-btn${enabled ? '' : ' opacity-50 cursor-not-allowed'}`}
         disabled={!enabled}
+        {...foldAttrs}
         data-proposal-id={a.explore}
         title={enabled ? a.title : "AI chat isn't configured on this deployment."}
         onClick={(e) => call({ fn: 'exploreProposalInDevChat', args: [a.explore!] }, e.currentTarget)}
@@ -408,6 +599,7 @@ export function ActionButton({ a }: { a: ActionSpec }): ReactNode {
       className={a.cls || 'gc-vote-btn'}
       disabled={a.disabled}
       title={a.title}
+      {...foldAttrs}
       data-act={a.act?.fn}
       onClick={a.act ? (e) => call(a.act, a.passNode ? e.currentTarget : undefined) : undefined}
     >
@@ -416,7 +608,14 @@ export function ActionButton({ a }: { a: ActionSpec }): ReactNode {
   );
 }
 
-/** The card's right-edge rail (`_cardRailHtml`): ⋯ up top, the eye at the bottom. */
+/**
+ * The card's right-edge rail (`_cardRailHtml`): ⋯ up top, the chevron below.
+ *
+ * The eye used to be pinned at the bottom of this column. A board card now
+ * draws its preview as a LABELLED pill at the end of the action band (see
+ * DevCard), so `rail.preview` is only drawn here by a caller that still
+ * wants the corner form — none of the board's builders do.
+ */
 function Rail({ rail }: { rail: RailSpec }): ReactNode {
   const trigger = rail.menuKey ? (
     <button
@@ -538,6 +737,13 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
   }
 
   const dense = m.dense;
+  // The vote pair leaves the action band for the status band, as one button
+  // beside the bar — on the board card and on the topic head alike.
+  const allActions = m.actions || [];
+  const yesSpec = allActions.find((a) => isVoteSpec(a, 'yes'));
+  const noSpec = allActions.find((a) => isVoteSpec(a, 'no'));
+  const voteBtn = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
+  const bandActions = voteBtn ? allActions.filter((a) => a !== yesSpec && a !== noSpec) : allActions;
   const chips = (m.badges || []).filter(Boolean);
   const kept = m.uncapped ? chips : chips.slice(0, BADGE_MAX);
   const linked = m.linked || [];
@@ -549,9 +755,19 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
   const chat = m.chatCount !== null && m.chatCount !== undefined
     ? <Badge b={{ t: 'chat', key: 'chat', count: m.chatCount || 0 }} />
     : null;
+  // The facts — linkage, metadata, message count — read as one muted text
+  // line under the bar on a board card (app.css restyles the chips), so a
+  // full-width break separates the bar row from them. Only when both exist:
+  // an empty band must stay empty, and a bare facts line needs no break.
+  const factsVisible = linked.length > 0 || kept.length > 0 || (m.chatCount || 0) > 0;
+  const brk = (m.pill || voteBtn) && factsVisible
+    ? <span className="dev-card-band-break" aria-hidden="true"></span>
+    : null;
   const badgeRow = (
     <>
       {m.pill ? <StatusPill s={m.pill.state} inline={m.pill.inline} /> : null}
+      {voteBtn}
+      {brk}
       {linked.map((b) => <Badge key={b.key} b={b} />)}
       {kept.map((b) => <Badge key={b.key} b={b} />)}
       {chat}
@@ -561,15 +777,25 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
     <div className="dev-card-badges dev-card-status" data-empty={statusHasContent ? undefined : '1'}>{badgeRow}</div>
   ) : (statusHasContent ? <div className="dev-card-badges">{badgeRow}</div> : null);
 
-  const primary = (m.actions || []).slice(0, ACTION_PRIMARY_MAX);
-  const bandPreview = m.actionPreview ? <Preview spec={m.actionPreview} /> : null;
+  const primary = bandActions.slice(0, ACTION_PRIMARY_MAX);
+  // The board card's preview rides at the END of the band as a labelled pill
+  // (the builders still hand it over as `rail.preview`; the model did not
+  // move). The detail head's arrives as `actionPreview`, already labelled.
+  const previewSpec = m.actionPreview
+    || (m.rail.preview ? { ...m.rail.preview, iconOnly: false } : null);
+  const bandPreview = previewSpec ? <Preview spec={previewSpec} /> : null;
   const hasActions = primary.length > 0 || !!bandPreview;
+  const folded = useFoldedActions(primary, m.rail.menuKey || '', !!bandPreview);
   const actionRow = hasActions ? (
-    <div className="gc-card-actions">
-      {primary.map((a) => <ActionButton key={a.key} a={a} />)}
+    <div className="gc-card-actions" ref={folded.ref}>
+      {primary.map((a, i) => (
+        <ActionButton key={a.key} a={a} fold={i > 0 && a.kudos == null ? i : undefined} hidden={i > 0 && i >= primary.length - folded.n} />
+      ))}
       {bandPreview}
     </div>
   ) : (dense ? <div className="gc-card-actions"></div> : null);
+  const rail: RailSpec = { ...m.rail, preview: null };
+  const edge = edgeFor(m);
 
   // The meta line, ' · '-joined. Dense reserves the band even when empty;
   // the detail head collapses it, exactly as `_cardContentHtml` did.
@@ -583,7 +809,7 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
     : null;
 
   return (
-    <div className={m.cls} {...attrs}>
+    <div className={`${m.cls} ${dense ? 'dev-card-dense' : 'dev-card-topic'}`} data-edge={edge} {...attrs}>
       <div className="flex-1 min-w-0">
         <div className="dev-card-head">
           {m.icon ? <CardIcon spec={m.icon} /> : null}
@@ -604,7 +830,99 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
         {actionRow}
         {(m.extra || []).map((x) => <ExtraRow key={x.key} x={x} />)}
       </div>
-      <Rail rail={m.rail} />
+      <Rail rail={rail} />
     </div>
   );
+}
+
+/**
+ * The card's left edge: the bar's tone, and the card's TYPE where it has no
+ * bar. 4px at a third strength (app.css `[data-edge]`), so a column reads as
+ * a stack of tinted spines — blue while a vote is open, violet while merging,
+ * amber behind main, red on a conflict, green once merged, grey while paused
+ * — and an open issue, which has no state, wears its type's amber so the
+ * Issues column is not the one bare column.
+ */
+function edgeFor(m: DevCardModel): string {
+  const s = m.pill?.state;
+  if (s && s.label) return isOpenVote(s) ? 'vote' : (s.tone || 'neutral');
+  const kind = String(m.key || '').split(':')[0];
+  if (kind === 'issue') return 'attention';
+  if (kind === 'proposal') return 'vote';
+  if (kind === 'gov') return 'progress';
+  return 'ok';
+}
+
+/**
+ * One line of actions, folding into ⋯.
+ *
+ * The dense band always clipped at one row, so a pill that did not fit
+ * wrapped onto a row nobody saw. It folds now: after layout the band
+ * measures its pills, keeps the first (the card's primary) and the Preview
+ * pill, marks as many of the rest as do not fit `data-folded`, and publishes
+ * those specs to app-view.js (`_setFoldedCardActions`) so `_toggleCardMenu`
+ * lists them at the top of the card's ⋯ menu.
+ *
+ * A folded pill is NOT `hidden`: app.css sends it to the clipped second row
+ * with `order` (so the Preview pill keeps the first row's right end) and
+ * it stays rendered. That is deliberate — `innerText`, which the declared
+ * checks read their `expectText` from, drops `display: none` content, and
+ * "Claim this issue" is one of those texts. Measured in a layout effect,
+ * before paint, re-measured on resize, and mirrored into React state so a
+ * re-render draws what the measurement decided.
+ */
+function useFoldedActions(
+  primary: ActionSpec[], menuKey: string, hasPreview: boolean,
+): { ref: (el: HTMLDivElement | null) => void; n: number } {
+  const bandRef = useRef<HTMLDivElement | null>(null);
+  const [n, setN] = useState(0);
+  const foldable = primary.filter((a, i) => i > 0 && a.kudos == null).length;
+  useIsoLayoutEffect(() => {
+    const band = bandRef.current;
+    if (!band || !foldable) { if (n) setN(0); return undefined; }
+    const measure = () => {
+      const kids = Array.from(band.children) as HTMLElement[];
+      const folds = kids.filter((k) => k.dataset.fold);
+      folds.forEach((k) => { k.removeAttribute('data-folded'); });
+      const gap = 6;
+      const avail = band.clientWidth;
+      let used = 0;
+      let count = 0;
+      for (const k of kids) {
+        if (k.dataset.fold) continue;
+        used += k.offsetWidth + (count ? gap : 0);
+        count += 1;
+      }
+      let shown = 0;
+      for (const k of folds) {
+        const w = k.offsetWidth + (count ? gap : 0);
+        if (used + w <= avail) { used += w; count += 1; shown += 1; } else break;
+      }
+      folds.forEach((k, i) => { if (i >= shown) k.setAttribute('data-folded', '1'); });
+      // The arithmetic mirrors the flex line-break; if a rounding edge still
+      // let one wrap, fold it too so the menu and the row agree.
+      const row = kids.length ? kids[0].offsetTop : 0;
+      folds.forEach((k, i) => {
+        if (i < shown && k.offsetTop > row) { k.setAttribute('data-folded', '1'); shown = i; }
+      });
+      setN(folds.length - shown);
+    };
+    measure();
+    if (typeof ResizeObserver !== 'function') return undefined;
+    const ro = new ResizeObserver(measure);
+    ro.observe(band);
+    return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [foldable, hasPreview, primary.map((a) => a.key + a.label).join('|')]);
+  // Tell the ⋯ menu which specs it now carries.
+  useEffect(() => {
+    if (!menuKey) return undefined;
+    const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+    if (!av || typeof av._setFoldedCardActions !== 'function') return undefined;
+    const hidden = n > 0 ? primary.filter((a, i) => i > 0 && a.kudos == null).slice(-n) : [];
+    av._setFoldedCardActions(menuKey, hidden);
+    return () => { av._setFoldedCardActions(menuKey, []); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuKey, n, primary.map((a) => a.key + a.label).join('|')]);
+  return { ref: (el) => { bandRef.current = el; }, n };
 }

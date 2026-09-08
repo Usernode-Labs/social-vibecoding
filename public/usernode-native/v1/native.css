@@ -93,6 +93,8 @@
   --un-dur-spring: 725ms;
   --un-dur-spring-stiff: 532ms;
   --un-dur-spring-gentle: 1006ms;
+  /* One fade clock for dialog cards AND the full-page dim (#1566). */
+  --un-dialog-fade-duration: 180ms;
 }
 
 @supports (animation-timing-function: linear(0, 1)) {
@@ -359,7 +361,13 @@ html.un-android .un-switch:checked:active::before {
    it ride up over the header, and the layer sits BENEATH the header in
    stacking order — level 0 and first in tree order in element mode, below
    .un-navbar's z-index:100 in window mode. So the puck is revealed by the
-   content sliding away rather than painted on top of the chrome. */
+   content sliding away rather than painted on top of the chrome.
+
+   The 34px box below is mirrored by PTR_PUCK in native.js, which derives
+   the whole travel pose from it (park, hold, per-px travel) so the puck
+   rests FULLY below the anchor line with equal space above and below —
+   issue #1526. The two copies are cross-checked by a test in
+   tests/native-kit.test.js; change them together. */
 
 .un-ptr-layer {
   position: absolute;
@@ -548,7 +556,7 @@ html.un-android .un-switch:checked:active::before {
   will-change: opacity;
 }
 .un-backdrop.un-backdrop-fade {
-  transition: opacity 180ms ease;
+  transition: opacity var(--un-dialog-fade-duration) ease;
 }
 
 /* ── Bottom sheet ──────────────────────────────────────────────────────
@@ -898,7 +906,7 @@ html.un-kb .un-action-sheet {
   text-align: center;
   transform: translate(-50%, -50%) scale(1.12);
   opacity: 0;
-  transition: transform 260ms var(--un-ease-spring), opacity 180ms ease, top 250ms ease-out;
+  transition: transform 260ms var(--un-ease-spring), opacity var(--un-dialog-fade-duration) ease, top 250ms ease-out;
   will-change: transform, opacity;
 }
 .un-alert.un-in {
@@ -985,7 +993,7 @@ html.un-kb .un-action-sheet {
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
   transform: translate(-50%, -50%) scale(1.04);
   opacity: 0;
-  transition: transform 260ms var(--un-ease-spring), opacity 180ms ease, top 250ms ease-out;
+  transition: transform 260ms var(--un-ease-spring), opacity var(--un-dialog-fade-duration) ease, top 250ms ease-out;
   will-change: transform, opacity;
   outline: none;
 }
@@ -1078,10 +1086,12 @@ html.un-android .un-toast.un-in {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .un-toast,
+  .un-toast {
+    transition: opacity 180ms ease;
+  }
   .un-modal,
   .un-alert {
-    transition: opacity 180ms ease;
+    transition: opacity var(--un-dialog-fade-duration) ease;
   }
   /* Keyboard-inset moves still apply, just without animation. */
   .un-sheet,

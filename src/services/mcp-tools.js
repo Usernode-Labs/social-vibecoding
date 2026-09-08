@@ -505,6 +505,14 @@ function shapeChecks(session) {
     phase: session.check_phase || null,
     trigger: session.check_trigger || null,
     checkedAt: isoOrNull(session.checks_checked_at),
+    // A run in flight, as far as it has got: `{ ran, passed, failed,
+    // expected, done, updatedAt, unit }`, written as the capture container's
+    // frames stream in and cleared with the verdict. `unit` is the repo
+    // unit suite (`npm test`) run alongside: `{ phase, ran, passed, failed,
+    // skipped, expected, done }`. Null outside a run — and null during the
+    // build phase, before the first check has run.
+    progress: (session.checks_progress && typeof session.checks_progress === 'object')
+      ? session.checks_progress : null,
     // The commit this verdict describes, and whether that is still the head.
     // `stale` answers false when either side is unknown: an unprovable
     // mismatch must not read as a proven one.
@@ -787,6 +795,28 @@ function shapeProposal(session, origin) {
     // yet must not report itself clean.
     mergeability: session.mergeability || null,
     freshness: require('./proposal-freshness').readFreshness(session),
+    // How current each part of this answer is. Everything above is read
+    // from the proposal's row, not from GitHub, and the row is written by
+    // several asynchronous jobs — the mirror copy after a submit, the
+    // pr-import sweep, the freshness pass, the checks run. A field can
+    // therefore lag the world by a sweep interval, and a caller comparing
+    // `headSha` to the branch it just pushed has to know that. `readAt` is
+    // this call; the others are when their own job last wrote.
+    asOf: {
+      readAt: new Date().toISOString(),
+      checks: isoOrNull(session.checks_checked_at),
+      freshness: isoOrNull(session.freshness_checked_at),
+      head: isoOrNull(session.imported_pr_head_at || session.updated_at),
+    },
+    // Writes the platform has in flight for this proposal right now. A
+    // staging build means checks_* and the preview URL are about to change;
+    // a caller that reads `checks.state` while this is true is reading the
+    // previous run.
+    pendingWrite: {
+      buildInFlight: (() => {
+        try { return !!require('./staging').hasInFlightBuild(session.id); } catch { return null; }
+      })(),
+    },
     externalAgent: session.external_agent || null,
     webPath: session.app_slug
       ? `${origin}/#app/${session.app_slug}/dev/sessions/${session.id}`
@@ -2600,7 +2630,9 @@ function registerTools(server, ctx) {
       source: z.enum(['work_order', 'assistant']).optional()
         .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),
       title: z.string().optional().describe('A short title for the proposal. Defaults to the task description. On a SESSION update (shape 4 targeting a work-order continuation) it is stored and names the pull request created when the session is proposed — with or without propose: true — instead of the "<user>\'s changes" placeholder. On a target that already has a PR it RENAMES it (panel and GitHub; votes untouched) — a same-commit resubmit with just a title is the fix for a wrong auto-generated name, and it works on a fork-tracked proposal too. The answer reports `titleUpdated`, and `titleRejected` when the rename was refused: `imported_pr` means the pull request was opened by a different GitHub account and keeps its own author\'s title.'),
-      description: z.string().optional().describe('What changed and why, for the people voting on it.'),
+      description: z.string().optional().describe('What changed and why, for the people voting on it. This is the TECHNICAL half — it is filed as the pull request body and shown in the proposal\u2019s collapsed "Technical details" section, so implementation detail belongs here rather than in `summary`.'),
+      summary: z.string().optional()
+        .describe('The USER-FACING half, and the first thing a voter reads: 1-3 short sentences, in plain everyday English, saying what changes for somebody USING the app. No file names, no identifiers, no code, no developer jargon — those belong in `description`. Not every voter is a developer, and a proposal that arrives without this shows them nothing but the technical description. Write what they would notice: what is different on screen, what they can now do, or what stops going wrong. Kept short (about 600 characters) — it is a summary, not a second description.'),
       testingPaths: z.array(z.string()).optional()
         .describe('The in-app routes this change is visible on, most important first — e.g. ["/board?demo=1", "/settings"]. Usernode shoots a before/after screenshot pair of each one for the people voting. Point them at the SCREEN YOU CHANGED, never the home page; a route may carry " @mobile" to be shot in a phone-sized viewport. Up to 3 are used. Omit only if the change has no visible screen — otherwise the voters see screenshots of the app\'s home page, which show nothing of your change. On an UPDATE these replace the proposal\'s stored routes and the screenshots are re-shot on them; omit them there to keep the ones it already has. The answer reports back `testingPaths` — what will actually be shot — and `testingPathsRejected` for anything it could not use, so check them rather than waiting for get_proposal\'s `captureDefaultedToRoot`.'),
       testingSteps: z.string().optional()
@@ -2662,7 +2694,7 @@ function registerTools(server, ctx) {
     },
     annotations: writeAnnotations,
   }, async ({
-    taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, agent,
+    taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, summary, agent,
     testingPaths, testingSteps, expectedHeadSha, propose, recheck, share,
   }) => {
     const guard = scopeGuard(WRITE_SCOPE);
@@ -2734,6 +2766,11 @@ function registerTools(server, ctx) {
         promote: true,
         ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
         ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
+        // The About sheet's user-facing half, carried on the same POST as the
+        // testing notes. Omitted when the agent sent none, so the route writes
+        // null and the proposal reads exactly as it did before — the platform
+        // does not invent one on this path.
+        ...(typeof summary === 'string' && summary.trim() ? { summary: summary.trim() } : {}),
         ...(extra.linkedIssues && extra.linkedIssues.length
           ? { linkedIssues: extra.linkedIssues }
           : {}),

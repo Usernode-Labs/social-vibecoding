@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { XIcon } from '@/components/ui/icons';
 import { useHiddenClass } from '../../lib/legacy-dom';
 import {
-  detectMobileOs, installOffer, storeLabel, type InstallOffer, type StoreUrls,
+  A2HS_STEPS, detectMobileOs, installOffer, storeLabel,
+  type InstallOffer, type StoreUrls,
 } from './detect';
 
 /**
@@ -45,10 +47,22 @@ import {
 const DISMISS_KEY = 'mobileInstallBannerDismissed';
 const BODY_CLASS = 'has-install-strip';
 
+/**
+ * #1514: the dismissal lasts a SESSION, not forever.
+ *
+ * It used to be written to `localStorage`, so the one person who tapped the
+ * × on a day the store link was not yet live could never be offered the app
+ * again on that device. `sessionStorage` keeps the strip down for as long as
+ * the tab is open — refreshes and in-app navigation included, which is what
+ * makes a dismissal feel respected — and lets the next visit ask once more.
+ *
+ * The old `localStorage` entry is deliberately NOT read as a fallback: it
+ * would pin exactly the people this change is meant to reach.
+ */
 /** Every read below is in a try/catch: Safari throws on storage in private mode. */
 function readDismissed(): boolean {
   try {
-    return localStorage.getItem(DISMISS_KEY) === '1';
+    return sessionStorage.getItem(DISMISS_KEY) === '1';
   } catch {
     return false;
   }
@@ -56,7 +70,7 @@ function readDismissed(): boolean {
 
 function writeDismissed(): void {
   try {
-    localStorage.setItem(DISMISS_KEY, '1');
+    sessionStorage.setItem(DISMISS_KEY, '1');
   } catch {
     /* A dismissal that cannot be persisted still hides the strip for this page. */
   }
@@ -83,6 +97,9 @@ export function MobileInstallBanner() {
   const [urls, setUrls] = useState<StoreUrls | null>(null);
   const [dismissed, setDismissed] = useState(false);
   const [offer, setOffer] = useState<InstallOffer | null>(null);
+  // #1513: the home-screen instructions are one tap away rather than always
+  // on, so the strip stays one line until somebody asks how.
+  const [showSteps, setShowSteps] = useState(false);
 
   // The fetch is skipped entirely for anyone who cannot be offered anything —
   // a desktop visitor, the native app, an installed PWA, someone who already
@@ -144,18 +161,49 @@ export function MobileInstallBanner() {
       <div className="min-w-0 flex-1 text-left leading-tight">
         <div className="font-medium text-zinc-900 dark:text-zinc-100 truncate">Usernode</div>
         <div className="text-zinc-500 dark:text-zinc-400 truncate">
-          {offer ? `Get the app on ${storeLabel(offer.os, offer.url)}` : 'Get the app'}
+          {/* Three states, and the middle one is the whole of #1513: with no
+              store listing published this used to read "Get the app" over a
+              link to nowhere. */}
+          {offer === null
+            ? 'Get the app'
+            : offer.kind === 'store'
+              ? `Get the app on ${storeLabel(offer.os, offer.url)}`
+              : (showSteps ? A2HS_STEPS[offer.os] : 'Add it to your home screen')}
         </div>
       </div>
-      <a
-        id="mobile-install-open"
-        href={offer ? offer.url : undefined}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="shrink-0 inline-flex items-center h-7 px-3 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium transition-colors un-touch-target"
-      >
-        Get
-      </a>
+      {offer && offer.kind === 'a2hs' ? (
+        // A BUTTON, not a link: there is nowhere to send anybody. iOS Safari
+        // has no install API and Android's prompt event is not guaranteed to
+        // fire, so the honest control reveals where the menu item is.
+        <Button
+          id="mobile-install-open"
+          type="button"
+          aria-expanded={showSteps}
+          onClick={() => setShowSteps((v) => !v)}
+          // Composed, not hand-written: the fill is `variant`'s and the ink is
+          // `ink`'s, so a restyle of the shell's primary button reaches this
+          // one too. Only the height and the tap target ride in className,
+          // which is what the anchor beside it already spells out — the two
+          // controls occupy the same seat and must be the same size.
+          layout="shrink"
+          variant="default"
+          size="xsText"
+          ink="solid"
+          className="inline-flex items-center h-7 un-touch-target"
+        >
+          {showSteps ? 'Got it' : 'How'}
+        </Button>
+      ) : (
+        <a
+          id="mobile-install-open"
+          href={offer && offer.kind === 'store' ? offer.url : undefined}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 inline-flex items-center h-7 px-3 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-xs font-medium transition-colors un-touch-target"
+        >
+          Get
+        </a>
+      )}
       <button
         id="mobile-install-dismiss"
         type="button"

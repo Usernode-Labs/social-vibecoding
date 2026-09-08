@@ -2008,7 +2008,10 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   one. **The puck never paints over the app's header**: it lives in an
   overflow-clipped layer stacked underneath the header, anchored by
   default at the scroller's own top edge (element mode) or the safe-area
-  inset (window mode, which also tucks it under `.un-navbar`). For a
+  inset (window mode, which also tucks it under `.un-navbar`). During the
+  pull it emerges from under that anchor line, and **at rest it sits
+  entirely below it, with equal space above and below the puck** — the
+  whole pose is derived from the puck's box, so no call site tunes it. For a
   custom **fixed** header in window mode, pass `opts.topEl` (the header
   element — re-measured on resize and at each pull, so a collapsing bar
   stays correct) or `opts.top` (a px offset); a header that lives
@@ -2016,7 +2019,9 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   anchor. For element containers, give them
   `overscroll-behavior-y: contain` (the kit also sets it defensively).
   No-op on desktop. Never throws: invalid input logs a console warning
-  and returns a no-op `{ detach() }`.
+  and returns a no-op `{ detach() }`. The returned handle also carries
+  `refresh()` — start a refresh with no gesture (the kit's
+  `beginRefreshing()`), a no-op while one is already running.
 - **Drag-to-reorder lists.**
   `unNative.attachReorder(listEl, { handle?, itemSelector?,
   longPressMs?, canDrop?, onReorder })`. Native-feel reordering: on

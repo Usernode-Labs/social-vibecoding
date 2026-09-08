@@ -44,18 +44,22 @@ export function OpenRouterSection() {
       </div>
       <div id="settings-openrouter-key-info" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-2 text-zinc-600 dark:text-zinc-400"></div>
       <div id="settings-openrouter-personal-controls">
-        <Label className="mb-1" htmlFor="settings-openrouter-key">
+        <Label className="px-1 pb-1 text-[15px] font-normal text-zinc-500 dark:text-zinc-500" htmlFor="settings-openrouter-key">
           Or use your personal OpenRouter API key
         </Label>
-        <div className="flex gap-2">
-          {/* Same shape as #settings-api-key above — see the note there. */}
-          <PasswordInput id="settings-openrouter-key" placeholder="sk-or-..." autoComplete="off" spellCheck={false} wrapperClassName="flex-1 min-w-0" className="font-mono" />
-          <Button id="settings-openrouter-save" layout="shrink">
-            Test &amp; save
-          </Button>
-          <Button id="settings-openrouter-remove" layout="hiddenShrink" variant="destructive" size="narrow" ink="danger">
-            Remove
-          </Button>
+        <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
+          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
+            {/* Same shape as #settings-api-key above — see the note there. */}
+            <PasswordInput id="settings-openrouter-key" placeholder="sk-or-..." autoComplete="off" spellCheck={false} wrapperClassName="flex-1 min-w-0" className="font-mono" box="card" ring="bare" hint="dim" />
+          </div>
+          <div className="flex gap-2 px-4 py-3">
+            <Button id="settings-openrouter-save" layout="shrink" variant="pillAccent" size="pill">
+              Test &amp; save
+            </Button>
+            <Button id="settings-openrouter-remove" layout="hiddenShrink" variant="pillDanger" size="pill" ink="dangerTint">
+              Remove
+            </Button>
+          </div>
         </div>
       </div>
       <div id="settings-openrouter-models-wrap" className="hidden mt-4">
@@ -74,10 +78,10 @@ export function OpenRouterSection() {
           <option value="high">High</option>
           <option value="xhigh">Extra high</option>
         </Select>
-        <button id="settings-openrouter-set-default" className="mt-3 rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-4 py-2 text-sm font-medium transition-colors">
+        <button id="settings-openrouter-set-default" className="mt-3 rounded-full bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 px-5 py-2.5 text-[15px] font-semibold transition-colors">
           Save as my default coding agent
         </button>
-        <button id="settings-claude-set-default" className="mt-2 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+        <button id="settings-claude-set-default" className="mt-2 rounded-full bg-zinc-100 dark:bg-zinc-800 px-5 py-2.5 text-[15px] font-semibold text-zinc-900 dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors">
           Use Claude Code as my default instead
         </button>
       </div>

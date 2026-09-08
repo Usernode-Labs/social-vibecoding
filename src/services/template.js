@@ -1,3 +1,6 @@
+const nodeAppPackage = require('../templates/node-app/package.json');
+const nodeAppLock = require('../templates/node-app/package-lock.json');
+
 // Forwarder snippet injected into every scaffolded app's public/index.html.
 // Captures console.log/info/warn/error/debug + uncaught errors +
 // unhandled promise rejections and posts them to `window.parent` via
@@ -308,16 +311,19 @@ Once the real app exists, rewrite this README to describe it.
     {
       path: 'package.json',
       content: JSON.stringify({
+        ...nodeAppPackage,
         name: slug,
-        version: '1.0.0',
-        private: true,
         description: appName,
-        main: 'server.js',
-        scripts: { start: 'node server.js' },
-        dependencies: {
-          express: '^4.21.0',
-          pg: '^8.13.0',
-          jsonwebtoken: '^9.0.2',
+      }, null, 2),
+    },
+    {
+      path: 'package-lock.json',
+      content: JSON.stringify({
+        ...nodeAppLock,
+        name: slug,
+        packages: {
+          ...nodeAppLock.packages,
+          '': { ...nodeAppLock.packages[''], name: slug },
         },
       }, null, 2),
     },
@@ -333,19 +339,18 @@ Once the real app exists, rewrite this README to describe it.
 # stays exactly as small as it was.
 FROM node:22-alpine AS css
 WORKDIR /build
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev
 COPY tailwind.config.js ./
 COPY styles ./styles
 COPY public ./public
-RUN npm install tailwindcss@3.4.17 --no-audit --no-fund \\
- && ./node_modules/.bin/tailwindcss \\
-      -c tailwind.config.js -i styles/tailwind-input.css \\
-      -o public/tailwind.css --minify
+RUN npm run build
 
 # Stage 2 — the app itself (unchanged apart from the one COPY at the end).
 FROM node:22-alpine
 WORKDIR /app
-COPY package.json ./
-RUN npm install --production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 COPY . .
 # After COPY . . so the compiled stylesheet is not overwritten by the
 # source tree (which deliberately does not contain one).
@@ -360,14 +365,13 @@ CMD ["node", "server.js"]
       path: 'tailwind.config.js',
       content: `// Tailwind config for this app's precompiled stylesheet.
 //
-// The Dockerfile's builder stage runs the Tailwind CLI over the globs below
+// npm run build (Docker or Paketo) runs the Tailwind CLI over the globs below
 // and writes public/tailwind.css, which public/index.html links as
 // /tailwind.css. Nothing is committed — every image build regenerates it.
 //
 // To build it locally (optional; the image build does this for you):
-//   npm install --no-save tailwindcss@3.4.17
-//   npx tailwindcss -c tailwind.config.js -i styles/tailwind-input.css \\
-//     -o public/tailwind.css --minify
+//   npm ci --include=dev
+//   npm run build
 module.exports = {
   // Every file that can contain a class name. Tailwind's extractor is a
   // regex over source text, so it finds class names written as whole
@@ -399,8 +403,8 @@ module.exports = {
       content: `/* Input stylesheet for this app's Tailwind build.
  *
  * Deliberately OUTSIDE public/ so it is never served — the @tailwind lines
- * are build-time directives and mean nothing to a browser. The Dockerfile
- * compiles this to public/tailwind.css.
+ * are build-time directives and mean nothing to a browser. npm run build
+ * compiles this to public/tailwind.css with Docker or Paketo.
  *
  * "base" is the preflight layer (the cross-browser reset). Keep all three
  * layers, in this order; dropping base changes every heading, list and form
@@ -418,6 +422,7 @@ module.exports = {
 .git
 .claude
 node_modules
+public/tailwind.css
 `,
     },
     {
@@ -435,8 +440,13 @@ schema-version = "0.2"
 
 [io.buildpacks]
 exclude = [
-  "node_modules/",
+  "node_modules",
+  "public/tailwind.css",
 ]
+
+[[io.buildpacks.build.env]]
+name = "BP_NODE_RUN_SCRIPTS"
+value = "build"
 `,
     },
     {
@@ -637,8 +647,8 @@ start().catch(err => { console.error(err); process.exit(1); });
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
   <!-- Tailwind, PRECOMPILED for this app (was cdn.tailwindcss.com's
        in-browser engine plus an inline tailwind.config here). The config
-       moved to tailwind.config.js in the repo root; the Dockerfile's builder
-       stage compiles it to public/tailwind.css on every image build, so the
+       moved to tailwind.config.js in the repo root; npm run build compiles
+       it to public/tailwind.css with Docker or Paketo on every image build, so the
        stylesheet is regenerated from THIS commit's markup every deploy and
        can never drift behind the code. ~7 KB of CSS instead of a ~400 KB
        engine, and no flash of unstyled content.

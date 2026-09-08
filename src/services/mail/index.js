@@ -391,6 +391,27 @@ async function sendWaitlistJoinMail(config, email, { moreToken = null, code = nu
   });
 }
 
+// A confirmation code the recipient asked for again: the resend endpoint,
+// and the re-join branch of the join endpoint. Its own kind, so the join
+// mail's one-per-day rule cannot swallow it and so the words are the ones
+// somebody chasing a code needs rather than a second welcome.
+//
+// `code: null` is the already-confirmed shape. The caller passes it when
+// the address has a confirmed_at, and the template answers "nothing left
+// to do" with a link to where they stand. The mail is the ONLY channel
+// that discloses that: the HTTP response is identical either way.
+async function sendWaitlistCodeMail(config, email, { code = null, moreToken = null } = {}) {
+  await send(config, {
+    kind: 'waitlist_code',
+    to: email,
+    code,
+    confirmUrl: code && moreToken
+      ? `${PRODUCTION_ORIGIN}/api/public/waitlist/confirm/${moreToken}`
+      : null,
+    statusUrl: !code && moreToken ? `${PRODUCTION_ORIGIN}/#more/${moreToken}` : null,
+  });
+}
+
 // The plaintext reset token exists only here (in the link) and in the
 // requester's response path — the DB holds its sha256. The caller mints and
 // hashes; this just carries it.
@@ -404,16 +425,33 @@ async function sendPasswordResetMail(config, email, token) {
   });
 }
 
+/**
+ * "Your Usernode access is ready" — the one mail whose whole job is a link.
+ *
+ * #1545: an existing account's link is a QUERY, not a fragment. It was
+ * `/#login`, and the report was that following it from a desktop mail client
+ * landed on the home page while the same mail worked from a phone. That is
+ * the signature of a link rewriter: a fragment is client-side only, so a
+ * scanner or tracker that rebuilds the URL has nothing to lose by dropping
+ * it, and what arrives is a bare `/`. A query string survives that, because
+ * a rewriter has to carry it to reconstruct the address at all.
+ * `AuthScreens.enter()` already honoured `?login=1` as "a pre-SPA link
+ * form" and rewrites it to its hash route on arrival, so the address bar
+ * ends up exactly where the old link pointed.
+ *
+ * #1548: the no-account link still carries the released address as a
+ * `#signup/<url-encoded>` segment, the same way `#reset-password/<token>`
+ * and `#more/<token>` carry theirs, so the signup screen can prefill it and
+ * ask for a code without a second step. That link keeps its fragment on
+ * purpose, for the same reason those two do: the address IS the route
+ * segment, and a `?signup=1` query has nowhere to put it.
+ */
 async function sendWaitlistReleaseMail(config, email, { hasAccount = false } = {}) {
   await send(config, {
     kind: 'waitlist_released',
     to: email,
-    // No account yet: carry the released address in the link so the signup
-    // screen can prefill it and send the code without a second step. Segment
-    // style (like #reset-password/<token>) because AuthScreens.routeFromHash
-    // splits hash routes on '/' and a ?email= query would never parse.
     url: hasAccount
-      ? `${PRODUCTION_ORIGIN}/#login`
+      ? `${PRODUCTION_ORIGIN}/?login=1`
       : `${PRODUCTION_ORIGIN}/#signup/${encodeURIComponent(email)}`,
     hasAccount,
   });
@@ -425,6 +463,7 @@ module.exports = {
   sendOtpMail,
   sendPasswordResetMail,
   sendWaitlistJoinMail,
+  sendWaitlistCodeMail,
   sendWaitlistReleaseMail,
   pruneDeliveries,
   buildMessage,

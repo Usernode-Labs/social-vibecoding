@@ -196,3 +196,65 @@ test('the reset sentence comes from CreditOptions, not a second copy here', () =
   assert.match(CREDIT_SRC, /CO\.resetSentence\(state\)/);
   assert.ok(!/Resets at midnight UTC/.test(CREDIT_SRC));
 });
+
+// ── #1788: the row now describes whichever window is binding ────────────
+//
+// The server sends ONE set of headline figures plus the name of the window
+// they came from, and the row's job is to not lie about which boundary the
+// user has to wait for. The figures are rendered identically either way —
+// what changes is every word around them.
+
+test('a weekly-bound row says "weekly" and points at Monday, not midnight', async () => {
+  const s = await publish(budget({
+    limitCents: 5000, spentCents: 4800, remainingCents: 200,
+    capWindow: 'weekly', windowLabel: 'This week', resetLabel: 'Monday 00:00 UTC',
+  }));
+  const html = rowHtml(s);
+  // Same meter, same tone rules — the figures are the figures.
+  assert.match(html, /\$48\.00/);
+  assert.match(html, /drawer-meter-dim">\/\$50\.00/);
+  assert.match(html, /\$2\.00 left/);
+  assert.match(html, /text-red-700 dark:text-red-400">\$48\.00/, '96% used is still "high"');
+  // But the words are the week's.
+  assert.match(s.view.title, /of your \$50\.00 weekly AI allowance used/);
+  assert.match(s.view.title, /Free credits reset Monday 00:00 UTC/);
+  assert.doesNotMatch(s.view.title, /daily/);
+  assert.doesNotMatch(s.view.title, /at Monday/, '"resets at Monday" is not English');
+});
+
+test('an exhausted weekly window tells the user it was the week that ran out', async () => {
+  const s = await publish(budget({
+    limitCents: 5000, spentCents: 5000, remainingCents: 0,
+    capWindow: 'weekly', windowLabel: 'This week', resetLabel: 'Monday 00:00 UTC',
+  }));
+  const left = s.view.parts.find((p) => p.remaining);
+  assert.equal(left.runs[1].text, 'none left');
+  assert.match(s.view.title, /You have used all \$50\.00 of this week’s AI allowance/);
+  assert.doesNotMatch(s.view.title, /of today’s/);
+});
+
+test('a weekly window with a key on file names the weekly allowance as the one spent', async () => {
+  const s = await publish(budget({
+    limitCents: 5000, spentCents: 5000, remainingCents: 0, hasByokKey: true,
+    capWindow: 'weekly', windowLabel: 'This week', resetLabel: 'Monday 00:00 UTC',
+  }));
+  assert.match(s.view.title, /\$50\.00 weekly allowance is used up/);
+  assert.match(s.view.title, /billed to the Anthropic key you saved in Settings/);
+});
+
+test('the daily row is untouched: still "daily", still local-time-aware', async () => {
+  const s = await publish(budget({ spentCents: 640, remainingCents: 1360 }));
+  assert.match(s.view.title, /of your \$20\.00 daily AI allowance used/);
+  assert.match(s.view.title, /Free credits reset at midnight UTC/);
+});
+
+// The window words live in ONE place each, for the same reason the reset
+// sentence does: a second copy is a second thing to forget.
+test('the window wording is derived from capWindow, never retyped per state', () => {
+  assert.match(CREDIT_SRC, /var windowAdj = weeklyWindow \? 'weekly' : 'daily';/);
+  assert.match(CREDIT_SRC, /var windowWhen = weeklyWindow \? 'this week’s' : 'today’s';/);
+  assert.ok(!/weekly allowance is used up|of this week’s AI allowance/.test(
+    CREDIT_OPTIONS_SRC), 'the tooltip copy has one home, and it is ai-credit.js');
+  // And the reset sentence drops the "at" for a weekday boundary.
+  assert.match(CREDIT_OPTIONS_SRC, /s\.capWindow === 'weekly'\s*\n?\s*\? 'Free credits reset ' \+ resetLabel/);
+});

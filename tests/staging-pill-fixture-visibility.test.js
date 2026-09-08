@@ -36,7 +36,12 @@ const MIGRATE_SRC = read('src/db/migrate.js');
 const DAPP = JSON.parse(read('dapp.json'));
 
 const SEED = 'seedStagingRestartRecoveredPills';
-const DEV_BOARD_PATH = '/?demo=1#app/usernode-2d5619/dev';
+// The Board's own route, not the bare /dev one it used to be: #1704 made
+// the Workshop the Dev screen's lander, and the Workshop renders only the
+// first theme's rows, so a card-title assertion there passes or fails by
+// which theme the card was dealt into that hour. The kanban's In-progress
+// column renders every card.
+const DEV_BOARD_PATH = '/?demo=1#app/usernode-2d5619/board';
 
 // Slice the seed function body out: from its definition to the next
 // top-level `async function` (both markers are unique definition sites).

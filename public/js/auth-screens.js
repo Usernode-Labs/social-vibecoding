@@ -54,6 +54,20 @@
 
   const ROUTES = Object.keys(SCREEN_IDS);
 
+  // The pages a `?return_to=` may send somebody to once they have signed in.
+  //
+  // Matched on the PATHNAME, never on the whole string. The MCP consent
+  // request IS its query string — client id, redirect uri, PKCE challenge,
+  // state — so an exact-string allowlist could not carry it, which is how
+  // that flow ended up smuggling its return target in a fragment nothing
+  // reads. The pathname is still the thing that decides the destination, so
+  // the open-redirect property is unchanged.
+  const RETURN_TO_PATHS = [
+    '/cli/authorize', '/connect/authorize',
+    '/api/me/social-identities/github/connect',
+    '/api/me/social-identities/x/connect',
+  ];
+
   // Screen transitions come from the platform's native kit via the
   // PlatformUI seam; when the kit failed to load the mutation just runs
   // without animation.
@@ -143,6 +157,44 @@
       AuthScreens._pendingHash = fullHash;
     },
 
+    // A `return_to` value this platform will actually navigate to, or ''.
+    //
+    // Resolved against this origin and then matched by pathname, so an
+    // allowed page keeps the query string it was asked for while an absolute
+    // URL, a scheme like javascript:, and a traversal that climbs out are all
+    // refused rather than becoming an open redirect. What refuses an OFF-SITE
+    // target is the ORIGIN comparison plus a pathname match taken from the
+    // parsed `url` — never from the raw string.
+    //
+    // The two shape tests do something narrower and are still load-bearing:
+    // dropping `raw.startsWith('//')` changes outcomes, because a
+    // protocol-relative value naming THIS host ('//usernode.example/…')
+    // resolves same-origin onto an allowed path and would then be accepted.
+    // That would not escape anywhere — it lands on the same page the plain
+    // path does — but the accepted spelling is deliberately just one shape,
+    // a plain absolute path, so a reader is never left comparing two.
+    //
+    // The fragment is dropped, and NOT because it is a security boundary —
+    // saying so would be false and would invite somebody to defend the wrong
+    // line. Neither allowed page needs one forwarded: connect-authorize.js
+    // never reads location.hash at all, and cli-authorize.js carries its
+    // launch code across a sign-in in sessionStorage rather than in the URL
+    // it returns to. (That card is reachable anyway from the
+    // `verification_uri_complete` link the server itself mints, so nothing
+    // here stands between anyone and it.) Forwarding a fragment would add a
+    // value nothing reads, so this returns one shape and only one.
+    returnToUrl(value) {
+      const raw = String(value || '');
+      if (!raw.startsWith('/') || raw.startsWith('//')) return '';
+      let url;
+      try {
+        url = new URL(raw, window.location.origin);
+      } catch (_) { return ''; }
+      if (url.origin !== window.location.origin) return '';
+      if (!RETURN_TO_PATHS.includes(url.pathname)) return '';
+      return url.pathname + url.search;
+    },
+
     deepLinkUrl(target) {
       const value = String(target || '');
       if (value.startsWith('/app/')) return value;
@@ -153,12 +205,24 @@
     // Anonymous boot entry (App.enterAnonymous). Routing lives in
     // restoreFromHash — its anonymous branch calls back into show().
     enter() {
-      // A pre-SPA link form: /?signup=1 (old landing CTA target). Honor
-      // it once, then let the hash own everything.
+      // Pre-SPA link forms: /?signup=1 (the old landing CTA target) and
+      // /?login=1. Honor one once, then let the hash own everything.
+      //
+      // #1545: these are the shapes EMAIL links use now. A fragment is
+      // client-side only, so a desktop mail client's link rewriter can drop
+      // `#signup` while rebuilding the URL and deliver a bare `/` — which is
+      // the home page, and exactly what the access-ready mail was reported
+      // doing on desktop while working from a phone. A query survives that.
+      //
+      // First match wins, and the address is rewritten to the hash route, so
+      // whichever spelling arrives the address bar ends up identical.
       try {
-        if (!location.hash &&
-            new URLSearchParams(location.search).has('signup')) {
-          history.replaceState(null, '', '/#signup');
+        if (!location.hash) {
+          const params = new URLSearchParams(location.search);
+          const route = params.has('signup') ? 'signup'
+            : params.has('login') ? 'login'
+              : null;
+          if (route) history.replaceState(null, '', `/#${route}`);
         }
       } catch (_) {}
       if (window.App) App.restoreFromHash();
@@ -259,17 +323,18 @@
     // OTP set-password, wallet verify, activation-code register). The
     // session cookie is set; boot the authed shell in place.
     async finishLogin() {
-      // The only login-return target accepted by the platform. Keeping
-      // this exact and relative prevents open redirects. CLI authorize is
-      // a separate document by design — real navigation stays.
+      // The login-return targets accepted by the platform. Both are separate
+      // documents by design — real navigation stays.
       try {
         const params = new URLSearchParams(location.search);
         const values = params.getAll('return_to');
         if (values.length === 1 &&
-            [...params.keys()].every((k) => k === 'return_to') &&
-            values[0] === '/cli/authorize') {
-          window.location.href = '/cli/authorize';
-          return;
+            [...params.keys()].every((k) => k === 'return_to')) {
+          const target = AuthScreens.returnToUrl(values[0]);
+          if (target) {
+            window.location.href = target;
+            return;
+          }
         }
       } catch (_) {}
 

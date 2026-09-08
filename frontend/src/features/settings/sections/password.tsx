@@ -18,31 +18,45 @@ export function PasswordSection() {
         <SectionHeading title="Change password">
           Set a new password for web login. If an admin gave you a temporary password, enter it as your current password here.
         </SectionHeading>
-        <div className="space-y-2">
-          <div id="cp-current-row">
+        {/* One card, the three fields as its rows. */}
+        <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
+          <div id="cp-current-row" className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
             <PasswordInput
               id="cp-current"
               autoComplete="current-password"
               placeholder="Current password"
+              box="card"
+              ring="bare"
+              hint="dim"
             />
           </div>
-          <PasswordInput
-            id="cp-new"
-            autoComplete="new-password"
-            placeholder="New password (at least 8 characters)"
-          />
-          <PasswordInput
-            id="cp-confirm"
-            autoComplete="new-password"
-            placeholder="Confirm new password"
-          />
+          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
+            <PasswordInput
+              id="cp-new"
+              autoComplete="new-password"
+              placeholder="New password (at least 8 characters)"
+              box="card"
+              ring="bare"
+              hint="dim"
+            />
+          </div>
+          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
+            <PasswordInput
+              id="cp-confirm"
+              autoComplete="new-password"
+              placeholder="Confirm new password"
+              box="card"
+              ring="bare"
+              hint="dim"
+            />
+          </div>
         </div>
         {/* Default (password) submit */}
-        <Button id="cp-save" layout="stacked">
+        <Button id="cp-save" layout="stacked" variant="pillAccent" size="pillLg" className="mt-3">
           Change password
         </Button>
         {/* Wallet (signature) submit — shown only in wallet mode */}
-        <Button id="cp-wallet-save" layout="hiddenStacked">
+        <Button id="cp-wallet-save" layout="hiddenStacked" variant="pillAccent" size="pillLg">
           Sign &amp; change password
         </Button>
         {/*

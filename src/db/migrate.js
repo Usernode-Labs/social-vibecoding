@@ -118,6 +118,7 @@ async function migrate(config) {
   await seedStagingBootstrapFailure(pool, config);
   await seedStagingChatEditFixtures(pool, config);
   await seedStagingLlmUsage(pool);
+  await seedStagingWeeklyCaps(pool);
   await seedStagingSpendDistribution(pool);
   await seedStagingCapReached(pool, config);
   await seedStagingAppCapApps(pool, config);
@@ -5618,19 +5619,11 @@ async function seedStagingHomeLayout(pool, config) {
   }
 }
 
-// Home screen's "Find more apps" row + the #admin/featured-apps section.
-// `featured_apps` is created by this change, so it does not exist in the
-// production database a staging clone starts from — the row, the browse
-// screen's featured-first ordering and the admin list would all render
-// empty in every PR preview.
-//
-// Candidate order: the demo apps seedStagingYourApps creates first (named
-// "Staging demo …", so an obviously-fake row leads the preview), then any
-// real cloned public app as a fallback — that second source is what keeps
-// the row populated when the fixture seed above couldn't run (it needs
-// prod-cloned users, which a fresh local DB doesn't have). Either way the
-// row renders on a plain `/` visit with no ?demo=1; the request-time demo
-// tiles in routes/apps.js demoIconApps cover the ?demo=1 path.
+// Home screen's Discover row + the #admin/featured-apps section. Append the
+// synthetic apps created by seedStagingYourApps, even when the clone already
+// has a featured list: those real apps may not have working reviews yet.
+// Preserve their ordering and review state. Only the synthetic fixtures are
+// certified here, and ON CONFLICT keeps their positions on subsequent boots.
 //
 // Chess Arena is deliberately NOT a candidate: seedStagingYourApps
 // favorites it for every capture identity, so leaving it out exercises the
@@ -5642,40 +5635,35 @@ async function seedStagingHomeLayout(pool, config) {
 async function seedStagingFeaturedApps(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
-  const FEATURED_SEED_COUNT = 3;
   try {
-    // Bail if an earlier boot (or an admin, on a long-lived preview)
-    // already curated the list — re-seeding would fight their ordering.
-    const { rows: existing } = await pool.query('SELECT 1 FROM featured_apps LIMIT 1');
-    if (existing.length) {
-      log.info('db', 'Staging featured-apps already populated — seed skipped');
-      return;
-    }
-    const { rows: candidates } = await pool.query(
-      `SELECT id FROM (
-         SELECT id, 0 AS tier, id AS tiebreak FROM apps
-          WHERE slug IN ('staging-demo-puzzle-chain', 'staging-demo-word-garden',
-                         'staging-demo-pixel-racer')
-         UNION ALL
-         SELECT id, 1 AS tier, id AS tiebreak FROM apps
-          WHERE NOT self_hosted
-            AND view_visibility = 'public'
-            AND status = 'running'
-            AND slug NOT IN ('staging-demo-chess-arena', 'staging-demo-puzzle-chain',
-                             'staging-demo-word-garden', 'staging-demo-pixel-racer')
-       ) c
-       ORDER BY tier ASC, tiebreak ASC
-       LIMIT $1`,
-      [FEATURED_SEED_COUNT]
+    // #1523: explicitly synthetic fixtures for captures and the reversible
+    // Discover-add check. Never certify a production-cloned app as tested.
+    await pool.query(
+      `UPDATE apps SET icon_emoji = '🧩',
+         main_sha = '0000000000000000000000000000000000000001',
+         directory_review_status = 'working', directory_reviewed_at = NOW(),
+         directory_reviewed_sha = '0000000000000000000000000000000000000001'
+       WHERE slug IN ('staging-demo-puzzle-chain', 'staging-demo-word-garden',
+                      'staging-demo-pixel-racer')
+         AND created_by = (SELECT id FROM users WHERE username = 'staging-demo-user')
+         AND directory_review_status = 'unreviewed'`
     );
-    for (let i = 0; i < candidates.length; i += 1) {
+    const { rows: candidates } = await pool.query(
+      `SELECT id FROM apps
+        WHERE slug IN ('staging-demo-puzzle-chain', 'staging-demo-word-garden',
+                       'staging-demo-pixel-racer')
+          AND created_by = (SELECT id FROM users WHERE username = 'staging-demo-user')
+          AND directory_review_status = 'working'
+        ORDER BY id ASC`
+    );
+    for (const candidate of candidates) {
       // ON CONFLICT keeps this idempotent across the per-push container
       // rebuilds that re-run this whole file.
       await pool.query(
         `INSERT INTO featured_apps (app_id, sort_order, created_by)
-         VALUES ($1, $2, NULL)
+         SELECT $1, COALESCE(MAX(sort_order), -1) + 1, NULL FROM featured_apps
          ON CONFLICT (app_id) DO NOTHING`,
-        [candidates[i].id, i]
+        [candidate.id]
       );
     }
     log.info('db', 'Staging featured-apps fixtures seeded', { rows: candidates.length });
@@ -6352,6 +6340,68 @@ async function seedStagingLlmUsage(pool) {
   }
 
   log.info('db', 'Staging llm_usage fixtures seeded', { users: users.length });
+}
+
+// #1788: weekly-cap fixtures for the admin Users list and the Limits
+// panel. Two facts make them necessary on a preview:
+//   1. llm_usage is staging:private (schema-only clone → empty), so the
+//      new "spent this week" figure on every user row would read $0.00
+//      and a reviewer could not tell that from a broken query.
+//   2. users.weekly_limit_cents is brand new, so no cloned row carries a
+//      per-user weekly override and the new "Weekly $" control would only
+//      ever show its blank "default" state.
+// Two obviously-fake users cover the two interesting cap combinations —
+// weekly-only (daily switched off with a 0) and weekly-off (a 0 weekly
+// beside a live daily cap) — with week-to-date spend attached so the
+// weekly figure is visibly larger than the daily one. Fixed ids +
+// ON CONFLICT DO NOTHING, so re-running on every container boot is a
+// no-op; strictly a no-op outside staging; fake identities only, never
+// the account that opened the preview.
+async function seedStagingWeeklyCaps(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    const fixtures = [
+      // Daily off (0), weekly $12.50 — the weekly cap is the only ceiling.
+      { id: 9300021, name: 'staging-demo-weekly-only', daily: 0, weekly: 1250 },
+      // Weekly off (0), daily $20 — today's behaviour, stated explicitly.
+      { id: 9300022, name: 'staging-demo-weekly-off', daily: 2000, weekly: 0 },
+    ];
+
+    for (const f of fixtures) {
+      // Sentinel password → never an interactive login.
+      await pool.query(
+        `INSERT INTO users (id, username, password, daily_limit_cents, weekly_limit_cents)
+         VALUES ($1, $2, '!staging-fixture-no-login!', $3, $4)
+         ON CONFLICT (id) DO NOTHING`,
+        [f.id, f.name, f.daily, f.weekly]
+      );
+      // Pin the caps on reboot so a tester who edits them in the console
+      // gets the intended pair back on the next container build.
+      await pool.query(
+        'UPDATE users SET daily_limit_cents = $2, weekly_limit_cents = $3 WHERE id = $1',
+        [f.id, f.daily, f.weekly]
+      );
+      // Week-to-date spend: one row per day since Monday, so the row's
+      // "this week" figure is several times its "today" figure and the two
+      // are visibly different numbers rather than the same one twice.
+      await pool.query(
+        `INSERT INTO llm_usage (user_id, date, total_cost_cents, byok_cost_cents)
+         SELECT $1, d::date, 37.5, 0
+           FROM generate_series(
+                  date_trunc('week', CURRENT_DATE)::date,
+                  CURRENT_DATE,
+                  INTERVAL '1 day'
+                ) d
+         ON CONFLICT (user_id, date) DO NOTHING`,
+        [f.id]
+      );
+    }
+
+    log.info('db', 'Staging weekly-cap fixtures seeded', { users: fixtures.length });
+  } catch (err) {
+    log.warn('db', 'Staging weekly-cap seeding failed', { message: err.message });
+  }
 }
 
 // Daily spend distribution fixtures (the seven-bucket stacked chart on
@@ -11994,6 +12044,16 @@ async function seedStagingPlatformMail(pool) {
     // OWN actions produce here.
     { kind: 'otp', to: 'staging-demo-user@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
     { kind: 'waitlist_joined', to: 'staging-demo-waitlist@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
+    // A REQUESTED code, from POST /api/public/waitlist/resend or a re-join.
+    // Its own kind because waitlist_joined is capped at one per address per
+    // day, which is the thing a resend exists to work around. Seeded so the
+    // admin mail log shows the kind at all in a preview: without a row, a
+    // reviewer cannot tell the filter has a value for it.
+    { kind: 'waitlist_code', to: 'staging-demo-waitlist@example.invalid', provider: 'log', status: 'skipped_staging', error: null },
+    // The throttled shape of the same kind: what a sixth request in a day
+    // records. It delivers nothing and counts toward nothing, and the log is
+    // the only place that is visible.
+    { kind: 'waitlist_code', to: 'staging-demo-throttled@example.invalid', provider: 'log', status: 'suppressed_rate_limit', error: 'another waitlist_code mail went to this address 12s ago' },
     // What production looks like when it works.
     { kind: 'waitlist_released', to: 'staging-demo-released@example.invalid', provider: 'gmail', status: 'sent', error: null },
     // The same kind, addressed to the ADMITTED waitlist fixture (900502).

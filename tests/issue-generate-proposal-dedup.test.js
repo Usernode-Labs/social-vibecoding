@@ -183,6 +183,11 @@ test('the head still offers exactly one Generate affordance, in its detail actio
   const head = AppView._issueCardModel(item, { noNav: true });
   assert.ok(!hasAction(head, 'confirmAutoSession'),
     'the head card must not grow its own re-run — the detail list owns it');
-  assert.match(detailActionsHtml(AppView, 'issue', item), />Generate proposal</,
+  // The detail list's pills are merged onto the card's band by
+  // `_topicCard` — Generate proposal stays a ⋯ row there — so what the list
+  // offers is asserted on the model, not on rendered markup.
+  assert.ok(AppView._detailActionsView('issue', item).pills.some((p) => p.label === 'Generate proposal'),
     'and the detail list does offer it');
+  assert.equal(detailActionsHtml(AppView, 'issue', item).includes('Generate proposal'), false,
+    'and the head does not draw it twice');
 });

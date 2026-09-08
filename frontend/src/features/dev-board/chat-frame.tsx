@@ -14,7 +14,11 @@
 
 export function DevChatSubView() {
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-strip">
+      {/* app.css gives this host the 12px of strip shoulder that shows above
+          the Discussion sheet ../group-chat/general-chat.tsx mounts here — the
+          same band a Messages thread shows above its sheet. Its class string
+          stays the empty-host one tests/dev-board-island.test.js pins. */}
       <div id="dev-chat-body" className="flex-1 min-h-0"></div>
     </div>
   );

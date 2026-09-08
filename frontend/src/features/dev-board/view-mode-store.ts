@@ -45,19 +45,21 @@ import { useSyncExternalStore } from 'react';
 export const DEV_VIEW_MODE_STORE_KEY = '__usernodeDevViewMode';
 
 /**
- * Mirrors `AppView.VIEW_MODES`; 'feed' is the fallback for an unknown value.
+ * Mirrors `AppView.VIEW_MODES`; 'workshop' is the fallback for an unknown
+ * value.
  *
  * THE UI OVERHAUL cut this from four modes to two — 'list' became 'feed' and
- * 'pm' / 'report' were retired. The module keeps the migration table
+ * 'pm' / 'report' were retired — and the Workshop then replaced 'feed' as the
+ * Dev screen's lander. The module keeps the migration table
  * (`AppView.RETIRED_VIEW_MODES`) so a stored preference naming a retired mode
  * still resolves; nothing here needs it, because everything that reaches this
  * store has already been through `_setViewMode`.
  */
-export const DEV_VIEW_MODES = ['feed', 'kanban'] as const;
+export const DEV_VIEW_MODES = ['workshop', 'kanban'] as const;
 
 export type DevViewMode = (typeof DEV_VIEW_MODES)[number];
 
-export const DEFAULT_DEV_VIEW_MODE: DevViewMode = 'feed';
+export const DEFAULT_DEV_VIEW_MODE: DevViewMode = 'workshop';
 
 export function isDevViewMode(value: unknown): value is DevViewMode {
   return typeof value === 'string' && (DEV_VIEW_MODES as readonly string[]).includes(value);

@@ -84,6 +84,13 @@ function stagingMockProposals(viewer) {
     pr_summary_md: 'This is a sample plain-language summary so testers can see '
       + 'the new explanation that now appears at the top of a proposal, written '
       + 'in everyday words, with no technical jargon.',
+    // The technical half, so a reviewer can see BOTH sections of the About
+    // sheet on ?demo=1 rather than only the labelled one. Obviously fake and
+    // deliberately written in the register the summary above must not use —
+    // the contrast between the two is the thing being reviewed.
+    pr_body: '## What changed\n\n- `renderTopicHead` now emits the summary '
+      + 'behind its own label\n- `parseImportSummary` bounds the field at 600 '
+      + 'characters\n\nSee `src/routes/votes.js` for the import path.',
     staging_url: null,
     testing_md: null,
     testing_path: null,
@@ -1520,6 +1527,28 @@ function parseImportLinkedIssues(body) {
   return sanitizeIssueNumbers(body && body.linkedIssues).slice(0, MAX_IMPORT_LINKED_ISSUES);
 }
 
+// The plain-language summary an import may carry (the About sheet's user-facing
+// half). On-platform sessions get one from llm.generatePrMetadata; an imported
+// or connector-submitted PR had no way to supply one at all, so those proposals
+// rendered the technical description as their only content — which is what the
+// two-section About sheet exists to avoid.
+//
+// Bounded, because it is the body text a voter reads FIRST. An agent that
+// pastes its whole PR body here would collapse the two sections back into one,
+// so the cap is deliberately much smaller than the description's: a few
+// sentences, not a document. Truncation is silent for the same reason the
+// testing note's is — one over-long field must not cost somebody their whole
+// submission — and the field is optional, so an omitted one behaves exactly as
+// before rather than inventing a summary nobody wrote.
+const MAX_IMPORT_SUMMARY = 600;
+
+function parseImportSummary(body) {
+  const raw = body && typeof body.summary === 'string' ? body.summary : '';
+  const trimmed = raw.replace(/\r\n/g, '\n').trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, MAX_IMPORT_SUMMARY);
+}
+
 function revisionChangedVoteResponse(res, headSha, message = null) {
   return res.status(409).json({
     error: message
@@ -1631,6 +1660,7 @@ function mergedRowSelect() {
            -- showing one opaque "still running". NULL = legacy wording.
            cs.check_phase,
            cs.check_trigger,
+           cs.checks_progress,
            -- Platform-variables pre-merge check (display mirror; the merge
            -- gate re-evaluates live).
            cs.platform_env_state, cs.platform_env_detail,
@@ -2445,6 +2475,7 @@ function voteRoutes(config) {
       // import button sends none, which leaves the column at the empty array
       // it defaulted to before.
       const importLinkedIssues = parseImportLinkedIssues(req.body);
+      const importSummary = parseImportSummary(req.body);
       const promote = req.body?.promote === true;
       const initialStatus = promote ? 'promoted' : 'active';
 
@@ -2460,12 +2491,13 @@ function voteRoutes(config) {
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
             source, imported_pr_head_sha, imported_pr_author, imported_pr_head_repo,
             promoted_at, shared_at, created_at,
-            testing_md, testing_path, testing_paths, linked_issues, pr_body)
+            testing_md, testing_path, testing_paths, linked_issues, pr_body,
+            pr_summary_md)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
             'imported', $8, $9, $10,
             CASE WHEN $7::text = 'promoted' THEN NOW() END,
             CASE WHEN $7::text = 'active' THEN NOW() END,
-            NOW(), $11, $12, $13::jsonb, $14, $15)
+            NOW(), $11, $12, $13::jsonb, $14, $15, $16)
            RETURNING id, status`,
           [
             app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
@@ -2482,6 +2514,10 @@ function voteRoutes(config) {
             // already holds `pr`, so this costs no extra GitHub call and the
             // proposal reports a description from its very first read.
             pr.body || null,
+            // The user-facing half of the About sheet. Null when the submitter
+            // sent none: the platform does not generate one here, so a proposal
+            // without it renders exactly as it did before this field existed.
+            importSummary,
           ]
         ));
         await selfAssignImportedProposal(
@@ -2864,7 +2900,7 @@ function voteRoutes(config) {
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status,
                 cs.created_at, cs.promoted_at,
                 cs.merge_conflict_state, cs.behind_main,
-                cs.check_state, cs.check_error_detail, cs.check_phase, cs.check_trigger,
+                cs.check_state, cs.check_error_detail, cs.check_phase, cs.check_trigger, cs.checks_progress,
                 -- #1442: the same freshness cache /promoted reads, so the
                 -- home strip's pill and the proposal card cannot disagree
                 -- about whether a proposal is ready to merge.
@@ -3109,6 +3145,7 @@ function voteRoutes(config) {
            -- showing one opaque "still running". NULL = legacy wording.
            cs.check_phase,
            cs.check_trigger,
+           cs.checks_progress,
            -- Platform-variables pre-merge check (display mirror; the merge
            -- gate re-evaluates live).
            cs.platform_env_state, cs.platform_env_detail,
@@ -3551,14 +3588,33 @@ function voteRoutes(config) {
         const injected = stagingMockMerged().map((m) => ({ ...m, row_type: 'pr' }))
           .concat(stagingMockCompletedCloseIssues())
           .filter((m) => !have.has(key(m)));
+        // #1788: make room for the mocks BEFORE merging them in, rather than
+        // letting them compete with real history for the page.
+        //
+        // The old order was unshift, sort newest-first, then truncate to
+        // `limit`. That trims the mocks like anything else, and these rows are
+        // dated in DAYS — 9100060 is two days old — so they only survived
+        // while fewer than `limit` real completed rows were newer than them.
+        // On a day with 63 merges they fell off page one entirely, and since
+        // the mocks are first-page-only by design they then appeared nowhere.
+        //
+        // That is what made the "A task moved to Done keeps its chips" check
+        // look flaky: it was failing whenever the platform had been busy, so
+        // its recorded flake rate rose with our own merge rate and it began
+        // blocking unrelated proposals.
+        //
+        // Reserving the slots is the fix rather than re-dating the mocks to a
+        // few hours old: that would work today and rot again at a higher merge
+        // rate, and it would fight #1264, which spread these deliberately over
+        // ~150 days so the report's monthly strip has something to draw.
+        if (rows.length + injected.length > limit) {
+          hasMore = true;
+          rows.length = Math.max(0, limit - injected.length);
+        }
         rows.unshift(...injected);
         // Re-sort so the mock close-issue rows interleave among the mock
         // merged PRs by date instead of clumping at the top.
         rows.sort(completedRowCompare);
-        if (rows.length > limit) {
-          hasMore = true;
-          rows.length = limit;
-        }
         // The COUNT(*) above can't see the mock rows (they aren't in the
         // DB), so bump the total by however many we injected to keep the
         // demo badge self-consistent with the rows the board renders.
@@ -4562,9 +4618,22 @@ async function checkAndMerge(config, pool, session, options = {}) {
             : "couldn't run its tests")
           : 'is still running its tests';
       const blockMsg = `${label} reached the vote threshold but ${reason}. Merge is blocked until checks pass. The proposal's tests re-run automatically when its owner pushes a fix.`;
-      await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
-      await sendSystemMessage(pool, session.app_id, blockMsg, 'system',
-        null, { type: 'session', ref: session.id }).catch(() => {});
+      // Said once. This gate runs on every vote and every check re-run, and
+      // it used to post the same sentence each time — eight copies on one
+      // topic thread. If the latest system line in this proposal's thread
+      // already says exactly this, there is nothing new to say.
+      const alreadySaid = await pool.query(
+        `SELECT content FROM chat_messages
+          WHERE app_id = $1 AND msg_type = 'system'
+            AND thread_type = 'session' AND thread_ref = $2
+          ORDER BY id DESC LIMIT 1`,
+        [session.app_id, session.id]
+      ).then((r) => !!(r.rows[0] && r.rows[0].content === blockMsg)).catch(() => false);
+      if (!alreadySaid) {
+        await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
+        await sendSystemMessage(pool, session.app_id, blockMsg, 'system',
+          null, { type: 'session', ref: session.id }).catch(() => {});
+      }
       log.info('votes', 'Merge blocked: checks not passing', {
         sessionId: session.id, checkState, failingCount,
         checksRevisionMismatch,

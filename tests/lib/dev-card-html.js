@@ -60,11 +60,11 @@ const mergedRowHtml = (AppView, row) => {
   return m ? cardHtml(m) : '';
 };
 
-/** Render the whole list feed from `AppView._feedView()`. */
-function feedHtml(AppView) {
+/** Render the whole Workshop from `AppView._workshopView()`. */
+function workshopHtml(AppView) {
   const m = mod();
-  m.devFeedStore.set(AppView._feedView());
-  return renderToHtml(createElement(m.DevFeed));
+  m.devWorkshopStore.set(AppView._workshopView());
+  return renderToHtml(createElement(m.DevWorkshop));
 }
 
 /** Render the whole kanban board from `AppView._kanbanView()`. */
@@ -217,6 +217,9 @@ function hasAction(model, fn, ...args) {
 const budgets = () => ({ ACTION_PRIMARY_MAX: mod().ACTION_PRIMARY_MAX, BADGE_MAX: mod().BADGE_MAX });
 
 module.exports = {
+  // The minimal card a topic head needs, for tests that care about the
+  // sheet BELOW the card rather than the card itself.
+  BLANK_CARD,
   actionHtml,
   proposalBodyHtml,
   previewHtml,
@@ -242,7 +245,7 @@ module.exports = {
   mergedCardHtml,
   closeIssueCardHtml,
   mergedRowHtml,
-  feedHtml,
+  workshopHtml,
   kanbanHtml,
   listRowHtml,
   columnHtml,
