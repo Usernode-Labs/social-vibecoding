@@ -4935,6 +4935,11 @@ CREATE TABLE IF NOT EXISTS native_session_credentials (
   CHECK (revoked_at IS NULL OR revoked_at >= created_at)
 );
 
+-- A restored web session is authority only while this exact native lease is
+-- live. Keep the incarnation too, for exact attempt replay and web logout.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS native_session_credential_reference
+  VARCHAR(47) REFERENCES native_session_credentials(credential_reference) ON DELETE CASCADE;
+
 -- Existing databases received an unnamed auto-generated CHECK that also
 -- admitted the retired `mobile_logout` value. Replace it without rewriting
 -- revoked audit history. `NOT VALID` still rejects that value on every new or

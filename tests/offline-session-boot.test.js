@@ -159,7 +159,7 @@ test('the boot session check has a deadline', () => {
   // Without it, a stalled-but-open socket holds boot forever — the white
   // screen half of the bug — even when a snapshot is sitting right there.
   assert.match(APP, /BOOT_SESSION_TIMEOUT_MS:\s*\d+/);
-  const body = appMethod('_fetchSession');
+  const body = appMethod('_fetchWebSession');
   assert.match(body, /AbortController/);
   assert.match(body, /BOOT_SESSION_TIMEOUT_MS/);
   assert.match(body, /clearTimeout/);

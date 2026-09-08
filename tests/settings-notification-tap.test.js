@@ -66,6 +66,7 @@ function boot(opts = {}) {
     dispatchEvent() {},
     setTimeout,
     clearTimeout,
+    setInterval() {},
     fetch() { return Promise.reject(new Error('unexpected fetch')); },
   };
   sandbox.window = sandbox;
