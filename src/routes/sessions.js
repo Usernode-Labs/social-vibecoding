@@ -1328,7 +1328,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // is a branch in the APP repository, and only comparing the two repos
       // separates that from a genuine fork.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
+        `SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
                 cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
                 cs.transcript_shared_at, cs.created_at, cs.source,
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
@@ -2539,6 +2539,34 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     } catch (err) {
       log.error('sessions', 'Failed to clone headless session', { message: err.message, stack: err.stack });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Check results are fetched on demand, separately from the private dev
+  // transcript and the lightweight board feed. The app view gate above still
+  // applies; sharing a session exposes these results, never its messages.
+  router.get('/api/sessions/:id/checks', async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.session_title, cs.pr_title,
+                cs.check_state, cs.check_phase, cs.check_trigger,
+                cs.check_error_detail, cs.checks_checked_at, cs.checks_commit_sha,
+                cs.checks_progress, cs.test_results, cs.checks_base_sha,
+                cs.checks_base_verdict, cs.checks_base_behind_by
+           FROM chat_sessions cs
+          WHERE cs.id = $1`,
+        [parseInt(req.params.id, 10)]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      const session = rows[0];
+      const visible = session.user_id === req.user.id || req.user.isAdmin
+        || (session.shared_at && ['active', 'paused'].includes(session.status))
+        || ['promoted', 'merging', 'merged'].includes(session.status);
+      if (!visible) return res.status(404).json({ error: 'Session not found' });
+      res.set('Cache-Control', 'no-store').json({ session });
+    } catch (err) {
+      log.error('sessions', 'Failed to read check results', { message: err.message });
+      res.status(500).json({ error: 'Could not load check results' });
     }
   });
 

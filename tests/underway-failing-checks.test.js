@@ -142,6 +142,6 @@ test('#1766: the re-run reuses the existing guards rather than restating them', 
   // re-run to someone who cannot ask for one.
   assert.match(body, /if \(AppView\.readOnly\) return null;/);
   assert.match(body, /if \(pr\.check_state === 'passing'\) return null;/);
-  assert.match(body, /if \(!owner && !App\.user\?\.isAdmin && !pr\.recheckable\) return null;/);
+  assert.match(body, /if \(!owner && !App\.user\?\.canAdminWrite && !pr\.recheckable\) return null;/);
   assert.match(body, /_recheckInFlight\.has\(pr\.id\)/);
 });

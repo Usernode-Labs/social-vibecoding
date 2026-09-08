@@ -173,11 +173,11 @@ test('the trigger is pinned in the top-right RAIL on every card type that has on
 
 test('a card with no ⋯ still gets its chevron, with no empty rail around it', () => {
   const AppView = makeAppView();
-  // A shared session demotes nothing, so with nothing to preview either
-  // _cardRailHtml returns the bare chevron rather than a one-child column.
+  // Exercise the generic empty-menu rail; shared sessions now offer View checks.
   const model = AppView._sharedSessionCardModel({
     id: 71, session_title: 'Theirs', username: 'them', user_id: 9,
   });
+  model.rail.menuKey = '';
   const html = cardHtml(model);
   assert.equal(menuKeyOf(html), null);
   assert.doesNotMatch(html, /dev-card-rail/);
@@ -189,6 +189,7 @@ test('a card with no ⋯ still gets its chevron, with no empty rail around it', 
   const withPreviewModel = AppView._sharedSessionCardModel({
     id: 71, session_title: 'Theirs', username: 'them', user_id: 9, staging_url: 'https://s',
   });
+  withPreviewModel.rail.menuKey = '';
   const withPreview = cardHtml(withPreviewModel);
   assert.equal(menuKeyOf(withPreview), null, 'still nothing demoted');
   assert.doesNotMatch(withPreview, /dev-card-rail/);
@@ -441,7 +442,7 @@ test('own session: visibility, chat-sharing, discussion and Archive', () => {
   const privHtml = cardHtml(privHtmlModel);
   assert.ok(hasAction(privHtmlModel, '_setSessionShared', 51, true));
   assert.match(privHtml, /gc-card-actions[\s\S]*?>Make visible</);
-  assert.equal(menuLabels(AppView, privHtml).join('|'), 'Archive',
+  assert.equal(menuLabels(AppView, privHtml).join('|'), 'View checks|Archive',
     'a private session has nowhere for a reader to reach its chat from');
 
   const visHtmlModel = AppView._mySessionCardModel(sess({ shared_at: '2026-06-01T00:00:00Z' }));
@@ -450,7 +451,7 @@ test('own session: visibility, chat-sharing, discussion and Archive', () => {
   assert.ok(hasAction(visHtmlModel, '_setSessionShared', 51, false), 'the same pill, flipped');
   assert.match(visHtml, /gc-card-actions[\s\S]*?>Hide</);
   assert.equal(menuLabels(AppView, visHtml).join('|'),
-    'Share chat|Open public discussion (2)|Archive');
+    'Share chat|Open public discussion (2)|View checks|Archive');
 
   const shared = menuItems(AppView, mySessionCardHtml(AppView, 
     sess({ shared_at: '2026-06-01T00:00:00Z', transcript_shared_at: '2026-06-01T01:00:00Z' })));
@@ -476,14 +477,14 @@ test('session cards: the ⋯ trigger is a <button>, so the card-open handler ski
   assert.match(SRC, /if \(e\.target\.closest\('a, button, input, form'\)\) return;/);
 });
 
-test('someone else’s shared session has nothing to demote, so no ⋯ at all', () => {
+test('someone else’s shared session offers check inspection without owner actions', () => {
   const AppView = makeAppView();
   const model = AppView._sharedSessionCardModel({
     id: 990001, session_title: 'Theirs', username: 'other', status: 'active',
   });
   const html = cardHtml(model);
   assert.match(html, /data-shared-session-row="990001"/);
-  assert.equal(menuKeyOf(html), null, 'visibility/archive are owner-only, so the menu is empty');
+  assert.equal(menuLabels(AppView, html).join('|'), 'View checks', 'inspection is public; visibility/archive remain owner-only');
 });
 
 // ── Surviving a repaint ─────────────────────────────────────────────────

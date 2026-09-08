@@ -10,6 +10,7 @@
  */
 
 export { ActionButton, DevCard, StatusPill, Badge, Preview, CardIcon, fmtCountdown, BADGE_MAX, ACTION_PRIMARY_MAX } from '../../frontend/src/features/dev-board/card/dev-card';
+export { SessionCheckResults, SessionChecks } from '../../frontend/src/features/dev-board/modals/session-checks';
 export { FooterView } from '../../frontend/src/features/dev-board/card/footer';
 export { DevWorkshop } from '../../frontend/src/features/dev-board/workshop/workshop';
 export { DevKanban } from '../../frontend/src/features/dev-board/card/dev-kanban';

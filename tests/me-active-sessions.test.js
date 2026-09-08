@@ -51,6 +51,7 @@ function startServer({ viewer = VIEWER, config = {} } = {}) {
 function sessionRow(overrides = {}) {
   return {
     id: 1,
+    user_id: VIEWER.id,
     branch_name: 'dev/tester-1',
     pr_number: null,
     pr_url: null,
@@ -88,6 +89,7 @@ test('query is owner-scoped and excludes archived/headless rows', async () => {
     // Owner scoping: the first filter param is the viewer's own id —
     // another user's rows can never satisfy the WHERE clause.
     assert.match(q.sql, /cs\.user_id = \$1/);
+    assert.match(q.sql, /SELECT cs\.id, cs\.user_id,/, 'the rerun guard needs the actual owner on each row');
     assert.deepStrictEqual(q.params, [VIEWER.id, false]);
     // Status filtering: non-archived statuses only, headless excluded.
     assert.match(q.sql, /status IN \('active', 'promoted', 'paused'\)/);
