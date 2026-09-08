@@ -994,6 +994,33 @@ test('a paragraph that fails to generate still waits a day before the next try',
   } finally { llm._setClientForTests(prev); resetBoard(); }
 });
 
+test('a row the old code left with a fresh clock and no text is written now, not tomorrow', async () => {
+  // The state production sat in after the failure column shipped: every
+  // earlier attempt had stamped `digest_at` and got nothing, and had no way
+  // to say so. Read as "a success an hour old", that row waited a day with
+  // the derived sentence on the page. No text and no error is due now.
+  boardOf(2);
+  const st = makeStore(freshRow({
+    themes_json: [{ id: 'a', name: 'A', description: 'd', saying: 's', anchors: [] }],
+    placements_json: { 'issue:1': 'a', 'issue:2': 'a' },
+    discovered_at: ago(1000), discovery_key_count: 2,
+    digest_text: null, digest_at: ago(60 * 1000), digest_error: null,
+  }));
+  const m = makeModel({ digest: 'The paragraph, at last, written by the model.' });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(out.skipped, null, 'not skipped as unchanged');
+    assert.deepEqual(m.calls.map((c) => c.kind), ['digest'], 'one call, for the paragraph alone');
+    assert.equal(st.row.digest_text, 'The paragraph, at last, written by the model.');
+    assert.equal(st.row.digest_error, null);
+    // And now that there IS text, the day applies: the next pass is quiet.
+    const again = await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(again.skipped, 'unchanged');
+    assert.deepEqual(m.calls.map((c) => c.kind), ['digest'], 'still one');
+  } finally { llm._setClientForTests(prev); resetBoard(); }
+});
+
 test('a merged row carries the proposal\u2019s plain-language summary, and the week is its own list', () => {
   const now = Date.parse('2026-01-10T12:00:00Z');
   const input = { items: [
@@ -1019,6 +1046,24 @@ test('digestStale: none, old, current', () => {
     'half an hour after a failure: not yet');
   assert.equal(svc.digestStale({ digest: null, digestAt: '2026-01-10T10:30:00Z', digestError: 'boom' }, now), true,
     'ninety minutes after a failure: due');
+  // No text and no recorded failure is not a success an hour old, however
+  // fresh the clock: it is the row the pre-`digest_error` code left behind,
+  // which stamped every attempt and could not say the attempt got nothing.
+  // Treating it as written meant a day with the worked-out sentence on the
+  // page and no call to the model. It is due now.
+  assert.equal(svc.digestStale({ digest: null, digestAt: '2026-01-10T11:00:00Z', digestError: null }, now), true,
+    'clock stamped an hour ago, no text, no error: due now');
+  assert.equal(svc.digestStale({ digest: null, digestAt: '2026-01-10T11:59:00Z', digestError: undefined }, now), true,
+    'even a minute ago');
+  assert.equal(svc.digestStale({ digest: '', digestAt: '2026-01-10T11:59:00Z', digestError: null }, now), true,
+    'empty string is no text');
+  // Kept text beside a failed later attempt: the hour applies, so the
+  // paragraph that could not be refreshed is retried soon, not kept a
+  // second day.
+  assert.equal(svc.digestStale({ digest: 'x', digestAt: '2026-01-10T11:30:00Z', digestError: 'boom' }, now), false,
+    'kept text, failed retry half an hour ago: not yet');
+  assert.equal(svc.digestStale({ digest: 'x', digestAt: '2026-01-10T10:30:00Z', digestError: 'boom' }, now), true,
+    'kept text, failed retry ninety minutes ago: due');
   assert.equal(svc.DIGEST_RETRY_MS, 60 * 60 * 1000);
   assert.equal(svc.DIGEST_MAX_AGE_MS, 24 * 60 * 60 * 1000, 'and the window is a day');
 });
