@@ -288,6 +288,11 @@ const AppView = {
   // normalizeValue), so no assignee.top can ever begin with whitespace.
   KANBAN_ASSIGNEE_UNASSIGNED: ' __unassigned__',
   _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null },
+  // Which app's filters `_kanbanFilters` currently holds. The persisted set
+  // is per slug, so this is what tells a repaint whether it is looking at a
+  // stale app's narrowing (restore) or at the viewer's own unsaved edit
+  // (leave it alone) — see the Workshop branch of _repaintDevBody (#1787).
+  _kanbanFiltersSlug: null,
   // Single source of truth for the empty/default filter set. `theme` is the
   // Workshop's: "Open on Board" from a theme narrows the board to that
   // theme's items, and the chip that says so is dismissable like the rest.
@@ -4611,6 +4616,7 @@ const AppView = {
         // them across navigation / reload. Keyed per slug, so switching apps
         // shows that app's own filters (or a clean board).
         AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
+        AppView._kanbanFiltersSlug = App.currentApp || null;
         // #814: restore this app's active mobile tab alongside its filters,
         // so switching apps shows that app's own column (or Issues).
         AppView._kanbanTab = AppView._loadKanbanTab(App.currentApp);
@@ -4636,7 +4642,21 @@ const AppView = {
     // Restored per slug on entry for the same reason the kanban branch above
     // does it: the controls and the themes have to come back as the viewer
     // left them, and the two branches share the persisted model.
-    AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
+    //
+    // #1787: GUARDED, where it used to run on every repaint. Unguarded it
+    // reloaded the persisted set over whatever the viewer had just done on
+    // this surface, so a filter set here survived only until the next WS
+    // push — and with search, which is an uncontrolled field React does not
+    // re-key, the typed text stayed in the box while the themes below it
+    // silently widened back out. The guard is the SLUG, not the node: the
+    // host above is created before this line so it always exists by now,
+    // and the persisted set is per app — so the slug covers both the first
+    // paint (null → a slug) and an app switch, which are the only two times
+    // the stored set legitimately changes underneath the viewer.
+    if (AppView._kanbanFiltersSlug !== App.currentApp) {
+      AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
+      AppView._kanbanFiltersSlug = App.currentApp || null;
+    }
     AppView._renderKanbanFilterBar();
     AppView._rerenderWorkshop();
     AppView._reanchorCardMenu();
@@ -5920,6 +5940,23 @@ const AppView = {
       }
       if (!hit) return false;
     }
+    // The Workshop's theme, matched on the same key the themes name cards by.
+    // The one filter that reads module state (the loaded themes) — and, with
+    // none loaded, the one that must widen rather than hide.
+    //
+    // A closure because BOTH exits need it. #1787: the session branch below
+    // returns early, and it did so AHEAD of this check, so with a theme
+    // selected every session matched every theme and a theme's Underway lane
+    // showed other themes' work. Priority and category are a fair no-op there
+    // — a session carries neither attribute — but a session does sit in a
+    // theme, by the issue it links (see `linkedTheme` in _workshopView).
+    const themeOk = () => {
+      if (!f.theme) return true;
+      const themeKind = kind === 'session'
+        ? (it && it.row_type === undefined && it.pr_number != null && it.status === 'merged' ? 'merged' : 'shared-session')
+        : kind;
+      return AppView._workshopThemeHas(f.theme, AppView._workshopItemKey(themeKind, it), it);
+    };
     if (kind === 'session' && it.source !== 'imported') {
       // "Waiting on you" genuinely excludes a session — there is nothing to
       // vote on until it becomes a proposal.
@@ -5930,7 +5967,7 @@ const AppView = {
       // session is not an assignable board item.
       if (f.assignee && f.assignee !== AppView.KANBAN_ASSIGNEE_UNASSIGNED
         && AppView._devCardAuthor(kind, it) !== f.assignee) return false;
-      return true;
+      return themeOk();
     }
     // priority / assignee filter on the community-voted top value. Cards
     // without the attribute set — and gov cards, which never carry them —
@@ -5961,16 +5998,7 @@ const AppView = {
         return false;
       }
     }
-    // The Workshop's theme, matched on the same key the themes name cards
-    // by. The one filter that reads module state (the loaded themes) —
-    // and, with none loaded, the one that must widen rather than hide.
-    if (f.theme) {
-      const themeKind = kind === 'session'
-        ? (it && it.row_type === undefined && it.pr_number != null && it.status === 'merged' ? 'merged' : 'shared-session')
-        : kind;
-      if (!AppView._workshopThemeHas(f.theme, AppView._workshopItemKey(themeKind, it), it)) return false;
-    }
-    return true;
+    return themeOk();
   },
 
   _kanbanFiltersActive() {
@@ -6033,9 +6061,21 @@ const AppView = {
   // so it was a one-line forward to the kanban repaint. Activity has the same
   // bar now (see the feed branch of _repaintDevBody), and a search typed there
   // has to repaint the feed or the box would take input and change nothing.
+  //
+  // #1787: the two things a filter change needs — PERSIST it, and tell the
+  // bar what it now says — used to live inside _repaintKanbanBoard, which
+  // this function only reaches on the Board. So on the WORKSHOP every filter
+  // set or cleared was a scratch value: `_saveKanbanFilters` never ran, so
+  // the next `_repaintDevBody` reloaded the old set over it; and
+  // `_updateKanbanFilterBarUI` never ran, so the chips and the `Filters (n)`
+  // count never moved — a chip's × widened the themes and stayed on screen,
+  // reading as broken. Both belong HERE, at the one point every control
+  // already funnels through, rather than on one of the two surfaces.
   _repaintBoardSurface() {
+    AppView._saveKanbanFilters(App.currentApp);
     if (AppView._getViewMode() === 'workshop') {
       AppView._rerenderWorkshop();
+      AppView._updateKanbanFilterBarUI();
       return;
     }
     AppView._repaintKanbanBoard();
@@ -6224,9 +6264,10 @@ const AppView = {
   _repaintKanbanBoard() {
     const board = document.getElementById('dev-kanban-board');
     if (!board) return;
-    // Every filter-control change (and Clear) funnels through here, so this
-    // is the single write point that keeps the persisted per-app filters in
-    // sync. WS-driven repaints re-save the same values — idempotent.
+    // _repaintBoardSurface saves before it forks (it is the point BOTH
+    // surfaces' controls funnel through); this covers the callers that come
+    // straight here — the WS-driven kanban refreshes — and re-saves the same
+    // values, which is idempotent.
     AppView._saveKanbanFilters(App.currentApp);
     const react = AppView._reactDevBoard();
     AppView._lastKanbanView = AppView._kanbanView();

@@ -65,7 +65,15 @@ function makeAppView(over) {
       setItem: (k, v) => { store[k] = String(v); },
       removeItem: (k) => { delete store[k]; },
     },
-    sessionStorage: {
+    // A no-op by default, as it always was. `sessionStore` opts one test
+    // group into a REAL one: the per-app filter set lives here, so whether a
+    // filter change is persisted is only observable against a store that
+    // remembers (#1787).
+    sessionStorage: o.sessionStore ? {
+      getItem: (k) => (k in o.sessionStore ? o.sessionStore[k] : null),
+      setItem: (k, v) => { o.sessionStore[k] = String(v); },
+      removeItem: (k) => { delete o.sessionStore[k]; },
+    } : {
       getItem: () => null, setItem: () => {}, removeItem: () => {},
     },
     location: o.location || { search: '', hash: '', href: 'http://localhost/' },
@@ -350,6 +358,158 @@ test('the theme filter narrows by membership, and widens when it cannot be appli
   assert.deepEqual(plain(AppView._kanbanActiveChips().map((c) => [c.key, c.label])), [['theme', 'Theme: Theming']]);
   AppView._dismissKanbanFilter('theme');
   assert.equal(AppView._kanbanFilters.theme, null);
+});
+
+// ── #1787: the row is the card, folded ───────────────────────────────
+
+test('a folded row carries the card\'s status band, in the tone the pill already had', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  // #1442's case: green checks on a proposal that no longer merges. The one
+  // fact that decides whether it can land at all.
+  AppView._proposals[0].mergeability = 'conflict';
+  AppView._proposals[0].mergeability_files = ['src/a.js', 'src/b.js'];
+  const html = workshopHtml(AppView);
+
+  assert.match(html, /<span class="dev-ws-row-band">/,
+    'the row has a band of its own, a mini of .dev-card-badges.dev-card-status');
+  assert.match(html, /class="dev-ws-row-state dev-ws-row-state-blocked"[^>]*>Conflicts with main · 2 files</,
+    'the composite pill keeps its label AND spends the tone it carries');
+  assert.ok(!html.includes('dev-ws-row-pill'),
+    'it is no longer flattened to plain text in the grey the author\'s name wears');
+
+  // The band is clipped to one line for the same reason the dense card's is:
+  // a row that grew with its state would break the column's rhythm.
+  assert.match(CSS, /\.dev-ws-row-band \{[^}]*max-height: 18px;[^}]*overflow: hidden;/);
+  assert.match(CSS, /\.dev-ws-row-open \.dev-ws-row-band \{ display: none; \}/,
+    'and it stands down when the card below is showing the real one');
+});
+
+test('an open row grows the same card rather than painting a second one under it', () => {
+  // The entry still renders the WHOLE dense card — two declared checks select
+  // `.dev-feed-entry > .gc-vote-item` and the legacy fillers walk it — so the
+  // de-duplication is CSS, not markup.
+  const unfolded = WORKSHOP.slice(WORKSHOP.indexOf('function UnfoldedRow'), WORKSHOP.indexOf('function Lane'));
+  assert.match(unfolded, /<DevCard model=\{row\.card\} \/>/);
+  assert.match(CSS, /\.dev-ws-rowwrap-open > \.dev-feed-entry > \.gc-vote-item \.dev-card-head,\n\.dev-ws-rowwrap-open > \.dev-feed-entry > \.gc-vote-item \.dev-card-meta \{ display: none; \}/,
+    'the repeated title and meta line are hidden, not removed');
+  // …and the sheet treatment is overridden under the id it was set with, or
+  // the body keeps its own 26px ring and reads as the second card again.
+  assert.match(CSS, /#dev-workshop \.dev-ws-rowwrap-open > \.dev-feed-entry \{/);
+  assert.match(CSS, /#dev-workshop \.dev-ws-rowwrap-open > \.dev-feed-entry > div:is\(\.dev-card-dense\) \{/);
+  // The status band inside the open card STAYS: the vote button rides in it.
+  assert.ok(!/\.dev-ws-rowwrap-open[^\n]*\.dev-card-status \{ display: none/.test(CSS),
+    'hiding it would take voting away from an opened proposal');
+});
+
+test('a theme head counts its people AND how much is still open in it', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12', 'issue:13', 'session:34', 'session:78'] }]);
+  const html = workshopHtml(AppView);
+  // Two issues open + one proposal in review = 3. The merge is NOT counted:
+  // the number answers "how much is left in here", and shipped work is not.
+  assert.match(
+    html,
+    /<span class="dev-ws-stat"><b>\d+<\/b>(?:person|people)<\/span><span class="dev-ws-stat"><b>3<\/b>items<\/span>/,
+    'people and items, side by side',
+  );
+  assert.match(CSS, /\.dev-ws-stat \+ \.dev-ws-stat \{[^}]*border-left:/, 'divided by a hairline');
+});
+
+test('"Shipped this week" opens folded, so a theme opens on what still needs someone', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12', 'issue:13', 'session:34', 'session:78'] }]);
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-lane="shipped"/, 'the lane is still drawn — the fold is not a removal');
+  assert.match(html, /<h4 class="dev-ws-lane-title" role="button" tabindex="0" aria-expanded="false">/,
+    'and it is a disclosure, closed');
+  assert.ok(!html.includes('Landed thing'),
+    'the merge it holds is not in the DOM until someone opens the lane');
+  assert.match(html, /<span class="dev-ws-lane-n">1<\/span>/,
+    'but the count rides in the heading, so the fold never hides how much is in there');
+  // Every other lane is unaffected.
+  assert.match(html, /data-ws-lane="open"[\s\S]{0,400}?class="dev-ws-row"/);
+});
+
+// ── #1787: a filter changed ON THE WORKSHOP has to stick ─────────────
+//
+// Both halves of a filter change — persist it, and tell the bar what it now
+// says — used to sit inside `_repaintKanbanBoard`, which the Workshop never
+// reaches. So on this surface a filter was a scratch value: nothing saved it,
+// the next `_repaintDevBody` reloaded the stored set over it, and the chip row
+// never moved, so a chip's × widened the themes and stayed on screen.
+
+test('a filter set on the Workshop is persisted, and clearing it is persisted too', () => {
+  const store = {};
+  const AppView = makeAppView({ sessionStore: store });
+  seed(AppView);
+  assert.equal(AppView._getViewMode(), 'workshop', 'the Workshop is the default surface');
+
+  AppView._kanbanFilters.priority = 'high';
+  AppView._repaintBoardSurface();
+  assert.equal(AppView._loadKanbanFilters('demo-app').priority, 'high',
+    'the Workshop path saves — _repaintKanbanBoard is not the only funnel');
+
+  AppView._dismissKanbanFilter('priority');
+  assert.equal(AppView._loadKanbanFilters('demo-app').priority, null,
+    'and the clear is saved, so the next repaint cannot put it back');
+});
+
+test('the Workshop republishes the filter bar, so a chip\'s × actually clears the chip', () => {
+  const AppView = makeAppView({
+    document: {
+      getElementById: (id) => (id === 'dev-kanban-filterbar' ? {} : null),
+      querySelector: () => null,
+      querySelectorAll: () => ({ forEach: () => {} }),
+      addEventListener: () => {},
+      createElement: () => ({ style: {}, classList: { add: () => {}, remove: () => {} } }),
+      body: { appendChild: () => {} },
+    },
+  });
+  seed(AppView);
+  const published = [];
+  AppView._publishKanbanFilters = (v) => published.push(plain(v));
+
+  AppView._kanbanFilters.priority = 'high';
+  AppView._repaintBoardSurface();
+  assert.equal(published.length, 1, 'the Workshop tells the bar a filter went on');
+  assert.equal(published[0].count, 1);
+
+  AppView._dismissKanbanFilter('priority');
+  assert.equal(published.length, 2);
+  assert.equal(published[1].count, 0, 'and that it came back off');
+  assert.deepEqual(published[1].chips, [], 'the chip row is emptied, not left showing a dead chip');
+});
+
+test('the Workshop restores the stored filters on an app switch, not on every repaint', () => {
+  const AppView = makeAppView();
+  // The slug the in-memory set belongs to is what tells a repaint apart from
+  // an app switch. Unguarded, `_repaintDevBody` reloaded on every paint and
+  // discarded whatever the viewer had just done here.
+  assert.equal(AppView._kanbanFiltersSlug, null, 'nothing loaded yet');
+  const branch = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('<div id="dev-workshop"></div>'));
+  assert.match(branch.slice(0, branch.indexOf('_rerenderWorkshop();')),
+    /if \(AppView\._kanbanFiltersSlug !== App\.currentApp\) \{\s*\n\s*AppView\._kanbanFilters = AppView\._loadKanbanFilters\(App\.currentApp\);/,
+    'the reload is behind the slug guard');
+});
+
+test('the theme filter constrains sessions too, not just issues and proposals', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
+  const f = { ...AppView._defaultKanbanFilters(), theme: 't' };
+  // A session sits in a theme by the issue it links, exactly as the Workshop
+  // places it. It used to return `true` before the theme check ran at all, so
+  // with a theme selected every session matched every theme and a theme's
+  // Underway lane showed other themes' work.
+  assert.equal(AppView._devCardMatches('session', { id: 90, linked_issues: ['12'] }, f), true);
+  assert.equal(AppView._devCardMatches('session', { id: 91, linked_issues: ['13'] }, f), false);
+  assert.equal(AppView._devCardMatches('session', { id: 92, linked_issues: [] }, f), false);
+  // Priority and category stay a no-op there — a session carries neither.
+  const byPriority = { ...AppView._defaultKanbanFilters(), priority: 'high' };
+  assert.equal(AppView._devCardMatches('session', { id: 93, linked_issues: [] }, byPriority), true);
 });
 
 test('"Open on Board" narrows the board to the theme and goes there by hash', () => {

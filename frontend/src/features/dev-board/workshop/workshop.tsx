@@ -45,8 +45,8 @@ import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../../lib/use-store-state';
 import { devWorkshopStore } from '../card/cards-store';
-import { CardIcon, DevCard, VoteButton } from '../card/dev-card';
-import type { ActionSpec } from '../card/model';
+import { Badge, CardIcon, DevCard, VoteButton } from '../card/dev-card';
+import type { ActionSpec, BadgeSpec } from '../card/model';
 import { FeedThread } from '../card/feed-thread';
 import type { DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
@@ -107,6 +107,48 @@ function authorOf(card: DevCardModel): string | null {
   return null;
 }
 
+/** How many of the card's own chips ride along on a folded row. */
+const ROW_BADGE_MAX = 3;
+
+/**
+ * The folded row's status band — a MINI of the dense card's own
+ * (`.dev-card-badges.dev-card-status`), built from the same two model fields,
+ * and clipped to one line for the same reason: a band that wrapped would push
+ * every row under it out of rhythm.
+ *
+ * The composite pill used to be flattened to `pill.state.label` and printed in
+ * `.dev-ws-row-meta`, in the same muted grey the author's name wears — so
+ * "Conflicts with main · 9 files", which is the one fact that decides whether
+ * a proposal can merge at all, read like a byline. It has carried a `tone` all
+ * along; this spends it.
+ *
+ * A `chipBtn` is rendered as a plain `chip`. The row's whole surface is the
+ * disclosure, and a chip that swallowed the click to do something else would
+ * make the card open sometimes and not others; the real control is still on
+ * the card, one tap away.
+ */
+function flatBadge(b: BadgeSpec): BadgeSpec {
+  return b.t === 'chipBtn'
+    ? { t: 'chip', key: b.key, cls: b.cls, label: b.label, title: b.title, spinner: b.spinner, data: b.data }
+    : b;
+}
+
+function RowBand({ card }: { card: DevCardModel }): ReactNode {
+  const s = card.pill?.state || null;
+  const linked = card.linked || [];
+  const chips = (card.badges || []).filter(Boolean).slice(0, ROW_BADGE_MAX);
+  if (!s && !linked.length && !chips.length) return null;
+  return (
+    <span className="dev-ws-row-band">
+      {s ? (
+        <span className={`dev-ws-row-state dev-ws-row-state-${s.tone}`} title={s.title}>{s.label}</span>
+      ) : null}
+      {linked.map((b) => <Badge key={b.key} b={flatBadge(b)} />)}
+      {chips.map((b) => <Badge key={b.key} b={flatBadge(b)} />)}
+    </span>
+  );
+}
+
 /**
  * One folded row: a disclosure, and one that carries NO `data-issue-row`,
  * so the delegated card-open handler never mistakes it for a card.
@@ -122,7 +164,6 @@ function FoldedRow({
   const c = row.card;
   const n = numberOf(c);
   const by = authorOf(c);
-  const pill = c.pill?.state.label || null;
   return (
     <div
       role="button"
@@ -146,8 +187,8 @@ function FoldedRow({
         <span className="dev-ws-row-meta">
           {n ? <span className="font-mono">{n}</span> : null}
           {by ? <span>{by}</span> : null}
-          {pill ? <span className="dev-ws-row-pill">{pill}</span> : null}
         </span>
+        <RowBand card={c} />
       </span>
       {c.chatCount ? <span className="dev-ws-row-chat" title={`${c.chatCount} replies`}>{`💬 ${c.chatCount}`}</span> : null}
       {trailing ? <span className="dev-ws-row-trailing" onClick={(e) => e.stopPropagation()}>{trailing}</span> : null}
@@ -196,11 +237,34 @@ function Lane({
   onToggle: (key: string) => void;
   themeId: string;
 }): ReactNode {
+  // "Shipped this week" is the one lane that is a RECORD rather than a
+  // question — nothing in it needs anybody — so a theme opens on the work
+  // that still wants someone and keeps the record one tap away (#1787). The
+  // hook runs before the early return below, because a hook may not be
+  // conditional; the lane still renders nothing when it holds nothing.
+  const collapsible = lane.key === 'shipped';
+  const [laneOpen, setLaneOpen] = useState(!collapsible);
   if (!lane.rows.length && !lane.more) return null;
+  const total = lane.rows.length + lane.more;
   return (
     <div className={`dev-ws-lane dev-ws-lane-${lane.key}`} data-ws-lane={lane.key}>
-      <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>{lane.title}</h4>
-      {lane.rows.map((row) => {
+      {collapsible ? (
+        <h4
+          className="dev-ws-lane-title"
+          role="button"
+          tabIndex={0}
+          aria-expanded={laneOpen}
+          onClick={() => setLaneOpen(!laneOpen)}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLaneOpen(!laneOpen); } }}
+        >
+          <span className="dev-ws-dot" aria-hidden="true"></span>{lane.title}
+          <span className="dev-ws-lane-n">{total}</span>
+          <ChevronRightIcon className="dev-ws-chev" aria-hidden="true" />
+        </h4>
+      ) : (
+        <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>{lane.title}</h4>
+      )}
+      {!laneOpen ? null : lane.rows.map((row) => {
         if (row.t !== 'card') return null;
         const open = openKey === row.key;
         return (
@@ -212,7 +276,7 @@ function Lane({
           </div>
         );
       })}
-      {lane.more ? <div className="dev-ws-more">{`+${lane.more} more in this lane`}</div> : null}
+      {laneOpen && lane.more ? <div className="dev-ws-more">{`+${lane.more} more in this lane`}</div> : null}
     </div>
   );
 }
@@ -287,6 +351,7 @@ function ThemeCard({
   onToggleRow: (key: string) => void;
 }): ReactNode {
   const c = theme.counts;
+  const openItems = c.open + c.underway + c.review;
   const chips: ReactNode[] = [];
   if (c.fresh) chips.push(<span key="fresh" className="dev-ws-cnt dev-ws-cnt-fresh"><b>{`+${c.fresh}`}</b> new</span>);
   if (c.review) chips.push(<span key="review" className="dev-ws-cnt dev-ws-cnt-review"><span className="dev-ws-dot"></span><b>{c.review}</b> in review</span>);
@@ -322,7 +387,15 @@ function ThemeCard({
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
       >
         <div className="dev-ws-theme-name">{theme.name}</div>
-        <div className="dev-ws-theme-people"><b>{theme.people.length}</b>{theme.people.length === 1 ? 'person' : 'people'}</div>
+        {/* Two stats, not one: how many people, and how big. `counts` is
+            incremented before the lane cap in the publisher, so this is the
+            theme's real size and not what happens to be drawn. SHIPPED is
+            excluded on purpose — the question the number answers is "how
+            much is left in here", and work that landed is not left. */}
+        <div className="dev-ws-theme-people">
+          <span className="dev-ws-stat"><b>{theme.people.length}</b>{theme.people.length === 1 ? 'person' : 'people'}</span>
+          <span className="dev-ws-stat"><b>{openItems}</b>{openItems === 1 ? 'item' : 'items'}</span>
+        </div>
         {theme.saying ? (
           <p className="dev-ws-theme-say">{theme.saying}</p>
         ) : (theme.description ? <p className="dev-ws-theme-say">{theme.description}</p> : null)}
