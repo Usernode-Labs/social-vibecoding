@@ -1338,9 +1338,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Landing CTA area is a compact link, not the survey",
+      "name": "Landing keeps its compact CTA and account-required apps carry locks (#1522)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#landing-waitlist a[href=\"#waitlist\"]",
+      "expectSelector": "body:has(#landing-apps .app-card[data-gated=\"true\"] [title=\"Account required\"]) #landing-waitlist a[href=\"#waitlist\"]",
       "allowConsoleErrors": true
     },
     {
