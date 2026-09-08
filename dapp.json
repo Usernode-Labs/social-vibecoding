@@ -506,6 +506,12 @@
   ],
   "tests": [
     {
+      "name": "Alerts settings explain delayed mobile push testing (#1795)",
+      "path": "/#settings/alerts",
+      "expectSelector": "[data-settings-section=\"alerts\"]:not(.hidden) #devchat-alerts-test",
+      "expectText": "10-second delay"
+    },
+    {
       "name": "Guest back arrow returns to the app directory (#1028)",
       "path": "/?shot=anon-back#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",

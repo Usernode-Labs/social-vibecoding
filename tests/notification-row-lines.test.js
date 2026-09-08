@@ -260,3 +260,10 @@ test('the three lines are visually ranked, not three of the same thing', () => {
   // beside them says the word too.
   assert.equal((body.match(/truncate"/g) || []).length, 3, 'all three truncate');
 });
+
+test('a push test has clear account-level copy without inventing a completed session', async () => {
+  const row = (await load())({ ...ROW, kind: 'test_alert', appName: null, appSlug: null, sessionId: null });
+  assert.equal(row.label, 'Usernode test alert');
+  assert.equal(row.appLine, '');
+  assert.match(row.segments[0].v, /You requested a push notification test/);
+});

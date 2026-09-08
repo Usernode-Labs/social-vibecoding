@@ -465,36 +465,48 @@
         });
       }
 
-      // #138 "Send a test alert" — exercises the user's own setup. Fires a
-      // demo completion after a short delay so they can stay (hear the
-      // chime) or switch away (see the background notification).
+      // The server owns delayed push delivery; this countdown only explains
+      // when the optional live-page chime will run.
       const alertsTest = document.getElementById('devchat-alerts-test');
       if (alertsTest) {
-        alertsTest.addEventListener('click', () => {
-          if (!window.DevAlerts) return;
+        alertsTest.addEventListener('click', async () => {
+          if (!window.DevAlerts || alertsTest.disabled) return;
           const status = document.getElementById('devchat-alerts-test-status');
-          const ms = DevAlerts.testAlert();
-          if (!status) return;
-          // Visible countdown that ticks down each second (the previous
-          // version set the text once and it looked frozen). Guard against
-          // rapid re-clicks by clearing any in-flight countdown first; the
-          // same id is cleared on close().
           this._clearAlertsTestCountdown();
-          status.classList.remove('hidden');
-          let remaining = Math.ceil(ms / 1000);
-          const render = () => {
-            status.textContent = `Alert in ${remaining}s. Stay here for the chime, or switch away / background the app for a notification.`;
-          };
-          render();
-          this._alertsTestTimer = setInterval(() => {
-            remaining -= 1;
-            if (remaining > 0) {
-              render();
-              return;
-            }
-            this._clearAlertsTestCountdown();
-            status.textContent = 'Sent. You should hear a chime now (or get a notification if you switched away).';
-          }, 1000);
+          alertsTest.disabled = true;
+          if (status) {
+            status.classList.remove('hidden');
+            status.textContent = 'Queueing test alert…';
+          }
+          try {
+            const result = await DevAlerts.testAlert();
+            if (!status) return;
+            const pushStatus = result.queued
+              ? 'Phone push queued. Background or close the mobile app to check for a notification.'
+              : result.reason === 'preference_disabled'
+                ? 'Phone push was not queued. Enable Developer sessions under Mobile push categories and try again.'
+                : 'Phone push was not queued. Sign in on your phone and enable Activity notifications and notification permission. Push delivery must also be available on the server.';
+            let remaining = Math.ceil(result.delayMs / 1000);
+            const render = () => {
+              status.textContent = `Alert in ${remaining}s. ${pushStatus} Stay here for the chime if sound is enabled.`;
+            };
+            render();
+            this._alertsTestTimer = setInterval(() => {
+              remaining -= 1;
+              if (remaining > 0) {
+                render();
+                return;
+              }
+              this._clearAlertsTestCountdown();
+              status.textContent = result.queued
+                ? 'The test push is queued for delivery. Check your phone; delivery may take a few more seconds.'
+                : pushStatus;
+            }, 1000);
+          } catch (err) {
+            if (status) status.textContent = err.message || 'Could not queue the test push. Please try again.';
+          } finally {
+            alertsTest.disabled = false;
+          }
         });
       }
 

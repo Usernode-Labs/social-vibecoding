@@ -1,4 +1,6 @@
 const { Router } = require('express');
+const { rateLimit } = require('express-rate-limit');
+const { queueTestAlert } = require('../services/test-alert');
 const { getPool } = require('../db/pool');
 const notifications = require('../services/notifications');
 const messageBookmarks = require('../services/message-bookmarks');
@@ -205,6 +207,27 @@ function stagingMockSavedMessages() {
 function notificationsRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+
+  const testAlertLimiter = rateLimit({
+    windowMs: 60000,
+    limit: 3,
+    keyGenerator: (req) => String(req.user.id),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Please wait a minute before sending another test alert.' },
+  });
+  router.post('/api/me/test-alert', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    return next();
+  }, testAlertLimiter, async (req, res) => {
+    try {
+      return res.json(await queueTestAlert(pool, req.user.id));
+    } catch (err) {
+      log.error('test-alert', 'queue failed', { message: err.message });
+      return res.status(500).json({ error: 'Could not queue the test push. Please try again.' });
+    }
+  });
 
   // Account-level mobile-push policy. This is intentionally a browser-
   // session surface rather than a phone-registration surface: any signed-in

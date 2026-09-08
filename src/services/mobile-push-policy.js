@@ -93,6 +93,8 @@ function buildCopy(kind, context, now) {
   const quoted = label ? `"${truncate(label, EMBED_TITLE_MAX)}"` : '';
   const quotedTitle = label ? `"${truncate(label, TITLE_EMBED_MAX)}"` : '';
   switch (kind) {
+    case 'test_alert':
+      return { title: 'Usernode test alert', body: 'Your phone can receive push notifications from Usernode.' };
     case 'conversation_invite':
       return {
         title: withConversation(actor ? `@${actor} invited you to a conversation`
