@@ -372,6 +372,14 @@ const ADDED_IDS = {
   'mobile-install-banner': 'The phone-browser strip offering the native app (#1372). Sits under #offline-banner and stacks with it.',
   'mobile-install-open': 'The strip\'s primary control. An anchor to the store when a listing is published for this OS (href from app_version_configs.update_url via GET /api/public/mobile-app); a button revealing the Add-to-Home-Screen steps when none is (#1513).',
   'mobile-install-dismiss': 'Dismisses the strip for this session; the answer is kept in sessionStorage, so the next visit is offered the app once more (#1514).',
+  // #1561 — the once-per-account welcome on Home. A new account lands on a
+  // launcher grid of other people's apps with nothing on the screen saying
+  // what the place is, so the banner states it: the apps are changed by the
+  // people using them, and nothing ships without a group vote. Like the
+  // install strip above, it is always in the document and starts `hidden`,
+  // because the viewer is not known at prerender time.
+  'home-welcome': 'The dismissible first-login explainer at the top of #home-body (#1561).',
+  'home-welcome-dismiss': 'Dismisses it for good, per account: the answer is kept in localStorage under the viewer\'s user id.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.
