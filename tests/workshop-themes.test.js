@@ -326,6 +326,54 @@ test('sanitizeWorkshopThemeDefinitions drops unknown anchors, duplicates, namele
   assert.equal(llm.sanitizeWorkshopThemeDefinitions(many, []).themes.length, 12);
 });
 
+test('a theme icon is one emoji or nothing — a word or a keycap is worse than none', () => {
+  const keys = ['issue:1'];
+  const icon = (v) => llm.sanitizeWorkshopThemeDefinitions(
+    { themes: [{ id: '', name: 'T', description: 'd', saying: 's', icon: v, anchors: [] }] }, keys,
+  ).themes[0].icon;
+  // A model asked for an emoji sometimes answers with a word, a keycap or a
+  // sentence, and any of those in a 22px glyph slot is worse than the initial
+  // the client falls back to — so this is a whitelist, not a trim (#1787).
+  assert.equal(icon('🎮'), '🎮');
+  assert.equal(icon('🕹️'), '🕹️', 'a variation selector rides along');
+  assert.equal(icon('👩🏽‍💻'), '👩🏽‍💻', 'so do a skin tone and a ZWJ');
+  assert.equal(icon('Games'), '');
+  assert.equal(icon('1️⃣'), '', 'a keycap is a digit wearing an emoji');
+  assert.equal(icon('🇬🇧'), '', 'a flag is never the answer');
+  assert.equal(icon('🎨 design'), '');
+  assert.equal(icon(''), '');
+  assert.equal(icon(undefined), '');
+});
+
+test('the discovery prompt cuts the board on ONE axis, and names the words that make a bucket', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/llm'), 'utf8');
+  // Anchor the end marker AFTER the start: `const user = \`APP:` appears in
+  // three prompts in this file, and the first one is above this system block.
+  const at = src.indexOf('You organise the work on a collaborative');
+  const system = src.slice(at, src.indexOf('const user = `APP:', at));
+  assert.ok(system.length > 500, 'the system prompt was actually found');
+
+  // The rule that produced the grab bag. "Fewer, broader themes beat many
+  // narrow ones" plus a total-coverage requirement and no size pressure: the
+  // model's cheapest way to satisfy both was one broad sink, and on this
+  // platform's own board that sink held the chain work, the brand system and
+  // the season programme under "Platform infrastructure and roadmap".
+  assert.ok(!/Fewer, broader themes beat many narrow ones/.test(system),
+    'the breadth instruction is gone');
+  // …and the licence that let three axes coexist.
+  assert.ok(!/the flow, the kind of experience/.test(system));
+
+  assert.match(system, /Cut the board on ONE axis/);
+  for (const word of ['infrastructure', 'roadmap', 'platform', 'core', 'general', 'misc', 'other', 'polish', 'experience', 'improvements']) {
+    assert.ok(system.includes(`"${word}"`), `the name rule names "${word}"`);
+  }
+  assert.match(system, /may never differ only by how ambitious the work is/,
+    'no two themes on one part of the product, split by scope');
+  assert.match(system, /where the person USING the app would notice it/,
+    'cards are assigned by impact, not by what would be edited');
+  assert.match(system, /"icon": ONE emoji/);
+});
+
 test('sanitizeWorkshopPlacements: placed, declined, and missing — unknown keys and themes ignored', () => {
   const out = llm.sanitizeWorkshopPlacements({ placements: [
     { key: 'issue:1', theme: 'a' },

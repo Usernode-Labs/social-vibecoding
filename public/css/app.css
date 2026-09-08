@@ -11456,6 +11456,11 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 .dev-ws-link:hover { text-decoration: underline; }
 
+/* The dashboard's numbers, when it is open. Same two-line stat shape the
+   theme head uses, laid out as a row that wraps on a phone. */
+.dev-ws-dash { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 4px; }
+.dev-ws-dash-cell { display: flex; flex-direction: column; font-size: 12px; color: var(--text-muted); line-height: 1.2; }
+.dev-ws-dash-cell b { font-size: 20px; font-weight: 600; color: var(--text-primary); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .dev-ws-sort { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 0; flex-wrap: wrap; }
 .dev-ws-sort-opts { display: flex; gap: 4px; }
 .dev-ws-chip {
@@ -11480,7 +11485,23 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-theme-head:hover { background: var(--state-neutral-bg); }
 .dev-ws-theme-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .dev-ws-theme-name { font-size: 17px; font-weight: 600; letter-spacing: -.01em; color: var(--text-primary); text-wrap: balance; }
-.dev-ws-theme-people { text-align: right; color: var(--text-muted); font-size: 12px; line-height: 1.2; }
+/* The theme's glyph, inline with its name so a long name still wraps under
+   itself rather than around a floated square. Sized to the cap height of the
+   name beside it. */
+.dev-ws-theme-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; margin-right: 7px; border-radius: 7px;
+  font-size: 15px; line-height: 1; vertical-align: -5px;
+  background: var(--state-neutral-bg);
+}
+/* The no-icon fallback: the initial on the name's own swatch — the same
+   colour `Faces` gives that name — so it reads as chosen, not as missing. */
+.dev-ws-theme-icon-letter { color: #fff; font-size: 12px; font-weight: 700; }
+/* Two stats side by side — people, then how many items are still open in
+   here — divided by a hairline rather than a glyph, so the pair reads as one
+   block and the numbers stay the loudest thing in it. */
+.dev-ws-theme-people { text-align: right; color: var(--text-muted); font-size: 12px; line-height: 1.2; display: flex; gap: 10px; }
+.dev-ws-stat + .dev-ws-stat { padding-left: 10px; border-left: 1px solid var(--app-sheet-line); }
 .dev-ws-theme-people b { display: block; font-size: 20px; font-weight: 600; color: var(--text-primary); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .dev-ws-theme-say { grid-column: 1 / -1; margin: 2px 0 0; font-size: 14px; color: var(--text-primary); }
 .dev-ws-theme-counts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -11522,20 +11543,58 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   margin: 0 0 4px; padding: 0 4px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
   color: var(--text-muted); display: flex; gap: 6px; align-items: center;
 }
+/* "Shipped this week" folds — it is the one lane nothing is waiting on. Its
+   count rides in the heading so the fold never hides how much is in there. */
+.dev-ws-lane-title[role="button"] { cursor: pointer; }
+.dev-ws-lane-title[role="button"]:hover { color: var(--text-primary); }
+.dev-ws-lane-title[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.dev-ws-lane-n { font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.dev-ws-lane-title[aria-expanded="true"] > .dev-ws-chev { transform: rotate(90deg); }
+.dev-ws-lane-title > .dev-ws-chev { width: 14px; height: 14px; }
 .dev-ws-rowwrap { margin-bottom: 4px; }
+/* ── The row IS the card, folded ─────────────────────────────
+   It used to be a grey strip on the sheet, which made an unfolded row read
+   as two objects: the strip, and a whole card painted under it repeating the
+   same title, number and author. Same sheet, border and radius as the entry
+   below it now, so opening one GROWS the thing you clicked (#1787). */
 .dev-ws-row {
   width: 100%; text-align: left; display: flex; align-items: center; gap: 10px;
-  padding: 8px 10px; border-radius: 12px; border: 0; background: var(--state-neutral-bg);
+  padding: 9px 10px; border-radius: 12px; border: 1px solid var(--border-light);
+  background: var(--dc-sheet);
   color: var(--text-primary); font: inherit; cursor: pointer;
 }
-.dev-ws-row:hover { background: var(--bg-tertiary); }
+.dev-ws-row:hover { background: var(--state-neutral-bg); border-color: var(--border); }
 .dev-ws-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.dev-ws-row > .dev-card-icon { flex-shrink: 0; }
+.dev-ws-row > .dev-card-icon { flex-shrink: 0; align-self: flex-start; margin-top: 1px; }
 .dev-ws-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .dev-ws-row-title { font-size: 14px; line-height: 1.3; }
 .dev-ws-row-meta { display: flex; gap: 8px; font-size: 12px; color: var(--text-muted); min-width: 0; }
 .dev-ws-row-meta > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dev-ws-row-pill { color: var(--text-primary); }
+/* ── The row's status band ───────────────────────────────────
+   A mini of `.dev-card-badges.dev-card-status`, and clipped exactly as that
+   one is and for the same reason: ONE line, overflow hidden, so a card with
+   more state than fits loses the surplus whole rather than growing the row
+   and breaking the column's rhythm. Hidden when the row is open — the full
+   card below is showing the real band, and one item gets one status line. */
+.dev-ws-row-band {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px;
+  min-height: 18px; max-height: 18px; overflow: hidden; margin-top: 4px;
+}
+.dev-ws-row-open .dev-ws-row-band { display: none; }
+/* The composite pill, wearing the tone it has always carried. Tones are
+   `statusPillState`'s vocabulary (neutral / ok / attention / blocked /
+   progress), not the merge badge's colour names — an unknown one falls
+   through to the neutral base rather than rendering unstyled. */
+.dev-ws-row-state {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 600; line-height: 1.5; white-space: nowrap;
+  padding: 1px 7px; border-radius: 9999px;
+  background: var(--state-neutral-bg); color: var(--state-neutral);
+}
+.dev-ws-row-state-blocked   { background: var(--state-blocked-bg);   color: var(--state-blocked); }
+.dev-ws-row-state-ok        { background: var(--state-ok-bg);        color: var(--state-ok); }
+.dev-ws-row-state-attention { background: var(--state-attention-bg); color: var(--state-attention); }
+.dev-ws-row-state-progress  { background: var(--state-progress-bg);  color: var(--state-progress); }
 .dev-ws-row-chat { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
 .dev-ws-new {
   margin-left: 6px; font-size: 10px; font-weight: 700; color: var(--accent); background: var(--accent-tint);
@@ -11546,8 +11605,44 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   margin-left: 6px; font-size: 10px; font-weight: 600; color: var(--text-muted);
   border: 1px dashed currentColor; padding: 0 5px; border-radius: 6px; vertical-align: middle; opacity: .8;
 }
+/* ── Open: ONE sheet in two parts ────────────────────────────
+   The row is the head and keeps its top corners; the entry is the body and
+   picks up exactly where it stopped, its own bottom border closing the same
+   box. The row's bottom border stays visible on purpose — inside one card it
+   reads as the rule under a heading, which is what it now is. */
+   Scoped under `#dev-workshop` because the entry's own sheet treatment is
+   (`#dev-workshop .dev-feed-entry`, above): an ID beats any class run, so a
+   bare `.dev-ws-rowwrap-open > .dev-feed-entry` loses and the body keeps its
+   26px ring — which is exactly the second card this is removing. */
 .dev-ws-rowwrap-open > .dev-ws-row { border-radius: 12px 12px 0 0; }
-.dev-ws-rowwrap-open > .dev-feed-entry { border-radius: 0 0 22px 22px; margin-top: 2px; }
+#dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry {
+  margin-top: 0;
+  border: 1px solid var(--border-light);
+  border-top: 0;
+  border-radius: 0 0 12px 12px;
+  box-shadow: none;
+  background-color: var(--dc-sheet);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+/* …and the dense card inside is that body, not a card of its own. It keeps
+   its tone bar — an inset shadow, so it costs no layout and is the one state
+   signal the row's band cannot carry — and gives up the sheet, the radius and
+   the drop shadow it wears standing alone on the Board. */
+#dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry > div:is(.dev-card-dense) {
+  background-color: transparent;
+  border-radius: 0;
+  box-shadow: inset var(--dev-edge-w) 0 0 color-mix(in srgb, var(--dev-edge) 33%, transparent);
+  padding-top: 6px;
+}
+/* The entry still renders the WHOLE dense card — `.dev-feed-entry >
+   .gc-vote-item` is what two declared checks select and what
+   `_wireFeedComments` / `_fillKudosHosts` walk — but its head and meta line
+   are the row's job now, so they are hidden rather than repeated. The status
+   band below them deliberately stays: the vote button rides in it, so hiding
+   it would take voting away from an opened proposal. */
+.dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item .dev-card-head,
+.dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item .dev-card-meta { display: none; }
 .dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
 .dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
 .dev-ws-theme-more { font-size: 13px; color: var(--text-muted); padding: 4px 10px 0; }

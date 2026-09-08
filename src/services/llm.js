@@ -1736,7 +1736,7 @@ const WORKSHOP_DISCOVERY_SCHEMA = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['id', 'name', 'description', 'saying', 'anchors'],
+        required: ['id', 'name', 'description', 'saying', 'icon', 'anchors'],
         properties: {
           // A previous theme's id when this IS that theme, else "" — a plain
           // string rather than a nullable one, which the structured-output
@@ -1745,6 +1745,12 @@ const WORKSHOP_DISCOVERY_SCHEMA = {
           name: { type: 'string' },
           description: { type: 'string' },
           saying: { type: 'string' },
+          // One emoji, so a theme is findable in a list at a glance. Chosen
+          // by the model rather than hashed from the name: a hash is stable
+          // and meaningless, and the whole value of the glyph is that it
+          // means the thing. Sanitised below, and optional in practice — a
+          // theme without one falls back to its initial on the client.
+          icon: { type: 'string' },
           // The cards that best exemplify the theme, by key: the first
           // placements, and the examples the placement call reads.
           anchors: { type: 'array', items: { type: 'string' } },
@@ -1780,6 +1786,27 @@ const WORKSHOP_PLACEMENT_SCHEMA = {
 // anchor named twice belongs to the first theme that named it, a nameless
 // theme is dropped and the list is capped. A theme with no anchors is kept —
 // the definitions are the product here; the anchors are a head start.
+// One emoji, or ''. A model asked for an emoji sometimes answers with a word,
+// a digit-keycap or a sentence, and any of those rendered in a 22px glyph slot
+// is worse than the initial the client falls back to — so this is a whitelist,
+// not a trim. Symbol/pictographic code points plus the joiners and modifiers
+// that hold a single emoji together (ZWJ, variation selector, skin tone,
+// regional indicators are excluded on purpose: a flag is never the answer).
+function sanitizeThemeIcon(v) {
+  const s = String(typeof v === 'string' ? v : '').trim();
+  if (!s) return '';
+  const cps = [...s];
+  if (!cps.length || cps.length > 6) return '';
+  let pictographic = 0;
+  for (const c of cps) {
+    if (/\p{Extended_Pictographic}/u.test(c)) { pictographic += 1; continue; }
+    // ️ variation selector, ‍ ZWJ, \u{1F3FB}-\u{1F3FF} skin tones.
+    if (/[️‍]|\p{Emoji_Modifier}/u.test(c)) continue;
+    return '';
+  }
+  return pictographic >= 1 ? s : '';
+}
+
 function sanitizeWorkshopThemeDefinitions(parsed, itemKeys) {
   const p = parsed || {};
   const clip = (v, n) => String(typeof v === 'string' ? v : '').trim().slice(0, n);
@@ -1803,6 +1830,7 @@ function sanitizeWorkshopThemeDefinitions(parsed, itemKeys) {
       name,
       description: clip(t.description, 220),
       saying: clip(t.saying, 320),
+      icon: sanitizeThemeIcon(t.icon),
       anchors,
     });
   }
@@ -1861,11 +1889,17 @@ async function generateWorkshopThemeDefinitions({ inputJson, appName, itemKeys, 
 
 You are drafting the themes, not placing every card: a second step places each card into one of your themes, reading only the card and your definitions. So the themes must together cover the whole board, and each must be clear enough that a card can be placed from its title alone.
 
+Cut the board on ONE axis: the part of the product a member could point at. Not the kind of work, not how ambitious the work is, not which layer of the stack it touches. "Game Corner" and "Signing in" are parts of a product; "Core UI polish", "Visual redesign" and "Platform infrastructure" are kinds of work. A board cut on both axes at once leaves cards that could sit in either, and one theme that quietly becomes the bucket for everything with no screen.
+
 Rules for the themes:
-- Between 3 and ${WORKSHOP_THEME_MAX} themes. Fewer, broader themes beat many narrow ones; every card on the board should have one theme it obviously belongs to.
-- "name": 2 to 5 words, plain language a non-technical member recognises (the part of the app, the flow, the kind of experience). Never a lifecycle word like "In review" or "Done".
+- Between 3 and ${WORKSHOP_THEME_MAX} themes: as many as the work genuinely has distinct parts. Do not merge two unrelated areas to reach a smaller number.
+- "name": 2 to 5 words naming that part of the product, in the words a member would use for it. Ordinary product nouns are right and often best — "wallet", "board", "sign-in", "Game Corner". What is wrong is naming the WORK instead of the thing: never use "infrastructure", "roadmap", "platform", "core", "general", "misc", "other", "polish", "experience" or "improvements" in a name. Never a lifecycle word like "In review" or "Done".
+- Two themes may never differ only by how ambitious the work is. A tidy-up of one part of the product and a redesign of that same part are ONE theme.
+- Some work has no screen: the chain and the wallet, the brand and design system, a launch or season programme, the build and the checks that gate merge. Each of those may be a theme, named as plainly as the rest. They are the only themes allowed not to name something a member can open.
+- Judge a card by where the person USING the app would notice it, not by what would be edited to fix it. "Email sign-in breaks for accounts that already have a password" is a sign-in card, not an email card.
 - "description": one sentence, 15 to 30 words, on what falls under this theme — written so that a card can be matched against it.
-- "saying": one or two sentences, at most 45 words, on what people are asking for in this theme — the most repeated ask first, quoting a title fragment where it helps. Written for someone who has just arrived. Plain text, no markdown.
+- "saying": one or two sentences, at most 45 words, in three beats — what this part of the product is, the ask that repeats most (quoting a title fragment where it helps), and where it stands right now. Written for somebody who has just arrived and knows none of the technical terms. Plain text, no markdown.
+- "icon": ONE emoji, the most obvious one for that part of the product. No text, no digits, no flags.
 - "anchors": 3 to ${WORKSHOP_ANCHOR_MAX} keys from the snapshot, of the cards that best exemplify the theme. A key belongs to at most one theme's anchors. Do not invent keys.
 - Order themes by how many distinct people are involved, then by recent activity.
 
