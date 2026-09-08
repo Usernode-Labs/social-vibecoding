@@ -625,6 +625,20 @@ function authRoutes(config) {
         hasByokKey: true,
         resetsAt: reset.toISOString(),
         lowBalancePct: 80,
+        // #1788: the allowance has two windows now, and the row's copy
+        // follows whichever one is binding. The daily cap binds in this
+        // fixture — the weekly one still has room — so the reviewed row
+        // reads exactly as it did before, with the window now stated
+        // rather than assumed.
+        capWindow: 'daily',
+        windowLabel: 'Today',
+        resetLabel: 'midnight UTC',
+        dailyApplies: true,
+        dailyLimitCents: 2000,
+        dailySpentCents: 1360,
+        weeklyApplies: true,
+        weeklyLimitCents: 17500,
+        weeklySpentCents: 4820,
         demo: true,
       });
     }

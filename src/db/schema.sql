@@ -77,6 +77,15 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_link_expires_at   TIMESTAMPTZ;
 -- src/routes/sessions.js via src/services/limits.js.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit_cents INTEGER;
 
+-- #1788: per-user WEEKLY LLM spend cap in cents, layered on top of the
+-- daily one above. NULL means "use the platform default" stored in
+-- platform_settings.user_weekly_limit_cents (see below); 0 means "no
+-- weekly cap applies to this user". Same admin surfaces as the daily
+-- override (/api/admin/users/:id/weekly-limit, admin console → Users).
+-- Read by limits.getUserCreditEntitlement / limits.resolveCaps, which
+-- own the full daily-vs-weekly interaction.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_limit_cents INTEGER;
+
 -- Experimental: opt-in AI progress estimate for coding runs. When TRUE,
 -- the platform periodically asks Haiku to skim the in-flight Claude Code
 -- progress log and emits a vague "AI guess" line in dev-chat (see
@@ -1995,6 +2004,44 @@ INSERT INTO platform_settings (key, value) VALUES
   -- merge-conflict / sync-with-main resolution turns. Defaults to $25/day.
   ('system_tokens_daily_limit_cents', '2500')
 ON CONFLICT (key) DO NOTHING;
+
+-- #1788: the platform-default per-user WEEKLY cap. Seeded as SEVEN TIMES
+-- whatever the daily default is at the moment this first runs, rather than
+-- as a literal: on an existing deployment that is exactly what a user on
+-- the default could already spend across a week, so the cap arrives
+-- enforced but non-regressive. A fresh deploy seeds 7 x 2500 = 17500.
+-- ON CONFLICT DO NOTHING, so an operator-set value survives every boot.
+INSERT INTO platform_settings (key, value)
+SELECT 'user_weekly_limit_cents',
+       (7 * COALESCE((
+         SELECT ps.value::int
+           FROM platform_settings ps
+          WHERE ps.key = 'user_daily_limit_cents'
+            AND ps.value ~ '^[0-9]+$'
+       ), 2500))::text
+ON CONFLICT (key) DO NOTHING;
+
+-- One-shot backfill of users.weekly_limit_cents for everyone who already
+-- holds a DAILY override. Without it, a raised daily cap would collide with
+-- the platform weekly default the first time the weekly gate ran — a user
+-- on $120/day would be cut off partway through Tuesday by a $140 week.
+-- Seven times their own daily cap preserves exactly what each of them could
+-- already spend. Guarded by a marker row so it runs EXACTLY ONCE, the same
+-- way app_quota_migrated above is: a re-runnable UPDATE would re-clobber
+-- any weekly cap an admin later lowers by hand. Rows with no daily override
+-- are left NULL and fall through to the platform default.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'weekly_limit_backfilled') THEN
+    UPDATE users
+       SET weekly_limit_cents = daily_limit_cents * 7
+     WHERE daily_limit_cents IS NOT NULL
+       AND weekly_limit_cents IS NULL;
+    INSERT INTO platform_settings (key, value)
+      VALUES ('weekly_limit_backfilled', 'true')
+      ON CONFLICT (key) DO NOTHING;
+  END IF;
+END $$;
 
 -- One-shot backfill of users.app_quota from the legacy can_create_apps
 -- boolean. Guarded by a marker row in platform_settings so it runs EXACTLY

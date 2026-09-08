@@ -224,6 +224,7 @@ const CARD_INFO: Record<string, string> = {
   'merged-all': 'Every dev session that landed in production.',
   'kudos': 'Total kudos handed out across all users.',
   'llm-today': 'Today\'s platform-key LLM spend (the spend the daily caps track), in dollars.',
+  'llm-week': 'Platform-key LLM spend so far this week, in dollars. The week runs Monday 00:00 UTC to Monday 00:00 UTC, the same window the per-user weekly cap enforces.',
 };
 
 // Both maps are constant, so their copy is registered once at module scope
@@ -371,6 +372,7 @@ function Counters({ o }: { o: any }) {
     { id: 'merged-all', label: 'Merged PRs (all time)', value: fmtInt(o.prs.merged) },
     { id: 'kudos', label: 'Kudos given (all time)', value: fmtInt(o.kudosTotal) },
     { id: 'llm-today', label: 'LLM spend today', value: dollars(o.llmSpendTodayCents) },
+    { id: 'llm-week', label: 'LLM spend this week', value: dollars(o.llmSpendWeekCents) },
   ];
   return (
     <>
