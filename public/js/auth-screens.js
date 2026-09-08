@@ -216,12 +216,19 @@
       //
       // First match wins, and the address is rewritten to the hash route, so
       // whichever spelling arrives the address bar ends up identical.
+      //
+      // `?status=1` is the check-my-status mail's one button (#1538). It
+      // resolves to the code-entry step of the waitlist screen, which is a
+      // hash ROUTE plus a hash QUERY — so it cannot use the bare `/#route`
+      // template the other two share. The state stays in the fragment for
+      // the same reason it always has: a query would put it in server logs.
       try {
         if (!location.hash) {
           const params = new URLSearchParams(location.search);
           const route = params.has('signup') ? 'signup'
             : params.has('login') ? 'login'
-              : null;
+              : params.has('status') ? 'waitlist?confirm=1'
+                : null;
           if (route) history.replaceState(null, '', `/#${route}`);
         }
       } catch (_) {}

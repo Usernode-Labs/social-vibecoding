@@ -642,6 +642,17 @@ const App = {
     // anonymous boot for the same reason waitlist-more does: restoreFromHash
     // drops an auth route outright for the signed-in session every capture
     // and proposal check runs as.
+    // `waitlist-admitted` (#1538) is the released panel of check-my-status:
+    // the pill, the joined-on date and the "Create my account" action a
+    // signup that has been let in reads back after typing its code. It is
+    // the one settled state no other route can paint, because reaching it
+    // for real needs a row with a released_at behind it.
+    // `waitlist-status` is the same panel one state earlier: still waiting,
+    // read back through check-my-status rather than confirmed just now. It
+    // is a separate shot from `waitlist-confirmed` because the difference
+    // between them is the whole point of the panel — the celebration is the
+    // join's and the state pill is the status read's — and one shot cannot
+    // photograph both.
     // `signup-code-sent` (#1548) is the signup screen a second after a
     // waitlist-release link opens it: the code step, the confirmation, and
     // the resend held for its cooldown. The address rides in the fragment
@@ -651,6 +662,7 @@ const App = {
     // proposal check runs as. login.tsx paints it and sends nothing.
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
         shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
+        shot !== 'waitlist-admitted' && shot !== 'waitlist-status' &&
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
         shot !== 'signup-code-sent' &&
@@ -659,7 +671,8 @@ const App = {
       return false;
     }
     if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed'
-         || shot === 'waitlist-step1' || shot === 'waitlist-code-entry') &&
+         || shot === 'waitlist-step1' || shot === 'waitlist-code-entry'
+         || shot === 'waitlist-admitted' || shot === 'waitlist-status') &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }

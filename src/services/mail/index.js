@@ -396,19 +396,33 @@ async function sendWaitlistJoinMail(config, email, { moreToken = null, code = nu
 // mail's one-per-day rule cannot swallow it and so the words are the ones
 // somebody chasing a code needs rather than a second welcome.
 //
-// `code: null` is the already-confirmed shape. The caller passes it when
-// the address has a confirmed_at, and the template answers "nothing left
-// to do" with a link to where they stand. The mail is the ONLY channel
-// that discloses that: the HTTP response is identical either way.
-async function sendWaitlistCodeMail(config, email, { code = null, moreToken = null } = {}) {
+// `confirmed: true` is the check-my-status shape (#1538): the address
+// already has a confirmed_at, so the code proves the mailbox rather than
+// confirming it, and the mail's one button goes to the code-entry screen
+// carrying NO token. `code: null` is the degradation for that same
+// address when minting failed — the template's "nothing left to do"
+// shape, which is still true. The mail is the ONLY channel that discloses
+// confirmation state: the HTTP response is identical either way.
+//
+// The status URL is a QUERY, not a fragment. Link rewriters drop
+// fragments (#1545), and AuthScreens.enter() turns `?status=1` back into
+// the code-entry route on arrival.
+async function sendWaitlistCodeMail(
+  config,
+  email,
+  { code = null, moreToken = null, confirmed = false } = {}
+) {
   await send(config, {
     kind: 'waitlist_code',
     to: email,
     code,
-    confirmUrl: code && moreToken
+    confirmed,
+    confirmUrl: code && moreToken && !confirmed
       ? `${PRODUCTION_ORIGIN}/api/public/waitlist/confirm/${moreToken}`
       : null,
-    statusUrl: !code && moreToken ? `${PRODUCTION_ORIGIN}/#more/${moreToken}` : null,
+    statusUrl: confirmed
+      ? `${PRODUCTION_ORIGIN}/?status=1`
+      : (!code && moreToken ? `${PRODUCTION_ORIGIN}/#more/${moreToken}` : null),
   });
 }
 

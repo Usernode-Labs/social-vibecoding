@@ -274,6 +274,16 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── #1538: check my status ────────────────────────────────────────
+  // The waitlist confirm step doubles as "read where I stand", so the panel
+  // that used to print one fixed sentence now prints what the row actually
+  // says. Four of the five ids are inside #waitlist-confirmed; the fifth
+  // is the landing page's way in.
+  'waitlist-status-pill': 'The three-state queue pill on #waitlist-confirmed, rendered from the SAME table as the stage-2 screen\'s #more-status-pill (waitlist-shared.tsx) so one row cannot be described two ways. Always in the markup and hidden until a code lands: the prerender has no status, and contents rendered before the fetch are a hydration mismatch, which console.errors and fails proposal checks.',
+  'waitlist-status-since': 'The joined-on date, offered in place of the queue position this panel deliberately does not show. Nothing on the platform ranks the waitlist (services/waitlist-signals.js computes no score on purpose), so a number would be invented; the date is a fact the row actually holds. Same always-present, hidden-until-filled contract as #waitlist-confirmed-email beside it.',
+  'waitlist-status-action': 'The one thing a RELEASED signup can act on: Create my account (#signup) or Sign in (#login), chosen on whether the invite has already been redeemed. Before this, somebody who lost the access-ready mail was told by this panel to keep waiting for it. Hidden for a signup that is still queued.',
+  'waitlist-confirmed-headline': 'The panel\u2019s emerald headline, named because it is CONDITIONAL now rather than constant. The card serves two arrivals: somebody who just joined and confirmed, and somebody who typed their address to read where they stand. Congratulating the second one restates what the pill below already says and reads as a system that has lost track of when they joined, so the headline is the confirm path\u2019s and the pill is the status path\u2019s, split on the codeOnly state that already separates the two everywhere else on this screen. Visible in the prerender, which is the shape the hand-written shell shipped.',
+  'landing-status-link': 'The landing card\'s "Already joined? Check your status" link, into the same code-entry step #waitlist-enter-code opens. It is the entry point for the case the issue is about — checking from a device that knows nothing about the signup — and it is on the landing page because that is where such a device arrives. Hidden for a session, like the CTA above it.',
   'feedback-form': 'The existing feedback form is hidden while the first-feedback confirmation is visible (#1583).',
   'feedback-first-success': 'Persistent first-feedback confirmation inside the existing feedback dialog (#1583).',
   'feedback-first-title': 'Accessible heading congratulating the first feedback submission (#1583).',

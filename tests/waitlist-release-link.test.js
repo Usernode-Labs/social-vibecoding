@@ -44,6 +44,39 @@ test('the release mail carries no fragment for a rewriter to drop', () => {
   assert.doesNotMatch(code, /#signup/, 'no fragment spelling survives in the code');
 });
 
+test('the status-code mail links to a query too (#1538)', () => {
+  // Same reasoning, one mail later: check-my-status is reached from a mail a
+  // desktop client may rewrite, so it points at `/?status=1` and never at a
+  // fragment. It also carries no more_token: the confirmed branch has nothing
+  // left to confirm, and a capability in an unsolicited mail is a capability
+  // handed to whoever the mailbox forwards to.
+  const fn = MAIL.slice(MAIL.indexOf('async function sendWaitlistCodeMail'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.match(body, /\/\?status=1/);
+  const statusLine = body.slice(body.indexOf('statusUrl:'));
+  const confirmedBranch = statusLine.slice(0, statusLine.indexOf(':') + 40);
+  assert.match(confirmedBranch, /confirmed/,
+    'the query spelling is the CONFIRMED branch, not a blanket change');
+});
+
+test('the survey fallback keeps its fragment, because the token IS the path', () => {
+  // The mint-failure degradation still mails `#more/<token>`, and that is
+  // right for the same reason the other token routes keep theirs: a segment
+  // route has nothing to reconstruct from a query.
+  const fn = MAIL.slice(MAIL.indexOf('async function sendWaitlistCodeMail'));
+  const body = fn.slice(0, fn.indexOf('\n}'));
+  assert.match(body, /\/#more\/\$\{moreToken\}/);
+});
+
+test('the anonymous boot honours the status spelling as well', () => {
+  const enter = AUTH_SCREENS.slice(AUTH_SCREENS.indexOf('    enter() {'));
+  const body = enter.slice(0, enter.indexOf('\n    },'));
+  assert.match(body, /params\.has\('status'\)/);
+  // It lands on the confirm step of the waitlist screen, which is where the
+  // code from the mail is typed. Not a screen of its own (#1538).
+  assert.match(body, /'waitlist\?confirm=1'/);
+});
+
 test('the other mails are untouched: their fragments carry a token', () => {
   // #more/<token> and #reset-password/<token> are segment routes; the token IS
   // the path, and they were not what was reported. Changing them would be a
