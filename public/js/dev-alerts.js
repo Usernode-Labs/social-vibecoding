@@ -19,8 +19,8 @@
 //
 // There is intentionally no service worker / web-push here (none exists in
 // this repo): browser notifications fire from the live page and so only
-// reach a backgrounded-but-alive tab. True closed-app delivery is the
-// native host's job — see the `notify` bridge message below.
+// reach a backgrounded-but-alive tab. Closed mobile-app delivery uses the
+// server's Firebase outbox; the notify bridge is a legacy live-page fallback.
 
 (function () {
   'use strict';
@@ -132,6 +132,7 @@
     // In-app deep-link hash for a completion, mirroring the routing in
     // Notifications._onItemClick.
     _routeFor(info) {
+      if (info?.kind === 'test_alert') return '#settings/alerts';
       if (!info || !info.appSlug) return null;
       if (info.kind === 'auto_solve_done') {
         return info.headlessIssueNumber
@@ -217,25 +218,30 @@
       }
     },
 
-    // Settings "Send a test alert" — exercise the user's own setup. Unlocks
-    // audio + requests permission immediately (we're inside the click
-    // gesture), then fires a demo completion after a short delay so the
-    // tester can choose to stay (hear the chime) or switch away (see the
-    // background notification). Returns the delay in ms so the caller can
-    // show a matching hint/countdown.
-    TEST_DELAY_MS: 3000,
-    testAlert() {
+    // Queue remote delivery before starting the optional live-page preview.
+    // Permission/audio unlocking stays synchronous within the click gesture.
+    TEST_DELAY_MS: 10000,
+    async testAlert() {
       DevAlerts._unlockAudio();
       DevAlerts.requestNotifyPermission();
+      const response = await fetch('/api/me/test-alert', {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not queue the test push. Please try again.');
       const info = {
-        kind: 'session_done',
-        appSlug: null,
-        sessionId: null,
-        title: 'Dev session finished',
+        kind: 'test_alert',
+        title: 'Usernode test alert',
         body: 'This is a test of your dev-chat sound & alerts.',
       };
-      setTimeout(() => DevAlerts.onCompletion(info), DevAlerts.TEST_DELAY_MS);
-      return DevAlerts.TEST_DELAY_MS;
+      setTimeout(() => {
+        // A native background test is delivered by the server, even when
+        // this WebView is suspended. Never send a duplicate local banner.
+        if (document.visibilityState === 'hidden' && DevAlerts._isNative()) return;
+        DevAlerts.onCompletion(info);
+      }, result.delayMs);
+      return result;
     },
   };
 

@@ -332,3 +332,13 @@ test('enabled delivery requires a matching Firebase project and explicit environ
     firebaseServiceAccountJsonB64: encoded,
   }));
 });
+
+test('test alert uses explicit copy with the normal opaque push envelope', () => {
+  const message = buildMessage({ ...INPUT, kind: 'test_alert' });
+  assert.deepEqual(message.notification, {
+    title: 'Usernode test alert',
+    body: 'Your phone can receive push notifications from Usernode.',
+  });
+  assert.equal(message.data.notification_id, '42');
+  assert.equal(message.android.notification.channelId, 'social_activity');
+});

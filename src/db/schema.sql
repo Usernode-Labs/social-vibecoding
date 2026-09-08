@@ -4390,6 +4390,7 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('auto_solve_done', 'developer_sessions', TRUE),
   ('connector_submitted', 'developer_sessions', TRUE),
   ('agent_awaiting_input', 'developer_sessions', TRUE),
+  ('test_alert', 'developer_sessions', TRUE),
   ('stale_pr', 'proposal_alerts', TRUE),
   ('check_failed', 'proposal_alerts', TRUE),
   ('pr_proposed', 'proposal_alerts', TRUE),
@@ -4407,7 +4408,7 @@ DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
    'mention', 'reply', 'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
-   'session_done', 'auto_solve_done', 'stale_pr', 'check_failed',
+   'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
    'pr_proposed', 'reaction', 'kudos',
    'conversation_invite', 'conversation_message', 'conversation_mention',
    'conversation_reply', 'conversation_reaction'
@@ -4544,10 +4545,11 @@ BEGIN
      FOR KEY SHARE OF r
   )
   INSERT INTO mobile_push_deliveries (
-    notification_id, registration_id, environment, installation_id, platform, expires_at
+    notification_id, registration_id, environment, installation_id, platform, expires_at, available_at
   )
   SELECT NEW.id, id, environment, installation_id, platform,
-         COALESCE(NEW.created_at, NOW()) + INTERVAL '24 hours'
+         COALESCE(NEW.created_at, NOW()) + INTERVAL '24 hours',
+         NOW() + CASE WHEN NEW.kind = 'test_alert' THEN INTERVAL '10 seconds' ELSE INTERVAL '0 seconds' END
     FROM eligible
   ON CONFLICT (notification_id, environment, installation_id) DO NOTHING;
 
