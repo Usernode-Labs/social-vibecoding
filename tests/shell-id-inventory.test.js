@@ -497,6 +497,14 @@ const ADDED_IDS = {
   'connector-prompt-help': 'Settings → Connectors block explaining how to stop the per-call connector permission prompts (#1218).',
   'connector-allow-rules': 'The three read-only allow rules, rendered for copying into a personal ~/.claude/settings.json (#1218).',
   'connector-allow-rules-copy': 'Copy button for that block (#1218).',
+  // #1607: the two product walkthroughs below the connector URL are six and
+  // seven steps, and the reported cost was reading them. These open a new
+  // chat pre-loaded with the server URL and the job, so the assistant that
+  // will use the connector answers "where is that button" instead. The href
+  // is written by Settings._renderConnectors() from the live #connector-url
+  // value, never hardcoded, so a fork shows its own.
+  'connector-open-claude': 'Settings → Connectors link opening a pre-loaded Claude chat to walk through connector setup (#1607).',
+  'connector-open-chatgpt': 'The same for ChatGPT (#1607).',
   // The in-chat setup tip fired once in production and locked itself out, and
   // the panel it points at had one flaw of its own: a single block headed "add
   // this to ~/.claude/settings.json", which is the wrong file for Claude Code
