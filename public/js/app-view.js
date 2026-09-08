@@ -4998,6 +4998,9 @@ const AppView = {
   WORKSHOP_LANE_MAX: 8,
   // Cards in the "Needs your vote" strip; the rest are a count.
   WORKSHOP_VOTES_MAX: 3,
+  // The viewer's own work in flight. Same cap and the same reveal-in-place
+  // as the vote strip: this is a reminder, not an inbox.
+  WORKSHOP_MINE_MAX: 3,
   // Rows in the "since your last visit" list.
   WORKSHOP_SINCE_MAX: 30,
   // Per page session: slug → the baseline (epoch ms, 0 on a first visit)
@@ -5270,9 +5273,10 @@ const AppView = {
     // so a model that omitted these would inherit the last app's slug and
     // offer a reply box that posts somewhere else.
     const slug = App.currentApp || '';
-    const ctx = { slug, canPost: !!AppView.appData?.can_collaborate };
+    const ctx = { slug, canPost: !!AppView.appData?.can_collaborate, viewerId: (App.user && App.user.id) || null };
     const empty = {
-      votes: { count: 0, rows: [] }, since: null, dashboard: null, nextUp: null, discussion: null, themes: [],
+      votes: { count: 0, total: 0, shown: 0, rows: [] }, mine: { count: 0, shown: 0, rows: [] },
+      since: null, dashboard: null, nextUp: null, discussion: null, themes: [],
       meta: {
         source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
         lastError: null, coverage: null, placing: 0, filtered: false,
@@ -5376,12 +5380,59 @@ const AppView = {
       add('merged', m, activityOf('merged', m) >= weekAgo ? 'shipped' : 'done', () => AppView._mergedRowModel(m));
     }
 
+    // ── What you are working on ──
+    //
+    // Above "Needs your vote", because the first question a returning member
+    // has is about their OWN work, and the lander answered every other one
+    // first: what the app is doing, what the group needs, what nobody has
+    // picked up. Their half-finished session was somewhere down inside a
+    // theme, under a heading about the theme.
+    //
+    // Built from the buckets rather than from `entries`, for the same reason
+    // the vote strip is: your own work is yours whatever the board is
+    // narrowed to, and a filter that hid it would be hiding the one thing
+    // on this screen you cannot find another way.
+    const meId = App.user && App.user.id;
+    const mineOf = (bucket, pick) => bucket.filter(pick);
+    const mineItems = [
+      ...mineOf(buckets.inProgress, (e) => e.kind === 'my-session')
+        .map((e) => ({ kind: 'my-session', item: e.item })),
+      ...mineOf(buckets.inReview, (x) => x.kind === 'proposal' && meId != null
+        && String(x.item.user_id) === String(meId))
+        .map((x) => ({ kind: 'proposal', item: x.item })),
+    ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item));
+    const mine = {
+      count: mineItems.length,
+      shown: AppView.WORKSHOP_MINE_MAX,
+      rows: mineItems.map(({ kind, item }) => {
+        const card = kind === 'my-session'
+          ? AppView._mySessionCardModel(item)
+          : AppView._proposalCardModel(item);
+        if (!card) return null;
+        const row = { t: 'card', key: `mine:${card.key}`, card };
+        const th = AppView._feedThreadRef({
+          kind: kind === 'my-session' ? 'shared-session' : kind, item,
+        });
+        if (th) row.thread = th;
+        return row;
+      }).filter(Boolean),
+    };
+
     // ── Needs your vote ──
     // Unfiltered on purpose: a vote owed is owed whatever the board is
     // narrowed to. Same predicate as the filter bar's "Waiting on you".
+    //
+    // Minus whatever the strip above is already showing. Your own promoted
+    // proposal satisfies "waiting on you" — the predicate asks whether you
+    // have voted, not whose it is — so it appeared in BOTH panes, one under
+    // the other, the same card twice on one screen. "What you are working
+    // on" wins: this pane is about somebody else's work, which is what its
+    // own heading has always said.
+    const mineKeys = new Set(mineItems.map(({ kind, item }) => AppView._workshopItemKey(kind, item)));
+    const notMine = (x) => !mineKeys.has(AppView._workshopItemKey(x.kind, x.item));
     const owed = [];
     for (const x of buckets.inReview) {
-      if (AppView._devCardMatches(x.kind, x.item, { needsVote: true })) owed.push(x);
+      if (notMine(x) && AppView._devCardMatches(x.kind, x.item, { needsVote: true })) owed.push(x);
     }
     const voteRow = (card) => ({ t: 'card', key: `vote:${card.key}`, card });
     // EVERY owed row, not the first few. "N more waiting on you" used to send
@@ -5390,8 +5441,16 @@ const AppView = {
     // list the lander was already showing the top of. It expands in place
     // now (#1787 round four), so the component needs the rest to reveal;
     // `shown` is the cap it draws until somebody asks for them.
+    // Everything the viewer COULD vote on, whether they have or not — the
+    // denominator behind the ring. `needsVote` above is the same population
+    // minus the ones they have already answered, so `total - count` is what
+    // they have done and the ring can state progress instead of a debt.
+    const votable = buckets.inReview.filter((x) => notMine(x) && (x.kind === 'proposal'
+      ? x.item.status === 'promoted'
+      : true));
     const votes = {
       count: owed.length,
+      total: votable.length,
       shown: AppView.WORKSHOP_VOTES_MAX,
       rows: owed.map((x) => voteRow(
         x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)
@@ -5569,6 +5628,7 @@ const AppView = {
       loading: false,
       emptyNote,
       votes,
+      mine,
       since,
       dashboard,
       nextUp,
