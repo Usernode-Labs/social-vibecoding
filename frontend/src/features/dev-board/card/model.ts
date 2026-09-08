@@ -435,6 +435,15 @@ export interface KanbanColView {
 export interface DevKanbanView {
   activeTab: string;
   cols: KanbanColView[];
+  /** The app, for the open card's "Open on its own page" link. */
+  slug?: string;
+  canPost?: boolean;
+  /**
+   * `?cards=open`: every card drawn unfolded — the board as it was before its
+   * columns folded, and the state the declared checks that read a card's
+   * anatomy run in.
+   */
+  unfolded?: boolean;
   /**
    * True until the board's first fetch lands. Every column draws placeholder
    * cards, and its count draws as a bar rather than `· 0` — an empty board

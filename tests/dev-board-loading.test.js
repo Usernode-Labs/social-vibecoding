@@ -263,9 +263,13 @@ test('EVERY feed view model carries `loading`, because the store merges', () => 
     assert.match(r, /loading:/, `this return path states loading: ${r.slice(0, 60)}…`);
   }
   const kanban = code.slice(code.indexOf('_kanbanView() {'));
+  // The object grew (slug, canPost and the ?cards=open flag ride with it,
+  // #1787) so it spans lines now; what matters is still that its ONE return
+  // states `loading` from the flag.
+  const kanbanFn = kanban.slice(0, kanban.indexOf('_onKanbanTabSelect'));
   assert.match(
-    kanban.slice(0, kanban.indexOf('_onKanbanTabSelect')),
-    /return \{ activeTab: AppView\._activeKanbanTab\(\), cols, loading: !AppView\._devDataReady \};/,
+    kanbanFn,
+    /return \{\s*activeTab: AppView\._activeKanbanTab\(\), cols, loading: !AppView\._devDataReady,[\s\S]*?\};/,
     'the kanban model derives it from the flag, on its single return path'
   );
 });
