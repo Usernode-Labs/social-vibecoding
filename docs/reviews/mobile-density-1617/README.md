@@ -26,7 +26,7 @@ hand-written replacement UI is used. They are browser captures, **not physical
 iPhone or iOS Safari captures**.
 
 The before build comes from a separate, untouched export of main at
-`f318d313b1b22310e287bec71f57890d600d04ac`. The after build uses the implementation
+`a9168912b3288f41b0aee68e3aea05730b3d7d20`. The after build uses the rebased implementation
 on `b/issue-1617-mobile-density`. The metadata files record the browser,
 viewport, and SHA-256 fingerprints of the actual CSS and JavaScript served.
 
@@ -48,7 +48,7 @@ viewport, and SHA-256 fingerprints of the actual CSS and JavaScript served.
 
 ## Verification
 
-- `npm test`: 11,491 passed, 20 skipped, zero failures.
+- `npm test`: 11,495 passed, 20 skipped, zero failures.
 - `npm run ensure:shell`: production shell and CSS builds pass.
 - Browser regression checks: Details opens and closes; Done, Escape, focus
   trapping/return, PR reveal and provider chooser work; no stacked dialogs;
@@ -75,7 +75,9 @@ Playwright is an optional developer tool, not a new repository dependency.
    to `artifacts/mobile-density/`, or the directory set in `CAPTURE_OUT`.
 4. For the before side, build an untouched checkout/export of the base above,
    run the same harness from that checkout's working directory, and use
-   `CAPTURE_PHASE=before`. Do not serve changed CSS with an old JavaScript bundle.
+   `CAPTURE_PHASE=before`. For an export without `.git`, also set
+   `CAPTURE_REVISION` to the full source SHA above. Do not serve changed CSS
+   with an old JavaScript bundle.
 
 The screenshots are taken before the interaction tests modify fixture state.
 Only the five PR-facing PNGs and their metadata are retained here; desktop and

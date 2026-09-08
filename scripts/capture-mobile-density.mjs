@@ -7,7 +7,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 const require = createRequire(import.meta.url);
@@ -15,6 +14,11 @@ const express = require('express');
 const { chromium } = require(process.env.PLAYWRIGHT_PATH || 'playwright');
 const output = path.resolve(process.env.CAPTURE_OUT || 'artifacts/mobile-density');
 const phase = process.env.CAPTURE_PHASE || 'before';
+// An exported baseline has no .git directory. Name its immutable source
+// explicitly instead of accidentally recording the harness checkout's HEAD.
+const revision = process.env.CAPTURE_REVISION
+  || execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+assert.match(revision, /^[a-f0-9]{40}$/, 'CAPTURE_REVISION must be a full commit SHA');
 const app = express();
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 app.use(express.static('public'));
@@ -179,7 +183,7 @@ try {
     fingerprints[file] = createHash('sha256').update(await fs.readFile(file)).digest('hex');
   }
   await fs.writeFile(path.join(output, `${phase}-metadata.json`), JSON.stringify({
-    phase, base: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', cwd: path.dirname(fileURLToPath(import.meta.url)) }).trim(),
+    phase, revision,
     browser: browser.version(), fixture: 'local synthetic API data; real built shell', fingerprints,
     viewports: [{ width: 360, height: 780, deviceScaleFactor: 2 }, { width: 1280, height: 900, deviceScaleFactor: 2 }],
     requests: [...requests], errors,

@@ -1,12 +1,12 @@
 {
   "phase": "before",
-  "base": "f318d313b1b22310e287bec71f57890d600d04ac",
+  "revision": "a9168912b3288f41b0aee68e3aea05730b3d7d20",
   "browser": "152.0.7977.77",
   "fixture": "local synthetic API data; real built shell",
   "fingerprints": {
-    "public/css/app.css": "bca7e796a0d4a4637ce5aed6267d3ee8478d6d01176b4d3d366d638d09ce849e",
-    "public/css/tailwind.css": "9b7bb0947a791c126970586f1b34eda453071ef9634fe14896ab0fedc7126555",
-    "public/shell/assets/shell.js": "a189a657bbac165b2265436a6aaec6dad087d735c4a1b69f64c23d29d6aaaeca"
+    "public/css/app.css": "35dd63a1915447ed4f570afc3f26ce9ef1adb4b58f9c17cbc977f51958e77eee",
+    "public/css/tailwind.css": "a4455cfb4f4b6caaff26a07d417e600b74759572a4c432a538a16eebb3bda9d6",
+    "public/shell/assets/shell.js": "bd800aad6bee780636120f1df0f09e7a755d9b003452483e3a346fd23a497b23"
   },
   "viewports": [
     {
