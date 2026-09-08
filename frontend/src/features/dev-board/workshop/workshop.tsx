@@ -52,6 +52,8 @@ import { TopicBodySections } from '../topic/topic-head';
 import type { DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import type { TopicBody } from '../topic/model';
 import { CardSkeleton } from '../card/skeleton';
+import { ProgressRing } from '@/components/ui/progress-ring';
+import { XIcon } from '@/components/ui/icons';
 
 type CardRow = Extract<ListRow, { t: 'card' }>;
 type SortKey = 'people' | 'activity' | 'open';
@@ -197,7 +199,9 @@ function FoldedRow({
     <div
       role="button"
       tabIndex={0}
-      className={open ? 'dev-ws-row dev-ws-row-open' : 'dev-ws-row'}
+      // The hover fill comes from the CARD's own utilities, so the two sizes
+      // of one item cannot drift apart on it. app.css keeps the border.
+      className={`dev-ws-row hover:bg-zinc-50 dark:hover:bg-zinc-800${open ? ' dev-ws-row-open' : ''}`}
       aria-expanded={open}
       // The card's own left edge, from the card's own function, so the two
       // sizes can never key off different state.
@@ -769,6 +773,53 @@ function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
   return bits.length ? bits.join(', ') : `${s.rows.length} things moved`;
 }
 
+/**
+ * "What needs you", closed until the number moves.
+ *
+ * The pane used to state a debt — "4 to vote on", in the warning tint, with
+ * no way to put it down. A ring says the same thing as PROGRESS, which is
+ * what the home screen's Challenges block does with the same primitive: the
+ * fraction is how many of the app's open proposals this viewer has answered,
+ * so a board where you have voted on six of seven reads as nearly finished
+ * rather than as one more thing owed.
+ *
+ * The dismissal stores the OWED COUNT, not a boolean. Closing it at four
+ * means "not these four"; the pane returns by itself the moment that number
+ * changes, which is the only moment it has something new to say. Per account
+ * and per app, and every storage access is wrapped — Safari throws on
+ * storage in private mode, and a lander is not worth a boot error.
+ */
+const NEEDS_YOU_KEY = 'usernode:ws-needs-you-dismissed:';
+
+function needsYouKey(slug: string, viewerId: number | null | undefined): string | null {
+  return slug && viewerId != null ? `${NEEDS_YOU_KEY}${slug}:${viewerId}` : null;
+}
+
+function readNeedsYouDismissed(slug: string, viewerId: number | null | undefined): number | null {
+  const key = needsYouKey(slug, viewerId);
+  if (!key) return null;
+  try {
+    const raw = localStorage.getItem(key);
+    return raw == null ? null : Number(raw);
+  } catch {
+    return null;
+  }
+}
+
+function VoteRing({ owed, total }: { owed: number; total: number }): ReactNode {
+  const done = Math.max(0, total - owed);
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return (
+    <ProgressRing
+      className="dev-ws-vote-ring"
+      pct={pct}
+      label={`${done}/${total}`}
+      title={`${done} of ${total} open proposals voted on`}
+      arcClassName={owed ? 'stroke-amber-500' : 'stroke-emerald-500'}
+    />
+  );
+}
+
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -794,6 +845,18 @@ export function DevWorkshop(): ReactNode {
   // and navigate, which left the lander and changed the view mode to read a
   // list the strip was already showing the top of.
   const [allVotes, setAllVotes] = useState(false);
+  const [allMine, setAllMine] = useState(false);
+  // The owed count this viewer last closed the pane at, or -1 for "not
+  // closed". Seeded from storage on mount rather than in the initialiser:
+  // the slug arrives with the publish, and reading storage during the first
+  // render of a component that also serves the prerendered shell is exactly
+  // the hydration trap AGENTS.md warns about.
+  const [needsYouHidden, setNeedsYouHidden] = useState<number>(-1);
+  const viewerId = v.viewerId;
+  useEffect(() => {
+    const stored = readNeedsYouDismissed(v.slug || '', viewerId);
+    setNeedsYouHidden(stored == null ? -1 : stored);
+  }, [v.slug, viewerId]);
 
   const themes = useMemo(() => sortThemes(v.themes, sortKey), [v.themes, sortKey]);
   // Every theme starts SHUT. The first one used to open itself, on the
@@ -905,11 +968,48 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
+      {/* ── Yours, first ──
+          The first question a returning member has is about their OWN work,
+          and the lander answered every other one before it: what the app is
+          doing, what the group needs, what nobody has picked up. A
+          half-finished session of theirs was somewhere down inside a theme,
+          under a heading about the theme. */}
+      {v.mine && v.mine.rows.length ? (
+        <section className="dev-ws-strip" data-ws-mine="">
+          <div className="dev-ws-strip-head">
+            <span className="dev-ws-eyebrow">What you are working on</span>
+          </div>
+          <div className="dev-ws-lane" data-ws-lane="mine">
+            {(allMine ? v.mine.rows : v.mine.rows.slice(0, v.mine.shown)).map((row) => (row.t === 'card' ? (
+              <CardRowView
+                key={row.key}
+                row={row}
+                slug={slug}
+                canPost={canPost}
+                open={openRows.mine === row.key}
+                onToggle={() => toggleRow('mine', row.key)}
+              />
+            ) : null))}
+            {v.mine.rows.length > v.mine.shown ? (
+              <button
+                type="button"
+                className="gc-vote-btn dev-ws-lane-btn"
+                aria-expanded={allMine}
+                data-ws-mine-more=""
+                onClick={() => setAllMine(!allMine)}
+              >
+                {allMine ? 'Show fewer' : `${v.mine.count - v.mine.shown} more of yours`}
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       {/* ── One pane: what needs a person ──
           Voting on somebody else's work and picking up nobody's are the same
           offer — "here is what you could do with five minutes" — and they were
           two containers saying it twice. */}
-      {v.votes.rows.length || nextUp ? (
+      {(v.votes.rows.length || nextUp) && needsYouHidden !== v.votes.count ? (
         <section
           className="dev-ws-strip"
           data-ws-votes=""
@@ -917,9 +1017,23 @@ export function DevWorkshop(): ReactNode {
         >
           <div className="dev-ws-strip-head">
             <span className="dev-ws-eyebrow">What needs you</span>
-            {v.votes.count
-              ? <span className="dev-ws-pill dev-ws-pill-warn">{`${v.votes.count} to vote on`}</span>
-              : null}
+            <span className="dev-ws-needs-end">
+              {v.votes.total ? <VoteRing owed={v.votes.count} total={v.votes.total} /> : null}
+              <button
+                type="button"
+                className="dev-ws-needs-close"
+                data-ws-needs-close=""
+                aria-label="Hide this until something changes"
+                title="Hide this until something changes"
+                onClick={() => {
+                  const key = needsYouKey(slug, v.viewerId);
+                  if (key) { try { localStorage.setItem(key, String(v.votes.count)); } catch { /* private mode */ } }
+                  setNeedsYouHidden(v.votes.count);
+                }}
+              >
+                <XIcon className="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
+            </span>
           </div>
           {v.votes.rows.length ? (
             <div className="dev-ws-lane" data-ws-lane="votes">
@@ -951,7 +1065,11 @@ export function DevWorkshop(): ReactNode {
           ) : null}
           {nextUp ? (
             <div className="dev-ws-lane" data-ws-lane="next">
-              <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>Nobody on this yet, why not give it a try?</h4>
+              {/* The heading states the fact; the line under it makes the
+                  offer. "Why not give it a try?" did both at once and coaxed
+                  while it did — a lander does not need to wheedle. */}
+              <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>Nobody has picked this up</h4>
+              <p className="dev-ws-lane-note">Free to take, if you want to try solving an issue.</p>
               <CardRowView
                 row={nextUp}
                 slug={slug}
