@@ -3763,6 +3763,7 @@ const App = {
   // zoom types ("fn reveals the incoming screen, after conceals the
   // outgoing one" — usernode-native/v1/native.js).
   _showOnlyScreen(revealId, keepAlso) {
+    window.UsernodeBrowserScroll?.capture();
     const keep = keepAlso || [];
     for (const id of App.SCREEN_IDS) {
       if (id === revealId || keep.includes(id)) continue;

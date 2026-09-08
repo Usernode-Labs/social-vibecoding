@@ -37,6 +37,7 @@ function makeHome(opts = {}) {
     _scrollWired: false,
   };
   const els = { 'home-screen': screen, 'home-search-bar': bar };
+  const page = { scrollTop: opts.scrollTop || 0 };
   const sandbox = {
     console,
     App: { user: { id: 1 } },
@@ -58,11 +59,25 @@ function makeHome(opts = {}) {
     removeEventListener: () => {},
   };
   sandbox.window = sandbox;
+  if (opts.pageScroll) sandbox.PlatformUI = { scrollElement: () => page };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
-  return { Home: sandbox.__Home, screen, bar };
+  return { Home: sandbox.__Home, screen, bar, page };
 }
+
+test('mobile web parks and reads the search bar using document scrolling', () => {
+  const { Home, screen, bar, page } = makeHome({ pageScroll: true, barHeight: 58 });
+  Home._searchReveal.sync();
+  assert.equal(page.scrollTop, 58);
+  assert.equal(screen.scrollTop, 0, 'the former inner pane no longer scrolls');
+  page.scrollTop = 12;
+  Home._searchReveal.mark();
+  assert.equal(bar.dataset.revealed, 'true');
+  page.scrollTop = 340;
+  Home._searchReveal.sync();
+  assert.equal(page.scrollTop, 340, 'a background render preserves the reading position');
+});
 
 // ── index.html structure ──────────────────────────────────────────
 

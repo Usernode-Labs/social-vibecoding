@@ -2,8 +2,9 @@
  * THE STAR RIDES THE PAGE; THE WASHES DO NOT.
  *
  * The home wallpaper (see "The home ground" in public/css/app.css) is the
- * body's background, and the body never scrolls — each screen root is its
- * own scroller — so every layer of it is pinned to the viewport. That is
+ * body's background in the bounded shell, where each screen root is its
+ * own scroller. On mobile web it is a fixed body::before layer while the
+ * document scrolls. In both cases the wallpaper stays viewport-sized. That is
  * right for the washes, which are ambient, and wrong for the star, which
  * the design places on the PAGE: it should slide away under the bar with
  * the tiles and come back when the page does.
@@ -45,8 +46,12 @@ export const SCROLLER_OF: ReadonlyArray<readonly [root: string, scroller: string
 
 const SCROLLER_IDS = new Set(SCROLLER_OF.map(([, scroller]) => scroller));
 
-type DocLike = Pick<Document, 'getElementById' | 'addEventListener'> & {
-  documentElement: { style: Pick<CSSStyleDeclaration, 'setProperty'> };
+type DocLike = EventTarget & Pick<Document, 'getElementById'> & {
+  documentElement: {
+    style: Pick<CSSStyleDeclaration, 'setProperty'>;
+    dataset?: DOMStringMap;
+  };
+  scrollingElement?: Pick<Element, 'scrollTop'> | null;
 };
 type WinLike = Pick<Window, 'addEventListener' | 'requestAnimationFrame'>;
 
@@ -70,7 +75,8 @@ export function visibleRoot(doc: DocLike): { root: string; scroller: string } | 
 export function starY(doc: DocLike): number {
   const showing = visibleRoot(doc);
   if (!showing) return 0;
-  const scroller = doc.getElementById(showing.scroller);
+  const scroller = doc.documentElement.dataset?.browserScroller === showing.scroller
+    ? doc.scrollingElement : doc.getElementById(showing.scroller);
   if (!scroller) return 0;
   return -Math.round(scroller.scrollTop - restTop(doc, showing.root));
 }
@@ -96,13 +102,14 @@ export function initWallpaperScroll(doc: DocLike, win: WinLike): () => void {
   // fire the same event and are filtered out by id.
   doc.addEventListener('scroll', (event) => {
     const target = event.target as Element | null;
-    if (target && target.id && SCROLLER_IDS.has(target.id)) apply();
+    if (event.target === doc || (target && target.id && SCROLLER_IDS.has(target.id))) apply();
   }, { capture: true, passive: true });
   // A screen change is published through the visibility store by both the
   // React islands and the legacy router; the hash covers the routes that
   // change scrollers without a visibility flip (the landing's sub-screens).
   getVisibilityStore().listeners.add(schedule);
   win.addEventListener('hashchange', schedule);
+  win.addEventListener('usernode:page-scroll', schedule);
   schedule();
   return apply;
 }
