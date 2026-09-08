@@ -1,5 +1,5 @@
 // Tests for the anonymous-shell probe (src/services/shell-probe.js),
-// which classifies each app's HTML shell as public / gated / unknown for
+// which classifies each app's shell + API gate as public / gated / unknown for
 // the landing page's app directory:
 //   - classifyResponse: the pure decision table.
 //   - probeUrl: live classification against a throwaway local server,
@@ -17,6 +17,7 @@ const {
   classifyResponse,
   probeUrl,
   probeApp,
+  selectDueApps,
   appShellUrl,
 } = require('../src/services/shell-probe');
 
@@ -37,6 +38,11 @@ test('classify: off-origin redirect is gated (bounce to the platform)', () => {
     classifyResponse(302, 'https://social-vibecoding.usernodelabs.org/#login', 'http://a:3000/'),
     'gated'
   );
+});
+
+test('classify: a protocol or port change is off-origin too', () => {
+  assert.equal(classifyResponse(302, 'https://a:3000/login', 'http://a:3000/'), 'gated');
+  assert.equal(classifyResponse(302, 'http://a:4000/login', 'http://a:3000/'), 'gated');
 });
 
 test('classify: same-origin redirect is followed', () => {
@@ -71,9 +77,84 @@ test('probeUrl: open shell (200) → public', async () => {
   finally { await srv.close(); }
 });
 
-test('probeUrl: scaffold 401 "Open in Usernode" page → gated', async () => {
-  const srv = await serve((req, res) => { res.writeHead(401); res.end('Open in Usernode'); });
+for (const status of [401, 403]) {
+  test(`probeUrl: a public index with an auth-required API (${status}) → gated (#1522)`, async () => {
+    const requests = [];
+    const srv = await serve((req, res) => {
+      requests.push({ url: req.url, headers: req.headers });
+      // The reported shape: static middleware serves index.html first, but
+      // the default /api/ middleware still requires a platform identity.
+      if (req.url === '/api/') { res.writeHead(status); res.end('Not authenticated'); return; }
+      res.writeHead(200); res.end('<html>App shell</html>');
+    });
+    try {
+      assert.equal(await probeUrl(srv.url), 'gated');
+      assert.deepEqual(requests.map(r => r.url), ['/', '/api/']);
+      for (const { headers } of requests) {
+        for (const key of ['cookie', 'authorization', 'x-usernode-token', 'sec-fetch-dest']) {
+          assert.equal(headers[key], undefined, `the probe stays anonymous: ${key}`);
+        }
+      }
+    } finally { await srv.close(); }
+  });
+}
+
+test('probeUrl: public static apps without an API stay public', async () => {
+  const srv = await serve((req, res) => {
+    res.writeHead(req.url === '/' ? 200 : 404); res.end('static app');
+  });
+  try { assert.equal(await probeUrl(srv.url), 'public'); }
+  finally { await srv.close(); }
+});
+
+test('probeUrl: a missing shell is not confused with a missing API', async () => {
+  const requests = [];
+  const srv = await serve((req, res) => { requests.push(req.url); res.writeHead(404); res.end(); });
+  try {
+    assert.equal(await probeUrl(srv.url), 'unknown');
+    assert.deepEqual(requests, ['/']);
+  } finally { await srv.close(); }
+});
+
+test('probeUrl: an API failure is unknown, not proof of guest access', async () => {
+  const srv = await serve((req, res) => {
+    res.writeHead(req.url === '/api/' ? 503 : 200); res.end();
+  });
+  try { assert.equal(await probeUrl(srv.url), 'unknown'); }
+  finally { await srv.close(); }
+});
+
+test('probeUrl: an API redirect to sign-in is gated without following it', async () => {
+  const requests = [];
+  const srv = await serve((req, res) => {
+    requests.push(req.url);
+    if (req.url === '/api/') res.writeHead(302, { location: 'https://platform.example/#login' });
+    else res.writeHead(200);
+    res.end();
+  });
+  try {
+    assert.equal(await probeUrl(srv.url), 'gated');
+    assert.deepEqual(requests, ['/', '/api/']);
+  } finally { await srv.close(); }
+});
+
+test('probeUrl: same-origin API redirects still enforce the final auth verdict', async () => {
+  const srv = await serve((req, res) => {
+    if (req.url === '/api/') res.writeHead(302, { location: '/api/session' });
+    else res.writeHead(req.url === '/api/session' ? 401 : 200);
+    res.end();
+  });
   try { assert.equal(await probeUrl(srv.url), 'gated'); }
+  finally { await srv.close(); }
+});
+
+test('probeUrl: scaffold 401 "Open in Usernode" page → gated', async () => {
+  const requests = [];
+  const srv = await serve((req, res) => { requests.push(req.url); res.writeHead(401); res.end('Open in Usernode'); });
+  try {
+    assert.equal(await probeUrl(srv.url), 'gated');
+    assert.deepEqual(requests, ['/'], 'a gated shell needs no second request');
+  }
   finally { await srv.close(); }
 });
 
@@ -136,4 +217,16 @@ test('probeApp: writes the verdict + checked_at through the pool', async () => {
 
 test('appShellUrl targets the shared-network container name on port 3000', () => {
   assert.equal(appShellUrl('my-app-ab12cd'), 'http://usernode-app-my-app-ab12cd:3000/');
+});
+
+test('selectDueApps: boot refreshes prior public verdicts without disturbing staging fixtures', async () => {
+  const calls = [];
+  const pool = { query: async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; } };
+  await selectDueApps(pool, true);
+  await selectDueApps(pool);
+  assert.equal(calls[0].params[1], true);
+  assert.equal(calls[1].params[1], false, 'ordinary ticks keep the hourly recheck cadence');
+  assert.match(calls[0].sql, /\$2::boolean AND anon_shell = 'public' AND anon_shell_checked_at <= NOW\(\)/);
+  assert.match(calls[0].sql, /self_hosted IS NOT TRUE/);
+  assert.match(calls[0].sql, /view_visibility = 'public'/);
 });

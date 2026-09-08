@@ -2562,10 +2562,10 @@ BEGIN
 END $$;
 
 -- Anonymous-shell probe result (landing-page app directory).
---   anon_shell: whether the app's own HTML shell serves without a
---     platform session. 'public' = anonymous GET / returns 2xx (echo /
---     lastwin style), 'gated' = it 401s or bounces to the platform (the
---     scaffold default), 'unknown' = never probed or unclassifiable.
+--   anon_shell: whether the app's shell and conventional API gate permit
+--     anonymous access. 'public' = GET / succeeds and GET /api/ succeeds
+--     or has no route (404, e.g. a static app). 'gated' = either requires
+--     authentication, 'unknown' = never probed or unclassifiable.
 --     Written ONLY by services/shell-probe.js; consumed by
 --     GET /api/public/apps as `requires_login` (anything not 'public').
 --     'unknown' renders as account-required — the safe default, matching
