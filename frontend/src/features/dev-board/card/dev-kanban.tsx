@@ -28,9 +28,12 @@
  * one you tap into the dense card, in place (./fold.tsx). Which row is open
  * is the COLUMN's state — one per column, so a board with four open cards
  * is still four columns of rows — and it lives in the component, so the
- * WS-driven republishes that repaint the board leave it alone. `?cards=open`
- * draws every card unfolded: the board as it was, and the state the declared
- * checks that read a card's anatomy run in.
+ * WS-driven republishes that repaint the board leave it alone. The open card
+ * is exactly the card the column drew before it folded (no "Open card"
+ * toggle: a column is too narrow for the actions it moves onto the facts
+ * line), with the item's own page one link below. `?cards=open` draws every
+ * card unfolded: the board as it was, and the state the declared checks that
+ * read a card's anatomy run in.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -127,6 +130,9 @@ function Column(
               canPost,
               open: unfolded || openKey === row.key,
               onToggle: () => setOpenKey((k) => (k === row.key ? null : row.key)),
+              // The Board's open card is the Board's card, bands and all; the
+              // topic sections are read on the item's own page (fold.tsx).
+              detail: false,
             }}
           />
         ))}

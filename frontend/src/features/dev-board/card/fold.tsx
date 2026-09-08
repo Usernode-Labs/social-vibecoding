@@ -240,8 +240,8 @@ export function FoldedRow({
  * card whole rather than growing a chimera.
  */
 export function UnfoldedRow({
-  row, slug, canPost,
-}: { row: CardRow; slug: string; canPost: boolean }): ReactNode {
+  row, slug, canPost, detail: withDetail = true,
+}: { row: CardRow; slug: string; canPost: boolean; detail?: boolean }): ReactNode {
   // ── "Open card" opens it HERE ──────────────────────────────────────
   //
   // It was a link out to the item's own screen, which meant the lander's
@@ -261,6 +261,20 @@ export function UnfoldedRow({
   const toggleDetail = () => {
     setDetail(detail ? null : readAppView<TopicBody>('_workshopCardBody', key));
   };
+  // ── …on the Workshop. The Board's open card is the Board's card ──
+  //
+  // The toggle rides as the card's `statusLead`, and a card given one moves
+  // its primary actions up beside it, onto the facts line (dev-card.tsx):
+  // right on a sheet 760px wide, and wrong in a kanban column of ~300px,
+  // where "Create proposal · Claim this issue · Open card · Preview" runs
+  // past the band's clip and the toggle is the pill that falls off. The
+  // Board's card also folds its second action into ⋯ by measuring the
+  // action band, which the inline placement defeats. So the Board passes
+  // `detail: false`: its open card is exactly the card the column drew
+  // before it folded — same bands, same folding, same declared checks —
+  // and the item's own page, one link below, is where the ledger and the
+  // transcript are read at a width that fits them.
+  //
   // The one thing the fold still cannot do: the item's own page, for a link
   // somebody wants to share. It moved off the sheet's own strip and onto the
   // card's meta line, which is where the topic screen puts GitHub too.
@@ -270,7 +284,7 @@ export function UnfoldedRow({
   // way out is the link under the card. The row it folds to wears none
   // either, so nothing on the item promises a destination it does not have.
   const card: DevCardModel = { ...row.card, rail: { ...row.card.rail, chevron: false } };
-  const openBtn = (
+  const openBtn = withDetail ? (
     <button
       type="button"
       className="gc-vote-btn dev-ws-open-btn"
@@ -278,7 +292,7 @@ export function UnfoldedRow({
       data-ws-open-card={row.key}
       onClick={toggleDetail}
     >{detail ? 'Close card' : 'Open card'}</button>
-  );
+  ) : undefined;
   return (
     <div className="dev-feed-entry dev-ws-sheet" data-ws-sheet={row.key}>
       <DevCard model={card} statusLead={openBtn} />
@@ -319,8 +333,12 @@ export function voteSpecs(card: DevCardModel): { yes: ActionSpec; no: ActionSpec
  * nothing left to differ about — and the Board's columns are a sixth caller.
  */
 export function CardRowView({
-  row, slug, canPost, open, onToggle,
-}: { row: CardRow; slug: string; canPost: boolean; open: boolean; onToggle: () => void }): ReactNode {
+  row, slug, canPost, open, onToggle, detail,
+}: {
+  row: CardRow; slug: string; canPost: boolean; open: boolean; onToggle: () => void;
+  /** Offer "Open card" (the topic sections in place) on the open card. The Workshop does; the Board does not. */
+  detail?: boolean;
+}): ReactNode {
   // EITHER the compressed row OR the card — never both. The two are one item
   // at two sizes, and drawing them together is what made the open state read
   // as a panel hanging off a row.
@@ -352,7 +370,7 @@ export function CardRowView({
       } : undefined}
     >
       {open ? (
-        <UnfoldedRow row={row} slug={slug} canPost={canPost} />
+        <UnfoldedRow row={row} slug={slug} canPost={canPost} detail={detail} />
       ) : (
         <FoldedRow row={row} open={open} onToggle={onToggle} />
       )}

@@ -121,7 +121,12 @@ test('?cards=open draws every card at full size, hooks intact: the board as it w
   assert.equal(count(html, /class="dev-ws-rowwrap dev-ws-rowwrap-open"/g), cards, 'every wrapper open');
   assert.equal(count(html, /class="dev-ws-row hover/g), 0, 'and no folded row drawn beside a card');
   assert.equal(count(html, /class="gc-vote-item [^"]*dev-card-dense"/g), cards, 'the dense card, once per item');
-  assert.equal(count(html, /class="gc-vote-btn dev-ws-open-btn"/g), cards, 'each with its Open card toggle');
+  // The Board's open card is the Board's card: no "Open card" toggle, because
+  // a card given one moves its actions onto the facts line, which a ~300px
+  // column cannot hold, and the checks that read the action band would find
+  // it empty. The actions stay in their band, folding into ⋯ as before.
+  assert.equal(count(html, /dev-ws-open-btn/g), 0, 'no Open card toggle on a board card');
+  assert.equal(count(html, /class="gc-card-actions/g), cards, 'every card keeps its action band');
   // The open card is a DIRECT child of the sheet, which is a direct child of
   // the wrapper — the declared unfold check selects it that way.
   assert.match(html, /class="dev-ws-rowwrap dev-ws-rowwrap-open"><div class="dev-feed-entry dev-ws-sheet"[^>]*><div class="gc-vote-item [^"]*dev-card-dense"/);
@@ -156,12 +161,16 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(KANBAN, /onToggle: \(\) => setOpenKey\(\(k\) => \(k === row\.key \? null : row\.key\)\),/);
   assert.match(KANBAN, /slug=\{v\.slug \|\| ''\}/);
   assert.match(KANBAN, /unfolded=\{!!v\.unfolded\}/);
+  assert.match(KANBAN, /detail: false,/, 'the Board asks for the card without the Open card toggle');
+  assert.match(LIST_ROWS, /detail=\{fold\.detail\}/);
+  assert.match(FOLD, /detail: withDetail = true,/, 'and the Workshop, passing nothing, keeps it');
+  assert.match(FOLD, /const openBtn = withDetail \? \(/);
   // A merged card's kudos slot is legacy-filled after every publish; a fold
   // happens between publishes, so the column re-runs the filler.
   assert.match(KANBAN, /callAppView\('_fillKudosHosts', hostRef\.current\)/);
   // The row renderer hands a card to the fold when it is given one, and
   // draws the plain card otherwise.
-  assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} \/>/);
+  assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} \/>/);
   assert.match(LIST_ROWS, /: <DevCard model=\{row\.card\} \/>/);
   // And the Workshop draws its rows from the SAME module — no second copy.
   assert.match(WORKSHOP, /import \{ CardRowView, callAppView \} from '\.\.\/card\/fold';/);
@@ -213,6 +222,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   }
   assert.deepEqual(offenders, [], 'a check that reaches into a board card must ask for the cards open');
   assert.ok(moved >= 20, `and a good number do (${moved})`);
+  // The ⋯ menu shots on the BOARD need a trigger to tap, and a trigger is on
+  // the card. (The home screen's app cards have a ⋯ too; those do not fold.)
+  for (const t of DAPP.tests) {
+    const p = t.path || '';
+    if (/shot=card-menu/.test(p) && board.test(p)) assert.match(p, /cards=open/, `${t.name} runs with the cards open`);
+  }
+  // Two text checks read what only the card says: a chip past the row's
+  // three, and the close card's body.
+  for (const name of ['Custom category chip renders on a Dev card (#780)',
+    'Applied close-issue proposal renders as an Issue close card in Completed/Done']) {
+    const t = DAPP.tests.find((x) => x.name === name);
+    assert.ok(t && /cards=open/.test(t.path), `${name} runs with the cards open`);
+  }
 
   const folded = DAPP.tests.find((t) => t.name === '#app/<slug>/board is the card area as a kanban, its cards folded to rows');
   assert.ok(folded, 'the board route check pins the fold');
@@ -221,8 +243,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
 
   const unfold = DAPP.tests.find((t) => /shot=board-unfold/.test(t.path || ''));
   assert.ok(unfold, 'one check taps a row open');
-  assert.match(unfold.expectSelector, /\.dev-ws-rowwrap-open > \.dev-ws-sheet > \.gc-vote-item\.dev-card-dense\[data-edge\] \.dev-card-status-end > \.dev-ws-open-btn\[aria-expanded="false"\]/,
-    'and reads the card it unfolded into, with its Open card toggle');
+  assert.match(unfold.expectSelector, /\.dev-ws-rowwrap-open > \.dev-ws-sheet > \.gc-vote-item\.dev-card-dense\[data-edge\] ~ \.dev-ws-sheet-actions > a\.dev-ws-link/,
+    'and reads the card it unfolded into, and the link to its own page beside it');
   assert.ok(!/cards=open/.test(unfold.path), 'without cards=open, or the tap would prove nothing');
 
   // The ⋯ menu capture needs a card up to have a trigger to tap.

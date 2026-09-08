@@ -34,6 +34,12 @@ export interface RowFold {
   canPost: boolean;
   open: boolean;
   onToggle: () => void;
+  /**
+   * Offer "Open card" on the open card. Off for a kanban column: the toggle
+   * moves the card's actions onto the facts line, which a ~300px column
+   * cannot hold (see fold.tsx), and the item's own page is a link below.
+   */
+  detail?: boolean;
 }
 
 function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
@@ -80,7 +86,7 @@ export function ListRowView({ row, fold }: { row: ListRow; fold?: RowFold | null
   switch (row.t) {
     case 'card':
       return fold
-        ? <CardRowView row={row} slug={fold.slug} canPost={fold.canPost} open={fold.open} onToggle={fold.onToggle} />
+        ? <CardRowView row={row} slug={fold.slug} canPost={fold.canPost} open={fold.open} onToggle={fold.onToggle} detail={fold.detail} />
         : <DevCard model={row.card} />;
     case 'divider':
       return (

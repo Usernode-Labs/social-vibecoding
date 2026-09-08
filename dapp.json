@@ -799,18 +799,18 @@
     },
     {
       "name": "Dev board: the ⋯ menu’s assignee row OPENS the assignee picker (it used to do nothing on desktop)",
-      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&row=assignee#app/usernode-2d5619/dev",
+      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&row=assignee&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#attr-popover #attr-assignee-input",
       "expectText": "Assigned person"
     },
     {
       "name": "Assignee picker: the viewer’s own pick renders as a re-clickable toggle — deselect by clicking again (#1187)",
-      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&row=assignee#app/usernode-2d5619/dev",
+      "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&row=assignee&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#attr-popover .attr-opt[data-attr-opt-mine=\"1\"][title]"
     },
     {
       "name": "Dev board: the same ⋯ row mechanism opens the priority picker in the list view",
-      "path": "/?demo=1&shot=card-menu&card=issue:900009&row=priority#app/usernode-2d5619/board",
+      "path": "/?demo=1&shot=card-menu&card=issue:900009&row=priority&cards=open#app/usernode-2d5619/board",
       "expectSelector": "#attr-popover .attr-opt[data-attr-opt-value=\"high\"]",
       "expectText": "Priority"
     },
@@ -1103,7 +1103,7 @@
     },
     {
       "name": "Custom category chip renders on a Dev card (#780)",
-      "path": "/?demo=1#app/usernode-2d5619/board",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectText": "Staging demo perf"
     },
     {
@@ -1795,7 +1795,7 @@
     {
       "name": "Kanban survives as the resolved mode on a ?view=kanban deep link, and a tap unfolds a row into its card",
       "path": "/?demo=1&view=kanban&shot=board-unfold#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-kanban-board .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item.dev-card-dense[data-edge] .dev-card-status-end > .dev-ws-open-btn[aria-expanded=\"false\"]"
+      "expectSelector": "#dev-body #dev-kanban-board .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-ws-sheet-actions > a.dev-ws-link"
     },
     {
       "name": "The Workshop renders its themes into #dev-workshop; the deep link opens one, with its items as folded rows under stage lanes",
@@ -2683,7 +2683,7 @@
     },
     {
       "name": "Applied close-issue proposal renders as an Issue close card in Completed/Done",
-      "path": "/?demo=1#app/usernode-2d5619/board",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectText": "closed by vote"
     },
     {
