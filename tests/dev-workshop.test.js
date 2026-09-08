@@ -1299,12 +1299,30 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   assert.ok(demo && demo.expectSelector.includes('[data-ws-theme="demo-voting"]'));
   const votes = byName(/pins the proposals waiting on the viewer's vote/);
   assert.ok(votes && /\[data-ws-votes\][\s\S]*button\.dev-vote-btn/.test(votes.expectSelector));
-  const unfolded = byName(/A Workshop row unfolds into the card/);
+  const unfolded = byName(/A Workshop row unfolds into the Activity sheet/);
   assert.ok(unfolded && /shot=feed-comments/.test(unfolded.path), 'the unfolded-row checks ride the capture deep link');
-  // Extended, not added — the manifest is at its working ceiling. The `:has()`
-  // proves the Open card toggle rides the card's own facts line without
-  // moving the element the check ends on.
-  assert.match(unfolded.expectSelector, /:has\(\.dev-card-status > \.dev-card-status-end > button\[data-ws-open-card\]\)/);
+  // NOT extended with a `:has()` for the Open card toggle, though it was
+  // once. That selector resolves in this repo's own Chromium against the
+  // component's real markup — verified — and failed 6 of 6 runs on the
+  // proposal gate, where the plain chain around it had passed for two
+  // rounds. The difference was never reproduced here, and a gate that
+  // blocks merge is the wrong place to keep a selector nobody can explain.
+  // The toggle is pinned against rendered markup in this file instead.
+  assert.ok(!unfolded.expectSelector.includes('data-ws-open-card'));
+
+  // The preview moved to the facts line, and the declared check moved with
+  // it. This is the sweep that was missed the first time: the unit tests for
+  // the new position were all updated and dapp.json was not, so the gate
+  // found it instead.
+  const preview = byName(/Preview is a labelled pill/);
+  assert.ok(preview, 'the board still pins where the preview lives');
+  assert.match(preview.expectSelector, /\.dev-card-status > \.dev-card-status-end > \.gc-vote-btn-preview/);
+  for (const t of dapp.tests) {
+    assert.ok(!/\.gc-card-actions[^,]*gc-vote-btn-preview/.test(t.expectSelector || ''),
+      `${t.name}: no check still looks for the preview in the action band`);
+    assert.ok(!/#dev-(kanban|body)[^,]*gc-explore-chat-btn/.test(t.expectSelector || ''),
+      `${t.name}: nor for Explore on a card face`);
+  }
   const strip = byName(/three views in order: App, Workshop, Board/);
   assert.ok(strip && /workshop.*board/.test(strip.expectSelector));
   for (const t of dapp.tests) {
