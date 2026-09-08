@@ -549,7 +549,9 @@ test('the suggestion stands down while a filter is active', () => {
 
 test('the strips are ordered for a returning member: since, then state, then what to do', () => {
   const store = {};
-  store[`${'workshopSeen'}:demo-app`] = String(Date.now() - 3 * 86400000);
+  // Keep the three-day-old proposal strictly after the last visit instead
+  // of relying on whether seed() happens in a later clock millisecond.
+  store[`${'workshopSeen'}:demo-app`] = String(Date.now() - 3.5 * 86400000);
   const AppView = makeAppView({ localStorage: store });
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);

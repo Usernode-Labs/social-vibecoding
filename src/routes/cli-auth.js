@@ -504,8 +504,7 @@ function cliPreAuthRoutes(config) {
              COUNT(*) AS global_count
            FROM cli_device_authorizations
           WHERE status IN ('pending', 'approved')
-            AND clock_timestamp() < expires_at
-              AND ${nativeWebSessionIsLive('sessions')}`,
+            AND clock_timestamp() < expires_at`,
           [clientIp(req)]
         );
         if (Number(countRows[0].ip_count) >= (config.cliDeviceLivePerIp || 10)
@@ -980,7 +979,8 @@ function cliBrowserRoutes(config) {
         const { rows: sessionRows } = await client.query(
           `SELECT 1 FROM sessions
             WHERE token = $1 AND user_id = $2
-              AND clock_timestamp() < expires_at`,
+              AND clock_timestamp() < expires_at
+              AND ${nativeWebSessionIsLive('sessions')}`,
           [sessionToken || '', req.user.id]
         );
         if (!sessionRows.length) return { authLost: true };

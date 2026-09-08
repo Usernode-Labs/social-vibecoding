@@ -22,7 +22,10 @@ test('native web session recovery against PostgreSQL', { skip: !DSN && 'set TEST
   const pool = new Pool({ connectionString: DSN, options: `-c search_path=${schema}` });
   try {
     await pool.query(`
-      CREATE TABLE users (id bigint PRIMARY KEY, username text DEFAULT 'alice');
+      CREATE TABLE users (id bigint PRIMARY KEY, username text DEFAULT 'alice',
+        is_admin boolean, admin_readonly boolean, app_quota integer,
+        ai_progress_estimate text, session_bridge_enabled boolean, locale text,
+        has_platform_access boolean);
       CREATE TABLE native_session_attempts (attempt_id text PRIMARY KEY);
       CREATE TABLE mobile_auth_tokens (id bigint PRIMARY KEY, user_id bigint, ability text, expires_at timestamptz, token_hash text);
       CREATE TABLE native_session_credentials (
@@ -50,6 +53,34 @@ test('native web session recovery against PostgreSQL', { skip: !DSN && 'set TEST
     const live = async (token) => (await pool.query(
       `SELECT token FROM sessions s WHERE token=$1 AND s.expires_at > NOW() AND ${nativeWebSessionIsLive('s')}`, [token]
     )).rows.length;
+
+    await t.test('PostgreSQL plans every production query containing the shared native-session predicate', async () => {
+      // These templates enter the reviewed dynamic inventory. Plan their
+      // actual SQL too, so a valid predicate in the wrong table context
+      // cannot hide behind a route test's database mock.
+      let count = 0;
+      const client = await pool.connect();
+      try {
+        for (const file of [
+          'middleware/auth.js', 'middleware/topochain-auth.js',
+          'routes/cli-auth.js', 'routes/status.js', 'routes/topochain/mobile.js',
+          'services/topochain/native-session-protocol.js', 'services/ws.js',
+        ]) {
+          const source = fs.readFileSync(path.join(__dirname, '../src', file), 'utf8');
+          for (const match of source.matchAll(/`[^`]*\$\{nativeWebSessionIsLive\('[a-z_]+'\)\}[^`]*`/g)) {
+            const sql = match[0].slice(1, -1).replace(
+              /\$\{nativeWebSessionIsLive\('([a-z_]+)'\)\}/g,
+              (_, alias) => nativeWebSessionIsLive(alias)
+            );
+            assert.ok(!sql.includes('${'), `unresolved SQL fragment in ${file}`);
+            const name = `native_auth_query_${count++}`;
+            await client.query(`PREPARE ${name} AS ${sql}`);
+            await client.query(`DEALLOCATE ${name}`);
+          }
+        }
+        assert.equal(count, 8, 'all cookie authentication queries receive planner coverage');
+      } finally { client.release(); }
+    });
 
     await t.test('the native HTTP endpoint authenticates the bearer and returns its lease with private cookie material', async () => {
       await reset();
