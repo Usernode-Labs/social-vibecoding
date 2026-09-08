@@ -289,6 +289,7 @@
           : DEPTH[route] < DEPTH[prev] ? 'pop' : 'none');
 
       fx(() => {
+        window.UsernodeBrowserScroll?.capture();
         for (const r of Object.keys(SCREEN_IDS)) {
           setScreenVisible(SCREEN_IDS[r], SCREEN_IDS[r] === id);
         }
