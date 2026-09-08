@@ -205,18 +205,69 @@ test('sendWaitlistCodeMail passes kind:"waitlist_code" through the shim', async 
 test('sendWaitlistReleaseMail passes kind:"waitlist_released" and a signup/login link', async () => {
   const seen = [];
   const cfg = { topochainMailTransport: { send: async (m) => { seen.push(m); } } };
-  await sendWaitlistReleaseMail(cfg, 'a@b.invalid', { hasAccount: false });
+  await sendWaitlistReleaseMail(cfg, 'a@b.invalid', { hasAccount: false, moreToken: 'tok123' });
   await sendWaitlistReleaseMail(cfg, 'a@b.invalid', { hasAccount: true });
   assert.equal(seen[0].kind, 'waitlist_released');
   // #1545: a QUERY, not a fragment. Following `/#signup` from a desktop mail
   // client landed on the home page while the same mail worked from a phone —
   // a link rewriter rebuilding the URL drops a fragment and keeps a query.
   // AuthScreens.enter() turns either spelling into the same hash route.
-  assert.match(seen[0].url, /\/\?signup=1$/, 'no account yet → account creation');
+  //
+  // #1548 adds `&t=<more_token>` to the no-account arm so the signup screen
+  // can prefill the address and send a code without a second step. A TOKEN
+  // rather than the address: it survives the rewriter for the same reason the
+  // query does, and it keeps an email address out of server logs and
+  // referrers, which for a waitlist is the fact people would least want
+  // leaking. The token is already an unguessable capability delivered to that
+  // same address.
+  assert.match(seen[0].url, /\/\?signup=1&t=/, 'no account yet → account creation, carrying a token');
+  assert.doesNotMatch(seen[0].url, /@/, 'the address itself never travels in the URL');
   assert.match(seen[1].url, /\/\?login=1$/, 'existing account → sign-in');
   for (const m of seen) {
     assert.doesNotMatch(m.url, /#/, 'nothing a link rewriter is free to drop');
   }
+});
+
+test('#1548: the release link carries an encoded token, never the address', async () => {
+  const seen = [];
+  const cfg = { topochainMailTransport: { send: async (m) => { seen.push(m); } } };
+  // The encoding concern is unchanged from when this carried the address:
+  // anything interpolated raw can decode back to something else. It is the
+  // token that travels now, so it is the token that must be encoded.
+  await sendWaitlistReleaseMail(cfg, 'a+tag@b.invalid', {
+    hasAccount: false, moreToken: 'tok+en/value',
+  });
+  const url = seen[0].url;
+  assert.match(url, /\/\?signup=1&t=/, 'a query, which a link rewriter keeps');
+  const t = url.split('&t=')[1];
+  assert.ok(t, 'the link carries a token');
+  assert.equal(t.includes('+'), false, 'encoded, not interpolated raw');
+  assert.equal(t.includes('/'), false, 'encoded, not interpolated raw');
+  assert.equal(decodeURIComponent(t), 'tok+en/value');
+  // The whole point of the token: the address stays out of the URL, and so
+  // out of server logs and referrers.
+  assert.equal(url.includes('a+tag@b.invalid'), false);
+  assert.equal(url.includes('a%2Btag%40b.invalid'), false);
+});
+
+test('#1548: with no token the link still works, just without the prefill', async () => {
+  const seen = [];
+  const cfg = { topochainMailTransport: { send: async (m) => { seen.push(m); } } };
+  // A signup row with no more_token (or a release path that cannot supply
+  // one) must still send a usable link rather than an `&t=undefined`.
+  await sendWaitlistReleaseMail(cfg, 'a@b.invalid', { hasAccount: false });
+  assert.match(seen[0].url, /\/\?signup=1$/);
+  assert.equal(seen[0].url.includes('undefined'), false);
+});
+
+test('an existing account gets no address in its link', async () => {
+  const seen = [];
+  const cfg = { topochainMailTransport: { send: async (m) => { seen.push(m); } } };
+  await sendWaitlistReleaseMail(cfg, 'a@b.invalid', { hasAccount: true });
+  // They sign in with a password they already have; there is no code to send
+  // and no field to prefill, so the address has no business in the URL.
+  assert.equal(seen[0].url.includes('a@b.invalid'), false);
+  assert.equal(seen[0].url.includes('a%40b.invalid'), false);
 });
 
 // ─── the always-success contract survives a broken transport ────────────
