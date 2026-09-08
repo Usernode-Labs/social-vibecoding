@@ -1881,6 +1881,27 @@ function parseWorkshopJson(resp, what) {
   return JSON.parse(match[0]);
 }
 
+// ── Prompt versions ────────────────────────────────────────────────────
+//
+// Each Workshop stage carries an integer version beside its prompt. The row
+// in app_workshop_themes records the version each stage last RAN with, and a
+// mismatch makes that stage due on the app's next pass whatever its clocks
+// and churn say (services/workshop-themes.js): discovery re-drafts the
+// categories, placement re-places every card, the digest is rewritten.
+// Without this a prompt change reached an app only when its own window ran
+// out — a day, or never on a settled board — and nothing on the row said
+// which prompt its output had come from.
+//
+// Bump the constant in the same diff as the prompt, knowingly: a discovery
+// bump re-drafts the categories of every app viewed in the last week and
+// members see their groupings change under them; a placement bump re-places
+// every card, in batches; a digest bump is one short call per app.
+// tests/workshop-prompt-versions.test.js pins a hash of each builder's
+// source to its version, so an edit here without a bump fails locally and
+// says which constant to raise, or which hash to re-pin when the edit is
+// cosmetic.
+const WORKSHOP_DISCOVERY_VERSION = 1;
+
 async function generateWorkshopThemeDefinitions({ inputJson, appName, itemKeys, apiKey, telemetryContext }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
@@ -1941,6 +1962,8 @@ ${inputJson}`;
 // the system prompt behind the instructions, marked cacheable: every batch
 // of a sweep, and every incremental placement until the next discovery,
 // sends the identical prefix.
+const WORKSHOP_PLACEMENT_VERSION = 1;
+
 async function placeWorkshopItems({ themesJson, itemsJson, appName, itemKeys, themeIds, apiKey, telemetryContext }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
@@ -2016,6 +2039,10 @@ function sanitizeWorkshopDigest(parsed) {
   if (raw.length < 20) return '';
   return raw.slice(0, 700);
 }
+
+// 2: the prompt below was rewritten around what a user notices (#1820); the
+// rows written under 1 would otherwise have kept the old paragraph for a day.
+const WORKSHOP_DIGEST_VERSION = 2;
 
 async function generateWorkshopDigest({ inputJson, landedJson, themesJson, appName, apiKey, telemetryContext }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
@@ -2105,6 +2132,7 @@ module.exports = {
   sanitizeWorkshopThemeDefinitions, sanitizeWorkshopPlacements, sanitizeWorkshopDigest,
   WORKSHOP_DIGEST_SCHEMA,
   WORKSHOP_DISCOVERY_SCHEMA, WORKSHOP_PLACEMENT_SCHEMA, WORKSHOP_THEME_MODEL,
+  WORKSHOP_DISCOVERY_VERSION, WORKSHOP_PLACEMENT_VERSION, WORKSHOP_DIGEST_VERSION,
   // Fable 5 classifier-fallback surface (+ tests)
   detectFallback, sanitizeFallbackContent, fallbackBoundary,
   FABLE_MODEL, FALLBACK_TARGET_MODEL, FALLBACK_BETA,
