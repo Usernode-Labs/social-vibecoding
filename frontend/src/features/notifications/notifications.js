@@ -252,8 +252,12 @@ const Notifications = {
         return false;
       }
     }
-    Notifications._onItemClick(id);
-    return true;
+    try {
+      return await Notifications._onItemClick(id) !== false;
+    } catch (err) {
+      console.warn('[notifications] destination failed', err);
+      return false;
+    }
   },
 
   async loadMore() {
@@ -583,7 +587,7 @@ const Notifications = {
 
   _onItemClick(id) {
     const item = Notifications.items.find((n) => n.id === id);
-    if (!item) return;
+    if (!item) return false;
     // Desktop: deliberately do NOT hide the anchored panel here — it stays
     // open over the navigated-to view so the user can keep clicking through
     // other notifications, and only dismisses via outside-click or the
@@ -638,7 +642,7 @@ const Notifications = {
     if (item.kind === 'session_done' && item.appSlug && item.sessionId) {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
-        App.openAppTab(item.appSlug, 'dev', { subTab: 'sessions', sessionId: item.sessionId });
+        return App.openAppTab(item.appSlug, 'dev', { subTab: 'sessions', sessionId: item.sessionId });
       } else {
         window.location.hash = `#app/${item.appSlug}/dev/sessions/${item.sessionId}`;
       }
@@ -662,7 +666,7 @@ const Notifications = {
       }
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
-        App.openAppTab(item.appSlug, 'dev', { subTab: 'chat' });
+        return App.openAppTab(item.appSlug, 'dev', { subTab: 'chat' });
       } else {
         window.location.hash = `#app/${item.appSlug}/dev/chat`;
       }
@@ -679,7 +683,7 @@ const Notifications = {
       const kind = item.detail === 'shared' ? 'session' : 'proposal';
       const id = parseInt(item.sessionId, 10);
       if (typeof App !== 'undefined' && App.openAppTab) {
-        App.openAppTab(item.appSlug, 'dev', {
+        return App.openAppTab(item.appSlug, 'dev', {
           subTab: 'topic',
           ref: { kind, id },
         });
@@ -692,7 +696,7 @@ const Notifications = {
     if (item.kind === 'auto_solve_done' && item.appSlug) {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
-        App.openAppTab(item.appSlug, 'dev', {
+        return App.openAppTab(item.appSlug, 'dev', {
           subTab: 'issues',
           ref: item.headlessIssueNumber || null,
         });
@@ -726,7 +730,7 @@ const Notifications = {
         const topicId = parseInt(item.threadRef, 10);
         if (topicKind && Number.isInteger(topicId) && topicId > 0) {
           if (typeof App !== 'undefined' && App.openAppTab) {
-            App.openAppTab(item.appSlug, 'dev', {
+            return App.openAppTab(item.appSlug, 'dev', {
               subTab: 'topic',
               ref: { kind: topicKind, id: topicId },
             });
@@ -748,7 +752,7 @@ const Notifications = {
       const proposalKinds = new Set(['pr_proposed', 'stale_pr', 'kudos', 'check_failed']);
       const toProposals = proposalKinds.has(item.kind);
       if (typeof App !== 'undefined' && App.openAppTab) {
-        App.openAppTab(item.appSlug, 'dev', toProposals
+        return App.openAppTab(item.appSlug, 'dev', toProposals
           ? { subTab: 'proposals', ref: item.sessionId || null }
           : { subTab: 'chat' });
       } else {

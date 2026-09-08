@@ -4631,7 +4631,11 @@ const App = {
     } catch (err) { /* unparseable url — nothing to warm */ }
   },
 
+  _appNavigationGeneration: 0,
+  _appLoad: null,
+
   async navigateToApp(slug, tab, ref, subTab) {
+    const generation = ++App._appNavigationGeneration;
     // Clean up whatever app we had mounted. This is a no-op on the first
     // navigation into any app, but without it a direct app-A → app-B
     // jump (e.g. via hash) would carry the previous app's dev-chat
@@ -4728,7 +4732,16 @@ const App = {
     // `!!tab` is load-bearing: without an explicit tab, `initialRoute.tab`
     // came from the launcher's cached record above, and a stale record must
     // never be what decides that an App-tab render can skip its token.
-    await AppView.open(slug, { needsToken: !(tab && initialRoute.tab === 'dev') });
+    const load = {
+      slug,
+      promise: AppView.open(slug, { needsToken: !(tab && initialRoute.tab === 'dev') }),
+    };
+    App._appLoad = load;
+    try {
+      await load.promise;
+    } finally {
+      if (App._appLoad === load) App._appLoad = null;
+    }
 
     // The user can navigate away (back to home, into a different app,
     // to the leaderboard) while `AppView.open(slug)` is still resolving
@@ -4738,7 +4751,7 @@ const App = {
     // user has since moved to. `App.currentApp` is updated synchronously
     // at the top of every navigate* method, so it's the canonical
     // "what's actually on screen right now" signal.
-    if (App.currentApp !== slug) return;
+    if (App.currentApp !== slug) return false;
 
     // After app data is loaded, swap header to the display name — unless a
     // Dev view owns the title by now (Streamlined Concept: Activity / Board
@@ -4769,7 +4782,11 @@ const App = {
     const finalTab = tab || defaultTab;
     const actualFinalTab = finalTab === 'app' && AppView.appData?.self_hosted
       ? 'dev' : finalTab;
-    App.switchTab(finalTab, ref, subTab, {
+    // A notification may have requested a different item in this same app
+    // while metadata was loading. Finish the shared setup above, but leave
+    // that newer caller in charge of the destination.
+    if (generation !== App._appNavigationGeneration) return false;
+    return App.switchTab(finalTab, ref, subTab, {
       // A provisional App path becoming the self-hosted Board is one logical
       // navigation. Replace it so Back returns to the launch origin in one go.
       replaceRoute: App._normalizeTab(actualFinalTab, ref, subTab).tab
@@ -5131,12 +5148,21 @@ const App = {
       : (opts && opts.ref != null ? opts.ref : null);
     const subTab = (opts && opts.subTab) || null;
     if (App.currentApp !== slug) {
-      App.navigateToApp(slug, tab, ref, subTab);
+      return App.navigateToApp(slug, tab, ref, subTab);
     } else {
       // Same app: switchTab normalizes legacy names, re-renders, and
       // syncs the clean route — idempotent when nothing changed, a forced
       // refresh when the target equals the current view.
-      App.switchTab(tab, ref, subTab);
+      const generation = ++App._appNavigationGeneration;
+      const load = App._appLoad;
+      if (load && load.slug === slug) {
+        return load.promise.then(() => {
+          if (App.currentApp !== slug ||
+              generation !== App._appNavigationGeneration) return false;
+          return App.switchTab(tab, ref, subTab);
+        });
+      }
+      return App.switchTab(tab, ref, subTab);
     }
   },
 };
