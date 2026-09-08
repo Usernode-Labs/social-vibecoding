@@ -1735,7 +1735,15 @@ test('sign-out closes once, then uses terminal protocol 2 or web navigation',
     'web-session deletion follows the closed native boundary');
   assert.match(logout, /if \(preflight\.nativeTerminal\)/);
   assert.match(logout, /return NativeChrome\.commitNativeLogout\(\)/);
-  assert.match(logout, /window\.location\.href = '\/'/);
+  // #1524 turned the web path's `location.href = '/'` into a REPLACE onto the
+  // landing page, on both branches: an entry pushed by an assignment lets Back
+  // restore the signed-in document straight out of the BFCache. Assert the
+  // constant too, so the destination cannot drift off the landing page while
+  // the navigation still reads correct.
+  assert.match(settingsJs, /const LANDING_URL = '\/';/);
+  assert.match(logout, /window\.location\.replace\(LANDING_URL\)/);
+  assert.doesNotMatch(logout, /window\.location\.(href|assign)\b/,
+    'a pushed entry would let Back restore the signed-in document (#1524)');
   assert.doesNotMatch(settingsJs,
     /_confirmDegradedSignOut|_bestEffortNativeLogout|NATIVE_SIGNOUT_NOTICE_KEY/,
     'legacy split/fallback logout machinery is removed, not maintained');
@@ -1953,6 +1961,20 @@ test('a demo Connect control is inert but present, and matches the live one', ()
   assert.match(demo, /<button type="button" disabled/);
   const surface = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white';
   assert.ok(live.includes(surface) && demo.includes(surface), 'one surface, both spellings');
+});
+
+test('unfinished social connections describe the symptom without diagnosing the callback (#1543)', () => {
+  const view = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  for (const provider of ['github', 'x']) {
+    const row = view._socialIdentityRowView(provider, {
+      available: true, linked: false, pendingAttemptAt: '2026-09-07T10:00:00Z',
+    }, {}, false);
+    assert.match(row.strandedNote, /connection attempt didn't complete/);
+    assert.match(row.strandedNote, /Try Connect again/);
+    assert.match(row.strandedNote, /browser did not reach the sign-in page/);
+    assert.doesNotMatch(row.strandedNote, /callback address isn't registered/);
+    assert.equal(view._socialIdentityRowView(provider, { available: true }, {}, false).strandedNote, null);
+  }
 });
 
 test('the reviewable claims travel with the row that makes them', () => {

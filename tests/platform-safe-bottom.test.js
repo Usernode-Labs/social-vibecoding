@@ -279,7 +279,7 @@ test('the general-chat composer bar carries platform-safe-bar, on both branches'
   );
   for (const readOnly of [false, true]) {
     const html = pane(readOnly);
-    const bar = /<div class="shrink-0 border-t[^"]*"/.exec(html);
+    const bar = /<div class="shrink-0 px-3[^"]*"/.exec(html);
     assert.ok(bar, `readOnly=${readOnly}: the composer's bar wrapper moved — re-anchor this test`);
     assert.match(bar[0], /platform-safe-bar/,
       `readOnly=${readOnly}: the general-chat composer must sit above the home indicator`);
@@ -308,7 +308,7 @@ test('the thread composer AND its read-only notice both carry the bar class', ()
     },
   );
   const composer = shell(false);
-  assert.match(composer, /class="shrink-0 border-t[^"]*platform-safe-bar"/,
+  assert.match(composer, /class="shrink-0 px-3[^"]*platform-safe-bar"/,
     'the thread composer must sit above the home indicator');
   const notice = shell(true);
   assert.match(notice, /class="px-3 py-2[^"]*platform-safe-bar">This thread is read-only\./,

@@ -87,6 +87,31 @@
   // declared check that says Advanced starts closed.
   const NAV_EXPANDED_KEY = 'settings_nav_expanded_groups_v1';
 
+  // ── Post-logout landing (#1524) ───────────────────────────────────────
+  //
+  // Signing out always ends on the PUBLIC LANDING page, on every surface.
+  // `/` with no fragment is the only address that boots the anonymous shell
+  // there: App.restoreFromHash treats any other hash (or any `/app/<slug>`
+  // path) as a remembered deep link and answers with the bare sign-in form.
+  // A bare '/' rather than App._rootUrl() so a leftover `?shot=` / `?signup=`
+  // query cannot survive the sign-out either.
+  const LANDING_URL = '/';
+
+  // A native sign-out whose terminal step fails leaves this document alive
+  // with server authority already revoked, so it navigates to the landing
+  // page like every other surface. The advisory that used to be toasted here
+  // would be destroyed by that navigation, so it is handed to the anonymous
+  // boot instead: App.enterAnonymous reads this key once and toasts it.
+  const LOGOUT_NOTICE_KEY = 'sv:logout_notice';
+  const NATIVE_SHUTDOWN_NOTICE =
+    'Signed out. Close and reopen the app to finish shutting down Usernode.';
+
+  // A successful native logout replaces the WebView, so nothing below it in
+  // this document normally runs. This bounded net covers the case where the
+  // replacement does not arrive: rather than leave a signed-out user looking
+  // at the Settings screen forever, land them on the landing page.
+  const NATIVE_LOGOUT_SAFETY_MS = 5000;
+
   const Settings = {
     // Planted by ./mount.ts, never imported: this file is a classic IIFE that
     // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
@@ -1654,7 +1679,36 @@
       // The connector URL is derived from the origin the SPA is served
       // from, so a self-hosted fork shows its own.
       const urlField = document.getElementById('connector-url');
-      if (urlField) urlField.value = `${window.location.origin}/mcp`;
+      const connectorUrl = `${window.location.origin}/mcp`;
+      if (urlField) urlField.value = connectorUrl;
+
+      // #1607: the "set it up in <product>" links open a new chat pre-loaded
+      // with the job. Built HERE, from the same derived origin the field
+      // shows, so a fork or a config change cannot leave a hardcoded URL
+      // behind — the rule the written steps already follow by pointing back
+      // at #connector-url rather than naming a host.
+      //
+      // The prompt carries the two things people get wrong: that Usernode
+      // uses dynamic client registration (so there is no client ID or secret
+      // to go looking for), and the exact name `usernode`, which is what
+      // Claude Code builds its permission rules from (#1218) and which one
+      // account once mistyped, silently missing every rule the platform
+      // ships.
+      //
+      // Deliberately short. It is a query string, and nothing secret is in
+      // it: the connector URL is a public endpoint and the authorisation
+      // happens through OAuth inside the product, not in this link.
+      const chatPrompt = `I want to add a custom MCP connector. The server URL is ${connectorUrl}`
+        + ' and it uses dynamic client registration, so there is no client ID or secret to enter.'
+        + ' Name it exactly "usernode". Walk me through it one step at a time and tell me what to click.';
+      const chatLinks = [
+        ['connector-open-claude', 'https://claude.ai/new?q='],
+        ['connector-open-chatgpt', 'https://chatgpt.com/?q='],
+      ];
+      for (const [id, base] of chatLinks) {
+        const link = document.getElementById(id);
+        if (link) link.href = `${base}${encodeURIComponent(chatPrompt)}`;
+      }
 
       this._connectorLoadId = (this._connectorLoadId || 0) + 1;
       const loadId = this._connectorLoadId;
@@ -2000,6 +2054,18 @@
         provider,
         name,
         heading: link.linked && link.handle ? `${name} · @${link.handle}` : name,
+        // #1557: the durable half of "did that work?". The OAuth round trip
+        // already writes a one-line result into #github-link-status, but that
+        // line is transient, xs, and a sibling of this block — come back to
+        // Settings a minute later and the only thing distinguishing a
+        // connected account from an unconnected one was a sentence about
+        // credit tiers. The badge says the state itself, on the row it is
+        // about. A reconnect-required link is deliberately NOT "Connected":
+        // it is linked for attribution and not yet credit-eligible, which is
+        // the distinction the amber state text spells out.
+        badge: link.reconnectRequired
+          ? { text: 'Reconnect needed', tone: 'amber' }
+          : (link.linked ? { text: 'Connected', tone: 'emerald' } : null),
         state,
         linkedAt: link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
           ? `linked ${new Date(link.linkedAt).toLocaleString()}`
@@ -2020,9 +2086,8 @@
         unlink: link.linked ? { disabled: !!demo } : null,
         strandedNote: link.pendingAttemptAt
           ? `Your last ${name} connection attempt didn't complete. `
-            + `If ${name} showed "Something went wrong — You weren't able to give access to the App", `
-            + `the platform's callback address isn't registered on the ${name} developer app, `
-            + 'so an administrator needs to update that app’s settings.'
+            + 'Try Connect again. This can happen if the browser did not reach the sign-in page or the flow was cancelled. '
+            + `If ${name} reports a callback or redirect address error, ask an administrator to check its OAuth settings.`
           : null,
         diagnostics: link.diagnostics
           ? this._socialIdentityDiagnosticsView(provider, link.diagnostics, demo)
@@ -2083,6 +2148,7 @@
         conflict: `That ${name} account is already linked elsewhere, or a different account must be disconnected first.`,
         denied: `${name} connection was cancelled.`,
         error: `${name} could not be connected. Try again.`,
+        account_mismatch: 'This browser is signed into a different Usernode account than the app. Sign out here, then tap Connect again in the app and sign in with the same account.',
       };
       status.textContent = messages[result] || '';
       if (!status.textContent) return;
@@ -3241,24 +3307,63 @@
       // Same reasoning for the offline session snapshot (#1021): it is the
       // record that says "this device is signed in", so leaving it behind
       // would let the next offline boot paint the signed-in shell for an
-      // account that just logged out.
-      try { window.App?.clearSessionSnapshot?.(); } catch (_) {}
+      // account that just logged out. _dropCachedSession is the wider sweep
+      // (#1524): it also clears the shell snapshot and the remembered Improve
+      // target, which main.tsx re-applies UNCONDITIONALLY at boot, before the
+      // session is known — so leaving them behind paints the previous
+      // session's header title and Improve button on the landing page.
+      try { window.App?._dropCachedSession?.(); } catch (_) {}
 
-      // This must remain the final statement on the native path: successful
-      // native logout replaces the WebView, so the old document has no
-      // timeout or navigation continuation.
+      // Normalise the address BEFORE the terminal native call (#1524). A
+      // native sign-out replaces the WebView but the platform keeps whatever
+      // URL it was on, so a logout from `#settings` (or from `/app/<slug>`)
+      // leaves an address that restoreFromHash reads as a remembered deep
+      // link and answers with the sign-in form on the next restore. This runs
+      // after the revocation above on purpose: a logout that FAILED must
+      // leave the address still describing the screen the user is looking at.
+      //
+      // replaceState is safe on both counts that matter here. NATIVE-BRIDGE.md's
+      // trust model binds the privileged capability to the executing JS realm,
+      // and a same-document History API change retains it; and replaceState
+      // fires neither popstate nor hashchange, so no router runs off it.
+      try { window.history?.replaceState?.(null, '', LANDING_URL); } catch (_) {}
+
+      // Back into a signed-in document restored whole from the BFCache would
+      // otherwise repaint the signed-in shell from memory (#1524). One-shot:
+      // this document is on its way out either way.
+      try {
+        window.addEventListener('pageshow', (event) => {
+          if (event && event.persisted) window.location.replace(LANDING_URL);
+        }, { once: true });
+      } catch (_) {}
+
+      // This must remain the final call on the native path: successful native
+      // logout replaces the WebView, so the old document normally runs no
+      // continuation work at all. The ONE relaxation (#1524) is navigation to
+      // the landing page, on both outcomes below. It cannot re-admit anyone:
+      // App.user is gone, so NativeChrome._webParticipantId() is null and
+      // establishCurrentSession() returns without asking the bridge for
+      // anything. Nothing else may be added here.
       if (preflight.nativeTerminal) {
-        // A rejection leaves this old document closed and server authority
-        // revoked. Do not navigate or reopen admission; the deliberately
-        // simple rare-failure recovery is an app restart/update.
-        return NativeChrome.commitNativeLogout().catch((error) => {
-          if (window.PlatformUI && PlatformUI.toast) {
-            PlatformUI.toast(
-              'Signed out. Close and reopen the app to finish shutting down Usernode.',
-              { error: true }
-            );
-          }
+        return NativeChrome.commitNativeLogout().then((result) => {
+          // The WebView should already be gone. If it is not, land this
+          // document on the public landing page rather than leave a
+          // signed-out user on the Settings screen.
+          const timer = setTimeout(() => {
+            window.location.replace(LANDING_URL);
+          }, NATIVE_LOGOUT_SAFETY_MS);
+          if (timer && typeof timer.unref === 'function') timer.unref();
+          return result;
+        }, (error) => {
+          // A rejection leaves the native realm closed and server authority
+          // revoked, but this document alive and signed out. Carry the
+          // advisory across the navigation (the toast itself would not
+          // survive it) and go to the landing page like every other surface.
+          try {
+            window.sessionStorage?.setItem?.(LOGOUT_NOTICE_KEY, NATIVE_SHUTDOWN_NOTICE);
+          } catch (_) {}
           console.warn('[settings] local native shutdown failed:', error);
+          window.location.replace(LANDING_URL);
           return false;
         });
       }
@@ -3268,8 +3373,9 @@
       // the anonymous shell on the landing screen — the public app
       // directory a guest normally sees — instead of the bare sign-in
       // form (#1159); the landing header's Sign in CTA keeps re-login one
-      // tap away.
-      window.location.href = '/';
+      // tap away. REPLACE, not assign (#1524): a pushed entry lets Back
+      // restore the signed-in document from the BFCache.
+      window.location.replace(LANDING_URL);
     },
 
     // Ask the active service worker to drop its API cache; resolves on ack

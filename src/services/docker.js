@@ -57,8 +57,16 @@ const APP_CPUS = '0.5';
 // itself became the bottleneck the ceiling was protecting against. Still a
 // ceiling — an idle preview is unaffected, and the cost only appears during
 // the same capture window the 1.0 bump was already for.
+//
+// Raised 2 → 4: eight concurrent pages on two cores left every request
+// queueing behind the others during the capture window, which is where the
+// "did not finish within the assert window" flakes came from — a check that
+// passes alone and fails under its seven neighbours. Still a ceiling. The
+// same figure is handed to the kubernetes deploy (services/kubernetes.js
+// deployApplication), whose preview limit used to be a hard-coded 1 CPU that
+// this setting never reached.
 const STAGING_MEMORY = process.env.STAGING_MEMORY || '256m';
-const STAGING_CPUS = process.env.STAGING_CPUS || '2';
+const STAGING_CPUS = process.env.STAGING_CPUS || '4';
 
 const SHARED_NETWORK = process.env.DOCKER_NETWORK || 'shared-web';
 
@@ -83,20 +91,127 @@ const STAGING_STOP_GRACE_SEC = 2;
 // grace — i.e. Docker had to SIGKILL. Slack absorbs docker CLI overhead.
 const FORCE_KILL_SLACK_MS = 400;
 
-async function buildImage(contextPath, tag, buildArgs = {}) {
+// One line of `docker build` output, as progress: the classic builder's
+// `Step 4/31 : RUN npm ci` and BuildKit's `#7 [shell 4/9] RUN npm ci` both
+// carry a step counter and the instruction. Null for any other line.
+function parseDockerBuildLine(line) {
+  const l = String(line || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
+  let m = /^Step (\d+)\/(\d+) : (.*)$/.exec(l);
+  if (m) return { index: parseInt(m[1], 10), total: parseInt(m[2], 10), phase: null, detail: m[3].trim() };
+  m = /^#\d+ \[([^\]]*?)(?:\s+(\d+)\/(\d+))?\] (.*)$/.exec(l);
+  if (m) {
+    const stage = (m[1] || '').trim() || null;
+    return {
+      index: m[2] ? parseInt(m[2], 10) : null,
+      total: m[3] ? parseInt(m[3], 10) : null,
+      phase: stage,
+      detail: m[4].trim(),
+    };
+  }
+  return null;
+}
+
+// `onProgress(image)`: `{ phase, index, total, detail }` per step line the
+// builder prints (see parseDockerBuildLine), read off the child's stdout and
+// stderr as they stream. The run is still judged from the exit code.
+// BuildKit, with a way back.
+//
+// The preview image is built by the CLASSIC builder today — `Step 6/36` in
+// the output is its format — which runs every stage in file order. This
+// repo's Dockerfile has two INDEPENDENT stages, `shell` and `css`, each
+// with its own `npm ci`, and the classic builder runs the second only after
+// the first has finished. BuildKit builds them concurrently, skips stages
+// nothing depends on, and commits layers through a faster snapshotter,
+// which is what a build whose small COPY steps cost as much as its large
+// ones is actually waiting on.
+//
+// `--progress=plain` is not cosmetic: BuildKit's default renderer redraws
+// with ANSI control sequences, which is not a stream of lines and would
+// leave the build-step progress (services/staging.js) blind. Plain mode
+// emits `#7 [shell 4/9] RUN npm ci` per step, which parseDockerBuildLine
+// already reads, on stderr — observed here alongside stdout.
+//
+// STAGING_BUILDKIT=0 turns it off without a code change. And a daemon that
+// cannot do BuildKit at all is not a broken fleet: the narrow matcher below
+// recognises that refusal specifically — not a failing Dockerfile — and the
+// build is retried once on the classic builder. Anything else throws as it
+// always did.
+function buildKitEnabled() {
+  const v = String(process.env.STAGING_BUILDKIT ?? '1').trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'off');
+}
+
+// Set once the CLI has refused BuildKit, so a host whose docker has no
+// buildx pays the refused attempt once per process rather than once per
+// image. The refusal is instant — the CLI answers before it reaches the
+// daemon — but it is on the path of all four callers (preview, capture,
+// worker and session images), and one warning per boot reads better than
+// one per build. A deploy restarts the process, so installing buildx takes
+// effect without a code change.
+let buildKitRefused = false;
+
+// Deliberately narrow: only the daemon/CLI saying it cannot do BuildKit.
+// A Dockerfile that fails to build must NOT be retried under another
+// builder — it would fail twice, take double the time, and report the
+// second failure.
+//
+// `buildkit is enabled but` is the durable half of that refusal. The
+// component it names next is not: the CLI says `the buildx component is
+// missing or broken`, and matching a guessed full sentence instead is how
+// the real message went unrecognised, so every image build on a host
+// without docker-buildx failed outright rather than falling back.
+function buildKitUnavailable(err) {
+  const text = `${(err && err.stderr) || ''}\n${(err && err.message) || ''}`.toLowerCase();
+  return /buildkit is enabled but/.test(text)
+    || /install the buildx component/.test(text)
+    || /'buildx' is not a docker command/.test(text)
+    || /buildkit not supported by daemon/.test(text)
+    || /failed to solve.*buildkit.*not supported/.test(text)
+    || /unknown flag: --progress/.test(text);
+}
+
+async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null } = {}) {
   const buildArgFlags = Object.entries(buildArgs).flatMap(
     ([k, v]) => ['--build-arg', `${k}=${v}`]
   );
-  log.info('docker', 'Building image', { context: contextPath, tag, buildArgs });
+  const wantBuildKit = buildKitEnabled() && !buildKitRefused;
+  log.info('docker', 'Building image', { context: contextPath, tag, buildArgs, buildKit: wantBuildKit });
   const startedAt = Date.now();
-  try {
-    await execFileAsync(
+  const runBuild = (useBuildKit) => {
+    const promise = execFileAsync(
       'docker',
-      ['build', ...buildArgFlags, '-t', tag, contextPath],
+      ['build', ...buildArgFlags, ...(useBuildKit ? ['--progress=plain'] : []), '-t', tag, contextPath],
       // Generous maxBuffer so a chatty build still yields a usable log
       // tail instead of a bare "maxBuffer exceeded" error (#416).
-      { timeout: 5 * 60 * 1000, maxBuffer: 8 * 1024 * 1024 }
+      {
+        timeout: 5 * 60 * 1000,
+        maxBuffer: 8 * 1024 * 1024,
+        env: { ...process.env, DOCKER_BUILDKIT: useBuildKit ? '1' : '0' },
+      }
     );
+    if (typeof onProgress === 'function' && promise.child) {
+      const observe = (line) => {
+        const step = parseDockerBuildLine(line);
+        if (step) onProgress(step);
+      };
+      if (promise.child.stdout) attachLineObserver(promise.child.stdout, observe);
+      if (promise.child.stderr) attachLineObserver(promise.child.stderr, observe);
+    }
+    return promise;
+  };
+  let usedBuildKit = wantBuildKit;
+  try {
+    try {
+      await runBuild(wantBuildKit);
+    } catch (err) {
+      if (!wantBuildKit || !buildKitUnavailable(err)) throw err;
+      log.warn('docker', 'BuildKit unavailable on this daemon: rebuilding with the classic builder, and not trying it again this process', {
+        tag, err: err.message,
+      });
+      buildKitRefused = true;
+      usedBuildKit = false;
+      await runBuild(false);
+    }
   } catch (err) {
     // Attach the build output tail so deploy callers can persist a
     // diagnosable apps.last_failure record (see services/deploy-failure).
@@ -108,8 +223,8 @@ async function buildImage(contextPath, tag, buildArgs = {}) {
     throw err;
   }
   const durationMs = Date.now() - startedAt;
-  log.info('docker', 'Image built', { tag, durationMs });
-  return { durationMs };
+  log.info('docker', 'Image built', { tag, durationMs, buildKit: usedBuildKit });
+  return { durationMs, buildKit: usedBuildKit };
 }
 
 // Linux caps a hostname at HOST_NAME_MAX (64 bytes) and runc's
@@ -267,10 +382,18 @@ async function runContainer(name, {
 // container exists. Stdin has no such cap. The write is fire-and-forget
 // with an error swallow: if the container dies before draining stdin the
 // EPIPE must not mask the real (exit-code) failure.
+// `onStdoutLine(line)`: called with each complete stdout line AS IT ARRIVES,
+// on top of the buffered result. The run is still judged from the buffered
+// stdout when the process exits — this is an observer, not a second parser
+// — so a listener that throws or is slow cannot change a verdict. Chunk
+// boundaries fall anywhere, so lines are re-assembled here and the trailing
+// partial is flushed at exit. Used to surface per-check progress while a
+// capture container is running, which the buffered result cannot do.
 async function runOneShot(name, {
   image, env = {}, memory = '1g', cpus = '1',
   timeoutMs = 240000, maxBuffer = 128 * 1024 * 1024,
   salvagePartial = false, stdinPayload = null, cmd = null,
+  onStdoutLine = null,
 }) {
   const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   const args = [
@@ -295,6 +418,9 @@ async function runOneShot(name, {
       promise.child.stdin.on('error', () => {});
       promise.child.stdin.end(stdinPayload);
     }
+    if (typeof onStdoutLine === 'function' && promise.child && promise.child.stdout) {
+      attachLineObserver(promise.child.stdout, onStdoutLine);
+    }
     return promise;
   };
   try {
@@ -318,6 +444,27 @@ async function runOneShot(name, {
     if (salvaged) return salvaged;
     throw err;
   }
+}
+
+// Feed a readable's bytes to `onLine` one complete line at a time. Node's
+// execFile keeps its own copy for the buffered result; this only listens.
+// Exported for the tests, which drive it with a PassThrough.
+function attachLineObserver(readable, onLine) {
+  let carry = '';
+  const emit = (line) => {
+    try { onLine(line); } catch { /* an observer must never break the run */ }
+  };
+  readable.on('data', (chunk) => {
+    carry += chunk.toString('utf8');
+    let nl;
+    while ((nl = carry.indexOf('\n')) !== -1) {
+      emit(carry.slice(0, nl));
+      carry = carry.slice(nl + 1);
+    }
+  });
+  readable.on('end', () => {
+    if (carry.length) { emit(carry); carry = ''; }
+  });
 }
 
 // Recover the partial stdout from a timed-out / buffer-exceeded execFile
@@ -771,6 +918,10 @@ module.exports = {
   containerHostname,
   execShellStdin,
   buildImage,
+  parseDockerBuildLine,
+  buildKitEnabled,
+  buildKitUnavailable,
+  attachLineObserver,
   runContainer,
   runOneShot,
   startContainer,

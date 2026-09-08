@@ -70,7 +70,7 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId) {
             cs.mergeability_files_complete, cs.freshness_main_sha,
             cs.freshness_merge_base_sha, cs.freshness_behind_by,
             cs.freshness_ahead_by, cs.freshness_checked_at,
-            cs.freshness_error, cs.check_phase, cs.check_trigger,
+            cs.freshness_error, cs.check_phase, cs.check_trigger, cs.checks_progress,
             cs.platform_env_state, cs.platform_env_detail,
             cs.check_error_detail, cs.requires_explicit_approval,
             (SELECT jsonb_object_agg(
@@ -736,21 +736,45 @@ async function loadSessionCheckContext(pool, sessionId) {
   };
 }
 
-function buildFailingChecksBlock(checkState, testResults) {
-  if (checkState !== 'failing') return '';
+// The failing checks as DATA rather than prose, capped the same way.
+//
+// #1766: the coding agent has been told exactly which checks fail, with
+// names, paths and reasons, since buildFailingChecksBlock below started
+// injecting them into its prompt. The person watching the card got a number.
+// So the board renders these same rows now, and both callers derive from one
+// function — an agent and a human reading different answers about the same
+// run is the failure this shape prevents.
+function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MAX) {
+  if (checkState !== 'failing') return { total: 0, blocking: 0, rows: [] };
   const failing = (Array.isArray(testResults) ? testResults : [])
     .filter((r) => r && r.status !== 'pass');
-  if (!failing.length) return '';
+  return {
+    total: failing.length,
+    // Advisory rows report but do not block, so a reviewer counting them as
+    // reasons the merge is held up would be reading a blocker that is not
+    // one. Same distinction MergeStatus.lifecycle already draws for the pill.
+    blocking: failing.filter((r) => !r.advisory).length,
+    rows: failing.slice(0, max).map((r) => ({
+      name: String(r.name || 'unnamed check').slice(0, 160),
+      path: String(r.path || '').slice(0, 160) || null,
+      reason: String(r.failureReason || 'failed').slice(0, 300),
+      advisory: !!r.advisory,
+      consoleError: Array.isArray(r.consoleErrors) && r.consoleErrors[0]
+        ? String(r.consoleErrors[0].message || '').slice(0, 200)
+        : null,
+    })),
+  };
+}
 
-  const blocking = failing.filter((r) => !r.advisory);
-  const lines = failing.slice(0, FAILING_CHECKS_MAX).map((r) => {
-    const name = String(r.name || 'unnamed check').slice(0, 160);
-    const p = String(r.path || '').slice(0, 160);
-    const reason = String(r.failureReason || 'failed').slice(0, 300);
-    const firstConsole = Array.isArray(r.consoleErrors) && r.consoleErrors[0]
-      ? ` · first console error: ${String(r.consoleErrors[0].message || '').slice(0, 200)}`
-      : '';
-    return `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${name}"${p ? ` (path: ${p})` : ''} — ${reason}${firstConsole}`;
+function buildFailingChecksBlock(checkState, testResults) {
+  const summary = summarizeFailingChecks(checkState, testResults);
+  const failing = { length: summary.total };
+  if (!summary.total) return '';
+
+  const blocking = { length: summary.blocking };
+  const lines = summary.rows.map((r) => {
+    const firstConsole = r.consoleError ? ` · first console error: ${r.consoleError}` : '';
+    return `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${r.name}"${r.path ? ` (path: ${r.path})` : ''} — ${r.reason}${firstConsole}`;
   });
   const more = failing.length > FAILING_CHECKS_MAX
     ? `\n(+${failing.length - FAILING_CHECKS_MAX} more failing)` : '';
@@ -1310,6 +1334,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
                 cs.check_state, cs.check_phase, cs.check_error_detail,
+                cs.test_results,
                 cs.agent_backend, cs.agent_model,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name,
@@ -1507,6 +1532,31 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       }
       // Per-viewer denominators for the "(x/y)" header — full admins get
       // the raised caps. Cheap (pure function on req.user, no query).
+      // #1766: name the failing checks, and drop the raw results.
+      //
+      // The card could already say "Checks failing · 3"; it could not say
+      // WHICH three, so the owner's only route to that was reading
+      // test_results out of the API by hand. Meanwhile the coding agent has
+      // been handed the full list, with reasons, in its prompt.
+      //
+      // Bounded on purpose: test_results holds a row per declared check (500+
+      // today) and this endpoint is polled. summarizeFailingChecks caps the
+      // rows and carries the totals separately, so the card can say "3 of 528
+      // failing" and list the first few without the feed growing with the
+      // manifest.
+      //
+      // IMPORTED rows keep the raw column, because they already had it:
+      // enrichImportedUnderwaySessions has been sending it for them since
+      // they became proposal-shaped, and me-active-sessions.test.js pins it.
+      // Dropping it there would be a silent breaking change to an existing
+      // contract in the name of a new one. Everything else selected it only
+      // so this summary could be built, so it goes back off the wire.
+      for (const row of sessions) {
+        if (!row) continue;
+        const summary = summarizeFailingChecks(row.check_state, row.test_results);
+        if (row.source !== 'imported') delete row.test_results;
+        if (summary.total) row.failing_checks = summary;
+      }
       res.json({
         sessions, totals, externalTasks, caps: effectiveSessionCaps(config, req.user),
       });
@@ -6534,6 +6584,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // the client's stop-escalation ladder across reloads.
     res.json({
       busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate,
+      spend: busy ? workerProgress.get(sessionId)?.spend || null : null,
       agentBackend: progressAgentBackend,
       agentModel: progressAgentModel,
       resolving: isResolving(sessionId),
@@ -6890,6 +6941,58 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         aiEnabled: true,
         resetsAt: reset.toISOString(),
         lowBalancePct: 80,
+        // #1788: which window these three figures describe. The daily cap
+        // is the one that bound here, which is what ?demo=1 has always
+        // meant — stated explicitly now that it is not the only answer.
+        capWindow: 'daily',
+        windowLabel: 'Today',
+        resetLabel: 'midnight UTC',
+        dailyApplies: true,
+        dailyLimitCents: 2000,
+        dailySpentCents: 2000,
+        weeklyApplies: false,
+        weeklyLimitCents: 0,
+        weeklySpentCents: 0,
+        demo: true,
+      });
+    }
+    // #1788: the weekly sibling. A spent WEEKLY allowance is even less
+    // reachable on a preview than a spent daily one — it would take seven
+    // days of seeded spend — and its copy differs everywhere the boundary
+    // is named ("this week", "Resets Monday 00:00 UTC"), so it gets its own
+    // fixture rather than a flag on the one above. The daily cap still has
+    // headroom here, so the weekly cap is unambiguously the one binding.
+    if (process.env.USERNODE_ENV === 'staging' && req.query.demo === 'weekly-out') {
+      // Next Monday 00:00 UTC, inline for the same reason as above: this
+      // branch stays provably free of any service call.
+      const weekReset = new Date();
+      weekReset.setUTCDate(weekReset.getUTCDate() + (((8 - weekReset.getUTCDay()) % 7) || 7));
+      weekReset.setUTCHours(0, 0, 0, 0);
+      return res.json({
+        spentCents: 17500,
+        limitCents: 17500,
+        remainingCents: 0,
+        creditPolicy: 'legacy',
+        tier: 'legacy',
+        limitSource: 'default',
+        verificationRequired: false,
+        entitlementAvailable: true,
+        tierLimitCents: 1000,
+        globalSpentCents: 4000,
+        globalLimitCents: 100000,
+        byokSpentCents: 0,
+        aiEnabled: true,
+        resetsAt: weekReset.toISOString(),
+        lowBalancePct: 80,
+        capWindow: 'weekly',
+        windowLabel: 'This week',
+        resetLabel: 'Monday 00:00 UTC',
+        dailyApplies: true,
+        dailyLimitCents: 2000,
+        dailySpentCents: 900,
+        weeklyApplies: true,
+        weeklyLimitCents: 17500,
+        weeklySpentCents: 17500,
         demo: true,
       });
     }
@@ -14714,4 +14817,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { BUILD_VENUES, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

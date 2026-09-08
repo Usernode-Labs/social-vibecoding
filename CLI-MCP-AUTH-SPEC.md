@@ -587,10 +587,21 @@ If there is no platform session, the page redirects to:
 /login.html?return_to=%2Fcli%2Fauthorize
 ```
 
-The login implementation may honor only the exact relative value
-`/cli/authorize`, with no query or fragment; it must discard absolute,
-protocol-relative, or other values. After login it returns to the approval
-page, which restores the launch code from `sessionStorage`.
+The login implementation honors a relative value whose PATH is on a short
+allowlist: `/cli/authorize` and the MCP consent path `/connect/authorize`.
+It resolves the value against its own origin and matches `url.pathname`, so
+absolute, protocol-relative, and otherwise off-origin values are discarded.
+
+The QUERY STRING is preserved, because the MCP consent request is carried in
+one — client id, redirect uri, PKCE challenge and state — and an exact-string
+allowlist could not have carried it. The FRAGMENT is always discarded. That is
+a normalisation and not a security boundary: this page takes its launch code
+from a fragment on first arrival but carries it across a sign-in in
+`sessionStorage`, and the consent page never reads a fragment at all, so a
+forwarded one would be a value nothing reads.
+
+After login it returns to the approval page, which restores the launch code
+from `sessionStorage`.
 
 Approval endpoint:
 

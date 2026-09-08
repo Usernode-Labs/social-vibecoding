@@ -449,21 +449,126 @@ test('the base commit is shown short, because that is what people compare', () =
   assert.ok(!html.includes('0123456789abcdef0123456789abcdef01234567'));
 });
 
-test('an existing connector is mentioned but never required', () => {
+test('an existing connector is mentioned, with the per-account caveat', () => {
   // The whole point of #1049 is that the MCP connector stopped being the
-  // only door. Someone who has one should hear that it also works; someone
-  // who has none must see no mention of it at all.
+  // only door. Someone who has one should hear that it also works — and
+  // that it belongs to the chat account it was added in, because the
+  // server's count is across every account and says nothing about the one
+  // the paste is going to.
   const withOne = DevFlowSelect.wizardHtml({
     status: fullStatus({ connectors: { count: 1 } }),
   });
   assert.match(withOne, /1 Claude \/ ChatGPT connector /, 'singular, not "1 connectors"');
+  assert.match(withOne, /belongs to the Claude account it was added in/);
+  assert.match(withOne, /<a href="#settings\/connectors">Settings → Connectors<\/a>/);
   const withTwo = DevFlowSelect.wizardHtml({
     status: fullStatus({ connectors: { count: 2 } }),
   });
   assert.match(withTwo, /2 Claude \/ ChatGPT connectors/);
+  const codex = DevFlowSelect.wizardHtml({
+    agent: 'codex',
+    status: fullStatus({ connectors: { count: 1 }, task: Object.assign({}, fullStatus().task, { agent: 'codex' }) }),
+  });
+  assert.match(codex, /belongs to the ChatGPT account it was added in/);
+  // Once the branch is pushed the hand-off note is gone, and with a
+  // connector the card-level hint is the only mention.
   const withNone = DevFlowSelect.wizardHtml({ status: fullStatus() });
+  assert.ok(!withNone.includes('data-flow-note='),
+    'a pushed branch has nothing left to connect for');
   assert.ok(!withNone.includes('connector'),
-    'no connector, no mention — it is not a prerequisite');
+    'no connector and nothing left to do with one: no mention');
+});
+
+// ── The connector prerequisite on the hand-off step ─────────────────
+//
+// The work order tells the agent to read the full platform rules through
+// its Usernode connector and to submit the branch itself. An account that
+// never added the connector — a SECOND Claude account, typically — can do
+// neither, and nothing in the five steps used to say so. The hand-off step
+// now says it once, at the paste moment, and links the page with the steps.
+
+function unpushed(over) {
+  return fullStatus(Object.assign({
+    branch: { state: 'missing', pushed: false, unpushed: false, missing: true },
+  }, over || {}));
+}
+
+test('with no connector, the hand-off step says to connect first and links the steps', () => {
+  const html = DevFlowSelect.wizardHtml({ status: unpushed() });
+  assert.match(html, /data-flow-step="handoff"[\s\S]*data-flow-note="connector"/,
+    'the note sits inside the hand-off step');
+  assert.match(html, /Before you paste, connect Usernode in the Claude account Claude Code will run as\./);
+  assert.match(html, /<a href="#settings\/connectors">Settings → Connectors<\/a> has the connector URL and the steps\./);
+  assert.match(html, /read the full platform rules and to submit the branch as a proposal itself/);
+  assert.match(html, /come back to this tab and press Submit/,
+    'it says what happens without one: the branch still lands, this tab finishes');
+  // The anchor is the browser's, not the walkthrough's: no data-flow-action,
+  // no target="_blank" — the settings page opens in this tab and the card
+  // resumes from the server's status when the person comes back.
+  const anchor = html.match(/<a href="#settings\/connectors"[^>]*>/)[0];
+  assert.ok(!/data-flow-action/.test(anchor));
+  assert.ok(!/target=/.test(anchor));
+});
+
+test('the note names the product the connector actually lives in', () => {
+  const codex = DevFlowSelect.wizardHtml({
+    agent: 'codex',
+    status: unpushed({ task: Object.assign({}, fullStatus().task, { agent: 'codex' }) }),
+  });
+  assert.match(codex, /connect Usernode in the ChatGPT account Codex will run as/);
+  assert.ok(!/Claude account/.test(codex));
+  assert.equal(DevFlowSelect.connectorProduct('claude-code'), 'Claude');
+  assert.equal(DevFlowSelect.connectorProduct('codex'), 'ChatGPT');
+});
+
+test('the note shows before the work order exists too, and on the todo step', () => {
+  // Connecting first is the point, so the note is not gated on the step
+  // being current the way its buttons are. With no task yet the hand-off
+  // step is still 'todo' and the note is already there.
+  const html = DevFlowSelect.wizardHtml({ status: unpushed({ task: null }) });
+  assert.match(html, /data-flow-step="handoff" data-flow-step-state="todo"/);
+  assert.match(html, /data-flow-note="connector"/);
+  const list = DevFlowSelect.steps(unpushed({ task: null }), 'claude-code');
+  const handoff = list.find((step) => step.key === 'handoff');
+  assert.ok(handoff.note, 'the step model carries the note');
+  assert.equal(handoff.note.href, '#settings/connectors');
+  for (const step of list) {
+    if (step.key !== 'handoff') assert.equal(step.note, null, `${step.key} has no note`);
+  }
+});
+
+test('the note is absent when it would be noise', () => {
+  // A connector exists: the card-level hint covers it.
+  assert.equal(DevFlowSelect.connectorNote({ count: 1 }, 'claude-code', { pushed: false }), null);
+  // The branch is pushed: the moment has passed.
+  assert.equal(DevFlowSelect.connectorNote({ count: 0 }, 'claude-code', { pushed: true }), null);
+  // The status predates the field: render exactly as before.
+  assert.equal(DevFlowSelect.connectorNote(undefined, 'claude-code', null), null);
+  assert.equal(DevFlowSelect.connectorNote({}, 'claude-code', null), null);
+  const withOne = DevFlowSelect.wizardHtml({ status: unpushed({ connectors: { count: 1 } }) });
+  assert.ok(!withOne.includes('data-flow-note='));
+  const noField = DevFlowSelect.wizardHtml({ status: unpushed({ connectors: undefined }) });
+  assert.ok(!noField.includes('data-flow-note='));
+  assert.ok(!noField.includes('connector'));
+});
+
+test('the note escapes and the plain anchor is left to the browser', () => {
+  const html = DevFlowSelect.wizardHtml({ status: unpushed() });
+  assert.ok(!/<div class="dc-flow-step-note"[^>]*><[^a]/.test(html), 'only the anchor is markup');
+  // wire() acts on [data-flow-action] only: a click on the note's anchor
+  // reaches no handler, so the browser's own hash navigation is what runs.
+  const calls = [];
+  const anchor = { tagName: 'A', getAttribute: (n) => (n === 'href' ? '#settings/connectors' : null), closest: () => null };
+  const root = {
+    listeners: {},
+    addEventListener(type, fn) { this.listeners[type] = fn; },
+    contains: () => true,
+  };
+  DevFlowSelect.wire(root, { onAction: (a) => calls.push(a) });
+  let prevented = false;
+  root.listeners.click({ target: anchor, preventDefault: () => { prevented = true; } });
+  assert.deepEqual(calls, []);
+  assert.equal(prevented, false);
 });
 
 // ── wire() ─────────────────────────────────────────────────────────────

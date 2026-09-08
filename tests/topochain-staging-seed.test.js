@@ -425,7 +425,9 @@ test('the waitlist fixtures seed both directions of the invite graph', () => {
   const referrals = (block.match(/, 900500\)/g) || []).length;
   assert.equal(referrals, 2, 'two rows came in through 900500, so it reads "Brought in 2"');
   assert.match(block, /"admit_together": true/,
-    'and one of them asked to be admitted together, which is its own line');
+    'and one row still carries the retired buddy flag (#1534), so a preview '
+    + 'exercises the fallback that shows a stopped-being-known key under '
+    + '"Other answers" instead of dropping what a signup actually submitted');
 });
 
 // The Answers column counts against the live section total, so the row that

@@ -853,6 +853,24 @@ const PUSHED_BRANCH = {
   },
 };
 
+// The mirror is the FIRST rung of the branch path (task 153), and its
+// provenance read is a public GET of the fork repository. None of the
+// fixtures below stub that read, so on the real helper it fails CLOSED as
+// `platform_unavailable` — never with a thrown error, fakeFetch's refusal is
+// caught inside githubPublic — and the ladder falls through to the
+// cross-fork rungs those tests were written for. Tests ABOUT the ladder say
+// so explicitly with `withMirrorUnavailable`; tests about the mirror itself
+// stub it with `withStubbedMirror` further down.
+function withMirrorUnavailable(fn, onCall) {
+  const headSvc = require('../src/services/external-agent-head');
+  const real = headSvc.mirrorForkBranch;
+  headSvc.mirrorForkBranch = async (args) => {
+    if (onCall) onCall(args);
+    return { ok: false, code: 'platform_unavailable', message: 'no write credential', retryable: true };
+  };
+  return Promise.resolve(fn()).finally(() => { headSvc.mirrorForkBranch = real; });
+}
+
 function submitPool(queries, extra = []) {
   return fakePool([
     ['FROM external_agent_tasks t JOIN apps a', [TASK_ROW]],
@@ -862,7 +880,7 @@ function submitPool(queries, extra = []) {
   ], queries);
 }
 
-test('submit_work opens the cross-fork PR and stamps the agent on the session', async () => {
+test('submit_work opens the cross-fork PR when the mirror is unavailable, and stamps the agent on the session', async () => {
   const queries = [];
   const calls = [];
   const created = [];
@@ -875,7 +893,7 @@ test('submit_work opens the cross-fork PR and stamps the agent on the session', 
     },
   });
 
-  const result = await withFetch(PUSHED_BRANCH, calls, () => svc.submitWork(
+  const result = await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, calls, () => svc.submitWork(
     { pool: submitPool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
     {
       user: { id: 3 }, clientName: 'Claude', taskId: 31, title: 'Dark mode',
@@ -885,7 +903,7 @@ test('submit_work opens the cross-fork PR and stamps the agent on the session', 
         return { ok: true, status: 200, body: { sessionId: 55 } };
       },
     }
-  ));
+  )));
 
   assert.equal(result.ok, true);
   assert.equal(result.proposalId, 55);
@@ -1219,9 +1237,11 @@ test('a submission that names no request links nothing', async () => {
 // The reason this whole area was rewritten. `submit_work` had never once
 // succeeded in production: every attempt reached `platform_error: The pull
 // request could not be opened`, an error that discarded whatever GitHub
-// actually said. There are three rungs now — the plain cross-fork create,
-// the same call with an explicit head_repo, and a mirror into the app's own
-// repository — and the error that survives all three names the cause.
+// actually said. There are three rungs — a mirror into the app's own
+// repository first (task 153), then the plain cross-fork create, then the
+// same call with an explicit head_repo — and the error that survives all
+// three names the cause. The cross-fork tests here run with the mirror
+// unavailable, which is the only way those rungs are reached now.
 
 const logger = require('../src/services/logger');
 
@@ -1270,23 +1290,23 @@ test('a 4xx cross-fork create is retried ONCE with an explicit head_repo', async
     },
   });
 
-  const result = await withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+  const result = await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
     { pool: submitPool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
     {
       user: { id: 3 }, taskId: 31, source: 'work_order',
       importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 71 } }),
     }
-  ));
+  )), () => { mirrored = true; });
 
   assert.equal(result.ok, true);
   assert.equal(result.prNumber, 92);
   assert.equal(result.submittedVia, 'branch_head_repo');
   assert.equal(attempts.length, 2, 'exactly one retry, never a loop');
-  assert.equal(attempts[0].headRepo, undefined, 'the plain cross-fork shape is still preferred');
+  assert.equal(attempts[0].headRepo, undefined, 'the plain cross-fork shape is tried first');
   assert.equal(attempts[1].headRepo, 'someuser/recipe-box');
   assert.equal(attempts[1].head, 'someuser:usernode/recipe-box-issue-4-abc123',
     'head is unchanged — head_repo only disambiguates it');
-  assert.equal(mirrored, false, 'a working retry never reaches the mirror');
+  assert.equal(mirrored, true, 'the mirror ran first and was unavailable — that is how the cross-fork rungs are reached');
 
   // Recorded so "was the missing head_repo the whole bug?" is a SQL query
   // rather than another production audit.
@@ -2242,6 +2262,82 @@ test('the work order presents every submit shape, in order of preference', async
   assert.match(order, /connector traffic goes out through Claude's own infrastructure/);
 });
 
+test('the work order tells an agent with no Usernode tools what that means and how to finish', async () => {
+  // The connector is per Claude / ChatGPT account, so a second account has
+  // none — and the old step 6 treated a missing connector as an unexplained
+  // state with a single remedy (hand it back). Now it names the cause,
+  // points at the page with the connect steps, and tailors the finish to
+  // who started the hand-off.
+  const assistant = fullOrder();
+  // Next to the first thing the connector is needed for: the rules pointer.
+  assert.match(assistant, /If this session has NO Usernode tools, the connector was never added to\n {2}the Claude or ChatGPT account you are running in/);
+  assert.match(assistant, /the excerpt below is enough to build with/);
+  assert.match(assistant, /^ {4}https:\/\/usernode\.example\/#settings\/connectors$/m,
+    'the settings URL is on its own indented line, like a command');
+  // And under WHEN YOU ARE DONE.
+  assert.match(assistant, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Usernode\n {3}connector was never added to the Claude or ChatGPT account this session\n {3}runs in/);
+  assert.match(assistant, /a second account does not inherit the\n {3}first one's/);
+  assert.match(assistant, /Push the branch anyway; the work is not lost/);
+  assert.match(assistant, /retry `submit_work` as in step 2/);
+  // Started by a chat assistant: hand it back, patch included.
+  assert.match(assistant, /Otherwise hand it back: print the branch name you pushed/);
+  assert.match(assistant, /save the patch from step 4 to a `\.patch` file/);
+  assert.match(assistant, /If they started from the Usernode tab instead/);
+  assert.doesNotMatch(assistant, /Otherwise finish from Usernode/);
+  // The URL appears in both places.
+  assert.equal(assistant.split('https://usernode.example/#settings/connectors').length - 1, 2);
+
+  // Started from the browser walkthrough: that tab's Submit button finishes.
+  const walkthrough = fullOrder({ startedFromWalkthrough: true });
+  assert.match(walkthrough, /Otherwise finish from Usernode: the walkthrough that produced this\n {3}work order checks for the pushed branch/);
+  assert.match(walkthrough, /its Submit button opens the proposal/);
+  assert.doesNotMatch(walkthrough, /Otherwise hand it back/);
+
+  // No origin, no URL — the page is still named.
+  const noOrigin = fullOrder({ webPath: '' });
+  assert.doesNotMatch(noOrigin, /#settings\/connectors/);
+  assert.match(noOrigin, /Settings → Connectors,\n {3}which has the connector URL/);
+});
+
+test('the update work order says the same for a missing connector, in its own terms', async () => {
+  const update = fullOrder({
+    targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' },
+  });
+  assert.match(update, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Usernode\n {3}connector was never added/);
+  assert.match(update, /^ {4}https:\/\/usernode\.example\/#settings\/connectors$/m);
+  assert.match(update, /Otherwise hand it back: print the branch name you pushed and the\n {3}proposal id/);
+  assert.doesNotMatch(update, /save the patch/, 'an update never sends a patch — that opens a second proposal');
+  const fromTab = fullOrder({
+    targetProposal: { id: 512, targetKind: 'proposal', branchHome: 'app_repo' },
+    startedFromWalkthrough: true,
+  });
+  assert.match(fromTab, /its Submit button applies the update/);
+  assert.doesNotMatch(fromTab, /Otherwise hand it back/);
+});
+
+test('renderPreparedTask derives "started from the walkthrough" from client_id', async () => {
+  // The browser flow stamps `usernode-web:<agent>` into client_id
+  // (routes/dev-flow.js); that is the only record of where a job came from.
+  const row = {
+    id: 77, fork_owner: 'someuser', fork_repo: 'recipe-box',
+    branch_name: 'usernode/x', base_sha: BASE_SHA, issue_number: null, brief: 'x',
+  };
+  const common = {
+    app: APP, owner: 'usernode-bot', repo: 'recipe-box',
+    origin: 'https://usernode.example', clientName: null,
+    forkStatus: 'ready', reused: true,
+  };
+  const fromTab = svc.renderPreparedTask({
+    ...common, task: { ...row, client_id: 'usernode-web:claude-code' }, clientId: 'usernode-web:claude-code',
+  });
+  assert.match(fromTab.workOrder, /Otherwise finish from Usernode/);
+  const fromChat = svc.renderPreparedTask({
+    ...common, task: { ...row, client_id: 'claude-ai-abc' }, clientId: 'claude-ai-abc',
+  });
+  assert.match(fromChat.workOrder, /Otherwise hand it back/);
+  assert.match(fromChat.workOrder, /https:\/\/usernode\.example\/#settings\/connectors/);
+});
+
 test('the work order contains no triple-backtick fence and indents every command', async () => {
   // The host wraps the whole work order in a fence; an inner fence closes
   // it early. One production paste reached Claude Code with every fence
@@ -2514,7 +2610,12 @@ function withStubbedMirror(stub, fn) {
   return Promise.resolve(fn()).finally(() => { headSvc.mirrorForkBranch = real; });
 }
 
-test('when BOTH cross-fork attempts fail, the branch is mirrored and a same-repo PR opens', async () => {
+test('the mirror is the first rung: the verified fork branch is copied and a same-repo PR opens', async () => {
+  // Task 153. A head in the app's own repository is one the platform can
+  // write, so the auto-sync and the conflict resolver keep the proposal
+  // current when main moves — a fork head sat at "Conflict resolution
+  // failed" until its author came back. No cross-fork create is attempted
+  // at all when the mirror works.
   const queries = [];
   const created = [];
   let cleaned = false;
@@ -2522,10 +2623,7 @@ test('when BOTH cross-fork attempts fail, the branch is mirrored and a same-repo
     findOpenPrByBranch: async () => null,
     createPR: async (owner, repo, opts) => {
       created.push(opts);
-      // Only the cross-fork shape is refused. The same-repo one — the shape
-      // that demonstrably worked on this deployment the same afternoon the
-      // connector failed — succeeds.
-      if (opts.head) throw validationFailed();
+      if (opts.head) throw new Error('a cross-fork create must not be attempted when the mirror worked');
       return { number: 97, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } };
     },
   });
@@ -2555,12 +2653,11 @@ test('when BOTH cross-fork attempts fail, the branch is mirrored and a same-repo
   assert.equal(result.submittedVia, 'mirror');
   assert.equal(cleaned, false, 'a successful submission keeps its branch');
 
-  // Three createPR calls: cross-fork, cross-fork + head_repo, then same-repo.
-  assert.equal(created.length, 3);
+  // ONE createPR call: the plain same-repo create from the mirrored branch.
+  assert.equal(created.length, 1);
+  assert.equal(created[0].head, undefined, 'a PLAIN same-repo create');
   assert.equal(created[0].headRepo, undefined);
-  assert.equal(created[1].headRepo, 'someuser/recipe-box');
-  assert.equal(created[2].head, undefined, 'the third is a PLAIN same-repo create');
-  assert.equal(created[2].branch, 'usernode/from-someuser-t31-deadbeef');
+  assert.equal(created[0].branch, 'usernode/from-someuser-t31-deadbeef');
 
   // A mirrored head is owned by the bot, so the PR-level owner check would
   // pass vacuously — it is skipped BECAUSE provenance was proven first.
@@ -2574,10 +2671,7 @@ test('a mirrored branch the platform cannot import is removed, not left on the a
   let cleaned = false;
   const gh = ghWithDiagnostics({
     findOpenPrByBranch: async () => null,
-    createPR: async (o, r, opts) => {
-      if (opts.head) throw validationFailed();
-      return { number: 98, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } };
-    },
+    createPR: async () => ({ number: 98, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } }),
   });
   const result = await withStubbedMirror(
     async () => ({
@@ -2598,12 +2692,15 @@ test('a mirrored branch the platform cannot import is removed, not left on the a
 
 test('a mirror the platform refuses is reported as its own reason, not as GitHub’s', async () => {
   // "That branch is in somebody else's repository" is a better answer than
-  // GitHub's 422, and a different one: it tells the user what to fix.
+  // GitHub's 422, and a different one: it tells the user what to fix. A
+  // cross-fork create would fail on the same fact with a worse sentence, so
+  // the mirror's own refusals never fall through to it.
+  let crossForkAttempts = 0;
   const gh = ghWithDiagnostics({
     findOpenPrByBranch: async () => null,
-    createPR: async () => { throw validationFailed(); },
+    createPR: async () => { crossForkAttempts += 1; throw validationFailed(); },
   });
-  for (const [code, message] of [['fork_mismatch', 'not yours'], ['base_mismatch', 'wrong base']]) {
+  for (const [code, message] of [['fork_mismatch', 'not yours'], ['base_mismatch', 'wrong base'], ['branch_not_found', 'no such branch']]) {
     const result = await withStubbedMirror(
       async () => ({ ok: false, code, message }),
       () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
@@ -2614,9 +2711,12 @@ test('a mirror the platform refuses is reported as its own reason, not as GitHub
     assert.equal(result.code, code);
     assert.equal(result.message, message);
   }
+  assert.equal(crossForkAttempts, 0, 'a refusal about the BRANCH is final — no cross-fork retry');
 
-  // Anything else falls back to the typed GitHub error, which now says what
-  // actually happened rather than "could not be opened".
+  // A refusal about the PLATFORM (no credential, the copy failed) falls
+  // through to the cross-fork rungs, and when those refuse too the typed
+  // GitHub error says what actually happened rather than "could not be
+  // opened".
   const fellBack = await withStubbedMirror(
     async () => ({ ok: false, code: 'platform_unavailable', message: 'git was unhappy' }),
     () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
@@ -2627,6 +2727,7 @@ test('a mirror the platform refuses is reported as its own reason, not as GitHub
   assert.equal(fellBack.code, 'pr_open_failed');
   assert.match(fellBack.message, /HTTP 422/);
   assert.ok(fellBack.compareUrl);
+  assert.equal(crossForkAttempts, 2, 'both cross-fork rungs were tried');
 });
 
 test('slug + branch with no taskId finds the caller’s open work for that app', async () => {
@@ -2684,23 +2785,24 @@ test('every cross-fork rung declines the maintainer-edit grant', async () => {
     },
   });
 
-  const result = await withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+  const result = await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
     { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
     {
       user: { id: 3 }, taskId: 31,
       importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 90 } }),
     }
-  ));
+  )));
 
   assert.equal(result.ok, true);
-  assert.equal(attempts.length, 1, 'rung 1 now succeeds — no retry, no mirror');
+  assert.equal(attempts.length, 1, 'the plain cross-fork create succeeds — no head_repo retry');
   assert.equal(attempts[0].maintainerCanModify, false,
     'the platform never asks for write access to somebody else’s fork');
 });
 
-test('rung 1 succeeding is recorded as `branch`, and the mirror never runs', async () => {
-  // The acceptance signal for this fix: `submitted_via` moving off
-  // 'mirror' is how we know the parameter did its job in production.
+test('the cross-fork create succeeding is recorded as `branch` — the rung that actually ran', async () => {
+  // `submitted_via` is how "how often is the platform's own write path
+  // unwell?" becomes a SQL query: a 'branch' row is one the mirror could not
+  // take, and the platform will not be able to sync it.
   const queries = [];
   let mirrorCalled = false;
   const gh = ghWithDiagnostics({
@@ -2712,20 +2814,20 @@ test('rung 1 succeeding is recorded as `branch`, and the mirror never runs', asy
     },
   });
 
-  const result = await withStubbedMirror(
-    async () => { mirrorCalled = true; return { ok: false, code: 'unexpected' }; },
+  const result = await withMirrorUnavailable(
     () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
       { pool: submitPool(queries), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
       {
         user: { id: 3 }, taskId: 31, source: 'work_order',
         importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 91 } }),
       }
-    ))
+    )),
+    () => { mirrorCalled = true; }
   );
 
   assert.equal(result.ok, true);
   assert.equal(result.submittedVia, 'branch');
-  assert.equal(mirrorCalled, false);
+  assert.equal(mirrorCalled, true, 'the mirror was tried first');
 
   const close = queries.find((q) => q.sql.includes('UPDATE external_agent_tasks'));
   assert.ok(close.params.includes('branch'),
@@ -2755,9 +2857,9 @@ function forkCollabRefused() {
 }
 
 test('a fork_collab refusal STOPS the ladder — it is our bug, not a repo condition', async () => {
-  // Retrying with head_repo cannot help and mirroring would paper over a
-  // defect at the call site, so neither happens. Unreachable once every
-  // cross-fork caller sends `false` — which is exactly why it is named.
+  // Retrying with head_repo cannot help, so it does not happen. Unreachable
+  // once every cross-fork caller sends `false` — which is exactly why it is
+  // named.
   const attempts = [];
   let mirrorCalled = false;
   const gh = ghWithDiagnostics({
@@ -2768,15 +2870,15 @@ test('a fork_collab refusal STOPS the ladder — it is our bug, not a repo condi
     },
   });
 
-  const result = await withStubbedMirror(
-    async () => { mirrorCalled = true; return { ok: false, code: 'unexpected' }; },
+  const result = await withMirrorUnavailable(
     () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
       { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
       {
         user: { id: 3 }, taskId: 31,
         importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 92 } }),
       }
-    ))
+    )),
+    () => { mirrorCalled = true; }
   );
 
   assert.equal(result.ok, false);
@@ -2786,94 +2888,96 @@ test('a fork_collab refusal STOPS the ladder — it is our bug, not a repo condi
   assert.match(result.message, /bug on our side/i,
     'says whose fault it is, so nobody re-audits their fork');
   assert.equal(attempts.length, 1, 'no head_repo retry');
-  assert.equal(mirrorCalled, false, 'and no mirror');
+  assert.equal(mirrorCalled, true, 'the mirror ran first — and only once');
 });
 
-test('an ordinary 422 still walks the whole ladder — only fork_collab short-circuits', async () => {
+test('with the mirror unavailable, an ordinary 422 still walks both cross-fork rungs — only fork_collab short-circuits', async () => {
   // Guard against the typed stop swallowing the fallback it sits beside.
   const attempts = [];
-  let mirrorCalled = false;
   const gh = ghWithDiagnostics({
     findOpenPrByBranch: async () => null,
     createPR: async (owner, repo, opts) => {
       attempts.push(opts);
-      if (opts.head) throw validationFailed();
-      return { number: 98, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } };
+      throw validationFailed();
     },
   });
 
-  const result = await withStubbedMirror(
-    async () => {
-      mirrorCalled = true;
-      return {
-        ok: true,
-        branch: 'usernode/from-someuser-t31-cafe',
-        credential: 'pat',
-        cleanup: async () => {},
-      };
-    },
+  const result = await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+    { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, taskId: 31,
+      importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 93 } }),
+    }
+  )));
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'pr_open_failed');
+  assert.equal(attempts.length, 2, 'cross-fork, then cross-fork + head_repo');
+  assert.equal(attempts[0].maintainerCanModify, false);
+  assert.equal(attempts[1].maintainerCanModify, false, 'rung 3 declines the grant too');
+  assert.equal(attempts[1].headRepo, 'someuser/recipe-box');
+});
+
+test('the same-repo mirror create keeps GitHub’s default for the maintainer grant', async () => {
+  // The grant is vacuous on a same-repo head, so nothing is sent.
+  const attempts = [];
+  await withStubbedMirror(
+    async () => ({
+      ok: true, branch: 'usernode/from-someuser-t31-cafe', credential: 'pat', cleanup: async () => {},
+    }),
     () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
-      { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+      {
+        pool: submitPool([]), config: {},
+        gh: ghWithDiagnostics({
+          findOpenPrByBranch: async () => null,
+          createPR: async (owner, repo, opts) => {
+            attempts.push(opts);
+            return { number: 98, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } };
+          },
+        }),
+        githubLink: linkedAs('someuser'), limits: okLimits,
+      },
       {
         user: { id: 3 }, taskId: 31,
         importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 93 } }),
       }
     ))
   );
-
-  assert.equal(result.ok, true);
-  assert.equal(result.submittedVia, 'mirror');
-  assert.equal(mirrorCalled, true);
-  assert.equal(attempts.length, 3, 'cross-fork, cross-fork + head_repo, then same-repo');
-  assert.equal(attempts[0].maintainerCanModify, false);
-  assert.equal(attempts[1].maintainerCanModify, false, 'rung 2 declines the grant too');
-  assert.equal(attempts[2].maintainerCanModify, undefined,
-    'the same-repo mirror create keeps GitHub’s default — the grant is vacuous there');
+  assert.equal(attempts.length, 1);
+  assert.equal(attempts[0].maintainerCanModify, undefined);
 });
 
-test('the mirror announces which rung failed and why', async () => {
-  // Cross-fork creates now decline the grant, so rung 1 is expected to
-  // succeed and this line should stop appearing. Its presence in the log
-  // is the signal that something new is refusing the fork head — visible
-  // without anyone going and querying submitted_via.
+test('the fallback announces why the mirror was unavailable', async () => {
+  // With the mirror first, the cross-fork rungs run only when the platform
+  // could not write the app repository. That is worth a line in the log:
+  // its presence is the signal that the platform's own write path is
+  // unwell — visible without anyone going and querying submitted_via.
   const lines = [];
-  const realInfo = logger.info;
-  logger.info = (scope, msg, meta) => { lines.push({ scope, msg, meta }); };
+  const realWarn = logger.warn;
+  logger.warn = (scope, msg, meta) => { lines.push({ scope, msg, meta }); };
 
   const gh = ghWithDiagnostics({
     findOpenPrByBranch: async () => null,
-    createPR: async (owner, repo, opts) => {
-      if (opts.head) throw validationFailed();
-      return { number: 99, html_url: 'x', head: { repo: { owner: { login: 'usernode-bot' } } } };
-    },
+    createPR: async () => ({ number: 99, html_url: 'x', head: { repo: { owner: { login: 'someuser' } } } }),
   });
 
   try {
-    await withStubbedMirror(
-      async () => ({
-        ok: true,
-        branch: 'usernode/from-someuser-t31-feed',
-        credential: 'pat',
-        cleanup: async () => {},
-      }),
-      () => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
-        { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
-        {
-          user: { id: 3 }, taskId: 31,
-          importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 94 } }),
-        }
-      ))
-    );
+    await withMirrorUnavailable(() => withFetch(PUSHED_BRANCH, [], () => svc.submitWork(
+      { pool: submitPool([]), config: {}, gh, githubLink: linkedAs('someuser'), limits: okLimits },
+      {
+        user: { id: 3 }, taskId: 31,
+        importProposal: async () => ({ ok: true, status: 200, body: { sessionId: 94 } }),
+      }
+    )));
   } finally {
-    logger.info = realInfo;
+    logger.warn = realWarn;
   }
 
-  const line = lines.find((l) => /falling back to the mirror/.test(l.msg));
+  const line = lines.find((l) => /falling back to a cross-fork pull request/.test(l.msg));
   assert.ok(line, 'the fallback is announced, not silent');
-  assert.equal(line.meta.failedRungs, 'branch, branch_head_repo');
-  assert.equal(line.meta.status, 422);
-  assert.equal(line.meta.githubField, 'head', 'names the field GitHub objected to');
-  assert.equal(line.meta.requestId, 'ABCD:1234:5678');
+  assert.equal(line.meta.mirrorCode, 'platform_unavailable');
+  assert.equal(line.meta.mirrorMessage, 'no write credential');
+  assert.equal(line.meta.taskId, 31);
   assert.equal(line.meta.head, 'someuser:usernode/recipe-box-issue-4-abc123');
 });
 

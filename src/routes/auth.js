@@ -1,3 +1,4 @@
+const appAllowance = require('../services/app-allowance');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const https = require('https');
@@ -473,10 +474,16 @@ function authRoutes(config) {
     // boolean so the create dialog can say "N of M used" instead of reducing
     // the policy to an unexplained locked button. Full admins bypass the
     // quota; view-only admins do not (the write routes use canAdminWrite too).
-    const appQuotaLimit = Math.max(0, Number(req.user.appQuota) || 0);
-    const appQuotaUnlimited = !!req.user.canAdminWrite;
-    let appQuotaUsed = null;
-    let canCreateApps = appQuotaUnlimited;
+    let allowance = {
+      quota: { used: null, limit: req.user.canAdminWrite ? null : req.user.appQuota, remaining: null },
+      canCreateApps: !!req.user.canAdminWrite,
+      requestedAt: null,
+    };
+    try {
+      allowance = await appAllowance.read(pool, req.user);
+    } catch (err) {
+      log.warn('auth', 'App allowance lookup failed', { message: err.message });
+    }
     // Preferred development flow (#1049). Read here rather than in the
     // per-request session hydration for the same reason as the profile
     // block above: this endpoint already pays for one users lookup, and
@@ -493,13 +500,7 @@ function authRoutes(config) {
                      AND credential.purpose = 'coding_agent'
                      AND credential.status = 'valid'
                 ) AS openrouter_credential_valid,
-                av.id AS avatar_id,
-                (
-                  SELECT COUNT(*)::int
-                    FROM apps owned_app
-                   WHERE owned_app.created_by = u.id
-                     AND owned_app.status <> 'error'
-                ) AS app_quota_used
+                av.id AS avatar_id
            FROM users u
            LEFT JOIN user_avatars av ON av.user_id = u.id
           WHERE u.id = $1`,
@@ -519,10 +520,6 @@ function authRoutes(config) {
         ? rows[0].dev_flow_preference
         : null;
       profile = shapeProfile(rows[0]);
-      if (rows[0]) {
-        const used = Number(rows[0].app_quota_used);
-        appQuotaUsed = Number.isInteger(used) && used >= 0 ? used : 0;
-      }
     } catch {}
     // #1055 staging fixture: report a saved BYOK key so the composer's
     // session-options menu renders its "Change your API key (…7f2c)" branch
@@ -535,10 +532,6 @@ function authRoutes(config) {
       demoKey = true;
       hasApiKey = true;
       keyLast4 = '7f2c';
-    }
-    if (appQuotaUsed != null) {
-      canCreateApps = appQuotaUnlimited
-        || (appQuotaLimit > 0 && appQuotaUsed < appQuotaLimit);
     }
     // Memoised for 30s inside the service, so this costs nothing on the boot
     // path of every tab; null is a perfectly good answer (the button hides).
@@ -558,14 +551,9 @@ function authRoutes(config) {
         // treatment; the numbers below explain that state in the create
         // dialog. A null used/remaining value means the count query was not
         // available, never a fabricated zero.
-        canCreateApps,
-        appCreationQuota: {
-          used: appQuotaUsed,
-          limit: appQuotaUnlimited ? null : appQuotaLimit,
-          remaining: appQuotaUnlimited || appQuotaUsed == null
-            ? null
-            : Math.max(0, appQuotaLimit - appQuotaUsed),
-        },
+        canCreateApps: allowance.canCreateApps,
+        appCreationQuota: allowance.quota,
+        appQuotaRequestedAt: allowance.requestedAt,
         // Experimental: opt-in AI progress estimate for coding runs
         // (Settings → Experimental). Default OFF.
         aiProgressEstimate: !!req.user.aiProgressEstimate,
@@ -671,6 +659,20 @@ function authRoutes(config) {
         hasByokKey: true,
         resetsAt: reset.toISOString(),
         lowBalancePct: 80,
+        // #1788: the allowance has two windows now, and the row's copy
+        // follows whichever one is binding. The daily cap binds in this
+        // fixture — the weekly one still has room — so the reviewed row
+        // reads exactly as it did before, with the window now stated
+        // rather than assumed.
+        capWindow: 'daily',
+        windowLabel: 'Today',
+        resetLabel: 'midnight UTC',
+        dailyApplies: true,
+        dailyLimitCents: 2000,
+        dailySpentCents: 1360,
+        weeklyApplies: true,
+        weeklyLimitCents: 17500,
+        weeklySpentCents: 4820,
         demo: true,
       });
     }

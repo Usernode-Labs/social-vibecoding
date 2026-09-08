@@ -19,6 +19,7 @@
 // Long-lived immutable assets (e.g. /visuals/:id, the versioned bridge URL)
 // set their own headers on their own routes and never reach this helper.
 const express = require('express');
+const fs = require('fs');
 const { isBuildScopedAssetPath, parseBuildScopedPath } = require('../../scripts/shell-stamp');
 
 const REVALIDATE = 'no-cache, must-revalidate';
@@ -83,6 +84,8 @@ function shellAssetCacheControl(filePath) {
 // would stop showing up. No header means the worker falls back to the race
 // it does today, which is exactly right for a checkout.
 const SHELL_BUILD_HEADER = 'X-Platform-Build';
+const SHELL_BUILD_TIME_HEADER = 'X-Platform-Build-Time';
+const _documentBuildTimes = new Map();
 
 /**
  * The deployed build id, or null when this process has no deploy identity
@@ -99,6 +102,39 @@ function applyShellBuildHeader(res, env = process.env) {
   const id = shellBuildId(env);
   if (id) res.setHeader(SHELL_BUILD_HEADER, id);
   return id;
+}
+
+/**
+ * Stamp a shell DOCUMENT with an ordered build value as well as its SHA.
+ *
+ * Git SHAs identify builds but cannot say which of two builds is newer. That
+ * distinction matters during a rollout: an old and a new server may both
+ * answer briefly, and the service worker must not let the old answer replace
+ * a newer cached index.html. The generated document's mtime is a build-time
+ * value, so it moves forward for an ordinary deploy and for an intentional
+ * rollback (which rebuilds the target revision now).
+ *
+ * Kept off JS/CSS responses: their build-scoped URL already pins their SHA;
+ * only the fixed /index.html cache key needs an ordering value.
+ */
+function applyShellDocumentHeaders(res, filePath, env = process.env) {
+  const id = applyShellBuildHeader(res, env);
+  if (!id) return null;
+  try {
+    // A deployed image never mutates its generated document. Cache the stat
+    // per process so this ordering header adds no synchronous I/O to normal
+    // navigations; dev has no build id and returns above before touching it.
+    let builtAt = _documentBuildTimes.get(filePath);
+    if (builtAt == null) {
+      builtAt = Math.trunc(fs.statSync(filePath).mtimeMs);
+      _documentBuildTimes.set(filePath, builtAt);
+    }
+    if (Number.isSafeInteger(builtAt) && builtAt > 0) {
+      res.setHeader(SHELL_BUILD_TIME_HEADER, String(builtAt));
+      return builtAt;
+    }
+  } catch { /* no ordering header; the worker fails closed on cross-build replacement */ }
+  return null;
 }
 
 /**
@@ -151,7 +187,9 @@ module.exports = {
   buildScopedAssetHandler,
   shellBuildId,
   applyShellBuildHeader,
+  applyShellDocumentHeaders,
   SHELL_BUILD_HEADER,
+  SHELL_BUILD_TIME_HEADER,
   REVALIDATE,
   IMMUTABLE,
 };

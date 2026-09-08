@@ -20,6 +20,11 @@ const assert = require('node:assert/strict');
 const poolMod = require('../src/db/pool');
 let row = {
   daily_limit_cents: null,
+  // #1788: NULL means "platform default", and the default weekly setting
+  // is absent from the stub below, so no weekly cap applies unless a test
+  // sets one — every pre-existing case here stays daily-only.
+  weekly_limit_cents: 0,
+  weekly_spent_cents: 0,
   total_cost_cents: 0,
   byok_cost_cents: 0,
   has_byok_key: false,
@@ -31,8 +36,16 @@ poolMod.getPool = () => ({
         ? { rows: [{ value: '2000' }] }
         : { rows: [] };
     }
-    if (/SELECT daily_limit_cents FROM users/.test(sql)) {
-      return { rows: [{ daily_limit_cents: row.daily_limit_cents }] };
+    if (/SELECT daily_limit_cents(?:, weekly_limit_cents)? FROM users/.test(sql)) {
+      return {
+        rows: [{
+          daily_limit_cents: row.daily_limit_cents,
+          weekly_limit_cents: row.weekly_limit_cents,
+        }],
+      };
+    }
+    if (/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/.test(sql)) {
+      return { rows: [{ total: row.weekly_spent_cents }] };
     }
     if (/LEFT JOIN llm_usage/.test(sql)) {
       return {
@@ -139,10 +152,18 @@ test('the payload carries no global spend or global cap', async () => {
   // threshold, and the threshold is the server's to declare (limits.
   // LOW_BALANCE_PCT) rather than a number retyped in the browser. It is a
   // constant, not a fact about this user, so it discloses nothing.
+  //
+  // #1788 added the window fields: which of the two caps the three legacy
+  // figures describe, plus the per-window breakdown behind them. All of it
+  // is about THIS user's own allowance, so the admin-only rule above is
+  // untouched.
   assert.deepEqual(Object.keys(r).sort(), [
-    'byokCents', 'creditPolicy', 'entitlementAvailable', 'hasByokKey',
-    'limitCents', 'limitSource', 'lowBalancePct', 'remainingCents', 'resetsAt',
-    'spentCents', 'tier', 'tierLimitCents', 'verificationRequired',
+    'byokCents', 'capWindow', 'creditPolicy', 'dailyApplies',
+    'dailyLimitCents', 'dailySpentCents', 'entitlementAvailable',
+    'hasByokKey', 'limitCents', 'limitSource', 'lowBalancePct',
+    'remainingCents', 'resetLabel', 'resetsAt', 'spentCents', 'tier',
+    'tierLimitCents', 'verificationRequired', 'weeklyApplies',
+    'weeklyLimitCents', 'weeklySpentCents', 'windowLabel',
   ]);
 });
 
@@ -150,4 +171,87 @@ test('no API key material is ever returned, only its presence', async () => {
   row.has_byok_key = true;
   const body = await fetch(`${base}/api/me/ai-budget`).then((x) => x.text());
   assert.ok(!/anthropic_key|last4|sk-ant/.test(body));
+});
+
+// ── #1788: two windows, one set of headline figures ─────────────────────
+//
+// The client reads limitCents / spentCents / remainingCents and nothing
+// else to draw the meter, the drawer row and the low-balance banner. With
+// a second cap in play those three have to describe whichever cap will
+// actually stop the next turn — and say which one that was, so the copy
+// around them can name the right boundary.
+
+test('the weekly cap becomes the headline once it has less room left', async () => {
+  row.daily_limit_cents = 2000;   // $20/day, $17 of it left
+  row.total_cost_cents = 300;
+  row.weekly_limit_cents = 5000;  // $50/week, $2 of it left
+  row.weekly_spent_cents = 4800;
+  row.byok_cost_cents = 0;
+  row.has_byok_key = false;
+
+  const r = await fetch(`${base}/api/me/ai-budget`).then((x) => x.json());
+  assert.equal(r.capWindow, 'weekly');
+  assert.equal(r.limitCents, 5000);
+  assert.equal(r.spentCents, 4800);
+  assert.equal(r.remainingCents, 200, 'the tighter of the two ceilings');
+  assert.equal(r.windowLabel, 'This week');
+  assert.equal(r.resetLabel, 'Monday 00:00 UTC');
+  assert.equal(new Date(r.resetsAt).getUTCDay(), 1, 'and resets on a Monday');
+
+  // The breakdown is still there for anything that wants both figures.
+  assert.equal(r.dailyApplies, true);
+  assert.equal(r.dailyLimitCents, 2000);
+  assert.equal(r.dailySpentCents, 300);
+  assert.equal(r.weeklyApplies, true);
+  assert.equal(r.weeklyLimitCents, 5000);
+  assert.equal(r.weeklySpentCents, 4800);
+});
+
+test('the daily cap stays the headline while it is the tighter one', async () => {
+  row.daily_limit_cents = 2000;
+  row.total_cost_cents = 1900;    // $1 left today
+  row.weekly_limit_cents = 5000;
+  row.weekly_spent_cents = 1900;  // $31 left this week
+
+  const r = await fetch(`${base}/api/me/ai-budget`).then((x) => x.json());
+  assert.equal(r.capWindow, 'daily');
+  assert.equal(r.limitCents, 2000);
+  assert.equal(r.remainingCents, 100);
+  assert.equal(r.windowLabel, 'Today');
+  assert.equal(r.resetLabel, 'midnight UTC');
+  assert.equal(r.weeklyApplies, true, 'the weekly cap still exists, it just is not binding');
+});
+
+// The trap this one guards: public/js/credit-options.js maps
+// limitCents === 0 to the red "exhausted" state. A user whose DAILY cap an
+// admin deliberately switched off, and who has a perfectly healthy weekly
+// allowance, must not be told they are out of credits.
+test('a switched-off daily cap never reaches the client as a zero limit', async () => {
+  row.daily_limit_cents = 0;
+  row.total_cost_cents = 4000;    // far past a $0 daily cap, which is off
+  row.weekly_limit_cents = 12500;
+  row.weekly_spent_cents = 4000;
+
+  const r = await fetch(`${base}/api/me/ai-budget`).then((x) => x.json());
+  assert.equal(r.dailyApplies, false);
+  assert.equal(r.capWindow, 'weekly');
+  assert.equal(r.limitCents, 12500, 'the weekly cap is the only one there is');
+  assert.equal(r.spentCents, 4000);
+  assert.equal(r.remainingCents, 8500);
+  assert.notEqual(r.limitCents, 0);
+});
+
+test('with neither cap in force the payload says so rather than inventing one', async () => {
+  row.daily_limit_cents = 0;
+  row.total_cost_cents = 0;
+  row.weekly_limit_cents = 0;
+  row.weekly_spent_cents = 0;
+
+  const r = await fetch(`${base}/api/me/ai-budget`).then((x) => x.json());
+  assert.equal(r.dailyApplies, false);
+  assert.equal(r.weeklyApplies, false);
+  assert.equal(r.capWindow, 'none');
+  // This is a display route, not a gate — it reports the state and lets
+  // checkBudget do the refusing (reason: 'no_allowance').
+  assert.equal(r.limitCents, 0);
 });

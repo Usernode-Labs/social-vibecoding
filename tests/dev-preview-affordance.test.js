@@ -93,7 +93,7 @@ function menuLabels(AppView, html) {
 
 // ── The three states ────────────────────────────────────────────────────
 
-test('live: an interactive icon button wired to swapToStagingForSession', () => {
+test('live: an interactive icon button wired to swapToStagingForSession (icon form)', () => {
   const AppView = makeAppView();
   const html = previewHtml(AppView, { id: 7, staging_url: 'https://stg.example' },
     { kind: 'proposal', sessionId: 7 });
@@ -222,9 +222,9 @@ test('each kind gets its own wording, and all four call sites use this helper', 
     assert.ok(AppView.PREVIEW_TITLES[kind], `${kind} has declared wording`);
   }
 
-  // 1. proposal card
+  // 1. proposal card — the board draws the LABELLED pill (round three)
   assert.match(proposalCardHtml(AppView, PR({ staging_url: 'https://s' })),
-    /gc-vote-btn-preview[^>]*gc-vote-btn-icon|gc-vote-btn-icon[^>]*gc-vote-btn-preview/);
+    /class="gc-vote-btn gc-vote-btn-preview"[^>]*>[\s\S]*?Preview</);
   // 2. own session card
   AppView._sharedById = {};
   assert.match(mySessionCardHtml(AppView, { id: 51, session_title: 'M', pr_number: 9 }),
@@ -302,14 +302,13 @@ test('an issue run with no preview (or a spec-only outcome) shows no affordance'
   }), /gc-vote-btn-preview/);
 });
 
-test('on a board card the eye is the RAIL\'s last child — the bottom-right corner', () => {
-  // Every dense card's preview hangs off the bottom of the right-hand rail,
-  // under the ⋯ and the chevron (app.css, `.dev-card-rail`). A column of cards
-  // then shows every preview in one vertical line, rather than at wherever the
-  // text pills before it happened to end. The ORDER inside the rail is the
-  // layout — the chevron's auto margins centre it in the gap between the two
-  // pills — so this pins the eye as the rail's final child, and pins that the
-  // dense action band no longer carries it at all.
+test('on a board card the preview is a labelled pill at the END of the action band', () => {
+  // Round three moved the preview out of the rail's corner and into the band
+  // as a pill with the eye AND the word: the 24px corner eye was the hardest
+  // thing on the card to hit. app.css pushes it to the right end of the line
+  // (`margin-left: auto`), so a column of cards still shows every preview on
+  // one vertical line — the card's right edge — and the rail is the ⋯ and the
+  // chevron only.
   const AppView = makeAppView();
   const cards = {
     proposal: proposalCardHtml(AppView, PR({ staging_url: 'https://s' })),
@@ -325,32 +324,24 @@ test('on a board card the eye is the RAIL\'s last child — the bottom-right cor
   for (const [kind, html] of Object.entries(cards)) {
     const band = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>\s*(?:<div|<\/div)/);
     assert.ok(band, `${kind}: an action band is still reserved`);
-    assert.doesNotMatch(band[1], /gc-vote-btn-preview/,
-      `${kind}: the eye has left the action band`);
-
+    const pills = band[1].match(/<(?:button|span)\b[^>]*class="[^"]*"/g) || [];
+    assert.match(pills[pills.length - 1], /gc-vote-btn-preview/,
+      `${kind}: the preview is the band's last pill`);
+    assert.match(band[1], /gc-vote-btn-preview"[^>]*>[\s\S]*?Preview</,
+      `${kind}: and it is labelled`);
+    assert.doesNotMatch(band[1], /gc-vote-btn-preview[^>]*gc-vote-btn-icon/,
+      `${kind}: never the icon variant`);
     const railAt = html.indexOf('dev-card-rail');
-    assert.ok(railAt > 0, `${kind}: a rail to hang it off`);
-    const rail = html.slice(railAt);
-    const children = rail.match(/<(?:button|span|svg)\b[^>]*class="[^"]*"/g) || [];
-    assert.match(children[children.length - 1], /gc-vote-btn-preview/,
-      `${kind}: the eye is the rail's last child`);
-    // The chevron must sit BEFORE it (its auto margins centre it in the gap
-    // between the ⋯ above and the eye below); the ⋯, when the card has one,
-    // stays first.
-    const chevronAt = rail.indexOf('M9 5l7 7-7 7');
-    const eyeAt = rail.indexOf('gc-vote-btn-preview');
-    assert.ok(chevronAt > 0 && chevronAt < eyeAt,
-      `${kind}: the chevron is between the ⋯ and the eye`);
-    const dotsAt = rail.indexOf('dev-card-menu-btn');
-    if (dotsAt > 0) {
-      assert.ok(dotsAt < chevronAt, `${kind}: the ⋯ keeps the top of the rail`);
+    if (railAt > 0) {
+      assert.doesNotMatch(html.slice(railAt), /gc-vote-btn-preview/,
+        `${kind}: the rail no longer carries it`);
     }
   }
 });
 
 test('a card with nothing to preview keeps exactly the rail it had before', () => {
-  // The move must not cost a reserved empty slot at the bottom of every other
-  // card's rail — that would read as a broken gap under the chevron.
+  // The rail is the ⋯ and the chevron; a card with no preview has nothing
+  // else in its band's right end either.
   const AppView = makeAppView();
   const html = proposalCardHtml(AppView, PR({ staging_url: null }));
   const rail = html.slice(html.indexOf('dev-card-rail'));

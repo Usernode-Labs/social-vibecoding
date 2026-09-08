@@ -425,6 +425,11 @@ const HomePanels = {
       // heading; `season` is where it shows.
       summary: HomePanels.summaryLine(panel),
       season: HomePanels.seasonView(panel),
+      onboardingNote: panel.onboarding
+        ? (panel.onboarding.unlocked
+          ? 'Persistent and weekly challenges are unlocked.'
+          : `${panel.onboarding.completed} of ${panel.onboarding.total} onboarding challenges completed. Finish these to unlock persistent and weekly challenges.`)
+        : null,
       total,
       expanded,
       rows: rows.map((c) => HomePanels.challengeRowView(c)),
@@ -556,7 +561,7 @@ const HomePanels = {
       key: panel.key,
       canCreate: !!(window.Home && typeof Home.canCreate === 'function' && Home.canCreate()),
       hint: (window.Home && Home.CREATE_DISABLED_HINT)
-        || 'Ask an admin to enable app creation for your account.',
+        || 'View your app allowance or request more slots.',
     };
   },
 
@@ -742,7 +747,7 @@ const HomePanels = {
     // tile's tooltip, while a tap opens the detailed quota in the dialog.
     if (key === 'create' && window.Home && typeof Home.canCreate === 'function' && !Home.canCreate()) {
       items.push({
-        label: Home.CREATE_DISABLED_HINT || 'Ask an admin to enable app creation for your account.',
+        label: Home.CREATE_DISABLED_HINT || 'View your app allowance or request more slots.',
         disabled: true,
       });
     }

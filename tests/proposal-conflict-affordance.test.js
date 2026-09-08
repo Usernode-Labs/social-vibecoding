@@ -139,6 +139,84 @@ test("detail: a 'conflict' snapshot renders the merge-failed detail box naming t
   assert.match(html, /Sync with main/, 'points at the dev-chat sync action');
 });
 
+// Task 153: the way out depends on WHERE THE HEAD LIVES, not on the state
+// that asked. A connector submission is mirrored into the app repository, so
+// its author has no dev-chat and no "Sync with main" — the branch is revised
+// where it was written and submitted again. A hand-opened pull request from a
+// fork is the one case the platform cannot sync at all, and the copy says so.
+const mirrorProposal = (over) => baseProposal({
+  source: 'imported',
+  branch_name: 'usernode/from-me-t31-cafe',
+  imported_pr_head_repo: 'acme/demo',
+  repo_url: 'https://github.com/acme/demo',
+  ...over,
+});
+const forkProposal = (over) => mirrorProposal({
+  branch_name: 'feature/dark-mode',
+  imported_pr_head_repo: 'me/demo',
+  ...over,
+});
+
+test('head home: a mirrored connector head is app_repo, a fork head is user_fork, a native row is app_repo', () => {
+  const AppView = makeAppView(ME);
+  assert.equal(AppView._headHome(baseProposal({})), 'app_repo');
+  assert.equal(AppView._headHome(mirrorProposal({})), 'app_repo');
+  assert.equal(AppView._headHome(forkProposal({})), 'user_fork');
+  // Without a head repo on the row (imported before the column existed), the
+  // platform's own branch namespace decides — same fallback as the server.
+  assert.equal(AppView._headHome(mirrorProposal({ imported_pr_head_repo: null, repo_url: null })), 'app_repo');
+  assert.equal(AppView._headHome(forkProposal({ imported_pr_head_repo: null, repo_url: null })), 'user_fork');
+  // The app's own repo URL is the fallback comparison when the row has none.
+  AppView.appData = { repo_url: 'https://github.com/acme/demo.git' };
+  assert.equal(AppView._headHome(mirrorProposal({ repo_url: null, branch_name: 'odd/name' })), 'app_repo');
+  assert.equal(AppView._headHome(forkProposal({ repo_url: null, branch_name: 'usernode/from-x' })), 'user_fork',
+    'the recorded head repo outranks the branch name');
+});
+
+test("detail: a mirrored proposal's conflict box never sends its author to a dev-chat", () => {
+  const AppView = makeAppView(ME);
+  for (const state of ['conflict', 'failed']) {
+    const html = mergeConflictHtml(AppView, mirrorProposal({
+      merge_conflict_state: state,
+      conflict_files: ['src/app.js'],
+    }));
+    assert.doesNotMatch(html, /Sync with main/, `${state}: no dev-chat action for a mirrored head`);
+    assert.doesNotMatch(html, /dev-chat/, `${state}: no dev-chat at all`);
+    assert.match(html, /submit it again as an update to this proposal/, `${state}: the way out is a resubmission`);
+    assert.match(html, /me<\/span>/, `${state}: names the creator`);
+  }
+  const conflict = mergeConflictHtml(AppView, mirrorProposal({ merge_conflict_state: 'conflict' }));
+  assert.match(conflict, /Usernode keeps this branch itself/, 'says the platform can sync it');
+  const failed = mergeConflictHtml(AppView, mirrorProposal({ merge_conflict_state: 'failed' }));
+  assert.match(failed, /me<\/span> needs to bring the branch up to date/, 'after a failed resolve the author acts');
+});
+
+test("detail: a fork-homed proposal's conflict box says the platform cannot sync it", () => {
+  const AppView = makeAppView(ME);
+  const html = mergeConflictHtml(AppView, forkProposal({
+    merge_conflict_state: 'failed',
+    conflict_files: ['src/app.js'],
+  }));
+  assert.match(html, /own fork, which Usernode cannot write to/);
+  assert.match(html, /me<\/span> needs to merge main into the branch and push it/);
+  assert.match(html, /the proposal follows the push/);
+  assert.doesNotMatch(html, /Sync with main/);
+});
+
+test('pill: the block reason for an imported proposal carries the same remedy', () => {
+  const AppView = makeAppView(ME);
+  const mirror = AppView.blockReasons(mirrorProposal({ merge_conflict_state: 'conflict' }));
+  assert.equal(mirror[0].key, 'merge_conflict');
+  assert.match(mirror[0].detail, /Usernode keeps this branch itself/);
+  assert.doesNotMatch(mirror[0].detail, /dev session/);
+  const fork = AppView.blockReasons(forkProposal({ merge_conflict_state: 'failed' }));
+  assert.equal(fork[0].key, 'conflict_failed');
+  assert.match(fork[0].detail, /cannot write to/);
+  // A native row keeps the sentence the pill has always carried.
+  const native = AppView.blockReasons(baseProposal({ merge_conflict_state: 'conflict' }));
+  assert.match(native[0].detail, /Its creator needs to finish the merge from their dev session/);
+});
+
 test("detail: a 'conflict' snapshot with the resolver in flight renders nothing (progress badge covers it)", () => {
   const AppView = makeAppView(ME);
   const html = mergeConflictHtml(AppView, baseProposal({

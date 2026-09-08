@@ -155,7 +155,6 @@ type Answers = {
    * see what that person typed.
    */
   invites?: string[];
-  admit_together?: boolean;
   [key: string]: unknown;
 };
 
@@ -220,7 +219,7 @@ function labelFor(map: Record<string, string> | undefined, code?: string | null)
 const KNOWN_ANSWER_KEYS = new Set([
   '_version', 'made_url', 'made_note', 'country', 'city', 'discovery',
   'referrer_handle', 'group', 'loss', 'verified', 'handles', 'followed_claim',
-  'invites', 'admit_together',
+  'invites',
 ]);
 
 // An unknown value as TEXT, never as markup. Objects are JSON so a nested
@@ -311,14 +310,7 @@ function SurveyAnswers({ answers, options }: { answers: Answers; options?: Waitl
   // Legacy rows only — see Answers.invites. New signups record who they
   // brought in through invited_by, which surfaces in the Referrals column.
   if (Array.isArray(a.invites) && a.invites.length) {
-    line('Invites (typed)', (
-      <>
-        {a.invites.join(', ')}
-        {a.admit_together ? <span className="text-zinc-500 dark:text-zinc-400">{' (only together)'}</span> : null}
-      </>
-    ));
-  } else if (a.admit_together) {
-    line('Invites', <span className="text-zinc-500 dark:text-zinc-400">only together</span>);
+    line('Invites (typed)', a.invites.join(', '));
   }
   const other = Object.keys(a).filter((k) => !KNOWN_ANSWER_KEYS.has(k)).sort();
   if (other.length) {
@@ -591,7 +583,6 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
       if (brought) bits.push(`Brought in ${brought}`);
       if (w.invited_by_email) bits.push(`Came from ${w.invited_by_email}`);
       else if (w.invited_by) bits.push(`Came from signup #${w.invited_by}`);
-      if (w.answers?.admit_together) bits.push('Asked to be admitted together');
       return bits.length
         ? <span className="text-xs text-zinc-600 dark:text-zinc-300">{bits.join(' · ')}</span>
         : <span className="text-xs text-zinc-500 dark:text-zinc-400">None</span>;

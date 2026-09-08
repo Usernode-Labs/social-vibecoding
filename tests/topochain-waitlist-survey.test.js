@@ -174,12 +174,21 @@ test('an empty answers object says so rather than rendering an empty block', () 
   assert.match(render({}), /No survey answers\./);
 });
 
-test('the two invite shapes render differently, and both say "only together"', () => {
-  const both = render({ invites: ['a@b.invalid'], admit_together: true });
-  assert.match(both, /a@b\.invalid/);
-  assert.match(both, /\(only together\)/);
-  const aloneHtml = render({ admit_together: true });
-  assert.match(aloneHtml, /only together/);
-  assert.ok(!/\(only together\)/.test(aloneHtml),
-    'with no invites listed the parenthetical would have nothing to qualify');
+// `admit_together` was retired with its checkbox (#1534): no admission path
+// ever read it, so a labelled line for it told an admin that a request was
+// live when it never had been. The stored value is NOT erased — it falls
+// through to "Other answers" like any other key the module stopped knowing,
+// which is the same treatment a retired question gets everywhere else.
+test('the retired buddy flag is no longer a line of its own, but is still shown', () => {
+  const html = render(HOSTILE);
+  assert.ok(!/only together/.test(html),
+    'nothing on the screen still describes a request the platform never honoured');
+  assert.match(html, /a@b\.invalid, c@d\.invalid/,
+    'the legacy typed addresses are unaffected and still read as themselves');
+
+  // A row carrying nothing but the retired key is not an empty row.
+  const alone = render({ admit_together: true });
+  assert.ok(!/No survey answers\./.test(alone), 'the stored value is still evidence');
+  assert.match(alone, /Other answers:/);
+  assert.match(alone, /admit_together: true/);
 });

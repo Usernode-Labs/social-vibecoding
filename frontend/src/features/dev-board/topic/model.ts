@@ -86,6 +86,20 @@ export interface CheckRow {
   advisory: boolean;
   name: string;
   path?: string | null;
+  /**
+   * Percent of this check's recorded runs that failed, or null when it has
+   * never failed, has too little history to judge, or is reliable enough
+   * that the chip would be noise. A graduated check keeps blocking when it
+   * starts failing intermittently — that is deliberate, there is no
+   * demotion — so this chip is the only thing that says it is doing so.
+   */
+  flaky?: number | null;
+  /**
+   * True when this row is GREEN only because a retry passed. The reason
+   * line is kept for it, which the renderer otherwise drops for a pass:
+   * the failure happened, it just did not reproduce.
+   */
+  keepReason?: boolean;
   reason?: string | null;
   errors?: { kind: string; message: string; source?: string | null }[];
 }
@@ -112,9 +126,124 @@ export type DetailBlock =
   | { t: 'checks'; v: ChecksVerdict };
 
 /** The proposal's detail block: the meta line, its notes, and the boxes. */
+/**
+ * One row of the "Where it stands" ledger — the topic page's one place
+ * where state is EXPLAINED (the card's bar is where it is summarised).
+ *
+ * A row is a dot in the bar's tone, a label with an optional count under
+ * it, a sentence, and at most a couple of controls. It replaces four
+ * things that used to stack under the card in four box styles: the "Why
+ * this can't merge yet" reasons, the checks panel, the roster line and the
+ * amber provenance notes. `key` is the row's `data-note`, which is what the
+ * declared checks address a row by (`mergeability`, `checks`, `env`, …).
+ */
+/** The repo unit suite (`npm test`), run alongside the browser checks. */
+export interface LedgerUnitProgress {
+  /** cloning | installing | running | done */
+  phase: string;
+  ran: number;
+  passed: number;
+  failed: number;
+  skipped?: number;
+  /** Last completed run's `# tests`, when known; null while it is not. */
+  expected: number | null;
+  done?: boolean;
+}
+
+/** One phase inside the image build (a buildpack lifecycle phase). */
+export interface LedgerBuildPhase {
+  name: string;
+  ms: number | null;
+  state: 'done' | 'now' | 'todo';
+}
+
+/** One step of the preview build: fetch, image, database, start. */
+export interface LedgerBuildStep {
+  key: string;
+  label: string;
+  /** Wall clock of a finished step; null while it is running or ahead. */
+  ms: number | null;
+  state: 'done' | 'now' | 'todo';
+  /** The image step's phases, live or finished. */
+  phases?: LedgerBuildPhase[] | null;
+  /** The running phase's last log line. */
+  detail?: string | null;
+}
+
+/** A run in flight: what the capture container has reported so far. */
+export interface LedgerProgress {
+  ran: number;
+  passed: number;
+  failed: number;
+  /** Declared check count, when known; null while it is not. */
+  expected: number | null;
+  done?: boolean;
+  unit?: LedgerUnitProgress | null;
+  build?: LedgerBuildStep[] | null;
+}
+
+export interface LedgerRow {
+  key: string;
+  tone: 'bad' | 'warn' | 'ok' | 'vote' | 'mute' | 'progress';
+  spinner?: boolean;
+  /**
+   * Its position in the path a blocked proposal takes, drawn in the dot in
+   * place of the tone glyph. Set only when there is a sync step to order
+   * the others against (`_topicLedgerPath`); a row with no step keeps its
+   * glyph.
+   */
+  step?: number | null;
+  /**
+   * True once this step is CLEARED — its checkbox draws a tick instead of
+   * its number. Only checks and votes can reach it; the sync step is on the
+   * path only while it is outstanding.
+   */
+  stepDone?: boolean;
+  label: string;
+  /**
+   * The small line under the label. Two jobs: a count ("1 of 463 failing"),
+   * or, on a numbered step, who acts and when — "snait, now",
+   * "automatic, after 1".
+   */
+  sub?: string | null;
+  /** The sentence, in the primary ink. */
+  text: TextRun[];
+  /**
+   * Follow-on material under the sentence, muted and IN ORDER: a text run
+   * array is a line, `{ list }` is a bulleted mono list. One ordered array
+   * for the same reason `NoteRow` above is one — a lines-then-list shape
+   * renders both in the wrong order, silently, which is exactly what the
+   * ledger did to the conflicting-file list until it carried lists here.
+   */
+  foot?: (TextRun[] | { list: NoteItem[] })[];
+  /** Follow-on lines in the attention tone — the admins-list and locked-app rules. */
+  warnFoot?: TextRun[][];
+  /** The checks row's failing tests, listed; and its passing ones, folded. */
+  fails?: CheckRow[] | null;
+  passes?: CheckRow[] | null;
+  /** The votes row's roster. */
+  roster?: RosterView | null;
+  /** The checks row's live progress while the run is pending. */
+  progress?: LedgerProgress | null;
+  actions?: ActionSpec[];
+  /** Extra attributes on the row — `data-checks-base="superseded"` for one check. */
+  attrs?: Record<string, string>;
+}
+
 export interface ProposalDetails {
-  /** "View PR on GitHub · proposed by maya · 2h ago", already split. */
+  /** "View PR on GitHub · proposed by maya · 2h ago", already split. The head draws the GitHub link on the card's meta line instead. */
   meta: { href?: string | null; parts: TextRun[] }[];
+  /** The ledger the head draws; the fields below are the material it is built from. */
+  ledger: LedgerRow[];
+  /**
+   * How many of the ledger's rows are numbered steps of the merge path, or
+   * null when there is no path to draw. Numbering says the steps are
+   * ORDERED; the caption this feeds says they are a GATE — every one of
+   * them has to clear before the proposal merges.
+   */
+  pathSteps?: number | null;
+  /** How many of those steps are still outstanding, for the same caption. */
+  pathLeft?: number | null;
   /** The circular "?" beside the meta line. */
   help: boolean;
   /** A prose note under the meta line. */
@@ -151,12 +280,19 @@ export interface TranscriptSection {
 
 /** Everything under the card, by topic kind. */
 export interface TopicBody {
-  /** The full action list, the blocked reasons and the before/after block. */
+  /**
+   * The detail actions. The PILLS are merged onto the card's own action band
+   * by `_renderTopicHead` (one action line, as on the board); the head draws
+   * only `visuals` from here, as the About sheet's before/after row. `reasons`
+   * stays for the builders that read it — the ledger is what says it now.
+   */
   actions: {
     pills: ActionSpec[];
     reasons: { heading: string; items: { key: string; label: string; detail: string; soft: boolean }[] } | null;
     visuals: { sessionId: number; open: boolean; tilesHtml: string } | null;
   } | null;
+  /** The About sheet's heading — "About this change", "About this issue". */
+  aboutTitle?: string | null;
   /** An issue's markdown body, already rendered and sanitised. */
   issueBodyHtml?: string | null;
   /** Render the `#dev-issue-comments` host (features/dev-board/issue-comments.tsx). */

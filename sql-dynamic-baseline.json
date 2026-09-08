@@ -250,13 +250,6 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "767046d15a8b591a58c7",
-      "count": 1,
-      "preview": "`SELECT COALESCE(SUM(total_cost_cents), 0)::float AS cents FROM llm_usage WHERE date = CURRENT_DATE ${adminFilter('user_id', includeAdmins)}`"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
       "fingerprint": "7b689087e7ec4ffd947e",
       "count": 1,
       "preview": "`WITH base AS ( SELECT u.id AS user_id, u.is_admin FROM users u WHERE ${userCohort} ${adminFilter('u.id', includeAdmins)} ), flags AS ( SELECT b.user_id, b.is_a"
@@ -311,6 +304,13 @@
       "preview": "`WITH cohorts AS ( SELECT id AS user_id, date_trunc('week', created_at)::date AS cohort_wk FROM users WHERE TRUE ${adminFilter('id', includeAdmins)} ), activity"
     },
     {
+      "source": "src/routes/dashboard.js",
+      "kind": "structural-template",
+      "fingerprint": "d5accaf0d7be85f38b5e",
+      "count": 1,
+      "preview": "`SELECT COALESCE(SUM(total_cost_cents) FILTER (WHERE date = CURRENT_DATE), 0)::float AS cents, COALESCE(SUM(total_cost_cents) FILTER (WHERE date >= date_trunc('"
+    },
+    {
       "source": "src/routes/debug.js",
       "kind": "structural-template",
       "fingerprint": "a740c5c5517cf3fe1b4b",
@@ -348,16 +348,16 @@
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "4ac99c0eca6fdce41b58",
+      "fingerprint": "bc985dc7d04a921eaa79",
       "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${DONE_EXPR})::int AS done, COALESCE( array_agg(COALESCE(c.reward, ct.reward)) FILTER (WHERE NOT (${DONE_"
+      "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
     },
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "f42a87aa607f67670a39",
+      "fingerprint": "c714fb518d47b4a81b6f",
       "count": 1,
-      "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
+      "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${totalSql(doneExpr)})::int AS done, COALESCE( array_agg(COALESCE(c.reward, ct.reward)) FILTER (WHERE NOT"
     },
     {
       "source": "src/routes/kudos.js",
@@ -691,20 +691,6 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "036986681db4d5f91b5e",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
-      "fingerprint": "080e08908a64d1c71e19",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
       "fingerprint": "760e6c035395e025ef99",
       "count": 1,
       "preview": "`SELECT i.id, i.kind, i.title, i.description, i.payload, i.status, i.github_issue_number, i.created_by, i.created_at, u.username AS created_by_username, (SELECT"
@@ -731,6 +717,20 @@
       "preview": "`SELECT pv.vote, u.username, pv.user_id FROM pr_votes pv JOIN users u ON pv.user_id = u.id JOIN chat_sessions cs ON cs.id = pv.session_id WHERE pv.session_id = "
     },
     {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "c0f8e5747ee725a64c53",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "e933979c578bc1fbc742",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
+    },
+    {
       "source": "src/services/agent-turn.js",
       "kind": "structural-template",
       "fingerprint": "f3a6d402b0a112ee09c3",
@@ -747,16 +747,16 @@
     {
       "source": "src/services/check-history.js",
       "kind": "structural-template",
-      "fingerprint": "09d1952d59bf2c795161",
+      "fingerprint": "1dfaa6c9adb884fed818",
       "count": 1,
       "preview": "`INSERT INTO app_check_history AS h (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_failed_at, last_seen_at, pass_count, fail_"
     },
     {
       "source": "src/services/check-history.js",
       "kind": "structural-template",
-      "fingerprint": "8d9c757a659d4ad24d6a",
+      "fingerprint": "73bb2c779f8c52b9b224",
       "count": 1,
-      "preview": "`INSERT INTO app_check_history (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at) VALUES ${values.join(', ')} ON CONFLIC"
+      "preview": "`INSERT INTO app_check_history (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, consecutive_passes) VALUES ${values.jo"
     },
     {
       "source": "src/services/conflict-resolver.js",
@@ -1004,6 +1004,13 @@
       "preview": "`SELECT ${appAccess.nonSecretAppColumnList()} FROM apps WHERE id = $1`"
     },
     {
+      "source": "src/services/topochain/challenge-onboarding.js",
+      "kind": "structural-template",
+      "fingerprint": "f5ca617f29f6a39ad971",
+      "count": 1,
+      "preview": "`/* challenge onboarding */ SELECT c.id, c.season_event_id, c.challenge_template_id, c.display_order, c.enabled, c.completed, COALESCE(c.schedule_start, ct.sche"
+    },
+    {
       "source": "src/services/topochain/db-console-role.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "35f1322f2f4f01e6afff",
@@ -1100,6 +1107,13 @@
       "fingerprint": "ffdbcfbaa56765b4a618",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET headless_status = $4, headless_outcome = COALESCE($5, headless_outcome), headless_step = NULL, headless_turn_id = NULL, last_activity_"
+    },
+    {
+      "source": "src/services/workshop-themes.js",
+      "kind": "structural-template",
+      "fingerprint": "2e26921bc2eaf7ee6d9c",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.linked_issues, cs.status, cs.created_at, u.username, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.s"
     }
   ]
 }

@@ -56,7 +56,7 @@ const THREAD_INITIAL = { __html: skeletonListHtml(1) };
 
 export function DevTopicSubView() {
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-strip">
       {/*
           The thread panel's host. `GroupChat.mountThread` mounts
           features/group-chat/thread-shell.tsx into it, so React renders it as

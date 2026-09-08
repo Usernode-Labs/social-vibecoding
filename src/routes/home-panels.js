@@ -105,21 +105,8 @@ function parseRewardPoints(reward) {
 // The count-the-rows rule UNDER-counts where an admin credits a batch in a
 // single row. It is the most honest signal available today; when a real
 // per-user progress feed lands, THIS is the one function to replace.
-function resolveProgress({ metricKind, metricTarget, activityCount, blocks }) {
-  const count = Number(activityCount) || 0;
-  const target = Number(metricTarget);
-  const hasTarget = metricKind != null && Number.isFinite(target) && target > 0;
-  if (!hasTarget) {
-    return { done: count > 0, current: null, target: null };
-  }
-  const raw = metricKind === 'blocks_produced' ? (Number(blocks) || 0) : count;
-  const current = Math.max(0, Math.min(raw, target));
-  // target <= 1 with any credit at all is done — a "produce your first
-  // block" challenge shouldn't read as 0/1 after the block was credited
-  // through the ledger rather than through the snapshot.
-  const done = raw >= target || (target <= 1 && count > 0);
-  return { done, current, target };
-}
+const { resolveProgress, loadOnboarding, challengeCategory } =
+  require('../services/topochain/challenge-onboarding');
 
 // resolveProgress's done rule, in SQL. It has to exist in both languages:
 // SQL needs it to sort not-done rows first and to pick WHICH rows survive
@@ -276,7 +263,7 @@ async function buildChallengesPanel(pool, user, opts) {
   // client grows the block past its height cap for this and the same
   // control collapses it back — nothing is persisted.
   const expanded = !!(opts && opts.expanded);
-  const scopeWhere = expanded ? ALL_CHALLENGE_WHERE : OPEN_CHALLENGE_WHERE;
+  let scopeWhere = expanded ? ALL_CHALLENGE_WHERE : OPEN_CHALLENGE_WHERE;
   const rowLimit = expanded ? CHALLENGE_EXPANDED_LIMIT : CHALLENGE_ROW_LIMIT;
 
   const season = await fetchCurrentSeason(pool);
@@ -288,6 +275,18 @@ async function buildChallengesPanel(pool, user, opts) {
       challenges: [], expanded,
     };
   }
+
+  const onboarding = await loadOnboarding(pool, user.id, { seasonId: season.id });
+  const locked = onboarding && !onboarding.summary.unlocked;
+  if (locked) scopeWhere += ' AND c.id = ANY($4::bigint[])';
+  // Keep the ring, sorting and remaining rewards in sync with lifetime
+  // onboarding progress, including credits earned in a previous season.
+  const doneExpr = onboarding
+    ? `CASE WHEN c.id = ANY($4::bigint[]) THEN c.id = ANY($5::bigint[]) ELSE (${DONE_EXPR}) END`
+    : DONE_EXPR;
+  const onboardingParams = onboarding
+    ? [onboarding.ids, onboarding.ids.filter((id) => onboarding.progress.get(id).done)] : [];
+  const totalSql = (sql) => sql.replace(/\$([45])/g, (_, n) => `$${Number(n) - 1}`);
 
   // Rows: one statement, per-user aggregates as correlated subqueries so
   // there is no second round trip and no N+1. Ordering is done in SQL —
@@ -304,7 +303,7 @@ async function buildChallengesPanel(pool, user, opts) {
             (SELECT COALESCE(SUM(ua.points), 0) FROM user_activities ua
               WHERE ua.user_id = $1 AND ua.challenge_id = c.id) AS my_points,
             ${MY_BLOCKS_SQL} AS my_blocks,
-            ${DONE_EXPR} AS my_done,
+            ${doneExpr} AS my_done,
             ck.icon AS kind_icon
        FROM challenges c
        JOIN season_events se ON se.id = c.season_event_id
@@ -315,12 +314,12 @@ async function buildChallengesPanel(pool, user, opts) {
        -- which the card falls back from rather than drawing a blank.
        LEFT JOIN challenge_kinds ck ON ck.id = COALESCE(c.kind, ct.kind)
       WHERE se.season_id = $2 AND ${scopeWhere}
-      ORDER BY (${DONE_EXPR}) ASC,
+      ORDER BY (${doneExpr}) ASC,
                (c.featured IS NOT TRUE) ASC,
                COALESCE(c.featured_order, 2147483647) ASC,
                c.display_order ASC, c.id ASC
       LIMIT $3`,
-    [user.id, season.id, rowLimit]
+    [user.id, season.id, rowLimit, ...onboardingParams]
   );
 
   // Totals over the WHOLE open set, not the page above: `total` drives the
@@ -331,22 +330,26 @@ async function buildChallengesPanel(pool, user, opts) {
   // handful of short strings) and parse them below.
   const { rows: totalRows } = await pool.query(
     `SELECT COUNT(*)::int AS total,
-            COUNT(*) FILTER (WHERE ${DONE_EXPR})::int AS done,
+            COUNT(*) FILTER (WHERE ${totalSql(doneExpr)})::int AS done,
             COALESCE(
-              array_agg(COALESCE(c.reward, ct.reward)) FILTER (WHERE NOT (${DONE_EXPR})),
+              array_agg(COALESCE(c.reward, ct.reward)) FILTER (WHERE NOT (${totalSql(doneExpr)})),
               '{}'
             ) AS open_rewards
        FROM challenges c
        JOIN season_events se ON se.id = c.season_event_id
        LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
-      WHERE se.season_id = $2 AND ${scopeWhere}`,
-    [user.id, season.id]
+      WHERE se.season_id = $2 AND ${totalSql(scopeWhere)}`,
+    [user.id, season.id, ...onboardingParams]
   );
 
   // A challenge whose template row vanished is skipped rather than 500ing
   // the panel — the same guard public.js applies to its own challenge
   // list (the FK should make it unreachable in practice).
   const challenges = rows.filter((r) => r.t_id != null).map(buildChallengeRow);
+  for (const c of challenges) {
+    c.label = challengeCategory(c.id, c.label, onboarding);
+    if (onboarding?.progress.has(c.id)) c.progress = onboarding.progress.get(c.id);
+  }
 
   // "Points still on the table": only when EVERY open row's reward parses
   // as a plain number. One "½ of your final credits" and the whole figure
@@ -369,6 +372,7 @@ async function buildChallengesPanel(pool, user, opts) {
     total: totalRows[0]?.total ?? challenges.length,
     done: totalRows[0]?.done ?? 0,
     points_remaining: pointsRemaining,
+    ...(onboarding ? { onboarding: onboarding.summary } : {}),
     challenges,
     expanded,
   };

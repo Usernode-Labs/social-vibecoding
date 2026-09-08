@@ -380,8 +380,10 @@ test('"back out of an issue / proposal / governance topic" rides the header anch
   // than by an imperative call — pinned properly in tests/header-back-home.js;
   // named here so this file's map of "who owns back" stays complete.
   assert.match(read('frontend/src/features/header/platform-header.tsx'),
-    /subTab === 'chat' \|\| subTab === 'topic'\) return `#app\/\$\{slug\}\/board`/,
-    'the header points a topic page at its Board');
+    /subTab === 'chat' \|\| subTab === 'topic'\) return board;/,
+    'the header points a topic page at its board — `board` and not a literal '
+    + '`/board`, because Workshop and Board are one screen in two layouts and '
+    + 'the arrow has to name the one the reader came from');
 });
 
 test('no in-page back control is left anywhere in the Dev area', () => {
@@ -509,7 +511,9 @@ const ROWS = [
     src: () => homeJs, file: 'home.js',
     anchor: ".querySelectorAll('.app-card')",
     wire: /NavLink\.wireModified\(card, hrefFor, activate\)/,
-    href: /App\._appUrl\(card\.dataset\.slug, 'app', null, null\)/,
+    // #1562: a Discover tap opens the app's detail page, not the app. The
+    // modified-click contract is unchanged — it just names a different route.
+    href: /detailHref\(card\.dataset\.slug\)/,
     guards: ['card-add-btn', 'card-menu-btn', "card.dataset.demo === 'true'", 'awaiting_secrets'],
   },
   // The dev chat's cross-app "Active Sessions" rows were the second entry
@@ -531,7 +535,10 @@ for (const r of ROWS) {
   test(`${r.label} open in a new tab under a modifier`, () => {
     const at = r.src().indexOf(r.anchor);
     assert.ok(at !== -1, `${r.file}: ${r.anchor} went missing`);
-    const body = r.src().slice(at, at + 1600);
+    // A window, not a parse: wide enough to hold the wiring block plus the
+    // comment above it. Raised from 1600 when #1562 gave the Discover card a
+    // named destination helper and two more lines of guard.
+    const body = r.src().slice(at, at + 2400);
     assert.match(body, r.wire, `${r.file}: must route through NavLink.wireModified`);
     assert.match(body, r.href, `${r.file}: the new tab must open the row's own route`);
     // hrefFor has to repeat the plain click's guards, or a modified click

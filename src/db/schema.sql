@@ -6,6 +6,10 @@ CREATE TABLE IF NOT EXISTS users (
   is_admin        BOOLEAN DEFAULT FALSE,
   created_at      TIMESTAMPTZ DEFAULT NOW()
 );
+-- #1583: account-wide, durable first-feedback acknowledgement. Historical
+-- feedback was not recorded per user; existing accounts start tracking at
+-- rollout. Written only after GitHub has accepted a feedback issue.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS first_feedback_at TIMESTAMPTZ;
 -- #30: optional user-provided Anthropic API key. `anthropic_key_enc`
 -- holds the encrypted payload (v1:<iv>:<tag>:<ct>, base64). We also
 -- keep the last 4 chars unencrypted purely so the UI can show
@@ -26,15 +30,16 @@ UPDATE users SET can_create_apps = TRUE WHERE is_admin = TRUE AND can_create_app
 -- apps a user may have created. This is the actual app-creation gate (see
 -- src/routes/apps.js) — a non-admin may create iff their live app count is
 -- below this number, so deleting an app frees a slot (mirrors the server-
--- wide maxApps cap). Default 0 means "cannot create until an admin raises
--- it", matching the old can_create_apps default-off behaviour. Full admins
+-- wide maxApps cap). New accounts receive two slots. Full admins
 -- bypass enforcement entirely; view-only admins keep their ordinary quota.
 -- The client sees both a derived `canCreateApps` boolean (computed in auth/me
 -- as canAdminWrite || liveCount < app_quota) and the numeric quota used by the
 -- create dialog. `can_create_apps`
 -- is KEPT for now purely as the one-shot backfill source below — dropping
 -- it (and the derived canCreateApps plumbing) is deferred work.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota INTEGER NOT NULL DEFAULT 2;
+ALTER TABLE users ALTER COLUMN app_quota SET DEFAULT 2;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS app_quota_requested_at TIMESTAMPTZ;
 
 -- is_admin is now mutable from the admin panel (grant/revoke toggle in
 -- public/admin.html → POST /api/admin/users/:id/is-admin). The column is
@@ -71,6 +76,15 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_link_expires_at   TIMESTAMPTZ;
 -- cap without raising it for everyone. Read by checkBudget() in
 -- src/routes/sessions.js via src/services/limits.js.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit_cents INTEGER;
+
+-- #1788: per-user WEEKLY LLM spend cap in cents, layered on top of the
+-- daily one above. NULL means "use the platform default" stored in
+-- platform_settings.user_weekly_limit_cents (see below); 0 means "no
+-- weekly cap applies to this user". Same admin surfaces as the daily
+-- override (/api/admin/users/:id/weekly-limit, admin console → Users).
+-- Read by limits.getUserCreditEntitlement / limits.resolveCaps, which
+-- own the full daily-vs-weekly interaction.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_limit_cents INTEGER;
 
 -- Experimental: opt-in AI progress estimate for coding runs. When TRUE,
 -- the platform periodically asks Haiku to skim the in-flight Claude Code
@@ -658,6 +672,26 @@ CREATE TABLE IF NOT EXISTS app_check_history (
   UNIQUE (app_id, check_key)
 );
 CREATE INDEX IF NOT EXISTS idx_app_check_history_app ON app_check_history(app_id);
+
+-- `consecutive_passes` is what graduation reads now. ONE observed pass used
+-- to be enough, so a check that is flaky from birth graduated on its first
+-- lucky run and blocked every proposal afterwards, with no demotion to
+-- undo it. Ten in a row, reset to zero by any failure, is a bar a 1-in-20
+-- flake clears only 60% of the time per window instead of 95%.
+--
+-- The backfill is a genuine one-time migration written to be safe under
+-- the idempotent boot: the column is added NULLABLE with no default, the
+-- two UPDATEs give every pre-existing row a value, and recordRun always
+-- writes one explicitly. On the second boot nothing is NULL, so both
+-- UPDATEs match nothing. A default would have re-run on every boot and
+-- re-graduated any check whose counter a failure had just reset.
+ALTER TABLE app_check_history ADD COLUMN IF NOT EXISTS consecutive_passes INTEGER;
+-- Already gating under the one-pass rule: keep it gating. No guard rail
+-- this app relies on is demoted by raising the bar.
+UPDATE app_check_history SET consecutive_passes = 10
+  WHERE consecutive_passes IS NULL AND first_passed_at IS NOT NULL;
+UPDATE app_check_history SET consecutive_passes = 0 WHERE consecutive_passes IS NULL;
+
 -- The graduated-set load is the hot read (once per checks run).
 CREATE INDEX IF NOT EXISTS idx_app_check_history_graduated
   ON app_check_history(app_id) WHERE first_passed_at IS NOT NULL;
@@ -736,6 +770,13 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_image_ref TE
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_build_ref VARCHAR(253);
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_runtime_kind VARCHAR(32);
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_runtime_name VARCHAR(253);
+-- The commit the preview was actually built from (the clone's HEAD at build
+-- time). A clean platform sync of main carries the checks verdict forward
+-- WITHOUT a rebuild, so the preview can sit a commit behind the head the
+-- row now describes; "Re-run checks" compares this to the head and rebuilds
+-- instead of testing the new head's checks against the old build. NULL for
+-- previews built before this column existed, which keeps the old behaviour.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS staging_commit_sha VARCHAR(64);
 -- LLM-generated PR title shown alongside the PR number across the UI
 -- (dev chat, vote panel, status page). Nullable so old rows predate the
 -- auto-title feature and just fall back to showing "by <user>".
@@ -935,6 +976,17 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_phase VARCHAR(
 -- simply shows no trigger caption then. Advisory/display only, exactly like
 -- check_phase: the merge gate reads check_state and nothing else.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_trigger VARCHAR(32);
+-- Live progress of the run in flight: `{ ran, passed, failed, expected,
+-- updatedAt, unit }`, written as the capture container's per-check frames
+-- stream in and cleared with the verdict. `unit` is the repo unit suite's
+-- own `{ phase, ran, passed, failed, skipped, expected, done }`, read off
+-- its TAP output the same way. NULL outside a run. The verdict itself
+-- stays in test_results; this is only what "checks running" has to say
+-- between the start and the end, which used to be nothing.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_progress JSONB;
+-- The unit suite's size from its last completed run (`# tests`), so the
+-- next run's live bar has a denominator before the suite finishes.
+ALTER TABLE apps                   ADD COLUMN IF NOT EXISTS unit_suite_last_tests INTEGER;
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.
@@ -1953,6 +2005,44 @@ INSERT INTO platform_settings (key, value) VALUES
   ('system_tokens_daily_limit_cents', '2500')
 ON CONFLICT (key) DO NOTHING;
 
+-- #1788: the platform-default per-user WEEKLY cap. Seeded as SEVEN TIMES
+-- whatever the daily default is at the moment this first runs, rather than
+-- as a literal: on an existing deployment that is exactly what a user on
+-- the default could already spend across a week, so the cap arrives
+-- enforced but non-regressive. A fresh deploy seeds 7 x 2500 = 17500.
+-- ON CONFLICT DO NOTHING, so an operator-set value survives every boot.
+INSERT INTO platform_settings (key, value)
+SELECT 'user_weekly_limit_cents',
+       (7 * COALESCE((
+         SELECT ps.value::int
+           FROM platform_settings ps
+          WHERE ps.key = 'user_daily_limit_cents'
+            AND ps.value ~ '^[0-9]+$'
+       ), 2500))::text
+ON CONFLICT (key) DO NOTHING;
+
+-- One-shot backfill of users.weekly_limit_cents for everyone who already
+-- holds a DAILY override. Without it, a raised daily cap would collide with
+-- the platform weekly default the first time the weekly gate ran — a user
+-- on $120/day would be cut off partway through Tuesday by a $140 week.
+-- Seven times their own daily cap preserves exactly what each of them could
+-- already spend. Guarded by a marker row so it runs EXACTLY ONCE, the same
+-- way app_quota_migrated above is: a re-runnable UPDATE would re-clobber
+-- any weekly cap an admin later lowers by hand. Rows with no daily override
+-- are left NULL and fall through to the platform default.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'weekly_limit_backfilled') THEN
+    UPDATE users
+       SET weekly_limit_cents = daily_limit_cents * 7
+     WHERE daily_limit_cents IS NOT NULL
+       AND weekly_limit_cents IS NULL;
+    INSERT INTO platform_settings (key, value)
+      VALUES ('weekly_limit_backfilled', 'true')
+      ON CONFLICT (key) DO NOTHING;
+  END IF;
+END $$;
+
 -- One-shot backfill of users.app_quota from the legacy can_create_apps
 -- boolean. Guarded by a marker row in platform_settings so it runs EXACTLY
 -- ONCE: a re-run-safe UPDATE keyed only on can_create_apps = TRUE would
@@ -1965,7 +2055,7 @@ ON CONFLICT (key) DO NOTHING;
 --     below the apps they already have. Admins are included (their quota is
 --     cosmetic since they bypass enforcement) so the admin UI shows a
 --     sensible number.
---   can_create_apps = FALSE → quota stays 0 (the column default).
+--   can_create_apps = FALSE → keep the numeric quota (now defaulting to 2).
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'app_quota_migrated') THEN
@@ -2024,6 +2114,21 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
 -- string. Today only 'reaction' uses it (the emoji someone reacted with);
 -- kept generic + nullable so future kinds can reuse it.
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS detail VARCHAR(32);
+
+-- #1559: grant existing accounts at least two slots once, preserving higher
+-- allowances. A later explicit admin reduction must survive every restart.
+-- Persist the notification in the same migration so offline users see it too.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'app_allowance_default_two_migrated') THEN
+    INSERT INTO notifications (user_id, kind, detail)
+      SELECT id, 'app_quota_changed', app_quota::text || ':2'
+        FROM users WHERE app_quota < 2;
+    UPDATE users SET app_quota = 2 WHERE app_quota < 2;
+    INSERT INTO platform_settings (key, value)
+      VALUES ('app_allowance_default_two_migrated', 'true');
+  END IF;
+END $$;
 
 -- #1405 path B: a coding agent driving the connector telling the platform it
 -- has asked the user something and is now waiting.
@@ -2520,6 +2625,15 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS screenshot_device_scale SMALLINT NOT N
 -- the cache-buster).
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_emoji VARCHAR(32);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_image_id VARCHAR(32);
+
+-- #1523: an admin's directory review, independent of container health and
+-- of the staging-only `demo` fixture flag. Existing apps remain unreviewed.
+-- A positive review is valid only for its deployed SHA and until the next
+-- deployment; demos/broken classifications persist until explicitly reviewed.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS directory_review_status VARCHAR(16)
+  NOT NULL DEFAULT 'unreviewed' CHECK (directory_review_status IN ('unreviewed', 'working', 'demo', 'broken'));
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS directory_reviewed_at TIMESTAMPTZ;
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS directory_reviewed_sha VARCHAR(40);
 
 -- Fork lineage. NULL for normally-created apps; for a fork it stores a
 -- REFERENCE ONLY to the source app: {"appId": <id>, "slug": "<slug>"}.
@@ -4684,6 +4798,7 @@ CREATE TABLE IF NOT EXISTS native_session_attempts (
     CHECK (chain_id ~ '^utc1[023456789acdefghjklmnpqrstuvwxyz]+$'),
   request_digest             CHAR(64) NOT NULL
     CHECK (request_digest ~ '^[0-9a-f]{64}$'),
+  walletless_supported       BOOLEAN NOT NULL DEFAULT FALSE,
   state                      VARCHAR(16) NOT NULL DEFAULT 'ticketed'
     CHECK (state IN ('ticketed', 'exchanged', 'revoked')),
   created_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -4693,6 +4808,10 @@ CREATE TABLE IF NOT EXISTS native_session_attempts (
     REFERENCES native_session_web_incarnations(id, user_id) ON DELETE CASCADE,
   CHECK (updated_at >= created_at)
 );
+-- TODO(remove-build-1250-compat): Drop decoder negotiation when all supported
+-- mobile builds accept account:null. Existing attempts keep the safe fallback.
+ALTER TABLE native_session_attempts
+  ADD COLUMN IF NOT EXISTS walletless_supported BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS native_session_attempts_user_idx
   ON native_session_attempts (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS native_session_attempts_incarnation_idx
@@ -6230,6 +6349,48 @@ CREATE TABLE IF NOT EXISTS app_report_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_app_report_snapshots_app
   ON app_report_snapshots (app_id, locked_at DESC);
+
+-- Workshop themes cache (the Dev screen's lander). One row per app, shared
+-- by every viewer — the input is built from shared-visibility data only,
+-- exactly like app_report_ai above. themes_json is the model's grouping:
+-- [{ id, name, description, saying, items: ['issue:12', 'session:34', …] }]
+-- with STABLE ids (the previous themes are fed back into each run so a
+-- theme keeps its id across regenerations). input_hash fingerprints the
+-- board the grouping was made from; a stale row is served as is while a
+-- regeneration runs behind the request. `source` is 'ai' for every cached
+-- row — the no-model category grouping is computed per request and never
+-- written here, so a key arriving later takes over cleanly.
+CREATE TABLE IF NOT EXISTS app_workshop_themes (
+  app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  input_hash    VARCHAR(64) NOT NULL,
+  themes_json   JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source        VARCHAR(16) NOT NULL DEFAULT 'ai',
+  model         VARCHAR(64),
+  generated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- The grouping became a two-stage pipeline (services/workshop-themes.js):
+-- themes_json now holds theme DEFINITIONS only ([{ id, name, description,
+-- saying, anchors }]) and placements_json the card → theme id map they are
+-- served with, so a card the model skipped is retried, never lost. Rows
+-- written before this carry `items` on the definitions and serve from them
+-- until the first reconcile. input_hash became the key set's digest.
+--   unplaced_json        cards the placer said fit no theme (they count as churn)
+--   discovered_at        when the definitions were last drafted
+--   discovery_key_count  how many cards that draft covered (the drift base)
+--   churn_added/removed  cards added / gone since that draft; a tenth re-drafts
+--   last_error/failed_at the last failed stage, for the footnote and the backoff
+--   last_viewed_at       stamped by GET; the hourly sweep re-checks recent apps
+--   reconcile_started_at the cross-instance lease one reconcile holds
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS placements_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS unplaced_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovered_at TIMESTAMPTZ;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovery_key_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS churn_added INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS churn_removed INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_error TEXT;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_failed_at TIMESTAMPTZ;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS reconcile_started_at TIMESTAMPTZ;
 
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,

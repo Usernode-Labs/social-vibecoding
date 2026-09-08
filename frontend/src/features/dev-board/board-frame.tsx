@@ -60,7 +60,12 @@
 
 import { useRef } from 'react';
 
-import { ChatIcon, ChevronRightIcon } from '@/components/ui/icons';
+import type { ReactNode } from 'react';
+
+import {
+  AppWindowIcon, ChatIcon, ChevronRightIcon, GitHubIcon, KeyIcon,
+  PencilSquareIcon, UserGroupIcon,
+} from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from './view-mode-store';
@@ -115,12 +120,69 @@ function PlusMenuHeading({
   );
 }
 
-/** The shared row shell for every `data-plus` action. */
+/**
+ * The shared row shell for every `data-plus` action.
+ *
+ * #1615: the same shape as the app chip's menu — a leading glyph, `gap-3`,
+ * `px-5`, a 44px floor and that menu's hover tint — so the two lists in this
+ * shell read as one kind of thing. What it deliberately does NOT copy is the
+ * chip menu's single-line row: every action here has a subtitle explaining
+ * what it does ("Renames are proposals, applied once voted in"), and those
+ * lines are the reason this menu is legible at all.
+ *
+ * The row's title carries `data-plus-title`, and `AppView._wirePlusMenu` reads
+ * THAT for its touch action sheet. It used to take `querySelector('span')` —
+ * the first span in the row — which was the title only by accident of source
+ * order, and any wrapper introduced above it (this layout needs one for the
+ * text column) would have handed every sheet row the wrong label, or none.
+ */
 const PLUS_ROW_CLS =
-  'w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
+  'w-full text-left flex items-start gap-3 px-5 py-2.5 min-h-[44px] '
+  + 'hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors';
 const PLUS_ROW_DIVIDER_CLS = ' border-t border-zinc-200 dark:border-zinc-800';
+const PLUS_ICON_CLS = 'shrink-0 mt-0.5 w-5 h-5 text-zinc-500 dark:text-zinc-400';
 const PLUS_TITLE_CLS = 'block text-sm font-medium text-zinc-800 dark:text-zinc-200';
 const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
+
+/**
+ * One `data-plus` action, as the row shell above.
+ *
+ * The action and the divider come in spelled exactly as the markup spells
+ * them, rather than as an `action` string and a boolean. Two reasons, and the
+ * second is why it is worth the slightly odd prop name: the source stays
+ * greppable per row, which is how tests/dev-plus-menu.test.js and
+ * tests/pr-import-menu.test.js locate each one and prove its gate (they read
+ * this file's TEXT and compare positions, so no example row name appears in
+ * this comment); and the divider EXPRESSIONS stay visible at the call site,
+ * where the condition ("does the members row render above me?") is the
+ * interesting part.
+ */
+function PlusRow({
+  'data-plus': action, icon, title, sub, dividerCls = '', titleNode,
+}: {
+  'data-plus': string;
+  icon: ReactNode;
+  title?: string;
+  sub: ReactNode;
+  dividerCls?: string;
+  /** For the one row whose title carries a legacy-owned leaf beside it. */
+  titleNode?: ReactNode;
+}): ReactNode {
+  return (
+    <button
+      data-plus={action}
+      className={PLUS_ROW_CLS + dividerCls}
+    >
+      {icon}
+      <span className="min-w-0 flex-1">
+        {titleNode ?? (
+          <span data-plus-title className={PLUS_TITLE_CLS}>{title}</span>
+        )}
+        <span className={PLUS_SUB_CLS}>{sub}</span>
+      </span>
+    </button>
+  );
+}
 
 /**
  * `#dev-body`'s initial content, as a constant string — see the header.
@@ -146,12 +208,11 @@ const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
  * between them is frozen at mount rather than followed live. A view toggle
  * does not re-pick: by then the real board owns the node.
  *
- * The second node the feed form used to carry — `#gc-merged`, the Completed
- * block — is gone: completed work is ordinary activity in the Feed's own
- * stream now (see `AppView._feedItems`), and the kanban Done column renders
- * its own.
+ * The list form is the Workshop's (`#dev-workshop`, features/dev-board/
+ * workshop/workshop.tsx), which replaced the Activity feed as the Dev
+ * screen's lander; the kanban Done column renders its own completed rows.
  */
-const DEV_BODY_FEED_INITIAL = { __html: '<div id="dev-feed">' + skeletonListHtml(3) + '</div>' };
+const DEV_BODY_WORKSHOP_INITIAL = { __html: '<div id="dev-workshop">' + skeletonListHtml(3) + '</div>' };
 const DEV_BODY_KANBAN_INITIAL = { __html: skeletonKanbanHtml() };
 
 /**
@@ -170,7 +231,7 @@ function useBodyInitial(): { __html: string } {
   const mode = useDevViewMode();
   const chosen = useRef<{ __html: string } | null>(null);
   if (!chosen.current) {
-    chosen.current = mode === 'kanban' ? DEV_BODY_KANBAN_INITIAL : DEV_BODY_FEED_INITIAL;
+    chosen.current = mode === 'kanban' ? DEV_BODY_KANBAN_INITIAL : DEV_BODY_WORKSHOP_INITIAL;
   }
   return chosen.current;
 }
@@ -185,14 +246,12 @@ function useBodyInitial(): { __html: string } {
  * chat: the board's recency stream took the name, and the screen it displaced
  * was left reachable only from a notification.
  *
- * It draws on the KANBAN only, because the Feed draws the same fact better.
- * A feed is a stream of what just happened and a conversation is one of the
- * things that just happened, so there it is an ordinary activity row sorted by
- * its latest message (`AppView._discussionCardModel`); a pinned tile above
- * that stream would be saying the discussion is not activity, immediately
- * above the row proving it is. The kanban is a prioritised worklist with no
- * such slot, so there the card is chrome above the columns — which is exactly
- * what it always was.
+ * It draws on the KANBAN only. The Workshop draws the same fact as one of its
+ * own rows (`AppView._discussionCardModel`), in its own place between the
+ * strips and the themes, so a second copy above the host would be the
+ * discussion twice. The kanban is a prioritised worklist with no such slot,
+ * so there the card is chrome above the columns — which is exactly what it
+ * always was.
  *
  * ── An anchor ──────────────────────────────────────────────────────────
  *
@@ -251,7 +310,14 @@ export function DevBoardFrame({
   const { locked } = useStoreState<LockedNoticeState>(lockedNoticeStore);
   const bodyInitial = useBodyInitial();
   return (
-    <div className="flex flex-col h-full min-h-0">
+    <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-strip">
+      {/*
+          THE BOARD IS THE STRIP. The dev area is drawn on the lift ladder the
+          session view already uses (`.dc-lift` in app.css): this column is
+          the frosted strip on the wallpaper, and a topic or the Discussion
+          opens as the sheet rising on it (./topic-frame.tsx, ./chat-frame.tsx).
+          Nothing inside the column changes.
+      */}
       {/*
           THE "DEV" SUB-HEADER ROW IS GONE (#1367 follow-up).
 
@@ -302,7 +368,7 @@ export function DevBoardFrame({
             title={
               readOnly
                 ? 'Fork this app'
-                : 'Propose a change, file an issue, or manage this app'
+                : 'Import a PR or manage this app'
             }
           >
             +
@@ -313,90 +379,87 @@ export function DevBoardFrame({
           >
             {readOnly ? null : (
               <>
-                <PlusMenuHeading label="Build a change" groupKey="build" divider={false} />
-                <button data-plus="proposal" className={PLUS_ROW_CLS}>
-                  <span className={PLUS_TITLE_CLS}>Propose a change</span>
-                  <span className={PLUS_SUB_CLS}>
-                    Start a dev session. You pick where it is built, and can change that
-                    any time
-                  </span>
-                </button>
+                {/* New change and Give feedback live in Improve (#1490). */}
                 {canCollaborate ? (
-                  <button
-                    data-plus="import-pr"
-                    className={PLUS_ROW_CLS + PLUS_ROW_DIVIDER_CLS}
-                  >
-                    <span className={PLUS_TITLE_CLS}>Import Feature from a PR</span>
-                    <span className={PLUS_SUB_CLS}>
-                      Your computer &middot; your own tools. You have already built it, so
-                      there is no chat for this one
-                    </span>
-                  </button>
+                  <>
+                    <PlusMenuHeading label="Import a change" groupKey="build" divider={false} />
+                    <PlusRow
+                      data-plus="import-pr"
+                      icon={<GitHubIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                      title="Import Feature from a PR"
+                      sub={(
+                        <>
+                          Your computer &middot; your own tools. You have already built it, so
+                          there is no chat for this one
+                        </>
+                      )}
+                    />
+                  </>
                 ) : null}
-                <button data-plus="issue" className={PLUS_ROW_CLS + PLUS_ROW_DIVIDER_CLS}>
-                  <span className={PLUS_TITLE_CLS}>New issue</span>
-                  <span className={PLUS_SUB_CLS}>
-                    Report a problem or idea without building it yourself
-                  </span>
-                </button>
                 <PlusMenuHeading
                   label="Settings &amp; rules"
                   groupKey="settings"
-                  divider={true}
+                  divider={canCollaborate}
                 />
                 {showsMembers ? (
-                  <button data-plus="members" className={PLUS_ROW_CLS}>
+                  <>
                     {selfHosted ? (
-                      <>
-                        <span className={PLUS_TITLE_CLS}>Proposal approvals</span>
-                        <span className={PLUS_SUB_CLS}>
-                          Who approves proposals and how many approvals are needed
-                        </span>
-                      </>
+                      <PlusRow
+                        data-plus="members"
+                        icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                        title="Proposal approvals"
+                        sub="Who approves proposals and how many approvals are needed"
+                      />
                     ) : (
-                      <>
-                        <span className={PLUS_TITLE_CLS}>Members &amp; visibility</span>
-                        <span className={PLUS_SUB_CLS}>Who can build and see this app</span>
-                      </>
+                      <PlusRow
+                        data-plus="members"
+                        icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                        title="Members &amp; visibility"
+                        sub="Who can build and see this app"
+                      />
                     )}
-                  </button>
+                  </>
                 ) : null}
-                <button
+                <PlusRow
                   data-plus="rename"
-                  className={PLUS_ROW_CLS + (showsMembers ? PLUS_ROW_DIVIDER_CLS : '')}
-                >
-                  <span className={PLUS_TITLE_CLS}>App display name</span>
-                  <span className={PLUS_SUB_CLS}>
-                    Renames are proposals, applied once voted in
-                  </span>
-                </button>
-                <button data-plus="secrets" className={PLUS_ROW_CLS + PLUS_ROW_DIVIDER_CLS}>
-                  <span className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    {selfHosted ? 'Platform variables' : 'App secrets'}
-                    {/* Filled by AppView.refreshDevChatSecretsState() — a
-                        legacy-owned leaf, so it renders empty and React never
-                        writes its text again. */}
+                  icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                  title="App display name"
+                  sub="Renames are proposals, applied once voted in"
+                  dividerCls={showsMembers ? PLUS_ROW_DIVIDER_CLS : ''}
+                />
+                <PlusRow
+                  data-plus="secrets"
+                  icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                  titleNode={(
                     <span
-                      id="dc-secrets-state"
-                      className="text-xs font-normal text-zinc-500 dark:text-zinc-500"
-                    ></span>
-                  </span>
-                  <span className={PLUS_SUB_CLS}>
-                    {selfHosted
-                      ? "The platform's own env, applied on its next deploy"
-                      : 'Set or update secret values'}
-                  </span>
-                </button>
+                      data-plus-title
+                      className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200"
+                    >
+                      {selfHosted ? 'Platform variables' : 'App secrets'}
+                      {/* Filled by AppView.refreshDevChatSecretsState() — a
+                          legacy-owned leaf, so it renders empty and React never
+                          writes its text again. */}
+                      <span
+                        id="dc-secrets-state"
+                        className="text-xs font-normal text-zinc-500 dark:text-zinc-500"
+                      ></span>
+                    </span>
+                  )}
+                  sub={selfHosted
+                    ? "The platform's own env, applied on its next deploy"
+                    : 'Set or update secret values'}
+                  dividerCls={PLUS_ROW_DIVIDER_CLS}
+                />
               </>
             )}
             {selfHosted ? null : (
-              <button
+              <PlusRow
                 data-plus="fork"
-                className={PLUS_ROW_CLS + (readOnly ? '' : PLUS_ROW_DIVIDER_CLS)}
-              >
-                <span className={PLUS_TITLE_CLS}>Fork this app</span>
-                <span className={PLUS_SUB_CLS}>Stand up your own independent copy</span>
-              </button>
+                icon={<AppWindowIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title="Fork this app"
+                sub="Stand up your own independent copy"
+                dividerCls={readOnly ? '' : PLUS_ROW_DIVIDER_CLS}
+              />
             )}
           </div>
         </div>
@@ -424,10 +487,10 @@ export function DevBoardFrame({
           ) : null}
         </div>
         <DiscussionCard cardCls={cardCls} cardHoverCls={cardHoverCls} />
-        {/* Body region: the Feed mounts #dev-feed here; Kanban mounts
-            #dev-kanban-filterbar + #dev-kanban-board. _repaintDevBody() owns
-            the swap. The wrapper node is stable across tab switches so the
-            delegated card-open handler (bound by the module) survives both. */}
+        {/* Body region: the Workshop mounts #dev-workshop here; Kanban mounts
+            #dev-kanban-board. _repaintDevBody() owns the swap. The wrapper
+            node is stable across tab switches so the delegated card-open
+            handler (bound by the module) survives both. */}
         <div
           id="dev-body"
           className="px-3 py-2"

@@ -177,7 +177,7 @@ const OWNED = [
   { sel: '#auto-session-modal' },
   { sel: '#credit-options-modal' },
   { sel: '#llm-consent-modal' },
-  // The two card surfaces (features/dev-board/card/dev-feed.tsx and
+  // The two card surfaces (features/dev-board/workshop/workshop.tsx and
   // dev-kanban.tsx). Both hosts are app-view.js's — `_repaintDevBody`
   // writes them into #dev-body — but every card below them is React's.
   //
@@ -188,7 +188,7 @@ const OWNED = [
   // then by Kudos.attach / _refreshButton / _renderPopover, four writers in
   // another module); `#dev-issue-title-error` by `saveIssueTitle`.
   {
-    sel: '#dev-feed',
+    sel: '#dev-workshop',
     except: ['.dev-feed-comments', '[data-kudos-host]'],
   },
   {

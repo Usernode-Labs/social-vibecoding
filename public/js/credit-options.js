@@ -116,7 +116,10 @@
     if (s.level === 'unavailable') {
       return 'Credit eligibility is temporarily unavailable.';
     }
-    var parts = 'Free credits reset at midnight UTC';
+    var resetLabel = s.resetLabel || 'midnight UTC';
+    var parts = s.capWindow === 'weekly'
+      ? 'Free credits reset ' + resetLabel
+      : 'Free credits reset at ' + resetLabel;
     var at = s.resetsAt ? new Date(s.resetsAt) : null;
     if (at && Number.isFinite(at.getTime())) {
       var local = null;
@@ -124,7 +127,7 @@
         // Only worth translating for a reader who is not already on UTC —
         // otherwise it prints "midnight UTC — 12:00 AM your time", which
         // is the same fact twice.
-        if (at.getTimezoneOffset() !== 0) {
+        if (at.getTimezoneOffset() !== 0 && s.capWindow !== 'weekly') {
           local = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
         }
       } catch (err) { /* no Intl — the UTC boundary still reads fine */ }
@@ -162,6 +165,9 @@
         byokCents: 0, pctUsed: 0, hasByokKey: !!(s && s.hasByokKey),
         globalOut: false, resetsAt: (s && s.resetsAt) || null,
         lowPct: (s && Number(s.lowBalancePct)) || LOW_PCT,
+        capWindow: (s && s.capWindow) || 'daily',
+        windowLabel: (s && s.windowLabel) || 'Today',
+        resetLabel: (s && s.resetLabel) || 'midnight UTC',
       };
     }
     var verificationRequired = !!s.verificationRequired;
@@ -198,6 +204,13 @@
       hasByokKey: !!s.hasByokKey,
       globalOut: globalOut,
       resetsAt: s.resetsAt || null,
+      // #1788: the allowance is two windows now, and the server reports
+      // whichever one is BINDING in the legacy limit/spent/remaining
+      // fields. These three say which window that was, so every sentence
+      // below names the right boundary instead of assuming "daily".
+      capWindow: s.capWindow || 'daily',
+      windowLabel: s.windowLabel || 'Today',
+      resetLabel: s.resetLabel || 'midnight UTC',
       lowPct: lowPct,
       verificationRequired: verificationRequired,
       entitlementAvailable: entitlementAvailable,
@@ -255,8 +268,9 @@
   // it, rather than announcing a failure that hasn't happened.
   function lowLead(state) {
     var s = state || {};
+    var when = s.capWindow === 'weekly' ? 'this week' : 'today';
     return 'Running low on free AI credits: ' + money(s.remainingCents)
-      + ' of ' + money(s.limitCents) + ' left today.';
+      + ' of ' + money(s.limitCents) + ' left ' + when + '.';
   }
 
   // ── Who each route is for (#1281) ──────────────────────────────────

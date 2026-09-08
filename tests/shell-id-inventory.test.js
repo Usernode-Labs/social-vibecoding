@@ -86,7 +86,12 @@ const RETIRED_IDS = {
   'switcher-views': 'The chip menu\'s copy of the three-view strip. The menu answers WHICH APP; a control about the app you are already in sat between you and the list you opened the menu for. The Improve panel keeps the strip, and the header\'s back arrow is the way OUT of a Board now.',
   'switcher-view-app': 'Its App segment. `#app-context-row-app` in the Improve panel is the surviving one.',
   'switcher-view-board': 'Its Board segment; `#app-context-row-board` survives.',
-  'switcher-view-activity': 'Its Activity segment; `#app-context-row-activity` survives.',
+  'switcher-view-activity': 'Its Activity segment; `#app-context-row-activity` survived it, and then retired in turn (below).',
+  // ── The Workshop replaced the Activity feed ─────────────────────
+  // The strip's middle segment names the lander now: the same cards as the
+  // Board, grouped by what they are about. The old #app/<slug>/activity
+  // address resolves onto it, so nothing a link named is lost.
+  'app-context-row-activity': 'The strip\'s Activity segment. The Workshop (`#app-context-row-workshop`) replaced the Activity feed as the Dev screen\'s lander; the feed\'s two answers — what needs your vote, what changed since you were here — are strips above its themes.',
   // ── #1443: one control names where you are ──────────────────────
   // The chip's menu lists every destination with its own page, so the header
   // stopped needing a second, third and fourth way to say the same thing.
@@ -259,10 +264,24 @@ const RETIRED_IDS = {
   // worked.
   'more-invites': 'Typed-address invite rows retired for the share link (#more-invite-url); they sent nothing.',
   'more-invite-add': 'The "add another" button for the retired invite rows.',
+  // ── The buddy checkbox promised something nothing delivered (#1534) ──
+  // "Only let me in when at least one person from my link gets in too"
+  // was stored on the answers blob and read by no admission path, so it
+  // held nobody back and let nobody in. The invite link beside it, and
+  // the copy saying we try to admit people together, are untouched.
+  'more-admit-together': 'The "only let me in when someone from my link gets in too" checkbox. Nothing read the flag, so the promise it made was never kept; the field is dropped on input the way #more-invites was.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  'feedback-form': 'The existing feedback form is hidden while the first-feedback confirmation is visible (#1583).',
+  'feedback-first-success': 'Persistent first-feedback confirmation inside the existing feedback dialog (#1583).',
+  'feedback-first-title': 'Accessible heading congratulating the first feedback submission (#1583).',
+  'feedback-first-notice': 'Preserves the successful filing and optional bounty outcome in the first-feedback confirmation (#1583).',
+  'feedback-first-fix': 'Starts an editable fix draft for the feedback issue (#1583).',
+  'feedback-first-fix-note': 'Explains the fix draft or the collaboration access requirement (#1583).',
+  'feedback-first-board': 'Opens the board of the app that received the feedback (#1583).',
+  'feedback-first-done': 'Dismisses the first-feedback confirmation without starting work (#1583).',
   'improve-working-dot': 'What is left on #improve-btn once the session COUNT moved to the bell (#1610): a bare 8px emerald pulse, rendered only while a dev session the viewer can see is mid-turn. It carries no text and no count, because that is the distinction the move was about — a count is an event waiting to be read and belongs where reading happens, while "a turn is running right now" is a live fact about this button that needs no dismissal. Top-right, so it cannot hide under the bottom-left outbox dot.',
   'wallet-recovery-modal': 'Native-only recovery for a pre-merge email wallet when authoritative session admission reports that the seeded wallet pool is empty. Opened ONLY from Settings → Usernode app → connection ("Connect existing wallet"); it used to open itself on every failed admission attempt, which is the pop-up that was reported.',
   // ── Home area labels: the block chrome moved above the card ──────
@@ -286,8 +305,8 @@ const ADDED_IDS = {
   // inside an app is already about.
   'improve-views': 'The block holding the three. #1431 built it; #1443 kept it.',
   'app-context-row-app': 'View and use the app — Improve.openApp(). Labelled Home on the self-hosted platform row.',
+  'app-context-row-workshop': 'The app\'s Workshop — the lander: the same cards as the Board, grouped by theme, with the vote and since-last-visit strips above them. Replaced the Activity segment.',
   'app-context-row-board': 'The app\'s Board.',
-  'app-context-row-activity': 'The app\'s Activity stream.',
   // ── #1443: the chip and its menu ────────────────────────────────
   'app-switcher-btn': 'The chip: the header\'s label on EVERY screen, and the one control that opens a list. #1431 built this as #header-title-tab but gated it on being inside an app; the gate is the whole difference, and losing it is what let #header-menu-btn, #back-icon-home and #messages-btn all go. It carries the same tinted 28px surface as #back-btn and the bell, because on the bare page ground it read as the heading it replaced.',
   'app-switcher-name': 'The label inside the chip — the same text #header-title carried as a bare heading, now a named slot so a declared check can assert WHAT the chip says and not merely that it exists.',
@@ -316,6 +335,10 @@ const ADDED_IDS = {
   'waitlist-confirm': 'The confirm-your-email block on the join success state. Hides once the code is accepted.',
   'waitlist-code': 'Six-digit email verification code; confirms the same row the mailed link does.',
   'waitlist-code-submit': 'Submits the verification code.',
+  'waitlist-enter-code': 'Step-1 link to the confirm step, for somebody who joined earlier and whose 15-minute code expired. Before it, that control was reachable only by submitting the join form again.',
+  'waitlist-confirm-email': 'The address the code belongs to, asked for only when the confirm step was reached without a join. Hidden after a join, where the form field still holds it.',
+  'waitlist-resend': 'Requests a fresh confirmation code (POST /api/public/waitlist/resend). Disabled for the advertised 60-second gap.',
+  'waitlist-resend-note': 'The resend result, kept apart from #waitlist-msg so a wrong code and a resend answer cannot overwrite each other.',
   // The share link that replaced the typed rows (see RETIRED_IDS above).
   'more-invite-url': "The signup's shareable invite link; joins through it set waitlist_signups.invited_by.",
   'more-invite-copy': 'Copies the invite link to the clipboard.',
@@ -347,8 +370,16 @@ const ADDED_IDS = {
   // these ids are present here even on a build where no store listing has
   // been published and the strip can never show.
   'mobile-install-banner': 'The phone-browser strip offering the native app (#1372). Sits under #offline-banner and stacks with it.',
-  'mobile-install-open': 'The store link. href comes from app_version_configs.update_url via GET /api/public/mobile-app, per OS.',
-  'mobile-install-dismiss': 'Dismisses the strip for good; the answer is kept in localStorage.',
+  'mobile-install-open': 'The strip\'s primary control. An anchor to the store when a listing is published for this OS (href from app_version_configs.update_url via GET /api/public/mobile-app); a button revealing the Add-to-Home-Screen steps when none is (#1513).',
+  'mobile-install-dismiss': 'Dismisses the strip for this session; the answer is kept in sessionStorage, so the next visit is offered the app once more (#1514).',
+  // #1561 — the once-per-account welcome on Home. A new account lands on a
+  // launcher grid of other people's apps with nothing on the screen saying
+  // what the place is, so the banner states it: the apps are changed by the
+  // people using them, and nothing ships without a group vote. Like the
+  // install strip above, it is always in the document and starts `hidden`,
+  // because the viewer is not known at prerender time.
+  'home-welcome': 'The dismissible first-login explainer at the top of #home-body (#1561).',
+  'home-welcome-dismiss': 'Dismisses it for good, per account: the answer is kept in localStorage under the viewer\'s user id.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.
@@ -466,6 +497,14 @@ const ADDED_IDS = {
   'connector-prompt-help': 'Settings → Connectors block explaining how to stop the per-call connector permission prompts (#1218).',
   'connector-allow-rules': 'The three read-only allow rules, rendered for copying into a personal ~/.claude/settings.json (#1218).',
   'connector-allow-rules-copy': 'Copy button for that block (#1218).',
+  // #1607: the two product walkthroughs below the connector URL are six and
+  // seven steps, and the reported cost was reading them. These open a new
+  // chat pre-loaded with the server URL and the job, so the assistant that
+  // will use the connector answers "where is that button" instead. The href
+  // is written by Settings._renderConnectors() from the live #connector-url
+  // value, never hardcoded, so a fork shows its own.
+  'connector-open-claude': 'Settings → Connectors link opening a pre-loaded Claude chat to walk through connector setup (#1607).',
+  'connector-open-chatgpt': 'The same for ChatGPT (#1607).',
   // The in-chat setup tip fired once in production and locked itself out, and
   // the panel it points at had one flaw of its own: a single block headed "add
   // this to ~/.claude/settings.json", which is the wrong file for Claude Code

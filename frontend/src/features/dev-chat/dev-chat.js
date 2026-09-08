@@ -1324,6 +1324,7 @@ const DevChat = {
   // dev chat tab shows a fresh session list instead of re-rendering the
   // previous app's session.
   reset() {
+    DevChat._stopSpendPolling();
     // #161: leaving the app (home / different app) while a turn is
     // running counts as leaving the session — arm its completion
     // notification before the state below is dropped.
@@ -1394,13 +1395,21 @@ const DevChat = {
     };
   },
 
-  // True when the page carries ?demo=1. The server only honours it in
-  // staging (see the demo branch on GET /api/budget in routes/sessions.js),
-  // so this is safe to send always — same pattern as Settings._cliTokensDemo.
-  _budgetDemo() {
+  // The page's ?demo= value, when it is one the budget route answers:
+  // '1' (the daily allowance spent) or, since #1788, 'weekly-out' (the
+  // weekly one spent). The server only honours either in staging (see the
+  // demo branches on GET /api/budget in routes/sessions.js), so this is
+  // safe to send always — same pattern as Settings._cliTokensDemo.
+  _budgetDemoValue() {
     try {
-      return new URLSearchParams(window.location.search).get('demo') === '1';
-    } catch { return false; }
+      const v = new URLSearchParams(window.location.search).get('demo');
+      return (v === '1' || v === 'weekly-out') ? v : null;
+    } catch { return null; }
+  },
+
+  // True when the page carries a demo budget flag of either spelling.
+  _budgetDemo() {
+    return !!DevChat._budgetDemoValue();
   },
 
   async refreshBudget() {
@@ -1425,7 +1434,7 @@ const DevChat = {
       // ?demo=1 passthrough so a staging reviewer can see the exhausted
       // state (red meter + three-route banner) without burning a real
       // daily allowance. Strictly a no-op in production.
-      const res = await fetch(`/api/budget${DevChat._budgetDemo() ? '?demo=1' : ''}`);
+      const res = await fetch(`/api/budget${DevChat._budgetDemo() ? `?demo=${DevChat._budgetDemoValue()}` : ''}`);
       if (res.ok) DevChat.budget = await res.json();
     } catch {}
     DevChat.renderBudget();
@@ -1447,7 +1456,9 @@ const DevChat = {
       role: 'assistant',
       content: '',
       creditsCard: {
-        error: 'Daily limit reached ($20.00). Resets at midnight UTC.',
+        error: DevChat._creditWindow().weekly
+          ? 'Weekly limit reached ($175.00). Resets Monday 00:00 UTC.'
+          : 'Daily limit reached ($20.00). Resets at midnight UTC.',
         hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
         globalOut: DevChat._globalBudgetOut(),
         verificationRequired: false,
@@ -1489,6 +1500,31 @@ const DevChat = {
     return CO.resetSentence(state);
   },
 
+  // #1788: the allowance runs over two windows now (daily and weekly) and
+  // the server reports whichever one is BINDING in the legacy
+  // limit/spent/remaining fields. Every sentence that used to hardcode
+  // "today" / "daily" asks here instead, so the meter, its tooltip and the
+  // banner all name the window the numbers actually describe.
+  _creditWindow() {
+    const b = DevChat.budget || {};
+    const weekly = b.capWindow === 'weekly';
+    return {
+      weekly,
+      // "Today: …" / "This week: …"
+      label: b.windowLabel || (weekly ? 'This week' : 'Today'),
+      // "…left today" / "…left this week"
+      when: weekly ? 'this week' : 'today',
+      // "your $20.00 platform daily limit"
+      limitNoun: weekly ? 'weekly limit' : 'daily limit',
+      // "your free daily AI credits"
+      creditsNoun: weekly ? 'free weekly AI credits' : 'free daily AI credits',
+      // Fallback for the reset sentence when CreditOptions is absent.
+      resetFallback: weekly
+        ? 'Resets Monday 00:00 UTC.'
+        : 'Resets at midnight UTC.',
+    };
+  },
+
   renderBudget() {
     // #463: budget data just changed (usage event, chat open, key
     // save/remove) — sync the credits-exhausted banner alongside the
@@ -1514,6 +1550,26 @@ const DevChat = {
   // thresholds, the wording, the dollar formatting, the reset sentence, and
   // the limit-first billing rule — and the component only draws them.
   _budgetPillView() {
+    const view = DevChat._settledBudgetPillView();
+    const spend = DevChat._liveSpend;
+    if (!spend || DevChat._isOpenRouterSession()
+        || Number(spend.sessionId) !== Number(DevChat.currentSession?.id)) return view;
+    return {
+      title: view.title,
+      parts: [...view.parts,
+        ...(view.parts.length ? [{ text: ' · ', className: 'text-zinc-500 dark:text-zinc-400' }] : []),
+        {
+          text: `this turn ${spend.estimated ? '~' : ''}$${(spend.costCents / 100).toFixed(2)}`,
+          className: 'text-zinc-500 dark:text-zinc-400',
+          title: spend.estimated
+            ? 'Estimated token spend so far. Updates while Claude Code works; final usage determines billing.'
+            : 'Token spend reported by Claude Code for this turn.',
+        },
+      ],
+    };
+  },
+
+  _settledBudgetPillView() {
     const NONE = { title: null, parts: [] };
     const muted = 'text-zinc-500 dark:text-zinc-400';
     // An OpenRouter session bills the user's own provider key, so the
@@ -1593,11 +1649,12 @@ const DevChat = {
         parts.push({ text: ' · ', className: muted });
         parts.push({ text: `your key $${byok}`, className: 'text-emerald-700 dark:text-emerald-400' });
       }
+      const win = DevChat._creditWindow();
       return {
-        title: `Today: $${spent} of your $${limit} platform daily limit`
+        title: `${win.label}: $${spent} of your $${limit} platform ${win.limitNoun}`
           + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
-          + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. `
-          + (resetTip || 'Resets at midnight UTC.'),
+          + `. The ${win.limitNoun} is used first; your key (…${last4}) takes over once it runs out. `
+          + (resetTip || win.resetFallback),
         parts,
       };
     }
@@ -1609,9 +1666,10 @@ const DevChat = {
     // pair — just unmistakably red, with the tooltip pointing at the
     // BYOK escape hatch. The banner carries the wordy explanation.
     if (DevChat._creditsExhausted()) {
+      const winOut = DevChat._creditWindow();
       return {
-        title: `Your free daily AI credits are used up. ${
-          resetTip || 'Resets at midnight UTC.'} Or add your own Anthropic API key in Settings to keep working now.`,
+        title: `Your ${winOut.creditsNoun} are used up. ${
+          resetTip || winOut.resetFallback} Or add your own Anthropic API key in Settings to keep working now.`,
         parts: [
           { text: `$${spent}`, className: 'text-red-700 font-semibold dark:text-red-400' },
           { text: `/$${limit}`, className: 'text-red-700 dark:text-red-400' },
@@ -1620,9 +1678,10 @@ const DevChat = {
     }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
     const color = pct > 80 ? 'text-red-700 dark:text-red-400' : pct > 50 ? 'text-yellow-700 dark:text-yellow-400' : 'text-emerald-700 dark:text-emerald-400';
+    const winOk = DevChat._creditWindow();
     return {
-      title: `Today: $${spent} of your $${limit} free daily AI credits. ${
-        resetTip || 'Resets at midnight UTC.'}`,
+      title: `${winOk.label}: $${spent} of your $${limit} ${winOk.creditsNoun}. ${
+        resetTip || winOk.resetFallback}`,
       parts: [
         { text: `$${spent}`, className: color },
         { text: `/$${limit}`, className: muted },
@@ -1706,9 +1765,11 @@ const DevChat = {
       tone: 'red',
       icon: 'warn',
       lead: userOut
-        ? 'You\u2019ve used up today\u2019s free AI credits.'
+        ? `You\u2019ve used up ${DevChat._creditWindow().when === 'this week'
+          ? 'this week\u2019s' : 'today\u2019s'} free AI credits.`
         : 'The platform\u2019s shared daily AI budget is used up.',
-      reset: DevChat._creditResetSentence() || 'Free credits reset at midnight UTC.',
+      reset: DevChat._creditResetSentence()
+        || `Free credits reset ${DevChat._creditWindow().weekly ? 'Monday 00:00 UTC' : 'at midnight UTC'}.`,
       tail: ' Or keep working right now ' + (DevChat._externalFlowsAvailable()
         ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
         : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'),
@@ -2077,7 +2138,8 @@ const DevChat = {
     const reset = DevChat._creditResetSentence();
     const lead = DevChat._globalBudgetOut()
       ? 'The platform\u2019s shared daily AI budget is used up.'
-      : 'You\u2019ve used up today\u2019s free AI credits.';
+      : `You\u2019ve used up ${DevChat._creditWindow().weekly
+        ? 'this week\u2019s' : 'today\u2019s'} free AI credits.`;
     return reset ? `${lead} ${reset}` : lead;
   },
 
@@ -3105,6 +3167,7 @@ const DevChat = {
     const switchingSession = !DevChat.currentSession
       || Number(DevChat.currentSession.id) !== Number(sessionId);
     if (switchingSession) {
+      DevChat._stopSpendPolling();
       // #771: a docked staging preview belongs to the session we're
       // leaving — close it so session A's preview can't render beside
       // session B's chat.
@@ -4555,6 +4618,8 @@ const DevChat = {
 
   _setStreamingUI(streaming, phase = null, { stoppable = true } = {}) {
     DevChat._composerBusy = !!streaming;
+    if (streaming) DevChat._startSpendPolling();
+    else DevChat._stopSpendPolling();
     if (streaming) DevChat._streamingPhase = phase;
     else DevChat._streamingPhase = null;
     // #1378: kept alongside the phase so every repaint that only knows the
@@ -5017,6 +5082,55 @@ const DevChat = {
     DevChat._hideActivity();
   },
 
+  // Read the same authorized status snapshot used for reconnects. No credit
+  // writes or per-token network requests; one bounded request every 3s.
+  _liveSpend: null,
+  _spendPollTimer: null,
+  _spendPollSession: null,
+  _spendPollGeneration: 0,
+
+  _applyLiveSpend(payload, sessionId) {
+    if (Number(DevChat.currentSession?.id) !== Number(sessionId)) return;
+    const spend = payload?.busy ? payload.spend : null;
+    DevChat._liveSpend = spend && Number.isFinite(spend.costCents) && spend.costCents > 0
+      ? { sessionId, costCents: spend.costCents, estimated: spend.estimated !== false } : null;
+    DevChat.renderBudget();
+  },
+
+  _startSpendPolling() {
+    const sessionId = DevChat.currentSession?.id;
+    if (!sessionId || DevChat._isOpenRouterSession()) return;
+    if (DevChat._spendPollTimer && DevChat._spendPollSession === sessionId) return;
+    DevChat._stopSpendPolling();
+    DevChat._spendPollSession = sessionId;
+    const generation = DevChat._spendPollGeneration;
+    let pending = false;
+    const poll = async () => {
+      // The reconnect poll already fetches the exact same snapshot.
+      if (pending || DevChat._progressPollTimer) return;
+      pending = true;
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/status`);
+        if (!res.ok) return;
+        const payload = await res.json();
+        if (generation !== DevChat._spendPollGeneration) return;
+        DevChat._applyLiveSpend(payload, sessionId);
+      } catch { /* preserve the last observation through transient failures */ }
+      finally { pending = false; }
+    };
+    DevChat._spendPollTimer = setInterval(poll, 3000);
+  },
+
+  _stopSpendPolling() {
+    if (DevChat._spendPollTimer) clearInterval(DevChat._spendPollTimer);
+    DevChat._spendPollTimer = null;
+    DevChat._spendPollSession = null;
+    DevChat._spendPollGeneration += 1;
+    const hadSpend = !!DevChat._liveSpend;
+    DevChat._liveSpend = null;
+    if (hadSpend) DevChat.renderBudget();
+  },
+
   _progressPollTimer: null,
 
   _startProgressPolling(sessionId, initialProgress, initialMetadata = null) {
@@ -5030,10 +5144,14 @@ const DevChat = {
     }
 
     DevChat._progressPollTimer = setInterval(async () => {
+      const spendGeneration = DevChat._spendPollGeneration;
       try {
         const res = await fetch(`/api/sessions/${sessionId}/status`);
         if (!res.ok) return;
         const payload = await res.json();
+        if (Number(DevChat.currentSession?.id) !== Number(sessionId) || !DevChat.isStreaming
+            || spendGeneration !== DevChat._spendPollGeneration) return;
+        DevChat._applyLiveSpend(payload, sessionId);
         const { busy, progress, estimate, stopping, stoppable } = payload;
         // #907: a machine can attach or detach mid-turn; keep the chip honest.
         DevChat._applyRunnerState(payload);
@@ -6543,6 +6661,46 @@ const DevChat = {
     const parsed = parseFloat(String(input.value || '').replace(/[^\d.-]/g, ''));
     if (Number.isFinite(parsed)) DevChat._qaNumber[gi] = Math.max(num.min, parsed);
     DevChat.renderMessages();
+  },
+
+  /**
+   * The question groups the chips on screen are drawn from, or null (#1601).
+   *
+   * Every Q/A interaction goes through this: the chip tap, the escape hatch,
+   * the number stepper and its typed commit, "Send answers" and "Use the
+   * suggested defaults". It was CALLED in five places and DEFINED in none, so
+   * each of them threw `DevChat._qaCurrentGroups is not a function` at the
+   * first line and the whole quick-check step was a dead end — which is what
+   * "selecting use the suggested defaults does nothing, send answers does
+   * nothing, not able to continue" was.
+   *
+   * The rule is `_buildChatView`'s `wantsQa`, restated so the two cannot
+   * disagree about WHICH message is being answered: the chips render on the
+   * last non-system message when that message is the assistant's, carries a
+   * non-empty `suggestions` array, and the session is one the viewer can still
+   * act in. Anything else renders no chips, and this answers null so the
+   * handlers return instead of acting on a question nobody can see.
+   *
+   * It returns the RAW `msg.suggestions`, not `_qaSpec`'s view of them: the
+   * handlers index `groups[gi].answers[ai]` expecting plain answer strings,
+   * while the spec maps each answer to a `{ text, suggested, selected }`
+   * object for rendering.
+   */
+  _qaCurrentGroups() {
+    const session = DevChat.currentSession;
+    if (!session || (session.status !== 'active' && session.status !== 'promoted')) return null;
+    const messages = DevChat.messages || [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (!msg || msg.role === 'system') continue;
+      // The last non-system row. If the viewer has already replied it is
+      // theirs, the chips are gone, and there is nothing to answer.
+      if (msg.role === 'user') return null;
+      return Array.isArray(msg.suggestions) && msg.suggestions.length
+        ? msg.suggestions
+        : null;
+    }
+    return null;
   },
 
   /**
@@ -8139,7 +8297,42 @@ const DevChat = {
       // to be wider).
       staging: { open: stagingOpen, width: DevChat._readStagingPanelWidth() || null },
       proposalHint: !!DevChat._proposalHint,
+      returnHint: DevChat._showReturnHint(),
     };
+  },
+
+  // #1595: keep the first-use explainer until it is acknowledged. Scope the
+  // dismissal to the viewer, across apps/sessions, with an in-memory fallback
+  // when browser storage is unavailable. Merely reading someone else's chat
+  // must not consume your first-use hint.
+  _dismissedReturnHints: new Set(),
+
+  _returnHintKey() {
+    // A deterministic capture can show the tip even after dismissal, without
+    // writing the viewer's preference or changing other screenshot states.
+    try {
+      const shot = new URLSearchParams(location.search).get('shot');
+      if (shot) return shot === 'dev-chat-first-use' ? 'preview' : null;
+    } catch { /* no browser location */ }
+    if (!DevChat._ownsSession(DevChat.currentSession) || !App.user.id) return null;
+    return `usernode:dev-chat-return-hint:v1:${App.user.id}`;
+  },
+
+  _showReturnHint() {
+    const key = DevChat._returnHintKey();
+    if (!key || DevChat._dismissedReturnHints.has(key)) return false;
+    if (key === 'preview') return true;
+    try { return localStorage.getItem(key) !== '1'; } catch { return true; }
+  },
+
+  dismissReturnHint() {
+    const key = DevChat._returnHintKey();
+    if (!key) return;
+    DevChat._dismissedReturnHints.add(key);
+    if (key !== 'preview') {
+      try { localStorage.setItem(key, '1'); } catch { /* keep the in-memory dismissal */ }
+    }
+    DevChat._publishDevView();
   },
 
   /**
