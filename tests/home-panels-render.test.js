@@ -1580,13 +1580,11 @@ test('Settings no longer offers the Home screen widgets section', () => {
   assert.doesNotMatch(SETTINGS, /settings-home-panels-list/);
   assert.equal(INDEX.indexOf('data-settings-section="home-panels"'), -1);
   assert.equal(INDEX.indexOf('id="settings-home-panels-list"'), -1);
-  // The legacy column remains, but the API no longer reads or writes it.
+  // The retired preference has no remaining API reads or writes.
   assert.doesNotMatch(ROUTE.replace(/^\s*\/\/.*$/gm, ''), /home_panels_hidden/);
 });
 
-test('the retired visibility column is retained without a destructive migration', () => {
-  assert.match(SCHEMA, /home_panels_hidden TEXT\[\] NOT NULL DEFAULT '\{\}'/);
-});
+
 
 // ── The widgets can actually SEE Home ─────────────────────────────────
 //

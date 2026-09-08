@@ -645,7 +645,7 @@ test('the card-count position endpoint is retired', async () => {
   const route = read('src/routes/home-panels.js');
   assert.doesNotMatch(route, /router\.post\('\/api\/home-panels\/:key\/position'/);
   assert.doesNotMatch(route, /MAX_PANEL_POSITION =/);
-  // The column survives (this schema file is append-only) but nothing reads
+  // The separate legacy placement column survives, but nothing reads
   // it — a stale reader would silently resurrect the old placement model.
   const schema = read('src/db/schema.sql');
   assert.match(schema, /home_panel_positions JSONB NOT NULL DEFAULT '\{\}'/);
@@ -657,13 +657,10 @@ test('the card-count position endpoint is retired', async () => {
 
 // ─── Source pins ──────────────────────────────────────────────────────
 
-test('schema retains the inert legacy visibility column for rolling deployments', () => {
+test('schema removes the retired visibility column on existing and fresh databases', () => {
   const schema = read('src/db/schema.sql');
-  assert.match(
-    schema,
-    /ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT\[\] NOT NULL DEFAULT '\{\}'/,
-    'keep the existing column while older containers may still reference it'
-  );
+  assert.match(schema, /ALTER TABLE users DROP COLUMN IF EXISTS home_panels_hidden;/);
+  assert.doesNotMatch(schema, /ADD COLUMN[^;]*home_panels_hidden/);
 });
 
 test('the route is mounted in server.js', () => {
