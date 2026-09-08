@@ -728,6 +728,24 @@ ticket still fails. Builds lacking `sessionLifecycleProtocol: 2` are web-only
 and update-required. There is no fallback to a multi-call login, node-start,
 or auth-poll sequence.
 
+Builds advertising `restoreWebSession` can recover the web login from
+their retained native credential. This root-owned, trusted-top-frame method
+does not require a realm-session claim. Native calls
+`POST /api/v4/mobile/auth/restore-web-session`, persists the authenticated
+90-day lease receipt, installs the seven-day HttpOnly cookie in the OS WebView
+store, and returns only `{ status: "restored", protocol: 2, userId, attemptId }`
+(or `{ status: "absent" }`). The original web incarnation and attempt are
+preserved. Cookie material never crosses the Flutter or JavaScript bridge.
+
+Social tries this before treating a web-auth 401 as signed out, and renews
+during foreground use at most once daily per document, including walletless
+sessions. Network failures preserve the display snapshot. Logout closes
+admission and settles an already-admitted recovery before sending web logout;
+restored cookies are also checked against their exact live native credential
+on cookie-authenticated paths, so a late response cannot undo revocation.
+Deploy the server/schema support before distributing the native capability.
+Older builds keep their existing web-login behavior.
+
 Before an anonymous native shell submits any ordinary session-mint request,
 it invokes the privileged root-owned `prepareForLogin()` operation. Native
 closes admission, drains admitted work, revokes the exact retained credential,

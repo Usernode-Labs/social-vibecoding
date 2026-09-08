@@ -1,3 +1,4 @@
+const { nativeWebSessionIsLive } = require('./web-session-auth');
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const { getPool } = require('../db/pool');
@@ -207,7 +208,7 @@ async function authenticateWsCookie(req, pool) {
     const { rows } = await pool.query(
       `SELECT s.user_id, s.expires_at, u.username, u.is_admin
        FROM sessions s JOIN users u ON s.user_id = u.id
-       WHERE s.token = $1`,
+       WHERE s.token = $1 AND ${nativeWebSessionIsLive('s')}`,
       [token]
     );
 

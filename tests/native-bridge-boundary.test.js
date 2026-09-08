@@ -1659,3 +1659,15 @@ test('a build without the privileged bootstrap classifies as unsupported',
     assert.equal(diag.privileged.state, 'unsupported');
     assert.equal(diag.privileged.code, null);
   });
+
+test('web recovery is root-privileged and does not need an established realm session', async () => {
+  const restored = { status: 'restored', protocol: 2, userId: '41', attemptId: ESTABLISH_ATTEMPT };
+  const loaded = loadBridge({ capabilities: ['privilegedBridgeCapability', 'restoreWebSession'],
+    responseMethods: { restoreWebSession: restored } });
+  assert.equal(JSON.stringify(await loaded.sandbox.usernode.restoreWebSession()), JSON.stringify(restored));
+  const post = loaded.nativePosts.at(-1);
+  assert.equal(post.method, 'restoreWebSession');
+  assert.equal(post.privilegedCapability, 'navigation-capability');
+  assert.equal('realmSessionClaim' in post, false);
+  assert.equal('sessionToken' in post, false);
+});

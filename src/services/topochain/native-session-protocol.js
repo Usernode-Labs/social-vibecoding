@@ -1,5 +1,7 @@
 'use strict';
 
+const { nativeWebSessionIsLive } = require('../web-session-auth');
+
 const crypto = require('crypto');
 const {
   PROTOCOL,
@@ -339,14 +341,23 @@ class NativeSessionProtocol {
     return withTransaction(this.pool, async (client) => {
       const now = this.now();
       const { rows: sessionRows } = await client.query(
-        `SELECT token, user_id, native_session_incarnation_id
+        `SELECT token, user_id, native_session_incarnation_id,
+                native_session_credential_reference,
+                (SELECT c.attempt_id FROM native_session_credentials c
+                  WHERE c.credential_reference = sessions.native_session_credential_reference) AS native_attempt_id
            FROM sessions
           WHERE token = $1 AND expires_at >= $2
+            AND ${nativeWebSessionIsLive('sessions')}
           FOR UPDATE`,
         [sessionToken, now]
       );
       const session = sessionRows[0];
       if (!session) protocolError(401, 'unauthenticated', 'Unauthenticated.');
+      // Recovery grants continuation of the exact native session, never a
+      // fresh native credential that could survive revocation of its source.
+      if (session.native_session_credential_reference && session.native_attempt_id !== request.attemptId) {
+        protocolError(409, 'native_session_attempt_conflict', 'The restored web session must resume its original native attempt.');
+      }
 
       let incarnationId = session.native_session_incarnation_id;
       if (!incarnationId) {
@@ -590,6 +601,7 @@ class NativeSessionProtocol {
         `SELECT token FROM sessions
           WHERE native_session_incarnation_id = $1
             AND user_id = $2 AND expires_at >= $3
+            AND ${nativeWebSessionIsLive('sessions')}
           FOR KEY SHARE`,
         [row.web_session_incarnation_id, row.user_id, now]
       );

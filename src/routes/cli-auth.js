@@ -1,5 +1,7 @@
 'use strict';
 
+const { nativeWebSessionIsLive } = require('../services/web-session-auth');
+
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
@@ -502,7 +504,8 @@ function cliPreAuthRoutes(config) {
              COUNT(*) AS global_count
            FROM cli_device_authorizations
           WHERE status IN ('pending', 'approved')
-            AND clock_timestamp() < expires_at`,
+            AND clock_timestamp() < expires_at
+              AND ${nativeWebSessionIsLive('sessions')}`,
           [clientIp(req)]
         );
         if (Number(countRows[0].ip_count) >= (config.cliDeviceLivePerIp || 10)
