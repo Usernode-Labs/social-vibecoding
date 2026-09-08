@@ -6395,6 +6395,10 @@ ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS reconcile_started_at TI
 -- client falls back to a sentence derived from the counts.
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_text TEXT;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_at TIMESTAMPTZ;
+-- Why the last digest attempt got nothing, or NULL when it succeeded. Read by
+-- the lander's footnote, and it picks the retry window (an hour after a
+-- failure, a day after a success).
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_error TEXT;
 
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,

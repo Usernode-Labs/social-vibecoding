@@ -505,7 +505,16 @@ test('the model\'s paragraph is what the pane says, when there is one', () => {
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
   const derived = workshopHtml(AppView);
   assert.match(derived, /3 open items across 1 category\./);
-  assert.match(derived, /The summary at the top is worked out from the board; the model writes one on the next draft\./);
+  assert.match(derived, /The summary at the top is worked out from the board; the model writes one on the next pass\./);
+
+  // And when the last attempt FAILED, the footnote says why. That failure
+  // used to be a log line and a day of silence, which is what the report
+  // "could something be up with the summarizer?" cost to answer.
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }],
+    { digestError: 'Workshop digest response hit the output limit before it finished' });
+  const failed = workshopHtml(AppView);
+  assert.match(failed, /could not be written \(Workshop digest response hit the output limit before it finished\); it is retried within the hour/);
+  assert.ok(!failed.includes('the model writes one on the next pass'), 'not also the neutral line');
 });
 
 test('themes all start collapsed, and a deep link is what opens one', () => {

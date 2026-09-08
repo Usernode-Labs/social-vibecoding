@@ -604,9 +604,16 @@ function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
   // are indistinguishable on screen — a model that has never run and one
   // whose call is failing both leave the derived sentence up there, and the
   // only way to tell was to read the database.
-  parts.push(written
-    ? 'The summary at the top was written by the model on the same pass.'
-    : 'The summary at the top is worked out from the board; the model writes one on the next draft.');
+  if (written) {
+    parts.push('The summary at the top was written by the model on the same pass.');
+  } else if (meta.digestError) {
+    // The failure that used to be a log line and a day of silence. Naming
+    // it here is what turned "could something be up with the summarizer?"
+    // from a question about the database into one the page answers.
+    parts.push(`The model\u2019s summary could not be written (${meta.digestError}); it is retried within the hour, and the sentence at the top is worked out from the board meanwhile.`);
+  } else {
+    parts.push('The summary at the top is worked out from the board; the model writes one on the next pass.');
+  }
   const c = meta.coverage;
   if (c && c.pending) parts.push(`${c.pending} new ${c.pending === 1 ? 'card is' : 'cards are'} being placed.`);
   if (c && c.unplaced) {
