@@ -76,7 +76,11 @@ function freshRow(over) {
     // A paragraph written a minute ago, so a row is not implicitly DUE one:
     // staleness now schedules a pass of its own, and a null default would
     // make every test below secretly a digest test.
-    digest_text: 'The standing paragraph.', digest_at: ago(60 * 1000), digest_error: null, ...over,
+    digest_text: 'The standing paragraph.', digest_at: ago(60 * 1000), digest_error: null,
+    // Every stage under the current prompt, or every test below would
+    // secretly be a version-bump test.
+    discovery_version: llm.WORKSHOP_DISCOVERY_VERSION, placement_version: llm.WORKSHOP_PLACEMENT_VERSION,
+    digest_version: llm.WORKSHOP_DIGEST_VERSION, ...over,
   };
 }
 function makeStore(initialRow, extra) {
@@ -102,7 +106,7 @@ function makeStore(initialRow, extra) {
     if (/SET input_hash/.test(sql)) {
       st.log.push('write');
       const [, hash, themes, placements, unplaced, model, discovered, keyCount, added, removed, lastError, digest,
-        digestTried, digestError] = params;
+        digestTried, digestError, discoveryVersion, placedAll, placementVersion, digestVersion] = params;
       Object.assign(st.row, {
         input_hash: hash, themes_json: JSON.parse(themes), placements_json: JSON.parse(placements),
         unplaced_json: JSON.parse(unplaced), model, generated_at: now(),
@@ -119,6 +123,11 @@ function makeStore(initialRow, extra) {
         // The error travels with the clock: set (or cleared) on a pass that
         // tried, left alone on one that did not.
         digest_error: digestTried ? (digestError == null ? null : digestError) : st.row.digest_error,
+        // The prompt versions move with the ATTEMPT of each stage: a draft,
+        // a pass that placed every card, a digest that was tried.
+        discovery_version: discovered ? discoveryVersion : st.row.discovery_version,
+        placement_version: placedAll ? placementVersion : st.row.placement_version,
+        digest_version: digestTried ? digestVersion : st.row.digest_version,
       });
       return { rows: [st.row] };
     }
@@ -300,6 +309,15 @@ test('needsDiscovery: first run, a tenth of churn, or a day old with any change 
   assert.equal(svc.needsDiscovery({ ...base, discoveredAt: ago(day / 2), churnAdded: 6, churnRemoved: 4 }), 'drift', 'added and removed both count');
   assert.equal(svc.needsDiscovery({ ...base, discoveredAt: ago(day / 2), unplacedCount: 10 }), 'drift', 'what the placer could not fit counts too');
   assert.equal(svc.needsDiscovery({ ...base, discoveredAt: null, churnAdded: 1 }), 'age', 'a row without a draft date is a day old');
+  // Drafted under another prompt: due now, whatever the clock and the churn
+  // say. No version passed is not behind, so the cases above keep meaning
+  // what they say.
+  const v = llm.WORKSHOP_DISCOVERY_VERSION;
+  assert.equal(svc.needsDiscovery({ ...base, discoveredAt: ago(1000), discoveryVersion: v - 1 }), 'version');
+  assert.equal(svc.needsDiscovery({ ...base, discoveredAt: ago(1000), discoveryVersion: v + 1 }), 'version', 'a rollback re-runs too');
+  assert.equal(svc.needsDiscovery({ ...base, discoveredAt: ago(1000), discoveryVersion: v }), null, 'current, fresh and quiet');
+  assert.equal(svc.needsDiscovery({ ...base, discoveredAt: ago(1000), discoveryVersion: String(v) }), null, 'pg may hand back a string');
+  assert.equal(svc.needsDiscovery({ hasThemes: false, discoveryVersion: v - 1 }), 'first', 'no definitions is first, not version');
   assert.ok(svc.DISCOVERY_MAX_AGE_MS >= 60 * 60 * 1000);
   assert.ok(svc.DRIFT_RATIO > 0 && svc.DRIFT_RATIO <= 1);
 });
@@ -1019,6 +1037,256 @@ test('a row the old code left with a fresh clock and no text is written now, not
     assert.equal(again.skipped, 'unchanged');
     assert.deepEqual(m.calls.map((c) => c.kind), ['digest'], 'still one');
   } finally { llm._setClientForTests(prev); resetBoard(); }
+});
+
+// ── prompt versions ──────────────────────────────────────────────────
+//
+// Each stage records the prompt version it last ran with (the constants
+// beside the prompts in llm.js). A bump in the code makes that stage due
+// now, whatever the clocks and the churn say. Stamped on the attempt, so a
+// bump against a failing model keeps its backoff.
+
+const SETTLED = () => ({
+  themes_json: [{ id: 'a', name: 'A', description: 'd', saying: 's', anchors: ['issue:1'] }],
+  placements_json: { 'issue:1': 'a', 'issue:2': 'a' },
+  discovered_at: ago(1000), discovery_key_count: 2,
+});
+
+test('digestDue: the version first, then the clocks', () => {
+  const now = Date.parse('2026-01-10T12:00:00Z');
+  const v = llm.WORKSHOP_DIGEST_VERSION;
+  const fresh = { digest: 'x', digestAt: '2026-01-10T11:00:00Z', digestError: null };
+  assert.equal(svc.digestDue({ ...fresh, digestVersion: v }, now), null);
+  assert.equal(svc.digestDue({ ...fresh, digestVersion: v - 1 }, now), 'version', 'fresh, but under the old prompt');
+  assert.equal(svc.digestDue({ ...fresh, digestVersion: v + 1 }, now), 'version', 'a rollback re-runs too');
+  assert.equal(svc.digestDue({ ...fresh }, now), null, 'no version known: the clocks decide');
+  assert.equal(svc.digestDue({ digest: null, digestAt: null, digestVersion: v }, now), 'never');
+  assert.equal(svc.digestDue({ digest: null, digestAt: '2026-01-10T11:00:00Z', digestError: null, digestVersion: v }, now), 'never');
+  assert.equal(svc.digestDue({ digest: null, digestAt: '2026-01-10T11:30:00Z', digestError: 'boom', digestVersion: v }, now), null);
+  assert.equal(svc.digestDue({ digest: null, digestAt: '2026-01-10T10:30:00Z', digestError: 'boom', digestVersion: v }, now), 'retry');
+  assert.equal(svc.digestDue({ digest: 'x', digestAt: '2026-01-09T11:00:00Z', digestVersion: v }, now), 'age');
+  assert.equal(svc.digestStale({ ...fresh, digestVersion: v - 1 }, now), true, 'and digestStale is digestDue with a yes or no');
+  assert.equal(svc.versionBehind(1, 2), true);
+  assert.equal(svc.versionBehind(2, 2), false);
+  assert.equal(svc.versionBehind('2', 2), false, 'pg may hand back a string');
+  assert.equal(svc.versionBehind(null, 2), false, 'unknown is not behind');
+  assert.equal(svc.versionBehind(undefined, 2), false);
+});
+
+test('the three versions are positive integers and the digest is on its second', () => {
+  for (const v of [llm.WORKSHOP_DISCOVERY_VERSION, llm.WORKSHOP_PLACEMENT_VERSION, llm.WORKSHOP_DIGEST_VERSION]) {
+    assert.ok(Number.isInteger(v) && v >= 1, String(v));
+  }
+  // The columns default to 1, so the rows written before they existed count
+  // as version 1 of everything: a deploy re-drafts nothing by itself. The
+  // digest prompt was rewritten in #1820 while those rows still held the
+  // old paragraph, and 2 is what puts the new one on every app.
+  assert.equal(llm.WORKSHOP_DIGEST_VERSION, 2);
+});
+
+test('a digest version bump rewrites a fresh paragraph now, and only the paragraph', async () => {
+  boardOf(2);
+  const st = makeStore(freshRow({
+    ...SETTLED(),
+    digest_text: 'Under the old prompt.', digest_at: ago(60 * 1000),
+    digest_version: llm.WORKSHOP_DIGEST_VERSION - 1,
+  }));
+  const m = makeModel({ digest: 'Under the new prompt, written by the model.' });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(out.skipped, null, 'a minute-old paragraph would otherwise be a quiet pass');
+    assert.deepEqual(out.outdated, ['digest']);
+    assert.deepEqual(m.calls.map((c) => c.kind), ['digest'], 'one call: no re-draft, no placement');
+    assert.equal(st.row.digest_text, 'Under the new prompt, written by the model.');
+    assert.equal(st.row.digest_version, llm.WORKSHOP_DIGEST_VERSION);
+    assert.equal(st.row.discovery_version, llm.WORKSHOP_DISCOVERY_VERSION, 'the other stages are untouched');
+    assert.equal(st.row.placement_version, llm.WORKSHOP_PLACEMENT_VERSION);
+    const again = await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(again.skipped, 'unchanged', 'and now it is a day before the next one');
+    assert.deepEqual(m.calls.map((c) => c.kind), ['digest']);
+  } finally { llm._setClientForTests(prev); resetBoard(); }
+});
+
+test('a digest version bump against a failing model is one attempt, then the failure clock', async () => {
+  boardOf(2);
+  const st = makeStore(freshRow({
+    ...SETTLED(),
+    digest_text: 'Under the old prompt.', digest_at: ago(60 * 1000),
+    digest_version: llm.WORKSHOP_DIGEST_VERSION - 1,
+  }));
+  const m = makeModel({ fail: (kind) => kind === 'digest' });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(st.row.digest_text, 'Under the old prompt.', 'the old paragraph stands');
+    assert.match(String(st.row.digest_error), /digest boom/);
+    assert.equal(st.row.digest_version, llm.WORKSHOP_DIGEST_VERSION, 'the version is stamped on the attempt');
+    const again = await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(again.skipped, 'unchanged', 'so the next pass is quiet, not a retry storm');
+    assert.deepEqual(m.calls.map((c) => c.kind), ['digest']);
+    st.row.digest_at = ago(61 * 60 * 1000);
+    const later = await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(later.skipped, null, 'and the hour brings it back');
+    assert.deepEqual(later.outdated, [], 'as a retry, not as a version bump');
+  } finally { llm._setClientForTests(prev); resetBoard(); }
+});
+
+test('a discovery version bump re-drafts a fresh, quiet board, and the whole pipeline follows', async () => {
+  boardOf(2);
+  const st = makeStore(freshRow({
+    ...SETTLED(),
+    discovery_version: llm.WORKSHOP_DISCOVERY_VERSION - 1,
+  }));
+  const m = makeModel({ themes: [{ id: 'a', name: 'A', anchors: ['issue:1'] }], place: placeAllInto('a') });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(out.discovered, true);
+    assert.deepEqual(out.outdated, ['discovery']);
+    assert.deepEqual(m.calls.map((c) => c.kind), ['discovery', 'placement', 'digest'], 'as any re-draft');
+    assert.equal(st.row.discovery_version, llm.WORKSHOP_DISCOVERY_VERSION);
+    assert.equal(st.row.placement_version, llm.WORKSHOP_PLACEMENT_VERSION, 'a re-draft places every card, so placement is current too');
+    assert.equal(st.row.digest_version, llm.WORKSHOP_DIGEST_VERSION);
+    const again = await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(again.skipped, 'unchanged');
+  } finally { llm._setClientForTests(prev); resetBoard(); }
+});
+
+test('a placement version bump re-places every card but the anchors, without re-drafting', async () => {
+  boardOf(3);
+  const st = makeStore(freshRow({
+    themes_json: [
+      { id: 'a', name: 'A', description: 'd', saying: 's', anchors: ['issue:1', 'issue:99'] },
+      { id: 'b', name: 'B', description: 'd', saying: 's', anchors: [] },
+    ],
+    placements_json: { 'issue:1': 'a', 'issue:2': 'a', 'issue:3': 'a' },
+    discovered_at: ago(1000), discovery_key_count: 3,
+    placement_version: llm.WORKSHOP_PLACEMENT_VERSION - 1,
+  }));
+  const m = makeModel({ place: placeAllInto('b') });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(out.discovered, false, 'the definitions stand');
+    assert.equal(out.replaced, true);
+    assert.deepEqual(out.outdated, ['placement']);
+    assert.deepEqual(m.calls.map((c) => c.kind), ['placement'], 'no re-draft, and the paragraph is fresh');
+    assert.deepEqual(m.calls[0].cards.map((c) => c.key), ['issue:2', 'issue:3'],
+      'every card but the anchors, which are the draft’s own examples; an anchor no longer on the board is dropped');
+    assert.deepEqual(st.row.placements_json, { 'issue:1': 'a', 'issue:2': 'b', 'issue:3': 'b' });
+    assert.deepEqual(st.row.themes_json.map((t) => t.id), ['a', 'b']);
+    assert.equal(st.row.placement_version, llm.WORKSHOP_PLACEMENT_VERSION);
+    assert.equal(st.row.discovery_version, llm.WORKSHOP_DISCOVERY_VERSION);
+    const again = await svc.reconcile({ pool, app: APP, reason: 'sweep' });
+    assert.equal(again.skipped, 'unchanged');
+  } finally { llm._setClientForTests(prev); resetBoard(); }
+});
+
+test('an incremental placement leaves the placement version alone', async () => {
+  // Only a pass that placed EVERY card may claim the current prompt for all
+  // of them. The row cannot be behind here (a behind row is re-placed
+  // whole), so the check is on the write: the flag is false, the column
+  // keeps what it had.
+  boardOf(3);
+  const st = makeStore(freshRow({
+    ...SETTLED(),
+    discovery_key_count: 100,
+  }));
+  const m = makeModel({ place: placeAllInto('a') });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    await svc.reconcile({ pool, app: APP, reason: 'change' });
+    assert.deepEqual(m.calls.map((c) => c.kind), ['placement']);
+    assert.deepEqual(m.calls[0].cards.map((c) => c.key), ['issue:3'], 'the new card only');
+    const write = queries.filter((q) => /SET input_hash/.test(q.sql)).pop();
+    assert.equal(write.params[15], false, 'placedAll is off for a batch of new cards');
+    assert.equal(st.row.placement_version, llm.WORKSHOP_PLACEMENT_VERSION);
+  } finally { llm._setClientForTests(prev); resetBoard(); }
+});
+
+test('a view kicks a pass for a paragraph under an older prompt, and for one a day old', async () => {
+  boardOf(2);
+  const st = makeStore(freshRow({
+    ...SETTLED(),
+    digest_text: 'Under the old prompt.', digest_at: ago(60 * 1000),
+    digest_version: llm.WORKSHOP_DIGEST_VERSION - 1,
+  }));
+  const m = makeModel({ digest: 'Under the new prompt, written by the model.' });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.getThemes({ pool, app: APP });
+    assert.equal(out.pending, true, 'started from the view, not left to the hourly sweep');
+    assert.equal(out.pendingStage, 'digest');
+    assert.equal(out.stale, false, 'the grouping itself is not in question');
+    assert.equal(out.digest, 'Under the old prompt.', 'served as it stands, never waited on');
+    await settle();
+    assert.deepEqual(m.calls.map((c) => c.kind), ['digest']);
+    assert.equal(st.row.digest_text, 'Under the new prompt, written by the model.');
+    // A day-old paragraph under the current prompt kicks the same way.
+    svc._lastKickForTests.clear();
+    st.row.digest_at = ago(25 * 60 * 60 * 1000);
+    const again = await svc.getThemes({ pool, app: APP });
+    assert.equal(again.pending, true);
+    assert.equal(again.pendingStage, 'digest');
+    await settle();
+    assert.equal(m.calls.length, 2);
+    // A current, fresh one does not.
+    svc._lastKickForTests.clear();
+    const quiet = await svc.getThemes({ pool, app: APP });
+    assert.equal(quiet.pending, false);
+    assert.equal(quiet.pendingStage, null);
+    assert.equal(m.calls.length, 2);
+  } finally { llm._setClientForTests(prev); resetBoard(); }
+});
+
+test('a view kicks a re-place for cards placed under an older prompt', async () => {
+  boardOf(2);
+  makeStore(freshRow({
+    ...SETTLED(),
+    placement_version: llm.WORKSHOP_PLACEMENT_VERSION - 1,
+  }));
+  const m = makeModel({ place: placeAllInto('a') });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.getThemes({ pool, app: APP });
+    assert.equal(out.pending, true);
+    assert.equal(out.pendingStage, 'placement');
+    assert.equal(out.stale, true, 'the grouping shown is about to move');
+    await settle();
+    assert.deepEqual(m.calls.map((c) => c.kind), ['placement']);
+  } finally { llm._setClientForTests(prev); resetBoard(); }
+});
+
+test('a view kicks a re-draft for categories drafted under an older prompt', async () => {
+  boardOf(2);
+  makeStore(freshRow({
+    ...SETTLED(),
+    discovery_version: llm.WORKSHOP_DISCOVERY_VERSION - 1,
+  }));
+  const m = makeModel({ themes: [{ id: 'a', name: 'A', anchors: ['issue:1'] }], place: placeAllInto('a') });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.getThemes({ pool, app: APP });
+    assert.equal(out.pending, true);
+    assert.equal(out.pendingStage, 'discovery');
+    assert.equal(out.stale, true);
+    await settle();
+    assert.equal(m.calls[0].kind, 'discovery');
+  } finally { llm._setClientForTests(prev); resetBoard(); }
+});
+
+test('a row from before the columns existed reads as version 1 of everything', () => {
+  // NOT NULL DEFAULT 1 in the schema; the shape does the same for a row a
+  // test or an older fixture hands in without the columns.
+  const row = freshRow({ themes_json: [{ id: 'a', name: 'A', anchors: [] }] });
+  delete row.discovery_version; delete row.placement_version; delete row.digest_version;
+  queryHandler = async () => ({ rows: [row] });
+  return svc.getCached(pool, APP.id).then((r) => {
+    assert.equal(r.discoveryVersion, 1);
+    assert.equal(r.placementVersion, 1);
+    assert.equal(r.digestVersion, 1);
+  });
 });
 
 test('a merged row carries the proposal\u2019s plain-language summary, and the week is its own list', () => {

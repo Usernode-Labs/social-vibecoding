@@ -6399,6 +6399,17 @@ ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_at TIMESTAMPTZ;
 -- the lander's footnote, and it picks the retry window (an hour after a
 -- failure, a day after a success).
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_error TEXT;
+-- Which version of each stage's prompt the row was last produced by: the
+-- WORKSHOP_*_VERSION constants beside the prompts in services/llm.js. A
+-- bump makes that stage due on the app's next pass whatever its clocks say
+-- (discovery re-drafts, placement re-places every card, the digest is
+-- rewritten). Stamped on the ATTEMPT, like digest_at, so a bump against a
+-- failing model keeps its backoff instead of retrying on every view. The
+-- default grandfathers the rows written before the columns existed: a
+-- deploy re-drafts nothing by itself.
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovery_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS placement_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_version INTEGER NOT NULL DEFAULT 1;
 
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,
