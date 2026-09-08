@@ -773,25 +773,33 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
       {chat}
     </>
   );
-  const statusRow = dense ? (
-    <div className="dev-card-badges dev-card-status" data-empty={statusHasContent ? undefined : '1'}>{badgeRow}</div>
-  ) : (statusHasContent ? <div className="dev-card-badges">{badgeRow}</div> : null);
-
-  const primary = bandActions.slice(0, ACTION_PRIMARY_MAX);
-  // The board card's preview rides at the END of the band as a labelled pill
-  // (the builders still hand it over as `rail.preview`; the model did not
-  // move). The detail head's arrives as `actionPreview`, already labelled.
+  // The preview rides at the right end of the FACTS line now, not on an
+  // action row of its own. It is the one control that is about looking
+  // rather than doing, and a whole row for it pushed the card taller while
+  // the facts line beside it had space to spare. (The builders still hand it
+  // over as `rail.preview`; the model did not move.) The detail head's
+  // arrives as `actionPreview`, already labelled.
   const previewSpec = m.actionPreview
     || (m.rail.preview ? { ...m.rail.preview, iconOnly: false } : null);
   const bandPreview = previewSpec ? <Preview spec={previewSpec} /> : null;
-  const hasActions = primary.length > 0 || !!bandPreview;
-  const folded = useFoldedActions(primary, m.rail.menuKey || '', !!bandPreview);
+  const statusBody = (
+    <>
+      {badgeRow}
+      {bandPreview ? <span className="dev-card-status-end">{bandPreview}</span> : null}
+    </>
+  );
+  const statusRow = dense ? (
+    <div className="dev-card-badges dev-card-status" data-empty={statusHasContent || bandPreview ? undefined : '1'}>{statusBody}</div>
+  ) : (statusHasContent || bandPreview ? <div className="dev-card-badges">{statusBody}</div> : null);
+
+  const primary = bandActions.slice(0, ACTION_PRIMARY_MAX);
+  const hasActions = primary.length > 0;
+  const folded = useFoldedActions(primary, m.rail.menuKey || '', false);
   const actionRow = hasActions ? (
     <div className="gc-card-actions" ref={folded.ref}>
       {primary.map((a, i) => (
         <ActionButton key={a.key} a={a} fold={i > 0 && a.kudos == null ? i : undefined} hidden={i > 0 && i >= primary.length - folded.n} />
       ))}
-      {bandPreview}
     </div>
   ) : (dense ? <div className="gc-card-actions"></div> : null);
   const rail: RailSpec = { ...m.rail, preview: null };
@@ -843,7 +851,7 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
  * — and an open issue, which has no state, wears its type's amber so the
  * Issues column is not the one bare column.
  */
-function edgeFor(m: DevCardModel): string {
+export function edgeFor(m: DevCardModel): string {
   const s = m.pill?.state;
   if (s && s.label) return isOpenVote(s) ? 'vote' : (s.tone || 'neutral');
   const kind = String(m.key || '').split(':')[0];

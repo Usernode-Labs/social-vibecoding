@@ -400,10 +400,91 @@ test('the app is described, not counted', () => {
   // three numbers and no sentence, which gives the size of the board and
   // nothing about it. A theme earns its place here by SAYING what it is
   // about; the app itself was the one thing on the lander that did not.
-  assert.match(html, /3 open items across 1 theme, most of the movement in Theming\./);
-  assert.match(html, /landed this week/);
-  assert.match(html, /1 proposal is waiting on votes and 2 open items have nobody on them\./);
-  assert.ok(!/>\d+ open · /.test(html), 'the bare number line is gone');
+  // The four numbers are TILES. They were prose, which is the slowest way to
+  // read four integers and the reason the sentence never got to say anything
+  // else.
+  assert.match(html, /data-ws-dash-cell="open"><b>3<\/b>open items/);
+  assert.match(html, /data-ws-dash-cell="shipped"><b>1<\/b>shipped this week/);
+  assert.match(html, /data-ws-dash-cell="votes"><b>1<\/b>waiting on a vote/);
+  assert.match(html, /data-ws-dash-cell="unclaimed"><b>2<\/b>with nobody on them/);
+  assert.ok(!html.includes('open items across'), 'and the prose does not repeat them');
+  assert.ok(!html.includes('waiting on votes and'), 'nor these');
+
+  // What is left for the sentence is what a tile cannot show. Here that is
+  // the week-over-week read; NOT "most of the movement in Theming", because
+  // the seeded theme is two open issues nobody has touched, which is the
+  // absence of movement.
+  assert.match(html, /It is the first week in a fortnight anything landed\./);
+  assert.ok(!html.includes('most of the movement'), 'an unearned superlative is not printed');
+});
+
+test('with nothing qualitative to say, the pane is tiles and no sentence at all', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
+  // A paged history refuses to compare weeks, and a board with no theme in
+  // flight has no busiest. Both silent, so there is nothing left to write —
+  // and a fabricated sentence built out of the same four numbers on the tiles
+  // above would be worse than the gap.
+  AppView._mergedHasMore = true;
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-dash-cell="open"/, 'the tiles still carry the state');
+  assert.ok(!html.includes('dev-ws-strip-text'), 'and the paragraph is not rendered');
+});
+
+test('a paged merge history states a floor and no rate at all', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
+
+  // Both weeks are counted from the same page, and the EARLIER one is the
+  // half that falls off the end. So a truncated page used to read as a
+  // drought that never happened: an app merging twenty a week was told "20
+  // landed this week, the first in a fortnight". `At least` was already on
+  // the count and never helped, because the fault was in the comparison.
+  AppView._mergedHasMore = true;
+  const paged = workshopHtml(AppView);
+  assert.ok(!paged.includes('fortnight'), 'no drought is claimed off a partial page');
+  assert.ok(!paged.includes('the week before'), 'and no rate either');
+  // The floor is said in one character, on the tile itself.
+  assert.match(paged, /data-ws-dash-cell="shipped"[^>]*><b>1\+<\/b>/);
+  assert.match(paged, /title="At least this many/);
+
+  // With the whole history in hand the comparison is real, and stands.
+  AppView._mergedHasMore = false;
+  const whole = workshopHtml(AppView);
+  assert.match(whole, /data-ws-dash-cell="shipped"><b>1<\/b>/, 'no marker');
+  assert.match(whole, /It is the first week in a fortnight anything landed\./);
+});
+
+test('busiest names the theme that is MOVING, and stays quiet without a clear leader', () => {
+  const AppView = makeAppView();
+  const t = (name, counts) => ({ name, counts: { open: 0, underway: 0, review: 0, shipped: 0, fresh: 0, ...counts } });
+
+  // The bug: it sorted on `lastActive`, so ONE comment ten minutes ago on a
+  // ten-item theme beat a hundred-item one and the sentence told the group
+  // their work was somewhere it was not.
+  assert.equal(
+    AppView._busiestTheme([t('Quiet', { open: 90 }), t('Busy', { underway: 4, review: 2 })]),
+    'Busy',
+    'a big backlog is not movement; four underway and two in review is',
+  );
+
+  // Open items alone never win it.
+  assert.equal(AppView._busiestTheme([t('Backlog', { open: 200 })]), null);
+
+  // Neither does a near-tie: "most of the movement" is a strong claim.
+  assert.equal(
+    AppView._busiestTheme([t('A', { underway: 4 }), t('B', { underway: 3 })]),
+    null,
+    'within 1.5x is not "most"',
+  );
+  assert.equal(AppView._busiestTheme([t('A', { underway: 6 }), t('B', { underway: 3 })]), 'A');
+
+  // Nor a board where almost nothing is in flight at all.
+  assert.equal(AppView._busiestTheme([t('A', { shipped: 2 })]), null, 'under the floor');
+  assert.equal(AppView._busiestTheme([t('A', { shipped: 3 })]), 'A');
+  assert.equal(AppView._busiestTheme([]), null);
 });
 
 test('the model\'s paragraph is what the pane says, when there is one', () => {
@@ -418,10 +499,10 @@ test('the model\'s paragraph is what the pane says, when there is one', () => {
   // …and the derived sentence is what runs when there is none: no model, no
   // draft yet, or a call that failed. Same relationship the category grouping
   // has to the drafted themes.
-  assert.ok(!html.includes('open items across'), 'the derived one stands down');
+  assert.ok(!html.includes('first week in a fortnight'), 'the derived one stands down');
 
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
-  assert.match(workshopHtml(AppView), /open items? across 1 theme/);
+  assert.match(workshopHtml(AppView), /It is the first week in a fortnight anything landed\./);
 });
 
 test('themes all start collapsed, and a deep link is what opens one', () => {
@@ -824,7 +905,7 @@ test('the Workshop renders its strips, its themes and its folded rows', () => {
   // Short rows, not cards: the folded row with the card's own Vote button
   // INSIDE it, at the trailing edge — which is why the row is a div with the
   // button role and not a <button>.
-  assert.match(html, /<div role="button" tabindex="0" class="dev-ws-row" aria-expanded="false" data-ws-row="vote:proposal:34"[\s\S]*?<span class="dev-ws-row-trailing"><button [^>]*class="dev-vote-btn"/,
+  assert.match(html, /<div role="button" tabindex="0" class="dev-ws-row"[^>]*data-ws-row="vote:proposal:34"[\s\S]*?<span class="dev-ws-row-trailing"><button [^>]*class="dev-vote-btn"/,
     'a vote row is the folded row with the vote button inside it');
   assert.ok(!/<button[^>]*>[^<]*<button/.test(html), 'and no button nests in a button');
   assert.ok(!/data-ws-votes[\s\S]*?gc-vote-item/.test(html.slice(0, html.indexOf('data-ws-next'))),
@@ -839,12 +920,61 @@ test('the Workshop renders its strips, its themes and its folded rows', () => {
   // The first theme opens by default, and its rows are folded disclosures
   // that carry NO card-open hook — the delegated #dev-body handler must not
   // see one on the row.
-  assert.match(html, /<div role="button" tabindex="0" class="dev-ws-row" aria-expanded="false" data-ws-row="issue:12"/);
+  assert.match(html, /<div role="button" tabindex="0" class="dev-ws-row"[^>]*data-ws-row="issue:12"/);
   assert.ok(!/<div role="button"[^>]*data-issue-row/.test(html), 'the folded row is not an issue-row hook');
   assert.match(html, /data-ws-lane="review"/);
   assert.match(html, /data-ws-lane="shipped"/);
   assert.ok(!html.includes('dev-feed-entry'), 'nothing is unfolded on a plain paint');
   assert.match(html, /aria-pressed="true">By people</, 'the default order is by people');
+});
+
+test('a folded row wears the card\u2019s own edge, number and glyph, and no chevron', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12', 'session:34'] }]);
+  AppView._workshopShot = 'themes';
+  const html = workshopHtml(AppView);
+
+  // The EDGE, from the card's own edgeFor: an issue with no state wears its
+  // type's amber, a proposal mid-checks wears its bar's tone. The row used to
+  // carry that colour as a tinted icon tile the card does not have, so one
+  // item opened on a different mark at each size.
+  assert.match(html, /class="dev-ws-row"[^>]*data-edge="attention"[^>]*data-ws-row="issue:12"/);
+  assert.match(html, /class="dev-ws-row"[^>]*data-edge="neutral"[^>]*data-ws-row="proposal:34"/);
+  assert.match(CSS, /\.dev-ws-row\[data-edge="vote"\]\s+\{ --dev-edge: var\(--accent\); \}/);
+  assert.match(CSS, /\.dev-ws-row \{[^}]*inset var\(--dev-edge-w\) 0 0 color-mix/,
+    'drawn as the card draws it: an inset shadow at the same width, not a border');
+
+  // The NUMBER. A proposal's meta reads "PR#41", and the row matched only
+  // "#41", so every proposal row was missing the thing people cite it by.
+  assert.match(html, /<span class="font-mono">PR#41<\/span>/);
+  assert.match(html, /<span class="font-mono">#12<\/span>/, 'and an issue is unchanged');
+
+  // The GLYPH. Same 22px box, no tile, same 18px mark as the card's.
+  assert.match(CSS, /\.dev-ws-row > \.dev-card-icon \{[^}]*width: 22px;[^}]*background: transparent/);
+  assert.match(CSS, /\.dev-ws-row > \.dev-card-icon > svg \{ width: 18px; height: 18px; \}/);
+
+  // And no chevron: it promises a destination the row does not have.
+  const rows = html.split('class="dev-ws-row"').slice(1);
+  assert.ok(rows.length, 'there are folded rows to check');
+  for (const r of rows) {
+    assert.ok(!r.slice(0, r.indexOf('</div>')).includes('dev-ws-chev'), 'a folded row draws no chevron');
+  }
+  assert.match(html, /dev-ws-theme-foot[\s\S]*?dev-ws-chev/, 'a theme header still does');
+});
+
+test('the card\u2019s facts line keeps its chips instead of flattening them', () => {
+  // "Closes #1575 · @alice · design" was drawn as muted text with a dot
+  // between, so the two facts most worth not skipping on a proposal card
+  // read as a byline. The Workshop's folded row kept them as chips, which
+  // is the treatment that won.
+  assert.ok(!/\.dev-card-status > \.dev-badge \{[^}]*background: transparent/.test(CSS),
+    'the flattening is gone');
+  assert.ok(!/\.dev-card-status > \.dev-badge \+ \.dev-badge::before/.test(CSS),
+    'and so is the dot that stood in for the gap between pills');
+  assert.match(CSS, /\.dev-card-status > \.dev-badge \{\s*height: 19px;/);
+  // The band reserves two rows and clips; the taller facts row moves the cap.
+  assert.match(CSS, /max-height: 53px;/);
 });
 
 test('the footnote says what is actually happening to the category grouping', () => {
@@ -1082,8 +1212,12 @@ test('the strip is App | Workshop | Board, and the segments are anchors at their
 
 test('the declared checks cover the lander, its strips and an unfolded row', () => {
   const byName = (re) => dapp.tests.find((t) => re.test(t.name || ''));
-  const lands = byName(/lands on the Workshop on every width/);
+  const lands = byName(/lands on the Workshop, which leads with its number tiles/);
   assert.ok(lands && lands.expectSelector.includes('#dev-workshop'));
+  // Extended rather than added: the manifest keeps 20 of its 580 slots clear
+  // and was already at that working ceiling, so a new entry would have failed
+  // the check-count guard. Same intent, one level deeper.
+  assert.match(lands.expectSelector, /\[data-ws-dash-cell="open"\]/);
   const themesCheck = byName(/renders its themes into #dev-workshop/);
   assert.ok(themesCheck && /\.dev-ws-row\[role="button"\]\[aria-expanded\]/.test(themesCheck.expectSelector));
   const demo = byName(/A demo theme names the mock rows/);

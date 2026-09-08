@@ -5162,6 +5162,46 @@ const AppView = {
   // assigned. `in_progress` is the server's own composition of the first two
   // (routes/issues.js composeInProgress), already expiry-filtered, so this
   // asks the same question the card's "N building" chip answers.
+  /**
+   * "most of the movement in X" — the theme that is actually MOVING.
+   *
+   * This used to be `sort((a, b) => b.lastActive - a.lastActive)[0]`: the
+   * most recently TOUCHED theme, which is a different claim and usually a
+   * false one. A single comment on one issue ten minutes ago put a ten-item
+   * theme ahead of a hundred-item one, and the sentence then told the group
+   * that most of their work was somewhere it was not.
+   *
+   * Movement is work that changed state or is changing now: underway, in
+   * review, shipped this week, and cards that are new. Open items are NOT
+   * movement — a backlog nobody has touched is the opposite of it, and
+   * counting it would just name the biggest pile.
+   *
+   * And the clause is DROPPED unless there is a real leader. "Most of the
+   * movement" is a strong claim; two themes within half of each other do not
+   * support it, and neither does a board where almost nothing is in flight.
+   * Saying nothing is the honest answer far more often than it looks.
+   */
+  WORKSHOP_BUSIEST_MIN: 3,
+  WORKSHOP_BUSIEST_RATIO: 1.5,
+
+  _themeMovement(t) {
+    const c = (t && t.counts) || {};
+    return (c.underway || 0) + (c.review || 0) + (c.shipped || 0) + (c.fresh || 0);
+  },
+
+  _busiestTheme(themes) {
+    const ranked = (themes || [])
+      .map((t) => ({ name: t.name, n: AppView._themeMovement(t) }))
+      .filter((x) => x.n > 0)
+      .sort((a, b) => b.n - a.n);
+    if (!ranked.length) return null;
+    const top = ranked[0];
+    if (top.n < AppView.WORKSHOP_BUSIEST_MIN) return null;
+    const second = ranked[1] ? ranked[1].n : 0;
+    if (second && top.n < second * AppView.WORKSHOP_BUSIEST_RATIO) return null;
+    return top.name;
+  },
+
   _issueUnclaimed(it) {
     const ip = it && it.in_progress;
     if (ip && Array.isArray(ip.claims) && ip.claims.length) return false;
@@ -5412,9 +5452,7 @@ const AppView = {
       }).length,
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
       unclaimed: idle.length,
-      busiest: named.length
-        ? named.slice().sort((a, b) => b.lastActive - a.lastActive)[0].name
-        : null,
+      busiest: AppView._busiestTheme(named),
       // The model's two sentences, when there are any. The derived sentence
       // the client can always build stays the fallback — same relationship
       // the category grouping has to the drafted themes.
@@ -7714,15 +7752,19 @@ const AppView = {
     // action band belongs to kudos instead, and on the detail head, which
     // already spells it out in full in its own action list below the header.
     const preview = AppView._cardPreviewSpec(pr, { kind: 'proposal', sessionId: pr.id });
-    const explore = (!noNav && AppView._showExplorePill(pr) && !isMerged && !AppView.readOnly);
-    const actions = (isMerged || AppView.readOnly)
-      ? []
-      : [
-        ...AppView._cardVoteButtonSpecs(pr),
-        ...(explore ? [{ key: 'explore', label: 'Explore in dev chat', title: AppView.EXPLORE_CHAT_TITLE, explore: pr.id }] : []),
-      ];
+    // ⋯, NOT the action band (#1787 round four). It is a door to a side
+    // conversation ABOUT the proposal rather than one of the things you do
+    // to it, and at ~170px it was the widest pill on the card — routinely
+    // pushing Vote or Withdraw into the fold it should have been in itself.
+    //
+    // No new mechanism for this: `_proposalMenuItems` has always offered the
+    // row and suppressed it when the face carried one (`st.exploreOnFace`).
+    // Telling it the face carries none is the whole change, and the detail
+    // head is untouched — it has room, spells the pill out in full, and has
+    // no ⋯ for a menu row to live in.
+    const actions = (isMerged || AppView.readOnly) ? [] : [...AppView._cardVoteButtonSpecs(pr)];
     const menu = AppView._proposalMenuItems(pr, {
-      mine, imported, isMerged, isMerging, noNav, exploreOnFace: explore,
+      mine, imported, isMerged, isMerging, noNav, exploreOnFace: false,
     });
 
     // #195/#211: the before/after capture tiles no longer live on the card —

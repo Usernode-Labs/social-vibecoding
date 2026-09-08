@@ -149,12 +149,12 @@ function assertCardActionContract(AppView, html, expect) {
     if (hasPreview) {
       assert.doesNotMatch(html, /gc-vote-btn-preview[^>]*gc-vote-btn-icon|gc-vote-btn-icon[^>]*gc-vote-btn-preview/,
         'the board preview is the labelled pill, not the icon variant');
-      const band = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
-      assert.ok(band && /gc-vote-btn-preview[^>]*>[\s\S]*Preview</.test(band[1]),
-        'the labelled Preview pill rides in the action band');
-      const pills = (band[1].match(/<(?:button|span)\b[^>]*class="[^"]*"/g) || []);
-      assert.match(pills[pills.length - 1], /gc-vote-btn-preview/,
-        'and it is the band\'s last pill — the right end of the line');
+      // #1787 round four: the preview rides at the RIGHT END OF THE FACTS
+      // LINE, not on an action row of its own. It is the one control about
+      // looking rather than doing, and a whole row for it pushed the card
+      // taller while the facts line beside it had space to spare.
+      assert.match(html, /dev-card-status[\s\S]*?dev-card-status-end[^>]*>[\s\S]*?gc-vote-btn-preview/,
+        'the labelled Preview pill closes the facts line');
       const railAt = html.indexOf('dev-card-rail');
       if (railAt > 0) {
         assert.doesNotMatch(html.slice(railAt), /gc-vote-btn-preview/, 'the rail no longer carries it');
@@ -409,7 +409,7 @@ const baseProposal = (over) => ({
   created_at: '2026-06-01T00:00:00Z', ...over,
 });
 
-test('proposal card: the vote is ONE button beside the bar, with Explore in the band', () => {
+test('proposal card: the vote is ONE button beside the bar, and the band is empty', () => {
   const AppView = makeAppView(ME);
   const model = AppView._proposalCardModel(baseProposal());
   const html = cardHtml(model);
@@ -432,10 +432,11 @@ test('proposal card: the vote is ONE button beside the bar, with Explore in the 
   assert.match(voted, /data-vote-btn="yes"[^>]*title="You voted Yes\. Press to change your vote\."/);
   const votedNo = cardHtml(AppView._proposalCardModel(baseProposal({ my_vote: 'no' })));
   assert.match(votedNo, /class="dev-vote-btn dev-vote-btn-no" data-vote-btn="no"/);
-  // Explore is the band's one primary now — the vote no longer spends two of
-  // its three slots.
-  assert.match(html, /gc-explore-chat-btn/, 'Explore promoted onto the face');
-  assertCardActionContract(AppView, html, { primary: 1, menu: true });
+  // And Explore is back in ⋯ (#1787 round four), so the band on a live
+  // foreign proposal is the vote and nothing else.
+  assert.ok(!html.includes('gc-explore-chat-btn'), 'Explore is not a face pill');
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/), 'it is a ⋯ row');
+  assertCardActionContract(AppView, html, { primary: 0, menu: true });
 });
 
 test('the detail head takes the same one vote button (topic page, round three)', () => {
@@ -465,13 +466,15 @@ test('proposal card (admin, not author): Admin merge / kudos stay in ⋯, Explor
   const model = AppView._proposalCardModel(baseProposal({ staging_url: 'https://stg.example' }));
   const html = cardHtml(model);
   assert.ok(hasAction(model, 'swapToStagingForSession', 7), 'Preview present, as the pill');
-  assertCardActionContract(AppView, html, { primary: 1, menu: true, previewIcon: true });
+  // primary: 0 — the vote is a status-band button, Explore is a ⋯ row and
+  // the preview closes the facts line, so a proposal card's action band is
+  // empty and `.gc-card-actions:empty` collapses it.
+  assertCardActionContract(AppView, html, { primary: 0, menu: true, previewIcon: true });
   assert.ok(menuHas(AppView, html, /Admin merge/), 'Admin merge in ⋯');
   assert.ok(menuHas(AppView, html, /kudos/i), 'kudos in ⋯');
-  // One action, one place: Explore is on the face now, so its ⋯ row is gone.
-  assert.match(html, /gc-explore-chat-btn/, 'Explore pill on the card face');
-  assert.ok(!menuHas(AppView, html, /Explore in dev chat/),
-    'and therefore NOT also a ⋯ row');
+  // One action, one place, and since #1787 round four that place is ⋯.
+  assert.ok(!html.includes('gc-explore-chat-btn'), 'no Explore pill on the card face');
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/), 'Explore in ⋯');
 });
 
 test('proposal card (author): Open session + Withdraw move to ⋯', () => {
@@ -487,23 +490,23 @@ test('proposal card (author): Open session + Withdraw move to ⋯', () => {
 
 // #1045 was about the owner of an IMPORTED proposal: there is no in-app
 // session behind it, so "Open session" must not render — and precisely
-// because of that, Explore's promotion DOES reach this card. "An owner
-// reaches the Mayor from their own session" (#313/#827) has no session to
-// point at here, so without the pill the owner of a PR they imported gets
-// no AI affordance at all. _showExplorePill is the shared predicate:
-// not-mine OR mine-but-imported gets the pill, live cards on the face.
-test('proposal card (author of an imported PR): Withdraw in ⋯, no session, Explore on the face', () => {
+// because of that, Explore DOES reach this card. "An owner reaches the Mayor
+// from their own session" (#313/#827) has no session to point at here, so
+// without it the owner of a PR they imported gets no AI affordance at all.
+// _showExplorePill is the shared predicate: not-mine OR mine-but-imported.
+// WHERE it is offered is a separate question, and since #1787 round four the
+// answer on a card is ⋯ rather than the face.
+test('proposal card (author of an imported PR): Withdraw and Explore in ⋯, no session', () => {
   const AppView = makeAppView(ME);
   const model = AppView._proposalCardModel(baseProposal({ user_id: ME, source: 'imported' }));
   const html = cardHtml(model);
   assert.ok(menuHas(AppView, html, /Withdraw/), 'Withdraw in ⋯');
   assert.ok(!menuHas(AppView, html, /Open session/), 'no dev session behind an imported PR');
-  assert.match(html, /gc-explore-chat-btn/,
-    'Explore promoted onto the face — the owner\'s only AI affordance (#1045)');
-  assert.ok(!menuHas(AppView, html, /Explore in dev chat/),
-    'one action, one place: on the face means no ⋯ row');
-  assert.match(html, /gc-card-actions/, 'shared action row present');
-  assertCardActionContract(AppView, html, { primary: 1, menu: true });
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/),
+    'Explore in ⋯ — the owner\'s only AI affordance (#1045)');
+  assert.ok(!html.includes('gc-explore-chat-btn'), 'one action, one place: not also a face pill');
+  assert.match(html, /gc-card-actions/, 'the reserved band is still emitted, and empty');
+  assertCardActionContract(AppView, html, { primary: 0, menu: true });
 });
 
 // ── Governance card ──────────────────────────────────────────────────────

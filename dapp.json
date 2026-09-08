@@ -1590,9 +1590,9 @@
       "expectText": "Submitted features"
     },
     {
-      "name": "The Dev tab lands on the Workshop on every width",
+      "name": "The Dev tab lands on the Workshop, which leads with its number tiles",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] .dev-ws-dash > [data-ws-dash-cell=\"open\"] + [data-ws-dash-cell=\"shipped\"] ~ [data-ws-dash-cell=\"unclaimed\"] > b"
     },
     {
       "name": "Proposal view shows the How-voting-works help button",
