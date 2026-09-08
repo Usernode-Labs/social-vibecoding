@@ -727,7 +727,9 @@ function ExtraRow({ x }: { x: ExtraSpec }): ReactNode {
 }
 
 /** The whole card. `m.attrs` carries the outer element's data-*, role and title. */
-export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
+export function DevCard(
+  { model: m, statusLead }: { model: DevCardModel; statusLead?: ReactNode },
+): ReactNode {
   const attrs: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(m.attrs || {})) {
     // `tabindex` must reach React by its DOM-property name or React warns —
@@ -773,25 +775,41 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
       {chat}
     </>
   );
-  const statusRow = dense ? (
-    <div className="dev-card-badges dev-card-status" data-empty={statusHasContent ? undefined : '1'}>{badgeRow}</div>
-  ) : (statusHasContent ? <div className="dev-card-badges">{badgeRow}</div> : null);
-
-  const primary = bandActions.slice(0, ACTION_PRIMARY_MAX);
-  // The board card's preview rides at the END of the band as a labelled pill
-  // (the builders still hand it over as `rail.preview`; the model did not
-  // move). The detail head's arrives as `actionPreview`, already labelled.
+  // The preview rides at the right end of the FACTS line now, not on an
+  // action row of its own. It is the one control that is about looking
+  // rather than doing, and a whole row for it pushed the card taller while
+  // the facts line beside it had space to spare. (The builders still hand it
+  // over as `rail.preview`; the model did not move.) The detail head's
+  // arrives as `actionPreview`, already labelled.
   const previewSpec = m.actionPreview
     || (m.rail.preview ? { ...m.rail.preview, iconOnly: false } : null);
   const bandPreview = previewSpec ? <Preview spec={previewSpec} /> : null;
-  const hasActions = primary.length > 0 || !!bandPreview;
-  const folded = useFoldedActions(primary, m.rail.menuKey || '', !!bandPreview);
+  // `statusLead` is a caller's own control, immediately LEFT of the preview
+  // at the same right-hand end. The Workshop puts its "Open card" toggle
+  // there (#1787 round four) so the two controls that are about seeing more
+  // of this item sit together, rather than one on the card and one in a
+  // strip of its own under it.
+  const statusEnd = statusLead || bandPreview ? (
+    <span className="dev-card-status-end">{statusLead}{bandPreview}</span>
+  ) : null;
+  const statusBody = (
+    <>
+      {badgeRow}
+      {statusEnd}
+    </>
+  );
+  const statusRow = dense ? (
+    <div className="dev-card-badges dev-card-status" data-empty={statusHasContent || statusEnd ? undefined : '1'}>{statusBody}</div>
+  ) : (statusHasContent || statusEnd ? <div className="dev-card-badges">{statusBody}</div> : null);
+
+  const primary = bandActions.slice(0, ACTION_PRIMARY_MAX);
+  const hasActions = primary.length > 0;
+  const folded = useFoldedActions(primary, m.rail.menuKey || '', false);
   const actionRow = hasActions ? (
     <div className="gc-card-actions" ref={folded.ref}>
       {primary.map((a, i) => (
         <ActionButton key={a.key} a={a} fold={i > 0 && a.kudos == null ? i : undefined} hidden={i > 0 && i >= primary.length - folded.n} />
       ))}
-      {bandPreview}
     </div>
   ) : (dense ? <div className="gc-card-actions"></div> : null);
   const rail: RailSpec = { ...m.rail, preview: null };
@@ -843,7 +861,7 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
  * — and an open issue, which has no state, wears its type's amber so the
  * Issues column is not the one bare column.
  */
-function edgeFor(m: DevCardModel): string {
+export function edgeFor(m: DevCardModel): string {
   const s = m.pill?.state;
   if (s && s.label) return isOpenVote(s) ? 'vote' : (s.tone || 'neutral');
   const kind = String(m.key || '').split(':')[0];

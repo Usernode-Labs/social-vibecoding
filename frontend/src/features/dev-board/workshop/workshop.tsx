@@ -45,10 +45,12 @@ import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../../lib/use-store-state';
 import { devWorkshopStore } from '../card/cards-store';
-import { Badge, CardIcon, DevCard, VoteButton } from '../card/dev-card';
+import { Badge, CardIcon, DevCard, edgeFor, VoteButton } from '../card/dev-card';
 import type { ActionSpec, BadgeSpec } from '../card/model';
 import { FeedThread } from '../card/feed-thread';
+import { TopicBodySections } from '../topic/topic-head';
 import type { DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
+import type { TopicBody } from '../topic/model';
 import { CardSkeleton } from '../card/skeleton';
 
 type CardRow = Extract<ListRow, { t: 'card' }>;
@@ -73,6 +75,17 @@ function relTime(ms: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+/** Like `callAppView`, but for the calls that answer with a view model. */
+function readAppView<T>(fn: string, ...args: unknown[]): T | null {
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  if (!av || typeof av[fn] !== 'function') return null;
+  try {
+    return av[fn](...args) as T;
+  } catch {
+    return null;
+  }
+}
+
 function callAppView(fn: string, ...args: unknown[]): void {
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
   if (av && typeof av[fn] === 'function') av[fn](...args);
@@ -93,10 +106,18 @@ function openHref(slug: string, card: DevCardModel): string | null {
   return null;
 }
 
-/** The `#N` from the meta line, when the card has one. */
+/**
+ * The card's number from its meta line, when it has one.
+ *
+ * An issue's reads `#1575` and a proposal's reads `PR#1540`, and this used to
+ * match only the first — so every proposal row on the lander was missing the
+ * one identifier people actually cite it by, while the card it folds from
+ * carried it. The two sizes disagreeing about whether an item HAS a number
+ * is the kind of difference that makes them read as two objects.
+ */
 function numberOf(card: DevCardModel): string | null {
   for (const m of card.meta) {
-    if (m.t === 'link' && /^#\d+$/.test(m.s)) return m.s;
+    if (m.t === 'link' && /^(?:PR)?#\d+$/.test(m.s)) return m.s;
   }
   return null;
 }
@@ -178,6 +199,9 @@ function FoldedRow({
       tabIndex={0}
       className={open ? 'dev-ws-row dev-ws-row-open' : 'dev-ws-row'}
       aria-expanded={open}
+      // The card's own left edge, from the card's own function, so the two
+      // sizes can never key off different state.
+      data-edge={edgeFor(c)}
       data-ws-row={row.key}
       onClick={onToggle}
       onKeyDown={(e) => {
@@ -200,7 +224,9 @@ function FoldedRow({
       </span>
       {c.chatCount ? <span className="dev-ws-row-chat" title={`${c.chatCount} replies`}>{`💬 ${c.chatCount}`}</span> : null}
       {trailing ? <span className="dev-ws-row-trailing" onClick={(e) => e.stopPropagation()}>{trailing}</span> : null}
-      <ChevronRightIcon className="dev-ws-chev" aria-hidden="true" />
+      {/* No chevron. It promises a destination, and this row has none: the
+          whole surface is a toggle that unfolds the card in place. A theme
+          header still wears one, because that is what it does. */}
     </div>
   );
 }
@@ -245,22 +271,55 @@ function withoutOpenHooks(card: DevCardModel): DevCardModel {
 function UnfoldedRow({
   row, slug, canPost,
 }: { row: CardRow; slug: string; canPost: boolean }): ReactNode {
+  // ── "Open card" opens it HERE ──────────────────────────────────────
+  //
+  // It was a link out to the item's own screen, which meant the lander's
+  // whole promise — one item, two sizes, in place — ended at the one control
+  // that had more to show. There is a third size now and it is still the same
+  // object: the card, and under it every section that screen draws (the
+  // ledger, the About sheet with its before/after tiles, the transcript),
+  // from `AppView._topicViewFor` via `_workshopCardBody`.
+  //
+  // Built on demand rather than published with the row: the view model for
+  // one of these is the expensive half of the topic screen, and a lander
+  // showing forty rows would build forty of them to draw none. Held in state
+  // so it survives re-renders, and dropped when the card is closed.
+  const [detail, setDetail] = useState<TopicBody | null>(null);
+  const key = row.card.key;
+  useEffect(() => { setDetail(null); }, [key]);
+  const toggleDetail = () => {
+    setDetail(detail ? null : readAppView<TopicBody>('_workshopCardBody', key));
+  };
+  // The one thing the fold still cannot do: the item's own page, for a link
+  // somebody wants to share. It moved off the sheet's own strip and onto the
+  // card's meta line, which is where the topic screen puts GitHub too.
   const href = openHref(slug, row.card);
+  const openBtn = (
+    <button
+      type="button"
+      className="gc-vote-btn dev-ws-open-btn"
+      aria-expanded={!!detail}
+      data-ws-open-card={row.key}
+      onClick={toggleDetail}
+    >{detail ? 'Close card' : 'Open card'}</button>
+  );
   return (
     <div className="dev-feed-entry dev-ws-sheet" data-ws-sheet={row.key}>
-      <DevCard model={withoutOpenHooks(row.card)} />
+      <DevCard model={withoutOpenHooks(row.card)} statusLead={openBtn} />
+      {detail ? (
+        <div className="dev-ws-detail" data-ws-detail={row.key}>
+          <TopicBodySections body={detail} />
+        </div>
+      ) : null}
       {row.commentsFor != null ? (
         <div className="dev-feed-comments" data-comments-for={String(row.commentsFor)}></div>
       ) : null}
       {row.thread && slug ? (
         <FeedThread slug={slug} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
       ) : null}
-      {/* No Collapse button: the card itself toggles. What is left here is the
-          one thing the fold cannot do, and the reason the hooks above could
-          be removed — leaving for the card's own page. */}
       {href ? (
         <div className="dev-ws-sheet-actions">
-          <a href={href} className="dev-ws-link">Open card ›</a>
+          <a href={href} className="dev-ws-link">Open on its own page ›</a>
         </div>
       ) : null}
     </div>
@@ -356,7 +415,15 @@ function CardRowView({
       className={open ? 'dev-ws-rowwrap dev-ws-rowwrap-open' : 'dev-ws-rowwrap'}
       onClick={open ? (e) => {
         const el = e.target as HTMLElement | null;
-        if (el && el.closest('a, button, input, textarea, select, form, [data-attr-chip], [data-issue-chip]')) return;
+        // Controls do their own job. So do the three REGIONS below the card:
+        // with a ledger, a thread and a comment list open under it there is a
+        // lot of prose to land on, and collapsing the whole item because
+        // somebody selected a word in it is not a fold, it is losing their
+        // place.
+        if (el && el.closest(
+          'a, button, input, textarea, select, form, [data-attr-chip], [data-issue-chip],'
+          + ' .dev-ws-detail, .dev-feed-thread, .dev-feed-comments',
+        )) return;
         onToggle();
       } : undefined}
     >
@@ -561,13 +628,26 @@ type Dash = NonNullable<DevWorkshopView['dashboard']>;
 function pace(d: Dash): string {
   const n = d.shippedWeek;
   const p = d.shippedPrevWeek;
-  // The merged history is paged, so with more behind it these are floors.
-  const at = d.partial ? 'At least ' : '';
+  // ── Why a partial history states no rate ──────────────────────────
+  //
+  // Both weeks are counted from the SAME page of merged history, and when
+  // there is more behind it the earlier week is the one more likely to fall
+  // off the end. So a truncated page reads as a drought that never happened:
+  // an app merging twenty changes a week was told "20 landed this week, the
+  // first in a fortnight", which is not a hedge away from true, it is
+  // backwards. `At least` was already on the COUNT and it was never enough,
+  // because the fault is in the COMPARISON.
+  //
+  // With a partial page the honest sentence is the floor and nothing else.
+  if (d.partial) {
+    if (!n) return 'Nothing has landed this week.';
+    return `At least ${n} ${n === 1 ? 'change' : 'changes'} landed this week.`;
+  }
   if (!n && !p) return 'Nothing has landed in the last fortnight.';
-  if (!p) return `${at}${n} ${n === 1 ? 'change' : 'changes'} landed this week, the first in a fortnight.`;
-  if (n > p) return `${at}${n} landed this week, up from ${p} the week before.`;
-  if (n < p) return `${at}${n} landed this week, down from ${p} the week before.`;
-  return `${at}${n} landed this week, the same as the week before.`;
+  if (!p) return `${n} ${n === 1 ? 'change' : 'changes'} landed this week, the first in a fortnight.`;
+  if (n > p) return `${n} landed this week, up from ${p} the week before.`;
+  if (n < p) return `${n} landed this week, down from ${p} the week before.`;
+  return `${n} landed this week, the same as the week before.`;
 }
 
 /**
@@ -577,38 +657,105 @@ function pace(d: Dash): string {
  * what runs when there is none: no model configured, no draft yet, or that one
  * call failed. Same relationship the category grouping has to the themes.
  */
+/**
+ * The four numbers, as tiles.
+ *
+ * They were prose ("58 open items across 11 themes... 4 proposals are waiting
+ * on votes and 19 open items have nobody on them"), which is the slowest
+ * possible way to read four integers and the reason the paragraph never got
+ * to say anything else. A tile is scanned; a clause has to be parsed.
+ *
+ * These four and not others: they are the ones somebody arriving asks. How
+ * much is open, is it moving, is anything blocked on ME, and is anything
+ * going begging. `themes` and `people` are already on screen — the sort bar
+ * counts the themes, and every theme header carries its own roster.
+ *
+ * "Shipped this week" wears a `+` when the merged history is paged, because
+ * the number is then a floor and not a total. That is the same fact `pace()`
+ * refuses to compare on, said in one character.
+ */
+function DashTiles({ d }: { d: Dash }): ReactNode {
+  const cells: { key: string; n: number; label: string; cls?: string; title?: string }[] = [
+    { key: 'open', n: d.open, label: d.open === 1 ? 'open item' : 'open items' },
+    {
+      key: 'shipped',
+      n: d.shippedWeek,
+      label: 'shipped this week',
+      cls: d.shippedWeek ? 'dev-ws-dash-good' : undefined,
+      title: d.partial ? 'At least this many: the merged history is longer than the page loaded.' : undefined,
+    },
+    {
+      key: 'votes',
+      n: d.votesWaiting,
+      label: d.votesWaiting === 1 ? 'waiting on a vote' : 'waiting on votes',
+      cls: d.votesWaiting ? 'dev-ws-dash-warn' : undefined,
+    },
+    { key: 'unclaimed', n: d.unclaimed, label: 'with nobody on them' },
+  ];
+  return (
+    <div className="dev-ws-dash" data-ws-dash="">
+      {cells.map((c) => (
+        <span
+          key={c.key}
+          className={c.cls ? `dev-ws-dash-cell ${c.cls}` : 'dev-ws-dash-cell'}
+          data-ws-dash-cell={c.key}
+          title={c.title}
+        >
+          <b>{c.key === 'shipped' && d.partial && c.n ? `${c.n}+` : c.n}</b>
+          {c.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 function summarise(d: Dash): string {
   return d.summary || describe(d);
 }
 
 /**
- * The app, described rather than counted.
+ * The app, described rather than counted — what is LEFT to say once the tiles
+ * have said the numbers.
  *
- * This pane used to read "63 open · 4 waiting on votes · 20 shipped this week"
- * — three numbers and no sentence, which tells a reader the size of the board
- * and nothing about it. A theme earns its place on this screen by SAYING what
- * it is about; the app itself was the one thing on the lander that did not, so
- * it now gets the same treatment in the same shape: what there is, how fast it
- * is moving, and what is waiting on a person.
+ * This used to be the whole pane's text: "63 open items across 11 themes,
+ * most of the movement in X. 20 landed this week... 4 proposals are waiting
+ * on votes and 19 open items have nobody on them." Every count in it is now a
+ * tile directly above, so repeating them in prose is worse than saying
+ * nothing: a reader who has already read "58 open" gets no second fact, and
+ * the sentence buries the one thing that is not a tile.
  *
- * Still derived, not written by a model — the numbers were always the answer,
- * they were just never put in a sentence.
+ * What is left is the two things a tile cannot show — where the movement is,
+ * and whether the week is faster or slower than the last. When neither can be
+ * said honestly this returns an EMPTY string and the paragraph is not
+ * rendered at all. That is the right outcome, not a hole: the tiles are the
+ * state, and an app with no model configured should not get a sentence
+ * fabricated for it out of the same four numbers.
  */
 function describe(d: Dash): string {
   const parts: string[] = [];
-  const scale = `${d.open} open ${d.open === 1 ? 'item' : 'items'}`
-    + (d.themes ? ` across ${d.themes} ${d.themes === 1 ? 'theme' : 'themes'}` : '');
-  parts.push(d.busiest ? `${scale}, most of the movement in ${d.busiest}.` : `${scale}.`);
-  parts.push(pace(d));
-  const waiting: string[] = [];
-  if (d.votesWaiting) {
-    waiting.push(`${d.votesWaiting} ${d.votesWaiting === 1 ? 'proposal is' : 'proposals are'} waiting on votes`);
-  }
-  if (d.unclaimed) {
-    waiting.push(`${d.unclaimed} open ${d.unclaimed === 1 ? 'item has nobody on it' : 'items have nobody on them'}`);
-  }
-  if (waiting.length) parts.push(`${waiting.join(' and ').replace(/^./, (c) => c.toUpperCase())}.`);
+  if (d.busiest) parts.push(`Most of the movement is in ${d.busiest}.`);
+  const trend = paceTrend(d);
+  if (trend) parts.push(trend);
   return parts.join(' ');
+}
+
+/**
+ * The week-over-week read, and only when there IS one to give.
+ *
+ * `pace()` above is the full sentence, kept for the theme footers and for
+ * anywhere the count is not already on screen. Here the count is a tile, so
+ * this returns the COMPARISON alone and nothing when the history cannot
+ * support one.
+ */
+function paceTrend(d: Dash): string {
+  if (d.partial) return '';
+  const n = d.shippedWeek;
+  const p = d.shippedPrevWeek;
+  if (!n && !p) return 'Nothing has landed in the last fortnight.';
+  if (!p) return n ? 'It is the first week in a fortnight anything landed.' : '';
+  if (n > p) return `That is up from ${p} the week before.`;
+  if (n < p) return `That is down from ${p} the week before.`;
+  return 'That is the same as the week before.';
 }
 
 /** "1 change landed, 2 new proposals" — what moved while you were away. */
@@ -643,6 +790,10 @@ export function DevWorkshop(): ReactNode {
     () => (v.autoExpand && v.autoExpand.key ? { [v.autoExpand.theme]: v.autoExpand.key } : {}),
   );
   const [sinceOpen, setSinceOpen] = useState(false);
+  // "N more waiting on you" reveals them HERE. It used to set a board filter
+  // and navigate, which left the lander and changed the view mode to read a
+  // list the strip was already showing the top of.
+  const [allVotes, setAllVotes] = useState(false);
 
   const themes = useMemo(() => sortThemes(v.themes, sortKey), [v.themes, sortKey]);
   // Every theme starts SHUT. The first one used to open itself, on the
@@ -720,7 +871,10 @@ export function DevWorkshop(): ReactNode {
               ? <span className="dev-ws-pill dev-ws-pill-good">{`${v.since.shipped} shipped since`}</span>
               : null}
           </div>
-          <p className="dev-ws-strip-text">{summarise(v.dashboard)}</p>
+          <DashTiles d={v.dashboard} />
+          {summarise(v.dashboard)
+            ? <p className="dev-ws-strip-text">{summarise(v.dashboard)}</p>
+            : null}
           {v.since ? (
             <p className="dev-ws-since-line">
               <span>{`Since your last visit, ${relTime(v.since.baseline)}: ${sinceWords(v.since)}`}</span>
@@ -770,7 +924,7 @@ export function DevWorkshop(): ReactNode {
           {v.votes.rows.length ? (
             <div className="dev-ws-lane" data-ws-lane="votes">
               <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>Needs your vote</h4>
-              {v.votes.rows.map((row) => (row.t === 'card' ? (
+              {(allVotes ? v.votes.rows : v.votes.rows.slice(0, v.votes.shown)).map((row) => (row.t === 'card' ? (
                 <CardRowView
                   key={row.key}
                   row={row}
@@ -780,9 +934,17 @@ export function DevWorkshop(): ReactNode {
                   onToggle={() => toggleRow('votes', row.key)}
                 />
               ) : null))}
-              {v.votes.count > v.votes.rows.length ? (
-                <button type="button" className="gc-vote-btn dev-ws-lane-btn" onClick={() => callAppView('openBoardNeedingVote')}>
-                  {`${v.votes.count - v.votes.rows.length} more waiting on you ›`}
+              {v.votes.rows.length > v.votes.shown ? (
+                <button
+                  type="button"
+                  className="gc-vote-btn dev-ws-lane-btn"
+                  aria-expanded={allVotes}
+                  data-ws-votes-more=""
+                  onClick={() => setAllVotes(!allVotes)}
+                >
+                  {allVotes
+                    ? 'Show fewer'
+                    : `${v.votes.count - v.votes.shown} more waiting on you`}
                 </button>
               ) : null}
             </div>

@@ -581,8 +581,13 @@ async function writeRow(pool, appId, next) {
             -- that did not (no model, the call failed, nothing changed) keeps
             -- the last one rather than blanking the paragraph: a stale
             -- sentence beside fresh themes is worth more than no sentence.
+            --
+            -- The CLOCK, though, moves on any pass that TRIED. Staleness is
+            -- what schedules the next attempt, so stamping only successes
+            -- would put a failing model back on the wire at every single
+            -- view, forever. Tried and got nothing is still tried.
             digest_text = COALESCE($12::text, digest_text),
-            digest_at = CASE WHEN $12::text IS NULL THEN digest_at ELSE NOW() END,
+            digest_at = CASE WHEN $13::boolean THEN NOW() ELSE digest_at END,
             reconcile_started_at = NULL
       WHERE app_id = $1
       RETURNING ${ROW_COLUMNS}`,
@@ -590,6 +595,7 @@ async function writeRow(pool, appId, next) {
       appId, next.inputHash, JSON.stringify(next.themes), JSON.stringify(next.placements),
       JSON.stringify(next.unplaced), next.model || null, !!next.discovered, next.discoveryKeyCount,
       next.churnAdded, next.churnRemoved, next.lastError || null, next.digest || null,
+      !!next.digestTried,
     ]
   );
   return shapeRow(rows[0]);
@@ -738,6 +744,34 @@ async function discover({ pool, app, input, previous }) {
 // carries on. Only ever attempted on a pass that re-drafted the themes —
 // between drafts nothing about the board's shape has moved enough to say
 // anything new, and it would be a Sonnet call per placement batch.
+/**
+ * How long a digest stands before it is written again.
+ *
+ * Round three tied the digest to discovery alone, which sounded frugal and
+ * was in fact a bug with no symptom in the tests: an app whose themes are
+ * settled never re-drafts, so the paragraph was never written AT ALL and
+ * every reader saw the client's derived fallback instead. It was invisible
+ * because the fallback is a complete sentence — nothing looked broken, it
+ * just was not the feature.
+ *
+ * A day is the cadence the paragraph itself talks in ("this week", "right
+ * now"), and it bounds the cost at one call per app per day.
+ */
+const DIGEST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * `digestAt` is when the digest was last ATTEMPTED, not when text last
+ * landed — see writeRow. That is what stops a model that is failing from
+ * being retried on every view: a pass that tried and got nothing still
+ * stamps the clock, keeps the previous text, and waits a day like any
+ * other. The fallback covers the gap, which is what it is for.
+ */
+function digestStale(row, now = Date.now()) {
+  if (!row || !row.digest) return true;
+  const at = Date.parse(row.digestAt || '');
+  return !Number.isFinite(at) || now - at >= DIGEST_MAX_AGE_MS;
+}
+
 async function makeDigest({ pool, app, input, themes }) {
   try {
     const out = await llm.generateWorkshopDigest({
@@ -849,7 +883,11 @@ async function reconcile({ pool, app, reason }) {
       discoveryKeyCount: row.discoveryKeyCount, churnAdded, churnRemoved,
       unplacedCount: diff.unplaced.size,
     });
-    if (!why && !diff.added.length && !diff.removed && !row.lastError) {
+    // A pass with nothing else to do still runs when the paragraph is due:
+    // on a settled board this branch is the ONLY one that ever fires, which
+    // is exactly why the digest never got written before.
+    const wantDigest = !!why || digestStale(row);
+    if (!why && !wantDigest && !diff.added.length && !diff.removed && !row.lastError) {
       await releaseLease(pool, app.id);
       leased = false;
       return { ...result, skipped: 'unchanged' };
@@ -891,13 +929,13 @@ async function reconcile({ pool, app, reason }) {
       result.failed = out.failed.length;
     }
 
-    const digest = next.discovered ? await makeDigest({ pool, app, input, themes }) : null;
+    const digest = wantDigest ? await makeDigest({ pool, app, input, themes }) : null;
 
     await writeRow(pool, app.id, {
       inputHash: fingerprintKeys(keys), themes, placements: next.placements,
       unplaced: [...next.unplaced], model, discovered: next.discovered,
       discoveryKeyCount: next.discoveryKeyCount, churnAdded: next.churnAdded,
-      churnRemoved: next.churnRemoved, lastError, digest,
+      churnRemoved: next.churnRemoved, lastError, digest, digestTried: wantDigest,
     });
     leased = false;
     notify(app, why ? 'discovery' : 'placement');
@@ -1051,9 +1089,9 @@ async function getThemes({ pool, app }) {
 
 module.exports = {
   buildThemeInput, fingerprint, fingerprintKeys, fallbackThemes, stagingDemoGrouping, assignIds, slugify, excerpt,
-  needsDiscovery, diffRow, themesWithItems,
+  needsDiscovery, digestStale, diffRow, themesWithItems,
   getCached, getThemes, reconcile, noteBoardChange, sweep, setNotifier,
-  DISCOVERY_MAX_AGE_MS, DRIFT_RATIO, CHANGE_DEBOUNCE_MS, FAILURE_BACKOFF_MS, PLACEMENT_BATCH,
+  DISCOVERY_MAX_AGE_MS, DIGEST_MAX_AGE_MS, DRIFT_RATIO, CHANGE_DEBOUNCE_MS, FAILURE_BACKOFF_MS, PLACEMENT_BATCH,
   _inFlightForTests: inFlight,
   _dirtyForTests: dirty,
   _changeTimersForTests: changeTimers,
