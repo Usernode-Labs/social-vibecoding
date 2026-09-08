@@ -612,8 +612,6 @@ test('the browse action routes through the hash for a real history entry', () =>
   // The OS/browser back gesture has to return to home, so this navigates by
   // hash rather than calling the router directly.
   assert.match(PANEL_SRC.ui, /home-panel-browse[\s\S]*?location\.hash = '#apps'/);
-  // ...and it is reachable from the widget's ⋮ menu too.
-  assert.match(PANELS_SRC, /label: 'Browse all apps'/);
 });
 
 test('the create widget renders in both states and keeps quota details reachable', () => {
@@ -664,16 +662,14 @@ test('Create app is a fixed section, for every account', () => {
 });
 
 test('a viewer with no quota can open the dialog to inspect it', () => {
-  // The compact locked state still carries the shared hint in its tooltip
-  // and menu note; tapping now opens the detailed used-of-limit row.
+  // The compact locked state carries the shared hint in its tooltip;
+  // tapping opens the detailed used-of-limit row.
   assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'View your app allowance or request more slots\.'/);
   const btn = PANEL_SRC.create.slice(PANEL_SRC.create.indexOf('onClick={'));
   assert.match(btn, /App\?\.showCreateModal\?\.\(\)/,
     'both enabled and locked tiles open the create modal');
   assert.doesNotMatch(btn, /PlatformUI\?\.toast\?\.\(/,
     'a generic toast cannot replace the exact quota display');
-  // The menu carries the same sentence as an inert row.
-  assert.match(PANELS_SRC, /key === 'create' && window\.Home[\s\S]*?CREATE_DISABLED_HINT/);
 });
 
 // ── Server side: the featured flags this row is built from ────────
