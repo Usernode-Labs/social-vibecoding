@@ -11600,11 +11600,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px;
   min-height: 18px; max-height: 18px; overflow: hidden; margin-top: 4px;
 }
-/* The band STAYS when the row opens. It used to be hidden here so the card
-   below could show the real one, which meant "Closes #12" travelled downward
-   on every open while the Vote button sat still — the two objects the fold was
-   supposed to stop being. The head is identical in both sizes now, and it is
-   the card below that gives up its duplicate band. */
 /* The composite pill, wearing the tone it has always carried. Tones are
    `statusPillState`'s vocabulary (neutral / ok / attention / blocked /
    progress), not the merge badge's colour names — an unknown one falls
@@ -11629,58 +11624,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   margin-left: 6px; font-size: 10px; font-weight: 600; color: var(--text-muted);
   border: 1px dashed currentColor; padding: 0 5px; border-radius: 6px; vertical-align: middle; opacity: .8;
 }
-/* ── Open: ONE sheet in two parts ────────────────────────────
-   The row is the head and keeps its top corners; the entry is the body and
-   picks up exactly where it stopped, its own bottom border closing the same
-   box. The row's bottom border stays visible on purpose — inside one card it
-   reads as the rule under a heading, which is what it now is.
+/* ── Open: the card, at the size the Board draws it ─────────
+   There is nothing to join here any more. The wrapper renders EITHER the
+   compressed row or this entry, never both, so the entry keeps the ordinary
+   `#dev-workshop .dev-feed-entry` sheet (above) and the dense card inside it
+   keeps every bit of chrome the Board gives it: the 36px icon, the meta line,
+   the full-width status bar, the facts line, the menu.
 
-   Scoped under `#dev-workshop` because the entry's own sheet treatment is
-   (`#dev-workshop .dev-feed-entry`, above): an ID beats any class run, so a
-   bare `.dev-ws-rowwrap-open > .dev-feed-entry` loses and the body keeps its
-   26px ring — which is exactly the second card this is removing.
-
-   This comment carried a SECOND comment-terminator when #1793 shipped, four
-   lines above here — and writing one INTO the prose closes the comment just
-   as effectively as ending it, which is how the bug happened and how it very
-   nearly happened again while being documented. Do not name the token here.
-   It closed the comment early, which turned the prose that followed
-   into a qualified-rule prelude — and a prelude runs to the first brace, so it
-   swallowed the three rules below as one invalid selector and the browser
-   dropped all of them. The open row kept its four corners and the entry kept
-   its own 26px frosted ring: two boxes, which is exactly the thing the block
-   was written to remove. Nothing caught it — the tests regex this file as
-   TEXT, so they matched the rules while the browser was discarding them. */
-.dev-ws-rowwrap-open > .dev-ws-row { border-radius: 12px 12px 0 0; }
-#dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry {
-  margin-top: 0;
-  border: 1px solid var(--border-light);
-  border-top: 0;
-  border-radius: 0 0 12px 12px;
-  box-shadow: none;
-  background-color: var(--dc-sheet);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-/* …and the dense card inside is that body, not a card of its own. It keeps
-   its tone bar — an inset shadow, so it costs no layout and is the one state
-   signal the row's band cannot carry — and gives up the sheet, the radius and
-   the drop shadow it wears standing alone on the Board. */
-#dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry > div:is(.dev-card-dense) {
-  background-color: transparent;
-  border-radius: 0;
-  box-shadow: inset var(--dev-edge-w) 0 0 color-mix(in srgb, var(--dev-edge) 33%, transparent);
-  padding-top: 6px;
-}
-/* The entry still renders the WHOLE dense card — `.dev-feed-entry >
-   .gc-vote-item` is what two declared checks select and what
-   `_wireFeedComments` / `_fillKudosHosts` walk — but its head and meta line
-   are the row's job now, so they are hidden rather than repeated. The status
-   band below them deliberately stays: the vote button rides in it, so hiding
-   it would take voting away from an opened proposal. */
-.dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item .dev-card-head,
-.dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item .dev-card-meta,
-.dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item .dev-card-status { display: none; }
+   #1799 did the opposite — it kept the row as a head and hid the card's head,
+   meta and status band so they would not repeat it. That made the open state a
+   third object belonging to neither size. Those four rules are gone rather
+   than adjusted; the row IS the compressed representation of this card, and
+   the way to show the card is to show the card. */
 .dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
 .dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
 .dev-ws-theme-more { font-size: 13px; color: var(--text-muted); padding: 4px 10px 0; }
