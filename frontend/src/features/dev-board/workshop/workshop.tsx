@@ -45,8 +45,8 @@ import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../../lib/use-store-state';
 import { devWorkshopStore } from '../card/cards-store';
-import { CardIcon, DevCard, VoteButton } from '../card/dev-card';
-import type { ActionSpec } from '../card/model';
+import { Badge, CardIcon, DevCard, VoteButton } from '../card/dev-card';
+import type { ActionSpec, BadgeSpec } from '../card/model';
 import { FeedThread } from '../card/feed-thread';
 import type { DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
@@ -107,6 +107,48 @@ function authorOf(card: DevCardModel): string | null {
   return null;
 }
 
+/** How many of the card's own chips ride along on a folded row. */
+const ROW_BADGE_MAX = 3;
+
+/**
+ * The folded row's status band — a MINI of the dense card's own
+ * (`.dev-card-badges.dev-card-status`), built from the same two model fields,
+ * and clipped to one line for the same reason: a band that wrapped would push
+ * every row under it out of rhythm.
+ *
+ * The composite pill used to be flattened to `pill.state.label` and printed in
+ * `.dev-ws-row-meta`, in the same muted grey the author's name wears — so
+ * "Conflicts with main · 9 files", which is the one fact that decides whether
+ * a proposal can merge at all, read like a byline. It has carried a `tone` all
+ * along; this spends it.
+ *
+ * A `chipBtn` is rendered as a plain `chip`. The row's whole surface is the
+ * disclosure, and a chip that swallowed the click to do something else would
+ * make the card open sometimes and not others; the real control is still on
+ * the card, one tap away.
+ */
+function flatBadge(b: BadgeSpec): BadgeSpec {
+  return b.t === 'chipBtn'
+    ? { t: 'chip', key: b.key, cls: b.cls, label: b.label, title: b.title, spinner: b.spinner, data: b.data }
+    : b;
+}
+
+function RowBand({ card }: { card: DevCardModel }): ReactNode {
+  const s = card.pill?.state || null;
+  const linked = card.linked || [];
+  const chips = (card.badges || []).filter(Boolean).slice(0, ROW_BADGE_MAX);
+  if (!s && !linked.length && !chips.length) return null;
+  return (
+    <span className="dev-ws-row-band">
+      {s ? (
+        <span className={`dev-ws-row-state dev-ws-row-state-${s.tone}`} title={s.title}>{s.label}</span>
+      ) : null}
+      {linked.map((b) => <Badge key={b.key} b={flatBadge(b)} />)}
+      {chips.map((b) => <Badge key={b.key} b={flatBadge(b)} />)}
+    </span>
+  );
+}
+
 /**
  * One folded row: a disclosure, and one that carries NO `data-issue-row`,
  * so the delegated card-open handler never mistakes it for a card.
@@ -122,7 +164,6 @@ function FoldedRow({
   const c = row.card;
   const n = numberOf(c);
   const by = authorOf(c);
-  const pill = c.pill?.state.label || null;
   return (
     <div
       role="button"
@@ -146,8 +187,8 @@ function FoldedRow({
         <span className="dev-ws-row-meta">
           {n ? <span className="font-mono">{n}</span> : null}
           {by ? <span>{by}</span> : null}
-          {pill ? <span className="dev-ws-row-pill">{pill}</span> : null}
         </span>
+        <RowBand card={c} />
       </span>
       {c.chatCount ? <span className="dev-ws-row-chat" title={`${c.chatCount} replies`}>{`💬 ${c.chatCount}`}</span> : null}
       {trailing ? <span className="dev-ws-row-trailing" onClick={(e) => e.stopPropagation()}>{trailing}</span> : null}
@@ -196,11 +237,34 @@ function Lane({
   onToggle: (key: string) => void;
   themeId: string;
 }): ReactNode {
+  // "Shipped this week" is the one lane that is a RECORD rather than a
+  // question — nothing in it needs anybody — so a theme opens on the work
+  // that still wants someone and keeps the record one tap away (#1787). The
+  // hook runs before the early return below, because a hook may not be
+  // conditional; the lane still renders nothing when it holds nothing.
+  const collapsible = lane.key === 'shipped';
+  const [laneOpen, setLaneOpen] = useState(!collapsible);
   if (!lane.rows.length && !lane.more) return null;
+  const total = lane.rows.length + lane.more;
   return (
     <div className={`dev-ws-lane dev-ws-lane-${lane.key}`} data-ws-lane={lane.key}>
-      <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>{lane.title}</h4>
-      {lane.rows.map((row) => {
+      {collapsible ? (
+        <h4
+          className="dev-ws-lane-title"
+          role="button"
+          tabIndex={0}
+          aria-expanded={laneOpen}
+          onClick={() => setLaneOpen(!laneOpen)}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLaneOpen(!laneOpen); } }}
+        >
+          <span className="dev-ws-dot" aria-hidden="true"></span>{lane.title}
+          <span className="dev-ws-lane-n">{total}</span>
+          <ChevronRightIcon className="dev-ws-chev" aria-hidden="true" />
+        </h4>
+      ) : (
+        <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>{lane.title}</h4>
+      )}
+      {!laneOpen ? null : lane.rows.map((row) => {
         if (row.t !== 'card') return null;
         const open = openKey === row.key;
         return (
@@ -212,7 +276,7 @@ function Lane({
           </div>
         );
       })}
-      {lane.more ? <div className="dev-ws-more">{`+${lane.more} more in this lane`}</div> : null}
+      {laneOpen && lane.more ? <div className="dev-ws-more">{`+${lane.more} more in this lane`}</div> : null}
     </div>
   );
 }
@@ -287,6 +351,7 @@ function ThemeCard({
   onToggleRow: (key: string) => void;
 }): ReactNode {
   const c = theme.counts;
+  const openItems = c.open + c.underway + c.review;
   const chips: ReactNode[] = [];
   if (c.fresh) chips.push(<span key="fresh" className="dev-ws-cnt dev-ws-cnt-fresh"><b>{`+${c.fresh}`}</b> new</span>);
   if (c.review) chips.push(<span key="review" className="dev-ws-cnt dev-ws-cnt-review"><span className="dev-ws-dot"></span><b>{c.review}</b> in review</span>);
@@ -321,8 +386,32 @@ function ThemeCard({
         onClick={onToggle}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
       >
-        <div className="dev-ws-theme-name">{theme.name}</div>
-        <div className="dev-ws-theme-people"><b>{theme.people.length}</b>{theme.people.length === 1 ? 'person' : 'people'}</div>
+        {/* The model picks the glyph, so it means the part of the product
+            rather than hashing to a stable-but-arbitrary one. With none —
+            an older row, or an answer the sanitiser rejected — the theme's
+            initial on its own swatch, which is the treatment `Faces` already
+            uses and reads as deliberate where a random emoji would not. */}
+        <div className="dev-ws-theme-name">
+          {theme.icon
+            ? <span className="dev-ws-theme-icon" aria-hidden="true">{theme.icon}</span>
+            : (
+              <span
+                className="dev-ws-theme-icon dev-ws-theme-icon-letter"
+                aria-hidden="true"
+                style={{ backgroundColor: swatchFor(theme.name) }}
+              >{theme.name.slice(0, 1).toUpperCase()}</span>
+            )}
+          {theme.name}
+        </div>
+        {/* Two stats, not one: how many people, and how big. `counts` is
+            incremented before the lane cap in the publisher, so this is the
+            theme's real size and not what happens to be drawn. SHIPPED is
+            excluded on purpose — the question the number answers is "how
+            much is left in here", and work that landed is not left. */}
+        <div className="dev-ws-theme-people">
+          <span className="dev-ws-stat"><b>{theme.people.length}</b>{theme.people.length === 1 ? 'person' : 'people'}</span>
+          <span className="dev-ws-stat"><b>{openItems}</b>{openItems === 1 ? 'item' : 'items'}</span>
+        </div>
         {theme.saying ? (
           <p className="dev-ws-theme-say">{theme.saying}</p>
         ) : (theme.description ? <p className="dev-ws-theme-say">{theme.description}</p> : null)}
@@ -400,6 +489,81 @@ const SORTS: { key: SortKey; label: string }[] = [
   { key: 'open', label: 'By open items' },
 ];
 
+type Dash = NonNullable<DevWorkshopView['dashboard']>;
+
+/** The rate, as a sentence: this week's merges against last week's. */
+function pace(d: Dash): string {
+  const n = d.shippedWeek;
+  const p = d.shippedPrevWeek;
+  // The merged history is paged, so with more behind it these are floors.
+  const at = d.partial ? 'At least ' : '';
+  if (!n && !p) return 'Nothing has landed in the last fortnight.';
+  if (!p) return `${at}${n} ${n === 1 ? 'change' : 'changes'} landed this week, the first in a fortnight.`;
+  if (n > p) return `${at}${n} landed this week, up from ${p} the week before.`;
+  if (n < p) return `${at}${n} landed this week, down from ${p} the week before.`;
+  return `${at}${n} landed this week, the same as the week before.`;
+}
+
+/** Where the work is, and what nobody has picked up. */
+function focus(d: Dash): string {
+  const bits: string[] = [];
+  if (d.busiest) bits.push(`most of the movement is in ${d.busiest}`);
+  if (d.votesWaiting) {
+    bits.push(`${d.votesWaiting} ${d.votesWaiting === 1 ? 'proposal is' : 'proposals are'} waiting on votes`);
+  }
+  if (d.unclaimed) {
+    bits.push(`${d.unclaimed} open ${d.unclaimed === 1 ? 'item has nobody on it' : 'items have nobody on them'}`);
+  }
+  if (!bits.length) return '';
+  return `${bits.join(', ').replace(/^./, (c) => c.toUpperCase())}.`;
+}
+
+/**
+ * The app's state, folded. Every number is DERIVED from what the board
+ * already loaded — no request of its own, and no model wrote the sentence.
+ * A generated paragraph would need its own staleness and its own footnote
+ * saying when it was written, and the numbers are the answer anyway.
+ *
+ * Closed by default, and closed it is one line: this sits above the work, and
+ * a lander that opens on a panel of statistics has buried what it is for.
+ */
+function Dashboard({ d }: { d: Dash }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const cells: { n: number; label: string }[] = [
+    { n: d.open, label: d.open === 1 ? 'open item' : 'open items' },
+    { n: d.themes, label: d.themes === 1 ? 'theme' : 'themes' },
+    { n: d.votesWaiting, label: 'waiting on votes' },
+    { n: d.people, label: d.people === 1 ? 'person here' : 'people here' },
+  ];
+  return (
+    <section className="dev-ws-strip" data-ws-dashboard="">
+      <div className="dev-ws-strip-head">
+        <span className="dev-ws-eyebrow">Where the app is</span>
+        <button
+          type="button"
+          className="dev-ws-link"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >{open ? 'Hide' : 'Show'}</button>
+      </div>
+      {open ? (
+        <>
+          <div className="dev-ws-dash">
+            {cells.map((c) => (
+              <span key={c.label} className="dev-ws-dash-cell"><b>{c.n}</b>{c.label}</span>
+            ))}
+          </div>
+          <p className="dev-ws-strip-text">{`${pace(d)} ${focus(d)}`.trim()}</p>
+        </>
+      ) : (
+        <p className="dev-ws-strip-text">
+          {`${d.open} open · ${d.votesWaiting} waiting on votes · ${d.shippedWeek} shipped this week`}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -447,6 +611,7 @@ export function DevWorkshop(): ReactNode {
   }, [openSig, v]);
 
   if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
+  const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
   const slug = v.slug || '';
   const canPost = !!v.canPost;
 
@@ -465,32 +630,6 @@ export function DevWorkshop(): ReactNode {
             </>
           )}
         </div>
-      ) : null}
-
-      {v.votes.rows.length ? (
-        <section className="dev-ws-strip" data-ws-votes="">
-          <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">Needs your vote</span>
-            <span className="dev-ws-pill dev-ws-pill-warn">{`${v.votes.count} ${v.votes.count === 1 ? 'proposal' : 'proposals'}`}</span>
-          </div>
-          <div className="dev-ws-lane" data-ws-lane="votes">
-            {v.votes.rows.map((row) => (row.t === 'card' ? (
-              <VoteRow
-                key={row.key}
-                row={row}
-                slug={slug}
-                canPost={canPost}
-                open={openRows.votes === row.key}
-                onToggle={() => toggleRow('votes', row.key)}
-              />
-            ) : null))}
-          </div>
-          {v.votes.count > v.votes.rows.length ? (
-            <button type="button" className="dev-ws-link self-start" onClick={() => callAppView('openBoardNeedingVote')}>
-              {`${v.votes.count - v.votes.rows.length} more waiting on you ›`}
-            </button>
-          ) : null}
-        </section>
       ) : null}
 
       {v.since ? (
@@ -532,17 +671,55 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
-      {v.welcome ? (
-        <section className="dev-ws-strip" data-ws-welcome="">
+      {/* The app's state, folded, directly under what changed since you were
+          last here — the two questions a returning member asks, in that
+          order. It absorbed the first-visit `welcome` strip: same numbers,
+          drawn every visit rather than once (#1787). */}
+      {v.dashboard ? <Dashboard d={v.dashboard} /> : null}
+
+      {v.votes.rows.length ? (
+        <section className="dev-ws-strip" data-ws-votes="">
           <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">What this project is working on</span>
+            <span className="dev-ws-eyebrow">Needs your vote</span>
+            <span className="dev-ws-pill dev-ws-pill-warn">{`${v.votes.count} ${v.votes.count === 1 ? 'proposal' : 'proposals'}`}</span>
           </div>
-          <p className="dev-ws-strip-text">
-            {`${v.welcome.open} open ${v.welcome.open === 1 ? 'item' : 'items'} in ${v.welcome.themes} ${v.welcome.themes === 1 ? 'theme' : 'themes'}`}
-            {v.welcome.votesWaiting ? `, ${v.welcome.votesWaiting} ${v.welcome.votesWaiting === 1 ? 'proposal' : 'proposals'} waiting for votes` : ''}
-            {v.welcome.shippedWeek ? `, ${v.welcome.shippedWeek} ${v.welcome.shippedWeek === 1 ? 'change' : 'changes'} shipped this week` : ''}
-            {'. Open a theme to see what is being said and built, and reply on anything to join in.'}
-          </p>
+          <div className="dev-ws-lane" data-ws-lane="votes">
+            {v.votes.rows.map((row) => (row.t === 'card' ? (
+              <VoteRow
+                key={row.key}
+                row={row}
+                slug={slug}
+                canPost={canPost}
+                open={openRows.votes === row.key}
+                onToggle={() => toggleRow('votes', row.key)}
+              />
+            ) : null))}
+          </div>
+          {v.votes.count > v.votes.rows.length ? (
+            <button type="button" className="dev-ws-link self-start" onClick={() => callAppView('openBoardNeedingVote')}>
+              {`${v.votes.count - v.votes.rows.length} more waiting on you ›`}
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+
+      {/* One unclaimed issue, beside the votes: the other thing a member can
+          do with five minutes. Only ever one — a list of everything nobody
+          has taken is the Board, and this is an invitation. */}
+      {nextUp ? (
+        <section className="dev-ws-strip" data-ws-next="">
+          <div className="dev-ws-strip-head">
+            <span className="dev-ws-eyebrow">Want to get started?</span>
+            <span className="dev-ws-pill">Nobody on it yet</span>
+          </div>
+          <div className="dev-ws-lane" data-ws-lane="next">
+            <div className={openRows.next === nextUp.key ? 'dev-ws-rowwrap dev-ws-rowwrap-open' : 'dev-ws-rowwrap'}>
+              <FoldedRow row={nextUp} open={openRows.next === nextUp.key} onToggle={() => toggleRow('next', nextUp.key)} />
+              {openRows.next === nextUp.key ? (
+                <UnfoldedRow row={nextUp} slug={slug} canPost={canPost} onCollapse={() => toggleRow('next', nextUp.key)} />
+              ) : null}
+            </div>
+          </div>
         </section>
       ) : null}
 
