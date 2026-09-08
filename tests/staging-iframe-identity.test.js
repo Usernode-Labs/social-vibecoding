@@ -28,6 +28,7 @@
 // Run with: node --test tests/staging-iframe-identity.test.js
 
 const test = require('node:test');
+
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -461,4 +462,19 @@ test('the legacy module makes no DOM write into the React-owned overlay', async 
   h.AppView.closeStagingOverlay();
   const leaked = h.asked.filter((id) => overlayIds.includes(id) || id === 'staging-iframe');
   assert.deepEqual(leaked, [], 'the module asked the document for no overlay-owned node');
+});
+
+test('preview background changes do not navigate and clear with the preview', async () => {
+  const h = await makeHarness();
+  const frame = h.bridge.frame();
+  const navigations = h.bridge.stats().navigations;
+  h.bridge.setBackground('#0a0d14');
+  assert.equal(h.store.get().background, '#0a0d14');
+  h.bridge.setMode('docked');
+  h.bridge.setMode('fullscreen');
+  assert.equal(h.bridge.frame(), frame);
+  assert.equal(h.bridge.stats().navigations, navigations);
+  assert.equal(h.store.get().background, '#0a0d14');
+  h.bridge.clearSrc();
+  assert.equal(h.store.get().background, '');
 });

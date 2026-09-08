@@ -6054,6 +6054,98 @@
   })();
   /* __USERNODE_SAFE_AREA_END__ */
 
+  // #1581: iOS paints the embedding iframe's background behind a rubber-band
+  // scroll, not the child document's html background. Publish the document's
+  // solid ground so the host can paint that surface too. This is automatic:
+  // existing apps get the fix when they next load the shared bridge.
+  /* __USERNODE_BACKGROUND_BEGIN__ */
+  (function () {
+    if (window === window.parent) return;
+    var lastColor;
+    var queued = false;
+
+    // Computed sRGB colors become a small, unambiguous wire value. Transparent
+    // roots fall through to body; images/gradients retain their solid ground.
+    function opaqueHex(value) {
+      if (typeof value !== "string") return null;
+      if (/^#[0-9a-f]{6}$/i.test(value)) return value.toLowerCase();
+      var match = /^rgba?\(([^)]+)\)$/i.exec(value);
+      if (!match) return null;
+      var channels = match[1].trim().split(/[\s,\/]+/).map(Number);
+      if (channels.length !== 3 && channels.length !== 4) return null;
+      if (channels.length === 4 && channels[3] !== 1) return null;
+      var hex = "#";
+      for (var i = 0; i < 3; i++) {
+        var n = channels[i];
+        if (!isFinite(n) || n < 0 || n > 255) return null;
+        hex += Math.round(n).toString(16).padStart(2, "0");
+      }
+      return hex;
+    }
+
+    function publish() {
+      queued = false;
+      if (!document.body) return;
+      try {
+        var color = opaqueHex(window.getComputedStyle(document.documentElement).backgroundColor)
+          || opaqueHex(window.getComputedStyle(document.body).backgroundColor);
+        if (color === lastColor) return;
+        lastColor = color;
+        window.parent.postMessage({ __usernode_background: "changed", color: color }, "*");
+      } catch (_) {}
+    }
+
+    function schedule() {
+      if (queued) return;
+      queued = true;
+      // Coalesce theme/style changes, including in a parked (hidden) app.
+      setTimeout(publish, 0);
+    }
+
+    function hasStyles(node) {
+      if (!node || node.nodeType !== 1) return false;
+      if (node.tagName === "STYLE" || node.tagName === "LINK") return true;
+      return !!(node.querySelector && node.querySelector('style, link[rel~="stylesheet"]'));
+    }
+
+    function start() {
+      if (typeof MutationObserver === "function") {
+        // Watch theme attributes on the document roots, not every game cell.
+        var roots = new MutationObserver(schedule);
+        roots.observe(document.documentElement, { attributes: true });
+        if (document.body) roots.observe(document.body, { attributes: true });
+        // React apps can insert their stylesheet after DOMContentLoaded. Only
+        // stylesheet changes schedule a read; routine game DOM updates do not.
+        var styles = new MutationObserver(function (records) {
+          for (var i = 0; i < records.length; i++) {
+            var r = records[i];
+            var target = r.target.nodeType === 3 ? r.target.parentElement : r.target;
+            if (target && target.tagName === "STYLE") { schedule(); return; }
+            var nodes = Array.from(r.addedNodes || []).concat(Array.from(r.removedNodes || []));
+            if (nodes.some(hasStyles)) { schedule(); return; }
+          }
+        });
+        styles.observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+      }
+      publish();
+    }
+
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
+    else start();
+    window.addEventListener("load", schedule);
+    window.addEventListener("pageshow", schedule);
+    window.addEventListener("resize", schedule);
+    document.addEventListener("load", function (e) {
+      if (e.target && e.target.tagName === "LINK") schedule();
+    }, true);
+    try {
+      var mq = window.matchMedia("(prefers-color-scheme: dark)");
+      if (mq.addEventListener) mq.addEventListener("change", schedule);
+      else if (mq.addListener) mq.addListener(schedule);
+    } catch (_) {}
+  })();
+  /* __USERNODE_BACKGROUND_END__ */
+
   // Rendering invariants (issue #360) — additive within v1.
   //
   // Opt-in, no-op-by-default self-checks an app registers to catch

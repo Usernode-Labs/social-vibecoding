@@ -140,6 +140,7 @@ function attachRenderer(store, refs) {
       }
       // Rendered props: a style change updates the existing node.
       r.el.style.opacity = faded ? '0' : '1';
+      r.el.style.backgroundColor = store.get().background || '';
       refs.iframe = r.el;
     }
     r.hostHidden = !active;
@@ -175,7 +176,7 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
 
   // The stores are module-scope singletons, like the islands they feed: reset
   // them to the prerendered state between cases.
-  storeMod.appFrameStore.set({ slug: '', active: false, faded: true, cover: null });
+  storeMod.appFrameStore.set({ slug: '', active: false, faded: true, background: '', cover: null });
   storeMod.appFrameRefs.iframe = null;
   stagingStoreMod.stagingStore.set({
     open: false, mode: 'fullscreen', dockRect: null, urlLabel: '',
@@ -973,4 +974,27 @@ test('every path that owned #app-content goes through the frame seam', () => {
   const appJs = read('public/js/app.js');
   assert.ok(appJs.includes('AppView._unmountAppFrame();'),
     'closeApp drops the frame when the app is actually left');
+});
+
+test('background updates preserve the app frame and clear when another app opens', async () => {
+  const h = await makeHarness();
+  h.bridge.mount({ slug: SLUG, faded: false });
+  h.bridge.setSrc(APP_URL);
+  const frame = h.bridge.frame();
+  const win = frame.contentWindow;
+  const loads = frame.loads;
+  h.AppView.handleBackgroundBridgeMessage({ source: win,
+    data: { __usernode_background: 'changed', color: '#0a0d14' } });
+  assert.equal(h.renderer.el.style.backgroundColor, '#0a0d14');
+  h.bridge.park(); h.bridge.activate();
+  h.bridge.mount({ slug: SLUG, faded: false });
+  assert.equal(h.bridge.frame(), frame);
+  assert.equal(frame.contentWindow, win);
+  assert.equal(frame.loads, loads);
+  assert.equal(h.store.get().background, '#0a0d14');
+  h.bridge.mount({ slug: 'another-app', faded: false });
+  assert.equal(h.store.get().background, '');
+  h.AppView.handleBackgroundBridgeMessage({ source: win,
+    data: { __usernode_background: 'changed', color: '#0a0d14' } });
+  assert.equal(h.store.get().background, '', 'a departed app cannot paint the next frame');
 });

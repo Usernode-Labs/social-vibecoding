@@ -1373,6 +1373,10 @@ const AppView = {
     isActive() { return !!AppView._appFrameDom._el('app-iframe'); },
     frame() { return AppView._appFrameDom._el('app-iframe'); },
     hasFrame() { return !!AppView._appFrameDom._el('app-iframe'); },
+    setBackground(background) {
+      const el = AppView._appFrameDom._el('app-iframe');
+      if (el) el.style.backgroundColor = background || '';
+    },
     setSrc(src) {
       const el = AppView._appFrameDom._el('app-iframe');
       if (!el || !src) return false;
@@ -15615,6 +15619,26 @@ const AppView = {
     } catch {}
   },
 
+  // #1581: WebKit exposes the IFRAME ELEMENT's background during a child
+  // document's rubber-band scroll, even when that document paints html/body.
+  // Accept only a solid color from the exact frame it will paint. The React
+  // bridges own their styles; the guest viewer is an explicitly static DOM
+  // region (landing.tsx's ViewerRegion), recreated when a guest leaves an app.
+  handleBackgroundBridgeMessage(e) {
+    const data = e.data;
+    if (!data || data.__usernode_background !== 'changed') return;
+    if (data.color !== null && (typeof data.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(data.color))) return;
+    const id = AppView.SAFE_AREA_FRAME_IDS.find((id) => {
+      const frame = document.getElementById(id);
+      return frame && e.source === frame.contentWindow;
+    });
+    if (!id) return;
+    const background = data.color ? data.color.toLowerCase() : '';
+    if (id === 'app-iframe') AppView._appFrame().setBackground?.(background);
+    else if (id === 'staging-iframe') AppView._staging()?.setBackground?.(background);
+    else document.getElementById(id).style.backgroundColor = background;
+  },
+
   // ── App LLM access consent flow (issue #34) ────────────────────────
   //
   // The bridge's usernode.requestLlmAccess()/getLlmAccess()/
@@ -16101,6 +16125,7 @@ if (typeof window !== 'undefined') {
     try { AppView.handleLocaleBridgeMessage(e); } catch {}
     // #970: the bridge's startup request for this frame's safe-area insets.
     try { AppView.handleSafeAreaBridgeMessage(e); } catch {}
+    try { AppView.handleBackgroundBridgeMessage(e); } catch {}
   });
 
   // #970: anything that can change a frame's rect relative to the page's

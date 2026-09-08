@@ -32,7 +32,7 @@ import { createStore } from '../../lib/plain-store.js';
  *
  * @typedef {{ top: number, left: number, width: number, height: number }} DockRect
  * @typedef {{
- *   open: boolean, mode: string, dockRect: DockRect | null, urlLabel: string,
+ *   open: boolean, mode: string, dockRect: DockRect | null, urlLabel: string, background: string,
  *   loaderVisible: boolean, loaderTitle: string, loaderSub: string,
  *   testBtnHidden: boolean, testBtnTitle: string, testPanelHidden: boolean,
  *   testHtml: string, fsBtnHidden: boolean, fsBtnText: string, fsBtnTitle: string,
@@ -54,6 +54,7 @@ export const stagingStore = createStore(/** @type {StagingState} */ ({
   /** Pinned rect while docked: { top, left, width, height } | null. */
   dockRect: null,
   urlLabel: '',
+  background: '',
   loaderVisible: false,
   loaderTitle: 'Opening preview…',
   loaderSub: '',
