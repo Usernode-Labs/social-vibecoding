@@ -99,6 +99,9 @@ function Row({ view }: { view: RowView }): ReactNode {
       onMouseEnter={warm}
       inset="none"
       chevron={false}
+      contentClassName="browse-row-content"
+      titleClassName="browse-row-title"
+      subtitleClassName="browse-row-meta"
       leading={(
         <div
           className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
@@ -113,7 +116,7 @@ function Row({ view }: { view: RowView }): ReactNode {
       )}
       title={(
         <span className="flex items-center gap-1.5 min-w-0">
-          <span className="truncate">{view.name}</span>
+          <span className="browse-row-name truncate">{view.name}</span>
           <span className={`status-dot ${view.statusDot} shrink-0`} title={view.status}></span>
         </span>
       )}

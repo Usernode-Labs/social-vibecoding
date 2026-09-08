@@ -111,7 +111,7 @@ const SESSION = {
 
 // ── 1. The venue button ────────────────────────────────────────────────
 
-test('the venue button is the LAST direct child, with the attributes the check reads', () => {
+test('the desktop venue remains a direct child with the attributes the check reads', () => {
   const { view } = makeDevChat();
   const html = headerHtml(view({ ...SESSION, agent_backend: 'codex_openrouter' }));
 
@@ -123,9 +123,21 @@ test('the venue button is the LAST direct child, with the attributes the check r
   assert.match(html, /class="dc-venue-caret"[^>]*>▾</);
   assert.doesNotMatch(html, /data-venue-busy|Thinking…|dc-venue-busy/,
     'idle keeps the ordinary dropdown affordance');
-  // LAST: nothing is rendered after it. The portal puts these children
-  // directly under `#dc-session-header`, so `>` and `:last-child` both hold.
-  assert.match(html, /<\/button>$/, 'the strip ends with the venue button');
+  // #1617 adds mobile Details after the inline desktop controls. Retain
+  // the direct-child contract, not the obsolete last-child assumption.
+  const { tokenize } = require('./helpers/html-tokens');
+  let depth = 0;
+  const children = [];
+  for (const token of tokenize(html)) {
+    if (token.kind === 'open') {
+      if (depth === 0) children.push(Object.fromEntries(token.attrs.map(a => [a.name, a.value])));
+      if (!token.selfClosing) depth++;
+    } else if (token.kind === 'close') depth--;
+  }
+  const venue = children.filter(c => c.id === 'dc-venue-select');
+  assert.equal(venue.length, 1);
+  assert.match(venue[0].class, /max-sm:hidden/);
+  assert.equal(children.filter(c => c['aria-haspopup'] === 'dialog').length, 1);
   assert.equal(html.indexOf('dc-venue-select') > html.indexOf('New change'), true);
 });
 
@@ -165,7 +177,8 @@ test('mid-turn the venue is visibly and accessibly locked', () => {
   assert.match(html, /aria-label="[^"].*Unavailable while the agent is thinking\./);
   assert.match(html, /title="Wait for the current response to finish[^"].*"/);
   assert.match(html, /class="dc-venue-busy"[^>]*>[\s\S]*Thinking…/);
-  assert.doesNotMatch(html, /dc-venue-caret|>▾</,
+  const venueHtml = html.match(/<button[^>]*id="dc-venue-select"[^>]*>[\s\S]*?<\/button>/)[0];
+  assert.doesNotMatch(venueHtml, /dc-venue-caret|>▾</,
     'the dropdown caret does not contradict the locked state');
 });
 
