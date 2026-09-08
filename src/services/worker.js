@@ -1224,9 +1224,17 @@ async function writeTurnSystemPrompt(sessionId, systemPrompt) {
   if (!meta) {
     throw new Error(`writeTurnSystemPrompt: no warm worker registered for session ${sessionId}`);
   }
-  await docker.execShellStdin(meta.containerName, buildTurnSystemPromptScript(systemPrompt), {
-    timeoutMs: 20000, label: 'writeTurnSystemPrompt',
-  });
+  if (usesKubernetesWorkers()) {
+    await execWorkerCommand(
+      meta.containerName,
+      ['sh', '-s'],
+      buildTurnSystemPromptScript(systemPrompt),
+    );
+  } else {
+    await docker.execShellStdin(meta.containerName, buildTurnSystemPromptScript(systemPrompt), {
+      timeoutMs: 20000, label: 'writeTurnSystemPrompt',
+    });
+  }
 }
 
 // Complete user-level prompt used only when a hosted Claude --resume attempt

@@ -24,12 +24,7 @@ const assert = require('node:assert/strict');
 
 const llm = require('../src/services/llm.js');
 const { QUICK_REPLY_RULES_TEXT } = require('../src/services/recovery-pills.js');
-
-const TOOL = {
-  name: 'suggest_replies',
-  description: 'test double',
-  input_schema: { type: 'object', properties: { replies: { type: 'array' } }, required: ['replies'] },
-};
+const { SUGGEST_REPLIES_TOOL: TOOL } = require('../src/routes/sessions.js');
 
 // Swap in a fake client, run `fn`, always restore. Records every
 // messages.create call so the tests can assert on the request shape (which
@@ -152,6 +147,8 @@ test('the continuation pins the one tool and asks for nothing else', async () =>
       assert.equal(params.tools[0].strict, true,
         'strict on the TOOL is what replaces the forced call\'s schema '
         + 'guarantee — it is a field of the tool, not of tool_choice');
+      assert.equal(params.tools[0].input_schema.additionalProperties, false,
+        'Anthropic strict tools must explicitly forbid additional object properties');
       assert.match(params.system, /Call suggest_replies now/,
         'and the instruction naming the tool is what replaces the rest of it');
       assert.equal(params.model, 'claude-opus-5',
