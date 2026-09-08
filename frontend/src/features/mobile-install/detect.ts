@@ -147,6 +147,22 @@ export function installOffer(env: InstallEnv): InstallOffer | null {
   // platform is an installable PWA on both, so the fallback is the home-screen
   // install rather than an empty strip.
   if (!url) return { kind: 'a2hs', os };
+  // #1515: a BETA is not "the app". `update_url` is one free-text field that
+  // feeds both the native update gate and this strip, and the value published
+  // for iOS today is a TestFlight invite. The update gate is right to follow
+  // it: it is talking to somebody who already installed that build. This strip
+  // is talking to a stranger, and sending them to "join a beta, install
+  // TestFlight first, accept an invite" under a button that says Get is a
+  // different offer from the one it appears to make.
+  //
+  // Since #1513 the answer here is the home-screen install rather than
+  // nothing, which is the better one: a stranger who cannot be sent to a
+  // public listing still gets a real way to install, and it is the path that
+  // works on this platform today.
+  //
+  // The same host test `storeLabel` uses, so the strip cannot end up naming a
+  // destination it has decided not to offer.
+  if (isBetaInvite(url)) return { kind: 'a2hs', os };
 
   return { kind: 'store', os, url };
 }
@@ -164,3 +180,19 @@ export const A2HS_STEPS: Record<MobileOs, string> = {
   ios: 'Tap Share, then Add to Home Screen.',
   android: 'Open the browser menu, then Add to Home screen.',
 };
+
+/**
+ * Is this a beta invite rather than a public store listing?
+ *
+ * Only TestFlight today, and deliberately a HOST test rather than a guess at
+ * the shape of a URL: an unrecognised host is somebody's real store listing on
+ * a domain this function has not heard of, and refusing it would hide a
+ * working offer. A beta we can name is the only thing worth suppressing.
+ */
+export function isBetaInvite(url: string): boolean {
+  try {
+    return new URL(url).hostname.toLowerCase() === 'testflight.apple.com';
+  } catch {
+    return false;
+  }
+}
