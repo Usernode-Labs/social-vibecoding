@@ -2027,7 +2027,7 @@ Write THREE or FOUR sentences, at most 90 words, as a single paragraph.
 
 Cover, in this order: the week just gone and what people actually finished; what is being worked on right now; and what is stuck or waiting on somebody. If the board has a through-line worth naming — a push several themes keep bending towards — that is the fourth sentence, and only then. Name the people whose work it is — "Sam and Priya spent the week on Game Corner" reads like a group that knows each other, which is what this is; use the usernames exactly as the snapshot spells them. Two or three names at most, and only where they carry real work; do not list everybody, and do not rank anybody.
 
-Say what the work was ABOUT, in the words a member would use — the part of the product, not the file. Prefer the theme names you are given over inventing your own labels.
+Say what the work was ABOUT, in the words a member would use — the part of the product, not the file. Prefer the category names you are given over inventing your own labels, and call them CATEGORIES if you name the grouping at all: that is the word the screen uses.
 
 STATE NO COUNTS. The dashboard directly above this paragraph already shows how many items are open, how many are waiting on votes, how many landed this week and how many have nobody on them. Repeating any of those spends the only sentences you have on something the reader has already read. Write what a number cannot: what the work is about, who is carrying it, what has stalled and why. The one exception is an absence worth naming, as in "nothing landed this week".
 
