@@ -61,6 +61,7 @@ import { DevWorkshop } from './workshop/workshop';
 import { TopicHead } from './topic/topic-head';
 import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
 import { AutoSessionModal } from './modals/auto-session-modal';
+import { SessionChecks, type SessionChecksProps } from './modals/session-checks';
 import { CreditOptionsModal } from './modals/credit-options-modal';
 import { LlmConsentModal } from './modals/llm-consent-modal';
 import {
@@ -106,6 +107,7 @@ export interface DevBoardBridge {
   mountTopicHead(host: Element | null): void;
   publishTopicHead(state: TopicHeadState): void;
   mountAutoSessionModal(host: Element | null, view: AutoSessionModalView): void;
+  mountSessionChecks(host: Element | null, props: SessionChecksProps): void;
   mountCreditOptionsModal(host: Element | null, view: CreditOptionsModalView): void;
   mountLlmConsentModal(host: Element | null, view: LlmConsentModalView): void;
   publishCardNow(now: number): void;
@@ -303,6 +305,10 @@ export const devBoardBridge: DevBoardBridge = {
   mountAutoSessionModal(host, view) {
     autoSessionModalStore.set({ view });
     mountLegacyPortal(host, createElement(AutoSessionModal));
+  },
+
+  mountSessionChecks(host, props) {
+    mountLegacyPortal(host, createElement(SessionChecks, props));
   },
 
   mountCreditOptionsModal(host, view) {

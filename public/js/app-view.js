@@ -2122,6 +2122,7 @@ const AppView = {
   /** Close whatever Dev dialog is open, resolving it the way Escape does. */
   _creditsModalClose: null,
   _dismissDevModals() {
+    if (AppView._sessionChecksClose) AppView._sessionChecksClose();
     AppView._autoSessionCancel();
     AppView._llmConsentDecline();
     if (AppView._creditsModalClose) AppView._creditsModalClose();
@@ -3215,6 +3216,7 @@ const AppView = {
     explore: '✨',          // ✨ was inline in the label; now the icon
     generate: '✧',         // ✧ sibling sparkle: the headless AI run
     retry: '↻',            // ↻
+    checks: '✓',          // check results
     visuals: '🖼',    // 🖼 before/after captures
     github: '↗',           // ↗ leaves the platform
     priority: '⚑',         // ⚑ the same flag the priority chip uses
@@ -6847,7 +6849,7 @@ const AppView = {
     const rest = f.total - shown.length;
     const names = shown.join(' · ') + (rest > 0 ? ` · +${rest} more` : '');
     meta.push({
-      t: 'text',
+      t: 'span', cls: '',
       s: `Failing: ${names}`,
       // The full first reason, where a pointer cannot carry it. Advisory
       // rows are named too but marked, because they do not block the merge
@@ -7002,11 +7004,12 @@ const AppView = {
     // Underway card, only on the promoted topic page. So an owner watching
     // their own session fail could see the verdict and do nothing about it
     // without leaving the board.
+    menu.push({ label: 'View checks', icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
     const recheck = AppView._recheckAction(s);
     if (recheck && !recheck.disabled) {
       menu.push({
         label: 'Re-run checks',
-        icon: 'refresh',
+        icon: 'retry',
         title: recheck.title,
         act: () => AppView.castRecheck(s.id),
       });
@@ -7081,6 +7084,11 @@ const AppView = {
     const author = s.imported_pr_author || 'unknown author';
     const preview = AppView._cardPreviewSpec(s, { kind: 'shared-session', sessionId: s.id });
     const menu = imported && !noNav ? AppView._importedUnderwayMenuItems(s) : [];
+    menu.push({ label: 'View checks', icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
+    const recheck = AppView._recheckAction(s);
+    if (recheck && !recheck.disabled) {
+      menu.push({ label: 'Re-run checks', icon: 'retry', act: () => AppView.castRecheck(s.id) });
+    }
     const attrs = { title: label };
     if (!noNav) {
       attrs['data-shared-session-row'] = String(s.id);
@@ -9027,12 +9035,14 @@ const AppView = {
   _recheckAction(pr) {
     if (!pr) return null;
     if (AppView.readOnly) return null;
+    if (pr.status && !['active', 'promoted'].includes(pr.status)) return null;
+    if (pr.status === 'active' && !pr.check_state) return null;
     if (pr.check_state === 'passing') return null;
     const owner = !!(App.user && pr.user_id === App.user.id);
     // `recheckable` is a staging ?demo=1 hint (set only on mock rows) so the
     // button is reviewable regardless of the demo viewer's owner/admin
     // status; real proposals never carry it and stay owner/admin-only.
-    if (!owner && !App.user?.isAdmin && !pr.recheckable) return null;
+    if (!owner && !App.user?.canAdminWrite && !pr.recheckable) return null;
     // #607: a WS/poll-driven re-render mid-request must not resurrect an
     // enabled button — keep it disabled while the request is in flight.
     if (AppView._recheckInFlight.has(pr.id)) {
@@ -9550,6 +9560,23 @@ const AppView = {
   // server; progress arrives via the checks_ready / staging_ready broadcasts
   // that drive refreshDevData, so we just disable the button transiently.
   _recheckInFlight: new Set(),
+  _sessionChecksClose: null,
+  openSessionChecks(sessionId) {
+    if (AppView._sessionChecksClose) AppView._sessionChecksClose();
+    const react = AppView._reactDevBoard();
+    if (!react) return;
+    const host = document.createElement('div');
+    host.dataset.sessionChecksHost = '';
+    document.body.appendChild(host);
+    const close = () => {
+      react.unmount(host);
+      host.remove();
+      if (AppView._sessionChecksClose === close) AppView._sessionChecksClose = null;
+    };
+    AppView._sessionChecksClose = close;
+    react.mountSessionChecks(host, { sessionId, onClose: close });
+  },
+
   async castRecheck(sessionId, btn) {
     if (AppView._recheckInFlight.has(sessionId)) return;
     AppView._recheckInFlight.add(sessionId);
@@ -9576,6 +9603,7 @@ const AppView = {
       // the spinning "Checks running…" badge renders immediately (the WS
       // pending broadcast covers everyone else's screens).
       AppView.refreshDevData('recheck');
+      return true;
     } catch (err) {
       PlatformUI.toast(`Re-run failed: ${err.message}`);
       if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }

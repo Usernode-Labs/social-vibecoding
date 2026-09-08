@@ -174,9 +174,9 @@ test('shared card: single-row shell; noNav drops nav, chevron and the actions ro
   assert.ok(nav.includes(SHELL), 'uses the standard single-row card shell');
   // The preview is a labelled pill at the end of the action band (round
   // three), so it comes BEFORE the chevron on the card's right edge — and
-  // with nothing to demote there is no rail column at all.
+  // check inspection shares the rail with that chevron.
   assertOrder(nav, ['dev-card-title', SPINNER, 'dev-chat-badge', 'gc-vote-btn-preview', CHEVRON]);
-  assert.doesNotMatch(nav, /dev-card-rail/, 'no column for a lone chevron');
+  assert.match(nav, /dev-card-rail/, 'check inspection shares the rail with the chevron');
 
   const noNav = sharedSessionCardHtml(AppView, s, { noNav: true });
   assert.doesNotMatch(noNav, /data-shared-session-row/, 'noNav variant has no row hook');
@@ -214,7 +214,7 @@ test('an owned imported PR shows proposal metadata with one promotion action', (
   assert.doesNotMatch(html, />Yes \(|>No \(/, 'voting stays hidden until promotion');
   assert.doesNotMatch(html, /Make visible|>Hide<|Share chat/);
   assert.equal(menuLabels(AppView, html).join('|'),
-    'Change priority…|Change category…|Change assignee…|View PR on GitHub',
+    'Change priority…|Change category…|Change assignee…|View PR on GitHub|View checks',
     'the menu edits proposal attributes without exposing dev-session actions');
   assert.ok(!menuHas(AppView, html, /Archive|Open session|Vote/));
 });
@@ -358,7 +358,7 @@ test('chat-shared own card flips to the revoke row and says so in the subtitle',
   assert.match(html, /Visible to everyone · chat readable/);
 });
 
-test('the ⋯ rows come in chat-sharing → discussion → Archive order', () => {
+test('the ⋯ rows come in chat-sharing → discussion → checks → Archive order', () => {
   const AppView = makeAppView();
   AppView._sharedById = { 51: { id: 51, chat_count: 0 } };
   const html = mySessionCardHtml(AppView, mySess({ shared_at: '2026-06-01T03:00:00Z' }));
@@ -366,7 +366,7 @@ test('the ⋯ rows come in chat-sharing → discussion → Archive order', () =>
   // Visibility used to lead this list; it is the promoted pill now, so the
   // menu starts at the narrower second opt-in. Archive stays last — it is the
   // destructive row.
-  assert.match(labels, /^Share chat\|Open public discussion\|Archive$/);
+  assert.match(labels, /^Share chat\|Open public discussion\|View checks\|Archive$/);
   assert.match(html, /gc-card-actions[\s\S]*?>Hide</, 'visibility leads the ACTION band');
 });
 
@@ -382,10 +382,10 @@ test('the "Read chat" PILL is gone — the transcript lives on the detail page',
     /data-transcript-section="71"/, 'the detail page hosts it');
 });
 
-test('a shared card carries no ⋯ at all (nothing left to demote)', () => {
+test('a shared card offers View checks from its menu', () => {
   const AppView = makeAppView();
   const html = sharedSessionCardHtml(AppView, sharedSess({ transcript_shared: true }));
-  assert.equal(menuKeyOf(html), null, 'no dead ⋯ button');
+  assert.equal(menuLabels(AppView, html).join('|'), 'View checks');
 });
 
 test('read-only viewers still reach a published transcript (via the detail page)', () => {

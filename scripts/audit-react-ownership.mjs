@@ -143,6 +143,7 @@ const OWNED = [
   // The card's ⋯ menu (features/dev-board/card-menu.tsx). Same story as the
   // picker above: on screen only mid-gesture, so this sweep never sees one.
   { sel: '.dev-card-menu' },
+  { sel: '[data-session-checks-host]' },
   // The three body-mounted Dev modals (features/dev-board/modals/). Same
   // story again — each scrim is created on open and removed on close, so
   // this sweep never sees one; the coverage is
