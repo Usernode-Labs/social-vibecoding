@@ -199,6 +199,13 @@ async function issueVerificationCode(pool, email) {
 // row (with more_token, so the caller can hand back the stage-2
 // capability) or null.
 //
+// The RETURNING carries the whole state tuple — submitted_at,
+// released_at, linked_user_id — because #1538's "check my status" reads
+// its answer straight off this row rather than making a second round
+// trip. An already-confirmed row is a normal, expected caller here: the
+// COALESCE below keeps its first timestamp and everything else is a
+// plain read.
+//
 // EVERY failure returns the same null — unknown email, malformed code,
 // wrong code, expired, already consumed, too many attempts — so this can
 // never be used to test whether an address is on the list. That is the
@@ -239,7 +246,8 @@ async function confirmSignupByCode(pool, email, code) {
     `UPDATE waitlist_signups
         SET confirmed_at = COALESCE(confirmed_at, NOW())
       WHERE email = $1
-      RETURNING id, email, confirmed_at, more_token`,
+      RETURNING id, email, submitted_at, confirmed_at, released_at,
+                linked_user_id, more_token`,
     [normalized]
   );
   return signup[0] || null;
