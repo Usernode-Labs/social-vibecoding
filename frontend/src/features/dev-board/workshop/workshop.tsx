@@ -346,18 +346,22 @@ function CardRowView({
   // excluded by the same guard the delegated handler uses, plus the thread's
   // composer and the chips that are real buttons: a click on Vote, on the ⋯,
   // on "Closes #12" or in the reply box must do its own job and nothing else.
+  //
+  // The handler goes on the wrapper rather than on a div around the sheet:
+  // the sheet is a DIRECT child of `.dev-ws-rowwrap-open`, and a declared
+  // check selects it that way. An intermediate element to hang onClick on
+  // is invisible in a diff and breaks that selector.
   return (
-    <div className={open ? 'dev-ws-rowwrap dev-ws-rowwrap-open' : 'dev-ws-rowwrap'}>
+    <div
+      className={open ? 'dev-ws-rowwrap dev-ws-rowwrap-open' : 'dev-ws-rowwrap'}
+      onClick={open ? (e) => {
+        const el = e.target as HTMLElement | null;
+        if (el && el.closest('a, button, input, textarea, select, form, [data-attr-chip], [data-issue-chip]')) return;
+        onToggle();
+      } : undefined}
+    >
       {open ? (
-        <div
-          onClick={(e) => {
-            const el = e.target as HTMLElement | null;
-            if (el && el.closest('a, button, input, textarea, select, form, [data-attr-chip], [data-issue-chip]')) return;
-            onToggle();
-          }}
-        >
-          <UnfoldedRow row={row} slug={slug} canPost={canPost} />
-        </div>
+        <UnfoldedRow row={row} slug={slug} canPost={canPost} />
       ) : (
         <FoldedRow row={row} open={open} onToggle={onToggle} />
       )}

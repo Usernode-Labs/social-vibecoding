@@ -30,6 +30,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const { workshopHtml } = require('./lib/dev-card-html');
+const { tokenize } = require('./helpers/html-tokens');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -998,6 +999,52 @@ test('an unfolded row is the Activity entry: the sheet, the card, the slot, the 
   // And the module's fillers are re-run when the set of unfolded rows changes.
   assert.match(WORKSHOP, /callAppView\('_wireFeedComments', host\)/);
   assert.match(WORKSHOP, /callAppView\('_fillKudosHosts', host\)/);
+});
+
+test('the open sheet is a DIRECT child of the wrapper, the way the check selects it', () => {
+  // The declared check reads
+  //
+  //   #dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry
+  //     > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-feed-thread ...
+  //
+  // and the two `>` in it are the whole point of this test. Hanging the
+  // close-on-click handler on a plain <div> wrapped around the sheet is a
+  // one-line change that renders identically, reviews as harmless and breaks
+  // that selector — it did, on the first submission of #1787's third round.
+  // The source-text test above cannot see it, because the extra element is in
+  // CardRowView and not in UnfoldedRow. So resolve the spine against the real
+  // markup instead: nothing may sit between the wrapper, the sheet and the
+  // card.
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['session:34', 'issue:12'] }]);
+  AppView._workshopShot = 'feed-comments';
+
+  const els = tokenize(workshopHtml(AppView)).filter((t) => t.kind === 'open');
+  const classOf = (t) => {
+    const a = (t.attrs || []).find((x) => x.name.toLowerCase() === 'class');
+    return a ? String(a.value).split(/\s+/) : [];
+  };
+  const attr = (t, n) => (t.attrs || []).some((x) => x.name.toLowerCase() === n);
+
+  const i = els.findIndex((t) => classOf(t).includes('dev-ws-rowwrap-open'));
+  assert.ok(i >= 0, 'the capture deep link opens a row');
+
+  const sheet = els[i + 1];
+  assert.ok(classOf(sheet).includes('dev-feed-entry'),
+    'the sheet is the wrapper\'s first child, with no element between them');
+
+  const card = els[i + 2];
+  assert.ok(classOf(card).includes('dev-card-dense'),
+    'and the Board\'s dense card is the sheet\'s first child');
+  assert.ok(attr(card, 'data-edge'), 'still carrying its state edge');
+
+  // The fold is the other half: while a row is open its compressed form is
+  // not drawn at all, so nothing can match `.dev-ws-rowwrap-open .dev-ws-row`.
+  const inside = els.slice(i + 1).findIndex((t) => classOf(t).includes('dev-ws-rowwrap'));
+  const end = inside === -1 ? els.length : i + 1 + inside;
+  assert.ok(!els.slice(i, end).some((t) => classOf(t).includes('dev-ws-row')),
+    'the compressed row is gone while the card is up');
 });
 
 test('the sheet CSS moved host with the entry, and the Workshop has its own', () => {
