@@ -3588,14 +3588,33 @@ function voteRoutes(config) {
         const injected = stagingMockMerged().map((m) => ({ ...m, row_type: 'pr' }))
           .concat(stagingMockCompletedCloseIssues())
           .filter((m) => !have.has(key(m)));
+        // #1788: make room for the mocks BEFORE merging them in, rather than
+        // letting them compete with real history for the page.
+        //
+        // The old order was unshift, sort newest-first, then truncate to
+        // `limit`. That trims the mocks like anything else, and these rows are
+        // dated in DAYS — 9100060 is two days old — so they only survived
+        // while fewer than `limit` real completed rows were newer than them.
+        // On a day with 63 merges they fell off page one entirely, and since
+        // the mocks are first-page-only by design they then appeared nowhere.
+        //
+        // That is what made the "A task moved to Done keeps its chips" check
+        // look flaky: it was failing whenever the platform had been busy, so
+        // its recorded flake rate rose with our own merge rate and it began
+        // blocking unrelated proposals.
+        //
+        // Reserving the slots is the fix rather than re-dating the mocks to a
+        // few hours old: that would work today and rot again at a higher merge
+        // rate, and it would fight #1264, which spread these deliberately over
+        // ~150 days so the report's monthly strip has something to draw.
+        if (rows.length + injected.length > limit) {
+          hasMore = true;
+          rows.length = Math.max(0, limit - injected.length);
+        }
         rows.unshift(...injected);
         // Re-sort so the mock close-issue rows interleave among the mock
         // merged PRs by date instead of clumping at the top.
         rows.sort(completedRowCompare);
-        if (rows.length > limit) {
-          hasMore = true;
-          rows.length = limit;
-        }
         // The COUNT(*) above can't see the mock rows (they aren't in the
         // DB), so bump the total by however many we injected to keep the
         // demo badge self-consistent with the rows the board renders.
