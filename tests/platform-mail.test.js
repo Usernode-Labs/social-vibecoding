@@ -390,7 +390,9 @@ test('the join mail carries the CODE, the confirm link AND the survey link', asy
   // a desktop, where it is one click. Either stamps the same row.
   assert.match(msg.text, /verification code is 123456/);
   assert.ok(msg.text.includes(seen[0].confirmUrl), 'the confirm CTA must be in the copy');
-  assert.match(msg.text, /confirm this email address in one click/i);
+  // #1540: the sentence is shorter and the HTML half is a button, but the
+  // text part must still carry the URL for a reader who cannot see HTML.
+  assert.match(msg.text, /confirm in one tap/i);
   // Andrea's copy for the optional questions, and the rolling-groups
   // promise that replaced the placeholder "[September 9]" date — no wave
   // has been committed to, and a date that slips is worse than none.
