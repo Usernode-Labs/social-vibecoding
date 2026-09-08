@@ -113,17 +113,18 @@ test('my own rename PR proposal renders Withdraw', () => {
   assert.ok(menuHas(AppView, html, /^Withdraw$/), 'rename PR shows Withdraw in ⋯');
 });
 
-// #313/#827: the card-level "Explore in dev chat" button renders on
-// proposals the viewer does NOT own (where there's no "Open session"), and is
-// omitted on the viewer's own cards.
-test("someone else's proposal renders the Explore-in-dev-chat card button", () => {
+// #313/#827: "Explore in dev chat" is offered on proposals the viewer does
+// NOT own (where there's no "Open session"), and omitted on their own cards.
+// #1787 round four moved it back off the face and into ⋯: it is a door to a
+// side conversation ABOUT the proposal rather than one of the things you do
+// to it, and at ~170px it was the widest pill on the card, pushing Vote or
+// Withdraw into the fold it should have been in itself.
+test("someone else's proposal offers Explore-in-dev-chat from ⋯", () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({ user_id: 999 }));
-  // On the FACE now, not in ⋯: the four-band card reserves an action band, and
-  // on a live foreign proposal Explore is what fills it beside Yes/No.
-  assert.match(html, /gc-card-actions[\s\S]*?gc-explore-chat-btn/,
-    'Explore offered as a pill on a foreign proposal');
-  assert.ok(!menuHas(AppView, html, /Explore in dev chat/), 'so not also a ⋯ row');
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/),
+    'Explore offered from ⋯ on a foreign proposal');
+  assert.ok(!html.includes('gc-explore-chat-btn'), 'and not as a pill on the face, so never both');
   assert.equal(html.match(/data-card-menu="([^"]+)"/)[1], 'proposal:7', 'menu keyed by the proposal id');
 });
 
@@ -145,8 +146,8 @@ test("someone else's merged proposal renders the Explore-in-dev-chat button", ()
 test('my own IMPORTED proposal DOES render the Explore-in-dev-chat button (#1045)', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({ source: 'imported' }));
-  assert.match(html, /gc-explore-chat-btn/, 'Explore pill present on my imported proposal');
-  assert.match(html, /data-proposal-id="7"/, 'wired to the proposal id');
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/),
+    'Explore offered from ⋯ on my imported proposal');
   assert.doesNotMatch(html, /openProposalSession/,
     'still no Open session — an imported PR has no dev session (#687)');
   assert.ok(menuHas(AppView, html, /^Withdraw$/), 'Withdraw is unaffected — a ⋯ row like any own live PR');

@@ -10844,7 +10844,19 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 :is(.dev-card-dense, .dev-card-topic) .dev-card-badges { margin-top: 8px; gap: 4px 6px; }
 :is(.dev-card-dense, .dev-card-topic) .dev-card-badges.dev-card-status {
   min-height: 0;
-  max-height: 52px;
+  /* THREE flex lines, not two: `.dev-card-band-break` is a full-width,
+     zero-height item that forces the wrap, and it takes a line of its own
+     WITH a row gap on each side. So the sum is 30 (bar) + 4 + 0 (break) + 4
+     + 22 (the facts row, whose tallest member is a control: the preview
+     pill and, in the Workshop, the Open card toggle) = 60.
+
+     Measured, not derived: 56 was 30 + 4 + 22, the break forgotten, and the
+     band clipped its own last 4px. It was 52 before that and clipping 5,
+     which nobody saw because the facts line was flat text and the loss fell
+     in the descender space under it. A 22px pill puts its bottom edge there
+     instead, and a control with its bottom edge shaved is the bug report
+     that found this. */
+  max-height: 60px;
 }
 .dev-card-band-break { flex-basis: 100%; height: 0; }
 /* The bar: 30px, r14, no outline (the wash is the surface), and its label
@@ -10960,24 +10972,48 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
    markup and hooks (button.attr-chip[data-attr-field], the issue chip, the
    chat badge), drawn as muted text with a dot between. The mono issue
    number keeps its family at 12px. */
+/* These used to be stripped to muted text with a "·" between them, so
+   "Closes #1575 · @alice · design" read as a byline. The Workshop's folded
+   row kept them as the chips they are, and putting the two sizes beside each
+   other settled which was right: on a proposal card, what it closes and who
+   has it are the two facts most worth not skipping, and a chip is not
+   skipped. The card takes the ROW's treatment now — one vocabulary across
+   both sizes instead of two. `.dev-badge`'s own tinted pill is what shows
+   through; all that is left here is the fit. */
 :is(.dev-card-dense, .dev-card-topic) .dev-card-status > .dev-badge {
-  height: auto;
-  padding: 0;
+  height: 19px;
+  font-size: 11.5px;
+}
+:is(.dev-card-dense, .dev-card-topic) .dev-card-status > .dev-badge.font-mono { font-size: 11px; }
+/* The preview, at the right end of the facts line rather than on an action
+   row of its own. `margin-left: auto` on a wrapping flex band pushes it to
+   the end of whatever line it lands on, which is the facts line while there
+   is room and its own line when there is not — the reserve-and-clip contract
+   is unchanged either way. Its right edge is the CONTENT column's, so it
+   sits just inside the ⋯ rather than flush with it: the rail is a column of
+   its own and reaching under it would put this pill beneath the menu button
+   in a narrow kanban column. */
+:is(.dev-card-dense, .dev-card-topic) .dev-card-status > .dev-card-status-end {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* The controls that end that line are 22px, not the 28px they were on their
+   own row: the band reserves and CLIPS at two rows, and a 28px control made
+   the facts row overflow the cap and lose its own bottom edge. Sized to the
+   line it now shares rather than to the row it used to own. */
+:is(.dev-card-dense, .dev-card-topic) .dev-card-status-end > .gc-vote-btn {
+  height: 22px;
+  padding: 0 9px;
   gap: 4px;
-  border-radius: 0;
-  background: transparent;
-  font-size: 12.5px;
-  font-weight: 500;
-  line-height: 1.4;
-  color: var(--text-muted);
+  border-radius: 999px;
+  font-size: 11.5px;
 }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-status > .dev-badge.font-mono { font-size: 12px; }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-status > .dev-badge + .dev-badge::before {
-  content: "·";
-  margin-right: 2px;
-  opacity: 0.6;
+:is(.dev-card-dense, .dev-card-topic) .dev-card-status-end > .gc-vote-btn > svg { width: 14px; height: 14px; }
+:is(.dev-card-dense, .dev-card-topic) .dev-card-status > button.dev-badge:hover {
+  box-shadow: 0 0 0 1px var(--border) inset;
 }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-status > button.dev-badge:hover { color: var(--accent); }
 :is(.dev-card-dense, .dev-card-topic) .dev-card-status > .dev-badge .attr-avatar { width: 14px; height: 14px; }
 
 /* ── The action band: one line, folding into ⋯ ──
@@ -11571,7 +11607,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dev-ws-strip, .dev-ws-theme { background-color: var(--dc-sheet); }
 }
-.dev-ws-strip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+/* CENTRE, not baseline. Baseline was right while the only thing beside the
+   eyebrow was a 22px pill; with a 30px ring in the line the eyebrow's
+   baseline aligned to the bottom of the ring and the two read as two rows. */
+.dev-ws-strip-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dev-ws-strip-text { margin: 0; font-size: 14px; color: var(--text-primary); }
 /* ── The Workshop's orientation pane ─────────────────────────
    "Since your last visit" moved inside "Where the app is": the description
@@ -11587,6 +11626,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    Dev screen and in a weight nothing else there wears. `.gc-vote-btn` is the
    platform's small action pill and is already what this screen uses. */
 .dev-ws-lane-btn { margin: 2px 0 0 4px; }
+/* The offer under a lane's heading, where the heading states the fact. */
+.dev-ws-lane-note { margin: -2px 0 6px 16px; font-size: 12px; color: var(--text-muted); }
+/* ── "What needs you": the ring, and the way to put it down ──
+   The pane stated a debt in the warning tint with no way to close it. The
+   ring is the home screen's Challenges primitive saying the same thing as
+   progress, and the × stores the OWED COUNT so the pane comes back by itself
+   the moment that number changes. */
+.dev-ws-needs-end { display: inline-flex; align-items: center; gap: 6px; }
+.dev-ws-vote-ring { width: 30px; height: 30px; }
+/* The count in words beside the ring. Muted and small: the ring is the
+   figure, this is what the figure is about. */
+.dev-ws-needs-count { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 .dev-ws-pill {
   display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px;
   font-size: 12px; font-weight: 600; white-space: nowrap;
@@ -11599,11 +11650,33 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 .dev-ws-link:hover { text-decoration: underline; }
 
-/* The dashboard's numbers, when it is open. Same two-line stat shape the
-   theme head uses, laid out as a row that wraps on a phone. */
-.dev-ws-dash { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 4px; }
-.dev-ws-dash-cell { display: flex; flex-direction: column; font-size: 12px; color: var(--text-muted); line-height: 1.2; }
-.dev-ws-dash-cell b { font-size: 20px; font-weight: 600; color: var(--text-primary); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+/* The dashboard's four numbers.
+   They were a sentence, and four integers read out as prose is the slowest
+   form they can take: the reader parses a clause to learn something a glance
+   should give. So they are tiles, on their own ground inside the pane, and
+   the paragraph under them is freed to say the things a number cannot.
+   Two up on a phone, four across from 420px. `auto-fit` rather than a fixed
+   count so the row never leaves one tile stranded on a line of its own. */
+.dev-ws-dash {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;
+  margin-top: 2px;
+}
+@media (min-width: 420px) { .dev-ws-dash { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.dev-ws-dash-cell {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 8px 10px; border-radius: 14px;
+  background: var(--dc-sheet); box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+  font-size: 11.5px; color: var(--text-muted); line-height: 1.25;
+}
+.dev-ws-dash-cell b {
+  font-size: 22px; font-weight: 600; color: var(--text-primary);
+  letter-spacing: -.02em; font-variant-numeric: tabular-nums;
+}
+/* Tone marks the two tiles that are a CALL, not a fact: something shipped,
+   something is blocked on you. A zero wears neither — nothing is waiting on
+   you is not a warning, and the component leaves the class off. */
+.dev-ws-dash-good b { color: var(--state-ok); }
+.dev-ws-dash-warn b { color: var(--state-attention); }
 .dev-ws-sort { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 0; flex-wrap: wrap; }
 .dev-ws-sort-opts { display: flex; gap: 4px; }
 .dev-ws-chip {
@@ -11706,9 +11779,49 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   background: var(--dc-sheet);
   color: var(--text-primary); font: inherit; cursor: pointer;
 }
-.dev-ws-row:hover { background: var(--state-neutral-bg); border-color: var(--border); }
+/* The hover FILL is the card's, applied as the card applies it: the same
+   `hover:bg-zinc-50 dark:hover:bg-zinc-800` utilities, on the row itself
+   (workshop.tsx). Two sizes of one object hovering to two different greys is
+   the same mismatch as two icons or two chip styles, and hard-coding the
+   colour here could not have fixed it — `zinc` is overridden in
+   tailwind.config.js, so a hex copied from the stock palette would be a
+   third grey rather than the card's. Only the border stays here. */
+.dev-ws-row:hover { border-color: var(--border); }
 .dev-ws-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.dev-ws-row > .dev-card-icon { flex-shrink: 0; align-self: flex-start; margin-top: 1px; }
+/* The row's icon is the CARD's icon, to the pixel: the same 22px box with no
+   tile and no fill, and the same 18px glyph. It used to be a 28px tinted
+   tile, which was the one part of the folded row that did not appear on the
+   card at all — so the two sizes of one item opened on a different mark.
+   The colour that tile was carrying is not lost: it moved to the left edge
+   below, which is where the card carries it. */
+.dev-ws-row > .dev-card-icon {
+  flex-shrink: 0; align-self: flex-start; margin-top: 1px;
+  width: 22px; height: 22px; background: transparent; border-radius: 0;
+}
+.dev-ws-row > .dev-card-icon > svg { width: 18px; height: 18px; }
+
+/* ── The row's left edge ──
+   The card's own spine (`div:is(.dev-card-dense, .dev-card-topic)[data-edge]`
+   above), on the row, from the same model field and the same tokens: blue
+   while a vote is open, violet while merging, amber behind main, red on a
+   conflict, green once merged. A folded row and its card now agree on their
+   colour, which is what makes the fold read as a fold. */
+.dev-ws-row {
+  --dev-edge-w: 4px;
+  --dev-edge: transparent;
+  padding-left: calc(10px + var(--dev-edge-w));
+  /* An inset shadow and a 33% mix, exactly as the card draws it: the same
+     4px at the same strength, following the same corner arc, taking no
+     layout. A border here would have been a different mark at a different
+     weight — which is the whole thing this row is trying to stop being. */
+  box-shadow: inset var(--dev-edge-w) 0 0 color-mix(in srgb, var(--dev-edge) 33%, transparent);
+}
+.dev-ws-row[data-edge="vote"]      { --dev-edge: var(--accent); }
+.dev-ws-row[data-edge="progress"]  { --dev-edge: var(--state-progress); }
+.dev-ws-row[data-edge="attention"] { --dev-edge: var(--state-attention); }
+.dev-ws-row[data-edge="blocked"]   { --dev-edge: var(--state-blocked); }
+.dev-ws-row[data-edge="ok"]        { --dev-edge: var(--state-ok); }
+.dev-ws-row[data-edge="neutral"]   { --dev-edge: var(--state-neutral); }
 .dev-ws-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .dev-ws-row-title { font-size: 14px; line-height: 1.3; }
 .dev-ws-row-meta { display: flex; gap: 8px; font-size: 12px; color: var(--text-muted); min-width: 0; }
@@ -11759,6 +11872,29 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    third object belonging to neither size. Those four rules are gone rather
    than adjusted; the row IS the compressed representation of this card, and
    the way to show the card is to show the card. */
+/* ── "Open card", and what it opens ────────────────────────
+   The toggle sits at the right end of the card's facts line, immediately
+   left of Preview (card/dev-card.tsx's `statusLead`): the two controls that
+   are about seeing MORE of this item, together, rather than one on the card
+   and one in a strip beneath it.
+
+   What it reveals is the topic screen's own sections — the ledger, the About
+   sheet with its before/after tiles, the transcript — drawn by the same
+   components from the same view model, indented under the card so a reader
+   can see where the item ends. Not the comment threads: the sheet already
+   carries both, above and below this block. */
+.dev-ws-open-btn { white-space: nowrap; }
+.dev-ws-detail {
+  margin-top: 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-light);
+  display: flex; flex-direction: column; gap: 8px;
+}
+/* The topic sheets are their own surfaces on their own page; inside a card
+   that is already a surface they lose the second one and keep the spacing. */
+.dev-ws-detail .dev-topic-sheet {
+  background: transparent; box-shadow: none; border-radius: 0; padding: 0;
+}
 .dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
 .dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
 .dev-ws-theme-more { font-size: 13px; color: var(--text-muted); padding: 4px 10px 0; }

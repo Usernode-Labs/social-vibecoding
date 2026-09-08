@@ -555,15 +555,16 @@ const MY_IMPORT = {
   created_at: '2026-06-01T00:00:00Z',
 };
 
-test('proposal card: my own IMPORTED proposal renders the pill and no Open session', () => {
+test('proposal card: my own IMPORTED proposal offers Explore from ⋯, and no Open session', () => {
   const AppView = cardHarness();
   const html = proposalCardHtml(AppView, MY_IMPORT);
-  assert.match(html, /gc-explore-chat-btn/, 'the pill is the owner\'s only AI affordance here');
-  assert.match(html, /data-proposal-id="7"/, 'wired to the proposal id');
+  // #1787 round four put Explore back in ⋯ on cards; _showExplorePill's rule
+  // about WHO is offered it (#1045) is untouched, only WHERE.
+  assert.ok(menuHas(AppView, html, /Explore in dev chat/),
+    'the ⋯ row is the owner\'s only AI affordance here');
+  assert.ok(!html.includes('gc-explore-chat-btn'), 'and not also a face pill');
   assert.ok(!menuHas(AppView, html, /Open session/),
     'an imported PR has no dev session to open (#687) — that rule is untouched');
-  assert.ok(!menuHas(AppView, html, /Explore in dev chat/),
-    'on the face, so not also a ⋯ row');
   assert.ok(menuHas(AppView, html, /^Withdraw$/), 'Withdraw is untouched too — now a ⋯ row');
 });
 

@@ -2499,7 +2499,19 @@ const AppView = {
 
   _findTopicItem() {
     const t = AppView._devTopic;
-    if (!t) return null;
+    return t ? AppView._findItem(t.kind, t.id) : null;
+  },
+
+  /**
+   * One item, by kind and id — the lookup `_findTopicItem` has always done,
+   * with the current topic no longer baked into it.
+   *
+   * The Workshop needs the same resolution for a row it is expanding IN
+   * PLACE, where there is no `_devTopic` and must not be one: opening a
+   * card inline is not navigation.
+   */
+  _findItem(kind, id) {
+    const t = { kind, id };
     if (t.kind === 'issue') {
       return (AppView._ghIssues || []).find((i) => i.number === t.id) || null;
     }
@@ -2698,8 +2710,50 @@ const AppView = {
     // is purely about not discarding typed text. Only save/cancel clear it.
 
     // The head is `features/dev-board/topic/topic-head.tsx` — the card and
-    // everything under it. This builds the two halves of its view model and
-    // publishes; nothing here writes markup.
+    // everything under it. `_topicViewFor` builds the two halves of its view
+    // model; nothing here writes markup.
+    const built = AppView._topicViewFor(t.kind, item);
+    if (!built) return;
+    const { card, body } = built;
+
+    const react = AppView._reactDevBoard();
+    if (react) {
+      // Mounted per paint, into the host the thread panel owns. The store
+      // flushes synchronously, so the head is in the DOM for the loads below
+      // — exactly as it was after the innerHTML assignment this replaced.
+      react.mountTopicHead(head);
+      react.publishTopicHead({ card, body });
+    }
+    // The Explore pills read `aiEnabledStore` now, so the DOM pass that used
+    // to dim them per paint is gone; this refreshes the one fact they read.
+    AppView._refreshAiAvailability();
+    AppView._fillKudosHosts(head);
+    if (t.kind === 'issue') AppView._loadIssueComments(item);
+    if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
+    // An auto-expanded transcript (arrived via "Read chat") loads straight
+    // away; every other one loads when it is opened.
+    if (body.transcript && body.transcript.expanded) {
+      AppView._loadSessionTranscript(body.transcript.id);
+    }
+  },
+
+  /**
+   * The topic screen's two halves — the full-width card, and everything
+   * under it — for one item.
+   *
+   * Lifted out of `_renderTopicHead` so the Workshop can draw the same thing
+   * INSIDE a folded row it has unfolded (#1787 round four): "Open card" used
+   * to leave the lander for a screen the reader then had to come back from,
+   * and every part of that screen except the comment threads — which the
+   * Workshop's sheet already carries — fits under the card in place.
+   *
+   * Pure apart from the caches it reads. It publishes nothing and loads
+   * nothing: the side effects stayed with the caller, because a card opened
+   * inline wants a different set of them.
+   */
+  _topicViewFor(kind, item) {
+    if (!item) return null;
+    const t = { kind };
     let card;
     let body;
     if (t.kind === 'issue') {
@@ -2772,26 +2826,7 @@ const AppView = {
     // capsule), and the detail actions join its one action line.
     AppView._topicCard(card, t.kind, item, body);
     body.aboutTitle = { issue: 'About this issue', proposal: 'About this change', session: 'About this session', gov: 'About this proposal' }[t.kind] || 'About';
-
-    const react = AppView._reactDevBoard();
-    if (react) {
-      // Mounted per paint, into the host the thread panel owns. The store
-      // flushes synchronously, so the head is in the DOM for the loads below
-      // — exactly as it was after the innerHTML assignment this replaced.
-      react.mountTopicHead(head);
-      react.publishTopicHead({ card, body });
-    }
-    // The Explore pills read `aiEnabledStore` now, so the DOM pass that used
-    // to dim them per paint is gone; this refreshes the one fact they read.
-    AppView._refreshAiAvailability();
-    AppView._fillKudosHosts(head);
-    if (t.kind === 'issue') AppView._loadIssueComments(item);
-    if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
-    // An auto-expanded transcript (arrived via "Read chat") loads straight
-    // away; every other one loads when it is opened.
-    if (body.transcript && body.transcript.expanded) {
-      AppView._loadSessionTranscript(body.transcript.id);
-    }
+    return { card, body };
   },
 
   // #1045: the ONE rule for whether a proposal row offers the "Explore in
@@ -4963,6 +4998,9 @@ const AppView = {
   WORKSHOP_LANE_MAX: 8,
   // Cards in the "Needs your vote" strip; the rest are a count.
   WORKSHOP_VOTES_MAX: 3,
+  // The viewer's own work in flight. Same cap and the same reveal-in-place
+  // as the vote strip: this is a reminder, not an inbox.
+  WORKSHOP_MINE_MAX: 3,
   // Rows in the "since your last visit" list.
   WORKSHOP_SINCE_MAX: 30,
   // Per page session: slug → the baseline (epoch ms, 0 on a first visit)
@@ -5054,7 +5092,7 @@ const AppView = {
   _workshopThemeName(themeId) {
     const t = AppView._workshopThemeData();
     const theme = t && (t.themes || []).find((x) => x.id === themeId);
-    return theme ? theme.name : 'Theme';
+    return theme ? theme.name : 'Category';
   },
 
   // While a regeneration is pending server-side, the re-fetch schedule in
@@ -5149,21 +5187,79 @@ const AppView = {
     location.hash = `#app/${slug}/board`;
   },
 
-  // "N more waiting on you": the board, narrowed to the proposals this
-  // viewer has not voted on.
-  openBoardNeedingVote() {
-    const slug = App.currentApp;
-    if (!slug) return;
-    AppView._kanbanFilters = AppView._loadKanbanFilters(slug);
-    AppView._kanbanFilters.needsVote = true;
-    AppView._saveKanbanFilters(slug);
-    location.hash = `#app/${slug}/board`;
-  },
-
   // Nobody is on this issue: no live claim, no session working it, nobody
   // assigned. `in_progress` is the server's own composition of the first two
   // (routes/issues.js composeInProgress), already expiry-filtered, so this
   // asks the same question the card's "N building" chip answers.
+  /**
+   * "most of the movement in X" — the theme that is actually MOVING.
+   *
+   * This used to be `sort((a, b) => b.lastActive - a.lastActive)[0]`: the
+   * most recently TOUCHED theme, which is a different claim and usually a
+   * false one. A single comment on one issue ten minutes ago put a ten-item
+   * theme ahead of a hundred-item one, and the sentence then told the group
+   * that most of their work was somewhere it was not.
+   *
+   * Movement is work that changed state or is changing now: underway, in
+   * review, shipped this week, and cards that are new. Open items are NOT
+   * movement — a backlog nobody has touched is the opposite of it, and
+   * counting it would just name the biggest pile.
+   *
+   * And the clause is DROPPED unless there is a real leader. "Most of the
+   * movement" is a strong claim; two themes within half of each other do not
+   * support it, and neither does a board where almost nothing is in flight.
+   * Saying nothing is the honest answer far more often than it looks.
+   */
+  WORKSHOP_BUSIEST_MIN: 3,
+  WORKSHOP_BUSIEST_RATIO: 1.5,
+
+  _themeMovement(t) {
+    const c = (t && t.counts) || {};
+    return (c.underway || 0) + (c.review || 0) + (c.shipped || 0) + (c.fresh || 0);
+  },
+
+  _busiestTheme(themes) {
+    const ranked = (themes || [])
+      .map((t) => ({ name: t.name, n: AppView._themeMovement(t) }))
+      .filter((x) => x.n > 0)
+      .sort((a, b) => b.n - a.n);
+    if (!ranked.length) return null;
+    const top = ranked[0];
+    if (top.n < AppView.WORKSHOP_BUSIEST_MIN) return null;
+    const second = ranked[1] ? ranked[1].n : 0;
+    if (second && top.n < second * AppView.WORKSHOP_BUSIEST_RATIO) return null;
+    return top.name;
+  },
+
+  /**
+   * The topic body for one card, for the Workshop to draw UNDER that card
+   * without leaving the lander (#1787 round four).
+   *
+   * `key` is the card's own model key (`proposal:34`, `issue:1575`), which
+   * is what the row already carries. Returns only the half that goes below
+   * the card — the Workshop is already drawing the card itself, and drawing
+   * it twice is the hybrid this whole line of work exists to stop being.
+   *
+   * `comments` is forced OFF. The topic screen's GitHub thread mounts into
+   * `#dev-issue-comments`, a singleton id, and the Workshop's sheet already
+   * carries both that thread and the app thread above this point. Asking
+   * for a second host would give the page two nodes with one id and the
+   * loader would fill whichever it found first.
+   */
+  _workshopCardBody(key) {
+    const at = String(key || '').indexOf(':');
+    if (at < 0) return null;
+    const kind = key.slice(0, at);
+    const rest = key.slice(at + 1);
+    const id = kind === 'issue' ? Number(rest) : Number(rest);
+    if (!Number.isFinite(id)) return null;
+    const item = AppView._findItem(kind, id);
+    if (!item) return null;
+    const built = AppView._topicViewFor(kind, item);
+    if (!built) return null;
+    return { ...built.body, comments: false };
+  },
+
   _issueUnclaimed(it) {
     const ip = it && it.in_progress;
     if (ip && Array.isArray(ip.claims) && ip.claims.length) return false;
@@ -5177,9 +5273,10 @@ const AppView = {
     // so a model that omitted these would inherit the last app's slug and
     // offer a reply box that posts somewhere else.
     const slug = App.currentApp || '';
-    const ctx = { slug, canPost: !!AppView.appData?.can_collaborate };
+    const ctx = { slug, canPost: !!AppView.appData?.can_collaborate, viewerId: (App.user && App.user.id) || null };
     const empty = {
-      votes: { count: 0, rows: [] }, since: null, dashboard: null, nextUp: null, discussion: null, themes: [],
+      votes: { count: 0, total: 0, shown: 0, rows: [] }, mine: { count: 0, shown: 0, rows: [] },
+      since: null, dashboard: null, nextUp: null, discussion: null, themes: [],
       meta: {
         source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
         lastError: null, coverage: null, placing: 0, filtered: false,
@@ -5283,17 +5380,79 @@ const AppView = {
       add('merged', m, activityOf('merged', m) >= weekAgo ? 'shipped' : 'done', () => AppView._mergedRowModel(m));
     }
 
+    // ── What you are working on ──
+    //
+    // Above "Needs your vote", because the first question a returning member
+    // has is about their OWN work, and the lander answered every other one
+    // first: what the app is doing, what the group needs, what nobody has
+    // picked up. Their half-finished session was somewhere down inside a
+    // theme, under a heading about the theme.
+    //
+    // Built from the buckets rather than from `entries`, for the same reason
+    // the vote strip is: your own work is yours whatever the board is
+    // narrowed to, and a filter that hid it would be hiding the one thing
+    // on this screen you cannot find another way.
+    const meId = App.user && App.user.id;
+    const mineOf = (bucket, pick) => bucket.filter(pick);
+    const mineItems = [
+      ...mineOf(buckets.inProgress, (e) => e.kind === 'my-session')
+        .map((e) => ({ kind: 'my-session', item: e.item })),
+      ...mineOf(buckets.inReview, (x) => x.kind === 'proposal' && meId != null
+        && String(x.item.user_id) === String(meId))
+        .map((x) => ({ kind: 'proposal', item: x.item })),
+    ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item));
+    const mine = {
+      count: mineItems.length,
+      shown: AppView.WORKSHOP_MINE_MAX,
+      rows: mineItems.map(({ kind, item }) => {
+        const card = kind === 'my-session'
+          ? AppView._mySessionCardModel(item)
+          : AppView._proposalCardModel(item);
+        if (!card) return null;
+        const row = { t: 'card', key: `mine:${card.key}`, card };
+        const th = AppView._feedThreadRef({
+          kind: kind === 'my-session' ? 'shared-session' : kind, item,
+        });
+        if (th) row.thread = th;
+        return row;
+      }).filter(Boolean),
+    };
+
     // ── Needs your vote ──
     // Unfiltered on purpose: a vote owed is owed whatever the board is
     // narrowed to. Same predicate as the filter bar's "Waiting on you".
+    //
+    // Minus whatever the strip above is already showing. Your own promoted
+    // proposal satisfies "waiting on you" — the predicate asks whether you
+    // have voted, not whose it is — so it appeared in BOTH panes, one under
+    // the other, the same card twice on one screen. "What you are working
+    // on" wins: this pane is about somebody else's work, which is what its
+    // own heading has always said.
+    const mineKeys = new Set(mineItems.map(({ kind, item }) => AppView._workshopItemKey(kind, item)));
+    const notMine = (x) => !mineKeys.has(AppView._workshopItemKey(x.kind, x.item));
     const owed = [];
     for (const x of buckets.inReview) {
-      if (AppView._devCardMatches(x.kind, x.item, { needsVote: true })) owed.push(x);
+      if (notMine(x) && AppView._devCardMatches(x.kind, x.item, { needsVote: true })) owed.push(x);
     }
     const voteRow = (card) => ({ t: 'card', key: `vote:${card.key}`, card });
+    // EVERY owed row, not the first few. "N more waiting on you" used to send
+    // the viewer to the Board with a filter set — it left the lander, it
+    // changed the view mode, and Back was the only way home, all to read a
+    // list the lander was already showing the top of. It expands in place
+    // now (#1787 round four), so the component needs the rest to reveal;
+    // `shown` is the cap it draws until somebody asks for them.
+    // Everything the viewer COULD vote on, whether they have or not — the
+    // denominator behind the ring. `needsVote` above is the same population
+    // minus the ones they have already answered, so `total - count` is what
+    // they have done and the ring can state progress instead of a debt.
+    const votable = buckets.inReview.filter((x) => notMine(x) && (x.kind === 'proposal'
+      ? x.item.status === 'promoted'
+      : true));
     const votes = {
       count: owed.length,
-      rows: owed.slice(0, AppView.WORKSHOP_VOTES_MAX).map((x) => voteRow(
+      total: votable.length,
+      shown: AppView.WORKSHOP_VOTES_MAX,
+      rows: owed.map((x) => voteRow(
         x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)
       )),
     };
@@ -5319,7 +5478,7 @@ const AppView = {
     // have, the remainder is what they did not name — titled below, once
     // it is known whether those cards are on their way or were declined.
     const rest = mkTheme(tData
-      ? { id: 'ungrouped', name: 'Not yet grouped', description: 'Items the themes do not name yet.' }
+      ? { id: 'ungrouped', name: 'Not yet grouped', description: 'Items the categories do not name yet.' }
       : { id: 'ungrouped', name: 'Everything on the board', description: '' }, true);
     let placingCount = 0;
     for (const e of entries) {
@@ -5351,11 +5510,11 @@ const AppView = {
         rest.placing = placingCount;
         if (placingCount && placingCount === restCount) {
           rest.name = 'Being placed';
-          rest.description = 'New cards are placed into a theme within a minute or two of arriving.';
+          rest.description = 'New cards are placed into a category within a minute or two of arriving.';
         } else if (placingCount) {
-          rest.description = `Cards the themes do not cover yet; ${placingCount} of them ${placingCount === 1 ? 'is' : 'are'} being placed now. They count towards the next re-draft.`;
+          rest.description = `Cards the categories do not cover yet; ${placingCount} of them ${placingCount === 1 ? 'is' : 'are'} being placed now. They count towards the next re-draft.`;
         } else {
-          rest.description = 'Cards the themes do not cover yet. They count towards the next re-draft of the themes.';
+          rest.description = 'Cards the categories do not cover yet. They count towards the next re-draft of the categories.';
         }
       }
       drawn.push(finish(rest));
@@ -5414,9 +5573,7 @@ const AppView = {
       }).length,
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
       unclaimed: idle.length,
-      busiest: named.length
-        ? named.slice().sort((a, b) => b.lastActive - a.lastActive)[0].name
-        : null,
+      busiest: AppView._busiestTheme(named),
       // The model's two sentences, when there are any. The derived sentence
       // the client can always build stays the fallback — same relationship
       // the category grouping has to the drafted themes.
@@ -5471,6 +5628,7 @@ const AppView = {
       loading: false,
       emptyNote,
       votes,
+      mine,
       since,
       dashboard,
       nextUp,
@@ -7716,15 +7874,19 @@ const AppView = {
     // action band belongs to kudos instead, and on the detail head, which
     // already spells it out in full in its own action list below the header.
     const preview = AppView._cardPreviewSpec(pr, { kind: 'proposal', sessionId: pr.id });
-    const explore = (!noNav && AppView._showExplorePill(pr) && !isMerged && !AppView.readOnly);
-    const actions = (isMerged || AppView.readOnly)
-      ? []
-      : [
-        ...AppView._cardVoteButtonSpecs(pr),
-        ...(explore ? [{ key: 'explore', label: 'Explore in dev chat', title: AppView.EXPLORE_CHAT_TITLE, explore: pr.id }] : []),
-      ];
+    // ⋯, NOT the action band (#1787 round four). It is a door to a side
+    // conversation ABOUT the proposal rather than one of the things you do
+    // to it, and at ~170px it was the widest pill on the card — routinely
+    // pushing Vote or Withdraw into the fold it should have been in itself.
+    //
+    // No new mechanism for this: `_proposalMenuItems` has always offered the
+    // row and suppressed it when the face carried one (`st.exploreOnFace`).
+    // Telling it the face carries none is the whole change, and the detail
+    // head is untouched — it has room, spells the pill out in full, and has
+    // no ⋯ for a menu row to live in.
+    const actions = (isMerged || AppView.readOnly) ? [] : [...AppView._cardVoteButtonSpecs(pr)];
     const menu = AppView._proposalMenuItems(pr, {
-      mine, imported, isMerged, isMerging, noNav, exploreOnFace: explore,
+      mine, imported, isMerged, isMerging, noNav, exploreOnFace: false,
     });
 
     // #195/#211: the before/after capture tiles no longer live on the card —

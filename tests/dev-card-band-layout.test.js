@@ -467,7 +467,7 @@ test('#1139: a flagged-empty status band is hidden, not merely collapsed', () =>
   const cap = rule('.dev-card-status + .gc-card-actions');
   assert.match(cap, /max-height: 24px/, 'the action-band cap still exists…');
   assert.match(CARD_TSX,
-    /className="dev-card-badges dev-card-status" data-empty=\{statusHasContent \? undefined : '1'\}/,
+    /className="dev-card-badges dev-card-status" data-empty=\{statusHasContent \|\| statusEnd \? undefined : '1'\}/,
     '…and the card still emits the band either way, flag or no flag');
 });
 
@@ -539,16 +539,20 @@ test('the rail emits ⋯, then the chevron; the preview rides at the end of the 
     const at = html.indexOf('<div class="dev-card-rail">');
     return at < 0 ? '' : html.slice(at, html.lastIndexOf('</div>'));
   };
-  // Round three: the board card's preview is a LABELLED pill at the right end
-  // of the action band (the corner eye was the hardest thing on the card to
-  // hit), so `rail.preview` — which the builders still hand over — is drawn
-  // there and the rail holds the ⋯ and the chevron only.
+  // Round three took the preview out of the rail and made it a LABELLED pill
+  // (the corner eye was the hardest thing on the card to hit); #1787 round
+  // four moved that pill onto the right end of the FACTS line, so it shares
+  // a row with "Closes #N" instead of holding one open by itself. Either
+  // way `rail.preview` — which the builders still hand over — is not drawn
+  // in the rail, which holds the ⋯ and the chevron only.
   assert.match(railOf({ menuKey: key, chevron: true, preview: eye }),
     /^<div class="dev-card-rail"><button [^>]*dev-card-menu-btn[\s\S]*?<svg [^>]*class="w-4 h-4[\s\S]*?<\/svg><\/div>$/);
   assert.doesNotMatch(railOf({ menuKey: key, chevron: true, preview: eye }), /gc-vote-btn-preview/);
   const withEye = BANDS({ rail: { menuKey: key, chevron: true, preview: eye } });
-  assert.match(withEye, /<div class="gc-card-actions">[\s\S]*<button [^>]*class="gc-vote-btn gc-vote-btn-preview"[^>]*>[\s\S]*?Preview<\/button><\/div>/,
-    'the labelled pill closes the action band');
+  assert.match(withEye, /class="dev-card-badges dev-card-status"[\s\S]*?<span class="dev-card-status-end"><button [^>]*class="gc-vote-btn gc-vote-btn-preview"[^>]*>[\s\S]*?Preview<\/button><\/span>/,
+    'the labelled pill closes the facts line');
+  assert.ok(!/<div class="gc-card-actions">[\s\S]*?gc-vote-btn-preview/.test(withEye),
+    'and no longer the action band');
   assert.doesNotMatch(withEye, /gc-vote-btn-preview[^>]*gc-vote-btn-icon/, 'never the icon variant on a board card');
 
   // No preview → the rail as it was: no reserved slot.
