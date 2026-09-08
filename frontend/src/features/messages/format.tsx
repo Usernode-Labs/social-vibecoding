@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 
+import { messageStamp } from '../../lib/timestamp';
 import type { ConversationUser, SharedObjectCard } from './types';
 
 export function initials(label: string): string {
@@ -26,8 +27,7 @@ export function relativeTime(value: string): string {
 }
 
 export function fullTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString();
+  return messageStamp(value).title;
 }
 
 function fallbackMarkdown(value: string): string {

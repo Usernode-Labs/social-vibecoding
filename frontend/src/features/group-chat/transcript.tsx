@@ -444,7 +444,7 @@ export function SpecShareRow({ msg }: { msg: TranscriptMessage }) {
       <div className="gc-spec-card-header">
         <span className="gc-spec-card-icon">📋</span>
         <span className="gc-spec-card-title">{spec.title}</span>
-        <span className="gc-msg-time">{msg.time}</span>
+        <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
       </div>
       <div className="gc-spec-card-attribution">
         {'Shared by '}
@@ -518,7 +518,7 @@ export function MessageRow({ msg }: { msg: TranscriptMessage }) {
       )}
       timestamp={(
         <>
-          <span className="gc-msg-time">{msg.time}</span>
+          <span className="gc-msg-time" title={msg.timeTitle}>{msg.time}</span>
           {msg.editedTitle ? (
             <span className="gc-msg-edited" title={msg.editedTitle}>edited</span>
           ) : null}
