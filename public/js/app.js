@@ -642,10 +642,18 @@ const App = {
     // anonymous boot for the same reason waitlist-more does: restoreFromHash
     // drops an auth route outright for the signed-in session every capture
     // and proposal check runs as.
+    // `signup-code-sent` (#1548) is the signup screen a second after a
+    // waitlist-release link opens it: the code step, the confirmation, and
+    // the resend held for its cooldown. The address rides in the fragment
+    // (`/?shot=signup-code-sent#signup/<url-encoded address>`), and like
+    // `waitlist-more` it needs the anonymous boot, because restoreFromHash
+    // drops an auth route for the signed-in session every capture and
+    // proposal check runs as. login.tsx paints it and sends nothing.
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
         shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
+        shot !== 'signup-code-sent' &&
         shot !== 'password-recovery' && shot !== 'password-recovery-sent' &&
         shot !== 'email-code-password-account') {
       return false;

@@ -180,6 +180,12 @@ function waitlistAdminRoutes(config) {
       if (released.newly_released) {
         await sendWaitlistReleaseMail(config, released.email, {
           hasAccount: released.linked_user_id != null,
+          // #1548: lets the signup screen prefill the address and send the
+          // code without a second step. An unguessable capability already
+          // delivered to this address, so it carries nothing the recipient
+          // does not already hold — and unlike the address itself it is safe
+          // in a query string, which is what survives a link rewriter.
+          moreToken: released.more_token || null,
         });
       }
       return ok(res, {
