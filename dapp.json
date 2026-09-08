@@ -1338,9 +1338,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Landing CTA area is a compact link, not the survey",
+      "name": "Landing keeps its compact CTA and account-required apps carry locks (#1522)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#landing-waitlist a[href=\"#waitlist\"]",
+      "expectSelector": "body:has(#landing-apps .app-card[data-gated=\"true\"] [title=\"Account required\"]) #landing-waitlist a[href=\"#waitlist\"]",
       "allowConsoleErrors": true
     },
     {
@@ -1798,8 +1798,8 @@
       "expectSelector": "#dev-body #dev-kanban-board"
     },
     {
-      "name": "The Workshop renders its themes into #dev-workshop, the first one open with its items as folded rows under stage lanes",
-      "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev",
+      "name": "The Workshop renders its themes into #dev-workshop; the deep link opens one, with its items as folded rows under stage lanes",
+      "path": "/?demo=1&shot=themes&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body #dev-workshop .dev-ws-themes [data-ws-theme] .dev-ws-theme-body [data-ws-lane] .dev-ws-row[role=\"button\"][aria-expanded]"
     },
     {

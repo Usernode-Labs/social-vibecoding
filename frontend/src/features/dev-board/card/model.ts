@@ -357,6 +357,13 @@ export interface DevWorkshopView {
     busiest: string | null;
     /** The merged history is paged; true means the week counts are floors. */
     partial: boolean;
+    /**
+     * The model's two sentences on the week just gone and what is in flight,
+     * written on the same reconcile that drafted the themes. Null with no
+     * model, before the first draft, or when that call failed — the fields
+     * above then build the sentence instead.
+     */
+    summary: string | null;
   } | null;
   /** One unclaimed open issue to suggest, as a row. Null while filtering. */
   nextUp: ListRow | null;
