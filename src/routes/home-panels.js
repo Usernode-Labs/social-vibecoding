@@ -1,49 +1,14 @@
-// Home-screen panels (issue #911) — data + per-user placement for the
-// cards that sit on the platform home screen alongside the app grid.
-//
-// NAMING — "panel", not "widget". frontend/src/features/home/home.js already owns a
-// DIFFERENT concept called "widget": the iOS home-screen widget's pinned
-// app grid (Home.renderWidgetSection / #widget-strip / .widget-tile),
-// whose UI literally says "Usernode widget". These cards are a separate
-// thing that lives on the SAME screen, so everything here — the route,
-// the column, the client module, the CSS classes — says `panel` instead.
-// User-facing copy never says "panel": the first panel is titled
-// "Challenges" and the Settings row that governs them says "Home screen
-// widgets", matching the language of #911.
-//
-// Surface:
-//   GET  /api/home-panels
-//        → { registry: [{ key, title, removable, sizes }], hidden: [key…],
-//            panels: [ … ] }
-//        `registry` + `hidden` always describe every panel this platform
-//        has (so Settings can render its checkboxes from the same
-//        response); `panels` carries the BUILT payload for the visible
-//        ones only.
-//   POST /api/home-panels/:key/visibility  body { hidden: boolean }
-//        → { hidden: [key…] }
-//
-// Visibility model: `users.home_panels_hidden` is a TEXT[] of keys the
-// viewer has dismissed. ABSENCE MEANS VISIBLE — that's what makes every
-// widget default-on for every existing and future account with no
-// backfill. Keys are validated against PANEL_REGISTRY on write so the
-// column can never accumulate junk.
-//
-// PLACEMENT lives elsewhere now: src/routes/home-layout.js owns the
-// free-form (column, row) cell each widget and app tile occupies, in the
-// same table and the same write as the app tiles. This file is the widget
-// REGISTRY plus per-widget CONTENT; it no longer stores a position.
-//
-// Three widgets today: `challenges` (the only one with a real builder),
-// `discover` (featured apps + the way into the app directory) and `create`
-// (the create-an-app tile). The registry indirection is deliberate: adding
-// a fourth is a new entry + a builder, not a refactor of route or client.
+// Data for the three fixed home-screen sections: Challenges, Discover and
+// Create app. All are present for every signed-in account (#1801).
+// GET /api/home-panels returns { registry, hidden: [], panels }.
+// `hidden: []` and `removable: false` keep cached clients compatible during
+// rollout. Legacy users.home_panels_hidden values are no longer read or written.
 
 'use strict';
 
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
-const { homePanelPrefLimiter } = require('../middleware/rate-limits');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
@@ -542,57 +507,25 @@ function demoChallengesPanel(opts) {
   };
 }
 
-// ─── Registry ────────────────────────────────────────────────────────
-//
-// key → { title, removable, sizes, build(pool, user), demo() }. Order here
-// is the order Settings renders its checkboxes in, and the fallback
-// placement order for any widget the client has no designed home cell for.
-// The three shipped widgets do have one — see HomeLayout.WIDGET_HOME_CELLS,
-// which is the source of truth for where a fresh home screen puts them.
-//
-// `sizes` is the widget's FOOTPRINT in grid cells, per column count:
-// { 4: [w, h], 5: [w, h] }. It lives here — not in the stored layout — so a
-// widget can be resized in code without migrating anyone's saved cells; the
-// client's HomeLayout.repair() nudges anything a size change made overlap.
-// 2x2 at five columns is ~397px inside the 1024px .home-column, under the
-// --home-panel-max-w 32rem cap, so the cap never binds in the grid.
-//
-// `removable: false` means the ⋮ menu and Settings must refuse to hide it.
-// Only `discover` carries it, because #home-browse-btn (now that widget's
-// footer) is the ONLY navigation into the #apps directory in the whole
-// shell — hiding it would strand the viewer with no way to find apps.
-//
-// THE REGISTRY TAKES NO VIEWER ARGUMENT, AND MUST NOT GROW ONE. Every entry
-// is unconditional: `create` is in the registry, in `panels`, in Settings and
-// in the layout for EVERY account, including one with no app quota. Whether
-// the create widget is tappable is decided client-side from the derived
-// `canCreateApps` boolean (/api/auth/me), which is quota-derived and can flip
-// mid-session — a per-viewer registry would turn each of those flips into a
-// layout mutation that re-packs the user's grid.
-//
-// `discover` and `create` are MARKER entries: they build no payload at all.
-// Discover's featured tiles are already served per-viewer by GET /api/apps
-// (`featured` / `featured_order`, derived client-side by Home.featuredApps),
-// and the create widget has nothing to fetch — so neither costs a query.
+// The registry is unconditional; app creation permission controls the Create
+// app section's action, never its presence. Discover and Create app need no
+// additional queries: their data is already supplied by the home screen.
 const PANEL_REGISTRY = [
   {
     key: 'challenges',
     title: 'Challenges',
-    removable: true,
     build: buildChallengesPanel,
     demo: demoChallengesPanel,
   },
   {
     key: 'discover',
     title: 'Discover',
-    removable: false,
     build: async () => ({}),
     demo: () => ({ demo: true }),
   },
   {
     key: 'create',
     title: 'Create app',
-    removable: true,
     build: async () => ({}),
     demo: () => ({ demo: true }),
   },
@@ -600,37 +533,13 @@ const PANEL_REGISTRY = [
 
 const PANEL_KEYS = new Set(PANEL_REGISTRY.map((p) => p.key));
 
-// The registry as the client needs it — keys, titles and removability, with
-// no builders.
-//
-// EACH ENTRY USED TO CARRY A `sizes` FOOTPRINT TABLE, per column count, and
-// the layout route exported `widgetSize(key, cols)` so its overlap check ran
-// on the SERVER's own numbers rather than sizes a patched client claimed. THE
-// UI OVERHAUL made Discover, Challenges and Create app fixed sections of the
-// home screen rather than items of the launcher grid, so nothing is placed
-// and there is no footprint to validate. The registry still says which blocks
-// exist, what they are called, and which may be hidden.
 function panelRegistryPublic() {
   return PANEL_REGISTRY.map((p) => ({
     key: p.key,
     title: p.title,
-    removable: p.removable !== false,
+    // Compatibility for cached clients that still expose widget controls.
+    removable: false,
   }));
-}
-
-// The viewer's dismissed keys, filtered to the live registry so a key
-// retired from the code stops affecting anything without a migration.
-// `home_panel_positions` is NOT read any more — free-form placement lives in
-// user_home_layout (see the retired-column comment in schema.sql).
-async function readPrefs(pool, userId) {
-  const { rows } = await pool.query(
-    'SELECT home_panels_hidden FROM users WHERE id = $1',
-    [userId]
-  );
-  const rawHidden = rows[0]?.home_panels_hidden;
-  const hidden = Array.isArray(rawHidden)
-    ? rawHidden.filter((k) => PANEL_KEYS.has(k)) : [];
-  return { hidden };
 }
 
 function homePanelRoutes() {
@@ -641,7 +550,6 @@ function homePanelRoutes() {
     if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
     const registry = panelRegistryPublic();
     try {
-      const { hidden } = await readPrefs(pool, req.user.id);
       const demo = IS_STAGING && req.query.demo === '1';
       // ?expand=<key> asks one panel for its expanded list (finished
       // challenges included, row cap lifted). Per-visit UI state, so it
@@ -654,7 +562,6 @@ function homePanelRoutes() {
       const variant = typeof req.query.challenges === 'string' ? req.query.challenges : '';
       const panels = [];
       for (const panel of PANEL_REGISTRY) {
-        if (hidden.includes(panel.key)) continue;
         const expanded = expandKey === panel.key;
         try {
           const data = demo && panel.demo
@@ -669,7 +576,7 @@ function homePanelRoutes() {
           });
         }
       }
-      return res.json({ registry, hidden, panels });
+      return res.json({ registry, hidden: [], panels });
     } catch (err) {
       log.error('home-panels', 'GET /api/home-panels failed', {
         userId: req.user.id, message: err.message,
@@ -677,58 +584,6 @@ function homePanelRoutes() {
       return res.status(500).json({ error: 'Internal server error' });
     }
   });
-
-  // Show / hide one widget. Deliberately NOT gated on anything about the
-  // viewer beyond being signed in: hiding `create` must work for an account
-  // with no app quota exactly as it does for a creator, since the widget is
-  // on every home screen either way.
-  router.post('/api/home-panels/:key/visibility', homePanelPrefLimiter, async (req, res) => {
-    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
-    const key = String(req.params.key || '');
-    if (!PANEL_KEYS.has(key)) return res.status(400).json({ error: 'Unknown panel' });
-    const entry = PANEL_REGISTRY.find((p) => p.key === key);
-    // Discover is the shell's only door to the app directory — refuse to
-    // hide it rather than leaving someone with no way to find apps.
-    if (entry && entry.removable === false && req.body && req.body.hidden === true) {
-      return res.status(400).json({ error: 'This widget cannot be hidden' });
-    }
-    const { hidden } = req.body || {};
-    if (typeof hidden !== 'boolean') {
-      return res.status(400).json({ error: 'hidden must be a boolean' });
-    }
-    try {
-      // array_remove first in BOTH branches so re-hiding an already-hidden
-      // panel can't duplicate the key.
-      const { rows } = await pool.query(
-        hidden
-          ? `UPDATE users
-                SET home_panels_hidden =
-                      array_append(array_remove(COALESCE(home_panels_hidden, '{}'), $2), $2)
-              WHERE id = $1
-              RETURNING home_panels_hidden`
-          : `UPDATE users
-                SET home_panels_hidden = array_remove(COALESCE(home_panels_hidden, '{}'), $2)
-              WHERE id = $1
-              RETURNING home_panels_hidden`,
-        [req.user.id, key]
-      );
-      const next = Array.isArray(rows[0]?.home_panels_hidden)
-        ? rows[0].home_panels_hidden.filter((k) => PANEL_KEYS.has(k))
-        : [];
-      return res.json({ hidden: next });
-    } catch (err) {
-      log.error('home-panels', 'visibility write failed', {
-        userId: req.user.id, key, message: err.message,
-      });
-      return res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // NOTE: POST /api/home-panels/:key/position is GONE. A widget's place on
-  // the home screen is a real (column, row) cell now, written through
-  // PUT /api/home-layout (src/routes/home-layout.js) alongside the app
-  // tiles — one write for the whole arrangement instead of a card-count
-  // per widget.
 
   return router;
 }

@@ -192,9 +192,9 @@ test('a card with no ⋯ still gets its chevron, with no empty rail around it', 
   const withPreview = cardHtml(withPreviewModel);
   assert.equal(menuKeyOf(withPreview), null, 'still nothing demoted');
   assert.doesNotMatch(withPreview, /dev-card-rail/);
-  assert.match(withPreview, /<div class="gc-card-actions"><button [^>]*gc-vote-btn-preview[^>]*>[\s\S]*?Preview<\/button><\/div>/,
-    'the Preview pill in the band');
-  assert.match(withPreview, /Preview<\/button><\/div><\/div><svg [^>]*class="w-4 h-4/,
+  assert.match(withPreview, /class="dev-card-badges dev-card-status"><span class="dev-card-status-end"><button [^>]*gc-vote-btn-preview[^>]*>[\s\S]*?Preview<\/button><\/span>/,
+    'the Preview pill closes the facts line (#1787 round four), not a row of its own');
+  assert.match(withPreview, /Preview<\/button><\/span><\/div><div class="gc-card-actions"><\/div><\/div><svg [^>]*class="w-4 h-4/,
     'and the bare chevron after the content column');
 });
 
@@ -238,10 +238,12 @@ test('proposal, foreign, plain collaborator', () => {
   const labels = menuLabels(AppView, proposalCardHtml(AppView, PR()));
   assert.ok(!labels.some((l) => /Admin merge/.test(l)), 'not an admin');
   assert.ok(!labels.some((l) => /Open session|Withdraw/.test(l)), 'not the author');
-  // Explore moved to the card FACE for exactly this viewer (foreign, live
-  // proposal, can collaborate), so it is deliberately absent from ⋯.
-  assert.ok(!labels.some((l) => /Explore in dev chat/.test(l)), 'promoted onto the face');
-  assert.match(proposalCardHtml(AppView, PR()), /gc-explore-chat-btn/, '…where it is');
+  // Explore is a ⋯ row again (#1787 round four): a door to a side conversation
+  // about the proposal rather than one of the things you do to it, and the
+  // widest pill on the card when it rode the face.
+  assert.ok(labels.some((l) => /Explore in dev chat/.test(l)), 'offered from ⋯');
+  assert.ok(!proposalCardHtml(AppView, PR()).includes('gc-explore-chat-btn'),
+    '…and nowhere on the face');
   assert.ok(labels.some((l) => /kudos/i.test(l)));
   assert.ok(labels.some((l) => /Set priority/.test(l)));
 });

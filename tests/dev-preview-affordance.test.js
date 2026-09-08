@@ -302,13 +302,16 @@ test('an issue run with no preview (or a spec-only outcome) shows no affordance'
   }), /gc-vote-btn-preview/);
 });
 
-test('on a board card the preview is a labelled pill at the END of the action band', () => {
-  // Round three moved the preview out of the rail's corner and into the band
-  // as a pill with the eye AND the word: the 24px corner eye was the hardest
-  // thing on the card to hit. app.css pushes it to the right end of the line
-  // (`margin-left: auto`), so a column of cards still shows every preview on
-  // one vertical line — the card's right edge — and the rail is the ⋯ and the
-  // chevron only.
+test('on a board card the preview is a labelled pill at the END of the FACTS line', () => {
+  // Round three moved the preview out of the rail's corner and made it a pill
+  // with the eye AND the word: the 24px corner eye was the hardest thing on
+  // the card to hit. #1787 round four moved that pill again, off its own
+  // action row and onto the right end of the facts line ("Closes #N", the
+  // assignee) — it is the one control about LOOKING rather than doing, and a
+  // row to itself pushed the card taller while the line beside it had space.
+  // app.css still pushes it to the right end (`margin-left: auto`), so a
+  // column of cards shows every preview on one vertical line, and the rail is
+  // the ⋯ and the chevron only.
   const AppView = makeAppView();
   const cards = {
     proposal: proposalCardHtml(AppView, PR({ staging_url: 'https://s' })),
@@ -322,15 +325,16 @@ test('on a board card the preview is a labelled pill at the END of the action ba
     }),
   };
   for (const [kind, html] of Object.entries(cards)) {
-    const band = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>\s*(?:<div|<\/div)/);
-    assert.ok(band, `${kind}: an action band is still reserved`);
-    const pills = band[1].match(/<(?:button|span)\b[^>]*class="[^"]*"/g) || [];
-    assert.match(pills[pills.length - 1], /gc-vote-btn-preview/,
-      `${kind}: the preview is the band's last pill`);
-    assert.match(band[1], /gc-vote-btn-preview"[^>]*>[\s\S]*?Preview</,
+    const facts = html.match(/class="dev-card-badges dev-card-status"[^>]*>([\s\S]*?)<\/div>\s*(?:<div|<\/div)/);
+    assert.ok(facts, `${kind}: the facts line is still emitted`);
+    assert.match(facts[1], /<span class="dev-card-status-end">\s*<button [^>]*gc-vote-btn-preview/,
+      `${kind}: the preview closes the facts line`);
+    assert.match(facts[1], /gc-vote-btn-preview"[^>]*>[\s\S]*?Preview</,
       `${kind}: and it is labelled`);
-    assert.doesNotMatch(band[1], /gc-vote-btn-preview[^>]*gc-vote-btn-icon/,
+    assert.doesNotMatch(facts[1], /gc-vote-btn-preview[^>]*gc-vote-btn-icon/,
       `${kind}: never the icon variant`);
+    assert.ok(!/<div class="gc-card-actions">[\s\S]*?gc-vote-btn-preview/.test(html),
+      `${kind}: and no longer the action band`);
     const railAt = html.indexOf('dev-card-rail');
     if (railAt > 0) {
       assert.doesNotMatch(html.slice(railAt), /gc-vote-btn-preview/,

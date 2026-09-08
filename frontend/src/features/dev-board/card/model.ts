@@ -320,10 +320,31 @@ export interface DevWorkshopView {
   slug?: string;
   /** Whether the viewer may post into a row's thread (collab-gated server-side). */
   canPost?: boolean;
+  /** Who is reading, so a dismissal is per account on a shared device. */
+  viewerId?: number | null;
   /** The no-items note, with its load-failure prefix. */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
   /** Proposals awaiting THIS viewer's vote — pinned above the themes. */
-  votes: { count: number; rows: ListRow[] };
+  votes: {
+    /** Still owed by this viewer. */
+    count: number;
+    /** Everything they COULD vote on, answered or not: the ring's denominator. */
+    total: number;
+    /** How many of `rows` the lander draws before "N more waiting on you". */
+    shown: number;
+    /** ALL of them: the rest are revealed in place, not on another screen. */
+    rows: ListRow[];
+  };
+  /**
+   * The viewer's OWN work in flight on this app: their dev sessions and the
+   * proposals they opened. Unfiltered, like `votes` — your own work is yours
+   * whatever the board is narrowed to.
+   */
+  mine: {
+    count: number;
+    shown: number;
+    rows: ListRow[];
+  };
   /**
    * What happened since the viewer last opened this app's Workshop, or null
    * on a first visit (the welcome takes its place). `baseline` is epoch ms.

@@ -39,10 +39,8 @@
 //
 // LAYOUT — each panel is its OWN bordered <article class="home-panel">, so a
 // block reads as a distinct box rather than another row inside a shared card.
-// The title (and the ⋮ menu) travel INSIDE each block: three blocks with
-// three titles cannot share the heading-above-the-section shape "Featured
-// apps" used. Blocks are plain full-width children — .home-column bounds the
-// feed (see app.css; #922 removed the per-box bound).
+// Each section has its own heading and navigation. Blocks are plain
+// full-width children — .home-column bounds the feed.
 //
 // DENSITY — a section sizes to its own CONTENT. That is the shape the full
 // render branch was always written for, and it is now the only one: the
@@ -81,7 +79,7 @@
 import { panelsStore } from './panels-store';
 
 const HomePanels = {
-  // Cache of GET /api/home-panels: { registry, hidden, positions, panels }.
+  // Cache of GET /api/home-panels: { registry, panels }.
   _data: null,
   _fetchedAt: 0,
   _inflight: null,
@@ -328,16 +326,6 @@ const HomePanels = {
   // markup at fixed positions now, so nothing has to be placed and nothing
   // has to wait for a registry to know where it goes.
 
-  // Is this widget allowed to be hidden? Discover is not (its footer is the
-  // shell's only door to the app directory). Everything else is — including
-  // `create`, for every account regardless of app quota.
-  isRemovable(key) {
-    const data = HomePanels._data;
-    const entry = data && Array.isArray(data.registry)
-      ? data.registry.find((r) => r.key === key) : null;
-    return !entry || entry.removable !== false;
-  },
-
   titleFor(key) {
     const data = HomePanels._data;
     const entry = data && Array.isArray(data.registry)
@@ -364,11 +352,10 @@ const HomePanels = {
       if (built) return built;
     }
     // Not in `panels` (a marker widget, or one whose build failed): still
-    // renderable if the registry knows it and the viewer hasn't hidden it.
+    // renderable if the registry knows it. Ignore stale hidden preferences
+    // from older server responses: these sections are permanent (#1801).
     if (!data || !Array.isArray(data.registry)) return null;
     if (!data.registry.some((r) => r.key === key)) return null;
-    const hidden = Array.isArray(data.hidden) ? data.hidden : [];
-    if (hidden.includes(key)) return null;
     return { key, title: HomePanels.titleFor(key) };
   },
 
@@ -718,82 +705,6 @@ const HomePanels = {
   // #app-list, so stopping the event AT the button was what kept a press on ⋮
   // from arming a drag. These sections are outside #app-list now.
 
-  // ── The widget menu ────────────────────────────────────────────────
-  //
-  // Replaces the bare ✕ the title bar used to carry. A single destructive
-  // control with no undo, one press away, on a block whose whole job is to
-  // sit quietly on the home screen was too easy to hit by accident — and it
-  // left nowhere to put anything else. The menu is the standard home-screen
-  // widget affordance and it makes "Hide widget" a deliberate two-step.
-
-  // The rows, as data so they can be asserted without a DOM. `Hide widget`
-  // is exactly what the ✕ did: persisted per user, restorable from
-  // Settings → Preferences → Home screen widgets.
-  menuItems(key) {
-    const items = [];
-    // Only where the panel HAS a destination. A future widget without one
-    // still gets a working menu rather than a row that goes nowhere.
-    if (key === 'challenges') {
-      items.push({ label: 'Open challenges', handler: () => { HomePanels.goToChallenges(); } });
-      // Both of the widget's destinations, named the same way its two visible
-      // controls name them (#980) — the bar's link and the footer's button.
-      items.push({ label: 'Open leaderboard', handler: () => { HomePanels.goToLeaderboard(); } });
-    }
-    if (key === 'discover') {
-      items.push({ label: 'Browse all apps', handler: () => { location.hash = '#apps'; } });
-    }
-    // The create widget's menu carries the ask-an-admin sentence as an inert
-    // note when the viewer has no quota — the same compact string as the
-    // tile's tooltip, while a tap opens the detailed quota in the dialog.
-    if (key === 'create' && window.Home && typeof Home.canCreate === 'function' && !Home.canCreate()) {
-      items.push({
-        label: Home.CREATE_DISABLED_HINT || 'View your app allowance or request more slots.',
-        disabled: true,
-      });
-    }
-    // Discover is the shell's only door to the app directory — it has no
-    // Hide row at all (and the server refuses the write besides).
-    if (HomePanels.isRemovable(key)) {
-      items.push({
-        label: 'Hide widget',
-        destructive: true,
-        handler: () => { HomePanels.setHidden(key, true); },
-      });
-    }
-    return items;
-  },
-
-  // The kit's ADAPTIVE menu: a bottom action sheet on touch, an anchored
-  // popover on desktop, from one call site with no platform branching.
-  // PlatformUI.menu is the repo's wrapper for it (platform-ui.js) and is
-  // preferred; unNative.menu is the direct fallback for a page that loads the
-  // kit without the wrapper.
-  _menuApi() {
-    const pui = window.PlatformUI;
-    if (pui && typeof pui.menu === 'function') return (o) => pui.menu(o);
-    const un = window.unNative;
-    if (un && typeof un.menu === 'function') return (o) => un.menu(o);
-    return null;
-  },
-
-  openMenu(key, anchorEl) {
-    if (!key) return Promise.resolve(null);
-    const present = HomePanels._menuApi();
-    // No kit at all (the legacy/no-JS-kit path): send the press where the
-    // widget's own primary row goes rather than swallowing it. Hiding stays
-    // reachable in Settings.
-    if (!present) {
-      if (key === 'challenges') HomePanels.goToChallenges();
-      else if (key === 'discover') location.hash = '#apps';
-      return Promise.resolve(null);
-    }
-    return present({
-      anchorEl,
-      title: HomePanels.titleFor(key),
-      items: HomePanels.menuItems(key),
-    });
-  },
-
   // Grow the block past its height cap in place, showing every challenge
   // including the organiser-finished ones; the same control collapses it.
   // Expanding needs a refetch because the collapsed payload is filtered
@@ -814,63 +725,8 @@ const HomePanels = {
       return false;
     }
   },
-
-  // NOTE: setPosition() is gone. A widget's place on the home screen is a
-  // real (column, row) cell now, written for the whole grid at once through
-  // PUT /api/home-layout — see HomeLayout + Home._persistLayout in home.js.
-
-  // Per-user show/hide. Optimistic: the block disappears immediately and
-  // comes back if the write fails.
-  //
-  // Discover refuses to hide (the server 400s it too): its footer is the
-  // shell's only door to the app directory. Create hides like any other
-  // widget REGARDLESS of app quota — the widget is on every home screen,
-  // so removing it must be equally available to everyone.
-  async setHidden(key, hidden) {
-    if (!key) return false;
-    if (hidden && !HomePanels.isRemovable(key)) return false;
-    const prev = HomePanels._data;
-    if (prev) {
-      HomePanels._data = {
-        ...prev,
-        hidden: hidden
-          ? Array.from(new Set([...(prev.hidden || []), key]))
-          : (prev.hidden || []).filter((k) => k !== key),
-        panels: hidden
-          ? (prev.panels || []).filter((p) => p.key !== key)
-          : (prev.panels || []),
-      };
-      HomePanels.render();
-    }
-    try {
-      const res = await fetch(`/api/home-panels/${encodeURIComponent(key)}/visibility`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ hidden: !!hidden }),
-      });
-      if (!res.ok) throw new Error('save failed');
-      // Un-hiding needs the payload rebuilt — it was never fetched, or was
-      // filtered out of the cache above.
-      if (!hidden) await HomePanels.ensureLoaded({ force: true });
-      // Showing/hiding a widget changes which items the grid places, so the
-      // layout has to be re-derived (and re-persisted) around it. Home owns
-      // that; a missing Home just means the next load picks it up.
-      if (window.Home && typeof Home.load === 'function') Home.load();
-      return true;
-    } catch (err) {
-      HomePanels._data = prev;
-      HomePanels.render();
-      return false;
-    }
-  },
 };
 
-// Still published as a global. This module rides in the React bundle as of
-// #1083 chunk F step 4, but home.js's grid renderer, the Settings screen's
-// "Home screen widgets" rows and the server-side PANEL_REGISTRY's client
-// counterpart all reach it by name, and its own nine `window.Home` /
-// `window.HomeLayout` reads are the mirror of that arrangement. The guard is for
-// the SSG prerender pass — frontend/scripts/build-shell.mjs evaluates the
-// island's whole module graph in Node, where there is no window.
+// Home calls this module through the legacy global. Guard the
+// publication for the shell's server-side prerender, where window is absent.
 if (typeof window !== 'undefined') window.HomePanels = HomePanels;

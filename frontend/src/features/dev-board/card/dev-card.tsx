@@ -727,7 +727,9 @@ function ExtraRow({ x }: { x: ExtraSpec }): ReactNode {
 }
 
 /** The whole card. `m.attrs` carries the outer element's data-*, role and title. */
-export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
+export function DevCard(
+  { model: m, statusLead }: { model: DevCardModel; statusLead?: ReactNode },
+): ReactNode {
   const attrs: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(m.attrs || {})) {
     // `tabindex` must reach React by its DOM-property name or React warns —
@@ -755,11 +757,52 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
   const chat = m.chatCount !== null && m.chatCount !== undefined
     ? <Badge b={{ t: 'chat', key: 'chat', count: m.chatCount || 0 }} />
     : null;
-  // The facts — linkage, metadata, message count — read as one muted text
-  // line under the bar on a board card (app.css restyles the chips), so a
-  // full-width break separates the bar row from them. Only when both exist:
-  // an empty band must stay empty, and a bare facts line needs no break.
-  const factsVisible = linked.length > 0 || kept.length > 0 || (m.chatCount || 0) > 0;
+  // The preview rides at the right end of the FACTS line, not on an action
+  // row of its own. It is the one control that is about looking rather than
+  // doing, and a whole row for it pushed the card taller while the facts
+  // line beside it had space to spare. (The builders still hand it over as
+  // `rail.preview`; the model did not move.) The detail head's arrives as
+  // `actionPreview`, already labelled.
+  const previewSpec = m.actionPreview
+    || (m.rail.preview ? { ...m.rail.preview, iconOnly: false } : null);
+  const bandPreview = previewSpec ? <Preview spec={previewSpec} /> : null;
+
+  // ── Where the primary actions go ──────────────────────────────────
+  //
+  // `statusLead` is a caller's own control at the right-hand end of the
+  // facts line; only the Workshop passes one ("Open card"). Where it does,
+  // the card's own primary actions join it there — "Create proposal" and
+  // "Claim this issue" beside "Open card" and "Preview", one line of things
+  // you can do to this item instead of two rows saying it twice.
+  //
+  // Only there. A board card sits in a kanban column ~165px wide, its
+  // actions fold into ⋯ by measuring the band they are in, and that
+  // measurement is meaningless inside a content-width group at the end of a
+  // wrapping line. The Workshop's card is the full width of the sheet and
+  // needs no folding, so this moves the pills exactly where there is room
+  // for them and nowhere else.
+  const primary = bandActions.slice(0, ACTION_PRIMARY_MAX);
+  const inlineActions = !!statusLead;
+  const bandPrimary = inlineActions ? [] : primary;
+  const hasActions = bandPrimary.length > 0;
+  const folded = useFoldedActions(bandPrimary, m.rail.menuKey || '', false);
+  const statusEnd = statusLead || bandPreview || (inlineActions && primary.length) ? (
+    <span className="dev-card-status-end">
+      {inlineActions ? primary.map((a) => <ActionButton key={a.key} a={a} />) : null}
+      {statusLead}
+      {bandPreview}
+    </span>
+  ) : null;
+
+  // The facts — linkage, metadata, message count — read as one line under
+  // the bar, so a full-width break separates the bar row from them.
+  //
+  // The END GROUP counts as facts-line content. It did not, and a proposal
+  // with a bar and a vote button but no chips therefore had no break at all
+  // — which put "Open card" and "Preview" on the bar's own line, wedged
+  // beside the vote. The controls belong under the bar whether or not the
+  // card happens to have something else to say down there.
+  const factsVisible = linked.length > 0 || kept.length > 0 || (m.chatCount || 0) > 0 || !!statusEnd;
   const brk = (m.pill || voteBtn) && factsVisible
     ? <span className="dev-card-band-break" aria-hidden="true"></span>
     : null;
@@ -773,25 +816,21 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
       {chat}
     </>
   );
+  const statusBody = (
+    <>
+      {badgeRow}
+      {statusEnd}
+    </>
+  );
   const statusRow = dense ? (
-    <div className="dev-card-badges dev-card-status" data-empty={statusHasContent ? undefined : '1'}>{badgeRow}</div>
-  ) : (statusHasContent ? <div className="dev-card-badges">{badgeRow}</div> : null);
+    <div className="dev-card-badges dev-card-status" data-empty={statusHasContent || statusEnd ? undefined : '1'}>{statusBody}</div>
+  ) : (statusHasContent || statusEnd ? <div className="dev-card-badges">{statusBody}</div> : null);
 
-  const primary = bandActions.slice(0, ACTION_PRIMARY_MAX);
-  // The board card's preview rides at the END of the band as a labelled pill
-  // (the builders still hand it over as `rail.preview`; the model did not
-  // move). The detail head's arrives as `actionPreview`, already labelled.
-  const previewSpec = m.actionPreview
-    || (m.rail.preview ? { ...m.rail.preview, iconOnly: false } : null);
-  const bandPreview = previewSpec ? <Preview spec={previewSpec} /> : null;
-  const hasActions = primary.length > 0 || !!bandPreview;
-  const folded = useFoldedActions(primary, m.rail.menuKey || '', !!bandPreview);
   const actionRow = hasActions ? (
     <div className="gc-card-actions" ref={folded.ref}>
-      {primary.map((a, i) => (
-        <ActionButton key={a.key} a={a} fold={i > 0 && a.kudos == null ? i : undefined} hidden={i > 0 && i >= primary.length - folded.n} />
+      {bandPrimary.map((a, i) => (
+        <ActionButton key={a.key} a={a} fold={i > 0 && a.kudos == null ? i : undefined} hidden={i > 0 && i >= bandPrimary.length - folded.n} />
       ))}
-      {bandPreview}
     </div>
   ) : (dense ? <div className="gc-card-actions"></div> : null);
   const rail: RailSpec = { ...m.rail, preview: null };
@@ -843,7 +882,7 @@ export function DevCard({ model: m }: { model: DevCardModel }): ReactNode {
  * — and an open issue, which has no state, wears its type's amber so the
  * Issues column is not the one bare column.
  */
-function edgeFor(m: DevCardModel): string {
+export function edgeFor(m: DevCardModel): string {
   const s = m.pill?.state;
   if (s && s.label) return isOpenVote(s) ? 'vote' : (s.tone || 'neutral');
   const kind = String(m.key || '').split(':')[0];

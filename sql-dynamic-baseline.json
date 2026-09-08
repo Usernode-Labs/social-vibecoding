@@ -361,13 +361,6 @@
     },
     {
       "source": "src/routes/home-panels.js",
-      "kind": "runtime-expression",
-      "fingerprint": "b233a9a8cce906aaab1b",
-      "count": 1,
-      "preview": "hidden ? `UPDATE users SET home_panels_hidden = array_append(array_remove(COALESCE(home_panels_hidden, '{}'), $2), $2) WHERE id = $1 RETURNING home_panels_hidde"
-    },
-    {
-      "source": "src/routes/home-panels.js",
       "kind": "structural-template",
       "fingerprint": "bc985dc7d04a921eaa79",
       "count": 1,
