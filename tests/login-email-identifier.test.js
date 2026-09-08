@@ -120,6 +120,10 @@ test('every spelling and flow enforces logout before another session mint', asyn
       '/api/auth/login/',
       '/API/AUTH/LOGIN',
       '/api/auth/wallet-reset-verify',
+      // Verifying an email code signs an established account straight in
+      // (#1586), so it mints a session and joins the boundary. The guard runs
+      // ahead of the route, so the credentials in the body are irrelevant.
+      '/api/auth/otp/verify',
     ]) {
       const r = await login(
         server,

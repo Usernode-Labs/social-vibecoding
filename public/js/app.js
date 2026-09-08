@@ -622,6 +622,9 @@ const App = {
     // anonymous boot so the capture session can't strip #login to the feed.
     // `password-recovery-sent` is the same view with the post-submit
     // confirmation painted (the green "link is on its way" success box).
+    // `email-code-password-account` (#1586) is the login screen carrying the
+    // explanation an email code hands back when the account it matches can
+    // only be signed in with its password. Same anonymous boot, same reason.
     // `waitlist-confirmed` is the state AFTER the six-digit code lands:
     // confirming is what puts somebody on the list now, so the list place
     // and the stage-2 offer live there rather than on `waitlist-joined`,
@@ -651,7 +654,8 @@ const App = {
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
         shot !== 'signup-code-sent' &&
-        shot !== 'password-recovery' && shot !== 'password-recovery-sent') {
+        shot !== 'password-recovery' && shot !== 'password-recovery-sent' &&
+        shot !== 'email-code-password-account') {
       return false;
     }
     if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed'
