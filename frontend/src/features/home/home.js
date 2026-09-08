@@ -1612,18 +1612,26 @@ const Home = {
       // buttons), so cmd/middle-click is intercepted instead. hrefFor
       // repeats the plain click's guards exactly, so an inert card (demo
       // tile, an app that isn't running) stays inert under a modifier.
+      // #1562: a Discover tap opens the app's DETAIL PAGE, not the app. This
+      // is a shelf of apps you have not met, and launching one drops a
+      // stranger inside a thing they could not first read anything about.
+      // `noteDetailOrigin('home')` tells that page no browse list is behind
+      // it, so its back control is the house (browse.js `_syncChrome`). Every
+      // guard below is unchanged.
+      const detailHref = (slug) => `#apps/${encodeURIComponent(slug)}`;
       const hrefFor = (e) => {
         if (e.target.closest('.card-add-btn') || e.target.closest('.card-menu-btn')) return null;
         if (card.dataset.demo === 'true') return null;
         if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return null;
-        return card.dataset.slug
-          ? App._appUrl(card.dataset.slug, 'app', null, null) : null;
+        return card.dataset.slug ? detailHref(card.dataset.slug) : null;
       };
       const activate = (e) => {
         if (e.target.closest('.card-add-btn') || e.target.closest('.card-menu-btn')) return;
         if (card.dataset.demo === 'true') return;
         if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
-        App.navigateToApp(card.dataset.slug);
+        if (!card.dataset.slug) return;
+        window.Browse?.noteDetailOrigin?.('home');
+        location.hash = detailHref(card.dataset.slug);
       };
       if (window.NavLink) NavLink.wireModified(card, hrefFor, activate);
       else card.addEventListener('click', activate);
