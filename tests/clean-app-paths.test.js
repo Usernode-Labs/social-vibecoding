@@ -105,6 +105,46 @@ test('opening an app writes its clean path before asynchronous loading', () => {
   'the address changes before AppView.open starts');
 });
 
+test('a notification arriving during app startup waits and keeps its target', async () => {
+  const { App, AppView, releaseOpen } = loadApp();
+  const rendered = [];
+  App.ImproveStatus = { setAppOpen() {} };
+  App.switchTab = async (tab, ref, subTab) => {
+    assert.ok(AppView.appData, 'routing waits for the app metadata');
+    rendered.push({ tab, ref, subTab });
+  };
+  const boot = App.navigateToApp('notes', 'dev', null, 'forum');
+  const tap = App.openAppTab('notes', 'dev', {
+    subTab: 'topic', ref: { kind: 'issue', id: 1804 },
+  });
+  assert.equal(rendered.length, 0);
+  AppView.appData = { slug: 'notes' };
+  releaseOpen();
+  await Promise.all([boot, tap]);
+  assert.deepEqual(JSON.parse(JSON.stringify(rendered.at(-1))), {
+    tab: 'dev', ref: { kind: 'issue', id: 1804 }, subTab: 'topic',
+  });
+});
+
+test('opening a notification waits for its destination render', async () => {
+  const { App, AppView, releaseOpen } = loadApp();
+  App.ImproveStatus = { setAppOpen() {} };
+  let finishRender;
+  const render = new Promise(resolve => { finishRender = resolve; });
+  App.switchTab = () => render;
+  let completed = false;
+  const tap = Promise.resolve(App.openAppTab('notes', 'dev', {
+    subTab: 'sessions', sessionId: 42,
+  })).then(() => { completed = true; });
+  AppView.appData = { slug: 'notes' };
+  releaseOpen();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(completed, false, 'a pending render must not acknowledge a tap');
+  finishRender();
+  await tap;
+  assert.equal(completed, true);
+});
+
 test('the serializer covers clean app, board, topic, and chromeless URLs', () => {
   const { App } = loadApp({ search: '?token=abc&shot=one' });
   assert.equal(App._appUrl('notes-9206f8', 'app'),

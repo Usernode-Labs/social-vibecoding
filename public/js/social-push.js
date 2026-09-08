@@ -97,6 +97,8 @@
     _admissionGeneration: 0,
     _drainPromise: null,
     _drainRerunRequested: false,
+    _tapRetryTimer: null,
+    _tapRetryAttempt: 0,
     _foregroundInvalidationDirty: persistedForegroundToken !== null,
     _foregroundInvalidationToken: persistedForegroundToken,
     _foregroundInvalidationPersisted: persistedForegroundToken !== null,
@@ -373,21 +375,47 @@
     },
 
     async _drainOnce() {
+      const generation = SocialPush._admissionGeneration;
+      const currentSession = () => generation === SocialPush._admissionGeneration &&
+        SocialPush._sessionAdmitted();
       if (!window.App || !App.user || !window.Notifications ||
-          !SocialPush._sessionAdmitted() ||
+          !SocialPush._foregroundPageActive || !currentSession() ||
           !await SocialPush.isSupported()) return false;
+      if (!currentSession()) return false;
       const claim = await window.usernode.claimPendingSocialNotification();
+      if (!currentSession()) return false;
       if (claim == null) return true;
       const notificationId = SocialPush._notificationId(claim);
       if (notificationId == null) return false;
       const opened = await Notifications.openById(notificationId);
-      if (!opened) return false;
+      if (!opened || !currentSession()) return false;
       return await window.usernode.ackPendingSocialNotification(
         notificationId
       ) === true;
     },
 
-    drainPending() {
+    _clearTapRetry() {
+      if (SocialPush._tapRetryTimer) clearTimeout(SocialPush._tapRetryTimer);
+      SocialPush._tapRetryTimer = null;
+    },
+
+    _scheduleTapRetry() {
+      const delays = [500, 2000, 5000, 15000, 30000];
+      if (!SocialPush._foregroundPageActive || !SocialPush._supported ||
+          !SocialPush._sessionAdmitted() || SocialPush._tapRetryTimer ||
+          SocialPush._tapRetryAttempt >= delays.length) return;
+      const delay = delays[SocialPush._tapRetryAttempt++];
+      SocialPush._tapRetryTimer = setTimeout(() => {
+        SocialPush._tapRetryTimer = null;
+        SocialPush.drainPending({ retry: true });
+      }, delay);
+    },
+
+    drainPending({ retry = false } = {}) {
+      if (!retry) {
+        SocialPush._clearTapRetry();
+        SocialPush._tapRetryAttempt = 0;
+      }
       if (SocialPush._drainPromise) {
         SocialPush._drainRerunRequested = true;
         return SocialPush._drainPromise;
@@ -406,9 +434,11 @@
         } while (SocialPush._drainRerunRequested);
         return result;
       })();
-      SocialPush._drainPromise = run.finally(() => {
+      SocialPush._drainPromise = run.then((result) => {
         SocialPush._drainPromise = null;
         SocialPush._drainRerunRequested = false;
+        if (!result) SocialPush._scheduleTapRetry();
+        return result;
       });
       return SocialPush._drainPromise;
     },
@@ -553,6 +583,9 @@
   window.addEventListener('usernode:social-push-pending', () => {
     SocialPush.drainPending();
   });
+  document.addEventListener('sv:authed', () => {
+    SocialPush.drainPending();
+  });
   window.addEventListener('usernode:social-push-foreground', () => {
     SocialPush.refreshAfterForegroundPush();
   });
@@ -577,6 +610,7 @@
     SocialPush._badgePublishedCount = null;
     if (!event || !event.detail || event.detail.admitted !== true) {
       SocialPush._clearState();
+      SocialPush._clearTapRetry();
       return;
     }
     SocialPush.getState();
@@ -678,6 +712,7 @@
 
   window.addEventListener('pagehide', () => {
     SocialPush._foregroundPageActive = false;
+    SocialPush._clearTapRetry();
     SocialPush._foregroundLifecycleEpoch += 1;
     // If this realm is later restored from BFCache, another realm may have
     // received and already consumed a shared invalidation while this UI was
@@ -712,6 +747,7 @@
     bridgePageActive = true;
     resetBridgeReadyBackoff();
     SocialPush.retryForegroundInvalidation();
+    SocialPush.drainPending();
     // A restored realm cannot trust its pre-freeze badge confirmation —
     // another realm may have badged over it while this one was away.
     SocialPush._republishBadge();
