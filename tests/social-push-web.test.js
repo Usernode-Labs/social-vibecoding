@@ -970,6 +970,107 @@ test('missing native capabilities make the coordinator a no-op', async () => {
   assert.deepEqual(loaded.calls, []);
 });
 
+test('a tap received before web sign-in drains when authenticated boot finishes', async () => {
+  const loaded = loadCoordinator({ claims: [{ notificationId: 42 }] });
+  loaded.sandbox.App.user = null;
+  loaded.fire('usernode:social-push-pending');
+  await settle();
+  assert.equal(loaded.calls.some(([name]) => name === 'claim'), false);
+  loaded.sandbox.App.user = { id: 7 };
+  loaded.fireDocument('sv:authed');
+  await settle();
+  assert.ok(loaded.calls.some(([name, id]) => name === 'ack' && id === 42));
+});
+
+test('a restored page drains a retained tap without another native event', async () => {
+  const loaded = loadCoordinator({ claims: [{ notificationId: 42 }] });
+  loaded.fire('pagehide');
+  loaded.fire('usernode:social-push-pending');
+  await settle();
+  assert.equal(loaded.calls.some(([name]) => name === 'claim'), false);
+  loaded.fire('pageshow');
+  await settle();
+  assert.ok(loaded.calls.some(([name, id]) => name === 'ack' && id === 42));
+});
+
+test('a transient open failure retries the retained tap without an online event', async () => {
+  let attempts = 0;
+  const loaded = loadCoordinator({
+    claims: [{ notificationId: 42 }, { notificationId: 42 }],
+    openImpl() { return ++attempts > 1; },
+    timeoutScale: 0.001,
+  });
+  await loaded.sandbox.SocialPush.drainPending();
+  assert.equal(loaded.calls.some(([name]) => name === 'ack'), false);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(attempts, 2);
+  assert.deepEqual(loaded.calls.filter(([name]) => name === 'ack'), [['ack', 42]]);
+});
+
+test('tap retries are bounded and pagehide cancels a scheduled retry', async () => {
+  const loaded = loadCoordinator({
+    claims: Array.from({ length: 10 }, () => ({ notificationId: 42 })),
+    openResult: false,
+    timeoutScale: 0.0001,
+  });
+  await loaded.sandbox.SocialPush.drainPending();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(loaded.calls.filter(([name]) => name === 'open').length, 6);
+  assert.equal(loaded.sandbox.SocialPush._tapRetryTimer, null);
+  await loaded.sandbox.SocialPush.drainPending();
+  loaded.fire('pagehide');
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(loaded.calls.filter(([name]) => name === 'open').length, 7);
+});
+
+test('an admission change during navigation cannot acknowledge the old tap', async () => {
+  let finish;
+  const loaded = loadCoordinator({
+    claims: [{ notificationId: 42 }],
+    openImpl() { return new Promise(resolve => { finish = resolve; }); },
+  });
+  const draining = loaded.sandbox.SocialPush.drainPending();
+  await settle();
+  loaded.fire('usernode:native-session-admission', { admitted: false });
+  finish(true);
+  await draining;
+  assert.equal(loaded.calls.some(([name]) => name === 'ack'), false);
+  loaded.fire('pagehide');
+});
+
+test('native exact opens await the real item router and preserve failed navigation', async () => {
+  const loaded = loadCoordinator();
+  loaded.sandbox.location = { search: '', hash: '' };
+  loaded.sandbox.URLSearchParams = URLSearchParams;
+  vm.runInContext(notificationsSource, loaded.sandbox);
+  const notifications = loaded.sandbox.Notifications;
+  notifications._markOneRead = () => {};
+  notifications._dismissSheetForNav = () => {};
+  const items = [
+    { id: 41, kind: 'mention', appSlug: 'notes', threadType: 'issue', threadRef: 1804 },
+    { id: 42, kind: 'pr_proposed', appSlug: 'notes', sessionId: 3952 },
+    { id: 43, kind: 'session_done', appSlug: 'notes', sessionId: 3955 },
+  ];
+  notifications.items = items;
+  for (const item of items) {
+    let finish;
+    let completed = false;
+    loaded.sandbox.App.openAppTab = () => new Promise(resolve => { finish = resolve; });
+    const opened = notifications.openById(item.id).then(result => {
+      completed = true;
+      return result;
+    });
+    await settle();
+    assert.equal(completed, false, item.kind);
+    finish();
+    assert.equal(await opened, true);
+  }
+  loaded.sandbox.App.openAppTab = async () => { throw new Error('offline'); };
+  assert.equal(await notifications.openById(42), false);
+  loaded.sandbox.App.openAppTab = async () => false;
+  assert.equal(await notifications.openById(42), false);
+});
+
 test('settings consumes live native push state', () => {
   assert.match(
     settingsSource,

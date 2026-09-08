@@ -3304,6 +3304,7 @@
       }
 
       try {
+        if (preflight.webRecoverySettled) await preflight.webRecoverySettled;
         const response = await fetch('/api/auth/logout', {
           method: 'POST', credentials: 'same-origin',
         });

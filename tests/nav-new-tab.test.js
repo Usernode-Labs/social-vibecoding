@@ -240,7 +240,7 @@ test('every screen entry refreshes the href through the one choke point', () => 
   const at = appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   assert.ok(at !== -1, '_showOnlyScreen went missing');
   const fn = appJs.slice(at, appJs.indexOf('\n  },', at));
-  assert.match(fn, /App\.setBackIcon\('home'\)/,
+  assert.match(fn, /App\.setBackIcon\(revealId === 'home-screen' \|\| revealId === 'browse-screen' \? 'none' : 'home'\)/,
     'this is what keeps the href from ever going stale — every screen change '
     + 'passes through here');
 });
@@ -251,20 +251,16 @@ test('the three up-one-level screens pass their own target', () => {
   // is likewise a level inside the screen and would strand a phone viewer
   // without it.
   //
-  // THEIR ROOTS DRAW THE HOUSE, which is what changed: 'home' used to be a
-  // synonym for hidden, so these three said "no level above me" and rendered
-  // nothing. They still have no level above them — the arrow does not come
-  // back — but "nothing above this" is exactly the screen that should offer
-  // home, and that is the glyph 'home' draws now.
-  //
-  // Browse's ROOT moved with them for the same reason, and it is the clearer
-  // case: it passed 'arrow' with no href, which RESOLVED to home. A chevron
-  // promising a level above where there is none, going home anyway — the
-  // right destination drawn as the wrong glyph.
+  // Settings and Admin roots draw the house. Browse's root shares Home's
+  // header without a back slot (#1569); Home remains in the navigation menu.
+  // A Browse detail opened from Home still draws the house, while a detail
+  // opened from the list (or directly) links back to that list.
   assert.match(browseJs, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/,
     'browse names the one state with a list above it…');
-  assert.match(browseJs, /setBackIcon\(upToList \? 'arrow' : 'home', upToList \? '#apps' : undefined\)/,
-    '…and that state alone gets the chevron; the rest get the house');
+  assert.match(browseJs, /const backMode = onDetail \? \(upToList \? 'arrow' : 'home'\) : 'none';/,
+    '…and that state alone gets the chevron; Home-origin details get the house and the root hides the slot');
+  assert.match(browseJs, /setBackIcon\(backMode, upToList \? '#apps' : undefined\)/,
+    'the list-bound chevron keeps its explicit parent target');
   assert.match(adminConsoleJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
     'the admin section chevron pops to the console menu; its root gets home');
   // Settings resolves its section target through _upHref (#1565): the menu

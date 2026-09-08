@@ -328,7 +328,7 @@ class TicketPool {
           releaseLock = null;
           return { rows: [] };
         }
-        if (sql.startsWith('SELECT token, user_id, native_session_incarnation_id FROM sessions')) {
+        if (sql.startsWith('SELECT token, user_id, native_session_incarnation_id')) {
           await acquireLock();
           return params[0] === pool.session.token
             ? { rows: [{ ...pool.session }] }
@@ -808,4 +808,20 @@ test('schema cross-binds session, attempt, installation, token, and account subj
   assert.match(schema, /FOREIGN KEY \(mobile_auth_token_id, user_id\)[\s\S]*?ON DELETE SET NULL \(mobile_auth_token_id\)/);
   assert.match(schema, /FOREIGN KEY \(account_id, user_id\)\s+REFERENCES onchain_accounts\(id, user_id\)/);
   assert.match(schema, /ALTER TABLE native_session_credentials\s+ALTER COLUMN account_id DROP NOT NULL/);
+});
+
+test('a restored web cookie can replay only its original native attempt', async () => {
+  const now = new Date('2026-08-26T12:00:00.000Z');
+  const pool = new TicketPool(now);
+  pool.session.native_session_credential_reference = opaque('nsc_', 4);
+  pool.session.native_attempt_id = opaque('nsa_', 5);
+  const protocol = new NativeSessionProtocol({ pool,
+    config: { nativeSessionV2Network: NETWORK, dataEncryptionKey: DATA_KEY }, now: () => now });
+  await assert.rejects(protocol.createHandoff({ sessionToken: 'cookie-A',
+    body: { protocol: 2, attemptId: opaque('nsa_', 6), desiredRuntime: 'running' } }),
+  { status: 409, code: 'native_session_attempt_conflict' });
+  assert.equal(pool.attempts.size, 0);
+  await protocol.createHandoff({ sessionToken: 'cookie-A',
+    body: { protocol: 2, attemptId: pool.session.native_attempt_id, desiredRuntime: 'running' } });
+  assert.equal(pool.attempts.size, 1);
 });

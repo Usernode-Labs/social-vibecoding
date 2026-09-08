@@ -102,6 +102,7 @@
     requestAlarmPermissions: true,
     openNotificationSettings: true,
     prepareForLogin: true,
+    restoreWebSession: true,
     logout: true,
     establishNativeSession: true,
     markPrivilegedBridgeReady: true,
@@ -5133,6 +5134,12 @@
     return callNativeChromeAction(
       "prepareForLogin", {}, _PERMISSION_REQUEST_TIMEOUT_MS
     );
+  };
+
+  // Root-owned, trusted top frame only. Native installs the HttpOnly cookie;
+  // the result contains public identity/attempt metadata, never credentials.
+  window.usernode.restoreWebSession = function () {
+    return callNativeChromeAction('restoreWebSession', {}, 45000);
   };
 
   // logout() → true. Social clears its web session and caches first, then
