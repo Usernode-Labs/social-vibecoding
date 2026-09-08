@@ -430,6 +430,21 @@ const App = {
   // nothing arrived in time — an open-but-stalled socket must not hold the
   // whole boot, which is what left the reported blank screen.
   async _fetchSession() {
+    const response = await App._fetchWebSession();
+    if (window.NativeChrome && typeof NativeChrome.restoreWebSession === 'function') {
+      try {
+        const restored = await NativeChrome.restoreWebSession({ force: response.status === 401 });
+        if (restored) return App._fetchWebSession();
+      } catch (error) {
+        // Native uncertainty must not erase a display snapshot. A valid web
+        // response can still be used while native recovery is unavailable.
+        if (response.status === 401) throw error;
+      }
+    }
+    return response;
+  },
+
+  async _fetchWebSession() {
     let timer = null;
     const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
     if (ctrl) timer = setTimeout(() => ctrl.abort(), App.BOOT_SESSION_TIMEOUT_MS);

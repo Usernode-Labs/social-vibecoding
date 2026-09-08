@@ -369,7 +369,8 @@ test('Social negotiates walletless issuance and exact replay with the existing p
         ADD COLUMN is_used BOOLEAN DEFAULT TRUE;
       CREATE TABLE sessions (
         token TEXT PRIMARY KEY, user_id BIGINT NOT NULL,
-        native_session_incarnation_id VARCHAR(47), expires_at TIMESTAMPTZ NOT NULL
+        native_session_incarnation_id VARCHAR(47), expires_at TIMESTAMPTZ NOT NULL,
+        native_session_credential_reference VARCHAR(47)
       );
       CREATE TABLE seasons (
         id BIGINT PRIMARY KEY, internal BOOLEAN, is_active BOOLEAN,

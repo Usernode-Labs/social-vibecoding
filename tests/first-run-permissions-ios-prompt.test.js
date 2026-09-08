@@ -111,6 +111,7 @@ function boot(opts) {
     // resolution is still pending but the event loop has already resolved"
     // — cancelling every later test in the file with it.
     setTimeout, clearTimeout,
+    setInterval() {},
     fetch() { return Promise.reject(new Error('unexpected fetch')); },
   };
   sandbox.window = sandbox;

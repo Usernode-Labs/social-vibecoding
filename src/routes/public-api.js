@@ -166,7 +166,7 @@ function publicApiRoutes(config) {
           icon_emoji: a.icon_emoji || null,
           icon_url: a.icon_image_id ? `/app-icons/${a.icon_image_id}` : null,
           active_users: parseInt(a.active_users, 10) || 0,
-          // From the anonymous-shell probe (services/shell-probe.js):
+          // From the anonymous shell + API-gate probe (services/shell-probe.js):
           // anything not positively classified 'public' is presented as
           // account-required — 'unknown' fails safe to gated, matching
           // the scaffold's default behavior.

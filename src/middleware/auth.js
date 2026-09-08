@@ -1,3 +1,4 @@
+const { nativeWebSessionIsLive } = require('../services/web-session-auth');
 const crypto = require('crypto');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -210,13 +211,15 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platform_access
+          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platform_access,
+             ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
           [cookieToken]
         );
 
-        if (rows.length > 0 && new Date(rows[0].expires_at) >= new Date()) {
+        if (rows.length > 0 && rows[0].native_session_valid !== false
+            && new Date(rows[0].expires_at) >= new Date()) {
           // Staging identity switch: a request that carries a VALID iframe
           // JWT for a DIFFERENT user than the cookie session re-mints as
           // the token's user (replacing the cookie) instead of silently
@@ -298,7 +301,9 @@ function authMiddleware(config) {
         if (rows.length > 0) {
           await pool.query('DELETE FROM sessions WHERE token = $1', [cookieToken]);
         }
-        res.clearCookie('session');
+        // An old in-flight request may finish after native recovery installed
+        // a replacement cookie. A 401 must not clear that newer credential.
+        // Explicit logout clears cookies; login/recovery replaces them.
       } catch (err) {
         log.error('auth', 'Session check failed', { message: err.message });
         return res.status(500).json({ error: 'Internal server error' });

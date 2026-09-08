@@ -207,7 +207,7 @@ test('the anonymous screens are reachable to shots via ?shot=anon', () => {
   const meAt = init[0].indexOf('_fetchSession()');
   assert.ok(shotAt > -1 && meAt > -1, 'both the shot check and the /me fetch are in init');
   assert.ok(shotAt < meAt, 'the shot override runs before the /me fetch');
-  assert.match(js.match(/async _fetchSession\(\) \{[\s\S]*?\n  \},/)[0],
+  assert.match(js.match(/async _fetchWebSession\(\) \{[\s\S]*?\n  \},/)[0],
     /fetch\('\/api\/auth\/me'/);
   const fn = js.match(/_anonShot\(\) \{[\s\S]*?\n  \},/);
   assert.ok(fn, '_anonShot exists');

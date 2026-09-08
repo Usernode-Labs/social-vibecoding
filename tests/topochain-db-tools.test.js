@@ -743,6 +743,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'mcp_connector_hints.last_token_id',   // an mcp_tokens.id row id — the setup-hint throttle key, no token material
     'cli_access_tokens.scopes',
     'chat_sessions.handoff_request_fingerprint', // a non-reversible request digest
+    'sessions.native_session_credential_reference', // public opaque reference, never bearer/cookie material
 
     // Foreign keys TO a credential row. The id is a row number; the secret
     // itself lives in a column that IS denied (or, for user_ai_credentials,

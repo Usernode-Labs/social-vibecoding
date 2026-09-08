@@ -1,5 +1,7 @@
 'use strict';
 
+const { nativeWebSessionIsLive } = require('../services/web-session-auth');
+
 const path = require('path');
 const crypto = require('crypto');
 const express = require('express');
@@ -977,7 +979,8 @@ function cliBrowserRoutes(config) {
         const { rows: sessionRows } = await client.query(
           `SELECT 1 FROM sessions
             WHERE token = $1 AND user_id = $2
-              AND clock_timestamp() < expires_at`,
+              AND clock_timestamp() < expires_at
+              AND ${nativeWebSessionIsLive('sessions')}`,
           [sessionToken || '', req.user.id]
         );
         if (!sessionRows.length) return { authLost: true };

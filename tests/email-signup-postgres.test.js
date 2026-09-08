@@ -29,7 +29,8 @@ const DDL = `
   CREATE TABLE sessions (
     token VARCHAR(64) PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    expires_at TIMESTAMPTZ NOT NULL
+    expires_at TIMESTAMPTZ NOT NULL,
+    native_session_credential_reference VARCHAR(47)
   );
   CREATE TABLE mobile_otp_codes (
     id BIGSERIAL PRIMARY KEY,
@@ -88,7 +89,11 @@ const DDL = `
     ON user_enrollments (user_id, season_id) WHERE season_event_id IS NULL;
   CREATE TABLE native_session_credentials (
     credential_reference VARCHAR(47) PRIMARY KEY,
-    account_id BIGINT NOT NULL REFERENCES onchain_accounts(id)
+    account_id BIGINT NOT NULL REFERENCES onchain_accounts(id),
+    user_id INTEGER REFERENCES users(id),
+    mobile_auth_token_id BIGINT REFERENCES mobile_auth_tokens(id),
+    state TEXT,
+    expires_at TIMESTAMPTZ
   );
   CREATE TABLE waitlist_signups (
     email VARCHAR(255) PRIMARY KEY,
