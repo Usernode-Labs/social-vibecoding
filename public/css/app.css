@@ -11450,6 +11450,20 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 .dev-ws-strip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .dev-ws-strip-text { margin: 0; font-size: 14px; color: var(--text-primary); }
+/* ── The Workshop's orientation pane ─────────────────────────
+   "Since your last visit" moved inside "Where the app is": the description
+   leads, and the personal line sits under it as a footnote to it rather than
+   as a strip of its own. */
+.dev-ws-since-line {
+  margin: 6px 0 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 13px; color: var(--text-muted);
+}
+/* A control at the end of a lane — "N more waiting on you". `.dev-ws-link`
+   set `font: inherit` with no size of its own, so it took whatever its parent
+   had: 16px in the two strip heads, larger than every other control on the
+   Dev screen and in a weight nothing else there wears. `.gc-vote-btn` is the
+   platform's small action pill and is already what this screen uses. */
+.dev-ws-lane-btn { margin: 2px 0 0 4px; }
 .dev-ws-pill {
   display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px;
   font-size: 12px; font-weight: 600; white-space: nowrap;
@@ -11586,7 +11600,11 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px;
   min-height: 18px; max-height: 18px; overflow: hidden; margin-top: 4px;
 }
-.dev-ws-row-open .dev-ws-row-band { display: none; }
+/* The band STAYS when the row opens. It used to be hidden here so the card
+   below could show the real one, which meant "Closes #12" travelled downward
+   on every open while the Vote button sat still — the two objects the fold was
+   supposed to stop being. The head is identical in both sizes now, and it is
+   the card below that gives up its duplicate band. */
 /* The composite pill, wearing the tone it has always carried. Tones are
    `statusPillState`'s vocabulary (neutral / ok / attention / blocked /
    progress), not the merge badge's colour names — an unknown one falls
@@ -11615,11 +11633,24 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    The row is the head and keeps its top corners; the entry is the body and
    picks up exactly where it stopped, its own bottom border closing the same
    box. The row's bottom border stays visible on purpose — inside one card it
-   reads as the rule under a heading, which is what it now is. */
+   reads as the rule under a heading, which is what it now is.
+
    Scoped under `#dev-workshop` because the entry's own sheet treatment is
    (`#dev-workshop .dev-feed-entry`, above): an ID beats any class run, so a
    bare `.dev-ws-rowwrap-open > .dev-feed-entry` loses and the body keeps its
-   26px ring — which is exactly the second card this is removing. */
+   26px ring — which is exactly the second card this is removing.
+
+   This comment carried a SECOND comment-terminator when #1793 shipped, four
+   lines above here — and writing one INTO the prose closes the comment just
+   as effectively as ending it, which is how the bug happened and how it very
+   nearly happened again while being documented. Do not name the token here.
+   It closed the comment early, which turned the prose that followed
+   into a qualified-rule prelude — and a prelude runs to the first brace, so it
+   swallowed the three rules below as one invalid selector and the browser
+   dropped all of them. The open row kept its four corners and the entry kept
+   its own 26px frosted ring: two boxes, which is exactly the thing the block
+   was written to remove. Nothing caught it — the tests regex this file as
+   TEXT, so they matched the rules while the browser was discarding them. */
 .dev-ws-rowwrap-open > .dev-ws-row { border-radius: 12px 12px 0 0; }
 #dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry {
   margin-top: 0;
@@ -11648,7 +11679,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    band below them deliberately stays: the vote button rides in it, so hiding
    it would take voting away from an opened proposal. */
 .dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item .dev-card-head,
-.dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item .dev-card-meta { display: none; }
+.dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item .dev-card-meta,
+.dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item .dev-card-status { display: none; }
 .dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
 .dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
 .dev-ws-theme-more { font-size: 13px; color: var(--text-muted); padding: 4px 10px 0; }
