@@ -8,10 +8,11 @@
 //     "Being placed" (marked on the row), one its placer declined under "Not
 //     yet grouped", one they name but the board no longer has is not drawn,
 //     and the viewer's own private session is placed by the issue it links.
-//   * The two strips: proposals waiting on THIS viewer's vote are pinned
-//     whatever the filters say; "since your last visit" is computed against
-//     a baseline read once per page session, and a first visit gets the
-//     welcome instead.
+//   * The strips, in the order a returning member reads them: what changed
+//     since they were last here, the app's state folded into a dashboard,
+//     the proposals waiting on THIS viewer's vote (pinned whatever the
+//     filters say) and one unclaimed issue to pick up. The baseline "since"
+//     is measured against is read once per page session.
 //   * The shared filter bar narrows the themes, and the Workshop's own
 //     `theme` filter is what "Open on Board" hands the kanban.
 //   * A row unfolds into the Activity entry byte-for-byte — `.dev-feed-entry`
@@ -280,13 +281,20 @@ test('the vote strip pins what is owed to the viewer, whatever the filters say',
   assert.equal(v.discussion, null, 'and the discussion row is dropped, as the feed dropped it');
 });
 
-test('a first visit gets the welcome; a return gets "since", against a baseline read once', () => {
+test('the dashboard is drawn every visit; "since" needs a baseline read once', () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
   const first = AppView._workshopView();
-  assert.equal(first.since, null);
-  assert.deepEqual(plain(first.welcome), { open: 3, themes: 1, votesWaiting: 1, shippedWeek: 1 });
+  assert.equal(first.since, null, 'a first visit has nothing to be since');
+  // #1787: this was `welcome`, and it was drawn ONLY here. "What is this
+  // project working on" is a returning member's question too, so the same
+  // numbers are drawn every visit, folded, with the rest of the app's state.
+  assert.equal(first.dashboard.open, 3);
+  assert.equal(first.dashboard.themes, 1);
+  assert.equal(first.dashboard.votesWaiting, 1);
+  assert.equal(first.dashboard.shippedWeek, 1);
+  assert.equal(first.dashboard.people, 1, 'from the merge context, not a new request');
 
   // A new page session, a week later than the stamp the first one wrote.
   const store = {};
@@ -295,7 +303,7 @@ test('a first visit gets the welcome; a return gets "since", against a baseline 
   seed(Later);
   Later._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
   const v = Later._workshopView();
-  assert.equal(v.welcome, null);
+  assert.ok(v.dashboard, 'and it is still there on a return visit');
   assert.ok(v.since, 'a baseline exists');
   assert.equal(v.since.opened, 1, 'issue 12 was filed two days ago; issue 13 twenty days ago');
   assert.equal(v.since.proposed, 1);
@@ -316,6 +324,26 @@ test('the discussion row is drawn as a row of its own', () => {
   const v = AppView._workshopView();
   assert.equal(v.discussion.key, 'discussion');
   assert.equal(v.discussion.card.attrs['data-discussion-row'], '1');
+});
+
+test('the discussion row leads with what it is, not with the last thing said', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._discussionSummary = {
+    slug: 'demo-app', content: 'Should the board default to the workshop?',
+    username: 'dana', createdAt: at(0),
+  };
+  const card = AppView._workshopView().discussion.card;
+  // The Board's card has always been this way round; the row was inside out,
+  // so the one heading on the lander that never changes changed every time
+  // somebody spoke (#1787).
+  assert.equal(card.title.text, 'General discussion');
+  assert.equal(plain(card.meta)[0].s, 'dana: Should the board default to the workshop?');
+
+  AppView._discussionSummary = null;
+  assert.equal(plain(AppView._workshopView().discussion.card.meta)[0].s,
+    'Talk with everyone building this app',
+    'and with nothing said yet the standing description takes the preview line');
 });
 
 test('the capture deep link names the first issue row to unfold', () => {
@@ -358,6 +386,80 @@ test('the theme filter narrows by membership, and widens when it cannot be appli
   assert.deepEqual(plain(AppView._kanbanActiveChips().map((c) => [c.key, c.label])), [['theme', 'Theme: Theming']]);
   AppView._dismissKanbanFilter('theme');
   assert.equal(AppView._kanbanFilters.theme, null);
+});
+
+// ── #1787: the dashboard, and the one thing to pick up ───────────────
+
+test('the dashboard reads a rate, not just a count, and says when it is a floor', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._merged = [
+    { id: 78, pr_number: 40, pr_title: 'This week', status: 'merged', username: 'alice', merged_at: at(2), created_at: at(2), row_type: 'pr' },
+    { id: 79, pr_number: 39, pr_title: 'Also this week', status: 'merged', username: 'bob', merged_at: at(5), created_at: at(5), row_type: 'pr' },
+    { id: 80, pr_number: 38, pr_title: 'Last week', status: 'merged', username: 'bob', merged_at: at(10), created_at: at(10), row_type: 'pr' },
+  ];
+  const d = AppView._workshopView().dashboard;
+  assert.equal(d.shippedWeek, 2);
+  assert.equal(d.shippedPrevWeek, 1, 'the week before, from the same source, so the two compare');
+  assert.equal(d.partial, false);
+
+  // The merged history is paged. With more behind it the counts are floors,
+  // and the view has to say so rather than reporting a page as the record.
+  AppView._mergedHasMore = true;
+  assert.equal(AppView._workshopView().dashboard.partial, true);
+});
+
+test('"try taking this one next" names an open issue nobody is on', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  // Issue 12 is the more recent of the two, so it is the one offered.
+  assert.equal(AppView._workshopView().nextUp.key, 'next:issue:12');
+  assert.equal(AppView._workshopView().dashboard.unclaimed, 2);
+
+  // A live claim, a running session or an assignee all take it out.
+  AppView._ghIssues[0].in_progress = { claims: [{ username: 'dana' }] };
+  assert.equal(AppView._workshopView().nextUp.key, 'next:issue:13', 'the claimed one is skipped');
+  AppView._ghIssues[1].assignee = { top: 'erin' };
+  assert.equal(AppView._workshopView().nextUp, null);
+  assert.equal(AppView._workshopView().dashboard.unclaimed, 0);
+});
+
+test('an issue already being worked on is never the one offered', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  // A promoted proposal against issue 12 moves it into the `underway` lane.
+  // It carries no claim and no assignee, so only the LANE rules it out — and
+  // offering it would name a card the viewer can see being built two strips
+  // further down the same page.
+  AppView._proposals[0].linked_issues = ['12'];
+  const v = AppView._workshopView();
+  assert.equal(v.nextUp.key, 'next:issue:13', 'the quiet one, not the busy one');
+  assert.equal(v.dashboard.unclaimed, 1);
+});
+
+test('the suggestion stands down while a filter is active', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'dark' };
+  // A narrowed board is somebody looking for something specific; offering
+  // them a different card is an interruption, not an invitation.
+  assert.equal(AppView._workshopView().nextUp, null);
+});
+
+test('the strips are ordered for a returning member: since, then state, then what to do', () => {
+  const store = {};
+  store[`${'workshopSeen'}:demo-app`] = String(Date.now() - 3 * 86400000);
+  const AppView = makeAppView({ localStorage: store });
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
+  const html = workshopHtml(AppView);
+  const order = ['data-ws-since', 'data-ws-dashboard', 'data-ws-votes', 'data-ws-next', 'data-discussion-row']
+    .map((k) => html.indexOf(k));
+  assert.ok(order.every((i) => i >= 0), `every strip is drawn: ${JSON.stringify(order)}`);
+  assert.deepEqual(order.slice().sort((a, b) => a - b), order,
+    'what changed, where the app is, what needs you, what you could take');
+  assert.match(html, /<button type="button" class="dev-ws-link" aria-expanded="false">Show<\/button>/,
+    'the dashboard opens folded — a lander that opens on statistics has buried what it is for');
 });
 
 // ── #1787: the row is the card, folded ───────────────────────────────
@@ -415,6 +517,22 @@ test('a theme head counts its people AND how much is still open in it', () => {
     'people and items, side by side',
   );
   assert.match(CSS, /\.dev-ws-stat \+ \.dev-ws-stat \{[^}]*border-left:/, 'divided by a hairline');
+});
+
+test('a theme wears the glyph the model chose, or its initial when there is none', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'Game Corner', icon: '🎮', items: ['issue:12'] }]);
+  assert.match(workshopHtml(AppView), /<span class="dev-ws-theme-icon" aria-hidden="true">🎮<\/span>Game Corner/);
+
+  // A row written before icons existed, or an answer the sanitiser rejected:
+  // the initial on the name's own swatch, which reads as chosen where a
+  // hashed-from-the-name emoji would be stable and meaningless.
+  AppView._workshopThemes = themes([{ id: 't', name: 'Game Corner', items: ['issue:12'] }]);
+  assert.match(
+    workshopHtml(AppView),
+    /class="dev-ws-theme-icon dev-ws-theme-icon-letter"[^>]*>G<\/span>Game Corner/,
+  );
 });
 
 test('"Shipped this week" opens folded, so a theme opens on what still needs someone', () => {
@@ -537,12 +655,12 @@ test('the Workshop renders its strips, its themes and its folded rows', () => {
   assert.match(html, /<div role="button" tabindex="0" class="dev-ws-row" aria-expanded="false" data-ws-row="vote:proposal:34"[\s\S]*?<span class="dev-ws-row-trailing"><button [^>]*class="dev-vote-btn"/,
     'a vote row is the folded row with the vote button inside it');
   assert.ok(!/<button[^>]*>[^<]*<button/.test(html), 'and no button nests in a button');
-  assert.ok(!/data-ws-votes[\s\S]*?gc-vote-item/.test(html.slice(0, html.indexOf('data-ws-welcome'))),
+  assert.ok(!/data-ws-votes[\s\S]*?gc-vote-item/.test(html.slice(0, html.indexOf('data-ws-next'))),
     'and no full card in the strip');
   // "Open on Board" sits at the bottom of the theme, not under a lane.
   assert.match(html, /<div class="dev-ws-theme-more">[\s\S]*?Open on Board ›/);
   assert.ok(!/dev-ws-more[\s\S]{0,80}Open on Board/.test(html), 'no lane carries its own');
-  assert.match(html, /data-ws-welcome=""/, 'a first visit: the welcome');
+  assert.match(html, /data-ws-dashboard=""/, 'the dashboard, folded');
   assert.match(html, /data-discussion-row="1"/, 'the discussion row');
   assert.match(html, /data-ws-theme="t"/, 'the theme');
   assert.match(html, /Dark mode should stick\./, 'with its saying');
@@ -587,7 +705,9 @@ test('the footnote says what is actually happening to the category grouping', ()
   html = workshopHtml(AppView);
   assert.match(html, /placing new cards…/, 'pending placement on real themes says so');
   assert.match(html, /Themes were drafted \d+[hd] ago and are re-drafted daily, or sooner when a tenth of the board changes\. 3 new cards are being placed\./);
-  assert.match(html, /<div class="dev-ws-theme-name">Being placed<\/div>/);
+  // The name is preceded by the theme's glyph now (#1787); the pin is still
+  // on the COPY, which is what these four states are about.
+  assert.match(html, /<div class="dev-ws-theme-name">(?:<span class="dev-ws-theme-icon[^>]*>[^<]*<\/span>)?Being placed<\/div>/);
   // The row's marker: the pseudo-theme is folded on a plain paint, so the
   // marker is pinned at the source, on the folded row.
   assert.match(WORKSHOP, /\{row\.placing \? <span className="dev-ws-placing"[^>]*>placing…<\/span> : null\}/);
@@ -598,7 +718,7 @@ test('the footnote says what is actually happening to the category grouping', ()
   html = workshopHtml(AppView);
   assert.match(html, /re-drafting themes…/, 'a pending discovery on real themes is a re-draft');
   assert.match(html, /3 cards did not fit a theme and wait for the next draft\. The last attempt failed \(placement: boom\); it is retried shortly\./);
-  assert.match(html, /<div class="dev-ws-theme-name">Not yet grouped<\/div>/);
+  assert.match(html, /<div class="dev-ws-theme-name">(?:<span class="dev-ws-theme-icon[^>]*>[^<]*<\/span>)?Not yet grouped<\/div>/);
   assert.ok(!html.includes('dev-ws-placing'), 'declined cards wear no marker');
 });
 

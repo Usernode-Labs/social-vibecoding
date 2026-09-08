@@ -295,6 +295,13 @@ export interface WorkshopTheme {
   description: string;
   /** "What people are asking for" — the model's line, absent on the category grouping. */
   saying: string | null;
+  /**
+   * One emoji for the theme, chosen by the model (fixed per category on the
+   * fallback grouping). `''` when there is none — a row written before icons
+   * existed, or an answer the sanitiser rejected — and the head then draws
+   * the theme's initial instead of a stand-in glyph that would mean nothing.
+   */
+  icon: string;
   people: string[];
   /** Epoch ms of the newest activity on any item in the theme. */
   lastActive: number;
@@ -329,7 +336,30 @@ export interface DevWorkshopView {
     rows: ListRow[];
   } | null;
   /** First-visit orientation: the board's shape in numbers. */
-  welcome: { open: number; themes: number; votesWaiting: number; shippedWeek: number } | null;
+  /**
+   * The app's state in numbers, every visit rather than only the first —
+   * this was `welcome`, which asked a newcomer's question a returning member
+   * has too. Everything here is derived from data the board already loaded;
+   * nothing is written by a model.
+   */
+  dashboard: {
+    open: number;
+    themes: number;
+    votesWaiting: number;
+    /** Merges in the last 7 days, and in the 7 before them — a rate. */
+    shippedWeek: number;
+    shippedPrevWeek: number;
+    /** Distinct people active on the app (the merge context's own count). */
+    people: number;
+    /** Open issues with no claim, no session and nobody assigned. */
+    unclaimed: number;
+    /** The theme with the most recent activity, by name. */
+    busiest: string | null;
+    /** The merged history is paged; true means the week counts are floors. */
+    partial: boolean;
+  } | null;
+  /** One unclaimed open issue to suggest, as a row. Null while filtering. */
+  nextUp: ListRow | null;
   /** The app's general discussion, as a row — see AppView._discussionCardModel. */
   discussion: ListRow | null;
   themes: WorkshopTheme[];

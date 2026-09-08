@@ -4752,8 +4752,18 @@ const AppView = {
   _discussionCardModel() {
     const s = AppView._discussionSummary;
     const fresh = !!(s && AppView.appData && s.slug === AppView.appData.slug);
-    const meta = [{ t: 'text', s: 'General discussion' }];
-    if (fresh && s.username) meta.push({ t: 'text', s: s.username });
+    // #1787: the two lines used to be the other way round — the message was
+    // the TITLE and "General discussion" sat under it in the meta line, so the
+    // one row on the lander whose heading never changes read as a different
+    // thing every time somebody spoke. The Board's card has always had it the
+    // right way round (`DiscussionCard` in board-frame.tsx: the name in bold,
+    // the last thing said muted underneath); this is that shape, in the
+    // Workshop's row.
+    const said = (fresh && s.content) ? s.content.slice(0, 200) : null;
+    const preview = said
+      ? (s.username ? `${s.username}: ${said}` : said)
+      : 'Talk with everyone building this app';
+    const meta = [{ t: 'text', s: preview }];
     if (fresh && s.createdAt) meta.push({ t: 'text', s: relTime(s.createdAt) });
     return {
       key: 'discussion',
@@ -4762,10 +4772,7 @@ const AppView = {
       // data-issue-row. A `1` rather than an id because there is exactly one.
       attrs: { 'data-discussion-row': '1', title: "Open the app's general chat" },
       icon: AppView._devCardIcon('chat'),
-      title: {
-        text: (fresh && s.content) ? s.content.slice(0, 200) : 'Talk with everyone building this app',
-        title: 'General discussion',
-      },
+      title: { text: 'General discussion', title: "Open the app's general chat" },
       meta,
       pill: null,
       linked: [],
@@ -4969,7 +4976,7 @@ const AppView = {
   // advanced to now on that first read: every later repaint in this session
   // compares against the same baseline, so a WS-driven refresh cannot make
   // "new" things stop being new mid-visit. A first visit has no baseline and
-  // gets the welcome instead.
+  // gets the dashboard alone instead.
   _workshopBaseline(slug) {
     if (!slug) return 0;
     if (Object.prototype.hasOwnProperty.call(AppView._workshopSince, slug)) {
@@ -5142,6 +5149,17 @@ const AppView = {
     location.hash = `#app/${slug}/board`;
   },
 
+  // Nobody is on this issue: no live claim, no session working it, nobody
+  // assigned. `in_progress` is the server's own composition of the first two
+  // (routes/issues.js composeInProgress), already expiry-filtered, so this
+  // asks the same question the card's "N building" chip answers.
+  _issueUnclaimed(it) {
+    const ip = it && it.in_progress;
+    if (ip && Array.isArray(ip.claims) && ip.claims.length) return false;
+    if (ip && Number(ip.sessions) > 0) return false;
+    return !(it && it.assignee && it.assignee.top);
+  },
+
   _workshopView() {
     const meta = AppView._ghIssuesMeta || {};
     // Published on every branch, placeholders included: `set` merges a patch,
@@ -5150,7 +5168,7 @@ const AppView = {
     const slug = App.currentApp || '';
     const ctx = { slug, canPost: !!AppView.appData?.can_collaborate };
     const empty = {
-      votes: { count: 0, rows: [] }, since: null, welcome: null, discussion: null, themes: [],
+      votes: { count: 0, rows: [] }, since: null, dashboard: null, nextUp: null, discussion: null, themes: [],
       meta: {
         source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
         lastError: null, coverage: null, placing: 0, filtered: false,
@@ -5278,7 +5296,7 @@ const AppView = {
     ];
     const mkTheme = (def, ungrouped) => ({
       id: def.id, name: def.name, description: def.description || '',
-      saying: def.saying || null, people: [], lastActive: 0,
+      saying: def.saying || null, icon: def.icon || '', people: [], lastActive: 0,
       counts: { open: 0, underway: 0, review: 0, shipped: 0, fresh: 0 },
       lanes: laneOrder.map((l) => ({ key: l.key, title: l.title, rows: [], more: 0 })),
       ...(ungrouped ? { ungrouped: true } : {}),
@@ -5332,9 +5350,8 @@ const AppView = {
       drawn.push(finish(rest));
     }
 
-    // ── Since your last visit / welcome ──
+    // ── Since your last visit ──
     let since = null;
-    let welcome = null;
     if (baseline) {
       const moved = entries.filter((e) => e.t > baseline).sort((a, b) => b.t - a.t);
       since = {
@@ -5344,14 +5361,64 @@ const AppView = {
         proposed: entries.filter((e) => e.kind === 'proposal' && e.created > baseline).length,
         rows: moved.slice(0, AppView.WORKSHOP_SINCE_MAX).map((e) => ({ ...e.row, key: `since:${e.row.key}` })),
       };
-    } else {
-      welcome = {
-        open: entries.filter((e) => e.lane !== 'done' && e.lane !== 'shipped').length,
-        themes: drawn.filter((t) => !t.ungrouped).length,
-        votesWaiting: buckets.inReview.length,
-        shippedWeek: entries.filter((e) => e.lane === 'shipped').length,
-      };
     }
+
+    // ── The dashboard, and the one thing to pick up ──
+    //
+    // This was `welcome`: the same four numbers, shown ONLY on a first visit,
+    // because "what is this project" is a newcomer's question. It is also the
+    // returning member's question every time they have been away a week, and
+    // there was nowhere to ask it — so it is drawn every visit now, folded,
+    // and it carries the rest of the app's state with it (#1787).
+    //
+    // Everything here is DERIVED from data the board already loaded. No new
+    // request, and nothing written by a model: a generated paragraph would
+    // need its own staleness and its own footnote saying when it was written,
+    // and these numbers are the answer anyway.
+    const nowMs = Date.now();
+    const WEEK = 7 * 86400000;
+    const mergedAtOf = (m) => ts(m.merged_at || m.closed_at || m.created_at);
+    const allMerged = Array.isArray(AppView._merged) ? AppView._merged : [];
+    const openEntries = entries.filter((e) => e.lane !== 'done' && e.lane !== 'shipped');
+    // Open issues nobody has taken. The OPEN lane specifically, not every
+    // unfinished entry: `_bucketDevItems` already moves an issue with a
+    // session or a promoted proposal against it into `underway`, so counting
+    // those would offer somebody a card that is visibly being worked on two
+    // strips further down. `_issueUnclaimed` then rules out the quieter
+    // signals — a live claim, an assignee — that do not move the lane.
+    const idle = openEntries
+      .filter((e) => e.lane === 'open' && e.kind === 'issue' && AppView._issueUnclaimed(e.item))
+      .sort((a, b) => b.t - a.t);
+    const named = drawn.filter((t) => !t.ungrouped);
+    const dashboard = {
+      open: openEntries.length,
+      themes: named.length,
+      votesWaiting: buckets.inReview.length,
+      shippedWeek: allMerged.filter((m) => mergedAtOf(m) > nowMs - WEEK).length,
+      // The week before, for a rate rather than a count. Same source as the
+      // week above so the two are comparable.
+      shippedPrevWeek: allMerged.filter((m) => {
+        const t = mergedAtOf(m);
+        return t <= nowMs - WEEK && t > nowMs - 2 * WEEK;
+      }).length,
+      people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
+      unclaimed: idle.length,
+      busiest: named.length
+        ? named.slice().sort((a, b) => b.lastActive - a.lastActive)[0].name
+        : null,
+      // The merged history is paged. With more behind it the two week counts
+      // are floors, not totals, and the view has to say so rather than
+      // reporting a page as if it were the whole record.
+      partial: !!AppView._mergedHasMore,
+    };
+
+    // "Try taking this one next" — the most recently active open issue with
+    // nobody on it. Recency rather than age on purpose: an issue the group is
+    // still talking about has context to start from, where the oldest one on
+    // the board is usually oldest for a reason.
+    const nextUp = (!filtering && idle.length)
+      ? { ...idle[0].row, key: `next:${idle[0].row.key}` }
+      : null;
 
     // ── The discussion row ──
     // Drawn whether or not anything has been said: on a lander it is the
@@ -5385,7 +5452,8 @@ const AppView = {
       emptyNote,
       votes,
       since,
-      welcome,
+      dashboard,
+      nextUp,
       discussion,
       themes: drawn,
       meta: {

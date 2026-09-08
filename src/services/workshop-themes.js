@@ -398,6 +398,7 @@ function assignIds(themes, previous) {
     used.add(id);
     return {
       id, name: t.name, description: t.description, saying: t.saying,
+      icon: t.icon || '',
       anchors: Array.isArray(t.anchors) ? t.anchors : [],
     };
   });
@@ -407,6 +408,12 @@ function assignIds(themes, previous) {
 //
 // By the community-voted category, which is the grouping the board already
 // carries. Order: biggest group first; the uncategorised remainder last.
+// One glyph per category, fixed rather than hashed: on this grouping the
+// category IS the theme, so the icon can mean the category and nothing else.
+const CATEGORY_ICONS = {
+  feature: '\u2728', bug: '\uD83D\uDC1B', improvement: '\uD83D\uDCC8',
+  design: '\uD83C\uDFA8', docs: '\uD83D\uDCC4', chore: '\uD83E\uDDF9',
+};
 const CATEGORY_LABELS = {
   feature: 'Features', bug: 'Bugs', improvement: 'Improvements',
   design: 'Design', docs: 'Docs', chore: 'Chores',
@@ -430,6 +437,7 @@ function fallbackThemes(input) {
         name: label,
         description: `Everything the group has tagged as ${label.toLowerCase()}.`,
         saying: null,
+        icon: CATEGORY_ICONS[cat] || '',
         items: keys,
       };
     });
@@ -439,6 +447,7 @@ function fallbackThemes(input) {
       name: 'Everything else',
       description: 'Items nobody has categorised yet.',
       saying: null,
+      icon: '',
       items: rest,
     });
   }
@@ -462,6 +471,9 @@ const STAGING_THEME_NAMES = [
   'Staging demo: voting and review',
   'Staging demo: look and feel',
 ];
+// So a preview shows the icon slot filled, which is half of what the slot
+// changes about the row of theme heads.
+const STAGING_THEME_ICONS = ['\uD83D\uDD11', '\uD83D\uDCF1', '\uD83D\uDDF3\uFE0F', '\uD83C\uDFA8'];
 
 function stagingDemoGrouping(input) {
   const items = (input && input.items) || [];
@@ -472,6 +484,7 @@ function stagingDemoGrouping(input) {
     name,
     description: 'A staging-only grouping of real board items, dealt out to show the Workshop\'s shape.',
     saying: 'Staging demo: what people are asking for in this theme would be summarised here by the model.',
+    icon: STAGING_THEME_ICONS[i] || '',
     items: [],
   }));
   items.forEach((it, i) => { themes[i % n].items.push(it.key); });
@@ -655,6 +668,9 @@ function themesWithItems(row, keys, placements) {
   }
   return row.themes.map((t) => ({
     id: t.id, name: t.name, description: t.description || '', saying: t.saying || null,
+    // '' when the model gave none, or on a row written before icons existed —
+    // the client draws the theme's initial rather than a stand-in glyph.
+    icon: t.icon || '',
     items: byTheme.get(t.id),
   }));
 }

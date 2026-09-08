@@ -11456,6 +11456,11 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 .dev-ws-link:hover { text-decoration: underline; }
 
+/* The dashboard's numbers, when it is open. Same two-line stat shape the
+   theme head uses, laid out as a row that wraps on a phone. */
+.dev-ws-dash { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 4px; }
+.dev-ws-dash-cell { display: flex; flex-direction: column; font-size: 12px; color: var(--text-muted); line-height: 1.2; }
+.dev-ws-dash-cell b { font-size: 20px; font-weight: 600; color: var(--text-primary); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .dev-ws-sort { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 0; flex-wrap: wrap; }
 .dev-ws-sort-opts { display: flex; gap: 4px; }
 .dev-ws-chip {
@@ -11480,6 +11485,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-theme-head:hover { background: var(--state-neutral-bg); }
 .dev-ws-theme-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .dev-ws-theme-name { font-size: 17px; font-weight: 600; letter-spacing: -.01em; color: var(--text-primary); text-wrap: balance; }
+/* The theme's glyph, inline with its name so a long name still wraps under
+   itself rather than around a floated square. Sized to the cap height of the
+   name beside it. */
+.dev-ws-theme-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; margin-right: 7px; border-radius: 7px;
+  font-size: 15px; line-height: 1; vertical-align: -5px;
+  background: var(--state-neutral-bg);
+}
+/* The no-icon fallback: the initial on the name's own swatch — the same
+   colour `Faces` gives that name — so it reads as chosen, not as missing. */
+.dev-ws-theme-icon-letter { color: #fff; font-size: 12px; font-weight: 700; }
 /* Two stats side by side — people, then how many items are still open in
    here — divided by a hairline rather than a glyph, so the pair reads as one
    block and the numbers stay the loudest thing in it. */

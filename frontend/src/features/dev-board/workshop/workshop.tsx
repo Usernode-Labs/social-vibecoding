@@ -386,7 +386,23 @@ function ThemeCard({
         onClick={onToggle}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
       >
-        <div className="dev-ws-theme-name">{theme.name}</div>
+        {/* The model picks the glyph, so it means the part of the product
+            rather than hashing to a stable-but-arbitrary one. With none —
+            an older row, or an answer the sanitiser rejected — the theme's
+            initial on its own swatch, which is the treatment `Faces` already
+            uses and reads as deliberate where a random emoji would not. */}
+        <div className="dev-ws-theme-name">
+          {theme.icon
+            ? <span className="dev-ws-theme-icon" aria-hidden="true">{theme.icon}</span>
+            : (
+              <span
+                className="dev-ws-theme-icon dev-ws-theme-icon-letter"
+                aria-hidden="true"
+                style={{ backgroundColor: swatchFor(theme.name) }}
+              >{theme.name.slice(0, 1).toUpperCase()}</span>
+            )}
+          {theme.name}
+        </div>
         {/* Two stats, not one: how many people, and how big. `counts` is
             incremented before the lane cap in the publisher, so this is the
             theme's real size and not what happens to be drawn. SHIPPED is
@@ -473,6 +489,81 @@ const SORTS: { key: SortKey; label: string }[] = [
   { key: 'open', label: 'By open items' },
 ];
 
+type Dash = NonNullable<DevWorkshopView['dashboard']>;
+
+/** The rate, as a sentence: this week's merges against last week's. */
+function pace(d: Dash): string {
+  const n = d.shippedWeek;
+  const p = d.shippedPrevWeek;
+  // The merged history is paged, so with more behind it these are floors.
+  const at = d.partial ? 'At least ' : '';
+  if (!n && !p) return 'Nothing has landed in the last fortnight.';
+  if (!p) return `${at}${n} ${n === 1 ? 'change' : 'changes'} landed this week, the first in a fortnight.`;
+  if (n > p) return `${at}${n} landed this week, up from ${p} the week before.`;
+  if (n < p) return `${at}${n} landed this week, down from ${p} the week before.`;
+  return `${at}${n} landed this week, the same as the week before.`;
+}
+
+/** Where the work is, and what nobody has picked up. */
+function focus(d: Dash): string {
+  const bits: string[] = [];
+  if (d.busiest) bits.push(`most of the movement is in ${d.busiest}`);
+  if (d.votesWaiting) {
+    bits.push(`${d.votesWaiting} ${d.votesWaiting === 1 ? 'proposal is' : 'proposals are'} waiting on votes`);
+  }
+  if (d.unclaimed) {
+    bits.push(`${d.unclaimed} open ${d.unclaimed === 1 ? 'item has nobody on it' : 'items have nobody on them'}`);
+  }
+  if (!bits.length) return '';
+  return `${bits.join(', ').replace(/^./, (c) => c.toUpperCase())}.`;
+}
+
+/**
+ * The app's state, folded. Every number is DERIVED from what the board
+ * already loaded — no request of its own, and no model wrote the sentence.
+ * A generated paragraph would need its own staleness and its own footnote
+ * saying when it was written, and the numbers are the answer anyway.
+ *
+ * Closed by default, and closed it is one line: this sits above the work, and
+ * a lander that opens on a panel of statistics has buried what it is for.
+ */
+function Dashboard({ d }: { d: Dash }): ReactNode {
+  const [open, setOpen] = useState(false);
+  const cells: { n: number; label: string }[] = [
+    { n: d.open, label: d.open === 1 ? 'open item' : 'open items' },
+    { n: d.themes, label: d.themes === 1 ? 'theme' : 'themes' },
+    { n: d.votesWaiting, label: 'waiting on votes' },
+    { n: d.people, label: d.people === 1 ? 'person here' : 'people here' },
+  ];
+  return (
+    <section className="dev-ws-strip" data-ws-dashboard="">
+      <div className="dev-ws-strip-head">
+        <span className="dev-ws-eyebrow">Where the app is</span>
+        <button
+          type="button"
+          className="dev-ws-link"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >{open ? 'Hide' : 'Show'}</button>
+      </div>
+      {open ? (
+        <>
+          <div className="dev-ws-dash">
+            {cells.map((c) => (
+              <span key={c.label} className="dev-ws-dash-cell"><b>{c.n}</b>{c.label}</span>
+            ))}
+          </div>
+          <p className="dev-ws-strip-text">{`${pace(d)} ${focus(d)}`.trim()}</p>
+        </>
+      ) : (
+        <p className="dev-ws-strip-text">
+          {`${d.open} open · ${d.votesWaiting} waiting on votes · ${d.shippedWeek} shipped this week`}
+        </p>
+      )}
+    </section>
+  );
+}
+
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -520,6 +611,7 @@ export function DevWorkshop(): ReactNode {
   }, [openSig, v]);
 
   if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
+  const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
   const slug = v.slug || '';
   const canPost = !!v.canPost;
 
@@ -538,32 +630,6 @@ export function DevWorkshop(): ReactNode {
             </>
           )}
         </div>
-      ) : null}
-
-      {v.votes.rows.length ? (
-        <section className="dev-ws-strip" data-ws-votes="">
-          <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">Needs your vote</span>
-            <span className="dev-ws-pill dev-ws-pill-warn">{`${v.votes.count} ${v.votes.count === 1 ? 'proposal' : 'proposals'}`}</span>
-          </div>
-          <div className="dev-ws-lane" data-ws-lane="votes">
-            {v.votes.rows.map((row) => (row.t === 'card' ? (
-              <VoteRow
-                key={row.key}
-                row={row}
-                slug={slug}
-                canPost={canPost}
-                open={openRows.votes === row.key}
-                onToggle={() => toggleRow('votes', row.key)}
-              />
-            ) : null))}
-          </div>
-          {v.votes.count > v.votes.rows.length ? (
-            <button type="button" className="dev-ws-link self-start" onClick={() => callAppView('openBoardNeedingVote')}>
-              {`${v.votes.count - v.votes.rows.length} more waiting on you ›`}
-            </button>
-          ) : null}
-        </section>
       ) : null}
 
       {v.since ? (
@@ -605,17 +671,55 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
-      {v.welcome ? (
-        <section className="dev-ws-strip" data-ws-welcome="">
+      {/* The app's state, folded, directly under what changed since you were
+          last here — the two questions a returning member asks, in that
+          order. It absorbed the first-visit `welcome` strip: same numbers,
+          drawn every visit rather than once (#1787). */}
+      {v.dashboard ? <Dashboard d={v.dashboard} /> : null}
+
+      {v.votes.rows.length ? (
+        <section className="dev-ws-strip" data-ws-votes="">
           <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">What this project is working on</span>
+            <span className="dev-ws-eyebrow">Needs your vote</span>
+            <span className="dev-ws-pill dev-ws-pill-warn">{`${v.votes.count} ${v.votes.count === 1 ? 'proposal' : 'proposals'}`}</span>
           </div>
-          <p className="dev-ws-strip-text">
-            {`${v.welcome.open} open ${v.welcome.open === 1 ? 'item' : 'items'} in ${v.welcome.themes} ${v.welcome.themes === 1 ? 'theme' : 'themes'}`}
-            {v.welcome.votesWaiting ? `, ${v.welcome.votesWaiting} ${v.welcome.votesWaiting === 1 ? 'proposal' : 'proposals'} waiting for votes` : ''}
-            {v.welcome.shippedWeek ? `, ${v.welcome.shippedWeek} ${v.welcome.shippedWeek === 1 ? 'change' : 'changes'} shipped this week` : ''}
-            {'. Open a theme to see what is being said and built, and reply on anything to join in.'}
-          </p>
+          <div className="dev-ws-lane" data-ws-lane="votes">
+            {v.votes.rows.map((row) => (row.t === 'card' ? (
+              <VoteRow
+                key={row.key}
+                row={row}
+                slug={slug}
+                canPost={canPost}
+                open={openRows.votes === row.key}
+                onToggle={() => toggleRow('votes', row.key)}
+              />
+            ) : null))}
+          </div>
+          {v.votes.count > v.votes.rows.length ? (
+            <button type="button" className="dev-ws-link self-start" onClick={() => callAppView('openBoardNeedingVote')}>
+              {`${v.votes.count - v.votes.rows.length} more waiting on you ›`}
+            </button>
+          ) : null}
+        </section>
+      ) : null}
+
+      {/* One unclaimed issue, beside the votes: the other thing a member can
+          do with five minutes. Only ever one — a list of everything nobody
+          has taken is the Board, and this is an invitation. */}
+      {nextUp ? (
+        <section className="dev-ws-strip" data-ws-next="">
+          <div className="dev-ws-strip-head">
+            <span className="dev-ws-eyebrow">Want to get started?</span>
+            <span className="dev-ws-pill">Nobody on it yet</span>
+          </div>
+          <div className="dev-ws-lane" data-ws-lane="next">
+            <div className={openRows.next === nextUp.key ? 'dev-ws-rowwrap dev-ws-rowwrap-open' : 'dev-ws-rowwrap'}>
+              <FoldedRow row={nextUp} open={openRows.next === nextUp.key} onToggle={() => toggleRow('next', nextUp.key)} />
+              {openRows.next === nextUp.key ? (
+                <UnfoldedRow row={nextUp} slug={slug} canPost={canPost} onCollapse={() => toggleRow('next', nextUp.key)} />
+              ) : null}
+            </div>
+          </div>
         </section>
       ) : null}
 
