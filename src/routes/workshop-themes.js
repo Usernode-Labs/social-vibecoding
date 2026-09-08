@@ -79,6 +79,7 @@ function workshopThemesRoutes(config) {
         // with no model, before the first draft, or when that call failed —
         // the client derives a sentence from the counts instead.
         digest: result.digest || null,
+        digestError: result.digestError || null,
       });
     } catch (err) {
       log.error('workshop-themes', 'GET failed', { message: err.message });

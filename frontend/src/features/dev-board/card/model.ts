@@ -408,6 +408,8 @@ export interface DevWorkshopView {
     pendingStage: 'discovery' | 'placement' | null;
     /** Why the last stage failed, so the footnote can say so. */
     lastError: string | null;
+    /** Why the model's summary paragraph is missing, when the last attempt failed. */
+    digestError: string | null;
     /** How much of the board the themes hold, as the server counts it. */
     coverage: { total: number; placed: number; unplaced: number; pending: number } | null;
     /** Cards on screen the server has themes for but has not placed yet. */

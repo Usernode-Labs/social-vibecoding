@@ -5143,6 +5143,9 @@ const AppView = {
         pending: !!data.pending,
         pendingStage: data.pendingStage === 'discovery' || data.pendingStage === 'placement' ? data.pendingStage : null,
         lastError: typeof data.lastError === 'string' && data.lastError ? data.lastError : null,
+        // Why the model's paragraph is missing, when it is: the footnote says
+        // so instead of leaving the derived sentence up there unexplained.
+        digestError: typeof data.digestError === 'string' && data.digestError ? data.digestError : null,
         coverage: cov ? {
           total: Number(cov.total) || 0, placed: Number(cov.placed) || 0,
           unplaced: Number(cov.unplaced) || 0, pending: Number(cov.pending) || 0,
@@ -5283,7 +5286,7 @@ const AppView = {
       since: null, dashboard: null, nextUp: null, discussion: null, themes: [],
       meta: {
         source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
-        lastError: null, coverage: null, placing: 0, filtered: false,
+        lastError: null, digestError: null, coverage: null, placing: 0, filtered: false,
       },
       autoExpand: null,
     };
@@ -5646,6 +5649,7 @@ const AppView = {
         pending: !!(tData && tData.pending),
         pendingStage: tData && tData.pending ? (tData.pendingStage || null) : null,
         lastError: (tData && tData.lastError) || null,
+        digestError: (tData && tData.digestError) || null,
         coverage: (tData && tData.coverage) || null,
         placing: placingCount,
         filtered: filtering,
