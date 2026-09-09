@@ -34,6 +34,7 @@ const checkHistory = require('./check-history');
 const unitSuite = require('./unit-suite');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
 const { getPool } = require('../db/pool');
+const { connectionCensus } = require('../db/connection-census');
 
 const CAPTURE_IMAGE = 'usernode-capture:latest';
 
@@ -2167,6 +2168,29 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         checksResult.errorDetail = detail;
         log.warn('visuals', 'Checks unreachable origin — recorded as error, not failing', {
           sessionId: session.id, origin: stagingOrigin, rows: containerRows.length,
+        });
+      }
+    }
+
+    // #1771: a run that did not pass gets one line saying whether the shared
+    // Postgres was starved while it ran. Twenty previews each holding six
+    // warm connections, on a server whose max_connections is the stock 100,
+    // is how a proposal's checks came back with 65 failures all citing one
+    // endpoint's 500s and nothing anywhere naming the cause.
+    //
+    // Sampled HERE rather than at the write: this is the moment the run
+    // finished, and storeChecks has a call-order contract two tests pin. A
+    // log line, never a verdict — it does not excuse a single row, it only
+    // records what else was true.
+    if (checksResult.state !== 'passing') {
+      const census = await connectionCensus(getPool(config));
+      if (census && census.saturated) {
+        log.warn('visuals', 'Checks ran while Postgres was near its connection limit', {
+          sessionId: session.id,
+          used: census.used,
+          max: census.max,
+          idle: census.idle,
+          top: census.topDatabases.slice(0, 3),
         });
       }
     }

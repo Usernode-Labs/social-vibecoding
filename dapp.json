@@ -110,7 +110,19 @@
       "key": "DB_POOL_MAX",
       "group": "Scaling",
       "default": "60",
-      "description": "Maximum Postgres connections in the platform's pool. Must stay comfortably under the postgres container's own max_connections."
+      "description": "Maximum Postgres connections in the platform's pool. One postgres container backs the platform, every production app and every staging preview, and its max_connections is the stock 100 \u2014 so this has to leave room for the whole fleet, not just for this process. Previews take STAGING_DB_POOL_MAX instead."
+    },
+    {
+      "key": "STAGING_DB_POOL_MAX",
+      "group": "Scaling",
+      "default": "8",
+      "description": "Maximum Postgres connections in a STAGING PREVIEW's pool. A preview serves one reviewer and one capture run, and capture drives 8 concurrent pages, so 8 is the most it can use at once. Read by the preview's own process; not injected by the platform, because adding a key to the injected env would mark every live preview stale and rebuild the fleet."
+    },
+    {
+      "key": "STAGING_CLUSTER_MAINTENANCE",
+      "group": "Scaling",
+      "default": "",
+      "description": "Set to 1 to let a staging preview run the leader-only fleet duties (sweepers, pollers, backfills) it normally skips. Off by default: a preview is a throwaway clone that wins its own advisory lock instantly and would otherwise poll its database forever, holding Postgres connections the rest of the fleet needs. Turn it on only in a preview that is reviewing a change to that machinery."
     },
     {
       "key": "WORKER_IDLE_EVICTION_MS",

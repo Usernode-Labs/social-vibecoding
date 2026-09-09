@@ -1,4 +1,5 @@
 const { getPool } = require('../db/pool');
+const { connectionCensus } = require('../db/connection-census');
 const log = require('./logger');
 const workerProgress = require('./worker-progress');
 const deployStatus = require('./deploy-status');
@@ -351,7 +352,13 @@ async function gatherFull(config) {
   //                           /proc, so freemem reflects the whole box,
   //                           not just the platform container).
   //   db                    — pg pool saturation; `waiting > 0` means
-  //                           handlers are queuing on connections.
+  //                           handlers are queuing on connections. `server`
+  //                           is the figure the pool is competing FOR
+  //                           (#1771): one Postgres backs the platform,
+  //                           every app and every preview, and its
+  //                           max_connections is the stock 100. A pool
+  //                           reporting `total: 3, max: 60` looks healthy
+  //                           right up to the server refusing the fourth.
   const sc = sessionCountsQ.rows[0] || {};
   const num = (v) => parseInt(v, 10) || 0;
   const globalCap = config.maxGlobalSessions || MAX_STAGING_GLOBAL;
@@ -380,6 +387,9 @@ async function gatherFull(config) {
       idle: pool.idleCount,
       waiting: pool.waitingCount,
       max: config.dbPoolMax || 10,
+      // Null when the census could not run — including, pointedly, when it
+      // could not run because the server had no connection left to give.
+      server: await connectionCensus(pool),
     };
   } catch { /* pg internals not present — leave null */ }
 
