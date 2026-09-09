@@ -1511,10 +1511,8 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
   );
   if (filesToRemove.length) {
     const containerName = _registryGet(sessionId)?.containerName
-      || workerContainerName(sessionId);
-    await docker.execFileAsync('docker', [
-      'exec', containerName, 'rm', '-f', ...filesToRemove,
-    ], { timeout: 5000 }).catch(() => {});
+      || workerRuntimeName(sessionId);
+    await execWorkerCommand(containerName, ['rm', '-f', ...filesToRemove], null, { timeoutMs: 5000 }).catch(() => {});
   }
 
   if (ownsCleanup) {
