@@ -585,6 +585,41 @@ test('namespace capacity reports requests and pod quota without claiming live us
   assert.equal(kubernetes._quantityNumberForTest('250m'), 0.25);
 });
 
+test('capacity exposes saturated limit, storage and object quotas when CPU limits are unquoted', async () => {
+  kubernetes._setClientsForTest({ core: {
+    async listNamespacedResourceQuota() {
+      return { items: [{ metadata: { name: 'social-vibecoding' }, status: {
+        hard: {
+          'requests.cpu': '24', 'limits.memory': '128Gi', 'requests.storage': '600Gi',
+          'requests.ephemeral-storage': '100Gi', 'limits.ephemeral-storage': '400Gi',
+          persistentvolumeclaims: '120', services: '128', secrets: '200', configmaps: '100',
+          'count/jobs.batch': '100', 'count/builds.kpack.io': '100',
+        },
+        used: {
+          'requests.cpu': '1', 'limits.memory': '128Gi', 'requests.storage': '500Gi',
+          'requests.ephemeral-storage': '75Gi', 'limits.ephemeral-storage': '300Gi',
+          persistentvolumeclaims: '119', services: '64', secrets: '180', configmaps: '10',
+          'count/jobs.batch': '90', 'count/builds.kpack.io': '100',
+        },
+      } }] };
+    },
+  } });
+  const [{ resources }] = await kubernetes.listNamespaceCapacity(config());
+  assert.equal(resources.limitsCpu, null, 'no aggregate CPU limit must not invent a capacity');
+  assert.equal(resources.requestsCpu.percent, 4.2);
+  assert.equal(resources.limitsMemory.percent, 100, 'memory blocks admission despite low CPU requests');
+  assert.equal(resources.limitsMemory.headroomPercent, 0);
+  assert.equal(resources.requestsStorage.percent, 83.3);
+  assert.equal(resources.persistentVolumeClaims.percent, 99.2);
+  assert.equal(resources.requestsEphemeralStorage.percent, 75);
+  assert.equal(resources.limitsEphemeralStorage.percent, 75);
+  assert.equal(resources.services.percent, 50);
+  assert.equal(resources.secrets.percent, 90);
+  assert.equal(resources.configMaps.percent, 10);
+  assert.equal(resources.jobs.percent, 90);
+  assert.equal(resources.builds.percent, 100);
+});
+
 
 for (const failed of [false, true]) {
   test(`unit-suite Job ${failed ? 'preserves failures' : 'completes'} with private input and no cluster credentials`, async () => {

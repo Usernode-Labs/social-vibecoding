@@ -829,6 +829,17 @@ async function listNamespaceCapacity(config) {
           pods: quotaMetric(quota, 'pods'),
           requestsCpu: quotaMetric(quota, 'requests.cpu'),
           requestsMemory: quotaMetric(quota, 'requests.memory'),
+          limitsCpu: quotaMetric(quota, 'limits.cpu'),
+          limitsMemory: quotaMetric(quota, 'limits.memory'),
+          requestsEphemeralStorage: quotaMetric(quota, 'requests.ephemeral-storage'),
+          limitsEphemeralStorage: quotaMetric(quota, 'limits.ephemeral-storage'),
+          requestsStorage: quotaMetric(quota, 'requests.storage'),
+          persistentVolumeClaims: quotaMetric(quota, 'persistentvolumeclaims'),
+          services: quotaMetric(quota, 'services'),
+          secrets: quotaMetric(quota, 'secrets'),
+          configMaps: quotaMetric(quota, 'configmaps'),
+          jobs: quotaMetric(quota, 'count/jobs.batch'),
+          builds: quotaMetric(quota, 'count/builds.kpack.io'),
         },
       };
     } catch (err) {
