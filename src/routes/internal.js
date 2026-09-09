@@ -13,7 +13,7 @@ const github = require('../services/github');
 // #945: the issue's Usernode-side Discussion thread, merged into the
 // by-number issue response the worker's usernode-issues CLI prints.
 const threadContext = require('../services/thread-context');
-const { USERNODE_DOMAIN } = require('../services/caddy');
+const { USERNODE_DOMAIN, USERNODE_APPS_DOMAIN } = require('../services/caddy');
 const appAccess = require('../services/app-access');
 // #1037: shared draft-card creation (validation, de-dupe, insert, live
 // push), also used by the Mayor's in-process draft_issue_report tool
@@ -36,7 +36,7 @@ async function isKnownHost(pool, rawDomain) {
   // defensively so a stray on-demand handshake for it never gets stuck.
   if (domain === USERNODE_DOMAIN) return true;
 
-  const suffix = '.' + USERNODE_DOMAIN;
+  const suffix = '.' + USERNODE_APPS_DOMAIN;
   if (!domain.endsWith(suffix)) return false;
   const label = domain.slice(0, -suffix.length);
   // Only single-level subdomains are routable (the wildcard matches one
