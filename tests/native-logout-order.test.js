@@ -14,7 +14,7 @@ const settingsSource = fs.readFileSync(
 // before any native teardown is attempted, and every surface ends on the
 // public landing page (#1524) — including the native path, whose old document
 // is otherwise forbidden continuation work.
-function loadSettings({ nativeTerminal = true, nativeFailure, webOk = true } = {}) {
+function loadSettings({ nativeTerminal = true, nativeFailure, webOk = true, offlineLogout = false, webFailure, webPending = false } = {}) {
   const order = [];
   const logoutButton = { disabled: false };
   let href = 'https://social.example/#settings';
@@ -41,6 +41,7 @@ function loadSettings({ nativeTerminal = true, nativeFailure, webOk = true } = {
       },
     },
     navigator: {},
+    AbortController,
     location,
     history: {
       replaceState(state, title, url) {
@@ -65,6 +66,9 @@ function loadSettings({ nativeTerminal = true, nativeFailure, webOk = true } = {
       _dropCachedSession() { order.push('drop-cached-session'); },
     },
     NativeChrome: {
+      async getInfo() {
+        return { sessionLifecycleProtocol: 2, capabilities: offlineLogout ? ['logout', 'offlineLogout'] : ['logout'] };
+      },
       prepareWebLogout() {
         order.push('close-native-realm');
         return { nativeTerminal };
@@ -85,6 +89,8 @@ function loadSettings({ nativeTerminal = true, nativeFailure, webOk = true } = {
       assert.equal(url, '/api/auth/logout');
       assert.equal(options.method, 'POST');
       order.push('web-session');
+      if (webFailure) throw webFailure;
+      if (webPending) return new Promise(() => {});
       return { ok: webOk, status: webOk ? 200 : 503 };
     },
   };
@@ -237,3 +243,36 @@ test('failed web logout leaves native terminal untouched and the page in place',
     assert.equal(loaded.href, 'https://social.example/#settings');
     assert.equal(loaded.stored.has('sv:logout_notice'), false);
   });
+
+for (const failure of [{ webOk: false }, { webFailure: new TypeError('offline') }]) {
+  test(`capable phone signs out locally after ${failure.webFailure ? 'network failure' : 'HTTP failure'}`, async () => {
+    const loaded = loadSettings({ offlineLogout: true, ...failure });
+    assert.equal(await loaded.sandbox.Settings.logout(), true);
+    assert.deepEqual(loaded.order, [
+      'close-native-realm', 'web-session', 'sw-cache', 'drop-cached-session',
+      'normalise-address', 'native-terminal',
+    ]);
+    assert.equal(loaded.stored.has('sv:logout_notice'), false);
+  });
+}
+
+test('a hung API cannot hold a capable phone logout indefinitely', async () => {
+  const loaded = loadSettings({ offlineLogout: true, webPending: true });
+  const pending = loaded.sandbox.Settings.logout();
+  await new Promise(setImmediate);
+  const deadline = loaded.timers.find((timer) => timer.ms === 2000);
+  assert.ok(deadline);
+  deadline.fn();
+  assert.equal(await pending, true);
+  assert.ok(loaded.order.includes('native-terminal'));
+});
+
+test('failed local cleanup after network failure does not claim logout or reload', async () => {
+  const loaded = loadSettings({
+    offlineLogout: true, webOk: false, nativeFailure: new Error('cookie deletion failed'),
+  });
+  assert.equal(await loaded.sandbox.Settings.logout(), false);
+  assert.equal(loaded.order.includes('navigate'), false);
+  assert.equal(loaded.order.includes('notice'), false);
+  assert.equal(loaded.logoutButton.disabled, false);
+});
