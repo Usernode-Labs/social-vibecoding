@@ -2776,11 +2776,13 @@ async function inspectContainerState(containerName) {
 async function _consumeJournal(containerName, journal, progress, state, { sessionId = null } = {}) {
   if (usesKubernetesWorkers()) {
     let charsConsumed = 0;
+    const counters = newWatchdogCounters();
+    let lastProbeAt = Date.now();
     // WORKER_JWT_TTL is the jsonwebtoken duration string "24h". Use its
     // numeric twin for arithmetic; coercing the string produces NaN and
     // makes this loop return probe_unobservable before its first poll.
     const deadline = Date.now() + WORKER_JWT_TTL_MS;
-    while (Date.now() < deadline) {
+    const readJournal = async () => {
       try {
         const { stdout } = await execWorkerCommand(containerName, ['cat', journal]);
         // cat may race a writer halfway through a JSON record or marker.
@@ -2793,14 +2795,35 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
           charsConsumed = newline + 1;
           state.rawStdout += `${line}\n`;
           parseLine(line, progress, state);
-          if (state.execExitSeen) return state;
+          if (state.execExitSeen) return;
         }
       } catch (_) { /* journal may not exist yet */ }
-      const busy = await isWorkerExecuting(containerName);
-      if (busy === false && charsConsumed > 0) {
-        state.exitCode = state.exitCode ?? -1;
-        state.markerlessCause = 'turn_process_gone';
-        return state;
+    };
+    while (Date.now() < deadline) {
+      await readJournal();
+      if (state.execExitSeen) return state;
+      const stopRequested = sessionId != null && !!_registryGet(sessionId)?.stopRequestedAt;
+      const interval = stopRequested ? WATCHDOG_STOP_INTERVAL_MS : WATCHDOG_INTERVAL_MS;
+      if (Date.now() - lastProbeAt >= interval) {
+        const busy = await isWorkerExecuting(containerName, { timeoutMs: WATCHDOG_PROBE_TIMEOUT_MS });
+        lastProbeAt = Date.now();
+        const verdict = recordWatchdogProbe(counters, busy, {
+          idleLimit: stopRequested ? WATCHDOG_STOP_IDLE_STRIKE_LIMIT : WATCHDOG_IDLE_STRIKE_LIMIT,
+        });
+        if (busy === null) {
+          log.warn('worker', 'Turn liveness probe failed', { containerName, sessionId, journal,
+            consecutiveFailures: counters.probeFailures });
+        }
+        if (verdict.abandon) {
+          // The wrapper can append its terminal marker between the last
+          // journal read and the idle probe. Give that durable result the
+          // final word, even if the journal was empty until this point.
+          await readJournal();
+          if (state.execExitSeen) return state;
+          state.exitCode = state.exitCode ?? -1;
+          state.markerlessCause = verdict.cause;
+          return state;
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
@@ -2996,7 +3019,7 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
 // a fallback for the case where this append doesn't land at all.
 async function stopTurn(sessionId) {
   const meta = _registryGet(sessionId);
-  const containerName = meta?.containerName || workerContainerName(sessionId);
+  const containerName = meta?.containerName || workerRuntimeName(sessionId);
   _registryUpsert(sessionId, { stopRequestedAt: Date.now() });
   await execWorkerCommand(containerName, ['sh', '-c',
     buildTurnStopScript(meta?.journal || null),
@@ -3087,7 +3110,7 @@ async function resumeTurnFromJournal(sessionId, {
 } = {}) {
   if (!journal) throw new Error('resumeTurnFromJournal: journal path required');
   const meta = _registryGet(sessionId);
-  const containerName = meta?.containerName || workerContainerName(sessionId);
+  const containerName = meta?.containerName || workerRuntimeName(sessionId);
   // #664: seed the per-turn BYOK counters from the persisted active_turn
   // record (callers pass active_turn.byokCents) so post-restart switched
   // calls accumulate on top instead of restarting from zero, and the
