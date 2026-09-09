@@ -474,8 +474,10 @@ test('narrow: only the active column renders cards, and every column keeps its s
     assert.equal(tabCount(narrow, key), tabCount(wide, key), `${key} tab count`);
   }
 
-  // The cards themselves are the only thing that waits.
-  const cards = (h) => (h.match(/gc-vote-item/g) || []).length;
+  // The cards themselves are the only thing that waits. A card draws as its
+  // folded row by default (#1787, card/fold.tsx), so count the fold wrappers
+  // — one per card at either size.
+  const cards = (h) => (h.match(/class="dev-ws-rowwrap/g) || []).length;
   assert.ok(cards(wide) > cards(narrow),
     `narrow renders fewer cards (wide ${cards(wide)}, narrow ${cards(narrow)})`);
   assert.ok(cards(narrow) > 0, 'the ACTIVE column still renders its cards');
@@ -489,11 +491,11 @@ test('wide is untouched, which is the contract the checks runner asserts under',
   // describes, card for card.
   const plain = kanbanHtml(AppView);
   assert.equal(withNarrow(false, () => kanbanHtml(AppView)), plain);
-  const cards = (h) => (h.match(/gc-vote-item/g) || []).length;
+  const cards = (h) => (h.match(/class="dev-ws-rowwrap/g) || []).length;
   assert.ok(cards(plain) > 0);
   // Every column carries cards at desktop width — the thing 30 declared
   // checks select through (`#dev-kanban-col-inprogress [data-issue-row=…]`
-  // and friends).
+  // and friends; the folded row carries the same hook as the card).
   for (const key of ['issues', 'inprogress', 'inreview', 'done']) {
     const start = plain.indexOf(`id="dev-kanban-col-${key}"`);
     assert.notEqual(start, -1);

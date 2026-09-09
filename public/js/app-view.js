@@ -380,6 +380,15 @@ const AppView = {
       }
     } catch {}
   },
+  // `?cards=open` — every board card drawn unfolded: the board as it was
+  // before its columns folded their cards to rows (#1787), and the state the
+  // declared checks that read a card's inner anatomy run in. Read on every
+  // view build like ?col=, never stored: it describes this page load.
+  _cardsOpen() {
+    try {
+      return new URLSearchParams(window.location.search).get('cards') === 'open';
+    } catch { return false; }
+  },
   // Active tab as used by the render — never trusts the field blindly, so a
   // bad assignment can't produce a board with every column hidden.
   _activeKanbanTab() {
@@ -736,6 +745,28 @@ const AppView = {
       // row inside it, so it cannot stand in for this one.
       if (shot === 'themes') {
         AppView._workshopShot = 'themes';
+      }
+      // `?shot=board-unfold` clicks the FIRST folded row on the board, so a
+      // check can watch a card unfold the way a tap does — through the fold's
+      // own handler, with the delegated open handler above standing aside.
+      // A synthetic click is not `isTrusted`, so it does not end the window
+      // the way a real gesture does; same guard as the ⋯ menu link.
+      if (shot === 'board-unfold') {
+        let tries = 0;
+        const done = () => {
+          clearInterval(tick);
+          document.removeEventListener('pointerdown', onUserInput, true);
+          document.removeEventListener('keydown', onUserInput, true);
+        };
+        const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
+        document.addEventListener('pointerdown', onUserInput, true);
+        document.addEventListener('keydown', onUserInput, true);
+        const tick = setInterval(() => {
+          if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
+          if (document.querySelector('#dev-kanban .dev-ws-rowwrap-open')) { done(); return; }
+          const row = document.querySelector('#dev-kanban .dev-ws-row');
+          if (row) row.click();
+        }, 300);
       }
       if (shot === 'feed-comments') {
         // The Workshop keeps its rows folded; the slot only exists inside an
@@ -2333,6 +2364,16 @@ const AppView = {
       // is component state now (card/list-rows.tsx) and survives repaints,
       // so both the branch and that helper are gone.
       if (e.target.closest('a, button, input, form')) return;
+      // A card inside a fold wrapper — the Workshop's rows, and the Board's
+      // columns since they fold too (card/fold.tsx) — is the fold's: its own
+      // handler opens and closes it, and "Open on its own page" is the route
+      // out. Both sizes keep their data-*-row hooks so the checks and the
+      // lookups below still find the item; this is what stops a click on
+      // them opening it full-screen. Checked here rather than by stripping
+      // the hooks off the model because the fold renders through a portal
+      // whose React root sits ABOVE this element, so its stopPropagation
+      // would run after this handler had navigated.
+      if (e.target.closest('.dev-ws-rowwrap')) return;
       const sessionChip = e.target.closest('[data-session-chip]');
       if (sessionChip) {
         // Own session → the owner's dev chat, exactly as the old strip.
@@ -2370,6 +2411,8 @@ const AppView = {
     // Space activate, mirroring the old strip's per-row keydown wiring.
     bodyEl.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      // The folded row handles its own Enter and Space (it is the toggle).
+      if (ev.target.closest && ev.target.closest('.dev-ws-rowwrap')) return;
       const el = ev.target.closest
         && ev.target.closest('[data-session-chip], [data-shared-session-row]');
       if (!el) return;
@@ -6683,7 +6726,14 @@ const AppView = {
     // The In progress column's own empty note has to come after its rows are
     // built: the archived toggle counts as content even with no cards.
     if (!cols[1].rows.length) cols[1].empty = emptyNote;
-    return { activeTab: AppView._activeKanbanTab(), cols, loading: !AppView._devDataReady };
+    // `slug` is what the open card's "Open on its own page" link is built
+    // from; `unfolded` is the ?cards=open state (every card at full size).
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp || '';
+    return {
+      activeTab: AppView._activeKanbanTab(), cols, loading: !AppView._devDataReady,
+      slug, canPost: !!(AppView.appData && AppView.appData.can_collaborate),
+      unfolded: AppView._cardsOpen(),
+    };
   },
 
   // The Done column's age cut (see _kanbanView). Session state: a board that
