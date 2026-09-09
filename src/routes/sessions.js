@@ -1493,6 +1493,22 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
             app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+          },
+          // #1808: the row PAST the relative form's seven-day floor. Every
+          // other mock here is minutes or hours old, so the session rows'
+          // stamp read "5m ago" on all of them and the branch that prints a
+          // real date was unreachable in a preview. A session parked a
+          // fortnight ago is also the case the old code got worst: it
+          // bucketed at thirty days and then months, so this row read "0mo
+          // ago" once and "5mo ago" later, neither of which is a day.
+          {
+            id: 990108, branch_name: 'mock/my-session-stale', pr_number: null,
+            pr_url: null, pr_title: null,
+            session_title: '[Mock] Your session from a couple of weeks ago',
+            status: 'active', linked_issues: [], shared_at: null,
+            created_at: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString(),
+            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
           }
         );
       }

@@ -8,11 +8,24 @@ const source = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'social-push.js'),
   'utf8'
 );
+// #1808: notifications.js has one bundle import now (`agoStamp` from
+// lib/timestamp.ts, which gave the rows a stamp with a floor). This harness
+// evaluates the shipped source raw in a vm, so it stands in for the bundler:
+// the import statement is dropped and the REAL helper is put in the sandbox
+// under the same name, so a row's stamp is the one that ships.
+const { agoStamp } = require('./lib/render-tsx').loadTsx('frontend/src/lib/timestamp.ts');
 const notificationsSource = fs.readFileSync(
   // #1079 chunk B: same module, now inside the React bundle.
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'),
   'utf8'
-);
+).replace(/^import \{ agoStamp \}.*$/m, '');
+
+// Evaluate that source with the helper in scope, standing in for the bundle's
+// module graph.
+function runNotifications(sandbox) {
+  sandbox.agoStamp = agoStamp;
+  vm.runInContext(notificationsSource, sandbox);
+}
 const settingsSource = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
   'utf8'
@@ -1042,7 +1055,7 @@ test('native exact opens await the real item router and preserve failed navigati
   const loaded = loadCoordinator();
   loaded.sandbox.location = { search: '', hash: '' };
   loaded.sandbox.URLSearchParams = URLSearchParams;
-  vm.runInContext(notificationsSource, loaded.sandbox);
+  runNotifications(loaded.sandbox);
   const notifications = loaded.sandbox.Notifications;
   notifications._markOneRead = () => {};
   notifications._dismissSheetForNav = () => {};
@@ -1129,7 +1142,7 @@ test('opaque id lookup reuses the existing notification click router', async () 
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(notificationsSource, sandbox);
+  runNotifications(sandbox);
   sandbox.Notifications.unread = 1;
 
   const opened = await sandbox.Notifications.openById(42);
@@ -1177,7 +1190,7 @@ test('native invalidation refresh bypasses the service-worker API cache',
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
-    vm.runInContext(notificationsSource, sandbox);
+    runNotifications(sandbox);
 
     assert.equal(sandbox.Notifications.nativeInvalidationRefreshVersion, 1);
     assert.equal(await sandbox.Notifications.refreshAfterInvalidation(), true);
@@ -1225,7 +1238,7 @@ test('an older ordinary refresh cannot overwrite a newer invalidation result',
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
-    vm.runInContext(notificationsSource, sandbox);
+    runNotifications(sandbox);
 
     const ordinary = sandbox.Notifications.refresh();
     const invalidation = sandbox.Notifications.refreshAfterInvalidation();
@@ -1279,7 +1292,7 @@ test('later ordinary refreshes cannot fall below a native freshness floor',
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
-    vm.runInContext(notificationsSource, sandbox);
+    runNotifications(sandbox);
 
     assert.equal(await sandbox.Notifications.refreshAfterInvalidation(), true);
     assert.equal(sandbox.Notifications.items[0].id, 2);
@@ -1325,7 +1338,7 @@ test('an overlapping ordinary refresh inherits the native freshness floor',
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
-    vm.runInContext(notificationsSource, sandbox);
+    runNotifications(sandbox);
 
     const invalidation = sandbox.Notifications.refreshAfterInvalidation();
     const ordinary = sandbox.Notifications.refresh();
@@ -1413,7 +1426,7 @@ test('a hung native invalidation fetch aborts so a later retry can run',
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
-    vm.runInContext(notificationsSource, sandbox);
+    runNotifications(sandbox);
 
     const first = sandbox.Notifications.refreshAfterInvalidation();
     timers.shift()();
@@ -1484,7 +1497,7 @@ test('a stalled invalidation response body is covered by the same deadline',
     sandbox.window = sandbox;
     sandbox.globalThis = sandbox;
     vm.createContext(sandbox);
-    vm.runInContext(notificationsSource, sandbox);
+    runNotifications(sandbox);
 
     const first = sandbox.Notifications.refreshAfterInvalidation();
     await Promise.resolve();

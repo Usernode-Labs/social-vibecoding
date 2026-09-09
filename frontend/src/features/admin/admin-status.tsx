@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // depended on <script> order (admin-console.js loaded first); inside the
 // React bundle the dependency is explicit (#1082 chunk E).
 import { AdminUI } from './admin-console.js';
+import { messageStamp } from '../../lib/timestamp';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
 // Health & status section of the admin console (#860) — the whole of the
@@ -710,6 +711,21 @@ function Drift({ drift }: { drift: any[] }) {
   );
 }
 
+// A log line's stamp: the time WITH seconds, preceded by the day once the
+// event is not today's. `messageStamp` drops seconds by design (a transcript
+// does not need them); a log does, so the time half is spelled here and only
+// the date half comes from the shared helper (#1808).
+function eventTime(ts: string | number | Date): string {
+  const date = new Date(ts);
+  if (Number.isNaN(date.getTime())) return '';
+  const time = date.toLocaleTimeString();
+  const stamp = messageStamp(ts);
+  // `text` is the bare time when the instant is today's; anything longer
+  // means it carried a date, and that date is everything before the comma.
+  const comma = stamp.text.lastIndexOf(', ');
+  return comma < 0 ? time : `${stamp.text.slice(0, comma)}, ${time}`;
+}
+
 const EVENT_LEVEL: Record<string, string> = {
   ERROR: 'text-red-700 dark:text-red-400',
   WARN: 'text-yellow-800 dark:text-yellow-400',
@@ -726,7 +742,14 @@ function Events({ events }: { events: any[] }) {
         return (
           // eslint-disable-next-line react/no-array-index-key
           <div key={i} className="truncate">
-            <span className="text-zinc-600 dark:text-zinc-400">{new Date(e.ts).toLocaleTimeString()}</span>
+            {/* #1808: seconds stay — this is a log and the ordering within a
+                minute is the point — but the day rides in front of it once
+                the event is not today's, and `title` carries the full
+                instant either way. */}
+            <time
+              className="text-zinc-600 dark:text-zinc-400"
+              title={messageStamp(e.ts).title}
+            >{eventTime(e.ts)}</time>
             <span className={EVENT_LEVEL[e.level] || 'text-zinc-600 dark:text-zinc-400'}>{` ${e.level}`}</span>
             <span className="text-zinc-500 dark:text-zinc-400">{` [${e.category}]`}</span>{` ${e.message}`}
             <span className="text-zinc-600 dark:text-zinc-400">{data.substring(0, 200)}</span>

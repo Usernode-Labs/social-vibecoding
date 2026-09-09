@@ -410,17 +410,44 @@ function isStagingMockIssueNumber(number) {
 function stagingMockIssueComments(number) {
   const n = Number(number);
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const daysAgo = (d) => hoursAgo(d * 24);
+  // #1808: every thread opens with three rows whose stamps land in the three
+  // branches the comment thread formats. An earlier year (fixed, so that
+  // branch is reachable for as long as this fixture lives), earlier this
+  // year, and inside the last few days. Before the fix all three read as a
+  // bare time of day, so the ladder is what makes the change reviewable:
+  // read down a thread and the stamps have to answer "when".
+  const stampLadder = () => ([
+    {
+      author: 'staging-tester',
+      body: '[Mock] Filing this from an earlier year, so the stamp on it has to carry one.',
+      createdAt: '2024-03-05T09:15:00Z',
+    },
+    {
+      author: 'usernode-bot',
+      body: '[Mock] Picked this up about six weeks ago, far enough back that the day matters more than the hour.',
+      createdAt: daysAgo(40),
+    },
+    {
+      author: 'another-tester',
+      body: '[Mock] And a reply from a few days ago, for the middle of the range.',
+      createdAt: daysAgo(3),
+    },
+  ]);
   const threads = {
     900001: [
+      ...stampLadder(),
       { author: 'staging-tester', body: '[Mock] I can reproduce this every time on Firefox — the toggle flips back to light as soon as I reload.', createdAt: hoursAgo(40) },
       { author: 'usernode-bot', body: '[Mock] Thanks for the report. Is the preference meant to persist per-device or per-account? Defaulting to per-device unless you say otherwise.', createdAt: hoursAgo(36) },
       { author: 'staging-tester', body: '[Mock] Per-device is fine — just make it survive a refresh.', createdAt: hoursAgo(30) },
     ],
     900002: [
+      ...stampLadder(),
       { author: 'another-tester', body: '[Mock] +1, Y/N shortcuts would be a huge time-saver during a voting spree.', createdAt: hoursAgo(20) },
       { author: 'usernode-bot', body: '[Mock] Should the shortcut act on the focused card only, or the top card in the list? Going with the focused card.', createdAt: hoursAgo(18) },
     ],
     900003: [
+      ...stampLadder(),
       { author: 'staging-tester', body: '[Mock] Happens on my iPhone SE in portrait — the Vote and Preview buttons spill off the right edge.', createdAt: hoursAgo(28) },
     ],
   };
@@ -429,6 +456,7 @@ function stagingMockIssueComments(number) {
   // the first caller before Number.isFinite is consulted) gets nothing.
   if (!Number.isFinite(n) || n <= 0) return [];
   return [
+    ...stampLadder(),
     {
       author: 'staging-tester',
       body: `[Mock] Staging stand-in for issue #${n}: the live thread came back `

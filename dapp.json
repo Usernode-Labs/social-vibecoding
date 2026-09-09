@@ -3608,6 +3608,58 @@
       "expectSelector": "#auth-login-screen:not(.hidden) #otp-link-wrap #otp-link.rounded-full",
       "expectText": "Sign in with an email code",
       "allowConsoleErrors": true
+    },
+    {
+      "name": "#1808: an issue's GitHub comments carry a day and a time, and the year once it is not this one",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "#dev-issue-comments .dev-issue-comment.dev-feed-msg .dev-feed-msg-head time.dev-feed-msg-time[title]",
+      "expectText": "2024"
+    },
+    {
+      "name": "#1808: the Discussion thread under the same issue stamps every row, and hovers the unelided instant",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "#dev-topic-thread .gc-msg-time[title]"
+    },
+    {
+      "name": "#1808: the app's general transcript stamps every row",
+      "path": "/app/usernode-2d5619/dev/chat",
+      "expectSelector": "#dev-chat-body .gc-msg-time[title]"
+    },
+    {
+      "name": "#1808: an unfolded card's comment preview stamps each reply and hovers the full instant",
+      "path": "/?demo=1&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time[title]"
+    },
+    {
+      "name": "#1808: a board card's age is its own element, so the exact instant is one hover away",
+      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
+      "expectSelector": "#dev-body .gc-vote-item .dev-card-meta span[title]"
+    },
+    {
+      "name": "#1808: a conversation row's age carries both the machine instant and the unelided one",
+      "path": "/?demo=1#messages",
+      "expectSelector": "#messages-screen .messages-conversation-row time.messages-row-time[title][datetime]"
+    },
+    {
+      "name": "#1808: a DM from an earlier year is stamped with that year, not a bare time of day",
+      "path": "/?demo=1#messages/910001",
+      "expectSelector": "#messages-screen .messages-message-meta time[title]",
+      "expectText": "2024"
+    },
+    {
+      "name": "#1808: a notification older than a week reads as a date, not a four-hundred-day duration",
+      "path": "/?shot=notifications&demo=1",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990209\"] time[title]"
+    },
+    {
+      "name": "#1808: an Improve row's age is its own element with the full instant in title",
+      "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#improve-panel #improve-sessions [data-improve-row] time[title]"
+    },
+    {
+      "name": "#1808: an admin log line keeps its seconds and gains the day once it is not today's",
+      "path": "/?demo=1#admin/status",
+      "expectSelector": "#admin-status-root #admin-status-events time[title]"
     }
   ],
   "governance": {

@@ -4882,7 +4882,11 @@ const AppView = {
       ? (s.username ? `${s.username}: ${said}` : said)
       : 'Talk with everyone building this app';
     const meta = [{ t: 'text', s: preview }];
-    if (fresh && s.createdAt) meta.push({ t: 'text', s: relTime(s.createdAt) });
+    // #1808: a `span` rather than a `text` part purely so the age can carry
+    // the exact instant in `title`. Same everywhere a card's meta line ends
+    // with a "3d ago".
+    const age = fresh && s.createdAt ? AppView._agePart(s.createdAt) : null;
+    if (age) meta.push(age);
     return {
       key: 'discussion',
       cls: `${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}`,
@@ -5784,9 +5788,10 @@ const AppView = {
       const botTag = isBot
         ? ' <span class="text-[0.9375rem] text-sky-700 dark:text-sky-400">bot</span>'
         : '';
-      const age = relTime(c.createdAt);
-      const ageHtml = age
-        ? `<span class="dev-feed-comment-time">${escapeHtml(age)}</span>`
+      // #1808: the age, with the unelided instant one hover away.
+      const age = relStamp(c.createdAt);
+      const ageHtml = age.text
+        ? `<span class="dev-feed-comment-time" title="${escapeAttr(age.title)}">${escapeHtml(age.text)}</span>`
         : '';
       return `<div class="dev-feed-comment">
           <span class="dev-feed-comment-main">
@@ -6913,6 +6918,26 @@ const AppView = {
   // Two names, then a count. A card is a pointer, not the ledger: the whole
   // list belongs on the topic page, and three lines of check titles in a
   // launcher row would push the card past the thing it exists to be.
+  // A card meta line's WHEN (#1808).
+  //
+  // Every card that ends its meta line with an age used to push a plain
+  // `{ t: 'text' }` part, so the age was all a reader could ever get: a row
+  // reading "3d ago" had no way to say which day, and the two merged-card
+  // sites pushed a bare numeric `toLocaleDateString` instead, which said
+  // 06/16/2025 beside neighbours that all said "3d ago". A `span` part
+  // carries `title`, so the exact instant is one hover away everywhere.
+  //
+  // `prefix` is for the rows that read "closed by vote · Jun 16" — the whole
+  // phrase is one part, and the title belongs to the phrase.
+  //
+  // Returns null for an instant that will not parse, so a caller can push it
+  // conditionally rather than draw an empty part.
+  _agePart(ts, prefix) {
+    const { text, title } = relStamp(ts);
+    if (!text) return null;
+    return { t: 'span', cls: '', s: `${prefix || ''}${text}`, title };
+  },
+
   _sessionCardMeta(s, subtitle) {
     const meta = [{ t: 'text', s: subtitle }];
     const f = s && s.failing_checks;
@@ -7566,10 +7591,19 @@ const AppView = {
   // features/dev-board/issue-comments.tsx draws.
   //
   // `_issueCommentsHtml` lived here. What it decided stays: which authors are
-  // bots, the date's slice, and the SANITIZER — a comment body is arbitrary
-  // GitHub markdown, run through `DevChat.renderMarkdown` (the same one the
-  // dev chat and the group chat's transcript use), with an escaped-`<pre>`
-  // fallback for a page where dev-chat.js did not load.
+  // bots and the SANITIZER — a comment body is arbitrary GitHub markdown, run
+  // through `DevChat.renderMarkdown` (the same one the dev chat and the group
+  // chat's transcript use), with an escaped-`<pre>` fallback for a page where
+  // dev-chat.js did not load.
+  //
+  // What does NOT stay is the date's slice. `createdAt.slice(0, 10)` took the
+  // first ten characters of GitHub's ISO string, which is a UTC date: a
+  // comment posted at 8pm in Sao Paulo was stamped with the NEXT day, and one
+  // posted at 6am in Tokyo with the previous one. It also carried no time at
+  // all — the thing #1808 was filed about, sitting directly above a Discussion
+  // thread that got it right. The raw instant goes through now and
+  // features/dev-board/issue-comments.tsx formats it in the reader's own zone
+  // with the shared helper.
   _issueCommentsView(comments, truncated, htmlUrl) {
     const list = Array.isArray(comments) ? comments : [];
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
@@ -7580,7 +7614,7 @@ const AppView = {
         key: String(c.id != null ? c.id : `i${i}`),
         author: c.author || 'unknown',
         bot: AppView._isBotCommentAuthor(c.author),
-        date: (c.createdAt || '').slice(0, 10),
+        createdAt: c.createdAt || '',
         bodyHtml: renderMd(c.body || ''),
       })),
       truncated: !!truncated,
@@ -7919,7 +7953,8 @@ const AppView = {
     const provenance = AppView._proposalProvenanceWords(pr);
     if (provenance) meta.push({ t: 'text', s: provenance });
     if (pr.username) meta.push({ t: 'text', s: pr.username });
-    if (pr.created_at) meta.push({ t: 'text', s: relTime(pr.created_at) });
+    const prAge = pr.created_at ? AppView._agePart(pr.created_at) : null;
+    if (prAge) meta.push(prAge);
     // Live proposals link their "Closes #N" pills to the issue's IN-APP
     // discussion (votes/bounty/thread live there; the GitHub link stays one
     // click away in the issue topic head). Merged cards keep the external
@@ -8216,7 +8251,7 @@ const AppView = {
     const meta = [];
     if (pr.pr_url) meta.push({ href: pr.pr_url, parts: ['View PR on GitHub'] });
     meta.push({ parts: [`${imported ? 'imported by' : 'proposed by'} `, { b: pr.username || '' }] });
-    if (pr.created_at) meta.push({ parts: [relTime(pr.created_at)] });
+    if (pr.created_at) meta.push({ parts: [relStamp(pr.created_at).text] });
 
     const notes = [];
     // #687: imported proposals have no in-app dev session — the code is
@@ -10011,11 +10046,13 @@ const AppView = {
     const applied = !!(issue.payload && issue.payload.appliedAt);
     const meta = [{ t: 'text', s: 'Governance proposal' }];
     if (issue.created_by_username) meta.push({ t: 'text', s: issue.created_by_username });
-    if (issue.created_at) meta.push({ t: 'text', s: relTime(issue.created_at) });
+    const issueAge = issue.created_at ? AppView._agePart(issue.created_at) : null;
+    if (issueAge) meta.push(issueAge);
     if (settled && applied) {
       const how = String(issue.payload.appliedBy || '').startsWith('admin:')
         ? 'closed by admin' : 'closed by vote';
-      meta.push({ t: 'text', s: `${how} ${relTime(issue.payload.appliedAt)}` });
+      const settledAge = AppView._agePart(issue.payload.appliedAt, `${how} `);
+      meta.push(settledAge || { t: 'text', s: how });
     }
     // The governance row is shaped into the same fields statusPillState
     // reads, so a rename / secret-change / close-issue proposal gets the
@@ -11899,7 +11936,10 @@ const AppView = {
     const maj = majority != null
       ? majority
       : ((AppView._mergedCtx && AppView._mergedCtx.majority) || 1);
-    const date = new Date(pr.created_at).toLocaleDateString();
+    // #1808: the ago ladder's degraded form ("Jun 16", or "Jun 16, 2025" once
+    // it is not this year) instead of a bare numeric `toLocaleDateString`,
+    // which said 06/16/2025 on a row whose neighbours all said "3d ago".
+    const date = AppView._agePart(pr.created_at);
     const mergedLabel = pr.pr_title ? pr.pr_title : `Change by ${pr.username}`;
     const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
     const mine = !!(App.user && pr.user_id === App.user.id);
@@ -11912,7 +11952,7 @@ const AppView = {
       cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400',
     }];
     if (pr.username) meta.push({ t: 'text', s: pr.username });
-    meta.push({ t: 'text', s: date });
+    if (date) meta.push(date);
     if (pr.revert_of_session_id) {
       meta.push({ t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: 'This PR is itself a revert', s: '↩ revert' });
     } else if (pr.revert_session_id) {
@@ -11999,7 +12039,7 @@ const AppView = {
     const how = String(p.appliedBy || '').startsWith('admin:')
       ? 'closed by admin' : 'closed by vote';
     const when = p.appliedAt || row.created_at;
-    const date = when ? new Date(when).toLocaleDateString() : '';
+    const date = when ? AppView._agePart(when, `${how} · `) : null;
     // GitHub link for the closed target, normalized like the kanban Issues
     // footer's repo link.
     const repo = (AppView.appData && AppView.appData.repo_url) || '';
@@ -12010,7 +12050,7 @@ const AppView = {
         ? { t: 'link', href: `${base}/issues/${issueN}`, s: `#${issueN}`, cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400' }
         : { t: 'span', cls: 'font-mono', s: `#${issueN}` });
     }
-    meta.push({ t: 'text', s: date ? `${how} · ${date}` : how });
+    meta.push(date || { t: 'text', s: how });
     // Same composite pill as every other settled row.
     const pillState = AppView.statusPillState({
       yes_count: parseInt(row.up_count) || 0,
@@ -16292,19 +16332,49 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = AppView;
 }
 
-function relTime(iso) {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return '';
-  const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
-  if (diffSec < 60) return 'just now';
-  const diffMin = Math.round(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.round(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDay = Math.round(diffHr / 24);
-  if (diffDay < 30) return `${diffDay}d ago`;
-  return new Date(iso).toLocaleDateString();
+// #1808: the legacy copy of `agoStamp` from frontend/src/lib/timestamp.ts —
+// form B, the age for a card, feed or list row. This file is a classic script
+// loaded by a <script> tag and cannot import from the bundle, and bridging it
+// through `window.UsernodeReact` would make the live format depend on which of
+// the two loaded first. So it is a hand-kept copy, and
+// tests/message-timestamp.test.js EXECUTES both against one table of instants
+// and asserts they answer identically. Read that file's header for the rule;
+// change both together or the test says so.
+//
+// Two things it fixes over the shape it replaces: the relative form stops at
+// SEVEN days (it used to run to thirty, so rows read "23d ago", which is a
+// duration and not information), and every caller now has a `title` carrying
+// the unelided stamp.
+const REL_FLOOR_MS = 7 * 24 * 60 * 60 * 1000;
+function relStamp(iso, now) {
+  const date = iso instanceof Date ? iso : new Date(iso ?? NaN);
+  if (Number.isNaN(date.getTime())) return { text: '', title: '' };
+  const ref = now || new Date();
+  const title = date.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+  const elapsed = ref.getTime() - date.getTime();
+  if (elapsed >= REL_FLOOR_MS) {
+    return {
+      text: date.toLocaleDateString(undefined, date.getFullYear() === ref.getFullYear()
+        ? { month: 'short', day: 'numeric' }
+        : { year: 'numeric', month: 'short', day: 'numeric' }),
+      title,
+    };
+  }
+  // A future instant (server/browser clock skew) clamps to "just now" rather
+  // than printing a negative age.
+  const seconds = Math.max(0, Math.floor(elapsed / 1000));
+  if (seconds < 60) return { text: 'just now', title };
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return { text: `${minutes}m ago`, title };
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return { text: `${hours}h ago`, title };
+  return { text: `${Math.floor(hours / 24)}d ago`, title };
 }
+
+// The text alone, for the callers that have nowhere to hang a title.
+function relTime(iso) { return relStamp(iso).text; }
 
 // Expose AppView on the global object. `const AppView = {…}` above is a
 // top-level lexical binding: in a classic (non-module) script it's reachable

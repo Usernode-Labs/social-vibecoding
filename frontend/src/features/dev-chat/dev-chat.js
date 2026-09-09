@@ -7528,7 +7528,12 @@ const DevChat = {
       branch: s.branch_name || '',
       busy,
       pr: s.pr_url ? { url: s.pr_url, number: s.pr_number } : null,
-      date: new Date(s.created_at).toLocaleDateString(),
+      // #1808: the raw instant, not `toLocaleDateString()`. The row said
+      // "9/9/2026" — a day with no time, in a list where several sessions a
+      // day is normal — and ./session-list.tsx stamps it with the shared
+      // helper now, which this module cannot import (./mount.ts evaluates
+      // its real source in a `vm` as a classic script).
+      createdAt: s.created_at || '',
       actions,
     };
   },
@@ -9849,7 +9854,17 @@ const DevChat = {
       : (DevChat.specViewer.viewVersionContent || '');
 
     const options = versions.map((v) => {
-      const built = v.built_at ? new Date(v.built_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+      // #1808: the year, once the version was not built this year. An
+      // option label cannot carry a `title` and cannot elide to a bare time,
+      // so it follows the shared rule's other half directly: the year is
+      // dropped inside the current one and printed outside it. Spelled here
+      // rather than imported for the reason above.
+      const builtAt = v.built_at ? new Date(v.built_at) : null;
+      const built = builtAt && !Number.isNaN(builtAt.getTime())
+        ? builtAt.toLocaleString([], builtAt.getFullYear() === new Date().getFullYear()
+          ? { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }
+          : { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : '';
       const isThisLatest = latest && v.version === latest.version;
       // The latest option carries the 'latest' value so re-selecting it
       // resumes following new versions; older options carry their number.

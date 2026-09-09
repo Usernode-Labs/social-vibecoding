@@ -42,6 +42,7 @@
  */
 
 
+import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from '../notifications/notifications-store.js';
 
@@ -65,18 +66,9 @@ export type SessionRowView = {
   lastActivityAt?: string | null;
 };
 
-/** Compact relative time — same buckets as the home grid's helper. */
-function relTime(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return null;
-  const seconds = Math.floor((Date.now() - t) / 1000);
-  if (seconds < 60) return 'just now';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-  if (seconds < 86400 * 30) return `${Math.floor(seconds / 86400)}d ago`;
-  return `${Math.floor(seconds / (86400 * 30))}mo ago`;
-}
+// `relTime` lived here. It ran a thirty-day bucket and then months, so a row
+// last touched in the spring read "5mo ago" — which is roughly true and says
+// nothing about which day. It is `agoStamp` from lib/timestamp.ts now (#1808).
 
 /**
  * THE STATE, as a word rather than as a colour alone.
@@ -225,7 +217,7 @@ export function SessionRow({
     sessionUnreadIds: number[];
   };
   const unread = sessionUnreadIds.includes(session.id);
-  const time = relTime(session.lastActivityAt);
+  const time = agoStamp(session.lastActivityAt);
   const state = stateOf(session);
 
   // The caption line. `showApp` is the "other apps" list, where which app a
@@ -233,10 +225,11 @@ export function SessionRow({
   // has already answered it, so the line spends its width on the status the
   // controller wrote (`session.status`) instead — "3 commits", the agent
   // holding a work order, whatever it knows.
+  // Everything before the stamp is one string; the stamp is its own element
+  // so it can carry the unelided instant in `title` (#1808).
   const caption = [
     showApp ? session.appName : null,
     session.status,
-    time,
   ].filter(Boolean).join(' · ');
 
   return (
@@ -254,9 +247,12 @@ export function SessionRow({
         {/* The caption can be empty — a session with no status, no time and no
             app name to show — and an empty line would still take its height,
             leaving the title floating above nothing. */}
-        {caption ? (
+        {caption || time.text ? (
           <span className="mt-0.5 block truncate text-[11px] text-zinc-500 dark:text-zinc-400">
             {caption}
+            {time.text ? (
+              <time title={time.title}>{caption ? ` · ${time.text}` : time.text}</time>
+            ) : null}
           </span>
         ) : null}
       </span>

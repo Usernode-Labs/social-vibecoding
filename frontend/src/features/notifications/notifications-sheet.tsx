@@ -229,8 +229,17 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
             (nobody did it) and on the two key rows (the name there is the
             subject). */}
         <span className="block text-xs text-zinc-500 truncate">
-          {[view.appLine, view.by ? `by @${view.by}` : null, view.time]
-            .filter(Boolean).join(' · ')}
+          {/* The when is its own element so it can carry the unelided instant
+              in `title` (#1808) — the rest of the line is plain text, and the
+              separator rides inside it rather than as a whitespace-only
+              child, same rule as everywhere else on this row. */}
+          {[view.appLine, view.by ? `by @${view.by}` : null].filter(Boolean)
+            .map((part, index) => (index ? ` · ${part}` : part)).join('')}
+          {view.time ? (
+            <time title={view.timeTitle}>
+              {[view.appLine, view.by].some(Boolean) ? ` · ${view.time}` : view.time}
+            </time>
+          ) : null}
         </span>
       </span>
       {/*
