@@ -105,6 +105,7 @@ const CHROME = process.env.CHROME_PATH
  * un-converted section's own `innerHTML` would report as a violation.
  */
 const OWNED = [
+  { sel: '[data-account-email-form]', when: '#settings/email' },
   // `#home-grid-overlay` is appended into this host by home.js during a drag,
   // which this sweep never performs and so never sees. It is a deliberate
   // exception resting on a timing invariant rather than a boundary — the
@@ -323,7 +324,7 @@ const OWNED = [
 
 const ROUTES = [
   '#home', '#apps', '#apps/recipebot', '#settings', '#settings/app-ai',
-  '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#messages', '#notifications',
+  '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#messages', '#notifications',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
   // The spec reader, which is the one host inside `#dc-view` whose subtree

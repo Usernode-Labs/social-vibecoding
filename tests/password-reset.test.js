@@ -27,6 +27,7 @@ let userPasswordRow = null; // row returned for SELECT password ... WHERE id
 let userLinkedPubkeyRow = null; // row for SELECT usernode_pubkey FROM users WHERE id
 let userByEmail = null;     // row for SELECT ... WHERE lower(email) = lower($1) (reset request)
 let userByResetHash = null; // row for SELECT ... WHERE password_reset_token_hash = $1
+let resetIssueRowCount = 1;
 let updateReturns = [];     // rows returned for UPDATE ... RETURNING
 
 poolMod.getPool = () => ({
@@ -46,6 +47,9 @@ poolMod.getPool = () => ({
     }
     if (/SELECT .*WHERE lower\(email\) = lower\(\$1\)/s.test(sql)) {
       return { rows: userByEmail ? [userByEmail] : [] };
+    }
+    if (/UPDATE users SET password_reset_token_hash/.test(sql)) {
+      return { rows: [], rowCount: resetIssueRowCount };
     }
     if (/UPDATE users SET password/.test(sql)) {
       return { rows: updateReturns };
@@ -112,6 +116,7 @@ function post(server, path, body, opts = {}) {
 }
 
 function reset() {
+  resetIssueRowCount = 1;
   capturedQueries = [];
   logCalls = [];
   userByPubkey = null;
@@ -490,6 +495,8 @@ test('email-reset request: eligible account mints a hashed token, mails the plai
     assert.strictEqual(mint.params[0], sha256(token), 'DB stores the sha256, not the plaintext');
     assert.ok(mint.params[1] instanceof Date && mint.params[1] > new Date(), 'expiry is in the future');
     assert.strictEqual(mint.params[2], 7);
+    assert.strictEqual(mint.params[3], userByEmail.email);
+    assert.match(mint.sql, /AND email = \$4 AND email_confirmed = TRUE AND is_admin = FALSE/);
 
     assert.ok(!JSON.stringify(r.body).includes(token), 'plaintext token not in the response');
     assert.ok(!JSON.stringify(logCalls).includes(token), 'plaintext token never logged');
@@ -655,4 +662,18 @@ test('admin reset: invalid id is 400', async () => {
   } finally {
     server.close();
   }
+});
+
+
+test('email-reset request: a concurrently replaced email receives no recovery link', async () => {
+  reset();
+  userByEmail = { id: 7, email: 'former@example.com' };
+  resetIssueRowCount = 0;
+  const server = await startApp(authRoutes, { nodeRpcUrl: 'http://unused' });
+  try {
+    const r = await post(server, '/api/auth/password-reset/request', { email: 'former@example.com' });
+    assert.strictEqual(r.res.status, 200);
+    assert.deepStrictEqual(r.body, { ok: true });
+    assert.strictEqual(sentResetMails.length, 0);
+  } finally { server.close(); }
 });

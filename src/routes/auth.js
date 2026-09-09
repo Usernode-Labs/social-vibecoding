@@ -1228,12 +1228,15 @@ function authRoutes(config) {
         const token = crypto.randomBytes(32).toString('hex');
         const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
         const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
-        await pool.query(
+        const issued = await pool.query(
           `UPDATE users SET password_reset_token_hash = $1,
                             password_reset_expires_at = $2
-            WHERE id = $3`,
-          [tokenHash, expiresAt, user.id]
+            WHERE id = $3 AND email = $4 AND email_confirmed = TRUE AND is_admin = FALSE`,
+          [tokenHash, expiresAt, user.id, user.email]
         );
+        // The mailbox may have changed since the lookup. Never issue a
+        // recovery token to the former address after it has been replaced.
+        if (!issued.rowCount) return res.json({ ok: true });
         // Never throws (mail-door contract); a transport failure is logged
         // there and must not turn this into an account oracle.
         await mail.sendPasswordResetMail(config, user.email, token);

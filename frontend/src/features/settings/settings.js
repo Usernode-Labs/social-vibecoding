@@ -224,6 +224,7 @@
       // section to configure.
 
       { key: 'username', label: 'Username', group: 'Account' },
+      { key: 'email', label: 'Email & recovery', group: 'Account' },
       { key: 'password', label: 'Password', group: 'Account' },
       { key: 'wallet', label: 'Usernode Wallet', group: 'Account', gate: 'wallet-section' },
 

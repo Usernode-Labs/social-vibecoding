@@ -49,6 +49,7 @@ import { OpenRouterSection } from './openrouter';
 import { PasswordSection } from './password';
 import { ThemeSection } from './theme';
 import { UsernameSection } from './username';
+import { EmailSection } from './email';
 import { UsernodeSection } from './usernode';
 import { WalletSection } from './wallet';
 
@@ -75,6 +76,7 @@ export function SettingsSections() {
       <AppAiSection />
       <AgentFilesSection />
       <UsernameSection />
+      <EmailSection />
       <PasswordSection />
       <WalletSection />
       <LanguageSection />

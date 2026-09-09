@@ -7066,3 +7066,16 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS freshness_error TEXT
 CREATE INDEX IF NOT EXISTS chat_sessions_freshness_checked_idx
   ON chat_sessions (freshness_checked_at NULLS FIRST)
   WHERE status = 'promoted';
+
+-- #1841: private, user-bound mailbox proof, separate from sign-in OTPs.
+CREATE TABLE IF NOT EXISTS account_email_verifications (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  email VARCHAR(255) NOT NULL,
+  code_hash TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  previous_email VARCHAR(255),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE account_email_verifications IS 'staging:private';

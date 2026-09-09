@@ -382,6 +382,13 @@ function adminTest(payload) {
  */
 const TEMPLATES = {
   otp,
+  account_email: ({ code }) => ({
+    subject: 'Verify your account email',
+    text: `Your account email verification code is ${code}.\n\nEnter it in Settings → Email & recovery to link this address to your account. It expires in 10 minutes. Never share this code. If you did not request this, ignore this email.`,
+    html: p('Enter this code in Settings → Email & recovery to link this address to your account:')
+      + codeBlock(code)
+      + p('It expires in 10 minutes. Never share this code. If you did not request this, ignore this email.'),
+  }),
   waitlist_joined: waitlistJoined,
   waitlist_code: waitlistCode,
   waitlist_released: waitlistReleased,
