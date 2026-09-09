@@ -174,7 +174,7 @@ async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
     [sessionId]
   );
   const session = rows[0];
-  if (!session || !session.staging_container_id) return { torn: false };
+  if (!session || !(session.staging_runtime_name || session.staging_container_id)) return { torn: false };
 
   // #851: teardownStaging owns the nulling and now reports whether the
   // container actually went away. On a leak the row deliberately still names
@@ -262,7 +262,7 @@ async function finalizeArchivedSession({
   const session = sessionRows[0];
   const appSlug = session?.app_slug;
 
-  if (session?.staging_container_id) {
+  if (session?.staging_runtime_name || session?.staging_container_id) {
     // Same contract as teardownStagingForSession above (#851): the chokepoint
     // nulls the columns itself once removal is CONFIRMED, and a leak keeps
     // them so the sweeper can retry. The archive itself proceeds regardless —

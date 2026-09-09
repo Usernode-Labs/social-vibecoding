@@ -4147,7 +4147,7 @@ function startSessionAutoPauseSweeper(config) {
       try {
         const { rows } = await pool.query(
           `SELECT id FROM chat_sessions
-           WHERE staging_container_id IS NOT NULL
+           WHERE (staging_runtime_name IS NOT NULL OR staging_container_id IS NOT NULL)
              AND status NOT IN ('promoted', 'merging', 'merged')
              AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
            ORDER BY last_activity_at ASC
