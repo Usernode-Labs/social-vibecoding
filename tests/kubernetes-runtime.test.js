@@ -30,6 +30,32 @@ function config() {
 
 test.afterEach(() => kubernetes._setClientsForTest(null));
 
+for (const conflict of ['terminating', 'disappeared']) {
+  test(`kpack recreates a pruned Build when its conflicting object is ${conflict}`, async () => {
+    let creates = 0;
+    let reads = 0;
+    kubernetes._setClientsForTest({ custom: {
+      async createNamespacedCustomObject() {
+        if (++creates === 1) throw Object.assign(new Error('exists'), { code: 409 });
+      },
+      async getNamespacedCustomObject() {
+        if (++reads === 1) {
+          if (conflict === 'disappeared') throw notFound();
+          return { metadata: { deletionTimestamp: new Date().toISOString() },
+            status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: 'old-image' } };
+        }
+        return { status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: 'new-image' } };
+      },
+    } });
+    const result = await kubernetes.createBuild(config(), {
+      app: { id: 7, slug: 'demo', repo_url: 'https://github.com/example/demo' },
+      revision: 'a'.repeat(40), environment: 'production',
+    });
+    assert.equal(creates, 2);
+    assert.equal(result.imageRef, 'new-image');
+  });
+}
+
 test('kpack Build is isolated in social-builds and returns status.latestImage', async () => {
   let created;
   kubernetes._setClientsForTest({

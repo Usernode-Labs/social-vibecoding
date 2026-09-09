@@ -192,10 +192,23 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     },
   };
   const { custom } = getClients();
-  try {
-    await custom.createNamespacedCustomObject({ group: 'kpack.io', version: 'v1alpha2', namespace: cfg.buildNamespace, plural: 'builds', body });
-  } catch (err) {
-    if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err;
+  const createDeadline = Date.now() + 60000;
+  while (true) {
+    try {
+      await custom.createNamespacedCustomObject({ group: 'kpack.io', version: 'v1alpha2', namespace: cfg.buildNamespace, plural: 'builds', body });
+      break;
+    } catch (err) {
+      if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err;
+      // Background GC may still be removing a Build pruned just before this
+      // deployment acquired its lock. Never reuse a terminating object.
+      const existing = await readBuild(config, buildName).catch((readErr) => {
+        if (isNotFound(readErr)) return null;
+        throw readErr;
+      });
+      if (existing && !existing.metadata?.deletionTimestamp) break;
+      if (Date.now() >= createDeadline) throw new Error(`Timed out waiting to recreate kpack Build ${buildName}`);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
   }
   try {
     const result = await waitForBuild(config, buildName, { onProgress });
@@ -541,6 +554,38 @@ async function deleteFailedBuilds(config) {
     await deleteBuild(config, build.metadata.name);
   }
   return { examined: items.length, deleted: failed.length };
+}
+
+function buildApiParams(config) {
+  return { group: 'kpack.io', version: 'v1alpha2', namespace: config.kubernetes.buildNamespace, plural: 'builds' };
+}
+
+async function listManagedBuilds(config) {
+  const items = [];
+  let next;
+  do {
+    const page = await getClients().custom.listNamespacedCustomObject({
+      ...buildApiParams(config), labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY}`,
+      limit: 500, _continue: next,
+    });
+    if (!Array.isArray(page?.items)) throw new Error('Invalid kpack Build inventory');
+    items.push(...page.items);
+    next = page.metadata?.continue;
+  } while (next);
+  return items;
+}
+
+async function readBuild(config, name) {
+  return getClients().custom.getNamespacedCustomObject({ ...buildApiParams(config), name });
+}
+
+async function deleteBuildSnapshot(config, build) {
+  const { name, uid, resourceVersion } = build.metadata;
+  if (!uid || !resourceVersion) throw new Error('Build deletion requires UID and resourceVersion');
+  await getClients().custom.deleteNamespacedCustomObject({
+    ...buildApiParams(config), name,
+    body: { propagationPolicy: 'Background', preconditions: { uid, resourceVersion } },
+  });
 }
 
 async function ensureWorker(config, { sessionId, env }) {
@@ -1186,6 +1231,7 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
 module.exports = {
   dnsName, withSuffix, labels, appResourceName, createBuild, deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
+  listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runUnitSuiteJob, execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, deleteWorker, listWorkers, cloneWorkerVolume,
   listStatusResources, listNamespaceCapacity,

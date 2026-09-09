@@ -27,6 +27,9 @@ Mayor / Claude Code pipeline that produces real PRs.
 
 ## Deployment paths
 
+Kubernetes operators: see [kpack Build retention](docs/kpack-build-retention.md)
+for completed build-Pod cleanup, retention configuration, and dry-run inspection.
+
 This code ships in two shapes:
 
 1. **Standalone** (this repo's `docker-compose.yml` + host deployer /
