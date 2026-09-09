@@ -728,7 +728,7 @@ function ExtraRow({ x }: { x: ExtraSpec }): ReactNode {
 
 /** The whole card. `m.attrs` carries the outer element's data-*, role and title. */
 export function DevCard(
-  { model: m, statusLead }: { model: DevCardModel; statusLead?: ReactNode },
+  { model: m, statusLead, actionEnd }: { model: DevCardModel; statusLead?: ReactNode; actionEnd?: ReactNode },
 ): ReactNode {
   const attrs: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(m.attrs || {})) {
@@ -781,10 +781,17 @@ export function DevCard(
   // wrapping line. The Workshop's card is the full width of the sheet and
   // needs no folding, so this moves the pills exactly where there is room
   // for them and nowhere else.
+  //
+  // `actionEnd` is the other seat for such a control: the END of the action
+  // band, after the card's own pills. That is where the Board's open card
+  // puts its "Open card" (card/fold.tsx), because a kanban column has no
+  // facts line wide enough for the actions to move onto. The band's fold
+  // measurement (useFoldedActions) counts every child without `data-fold`
+  // as fixed width, so the pills fold into ⋯ AROUND it rather than under it.
   const primary = bandActions.slice(0, ACTION_PRIMARY_MAX);
   const inlineActions = !!statusLead;
   const bandPrimary = inlineActions ? [] : primary;
-  const hasActions = bandPrimary.length > 0;
+  const hasActions = bandPrimary.length > 0 || !!actionEnd;
   const folded = useFoldedActions(bandPrimary, m.rail.menuKey || '', false);
   const statusEnd = statusLead || bandPreview || (inlineActions && primary.length) ? (
     <span className="dev-card-status-end">
@@ -831,6 +838,7 @@ export function DevCard(
       {bandPrimary.map((a, i) => (
         <ActionButton key={a.key} a={a} fold={i > 0 && a.kudos == null ? i : undefined} hidden={i > 0 && i >= bandPrimary.length - folded.n} />
       ))}
+      {actionEnd}
     </div>
   ) : (dense ? <div className="gc-card-actions"></div> : null);
   const rail: RailSpec = { ...m.rail, preview: null };
