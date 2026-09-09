@@ -501,7 +501,13 @@ test('the message count rides the meta line at both sizes, and only when there i
   quiet._proposals[0].chat_count = 5;
   const folded = kanbanHtml(quiet);
   assert.match(folded, /data-proposal-row="34"[\s\S]*?<span class="dev-ws-row-meta">(?:(?!<\/span><span class="dev-ws-row-band">)[\s\S])*?<span class="dev-chat-badge/, 'and on the row, in the same place');
-  // The two sizes share one corner now, too.
-  assert.match(CSS, /\.dev-ws-row \{[^}]*border-radius: 1\.25rem;/);
-  assert.match(read('tailwind.config.js'), /'2xl': '1\.25rem'/, 'the card\u2019s rounded-2xl');
+  // The two sizes share one chrome now, too: the card's r22, its 14/14/12
+  // padding with the 4px edge inside it, its 8px glyph gap, its drop shadow,
+  // and no hairline border. Pinned value for value against the card's rule.
+  const card = CSS.slice(CSS.indexOf('\ndiv:is(.dev-card-dense, .dev-card-topic) {'));
+  assert.match(card, /border-radius: 22px;[\s\S]*?padding: 14px 14px 12px;\s*padding-left: calc\(14px \+ var\(--dev-edge-w\)\);/);
+  assert.match(CSS, /\.dev-ws-row \{[^}]*gap: 8px;[^}]*padding: 14px 14px 12px; border-radius: 22px; border: 0;/);
+  assert.match(CSS, /\.dev-ws-row \{[^}]*padding-left: calc\(14px \+ var\(--dev-edge-w\)\);[^}]*0 1px 2px rgba\(0, 0, 0, 0\.06\);/);
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head \{ gap: 8px;/);
+  assert.ok(!/\.dev-ws-row:hover \{ border-color/.test(CSS), 'no border to colour on hover');
 });

@@ -1162,7 +1162,7 @@ test('one hover for both sizes, and a facts line that is not clipped', () => {
   // grey. The row wears the card's own utilities instead.
   assert.match(FOLD, /className=\{`dev-ws-row hover:bg-zinc-50 dark:hover:bg-zinc-800/);
   assert.ok(!/\.dev-ws-row:hover \{[^}]*background:/.test(CSS), 'app.css no longer sets the fill');
-  assert.match(CSS, /\.dev-ws-row:hover \{ border-color: var\(--border\); \}/, 'only the border');
+  assert.ok(!/\.dev-ws-row:hover \{/.test(CSS), 'and no hover rule of its own at all: the fill utility is the whole hover, as it is on the card');
 
   // The card's status row clips at the bar's 30px and its facts row at one
   // 22px line; each is its own element, so neither can clip the other's

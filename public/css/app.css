@@ -11757,10 +11757,13 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    same title, number and author. Same sheet, border and radius as the entry
    below it now, so opening one GROWS the thing you clicked (#1787). */
 .dev-ws-row {
-  width: 100%; text-align: left; display: flex; align-items: center; gap: 10px;
-  /* The card's own radius (`rounded-2xl`, 1.25rem in tailwind.config.js),
-     so the two sizes of one item share one corner. */
-  padding: 9px 10px; border-radius: 1.25rem; border: 1px solid var(--border-light);
+  width: 100%; text-align: left; display: flex; align-items: center; gap: 8px;
+  /* The card's own chrome, value for value (`div:is(.dev-card-dense,
+     .dev-card-topic)` above): r22, 14px sides and top, 12px bottom, the 8px
+     glyph gap, no border, the same soft drop shadow. The row had a hairline
+     border, 9x10 padding, r12 and a 10px gap — four small differences that
+     made the two sizes of one item read as two objects. */
+  padding: 14px 14px 12px; border-radius: 22px; border: 0;
   background: var(--dc-sheet);
   color: var(--text-primary); font: inherit; cursor: pointer;
 }
@@ -11771,7 +11774,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    colour here could not have fixed it — `zinc` is overridden in
    tailwind.config.js, so a hex copied from the stock palette would be a
    third grey rather than the card's. Only the border stays here. */
-.dev-ws-row:hover { border-color: var(--border); }
 .dev-ws-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* The row's icon is the CARD's icon, to the pixel: the same 22px box with no
    tile and no fill, and the same 18px glyph. It used to be a 28px tinted
@@ -11794,12 +11796,15 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-row {
   --dev-edge-w: 4px;
   --dev-edge: transparent;
-  padding-left: calc(10px + var(--dev-edge-w));
+  padding-left: calc(14px + var(--dev-edge-w));
   /* An inset shadow and a 33% mix, exactly as the card draws it: the same
      4px at the same strength, following the same corner arc, taking no
-     layout. A border here would have been a different mark at a different
-     weight — which is the whole thing this row is trying to stop being. */
-  box-shadow: inset var(--dev-edge-w) 0 0 color-mix(in srgb, var(--dev-edge) 33%, transparent);
+     layout, over the same drop shadow. A border here would have been a
+     different mark at a different weight — which is the whole thing this
+     row is trying to stop being. */
+  box-shadow:
+    inset var(--dev-edge-w) 0 0 color-mix(in srgb, var(--dev-edge) 33%, transparent),
+    0 1px 2px rgba(0, 0, 0, 0.06);
 }
 .dev-ws-row[data-edge="vote"]      { --dev-edge: var(--accent); }
 .dev-ws-row[data-edge="progress"]  { --dev-edge: var(--state-progress); }
