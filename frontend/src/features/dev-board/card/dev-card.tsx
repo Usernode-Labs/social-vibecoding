@@ -759,7 +759,12 @@ export function metaLineNodes(m: DevCardModel): ReactNode[] {
 
 /** The whole card. `m.attrs` carries the outer element's data-*, role and title. */
 export function DevCard(
-  { model: m, actionEnd }: { model: DevCardModel; actionEnd?: ReactNode },
+  { model: m, actionEnd, headEnd }: {
+    model: DevCardModel;
+    actionEnd?: ReactNode;
+    /** The fold's mark at the head's end (card/fold.tsx FoldMark); the card draws none of its own. */
+    headEnd?: ReactNode;
+  },
 ): ReactNode {
   const attrs: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(m.attrs || {})) {
@@ -885,6 +890,7 @@ export function DevCard(
               <TitleContent t={m.title} />
             </div>
           </div>
+          {headEnd}
         </div>
         {metaRow}
         {statusRow}

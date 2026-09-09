@@ -744,7 +744,7 @@ test('a folded row\'s last line carries the card\'s state, in the tone the pill 
 
 test('an open row IS the Board\'s card, not a headless copy under a row', () => {
   const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
-  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} \/>/);
+  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/);
 
   // #1799 kept the compressed row as a head and hid the card's head, meta and
   // status band so they would not repeat it — which made the open state a
@@ -1347,7 +1347,7 @@ test('an unfolded row is the Activity entry: the sheet, the card, the slot, the 
   // entry wrapper and its three children, in the order the feed drew them.
   const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
   assert.match(unfolded, /className="dev-feed-entry dev-ws-sheet"/, 'the sheet wrapper the feed used');
-  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} \/>/, 'the same card builder');
+  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/, 'the same card builder');
   // Minus the rail chevron: inside a fold a click on the card folds it, so the
   // Board's "this opens" mark would promise a destination the card no longer
   // has. Everything else on the model is the Board's, untouched.

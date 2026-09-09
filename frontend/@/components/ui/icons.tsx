@@ -555,6 +555,29 @@ export const GitHubIcon = filled(
 );
 
 /**
+ * The dev card's fold mark: which SIZE the item is at (card/fold.tsx
+ * FoldMark). Two chevrons pointing apart, and a bar between them that the
+ * closed state scales away — one glyph, three paths, each classed so app.css
+ * can move them apart on the open card (`.dev-fold-mark`), which is why it
+ * is written out rather than built: a factory's single path could not be
+ * stretched in parts. The `d` strings are named literals for the same
+ * reason the eye's are — tests/shell-icon-set.test.js reads this module's
+ * path data as its quoted literals.
+ */
+const FOLD_TOP = 'M8.25 9L12 5.25 15.75 9';
+const FOLD_BAR = 'M12 5.5v13';
+const FOLD_BOTTOM = 'M8.25 15L12 18.75 15.75 15';
+
+export const FoldMarkIcon = ({ id, className, ...rest }: IconProps) => (
+  <svg id={id} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+    <path className="dev-fold-top" d={FOLD_TOP} />
+    <path className="dev-fold-bar" d={FOLD_BAR} />
+    <path className="dev-fold-bottom" d={FOLD_BOTTOM} />
+  </svg>
+);
+FoldMarkIcon.displayName = 'FoldMarkIcon';
+
+/**
  * The escape hatch, for the two call sites that pick their `d` out of a table
  * at render time rather than naming a glyph: the dev board's view switcher
  * (`VIEW_ICON_PATHS[mode]`) and the app card's visibility chip

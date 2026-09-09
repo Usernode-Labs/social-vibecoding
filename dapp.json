@@ -731,6 +731,16 @@
       "expectText": "Preview"
     },
     {
+      "name": "Dev board: every folded row wears the fold mark, closed — two chevrons apart, the bar between them drawn but scaled away",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .dev-ws-rowwrap > .dev-ws-row[aria-expanded=\"false\"] > span.dev-fold-mark[aria-hidden=\"true\"]:not([data-open]) > svg > path.dev-fold-top + path.dev-fold-bar + path.dev-fold-bottom"
+    },
+    {
+      "name": "Dev board: the open card's fold mark is the same glyph stretched open, and the button that folds the card",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item .dev-card-head > button.dev-fold-mark[data-open=\"1\"][aria-expanded=\"true\"][aria-label] > svg > path.dev-fold-bar"
+    },
+    {
       "name": "Dev board, round three: every card wears a tone-keyed left edge, and a glyph where the tile was",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item.dev-card-dense[data-edge] > .flex-1 > .dev-card-head > .dev-card-icon.rounded-lg + .dev-card-head-main"
