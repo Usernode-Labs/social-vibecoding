@@ -855,6 +855,7 @@ async function runUnitSuiteJob(config, options) {
 async function runCheckJob(config, {
   sessionId, env, stdinPayload = null, timeoutMs = 180000,
   onStdoutLine = null, cmd, memory = '2g', cpus = '4', maxBuffer = 64 * 1024 * 1024,
+  salvagePartial = false,
 }, kind) {
   const cfg = config.kubernetes;
   const unitSuite = kind === 'unit-suite';
@@ -903,6 +904,25 @@ async function runCheckJob(config, {
   // Follow state lives outside the try so the finally can close the stream.
   let following = false;
   let followAbort = null;
+  const retainPartial = !unitSuite && salvagePartial;
+  const retained = [];
+  let retainedBytes = 0;
+  const reportLine = line => {
+    if (retainPartial && retainedBytes < maxBuffer) {
+      const bytes = Buffer.from(`${line}\n`, 'utf8').subarray(0, maxBuffer - retainedBytes);
+      retained.push(bytes);
+      retainedBytes += bytes.length;
+    }
+    if (typeof onStdoutLine === 'function') {
+      try { onStdoutLine(line); } catch { /* observer must not break the run */ }
+    }
+  };
+  const boundedOutput = text => {
+    const bytes = Buffer.from(text || '', 'utf8');
+    let end = Math.min(bytes.length, maxBuffer);
+    while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
+    return bytes.subarray(0, end).toString('utf8');
+  };
   try {
     if (inputSecretName) {
       await core.createNamespacedSecret({ namespace, body: {
@@ -943,14 +963,29 @@ async function runCheckJob(config, {
       progressPodName = pods.items?.[0]?.metadata?.name || null;
       return progressPodName;
     };
+    const readOutput = async () => {
+      let timer;
+      try {
+        return await Promise.race([(async () => {
+          const podName = await findPod();
+          if (!podName) return '';
+          // One extra byte detects a silently truncated capture log.
+          return String(await core.readNamespacedPodLog({ name: podName, namespace, container: kind,
+            limitBytes: unitSuite ? maxBuffer : maxBuffer + 1 }) || '');
+        })(), new Promise((_resolve, reject) => {
+          // Salvaging logs must never prevent timeout cleanup of the Job.
+          timer = setTimeout(() => reject(new Error('Check Job log read timed out')), 15000);
+        })]);
+      } finally { clearTimeout(timer); }
+    };
     const startFollow = async () => {
-      if (typeof onStdoutLine !== 'function' || following) return;
+      if ((!retainPartial && typeof onStdoutLine !== 'function') || following) return;
       try {
         if (!(await findPod())) return;
         const logApi = clientsLogApi(getClients());
         if (!logApi) return;
         const sink = new stream.PassThrough();
-        attachLineObserver(sink, onStdoutLine, { skipBytes: consumed });
+        attachLineObserver(sink, reportLine, { skipBytes: consumed });
         // The API refuses a container that has not started ("is waiting to
         // start"); the next tick tries again, and the polled read covers
         // the gap.
@@ -959,7 +994,7 @@ async function runCheckJob(config, {
       } catch { /* the polled read stays in charge */ }
     };
     const observeProgress = async () => {
-      if (typeof onStdoutLine !== 'function' || following) return;
+      if ((!retainPartial && typeof onStdoutLine !== 'function') || following) return;
       try {
         if (!(await findPod())) return;
         const text = await core.readNamespacedPodLog({ name: progressPodName, namespace, container: kind, limitBytes: maxBuffer });
@@ -969,7 +1004,7 @@ async function runCheckJob(config, {
         const lastNl = fresh.lastIndexOf('\n');
         if (lastNl === -1) return; // no complete new line yet
         for (const line of fresh.slice(0, lastNl).split('\n')) {
-          try { onStdoutLine(line); } catch { /* observer must not break the run */ }
+          reportLine(line);
         }
         consumed += lastNl + 1;
       } catch { /* progress is best-effort */ }
@@ -985,23 +1020,42 @@ async function runCheckJob(config, {
         err.code = terminated?.exitCode;
         const jobReason = job.status.conditions?.find(c => c.type === 'Failed')?.reason;
         err.stderr = [jobReason, terminated?.reason].filter(Boolean).join(': ');
-        err.killed = jobReason === 'DeadlineExceeded';
+        err.killed = jobReason === 'DeadlineExceeded' || terminated?.reason === 'OOMKilled';
         throw err;
       }
       if (job.status?.succeeded) {
-        const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
-        const pod = pods.items?.[0];
-        return { stdout: pod ? await core.readNamespacedPodLog({ name: pod.metadata.name, namespace, container: kind, limitBytes: maxBuffer }) : '', runtimeName: name };
+        let stdout;
+        try { stdout = await readOutput(); }
+        catch (err) { err.captureLogFailed = !unitSuite; throw err; }
+        if (!unitSuite && Buffer.byteLength(stdout, 'utf8') > maxBuffer) {
+          const err = new Error('Capture output exceeds maxBuffer');
+          err.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+          err.stdout = boundedOutput(stdout);
+          throw err;
+        }
+        return { stdout, runtimeName: name };
       }
       tick += 1;
       if (!following) await startFollow();
       if (!following && tick % PROGRESS_EVERY_TICKS === 0) await observeProgress();
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
-    // Stop the workload before removing its input credentials on timeout.
-    await deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, { propagationPolicy: 'Background' });
     const err = new Error(`Timed out waiting for ${kind} Job ${name}`);
     err.killed = true;
+    // Read before deletion: deleting the Job can immediately remove the Pod
+    // and the only durable copy of completed capture frames.
+    err.stdout = await readOutput().catch(() => '');
+    await deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, { propagationPolicy: 'Background' });
+    throw err;
+  } catch (err) {
+    const observed = Buffer.concat(retained).toString('utf8');
+    const stdout = boundedOutput(Buffer.byteLength(err.stdout || '', 'utf8') >= retainedBytes ? err.stdout : observed);
+    if (retainPartial && stdout && (err.killed || err.captureLogFailed || err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')) {
+      return { stdout, stderr: err.stderr || '', runtimeName: name, partial: true,
+        partialReason: err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'output over maxBuffer'
+          : err.captureLogFailed ? 'capture log unavailable'
+            : err.stderr?.includes('OOMKilled') ? 'capture OOM killed' : 'run timed out' };
+    }
     throw err;
   } finally {
     if (followAbort && typeof followAbort.abort === 'function') {

@@ -377,7 +377,7 @@ test('capture runtime uses a bounded Job and caps log retrieval', async () => {
   assert.equal(created.body.spec.template.spec.securityContext.runAsUser, 1000);
   assert.equal(created.body.spec.template.spec.securityContext.runAsGroup, 1000);
   assert.equal(created.body.spec.template.spec.securityContext.fsGroup, 1000);
-  assert.equal(logRequest.limitBytes, 64 * 1024 * 1024);
+  assert.equal(logRequest.limitBytes, 64 * 1024 * 1024 + 1);
   assert.equal(result.stdout, 'result');
 });
 
