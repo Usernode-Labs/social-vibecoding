@@ -541,8 +541,8 @@ function isVoteSpec(a: ActionSpec, side: 'yes' | 'no'): boolean {
 /** One action pill; the kudos slot and the Explore pill are its two specials. */
 export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number; hidden?: boolean }): ReactNode {
   const { enabled } = useStoreState(aiEnabledStore);
-  // `data-fold` marks a pill the one-line band may hide; the first pill and
-  // the kudos host never carry it.
+  // `data-fold` marks a pill the one-line band may hide; every pill carries
+  // one but the kudos host.
   const foldAttrs = fold ? { 'data-fold': String(fold), 'data-folded': hidden ? '1' : undefined } : {};
   if (a.kudos != null) {
     // The controller host — `AppView._fillKudosHosts` owns everything below.
@@ -772,6 +772,9 @@ export function DevCard(
   // line beside it had space to spare. (The builders still hand it over as
   // `rail.preview`; the model did not move.) The detail head's arrives as
   // `actionPreview`, already labelled.
+  // The preview used to close the FACTS line; it sits at the far right of
+  // the action band now, after the hamburger, with the card's other controls
+  // — a fixed child of the band, which the pills fold around.
   const previewSpec = m.actionPreview
     || (m.rail.preview ? { ...m.rail.preview, iconOnly: false } : null);
   const bandPreview = previewSpec ? <Preview spec={previewSpec} /> : null;
@@ -805,13 +808,12 @@ export function DevCard(
   const inlineActions = !!statusLead;
   const bandPrimary = inlineActions ? [] : primary;
   const menuTrigger = m.rail.menuKey ? <MenuTrigger menuKey={m.rail.menuKey} /> : null;
-  const hasActions = bandPrimary.length > 0 || !!actionEnd || !!menuTrigger;
-  const folded = useFoldedActions(bandPrimary, m.rail.menuKey || '', false);
-  const statusEnd = statusLead || bandPreview || (inlineActions && primary.length) ? (
+  const hasActions = bandPrimary.length > 0 || !!actionEnd || !!menuTrigger || !!bandPreview;
+  const folded = useFoldedActions(bandPrimary, m.rail.menuKey || '', !!bandPreview);
+  const statusEnd = statusLead || (inlineActions && primary.length) ? (
     <span className="dev-card-status-end">
       {inlineActions ? primary.map((a) => <ActionButton key={a.key} a={a} />) : null}
       {statusLead}
-      {bandPreview}
     </span>
   ) : null;
 
@@ -850,10 +852,11 @@ export function DevCard(
   const actionRow = hasActions ? (
     <div className="gc-card-actions" ref={folded.ref}>
       {bandPrimary.map((a, i) => (
-        <ActionButton key={a.key} a={a} fold={i > 0 && a.kudos == null ? i : undefined} hidden={i > 0 && i >= bandPrimary.length - folded.n} />
+        <ActionButton key={a.key} a={a} fold={a.kudos == null ? i + 1 : undefined} hidden={i >= bandPrimary.length - folded.n} />
       ))}
       {actionEnd}
       {menuTrigger}
+      {bandPreview}
     </div>
   ) : (dense ? <div className="gc-card-actions"></div> : null);
   const rail: RailSpec = { ...m.rail, preview: null };
@@ -943,7 +946,10 @@ function useFoldedActions(
 ): { ref: (el: HTMLDivElement | null) => void; n: number } {
   const bandRef = useRef<HTMLDivElement | null>(null);
   const [n, setN] = useState(0);
-  const foldable = primary.filter((a, i) => i > 0 && a.kudos == null).length;
+  // Every pill but a kudos host may fold — the first included. The fixed
+  // children ("Open card", the hamburger, Preview) sit at the band's right
+  // and a narrow column may leave no room before them.
+  const foldable = primary.filter((a) => a.kudos == null).length;
   useIsoLayoutEffect(() => {
     const band = bandRef.current;
     if (!band || !foldable) { if (n) setN(0); return undefined; }
@@ -986,7 +992,7 @@ function useFoldedActions(
     if (!menuKey) return undefined;
     const av = typeof window !== 'undefined' ? (window as any).AppView : null;
     if (!av || typeof av._setFoldedCardActions !== 'function') return undefined;
-    const hidden = n > 0 ? primary.filter((a, i) => i > 0 && a.kudos == null).slice(-n) : [];
+    const hidden = n > 0 ? primary.filter((a) => a.kudos == null).slice(-n) : [];
     av._setFoldedCardActions(menuKey, hidden);
     return () => { av._setFoldedCardActions(menuKey, []); };
     // eslint-disable-next-line react-hooks/exhaustive-deps

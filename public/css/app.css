@@ -11116,7 +11116,8 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn svg { width: 16px; height: 16px; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview {
-  margin-left: auto;
+  /* After the hamburger, which is what pushes the pair to the band's right
+     edge; a second auto margin here would split the free space between them. */
   gap: 5px;
   padding: 0 10px 0 9px;
   color: var(--accent);
