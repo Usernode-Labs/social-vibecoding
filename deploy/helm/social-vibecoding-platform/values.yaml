@@ -84,9 +84,10 @@ migration:
       ephemeral-storage: 2Gi
 
 config:
-  # Canonical platform host and generated-application suffix. Generated apps
-  # are addressed as <slug>.<domain>.
+  # Canonical platform host for the UI, authentication, and platform API.
   domain: social-vibecoding.example.invalid
+  # Empty retains the historical <slug>.<domain> layout.
+  appsDomain: ""
   platformRepository: https://github.com/replace-me/social-vibecoding
   nodeRpcUrl: http://replace-me.invalid:3000
   # Explorer host[:port] without a scheme. Public hosts use HTTPS; private

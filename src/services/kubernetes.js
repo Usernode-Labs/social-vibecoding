@@ -338,6 +338,8 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   const hostname = environment === 'production'
     ? `${app.slug}.${cfg.appDomain}`
     : `${app.slug}--s${sessionId}.${cfg.appDomain}`;
+  // Check before creating or updating any Kubernetes resources.
+  require('./caddy').assertAppHostname(hostname, cfg.platformDomain);
   const { core, apps, networking } = getClients();
 
   await upsert(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, {
