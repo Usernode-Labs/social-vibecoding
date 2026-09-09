@@ -2777,7 +2777,7 @@ async function inspectContainerState(containerName) {
 // the lines we already consumed.
 async function _consumeJournal(containerName, journal, progress, state, { sessionId = null } = {}) {
   if (usesKubernetesWorkers()) {
-    let linesConsumed = 0;
+    let charsConsumed = 0;
     // WORKER_JWT_TTL is the jsonwebtoken duration string "24h". Use its
     // numeric twin for arithmetic; coercing the string produces NaN and
     // makes this loop return probe_unobservable before its first poll.
@@ -2785,17 +2785,21 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
     while (Date.now() < deadline) {
       try {
         const { stdout } = await execWorkerCommand(containerName, ['cat', journal]);
-        const lines = stdout.split('\n');
-        for (let i = linesConsumed; i < lines.length; i++) {
-          if (!lines[i]) continue;
-          linesConsumed += 1;
-          state.rawStdout += `${lines[i]}\n`;
-          parseLine(lines[i], progress, state);
+        // cat may race a writer halfway through a JSON record or marker.
+        // Advance only past complete lines, including blank lines. The next
+        // cumulative read supplies the remainder without losing or replaying
+        // records (and therefore provider usage) at a polling boundary.
+        let newline;
+        while ((newline = stdout.indexOf('\n', charsConsumed)) !== -1) {
+          const line = stdout.slice(charsConsumed, newline);
+          charsConsumed = newline + 1;
+          state.rawStdout += `${line}\n`;
+          parseLine(line, progress, state);
           if (state.execExitSeen) return state;
         }
       } catch (_) { /* journal may not exist yet */ }
       const busy = await isWorkerExecuting(containerName);
-      if (busy === false && linesConsumed > 0) {
+      if (busy === false && charsConsumed > 0) {
         state.exitCode = state.exitCode ?? -1;
         state.markerlessCause = 'turn_process_gone';
         return state;
