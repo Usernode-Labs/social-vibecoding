@@ -362,7 +362,7 @@ const GroupChat = {
       const isFirstLoad = !GroupChat.oldestMessageId;
       const url = GroupChat.oldestMessageId
         ? `/api/apps/${GroupChat.appSlug}/messages?before=${GroupChat.oldestMessageId}&limit=50`
-        : `/api/apps/${GroupChat.appSlug}/messages?limit=50`;
+        : `/api/apps/${GroupChat.appSlug}/messages?limit=50${GroupChat._demoParam()}`;
 
       // Preserve scroll anchor when prepending older history so the viewport
       // doesn't jump to the top.
@@ -824,7 +824,8 @@ const GroupChat = {
     const beforeParam = st.oldestId ? `&before=${st.oldestId}` : '';
     try {
       const res = await fetch(
-        `/api/apps/${slug}/messages?thread_type=${encodeURIComponent(type)}&thread_ref=${encodeURIComponent(ref)}&limit=50${beforeParam}`
+        `/api/apps/${slug}/messages?thread_type=${encodeURIComponent(type)}&thread_ref=${encodeURIComponent(ref)}`
+        + `&limit=50${beforeParam}${beforeParam ? '' : GroupChat._demoParam()}`
       );
       if (!res.ok) return;
       const { messages } = await res.json();
@@ -2224,10 +2225,10 @@ const GroupChat = {
     const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown
       ? (str) => DevChat.renderMarkdown(str)
       : null;
-    const built = meta.builtAt
-      ? new Date(meta.builtAt).toLocaleString([],
-        { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-      : null;
+    // #1808: composed from `_stamp` rather than spelling its own options
+    // table, which had no `year` — a spec built last June read "Jun 16,
+    // 02:41 PM", exactly like one built this June.
+    const built = GroupChat._stamp(meta.builtAt).text || null;
     return {
       title: meta.title || `Spec v${meta.version}`,
       // The preview title the panel header shows while the fetch is in
@@ -2342,7 +2343,8 @@ const GroupChat = {
       panel._gcKeyHandler = onKey;
     }
 
-    const builtStr = builtAt ? new Date(builtAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    // Same table as the share card above, from the same helper (#1808).
+    const builtStr = GroupChat._stamp(builtAt).text;
     const subtitleParts = [];
     if (version != null) subtitleParts.push(`v${version}`);
     if (builtStr) subtitleParts.push(builtStr);
@@ -2432,6 +2434,19 @@ const GroupChat = {
   // (see stagingMockSpecVersion in src/routes/sessions.js) so the panel —
   // and its copy button — are reviewable in a staging preview. Honoured by
   // the server ONLY in staging; a no-op in production.
+  // #1808: the same ?demo=1 passthrough for the TRANSCRIPT reads. A declared
+  // check renders against a fresh, empty staging database, so both the
+  // general stream and a topic's Discussion thread came back with nothing to
+  // stamp; the server answers a first page of `[Mock]` rows spanning all
+  // three branches (see stagingMockGroupChat in src/routes/chat.js). Only on
+  // a first page — a `before` cursor is paging past what is already on
+  // screen — and honoured by the server ONLY in staging.
+  _demoParam() {
+    try {
+      return new URLSearchParams(location.search).get('demo') === '1' ? '&demo=1' : '';
+    } catch { return ''; }
+  },
+
   _specDemoQS() {
     try {
       return new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';

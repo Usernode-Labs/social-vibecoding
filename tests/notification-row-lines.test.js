@@ -43,18 +43,23 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { loadTsx } = require('./lib/render-tsx');
 
 const SHEET = fs.readFileSync(path.join(
   __dirname, '..', 'frontend/src/features/notifications/notifications-sheet.tsx'), 'utf8');
 
-// notifications.js is import-free by design (see ./notifications-store.js) and
-// publishes its controller on `window`, so a bare global is the whole harness.
+// notifications.js publishes its controller on `window`, so a bare global is
+// most of the harness. It is BUNDLED rather than imported directly because
+// #1808 gave it one import — `lib/timestamp.ts`, the shared stamp helper —
+// and Node's ESM resolver cannot follow an extensionless specifier to a
+// TypeScript file. esbuild can, and ./lib/render-tsx.js already runs it for
+// exactly this reason; the module body still evaluates once, against the same
+// `window` shim.
 let rowView = null;
 async function load() {
   if (rowView) return rowView;
   if (!globalThis.window) globalThis.window = globalThis;
-  await import(new URL(
-    '../frontend/src/features/notifications/notifications.js', `file://${__filename}`).href);
+  loadTsx('frontend/src/features/notifications/notifications.js');
   rowView = globalThis.window.Notifications._rowView;
   assert.equal(typeof rowView, 'function', 'the controller publishes _rowView');
   return rowView;

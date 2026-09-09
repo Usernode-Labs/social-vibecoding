@@ -158,6 +158,27 @@ function stagingMockNotifications() {
       prTitle: null, branchName: 'dev/mockuser-1700000000002',
       prNumber: null, headlessIssueNumber: null,
     },
+    // #1808: the row that is PAST the relative form's seven-day floor, and
+    // fixed in an earlier year so it stays past it. Every other row here is
+    // minutes or days old, so without this one a preview shows only the "12m
+    // ago" half of the change and never the date the old code could not
+    // reach: these rows had no floor at all and printed "412d ago".
+    //
+    // UNREAD on purpose, which is both where the bug was worst and the only
+    // way a preview can see it: the sheet opens on the Unread tab, so a read
+    // row of this age is one click away from every screenshot and declared
+    // check. An old unread notification is exactly the row that used to read
+    // as a four-hundred-day duration.
+    {
+      ...base,
+      id: 990209, kind: 'session_done',
+      createdAt: '2024-05-21T14:05:00Z',
+      readAt: null,
+      sessionId: 990108,
+      sessionTitle: '[Mock] Something from an earlier year',
+      prTitle: null, branchName: 'dev/mockuser-1700000000003',
+      prNumber: null, headlessIssueNumber: null,
+    },
   ];
 }
 

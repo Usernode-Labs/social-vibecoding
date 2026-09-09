@@ -16,6 +16,52 @@ const {
 
 const THREAD_TYPES = new Set(['issue', 'session', 'governance']);
 const MAX_THREAD_REF = 2147483647; // PostgreSQL INTEGER
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+// #1808: staging demo rows for a chat transcript, injected at request time
+// (?demo=1) only when the real read came back EMPTY, so a genuine transcript
+// always wins. Never persisted, and a strict no-op outside staging.
+//
+// Why the group chat needs one at all: `chat_messages` IS cloned into a
+// staging preview, so a prod-cloned container has a transcript. A declared
+// check does not run against one — it renders against a fresh, empty staging
+// database — so the transcript this change is most visibly about was the one
+// surface no check could see. These rows also put all three of the stamp's
+// branches on screen at once: an earlier year, earlier this year, and today.
+// A live seed cannot hold that, because "today" moves.
+//
+// `thread` is the issue/session/governance thread the reader asked for, or
+// null for the general stream. The same four rows serve both: a topic's
+// Discussion sheet and an unfolded card's FeedThread read this endpoint with
+// a thread filter, and on a clean staging database they came back empty too.
+// The ids differ per surface so a page showing both does not draw one id
+// twice.
+function stagingMockGroupChat(appId, thread) {
+  const iso = (ms) => new Date(ms).toISOString();
+  const now = Date.now();
+  const base = thread ? 9902011 : 9902001;
+  const row = (offset, minutesBack, username, content, createdAt) => ({
+    id: base + offset, user_id: 0, username, content,
+    msg_type: 'message', metadata: {},
+    thread_type: thread ? thread.type : null,
+    thread_ref: thread ? thread.ref : null,
+    created_at: createdAt || iso(now - minutesBack * 60 * 1000),
+    edited_at: null, reactions: [], bookmarked: false,
+    has_unread_notification: false, app_id: appId,
+  });
+  return [
+    row(0, 0, 'staging-demo-user',
+      '[Mock] Opening line, posted in an earlier year. Its stamp carries the year.',
+      '2024-02-19T16:05:00Z'),
+    row(1, 0, 'staging-tester',
+      '[Mock] A reply from earlier this year: the day, then the time.',
+      iso(now - 40 * 24 * 60 * 60 * 1000)),
+    row(2, 95, 'staging-demo-user',
+      '[Mock] And one from this morning, which needs no date at all.'),
+    row(3, 4, 'staging-tester',
+      '[Mock] Same again a few minutes ago, so a run of today\'s rows stays easy to scan.'),
+  ];
+}
 
 function parseThreadRef(value) {
   const ref = typeof value === 'number'
@@ -146,6 +192,16 @@ function chatRoutes(config) {
         } catch (err) {
           log.warn('chat', 'unread-dot hydrate failed', { message: err.message });
         }
+      }
+
+      // The empty-transcript fallback described at stagingMockGroupChat.
+      // Only a first page: a `before` cursor is the client paging PAST what
+      // it already has, and answering that with the same four rows again
+      // would loop the transcript.
+      if (IS_STAGING && req.query.demo === '1' && !before && messages.length === 0) {
+        return res.json({
+          messages: stagingMockGroupChat(appId, threadType ? { type: threadType, ref: threadRef } : null),
+        });
       }
 
       res.json({ messages });

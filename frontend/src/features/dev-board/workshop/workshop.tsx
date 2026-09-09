@@ -46,6 +46,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { ChevronRightIcon } from '@/components/ui/icons';
 
+import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
 import { devWorkshopStore } from '../card/cards-store';
 import { DevCard } from '../card/dev-card';
@@ -64,15 +65,17 @@ function swatchFor(name: string): string {
   return palette[h % palette.length];
 }
 
+// The shared ago ladder (#1808) — this file used to carry its own, with a
+// 90-second "just now" and a 48-hour bucket that read "36h ago" where every
+// other surface said "1d ago". Both call sites drop it into a SENTENCE, so
+// the degraded form lands as "drafted Jun 16" rather than "drafted 84d ago",
+// which is the point.
+//
+// The epoch guard stays: these two take a millisecond number that is 0 when
+// the thing never happened, and `agoStamp(0)` is a 1970 date, not nothing.
 function relTime(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return '';
-  const secs = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-  if (secs < 90) return 'just now';
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 48) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  return agoStamp(ms).text;
 }
 
 function Lane({

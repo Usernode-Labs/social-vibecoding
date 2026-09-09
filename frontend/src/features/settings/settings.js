@@ -1409,14 +1409,22 @@
     // lease to release at all.
     _localAgentView(agent) {
       const app = agent.appName || agent.appSlug || 'an app';
-      const seen = Number.isFinite(Date.parse(agent.lastSeenAt))
-        ? new Date(agent.lastSeenAt).toLocaleTimeString() : 'unknown';
       return {
         leaseId: agent.leaseId || null,
         label: agent.label || null,
         title: agent.label || 'Unnamed machine',
         where: agent.sessionTitle ? `${app} · ${agent.sessionTitle}` : String(app),
-        detail: `${agent.runtime || 'claude-code'} · last seen ${seen}`,
+        runtime: agent.runtime || 'claude-code',
+        // #1808: the raw instant, NOT a formatted time. This was
+        // `toLocaleTimeString()`, so a machine last seen in March read
+        // "last seen 10:00" — the same words as one seen this morning, on a
+        // row whose entire job is to say whether the machine is still there.
+        // ./local-agents-list.tsx stamps it with the shared helper, which
+        // this module cannot import: four test harnesses run its real source
+        // through `vm.runInContext` as a classic script, where a top-level
+        // `import` is a syntax error. Formatting in the renderer is the
+        // arrangement that needs no second copy of the helper.
+        lastSeenAt: Number.isFinite(Date.parse(agent.lastSeenAt)) ? agent.lastSeenAt : null,
         // Demo rows (staging ?demo=1) are fabricated per request and own no
         // lease, so there is nothing for a button to release.
         detachable: !agent.demo && !!agent.leaseId,
@@ -1833,8 +1841,17 @@
         if (cap && shown >= cap) {
           text += `That is the limit of ${cap} per connection per ${days} days; it will come back once the window rolls over.`;
         } else if (quietUntil > Date.now()) {
+          // #1808: a bare "12:20 AM" here can be TOMORROW's. The cooldown
+          // runs from the last tip, so one sent late in the evening puts the
+          // deadline past midnight, and a reader comparing it to the clock
+          // concludes the window has already passed. A day word settles it,
+          // and anything further out gets the whole stamp.
+          const end = new Date(quietUntil);
+          const deadline = end.toDateString() === new Date().toDateString()
+            ? `today at ${end.toLocaleTimeString()}`
+            : end.toLocaleString();
           text += `It stays quiet for ${cooldown} minutes after each one, so a conversation opened before `
-            + `${new Date(quietUntil).toLocaleTimeString()} will not carry it. One opened after that will.`;
+            + `${deadline} will not carry it. One opened after that will.`;
         } else {
           text += 'Open a new conversation to see it again.';
         }
@@ -4226,8 +4243,14 @@
     // exactly when it is wanted — the same mistake the connection panel
     // above was written to undo.
 
+    // #1808: the WHOLE instant, not a time of day. This stamps one
+    // diagnostics line ("Last icon check: …") whose only reader is somebody
+    // working out whether the widget's icon verdict is stale — and "02:41 PM"
+    // with no day cannot answer that. It is a plain `toLocaleString()` rather
+    // than the shared helper because a diagnostics line elides nothing and
+    // this module cannot import (see _localAgentView).
     _widgetIconTime(ms) {
-      try { return new Date(ms).toLocaleTimeString(); } catch (_) { return String(ms); }
+      try { return new Date(ms).toLocaleString(); } catch (_) { return String(ms); }
     },
 
     // One line per pinned entry: what the widget says it holds, and

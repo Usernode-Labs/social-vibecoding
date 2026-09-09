@@ -1265,7 +1265,8 @@ test('a machine label can never escape into markup', () => {
         leaseId: 'lease_1',
         title: hostile,
         where: hostile,
-        detail: 'claude-code · last seen 10:00',
+        runtime: 'claude-code',
+        lastSeenAt: '2026-03-04T10:00:00Z',
         detachable: true,
       }],
     },
@@ -1336,7 +1337,7 @@ test('detaching is confirmed, and an already-gone lease is not an error', () => 
       phase: 'ready',
       agents: [{
         leaseId: null, title: 'staging demo', where: 'an app',
-        detail: 'claude-code · last seen 10:00', detachable: false,
+        runtime: 'claude-code', lastSeenAt: '2026-03-04T10:00:00Z', detachable: false,
       }],
     },
   );

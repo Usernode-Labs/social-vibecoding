@@ -54,7 +54,8 @@ export interface SessionRow {
   /** #1038: from the live store, not the sessions payload. */
   busy: boolean;
   pr: { url: string; number: number } | null;
-  date: string;
+  /** The raw creation instant; ./session-list.tsx stamps it (#1808). */
+  createdAt: string;
   actions: SessionAction[];
 }
 

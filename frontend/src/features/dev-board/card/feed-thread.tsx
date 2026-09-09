@@ -32,6 +32,7 @@ import { Button } from '@/components/ui/button';
 import { ArrowUpIcon } from '@/components/ui/icons';
 import { Textarea } from '@/components/ui/textarea';
 
+import { agoStamp } from '../../../lib/timestamp';
 import { useAutoGrow } from '../../../lib/use-auto-grow';
 import { useStoreState } from '../../../lib/use-store-state';
 import { swatchFor } from '../../messages/format';
@@ -57,17 +58,9 @@ function demoQS(): string {
   }
 }
 
-function relTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return '';
-  const secs = Math.max(0, Math.floor((Date.now() - then) / 1000));
-  if (secs < 60) return 'just now';
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
+// `relTime` lived here — the fifth copy of the ago ladder, and one that never
+// degraded at all: a reply from March read "180d ago". It is `agoStamp` from
+// lib/timestamp.ts now (#1808).
 
 /**
  * Turn the chat endpoint's oldest-first rows into the compact human preview.
@@ -110,6 +103,7 @@ function isMine(m: FeedThreadMessage): boolean {
  */
 export function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
   const mine = isMine(m);
+  const when = agoStamp(m.createdAt);
   return (
     <div className={mine ? 'dev-feed-msg dev-feed-msg-mine' : 'dev-feed-msg'}>
       <span className="dev-feed-msg-avatar" aria-hidden="true" style={{ backgroundColor: swatchFor(m.author) }}>
@@ -118,7 +112,7 @@ export function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
       <div className="dev-feed-msg-bubble">
         <div className="dev-feed-msg-head">
           <span className="dev-feed-msg-author">{m.author}</span>
-          <span className="dev-feed-msg-time">{relTime(m.createdAt)}</span>
+          <time className="dev-feed-msg-time" dateTime={m.createdAt} title={when.title}>{when.text}</time>
         </div>
         {/* Plain text, never markdown and never innerHTML. This is the one
             surface in the feed that renders something a person typed, and it
