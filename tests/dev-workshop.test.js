@@ -713,7 +713,7 @@ test('the strips are ordered for a returning member: since, then state, then wha
 
 // ── #1787: the row is the card, folded ───────────────────────────────
 
-test('a folded row carries the card\'s status band, in the tone the pill already had', () => {
+test('a folded row\'s last line carries the card\'s state, in the tone the pill already had, with the vote at its right', () => {
   const AppView = makeAppView();
   seed(AppView);
   // #1442's case: green checks on a proposal that no longer merges. The one
@@ -723,15 +723,19 @@ test('a folded row carries the card\'s status band, in the tone the pill already
   const html = workshopHtml(AppView);
 
   assert.match(html, /<span class="dev-ws-row-band">/,
-    'the row has a band of its own, a mini of .dev-card-badges.dev-card-status');
+    'the row has a last line of its own: the card\'s status row and facts row in one');
   assert.match(html, /class="dev-ws-row-state dev-ws-row-state-blocked"[^>]*>Conflicts with main · 2 files</,
     'the composite pill keeps its label AND spends the tone it carries');
   assert.ok(!html.includes('dev-ws-row-pill'),
     'it is no longer flattened to plain text in the grey the author\'s name wears');
 
-  // The band is clipped to one line for the same reason the dense card's is:
-  // a row that grew with its state would break the column's rhythm.
-  assert.match(CSS, /\.dev-ws-row-band \{[^}]*max-height: 18px;[^}]*overflow: hidden;/);
+  // The line is clipped to one for the same reason the dense card's rows are:
+  // a row that grew with its state would break the column's rhythm. The vote
+  // button sits at its right end, where the card's bar puts it.
+  assert.match(CSS, /\.dev-ws-row-band \{[^}]*flex-wrap: nowrap;[^}]*overflow: hidden;/);
+  assert.match(CSS, /\.dev-ws-row-band > \.dev-ws-row-trailing \{ margin-left: auto; \}/);
+  assert.match(html, /<span class="dev-ws-row-band">[\s\S]*?<span class="dev-ws-row-trailing"><button [^>]*class="dev-vote-btn"/,
+    'the vote rides the last line, not the row\'s middle-right');
   // It does NOT stand down when the row opens any more — see the open-state
   // test below. The head is identical in both sizes, and the duplicate is the
   // card's band, not this one.
@@ -740,7 +744,7 @@ test('a folded row carries the card\'s status band, in the tone the pill already
 
 test('an open row IS the Board\'s card, not a headless copy under a row', () => {
   const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
-  assert.match(unfolded, /<DevCard model=\{card\} statusLead=\{placement === 'facts' \? openBtn : undefined\}/);
+  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} \/>/);
 
   // #1799 kept the compressed row as a head and hid the card's head, meta and
   // status band so they would not repeat it — which made the open state a
@@ -968,10 +972,14 @@ test('a folded row wears the card\u2019s own edge, number and glyph, and no chev
   assert.match(CSS, /\.dev-ws-row \{[^}]*inset var\(--dev-edge-w\) 0 0 color-mix/,
     'drawn as the card draws it: an inset shadow at the same width, not a border');
 
-  // The NUMBER. A proposal's meta reads "PR#41", and the row matched only
-  // "#41", so every proposal row was missing the thing people cite it by.
-  assert.match(html, /<span class="font-mono">PR#41<\/span>/);
-  assert.match(html, /<span class="font-mono">#12<\/span>/, 'and an issue is unchanged');
+  // The NUMBER: the card's own meta line, node for node (metaLineNodes), so
+  // the row's number is the same link the card's is, "PR#41" and "#12" alike.
+  // (The row used to re-derive it and matched only "#41", so every proposal
+  // row was missing the thing people cite it by.)
+  assert.match(html, /<span class="dev-ws-row-meta"><a href="[^"]*" target="_blank" rel="noopener" class="font-mono[^"]*"[^>]*>PR#41<\/a>/);
+  assert.match(html, /<span class="dev-ws-row-meta"><a href="[^"]*" target="_blank" rel="noopener" class="font-mono[^"]*"[^>]*>#12<\/a>/, 'and an issue is unchanged');
+  assert.match(FOLD, /<span className="dev-ws-row-meta">\{metaLineNodes\(c\)\}<\/span>/, 'one builder for both sizes');
+  assert.match(FOLD, /closest\('a, button'\)\) return;/, 'a click on the link is the link\'s, not the row\'s');
 
   // The GLYPH. Same 22px box, no tile, same 18px mark as the card's.
   assert.match(CSS, /\.dev-ws-row > \.dev-card-icon \{[^}]*width: 22px;[^}]*background: transparent/);
@@ -995,13 +1003,14 @@ test('the card\u2019s facts line keeps its chips instead of flattening them', ()
     'the flattening is gone');
   assert.ok(!/\.dev-card-status > \.dev-badge \+ \.dev-badge::before/.test(CSS),
     'and so is the dot that stood in for the gap between pills');
-  assert.match(CSS, /\.dev-card-status > \.dev-badge \{\s*height: 19px;/);
-  // The band reserves two rows and clips; the taller facts row moves the cap.
-  assert.match(CSS, /max-height: 60px;/);
-  // And the controls that now share that line are sized to it. A 28px pill
-  // overflowed the cap and lost its own bottom edge — which a screenshot
-  // caught and no assertion would have.
-  assert.match(CSS, /\.dev-card-status-end > \.gc-vote-btn \{\s*height: 22px;/);
+  assert.match(CSS, /:is\(\.dev-card-status, \.dev-card-facts\) > \.dev-badge \{\s*height: 19px;/);
+  // The facts are a row of their own under the status row now, clipped at
+  // one line and tabbed in with the meta line; the one band with a break in
+  // it, and the 60px it clipped at, are gone.
+  assert.match(CSS, /\.dev-card-badges\.dev-card-facts \{[^}]*max-height: 22px;/);
+  assert.match(CSS, /\.dev-card-head:has\(> \.dev-card-icon\) ~ \.dev-card-facts \{ padding-left: 30px; \}/);
+  assert.ok(!/max-height: 60px;/.test(CSS));
+  assert.ok(!/dev-card-band-break|dev-card-status-end/.test(CSS));
 });
 
 test('Open card builds the topic screen\u2019s own sections, without navigating', () => {
@@ -1025,7 +1034,7 @@ test('Open card builds the topic screen\u2019s own sections, without navigating'
   // The sheet renders it under the card, and the toggle rides in the card's
   // own action band — the Board's seat too — rather than in a strip below it.
   const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
-  assert.match(unfolded, /actionEnd=\{placement === 'actions' \? openBtn : undefined\}/, 'the band seat, on both surfaces');
+  assert.match(unfolded, /actionEnd=\{placement \? openBtn : undefined\}/, 'the band seat, on both surfaces');
   assert.match(unfolded, /detail: placement = 'actions',/, 'and it is the default, so the Workshop passes nothing');
   assert.match(unfolded, /<TopicBodySections body=\{detail\} \/>/);
   assert.match(unfolded, /detail \? 'Close card' : 'Open card'/);
@@ -1123,29 +1132,26 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
   assert.equal(AppView._workshopView().mine.count, 2, 'a search does not hide your own work');
 });
 
-test('the facts-line seat still moves a card\u2019s own actions up beside its control, for a caller that wants it', () => {
-  // `statusLead` puts a caller's control at the right end of the facts line
-  // and the card's own pills beside it. Nothing passes one since the
-  // Workshop's open card took the band seat (so both surfaces draw one
-  // card), but the seat stays for a surface the full width of its sheet: a
-  // board card sits in a ~300px column, its actions fold into the menu by
-  // measuring the band they are in, and that measurement is meaningless
-  // inside a content-width group at the end of a wrapping line.
-  const src = CARD_TSX;
-  assert.match(src, /const inlineActions = !!statusLead;/);
-  assert.match(src, /const bandPrimary = inlineActions \? \[\] : primary;/,
-    'the board keeps its own action row');
-  assert.match(src, /\{inlineActions \? primary\.map\(\(a\) => <ActionButton key=\{a\.key\} a=\{a\} \/>\) : null\}/);
+test('the band is Open card\u2019s one seat: the facts-line seat and its inline-actions path are gone', () => {
+  // `statusLead` put a caller's control at the right end of the facts line
+  // and moved the card's own pills up beside it. Nothing passed one once the
+  // Workshop's open card took the band seat, and with the facts as a row of
+  // their own there is no line for it to end. One seat, one drawing.
+  assert.ok(!CARD_TSX.includes('statusLead'));
+  assert.ok(!CARD_TSX.includes('inlineActions'));
+  assert.ok(!CARD_TSX.includes('dev-card-status-end'));
+  assert.match(FOLD, /export type DetailPlacement = 'actions' \| false;/);
 });
 
-test('the end group is facts-line content, so it never rides the bar\u2019s line', () => {
-  // A proposal with a bar and a vote but NO chips had no band break at all,
-  // which put Open card and Preview on the bar's own line, wedged beside the
-  // vote. The break asks whether the facts line has anything on it, and the
-  // end group is something on it.
-  assert.match(CARD_TSX,
-    /const factsVisible = linked\.length > 0 \|\| kept\.length > 0 \|\| \(m\.chatCount \|\| 0\) > 0 \|\| !!statusEnd;/);
-  assert.match(CARD_TSX, /const brk = \(m\.pill \|\| voteBtn\) && factsVisible/);
+test('the status row and the facts row are two elements, not one band with a break in it', () => {
+  // The bar with the vote at its right spans the card; the facts under it
+  // are tabbed in. A dense card always emits the status row (flagged empty
+  // when it has no bar and no vote, so the sibling chain the checks walk
+  // stays intact) and the facts row only with something visible in it.
+  assert.match(CARD_TSX, /<div className="dev-card-badges dev-card-status" data-empty=\{pill \|\| voteBtn \? undefined : '1'\}>\{pill\}\{voteBtn\}<\/div>/);
+  assert.match(CARD_TSX, /const factsShown = kept\.length > 0 \|\| chatVisible;/);
+  assert.match(CARD_TSX, /const factsRow = dense && factsShown \? \(\s*<div className="dev-card-badges dev-card-facts">/);
+  assert.ok(!CARD_TSX.includes('dev-card-band-break'));
 });
 
 test('one hover for both sizes, and a facts line that is not clipped', () => {
@@ -1158,14 +1164,12 @@ test('one hover for both sizes, and a facts line that is not clipped', () => {
   assert.ok(!/\.dev-ws-row:hover \{[^}]*background:/.test(CSS), 'app.css no longer sets the fill');
   assert.match(CSS, /\.dev-ws-row:hover \{ border-color: var\(--border\); \}/, 'only the border');
 
-  // The band clips at THREE flex lines, not two: `.dev-card-band-break` is a
-  // zero-height full-width item that takes a line of its own with a row gap
-  // on each side. 30 + 4 + 0 + 4 + 22 = 60. At 56 the controls that share
-  // the facts line lost their bottom edge; at 52, before them, the flat text
-  // lost descender space and nobody noticed.
-  assert.match(CSS, /max-height: 60px;/);
-  assert.match(CSS, /\.dev-card-band-break \{ flex-basis: 100%; height: 0; \}/,
-    'the break is still what forces the wrap, and still costs a line');
+  // The card's status row clips at the bar's 30px and its facts row at one
+  // 22px line; each is its own element, so neither can clip the other's
+  // bottom edge the way the one wrapping band with a break in it once did.
+  assert.match(CSS, /\.dev-card-badges\.dev-card-status \{[^}]*max-height: 30px;/);
+  assert.match(CSS, /\.dev-card-badges\.dev-card-facts \{[^}]*max-height: 22px;/);
+  assert.ok(!/dev-card-band-break/.test(CSS), 'the break, and the line it cost, are gone');
 });
 
 test('"N more waiting on you" reveals them here, not on a filtered board', () => {
@@ -1343,7 +1347,7 @@ test('an unfolded row is the Activity entry: the sheet, the card, the slot, the 
   // entry wrapper and its three children, in the order the feed drew them.
   const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
   assert.match(unfolded, /className="dev-feed-entry dev-ws-sheet"/, 'the sheet wrapper the feed used');
-  assert.match(unfolded, /<DevCard model=\{card\} statusLead=\{placement === 'facts' \? openBtn : undefined\}/, 'the same card builder');
+  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} \/>/, 'the same card builder');
   // Minus the rail chevron: inside a fold a click on the card folds it, so the
   // Board's "this opens" mark would promise a destination the card no longer
   // has. Everything else on the model is the Board's, untouched.

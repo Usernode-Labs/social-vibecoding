@@ -154,12 +154,16 @@ test('a merged row shows a visible 💬 badge when chat_count > 0', () => {
   assert.doesNotMatch(badge, /\bhidden\b/, 'non-empty badge is visible');
 });
 
-test('a merged row hides the 💬 badge when chat_count is 0', () => {
+test('a merged row draws no 💬 badge when chat_count is 0, and one in its facts row when there are messages', () => {
   const { AppView } = makeAppView();
   AppView._mergedCtx = { majority: 2, activeUsers: 3 };
-  const html = mergedCardHtml(AppView, mergedPr({ chat_count: 0 }), 2);
-  const badge = html.match(/<span class="dev-chat-badge[^>]*data-count="0"[^>]*>/)[0];
-  assert.match(badge, /\bhidden\b/, 'empty badge is hidden');
+  // The dense card's facts row is emitted only with something visible in it,
+  // and a live bump repaints from the model — so a 0 count draws nothing,
+  // where it used to draw a hidden badge for the bump to reveal.
+  const none = mergedCardHtml(AppView, mergedPr({ chat_count: 0 }), 2);
+  assert.doesNotMatch(none, /dev-chat-badge|dev-card-facts/);
+  const some = mergedCardHtml(AppView, mergedPr({ chat_count: 2 }), 2);
+  assert.match(some, /<div class="dev-card-badges dev-card-facts"><span class="dev-chat-badge[^>]*data-count="2"/);
 });
 
 test('#dev-body tap opens the proposal topic on a bare merged-row click', async () => {

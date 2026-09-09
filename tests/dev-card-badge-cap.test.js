@@ -133,9 +133,15 @@ test('the builder drops falsy entries before the cap counts them', () => {
   assert.ok(model.badges.every(Boolean));
 });
 
-test('a null chat count omits the 💬 badge entirely', () => {
+test('a null chat count omits the 💬 badge entirely, and a 0 count draws none on the dense card', () => {
   assert.doesNotMatch(BANDS({ badges: CHIPS(1), chatCount: null }), /dev-chat-badge/);
-  assert.match(BANDS({ badges: CHIPS(1), chatCount: 0 }), /dev-chat-badge/);
+  // The dense card's facts row is emitted only with something visible in
+  // it, and a live bump repaints from the model, so no hidden 0 waits there.
+  assert.doesNotMatch(BANDS({ badges: CHIPS(1), chatCount: 0 }), /dev-chat-badge/);
+  assert.match(BANDS({ badges: CHIPS(1), chatCount: 2 }), /dev-card-facts"><span class="marker">1<\/span><span class="dev-chat-badge/,
+    'a real count rides the facts row, after the chips');
+  // The detail head keeps drawing it at 0, hidden, as it always has.
+  assert.match(BANDS({ dense: false, badges: CHIPS(1), chatCount: 0 }), /dev-chat-badge dev-badge hidden/);
 });
 
 test('the detail head opts OUT of the cap (every chip must be reachable there)', () => {

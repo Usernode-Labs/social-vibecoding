@@ -48,7 +48,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 
-import { Badge, CardIcon, DevCard, edgeFor, VoteButton } from './dev-card';
+import { Badge, CardIcon, DevCard, edgeFor, metaLineNodes, VoteButton } from './dev-card';
 import { FeedThread } from './feed-thread';
 import type { ActionSpec, BadgeSpec, DevCardModel, ListRow } from './model';
 import { TopicBodySections } from '../topic/topic-head';
@@ -63,7 +63,7 @@ export type CardRow = Extract<ListRow, { t: 'card' }>;
  * band, the actions staying where they are (the Board's columns). `false`:
  * no toggle.
  */
-export type DetailPlacement = 'facts' | 'actions' | false;
+export type DetailPlacement = 'actions' | false;
 /**
  * What "Open card" does: opens the item's sections in place under the card
  * (the Workshop), or goes to the item's own page (the Board).
@@ -118,36 +118,15 @@ export function openHref(slug: string, card: DevCardModel): string | null {
   return null;
 }
 
-/**
- * The card's number from its meta line, when it has one.
- *
- * An issue's reads `#1575` and a proposal's reads `PR#1540`, and this used to
- * match only the first — so every proposal row on the lander was missing the
- * one identifier people actually cite it by, while the card it folds from
- * carried it. The two sizes disagreeing about whether an item HAS a number
- * is the kind of difference that makes them read as two objects.
- */
-export function numberOf(card: DevCardModel): string | null {
-  for (const m of card.meta) {
-    if (m.t === 'link' && /^(?:PR)?#\d+$/.test(m.s)) return m.s;
-  }
-  return null;
-}
-
-/** The author from the meta line: the first plain text part. */
-export function authorOf(card: DevCardModel): string | null {
-  for (const m of card.meta) if (m.t === 'text') return m.s;
-  return null;
-}
-
 /** How many of the card's own chips ride along on a folded row. */
 export const ROW_BADGE_MAX = 3;
 
 /**
- * The folded row's status band — a MINI of the dense card's own
- * (`.dev-card-badges.dev-card-status`), built from the same two model fields,
- * and clipped to one line for the same reason: a band that wrapped would push
- * every row under it out of rhythm.
+ * The folded row's last line: the card's status row and facts row in one —
+ * a chip of the composite pill's state, the state chips, the message count,
+ * and the vote button at the right end, where the card's bar puts it. One
+ * line, clipped, for the same reason the card's rows are: a band that
+ * wrapped would push every row under it out of rhythm.
  *
  * The composite pill used to be flattened to `pill.state.label` and printed in
  * `.dev-ws-row-meta`, in the same muted grey the author's name wears — so
@@ -171,19 +150,21 @@ export function tagsOf(card: DevCardModel): BadgeSpec[] {
   return (card.badges || []).filter((b) => b && b.t === 'attr');
 }
 
-export function RowBand({ card }: { card: DevCardModel }): ReactNode {
+export function RowBand({ card, trailing }: { card: DevCardModel; trailing?: ReactNode }): ReactNode {
   const s = card.pill?.state || null;
-  const linked = card.linked || [];
-  // The state chips only: the tags are on the meta line (see FoldedRow).
-  const chips = (card.badges || []).filter((b) => b && b.t !== 'attr').slice(0, ROW_BADGE_MAX);
-  if (!s && !linked.length && !chips.length) return null;
+  // The state chips only: the tags and the linked-issue chips are the meta
+  // line's (metaLineNodes), on the row as on the card.
+  const chips = (card.badges || []).filter((b) => b && b.t !== 'attr' && b.t !== 'issueChip').slice(0, ROW_BADGE_MAX);
+  const count = card.chatCount || 0;
+  if (!s && !chips.length && !count && !trailing) return null;
   return (
     <span className="dev-ws-row-band">
       {s ? (
         <span className={`dev-ws-row-state dev-ws-row-state-${s.tone}`} title={s.title}>{s.label}</span>
       ) : null}
-      {linked.map((b) => <Badge key={b.key} b={flatBadge(b)} />)}
       {chips.map((b) => <Badge key={b.key} b={flatBadge(b)} />)}
+      {count ? <Badge b={{ t: 'chat', key: 'chat', count }} /> : null}
+      {trailing ? <span className="dev-ws-row-trailing" onClick={(e) => e.stopPropagation()}>{trailing}</span> : null}
     </span>
   );
 }
@@ -194,23 +175,22 @@ export function RowBand({ card }: { card: DevCardModel }): ReactNode {
  * leaves it alone because it sits inside a `.dev-ws-rowwrap` — see the
  * header.
  *
- * A `div` with the button role rather than a `<button>`, because the vote
- * strip's rows carry the card's Vote button INSIDE them (`trailing`), and
- * a button cannot contain a button. The trailing control stops its clicks
- * from reaching the row; Enter and Space on the row itself toggle it.
+ * A `div` with the button role rather than a `<button>`, because the row
+ * carries real controls INSIDE it — the vote button, the number's link, the
+ * tag chips — and a button cannot contain a button. A click on any of them
+ * does its own job and does not toggle the row; Enter and Space on the row
+ * itself toggle it.
  */
 export function FoldedRow({
   row, open, onToggle,
 }: { row: CardRow; open: boolean; onToggle: () => void }): ReactNode {
   const c = row.card;
-  const n = numberOf(c);
-  const by = authorOf(c);
   // The vote control belongs to the ROW, on every row that has one — not just
   // the ones in the vote strip. It used to ride in the dense card's status
   // band for a row inside a theme, which meant opening that row moved the
   // control from nowhere to somewhere while "Closes #N" moved the other way:
-  // two objects, which is what this stops being. Now the head is identical
-  // folded and open, and nothing travels.
+  // two objects, which is what this stops being. It sits at the right end of
+  // the row's last line, which is where the card's bar puts it.
   const specs = voteSpecs(c);
   const trailing = specs ? <VoteButton yes={specs.yes} no={specs.no} /> : null;
   return (
@@ -226,7 +206,12 @@ export function FoldedRow({
       data-edge={edgeFor(c)}
       data-ws-row={row.key}
       {...itemHooks(c)}
-      onClick={onToggle}
+      onClick={(e) => {
+        // The row's own controls do their own job: the number's link, a tag
+        // chip, a "Closes #N" chip. Only the surface around them toggles.
+        if ((e.target as HTMLElement | null)?.closest('a, button')) return;
+        onToggle();
+      }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return;
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); }
@@ -239,15 +224,11 @@ export function FoldedRow({
           {row.fresh ? <span className="dev-ws-new">new</span> : null}
           {row.placing ? <span className="dev-ws-placing" title="Being placed into a category">placing…</span> : null}
         </span>
-        <span className="dev-ws-row-meta">
-          {n ? <span className="font-mono">{n}</span> : null}
-          {by ? <span>{by}</span> : null}
-          {tagsOf(c).map((b) => <Badge key={b.key} b={flatBadge(b)} />)}
-        </span>
-        <RowBand card={c} />
+        {/* The card's own meta line, node for node: number · author · when,
+            the tags, the linked-issue chips. */}
+        <span className="dev-ws-row-meta">{metaLineNodes(c)}</span>
+        <RowBand card={c} trailing={trailing} />
       </span>
-      {c.chatCount ? <span className="dev-ws-row-chat" title={`${c.chatCount} replies`}>{`💬 ${c.chatCount}`}</span> : null}
-      {trailing ? <span className="dev-ws-row-trailing" onClick={(e) => e.stopPropagation()}>{trailing}</span> : null}
       {/* No chevron. It promises a destination, and this row has none: the
           whole surface is a toggle that unfolds the card in place. A theme
           header still wears one, because that is what it does. */}
@@ -314,7 +295,7 @@ export function UnfoldedRow({
   // widths: the pills stay where the column has always drawn them and the
   // band's own measurement folds them into the menu around the toggle. So
   // it is the default now and the two surfaces draw one card, which is the
-  // point of the fold. `'facts'` remains for a caller that wants the other.
+  // point of the fold.
   //
   // The one thing the fold still cannot do: the item's own page, for a link
   // somebody wants to share. On the Workshop it is the link under the sheet;
@@ -337,7 +318,7 @@ export function UnfoldedRow({
   );
   return (
     <div className="dev-feed-entry dev-ws-sheet" data-ws-sheet={row.key}>
-      <DevCard model={card} statusLead={placement === 'facts' ? openBtn : undefined} actionEnd={placement === 'actions' ? openBtn : undefined} />
+      <DevCard model={card} actionEnd={placement ? openBtn : undefined} />
       {detail ? (
         <div className="dev-ws-detail" data-ws-detail={row.key}>
           <TopicBodySections body={detail} />

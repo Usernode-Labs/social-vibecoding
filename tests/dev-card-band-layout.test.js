@@ -216,44 +216,54 @@ test('#1139: a bare issue card — nothing voted, claimed or said — is flagged
   const model = AppView._issueCardModel(ISSUE({ chatCount: 0 }));
   const html = cardHtml(model);
   const open = html.indexOf('class="dev-card-badges dev-card-status"');
-  assert.ok(open > 0, 'the band is still in the DOM');
+  assert.ok(open > 0, 'the status row is still in the DOM');
   assert.match(html.slice(open, open + 120), /data-empty="1"/);
-  // And it really is visually blank: the only child is the hidden 💬 badge,
-  // which is WHY emptiness cannot be decided from the markup.
+  // And it really is blank — no bar, no vote — and there is no facts row
+  // under it either: a 0 count draws no badge on the dense card, so the
+  // row that would hold it is not emitted at all.
   const band = html.slice(open, html.indexOf('<div class="gc-card-actions"', open));
-  assert.match(band, /dev-chat-badge[^"]*hidden/,
-    'the 0-count badge ships hidden — a string/`:empty` test would never fire');
-  assert.doesNotMatch(band, /dev-status-pill-block|Closes #/);
+  assert.doesNotMatch(band, /dev-card-facts|dev-chat-badge|dev-status-pill-block|Closes #/);
 });
 
-test('#1139: a 0 chat count is not content, a real one is', () => {
+test('#1139: a 0 chat count is not content, a real one is a facts row', () => {
   const AppView = makeAppView();
   const zero = BANDS({ chatCount: 0 });
-  assert.match(zero, /data-empty="1"/, '💬 0 is invisible, so the band is empty');
+  assert.match(zero, /data-empty="1"/, '💬 0 is invisible: the status row (no bar, no vote) is flagged');
+  assert.doesNotMatch(zero, /dev-card-facts|dev-chat-badge/, 'and no facts row is drawn to hold a hidden badge');
   const one = BANDS({ chatCount: 1 });
-  assert.doesNotMatch(one, /data-empty/, 'one message fills the band');
-  assert.match(one, /dev-chat-badge/);
+  assert.match(one, /<div class="dev-card-badges dev-card-facts"><span class="dev-chat-badge/, 'one message is a facts row');
+  assert.match(one, /dev-card-status" data-empty="1"/,
+    'the status row stays bare — the count is a fact under the bar, not the bar');
   // null/undefined mean "this card type has no thread badge at all".
-  assert.match(BANDS({ chatCount: null }),
-    /data-empty="1"/);
+  const none = BANDS({ chatCount: null });
+  assert.match(none, /data-empty="1"/);
+  assert.doesNotMatch(none, /dev-card-facts/);
 });
 
-test('#1139: any single visible pill keeps the band reserved', () => {
+test('#1139: each thing a card can say has one home — the bar in the status row, the chips in the facts row, the linkage on the meta line', () => {
   const AppView = makeAppView();
+  const bar = BANDS({ pill: { state: { tier: 6, key: 't', label: '2/3', tone: 'progress', yes: 2, no: 0, majority: 3, advisory: 0, lock: false }, inline: false } });
+  assert.doesNotMatch(bar, /data-empty/, 'a state bar fills the status row');
+  assert.doesNotMatch(bar, /dev-card-facts/);
+  const closes = BANDS({ linked: [{ t: 'issueChip', key: 'i4', n: 4, prefix: 'Closes ', cls: 'dev-badge', title: 'i' }] });
+  assert.match(closes, /<div class="dev-card-meta">[\s\S]*?data-issue-chip="4"[\s\S]*?<\/div><div class="dev-card-badges dev-card-status" data-empty="1">/,
+    'Closes #N is the meta line\'s — what the item IS — and leaves the status row bare');
+  assert.doesNotMatch(closes, /dev-card-facts/);
   const cases = {
-    'a state bar': { pill: { state: { tier: 6, key: 't', label: '2/3', tone: 'progress', yes: 2, no: 0, majority: 3, advisory: 0, lock: false }, inline: false } },
-    'a Closes-#N pill': { linked: [{ t: 'issueChip', key: 'i4', n: 4, prefix: 'Closes ', cls: 'dev-badge', title: 'i' }] },
     'one metadata chip': { badges: [CHIP('High')] },
     'a work-state chip': { badges: [CHIP('Paused · maya', { 'data-work-state': 'paused' })] },
   };
   for (const [what, over] of Object.entries(cases)) {
-    assert.doesNotMatch(BANDS(over), /data-empty/, `${what} is content`);
+    const html = BANDS(over);
+    assert.match(html, /<div class="dev-card-badges dev-card-facts">/, `${what} is a facts row`);
+    assert.match(html, /dev-card-status" data-empty="1"/, `${what} does not fill the status row`);
   }
   // A chip that has nothing to say is dropped by the BUILDER (every chip spec
   // returns null and the builders `.filter(Boolean)`), so an empty list is
-  // what reaches the band — which is what makes this check enough.
-  assert.match(BANDS({ badges: [] }),
-    /data-empty="1"/);
+  // what reaches the card — which is what makes this check enough.
+  const bare = BANDS({ badges: [] });
+  assert.match(bare, /data-empty="1"/);
+  assert.doesNotMatch(bare, /dev-card-facts/);
 });
 
 test('#1139: the non-dense head omits a row holding only a hidden badge', () => {
@@ -282,7 +292,7 @@ test('#1139: bumpThreadBadge clears the flag when it reveals the badge', () => {
   assert.match(body, /_repaintCards\(\)/, 'it repaints from the bumped cache');
   assert.doesNotMatch(body, /classList\./, 'no in-place class write');
   assert.doesNotMatch(body, /removeAttribute\('data-empty'\)/, 'nor an in-place flag write');
-  assert.match(CARD_TSX, /statusHasContent/, 'the flag is computed at render');
+  assert.match(CARD_TSX, /data-empty=\{pill \|\| voteBtn \? undefined : '1'\}/, 'the flag is computed at render');
 });
 
 test('bands are SIBLINGS of the head, so only the head is indented', () => {
@@ -300,32 +310,36 @@ test('bands are SIBLINGS of the head, so only the head is indented', () => {
     'nothing but the title shares the icon\'s row');
 });
 
-// ── Band 1: the two-line title clamp ─────────────────────────────────────
+// ── Band 1: the title wraps in full ──────────────────────────────────────
 
-test('a board title carries the clamp class AND its full text as `title`', () => {
+test('a board title wraps in full: no clamp class, and no tooltip standing in for one', () => {
+  // It clamped at two lines (with the full text in a `title` tooltip) so a
+  // column of open cards kept one rhythm. A column holds one open card among
+  // folded rows now, and the row's title has always wrapped in full: the
+  // card's does the same, so the two sizes never disagree about the name.
   const AppView = makeAppView();
   const long = 'A deliberately enormous proposal title that runs well past two '
-    + 'lines in a narrow kanban column so the clamp has something to bite on';
+    + 'lines in a narrow kanban column so a clamp would have something to bite on';
   const model = AppView._proposalCardModel(PR({ pr_title: long }));
   const html = cardHtml(model);
-  assert.match(html, /class="dev-card-title dev-card-title-clamp" title="/,
-    'the clamped element itself carries the tooltip');
-  assert.ok(html.includes(long), 'the full title is still in the DOM, un-truncated');
+  assert.match(html, /<div class="dev-card-title">/, 'the shared title cell, unclamped');
+  assert.doesNotMatch(html, /dev-card-title-clamp/);
+  assert.ok(!/class="dev-card-title"[^>]*\stitle="/.test(html), 'no tooltip: the text is all there');
+  assert.ok(html.includes(long), 'the full title is in the DOM');
 });
 
-test('every board card type clamps its title', () => {
+test('every board card type wraps its title in full', () => {
   const AppView = makeAppView();
   for (const [kind, html] of Object.entries(everyCard(AppView))) {
-    assert.match(html, /dev-card-title dev-card-title-clamp/,
-      `${kind} card should clamp`);
-    assert.match(html, /dev-card-title-clamp"[^>]*title="/,
-      `${kind} card's clamped title should carry a tooltip`);
+    assert.match(html, /<div class="dev-card-title"[^>]*>/, `${kind} card uses the shared title cell`);
+    assert.doesNotMatch(html, /dev-card-title-clamp/, `${kind} card does not clamp`);
+    assert.ok(!/class="dev-card-title"[^>]*\stitle="/.test(html), `${kind} card carries no tooltip`);
   }
 });
 
 // ── Band 3: one merged status band ───────────────────────────────────────
 
-test('the state bar and the Closes pills share ONE band; the chips ride the meta line', () => {
+test('the status row holds the bar; the Closes pills and the chips ride the meta line', () => {
   const AppView = makeAppView();
   const model = AppView._proposalCardModel(PR({
     linked_issues: [4],
@@ -333,35 +347,38 @@ test('the state bar and the Closes pills share ONE band; the chips ride the meta
   }));
   const html = cardHtml(model);
   const open = html.indexOf('class="dev-card-badges dev-card-status"');
-  assert.ok(open > 0, 'the merged band exists');
+  assert.ok(open > 0, 'the status row exists');
   const band = html.slice(open, html.indexOf('<div class="gc-card-actions"', open));
-  assert.match(band, /dev-status-pill-block/, 'state bar in the band');
-  assert.match(band, /Closes #4/, 'linked-issue pill in the same band');
-  // The metadata chips are TAGS, not states: since #1787 they ride the meta
-  // line beside the number and the author, which wraps for them, on the
-  // open card and on the folded row alike.
-  assert.doesNotMatch(band, /High/, 'the priority chip is not in the band');
+  assert.match(band, /dev-status-pill-block/, 'state bar in the status row');
+  assert.doesNotMatch(band, /Closes #4|High/, 'and nothing that is not a state');
+  // The metadata chips are TAGS and the linkage is what the item IS: since
+  // #1787 both ride the meta line beside the number and the author, which
+  // wraps for them, on the open card and on the folded row alike.
   const meta = html.slice(html.indexOf('class="dev-card-meta"'), open);
-  assert.match(meta, /dev-badge[^>]*>[\s\S]*?High/, 'it is on the meta line');
-  // Only ONE status band per card: .dev-status-row is retired, and a second
-  // full-width row is exactly what the merge removed.
+  assert.match(meta, /dev-badge[^>]*>[\s\S]*?High/, 'the priority chip is on the meta line');
+  assert.match(meta, /Closes #4/, 'and so is the linked-issue chip');
+  // Only ONE status row per card: .dev-status-row is retired, and the
+  // band break that once folded the facts under the bar inside one band is
+  // gone too — the facts are a row of their own.
   assert.equal(html.split('dev-card-badges dev-card-status').length - 1, 1);
-  assert.doesNotMatch(html, /dev-status-row/);
+  assert.doesNotMatch(html, /dev-status-row|dev-card-band-break/);
 });
 
-test('Closes-#N pills left the META line for the status band', () => {
+test('Closes-#N rides the META line as a tag, beside the number', () => {
+  // It left the meta line for the status band when the meta line was one
+  // truncating line and a pill in it was the first thing cut. The meta line
+  // wraps now, and "what this closes" is what the item is, like who it is
+  // assigned to — so it sits with the tags, under the title, at both sizes.
   const AppView = makeAppView();
   const model = AppView._proposalCardModel(PR({ linked_issues: [4] }));
   const html = cardHtml(model);
   const meta = html.slice(html.indexOf('class="dev-card-meta"'),
     html.indexOf('class="dev-card-badges dev-card-status"'));
-  assert.doesNotMatch(meta, /Closes #4/,
-    'the linkage is a STATE, and the band is where states go; the meta line '
-    + 'carries the number, the author and the tags');
-  assert.match(html.slice(html.indexOf('dev-card-status')), /Closes #4/);
+  assert.match(meta, /Closes #4/);
+  assert.doesNotMatch(html.slice(html.indexOf('dev-card-status')), /Closes #4/);
 });
 
-test('the state bar LEADS the band and flexes rather than filling it', () => {
+test('the state bar LEADS the status row and flexes rather than filling it', () => {
   const AppView = makeAppView();
   const model = AppView._proposalCardModel(PR({
     linked_issues: [4],
@@ -369,9 +386,11 @@ test('the state bar LEADS the band and flexes rather than filling it', () => {
   }));
   const html = cardHtml(model);
   const band = html.indexOf('dev-card-badges dev-card-status');
-  assert.ok(html.indexOf('dev-status-pill-block', band) < html.indexOf('Closes #4', band),
-    'state first — it is the card\'s headline, and the band clips at its end');
-  assert.ok(html.indexOf('High') < band, 'the tag that used to trail it sits on the meta line above');
+  assert.match(html.slice(band, html.indexOf('<div class="gc-card-actions"', band)),
+    /^dev-card-badges dev-card-status"><span class="[^"]*dev-status-pill-block/,
+    'the bar leads the row — it is the card\'s headline state');
+  assert.ok(html.indexOf('High') < band && html.indexOf('Closes #4') < band,
+    'the tag and the linkage that used to trail it sit on the meta line above');
 });
 
 // ── dense: false — the one caller that opts out ──────────────────────────
@@ -393,12 +412,11 @@ test('the composer\'s dense flag is what decides all of it', () => {
   const AppView = makeAppView();
   const dense = BANDS();
   const loose = BANDS({ dense: false });
-  assert.match(dense, /dev-card-title-clamp/);
+  assert.doesNotMatch(dense, /dev-card-title-clamp/, 'no clamp at either size');
   assert.match(dense, /dev-card-meta/);
   assert.match(dense, /dev-card-status/);
   assert.match(dense, /gc-card-actions/);
   // Nothing to show → nothing rendered, exactly as before the four bands.
-  assert.doesNotMatch(loose, /dev-card-title-clamp/);
   assert.doesNotMatch(loose, /dev-card-meta/);
   assert.doesNotMatch(loose, /dev-card-badges/);
   assert.doesNotMatch(loose, /gc-card-actions/);
@@ -412,17 +430,11 @@ function rule(selector) {
   return CSS.slice(i, CSS.indexOf('\n}', i));
 }
 
-test('.dev-card-title-clamp clamps at two lines and reserves the second', () => {
-  const r = rule('.dev-card-title-clamp');
-  assert.match(r, /-webkit-line-clamp: 2/);
-  // -webkit-line-clamp is inert without both of these.
-  assert.match(r, /display: -webkit-box/);
-  assert.match(r, /-webkit-box-orient: vertical/);
-  assert.match(r, /overflow: hidden/);
-  const min = parseFloat(r.match(/min-height:\s*([\d.]+)px/)[1]);
-  // Two lines of the 13.5px/1.35 card title.
-  assert.ok(Math.abs(min - 2 * 1.35 * 13.5) < 0.5,
-    `min-height should reserve exactly two title lines, got ${min}px`);
+test('the title has no clamp rule left at either size', () => {
+  // The two-line clamp and its reserved second line are gone with the class:
+  // a rule that outlived its markup would be the next thing to fight.
+  assert.ok(!/dev-card-title-clamp/.test(CSS), 'no .dev-card-title-clamp rule in app.css');
+  assert.ok(!CARD_TSX.includes('dev-card-title-clamp'), 'and no such class rendered');
 });
 
 test('the meta band reserves — and caps — its single line', () => {
@@ -471,15 +483,17 @@ test('#1139: a flagged-empty status band is hidden, not merely collapsed', () =>
   // THE regression this whole design exists to prevent: the action band's cap
   // is an adjacent-sibling rule, so the flagged band must stay in the DOM.
   // display:none preserves sibling adjacency; removing the node would not.
-  const cap = rule('.dev-card-status + .gc-card-actions');
+  // The facts row may sit between the status row and the band, so the cap
+  // names either as the band's predecessor.
+  const cap = rule(':is(.dev-card-status, .dev-card-facts) + .gc-card-actions');
   assert.match(cap, /max-height: 24px/, 'the action-band cap still exists…');
   assert.match(CARD_TSX,
-    /className="dev-card-badges dev-card-status" data-empty=\{statusHasContent \|\| statusEnd \? undefined : '1'\}/,
-    '…and the card still emits the band either way, flag or no flag');
+    /className="dev-card-badges dev-card-status" data-empty=\{pill \|\| voteBtn \? undefined : '1'\}/,
+    '…and the card still emits the status row either way, flag or no flag');
 });
 
-test('the action band is capped only where it follows a dense status band', () => {
-  const r = rule('.dev-card-status + .gc-card-actions');
+test('the action band is capped only where it follows a dense status or facts row', () => {
+  const r = rule(':is(.dev-card-status, .dev-card-facts) + .gc-card-actions');
   const min = parseFloat(r.match(/min-height:\s*(\d+)px/)[1]);
   const max = parseFloat(r.match(/max-height:\s*(\d+)px/)[1]);
   assert.equal(min, max, 'reserved AND capped');
@@ -499,7 +513,7 @@ test('the kudos pill hugs its wrapper inside the capped action band', () => {
   // sized by a LINE box, so the span measured 25.5px and its font descender
   // pushed the button 1.5px down — clipped through its own bottom border in a
   // band with zero slack. inline-flex sizes the span by its child instead.
-  const r = rule('.dev-card-status + .gc-card-actions .kudos-wrap');
+  const r = rule(':is(.dev-card-status, .dev-card-facts) + .gc-card-actions .kudos-wrap');
   assert.match(r, /display: inline-flex/);
   assert.match(r, /align-items: center/);
   // Scoped to the dense band: the detail view's kudos button sits in an
@@ -523,7 +537,7 @@ test('the band\'s controls: the hamburger takes the right edge, Preview after it
   // The dead rule from an older placement must be gone too: nothing in the
   // band pushes a trailing icon pill.
   assert.doesNotMatch(CSS, /gc-card-actions > \.gc-vote-btn-icon/);
-  const band = rule('.dev-card-status + .gc-card-actions');
+  const band = rule(':is(.dev-card-status, .dev-card-facts) + .gc-card-actions');
   assert.doesNotMatch(band, /justify-content/,
     'the band itself stays a plain left-aligned flex row');
 });

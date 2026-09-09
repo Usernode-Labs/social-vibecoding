@@ -103,12 +103,15 @@ test('every board card draws folded: one row per card, no card face, the item’
   // The hooks the checks and the lookups name an item by ride on the row.
   assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-ws-row="issue:1575"[^>]*data-issue-row="1575"/);
   assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-ws-row="proposal:34"[^>]*data-proposal-row="34"/);
-  // And the row keeps the card's edge and number, as on the Workshop.
+  // And the row keeps the card's edge and number, as on the Workshop — the
+  // number as the card's own link, from the card's own meta line.
   assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-edge="[a-z]+"[^>]*data-ws-row="issue:1575"/);
-  assert.match(html, /<span class="font-mono">#1575<\/span>/);
-  assert.match(html, /<span class="font-mono">PR#1540<\/span>/);
-  // The proposal's vote rides on its row, as the Workshop's rows carry it.
-  assert.match(html, /data-ws-row="proposal:34"[\s\S]*?<span class="dev-ws-row-trailing"><button [^>]*class="dev-vote-btn"/);
+  assert.match(html, /<span class="dev-ws-row-meta"><a href="[^"]*"[^>]*class="font-mono[^"]*"[^>]*>#1575<\/a>/);
+  assert.match(html, /<span class="dev-ws-row-meta"><a href="[^"]*"[^>]*class="font-mono[^"]*"[^>]*>PR#1540<\/a> · evan · /,
+    'number · author · when, dotted as the card writes them');
+  // The proposal's vote rides on its row's LAST line, at the right end, as
+  // the Workshop's rows carry it and as the card's bar puts it.
+  assert.match(html, /data-ws-row="proposal:34"[\s\S]*?<span class="dev-ws-row-band">[\s\S]*?<span class="dev-ws-row-trailing"><button [^>]*class="dev-vote-btn"/);
 });
 
 test('?cards=open draws every card at full size, hooks intact: the board as it was', () => {
@@ -189,7 +192,7 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(FOLD, /mode === 'page' \? \(\s*href \? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a> : undefined\s*\)/);
   assert.match(FOLD, /\{href && mode === 'inline' \? \(\s*<div className="dev-ws-sheet-actions">/, 'the line under the sheet is the Workshop\u2019s');
   assert.match(FOLD, /detail: placement = 'actions',/, 'and the Workshop, passing nothing, gets the same seat');
-  assert.match(FOLD, /<DevCard model=\{card\} statusLead=\{placement === 'facts' \? openBtn : undefined\} actionEnd=\{placement === 'actions' \? openBtn : undefined\} \/>/);
+  assert.match(FOLD, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} \/>/);
   // The seat itself: DevCard renders `actionEnd` after its own pills and
   // before the hamburger and Preview, and the fold measurement counts all
   // three as fixed children (no data-fold).
@@ -384,12 +387,16 @@ test('the tags ride the meta line beside the number, on the open card and the fo
   // Priority, assignee and category are labels, not states: the status
   // band keeps the states (the pill, the work-state chip, Closes #N, the
   // chat count) and the meta line takes the tags, wrapping for them.
-  assert.match(CARD, /const tags = chips\.filter\(\(b\) => b\.t === 'attr'\);/);
-  assert.match(CARD, /const states = chips\.filter\(\(b\) => b\.t !== 'attr'\);/);
-  assert.match(CARD, /\{metaNodes\}\s*\{tags\.map\(\(b\) => <Badge key=\{b\.key\} b=\{b\} \/>\)\}/);
-  assert.match(FOLD_SRC, /export function tagsOf\(card: DevCardModel\): BadgeSpec\[\]/);
-  assert.match(FOLD_SRC, /\{tagsOf\(c\)\.map\(\(b\) => <Badge key=\{b\.key\} b=\{flatBadge\(b\)\} \/>\)\}/);
-  assert.match(FOLD_SRC, /filter\(\(b\) => b && b\.t !== 'attr'\)\.slice\(0, ROW_BADGE_MAX\)/, 'the row band keeps the states');
+  // ONE builder draws the line at both sizes, so they cannot drift: the
+  // ' · '-joined parts, then the tags, then the linked-issue chips.
+  assert.match(CARD, /export function metaLineNodes\(m: DevCardModel\): ReactNode\[\]/);
+  assert.match(CARD, /filter\(\(b\) => b && b\.t === 'attr'\)\) nodes\.push/);
+  assert.match(CARD, /for \(const b of m\.linked \|\| \[\]\) nodes\.push/);
+  assert.match(CARD, /filter\(\(b\) => b && b\.t === 'issueChip'\)\) nodes\.push/, 'a session\u2019s #N chips too');
+  assert.match(CARD, /<div className="dev-card-meta">\{metaNodes\}<\/div>/);
+  assert.match(CARD, /const states = chips\.filter\(\(b\) => b\.t !== 'attr' && b\.t !== 'issueChip'\);/);
+  assert.match(FOLD_SRC, /<span className="dev-ws-row-meta">\{metaLineNodes\(c\)\}<\/span>/);
+  assert.match(FOLD_SRC, /filter\(\(b\) => b && b\.t !== 'attr' && b\.t !== 'issueChip'\)\.slice\(0, ROW_BADGE_MAX\)/, 'the row\u2019s last line keeps the states');
   // Rendered: the fixture issue has an assignee, so its chip sits on the
   // meta line at both sizes and its status band holds nothing.
   const open = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
@@ -400,14 +407,15 @@ test('the tags ride the meta line beside the number, on the open card and the fo
   assert.match(card, /<div class="dev-card-badges dev-card-status" data-empty="1">/, 'and nothing left in the band');
   const folded = kanbanHtml(makeAppView());
   const row = folded.slice(folded.indexOf('data-issue-row="1575"'), folded.indexOf('data-proposal-row="34"'));
-  assert.match(row, /<span class="dev-ws-row-meta"><span class="font-mono">#1575<\/span>[\s\S]*?<button(?=[^>]*attr-chip)[^>]*data-attr-field="assignee"/,
+  assert.match(row, /<span class="dev-ws-row-meta"><a href="[^"]*"[^>]*>#1575<\/a><button(?=[^>]*attr-chip)[^>]*data-attr-field="assignee"/,
     'and on the row, after the number');
   assert.ok(!/dev-ws-row-band[\s\S]*?attr-chip/.test(row), 'never in the row’s state band');
   // The meta line may wrap for them: the one-line clamp is gone.
   const m = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .dev-card-meta {');
   assert.ok(m > 0);
   assert.match(CSS.slice(m, CSS.indexOf('\n}', m)), /white-space: normal; overflow: visible;/);
-  assert.match(CSS, /\.dev-ws-row-meta \{ display: flex; flex-wrap: wrap;/);
+  assert.match(CSS, /\.dev-ws-row-meta \{ display: block; font-size: 12\.5px; line-height: 21px;[^}]*white-space: normal; \}/,
+    'the row\u2019s meta line wears the card\u2019s sizes and wraps as it does');
 });
 
 test('the open card’s meta line is tabbed in under the title, as the row’s is, and sits snug beneath it', () => {
@@ -418,10 +426,13 @@ test('the open card’s meta line is tabbed in under the title, as the row’s i
   assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head \{ gap: 8px;/);
   assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head > \.dev-card-icon \{\n  width: 22px;/);
   assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) \+ \.dev-card-meta \{ padding-left: 30px; \}/);
-  // The title still clamps at two lines but no longer reserves the second:
-  // that lined up the bands of a column of open cards, and a column holds
-  // one open card among folded rows now.
-  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-title-clamp \{ min-height: 0; \}/);
+  // The title neither clamps nor reserves a second line any more: the
+  // row's has always wrapped in full, and the card's does the same.
+  assert.ok(!/dev-card-title-clamp/.test(CSS));
+  // And the facts row under the status row is tabbed in like the meta line,
+  // as the row's last line is; the status row and the band span the card.
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) ~ \.dev-card-facts \{ padding-left: 30px; \}/);
+  assert.ok(!/\.dev-card-head:has\(> \.dev-card-icon\) ~ \.dev-card-status \{/.test(CSS), 'the bar row is not indented');
   // Folded rows sit 4px apart, as the Workshop's do.
   assert.match(CSS, /#dev-kanban \.dev-kanban-col > \.space-y-2 > :not\(\[hidden\]\) ~ :not\(\[hidden\]\) \{ margin-top: 4px; \}/);
 });
@@ -442,5 +453,22 @@ test('Open card never answers a tap with nothing: the Board links out, and an in
   const html = kanbanHtml(AppView);
   for (const kind of ['issues/1575', 'proposals/34']) {
     assert.match(html, new RegExp(`<a class="gc-vote-btn dev-ws-open-btn" href="#app/demo-app/dev/${kind}"`), `${kind}: a real link`);
+  }
+});
+
+test('the declared checks follow the two rows and the row’s last line', () => {
+  // Each re-pointed check names the seat that moved: the work-state chip in
+  // the facts row, the vote at the row's bottom-right, Closes #N on the meta
+  // line, the facts row under the status row, and the unclamped title.
+  const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
+  assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
+  assert.match(byName(/the vote at each row.s bottom-right/).expectSelector, /\.dev-ws-row-main > \.dev-ws-row-band > \.dev-ws-row-trailing > button\.dev-vote-btn/);
+  assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
+  assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
+  assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);
+  assert.match(byName(/the vote is one button beside the state bar/).expectSelector, /\.dev-card-status > \.dev-status-pill-block \+ \.dev-vote-btn/, 'the bar row keeps its check as it was');
+  for (const t of DAPP.tests) {
+    assert.ok(!/dev-card-band-break|dev-card-status-end|dev-ws-row-chat/.test(t.expectSelector || ''),
+      `${t.name}: no check names a seat that no longer exists`);
   }
 });
