@@ -765,7 +765,7 @@ test('an open row IS the Board\'s card, not a headless copy under a row', () => 
   // card's model for that reason. The handler now stands aside for any click
   // inside a fold wrapper instead, so the model keeps the hooks the checks
   // select on, at BOTH sizes, and the Board's columns can fold the same way.
-  assert.match(APP_VIEW_SRC, /if \(e\.target\.closest\('\.dev-ws-rowwrap'\)\) return;/);
+  assert.match(APP_VIEW_SRC, /if \(AppView\._inFoldWrapper\(e\)\) return;/);
   assert.ok(!/function withoutOpenHooks/.test(FOLD) && !/withoutOpenHooks/.test(WORKSHOP), 'nothing strips them any more');
   assert.match(FOLD, /\{\.\.\.itemHooks\(c\)\}/, 'the folded row carries the item\u2019s hooks too');
   assert.ok(!/onCollapse/.test(FOLD), 'and there is no Collapse control');

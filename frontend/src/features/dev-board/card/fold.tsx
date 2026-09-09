@@ -28,16 +28,22 @@
  * hook, so an item is findable whichever size it is at.
  *
  * What those hooks USED to do on a click is open the item full-screen,
- * through `AppView._wireDevBody`'s delegated handler on `#dev-body`. That
- * handler now stands aside for any click inside a `.dev-ws-rowwrap`: the
- * fold owns its clicks, and the full-screen route is the link on the open
- * card. The Workshop used to get the same effect by stripping the hooks off
- * the open card's model (`withoutOpenHooks`) — necessary then, because this
- * component renders through a portal whose React root sits ABOVE
- * `#dev-body`, so a synthetic `stopPropagation` here would have run after
- * the delegated handler had already navigated. Having the handler check for
- * the wrapper does the same job without the model losing what the checks
- * select on.
+ * through the delegated click handler app-view.js binds on `#dev-body`.
+ * That handler now stands aside for any click whose path passed through a
+ * `.dev-ws-rowwrap` (`AppView._inFoldWrapper`): the fold owns its clicks,
+ * and the full-screen route is the link on the open card. The Workshop used
+ * to get the same effect by stripping the hooks off the open card's model
+ * (`withoutOpenHooks`); checking for the wrapper does the same job without
+ * the model losing what the checks select on.
+ *
+ * One subtlety decides how that check is written. This component renders
+ * through a portal, and React listens on the portal host, which sits
+ * BELOW `#dev-body` — so React's handler runs first, and the state update
+ * it makes is flushed in a microtask, which a real click runs between
+ * listeners. By the time the event reaches `#dev-body` the row (or card)
+ * that was clicked has been swapped for its other size: the target is
+ * detached, and `closest()` from it cannot find the wrapper. The handler
+ * reads the event's composed path instead, which is captured at dispatch.
  */
 
 import { useEffect, useState, type ReactNode } from 'react';

@@ -380,6 +380,31 @@ const AppView = {
       }
     } catch {}
   },
+  // Was this click (or key) inside a fold wrapper — a Workshop row, a Board
+  // row, or the open card either folds to (card/fold.tsx)? The fold owns
+  // those; the delegated handlers above stand aside for them.
+  //
+  // Read off `composedPath()`, NOT `e.target.closest()`, and the difference
+  // is the whole bug this replaced. The fold's React listener sits on the
+  // portal host inside #dev-body, so it runs BEFORE the handler here, and
+  // React flushes the state update it makes in a microtask. On a real
+  // click the browser runs microtasks between listeners, so by the time
+  // the event reaches #dev-body the row that was clicked has already been
+  // replaced by the card (or the card by the row): `e.target` is a detached
+  // node, `closest()` from it finds no wrapper, the guard missed, and the
+  // row's own data-issue-row hook opened the item full-screen. The composed
+  // path is captured when dispatch begins and still holds the ancestors the
+  // target had. A scripted `el.click()` runs no microtask mid-dispatch, so
+  // the target is still attached and the old check passed — which is why
+  // the ?shot=board-unfold capture could not catch this.
+  _inFoldWrapper(e) {
+    const path = e && typeof e.composedPath === 'function' ? e.composedPath() : null;
+    if (path && path.length) {
+      return path.some((n) => !!(n && n.classList && n.classList.contains('dev-ws-rowwrap')));
+    }
+    const t = e && e.target;
+    return !!(t && typeof t.closest === 'function' && t.closest('.dev-ws-rowwrap'));
+  },
   // `?cards=open` — every board card drawn unfolded: the board as it was
   // before its columns folded their cards to rows (#1787), and the state the
   // declared checks that read a card's inner anatomy run in. Read on every
@@ -2369,11 +2394,9 @@ const AppView = {
       // handler opens and closes it, and "Open on its own page" is the route
       // out. Both sizes keep their data-*-row hooks so the checks and the
       // lookups below still find the item; this is what stops a click on
-      // them opening it full-screen. Checked here rather than by stripping
-      // the hooks off the model because the fold renders through a portal
-      // whose React root sits ABOVE this element, so its stopPropagation
-      // would run after this handler had navigated.
-      if (e.target.closest('.dev-ws-rowwrap')) return;
+      // them opening it full-screen. See _inFoldWrapper for why it reads the
+      // event's path rather than the target's ancestors.
+      if (AppView._inFoldWrapper(e)) return;
       const sessionChip = e.target.closest('[data-session-chip]');
       if (sessionChip) {
         // Own session → the owner's dev chat, exactly as the old strip.
@@ -2412,7 +2435,7 @@ const AppView = {
     bodyEl.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter' && ev.key !== ' ') return;
       // The folded row handles its own Enter and Space (it is the toggle).
-      if (ev.target.closest && ev.target.closest('.dev-ws-rowwrap')) return;
+      if (AppView._inFoldWrapper(ev)) return;
       const el = ev.target.closest
         && ev.target.closest('[data-session-chip], [data-shared-session-row]');
       if (!el) return;
