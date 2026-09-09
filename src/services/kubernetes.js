@@ -829,6 +829,17 @@ async function listNamespaceCapacity(config) {
           pods: quotaMetric(quota, 'pods'),
           requestsCpu: quotaMetric(quota, 'requests.cpu'),
           requestsMemory: quotaMetric(quota, 'requests.memory'),
+          limitsCpu: quotaMetric(quota, 'limits.cpu'),
+          limitsMemory: quotaMetric(quota, 'limits.memory'),
+          requestsEphemeralStorage: quotaMetric(quota, 'requests.ephemeral-storage'),
+          limitsEphemeralStorage: quotaMetric(quota, 'limits.ephemeral-storage'),
+          requestsStorage: quotaMetric(quota, 'requests.storage'),
+          persistentVolumeClaims: quotaMetric(quota, 'persistentvolumeclaims'),
+          services: quotaMetric(quota, 'services'),
+          secrets: quotaMetric(quota, 'secrets'),
+          configMaps: quotaMetric(quota, 'configmaps'),
+          jobs: quotaMetric(quota, 'count/jobs.batch'),
+          builds: quotaMetric(quota, 'count/builds.kpack.io'),
         },
       };
     } catch (err) {
@@ -890,11 +901,21 @@ async function cloneWorkerVolume(config, sourceSessionId, targetSessionId) {
 // swallowed: progress is a courtesy, the verdict still comes from the final
 // read below, unchanged.
 async function runCaptureJob(config, options) {
-  return runCheckJob(config, options, 'capture');
+  return runCheckJob(config, { memory: '4g', cpus: '4', ...options }, 'capture');
 }
 
 async function runUnitSuiteJob(config, options) {
   return runCheckJob(config, options, 'unit-suite');
+}
+
+function checkResourceRequest(request, limit, resource) {
+  const limitNumber = quantityNumber(limit);
+  if (limitNumber === null || limitNumber <= 0) {
+    throw new Error(`Invalid check ${resource} limit`);
+  }
+  // Smaller operator overrides must not produce an inadmissible Pod whose
+  // request exceeds its limit. Keep the normal working-set reservation otherwise.
+  return quantityNumber(request) > limitNumber ? limit : request;
 }
 
 async function runCheckJob(config, {
@@ -904,6 +925,16 @@ async function runCheckJob(config, {
 }, kind) {
   const cfg = config.kubernetes;
   const unitSuite = kind === 'unit-suite';
+  const cpuLimit = String(cpus);
+  const memoryLimit = String(memory).replace(/g$/i, 'Gi').replace(/m$/i, 'Mi');
+  const resources = {
+    requests: {
+      cpu: checkResourceRequest('1', cpuLimit, 'CPU'),
+      memory: checkResourceRequest(unitSuite ? '1Gi' : '3Gi', memoryLimit, 'memory'),
+      'ephemeral-storage': '1Gi',
+    },
+    limits: { cpu: cpuLimit, memory: memoryLimit, 'ephemeral-storage': unitSuite ? '8Gi' : '4Gi' },
+  };
   const image = unitSuite ? cfg.workerImage : cfg.captureImage;
   if (!image?.includes('@sha256:')) throw new Error(`${unitSuite ? 'KUBERNETES_WORKER_IMAGE' : 'KUBERNETES_CAPTURE_IMAGE'} must be an immutable digest`);
   const namespace = cfg.workerNamespace;
@@ -917,16 +948,12 @@ async function runCheckJob(config, {
     env: Object.entries(env || {}).map(([key, value]) => unitSuite
       ? { name: key, valueFrom: { secretKeyRef: { name: inputSecretName, key } } }
       : { name: key, value: String(value) }),
-    // Eight concurrent Chromium pages need the same memory budget as Docker captures.
-    resources: { requests: { cpu: '250m', memory: '512Mi', 'ephemeral-storage': '1Gi' }, limits: { cpu: '2', memory: '4Gi', 'ephemeral-storage': '4Gi' } },
+    // Captures share Docker's limits and reserve the observed browser working set.
+    resources,
     securityContext: containerSecurityContext(),
   };
   if (unitSuite) {
     container.command = cmd;
-    container.resources = {
-      requests: { cpu: '1', memory: '1Gi', 'ephemeral-storage': '1Gi' },
-      limits: { cpu: String(cpus), memory: String(memory).replace(/g$/i, 'Gi').replace(/m$/i, 'Mi'), 'ephemeral-storage': '8Gi' },
-    };
   }
   const podVolumes = [];
   if (!unitSuite && inputSecretName) {

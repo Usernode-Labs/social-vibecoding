@@ -2093,6 +2093,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       if (kubernetesCapture) {
         ({ stdout, ...res } = await kubernetes.runCaptureJob(config, {
           onStdoutLine: progressObserver,
+          memory: CAPTURE_MEMORY,
+          cpus: CAPTURE_CPUS,
           sessionId: session.id,
           env: captureEnv,
           stdinPayload: testsViaStdin ? testsJson : null,

@@ -399,12 +399,53 @@ test('capture runtime uses a bounded Job and caps log retrieval', async () => {
   assert.equal(created.body.spec.activeDeadlineSeconds, 120);
   assert.equal(created.body.spec.ttlSecondsAfterFinished, 3600);
   assert.equal(created.body.spec.template.spec.automountServiceAccountToken, false);
-  assert.equal(created.body.spec.template.spec.containers[0].resources.limits.memory, '4Gi');
+  assert.deepEqual(created.body.spec.template.spec.containers[0].resources, {
+    requests: { cpu: '1', memory: '3Gi', 'ephemeral-storage': '1Gi' },
+    limits: { cpu: '4', memory: '4Gi', 'ephemeral-storage': '4Gi' },
+  });
   assert.equal(created.body.spec.template.spec.securityContext.runAsUser, 1000);
   assert.equal(created.body.spec.template.spec.securityContext.runAsGroup, 1000);
   assert.equal(created.body.spec.template.spec.securityContext.fsGroup, 1000);
   assert.equal(logRequest.limitBytes, 64 * 1024 * 1024 + 1);
   assert.equal(result.stdout, 'result');
+});
+
+for (const kind of ['Capture', 'UnitSuite']) {
+  for (const [cpus, memory, expectedMemory, expectedRequestMemory] of [
+    ['6', '6g', '6Gi', kind === 'Capture' ? '3Gi' : '1Gi'],
+    ['0.5', '512m', '512Mi', '512Mi'],
+  ]) {
+    test(`${kind} honors resource overrides ${cpus} CPU / ${memory} without exceeding limits`, async () => {
+      let created;
+      kubernetes._setClientsForTest({
+        batch: {
+          async createNamespacedJob({ body }) { created = body; },
+          async readNamespacedJob() { return { status: { succeeded: 1 } }; },
+        },
+        core: {
+          async createNamespacedSecret() {},
+          async deleteNamespacedSecret() {},
+          async listNamespacedPod() { return { items: [{ metadata: { name: 'check-pod' } }] }; },
+          async readNamespacedPodLog() { return 'passed'; },
+        },
+      });
+      await kubernetes[`run${kind}Job`](config(), { sessionId: 42, env: {}, cpus, memory });
+      const { requests, limits } = created.spec.template.spec.containers[0].resources;
+      assert.equal(limits.cpu, cpus);
+      assert.equal(limits.memory, expectedMemory);
+      assert.equal(requests.cpu, Number(cpus) < 1 ? cpus : '1');
+      assert.equal(requests.memory, expectedRequestMemory);
+    });
+  }
+}
+
+test('invalid capture resource limits fail before creating credentials or workloads', async () => {
+  kubernetes._setClientsForTest({});
+  for (const options of [{ cpus: '0' }, { cpus: 'invalid' }, { memory: '-1g' }]) {
+    await assert.rejects(kubernetes.runCaptureJob(config(), {
+      sessionId: 42, env: {}, stdinPayload: '{}', ...options,
+    }), /Invalid check (CPU|memory) limit/);
+  }
 });
 
 test('capture runtime transports oversized test input through a temporary Secret volume', async () => {
@@ -542,6 +583,41 @@ test('namespace capacity reports requests and pod quota without claiming live us
   assert.deepEqual(apps.resources.requestsMemory, { used: '1536Mi', hard: '32Gi', percent: 4.7, headroomPercent: 95.3 });
   assert.equal(kubernetes._quantityNumberForTest('1Gi'), 2 ** 30);
   assert.equal(kubernetes._quantityNumberForTest('250m'), 0.25);
+});
+
+test('capacity exposes saturated limit, storage and object quotas when CPU limits are unquoted', async () => {
+  kubernetes._setClientsForTest({ core: {
+    async listNamespacedResourceQuota() {
+      return { items: [{ metadata: { name: 'social-vibecoding' }, status: {
+        hard: {
+          'requests.cpu': '24', 'limits.memory': '128Gi', 'requests.storage': '600Gi',
+          'requests.ephemeral-storage': '100Gi', 'limits.ephemeral-storage': '400Gi',
+          persistentvolumeclaims: '120', services: '128', secrets: '200', configmaps: '100',
+          'count/jobs.batch': '100', 'count/builds.kpack.io': '100',
+        },
+        used: {
+          'requests.cpu': '1', 'limits.memory': '128Gi', 'requests.storage': '500Gi',
+          'requests.ephemeral-storage': '75Gi', 'limits.ephemeral-storage': '300Gi',
+          persistentvolumeclaims: '119', services: '64', secrets: '180', configmaps: '10',
+          'count/jobs.batch': '90', 'count/builds.kpack.io': '100',
+        },
+      } }] };
+    },
+  } });
+  const [{ resources }] = await kubernetes.listNamespaceCapacity(config());
+  assert.equal(resources.limitsCpu, null, 'no aggregate CPU limit must not invent a capacity');
+  assert.equal(resources.requestsCpu.percent, 4.2);
+  assert.equal(resources.limitsMemory.percent, 100, 'memory blocks admission despite low CPU requests');
+  assert.equal(resources.limitsMemory.headroomPercent, 0);
+  assert.equal(resources.requestsStorage.percent, 83.3);
+  assert.equal(resources.persistentVolumeClaims.percent, 99.2);
+  assert.equal(resources.requestsEphemeralStorage.percent, 75);
+  assert.equal(resources.limitsEphemeralStorage.percent, 75);
+  assert.equal(resources.services.percent, 50);
+  assert.equal(resources.secrets.percent, 90);
+  assert.equal(resources.configMaps.percent, 10);
+  assert.equal(resources.jobs.percent, 90);
+  assert.equal(resources.builds.percent, 100);
 });
 
 
