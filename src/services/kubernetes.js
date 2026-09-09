@@ -806,7 +806,8 @@ async function runCaptureJob(config, {
   const captureContainer = {
     name: 'capture', image: cfg.captureImage, imagePullPolicy: 'IfNotPresent',
     env: Object.entries(env || {}).map(([key, value]) => ({ name: key, value: String(value) })),
-    resources: { requests: { cpu: '250m', memory: '512Mi', 'ephemeral-storage': '1Gi' }, limits: { cpu: '2', memory: '2Gi', 'ephemeral-storage': '4Gi' } },
+    // Eight concurrent Chromium pages need the same memory budget as Docker captures.
+    resources: { requests: { cpu: '250m', memory: '512Mi', 'ephemeral-storage': '1Gi' }, limits: { cpu: '2', memory: '4Gi', 'ephemeral-storage': '4Gi' } },
     securityContext: containerSecurityContext(),
   };
   const podVolumes = [];
