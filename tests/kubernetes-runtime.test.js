@@ -191,7 +191,7 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     readNamespacedService: async () => { throw notFound(); },
     readNamespacedDeployment: async ({ name }) => {
       if (written.some((item) => item.kind === 'Deployment')) {
-        return { metadata: { name, generation: 1 }, status: { observedGeneration: 1, availableReplicas: 1 } };
+        return { metadata: { name, generation: 1 }, status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
       }
       throw notFound();
     },
@@ -288,7 +288,7 @@ test('worker runtime reconciles a retained PVC, Secret and warm Deployment', asy
     apps: {
       readNamespacedDeployment: async ({ name }) => {
         if (written.some((item) => item.kind === 'Deployment')) {
-          return { metadata: { name, generation: 1 }, status: { observedGeneration: 1, availableReplicas: 1 } };
+          return { metadata: { name, generation: 1 }, status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
         }
         throw notFound();
       },

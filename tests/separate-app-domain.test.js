@@ -77,7 +77,7 @@ test('Kubernetes app and preview ingresses use sibling hosts with matching TLS',
     },
     apps: {
       async readNamespacedDeployment() {
-        return { metadata: { generation: 1, resourceVersion: '1' }, status: { observedGeneration: 1, availableReplicas: 1 } };
+        return { metadata: { generation: 1, resourceVersion: '1' }, status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
       },
       async replaceNamespacedDeployment() {},
     },

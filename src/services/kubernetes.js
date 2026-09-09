@@ -358,7 +358,7 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
     apiVersion: 'v1', kind: 'Service', metadata: { name, namespace, labels: resourceLabels },
     spec: { selector: selectorLabels, ports: [{ name: 'http', port: 3000, targetPort: 3000 }], type: 'ClusterIP' },
   });
-  await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, {
+  const deployed = await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, {
     apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name, namespace, labels: resourceLabels },
     spec: {
       replicas: 1,
@@ -402,7 +402,7 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
     },
   });
   try {
-    await waitForDeployment(namespace, name);
+    await waitForDeployment(namespace, name, { generation: deployed?.metadata?.generation });
   } catch (err) {
     // A failed preview has no serving value but its declared CPU limit still
     // consumes ResourceQuota. Production keeps its prior ReplicaSet for a
@@ -419,12 +419,20 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   return { runtimeKind: 'kubernetes', runtimeName: name, imageRef, hostname, url: `https://${hostname}` };
 }
 
-async function waitForDeployment(namespace, name, timeoutMs = 5 * 60 * 1000) {
+async function waitForDeployment(namespace, name, { timeoutMs = 5 * 60 * 1000, generation = 0 } = {}) {
   const deadline = Date.now() + timeoutMs;
   const { apps } = getClients();
   while (Date.now() < deadline) {
     const deployment = await apps.readNamespacedDeployment({ name, namespace });
-    if (deployment.status?.availableReplicas >= 1 && deployment.status?.observedGeneration >= deployment.metadata.generation) return deployment;
+    const desired = deployment.spec?.replicas ?? 1;
+    const status = deployment.status || {};
+    // An available OLD replica keeps serving during a rolling update. Wait
+    // for the controller to observe our write, replace every old replica,
+    // and make the updated replicas ready and available before publishing it.
+    if (!deployment.metadata.deletionTimestamp && desired > 0
+        && status.observedGeneration >= Math.max(generation, deployment.metadata.generation)
+        && status.updatedReplicas === desired && status.replicas === desired
+        && status.readyReplicas >= desired && status.availableReplicas >= desired) return deployment;
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
   throw new Error(`Timed out waiting for Deployment ${namespace}/${name}`);
@@ -456,8 +464,8 @@ async function restartApplication(config, runtimeName) {
   deployment.spec.template.metadata ||= {};
   deployment.spec.template.metadata.annotations ||= {};
   deployment.spec.template.metadata.annotations['social.usernode.io/restarted-at'] = new Date().toISOString();
-  await getClients().apps.replaceNamespacedDeployment({ name: runtimeName, namespace, body: deployment });
-  return waitForDeployment(namespace, runtimeName);
+  const restarted = await getClients().apps.replaceNamespacedDeployment({ name: runtimeName, namespace, body: deployment });
+  return waitForDeployment(namespace, runtimeName, { generation: restarted?.metadata?.generation });
 }
 
 async function deleteApplication(config, runtimeName) {
