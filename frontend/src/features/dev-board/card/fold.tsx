@@ -161,10 +161,16 @@ export function flatBadge(b: BadgeSpec): BadgeSpec {
     : b;
 }
 
+/** The card's tags — priority, assignee, category — which ride on the meta line at both sizes. */
+export function tagsOf(card: DevCardModel): BadgeSpec[] {
+  return (card.badges || []).filter((b) => b && b.t === 'attr');
+}
+
 export function RowBand({ card }: { card: DevCardModel }): ReactNode {
   const s = card.pill?.state || null;
   const linked = card.linked || [];
-  const chips = (card.badges || []).filter(Boolean).slice(0, ROW_BADGE_MAX);
+  // The state chips only: the tags are on the meta line (see FoldedRow).
+  const chips = (card.badges || []).filter((b) => b && b.t !== 'attr').slice(0, ROW_BADGE_MAX);
   if (!s && !linked.length && !chips.length) return null;
   return (
     <span className="dev-ws-row-band">
@@ -231,6 +237,7 @@ export function FoldedRow({
         <span className="dev-ws-row-meta">
           {n ? <span className="font-mono">{n}</span> : null}
           {by ? <span>{by}</span> : null}
+          {tagsOf(c).map((b) => <Badge key={b.key} b={flatBadge(b)} />)}
         </span>
         <RowBand card={c} />
       </span>
@@ -255,7 +262,7 @@ export function FoldedRow({
  * card whole rather than growing a chimera.
  */
 export function UnfoldedRow({
-  row, slug, canPost, detail: placement = 'facts',
+  row, slug, canPost, detail: placement = 'actions',
 }: { row: CardRow; slug: string; canPost: boolean; detail?: DetailPlacement }): ReactNode {
   // ── "Open card" opens it HERE ──────────────────────────────────────
   //

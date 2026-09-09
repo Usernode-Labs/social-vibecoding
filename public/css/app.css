@@ -10877,7 +10877,20 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
    1.4 x 12.5 = 17.5 for the one-line meta. */
 :is(.dev-card-dense, .dev-card-topic) .dev-card-title { font-size: 14px; }
 :is(.dev-card-dense, .dev-card-topic) .dev-card-title-clamp { min-height: 37.8px; }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-meta { font-size: 12.5px; min-height: 17.5px; max-height: 17.5px; }
+:is(.dev-card-dense, .dev-card-topic) .dev-card-meta {
+  font-size: 12.5px;
+  /* The tags (priority, assignee, category) ride here beside the number and
+     the author, and the line may wrap to a second one for them: the old
+     one-line clamp (min/max 17.5px) is gone. 21px lines so a 19px chip sits
+     on the line without pushing it. */
+  min-height: 21px; max-height: none; line-height: 21px;
+  white-space: normal; overflow: visible; text-overflow: clip;
+}
+:is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge {
+  height: 19px; font-size: 11.5px; vertical-align: middle; margin-left: 4px;
+}
+:is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge.font-mono { font-size: 11px; }
+:is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge .attr-avatar { width: 14px; height: 14px; }
 
 /* ── The status band: the bar row, then the facts as one line ──
    Two rows at most — the bar with the vote button beside it, then the
@@ -11081,7 +11094,27 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   padding: 0 10px;
   font-size: 12px;
   font-weight: 600;
+  /* The Vote button's "Yes" state (.dev-vote-btn-yes): the accent on its
+     tint. The band's pills were the neutral grey fill, which read as a
+     third colour beside the blue Vote and the blue Preview. */
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: transparent;
 }
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent-light);
+  color: var(--accent);
+}
+/* The menu trigger: a hamburger at the far right of the band, the row's own
+   "more" — that is where the pills that do not fit the line go. */
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn {
+  margin-left: auto;
+  width: 28px;
+  padding: 0;
+  color: var(--accent);
+}
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn svg { width: 16px; height: 16px; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview {
   margin-left: auto;
   gap: 5px;
@@ -11115,7 +11148,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 
 /* Cards with 22px corners want a little more air between them than the
    column's space-y-2 gives. */
-#dev-kanban .dev-kanban-col > .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 10px; }
+#dev-kanban .dev-kanban-col > .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 4px; }
 
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -11866,8 +11899,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-row[data-edge="neutral"]   { --dev-edge: var(--state-neutral); }
 .dev-ws-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .dev-ws-row-title { font-size: 14px; line-height: 1.3; }
-.dev-ws-row-meta { display: flex; gap: 8px; font-size: 12px; color: var(--text-muted); min-width: 0; }
+.dev-ws-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; font-size: 12px; color: var(--text-muted); min-width: 0; margin-top: 1px; }
 .dev-ws-row-meta > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The tags ride on this line at the row's size too (fold.tsx tagsOf),
+   in the card's chip geometry. */
+.dev-ws-row-meta > .dev-badge { height: 19px; font-size: 11.5px; }
+.dev-ws-row-meta > .dev-badge .attr-avatar { width: 14px; height: 14px; }
 /* ── The row's status band ───────────────────────────────────
    A mini of `.dev-card-badges.dev-card-status`, and clipped exactly as that
    one is and for the same reason: ONE line, overflow hidden, so a card with

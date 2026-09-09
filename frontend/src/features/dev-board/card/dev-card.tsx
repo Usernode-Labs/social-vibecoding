@@ -50,17 +50,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  EllipsisHorizontalIcon,
-  EyeIcon,
-  EyeOffIcon,
-  Glyph,
-  PencilSquareIcon,
-  XIcon,
-} from '@/components/ui/icons';
+import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { useStoreState } from '../../../lib/use-store-state';
 import { aiEnabledStore, cardNowStore } from './cards-store';
@@ -616,25 +606,38 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
  * DevCard), so `rail.preview` is only drawn here by a caller that still
  * wants the corner form — none of the board's builders do.
  */
-function Rail({ rail }: { rail: RailSpec }): ReactNode {
-  const trigger = rail.menuKey ? (
+/**
+ * The card's menu trigger: a hamburger at the far right of the action band.
+ *
+ * It was a ⋯ in the card's top-right rail. The band is where the card's
+ * other controls are, and the menu is where the pills that do not fit the
+ * band go (useFoldedActions), so the trigger sits at the end of that row,
+ * pushed to its right edge, as the row's own "more". Same `data-card-menu`
+ * hook, same `dev-card-menu-btn` class: `_openCardMenu`, `_reanchorCardMenu`
+ * and the declared checks find it where they always did.
+ */
+function MenuTrigger({ menuKey }: { menuKey: string }): ReactNode {
+  return (
     <button
       type="button"
       className="gc-vote-btn gc-vote-btn-icon dev-card-menu-btn"
-      data-card-menu={rail.menuKey}
+      data-card-menu={menuKey}
       aria-haspopup="true"
       aria-label="More actions"
       title="More actions"
     >
-      <EllipsisHorizontalIcon aria-hidden="true" />
+      <Bars3Icon aria-hidden="true" />
     </button>
-  ) : null;
+  );
+}
+
+function Rail({ rail }: { rail: RailSpec }): ReactNode {
   const chevron = rail.chevron ? <Chevron /> : null;
   const preview = rail.preview ? <Preview spec={rail.preview} /> : null;
-  if (!trigger && !chevron && !preview) return null;
+  if (!chevron && !preview) return null;
   // A lone chevron is already the card's only right-edge child — no column.
-  if (!trigger && !preview) return chevron;
-  return <div className="dev-card-rail">{trigger}{chevron}{preview}</div>;
+  if (!preview) return chevron;
+  return <div className="dev-card-rail">{chevron}{preview}</div>;
 }
 
 function MetaPartView({ p }: { p: MetaPart }): ReactNode {
@@ -747,12 +750,18 @@ export function DevCard(
   const voteBtn = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
   const bandActions = voteBtn ? allActions.filter((a) => a !== yesSpec && a !== noSpec) : allActions;
   const chips = (m.badges || []).filter(Boolean);
-  const kept = m.uncapped ? chips : chips.slice(0, BADGE_MAX);
+  // The TAGS — priority, assignee, category — ride on the meta line beside
+  // the number and the author, and may wrap it to a second line. The status
+  // band keeps what is a STATE rather than a label: the composite pill, the
+  // work-state chip, the imported / paused chips, Closes #N, the chat count.
+  const tags = chips.filter((b) => b.t === 'attr');
+  const states = chips.filter((b) => b.t !== 'attr');
+  const kept = m.uncapped ? states : states.slice(0, BADGE_MAX);
   const linked = m.linked || [];
   // #1139: a status band with nothing a reader can see is emitted (the node
   // must stay — app.css caps the action band through the sibling chain) but
   // stamped data-empty and hidden by CSS. A 0 chat count is NOT content.
-  const statusHasContent = chips.length > 0 || !!m.pill || linked.length > 0
+  const statusHasContent = states.length > 0 || !!m.pill || linked.length > 0
     || (m.chatCount !== null && m.chatCount !== undefined && (m.chatCount || 0) > 0);
   const chat = m.chatCount !== null && m.chatCount !== undefined
     ? <Badge b={{ t: 'chat', key: 'chat', count: m.chatCount || 0 }} />
@@ -788,10 +797,15 @@ export function DevCard(
   // facts line wide enough for the actions to move onto. The band's fold
   // measurement (useFoldedActions) counts every child without `data-fold`
   // as fixed width, so the pills fold into ⋯ AROUND it rather than under it.
-  const primary = bandActions.slice(0, ACTION_PRIMARY_MAX);
+  // Every action the card has goes in the band; the band's measurement
+  // (useFoldedActions) shows as many as fit on its one line and folds the
+  // rest, from the end, into the menu behind the hamburger. The old cap of
+  // three text pills (ACTION_PRIMARY_MAX) is gone: the line is the cap now.
+  const primary = bandActions;
   const inlineActions = !!statusLead;
   const bandPrimary = inlineActions ? [] : primary;
-  const hasActions = bandPrimary.length > 0 || !!actionEnd;
+  const menuTrigger = m.rail.menuKey ? <MenuTrigger menuKey={m.rail.menuKey} /> : null;
+  const hasActions = bandPrimary.length > 0 || !!actionEnd || !!menuTrigger;
   const folded = useFoldedActions(bandPrimary, m.rail.menuKey || '', false);
   const statusEnd = statusLead || bandPreview || (inlineActions && primary.length) ? (
     <span className="dev-card-status-end">
@@ -839,6 +853,7 @@ export function DevCard(
         <ActionButton key={a.key} a={a} fold={i > 0 && a.kudos == null ? i : undefined} hidden={i > 0 && i >= bandPrimary.length - folded.n} />
       ))}
       {actionEnd}
+      {menuTrigger}
     </div>
   ) : (dense ? <div className="gc-card-actions"></div> : null);
   const rail: RailSpec = { ...m.rail, preview: null };
@@ -851,8 +866,13 @@ export function DevCard(
     if (i) metaNodes.push(' · ');
     metaNodes.push(<MetaPartView key={i} p={p} />);
   });
-  const metaRow = dense || metaNodes.length
-    ? <div className="dev-card-meta">{metaNodes}</div>
+  const metaRow = dense || metaNodes.length || tags.length
+    ? (
+      <div className="dev-card-meta">
+        {metaNodes}
+        {tags.map((b) => <Badge key={b.key} b={b} />)}
+      </div>
+    )
     : null;
 
   return (
