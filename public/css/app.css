@@ -11943,4 +11943,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 /* The vote strip's rows carry the card's Vote button at their trailing
    edge, before the chevron. */
 .dev-ws-row-trailing { display: inline-flex; align-items: center; flex-shrink: 0; }
+/* ── The Board's columns fold their cards too (#1787) ─────────
+   The same row, the same sheet and the same fold (card/fold.tsx), inside a
+   kanban column. The column's own `space-y-2` (10px, see #dev-kanban above)
+   is the rhythm between rows, so the wrapper's 4px is not added to it. The
+   open card is the column's tile as it always was; the sheet around it is
+   transparent here — the Workshop's frosted plane is scoped to #dev-workshop
+   on purpose — so the only thing the sheet draws on the board is the "Open
+   on its own page" line under the card. */
+#dev-kanban .dev-ws-rowwrap { margin-bottom: 0; }
+#dev-kanban .dev-ws-sheet-actions { padding: 0 10px; margin-top: 6px; font-size: 12px; }
 .dev-ws-foot-note { font-size: 12px; color: var(--text-muted); text-align: center; padding: 6px 0 2px; }
