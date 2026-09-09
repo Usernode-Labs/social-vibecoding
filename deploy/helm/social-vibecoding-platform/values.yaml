@@ -135,6 +135,8 @@ ingress:
 networkPolicy:
   enabled: true
   ciliumApiServerEgress: true
+  # Must match APP_NAMESPACE in the foundation's social-build-policy ConfigMap.
+  appNamespace: social-apps
   # Optional cross-namespace access to the selected UserNode HTTP endpoint.
   # Keep the Pod selector specific so the platform cannot reach every workload
   # in the network namespace merely because it needs one node's /status API.
