@@ -747,6 +747,12 @@ export function metaLineNodes(m: DevCardModel): ReactNode[] {
   // among its badges. Same chip, same line.
   for (const b of m.linked || []) nodes.push(<Badge key={b.key} b={b} />);
   for (const b of (m.badges || []).filter((b) => b && b.t === 'issueChip')) nodes.push(<Badge key={b.key} b={b} />);
+  // And the message count, when there is one: it is a fact about the item,
+  // not a state, and it used to sit in a different place at each size (the
+  // row's last line, the card's facts row). Nothing is drawn at 0 — a live
+  // bump repaints from the model rather than revealing a hidden badge.
+  const count = m.chatCount || 0;
+  if (count > 0) nodes.push(<Badge key="chat" b={{ t: 'chat', key: 'chat', count }} />);
   return nodes;
 }
 
@@ -776,13 +782,14 @@ export function DevCard(
   // built from the same fields in the same order so they read as one object:
   //
   //   head   the glyph, then the title, wrapping in full at both sizes
-  //   meta   number · author · when, the tags, the linked-issue chips —
-  //          tabbed in under the title (metaLineNodes, shared with the row)
+  //   meta   number · author · when, the tags, the linked-issue chips, the
+  //          message count — tabbed in under the title (metaLineNodes,
+  //          shared with the row)
   //   status the STATE: on the card the full bar with the vote button beside
   //          it, spanning the card; on the row a chip of the same state,
   //          with the vote button at the row's bottom-right
   //   facts  the state chips — the work-state chip, the imported / paused
-  //          chips — and the message count, tabbed in like the meta line
+  //          chips — tabbed in like the meta line
   //   band   the actions, spanning the card (the card only)
   //
   // So the card is the row plus the bar expanded and the buttons added, and
@@ -790,16 +797,7 @@ export function DevCard(
   const chips = (m.badges || []).filter(Boolean);
   const states = chips.filter((b) => b.t !== 'attr' && b.t !== 'issueChip');
   const kept = m.uncapped ? states : states.slice(0, BADGE_MAX);
-  const chatCount = m.chatCount !== null && m.chatCount !== undefined ? (m.chatCount || 0) : null;
-  // The dense card draws the count only when there is one: the facts row is
-  // emitted only with something visible in it (see below), and a live bump
-  // repaints from the model rather than revealing a hidden badge in place.
-  // The detail head keeps drawing it at 0, hidden, as it always has — but a
-  // hidden badge is not a reason to draw the row (#1139).
-  const chatVisible = (chatCount || 0) > 0;
-  const chat = chatCount !== null && (dense ? chatVisible : true)
-    ? <Badge b={{ t: 'chat', key: 'chat', count: chatCount }} />
-    : null;
+
   // The preview is the last thing in the action band, after the hamburger,
   // with the card's other controls: a fixed child of the band, which the
   // pills fold around, and always the LABELLED pill — the eye and the word —
@@ -840,14 +838,14 @@ export function DevCard(
   // only when a reader could see something in it. The detail head keeps its
   // one uncapped row, the pill as an inline capsule among the chips.
   const pill = m.pill ? <StatusPill s={m.pill.state} inline={m.pill.inline} /> : null;
-  const factsShown = kept.length > 0 || chatVisible;
+  const factsShown = kept.length > 0;
   const statusRow = dense ? (
     <div className="dev-card-badges dev-card-status" data-empty={pill || voteBtn ? undefined : '1'}>{pill}{voteBtn}</div>
   ) : (pill || voteBtn || factsShown ? (
-    <div className="dev-card-badges">{pill}{voteBtn}{kept.map((b) => <Badge key={b.key} b={b} />)}{chat}</div>
+    <div className="dev-card-badges">{pill}{voteBtn}{kept.map((b) => <Badge key={b.key} b={b} />)}</div>
   ) : null);
   const factsRow = dense && factsShown ? (
-    <div className="dev-card-badges dev-card-facts">{kept.map((b) => <Badge key={b.key} b={b} />)}{chat}</div>
+    <div className="dev-card-badges dev-card-facts">{kept.map((b) => <Badge key={b.key} b={b} />)}</div>
   ) : null;
 
   const actionRow = hasActions ? (
@@ -973,10 +971,25 @@ function useFoldedActions(
       setN(folds.length - shown);
     };
     measure();
-    if (typeof ResizeObserver !== 'function') return undefined;
-    const ro = new ResizeObserver(measure);
-    ro.observe(band);
-    return () => ro.disconnect();
+    // Re-measure when the band's width changes — and when its CONTENT does:
+    // a merged card's kudos slot is filled by app-view.js after this effect
+    // has run (the column's layout effect, a parent's, runs after the
+    // card's), and a pill that measured 0px wide then grows to a button.
+    // The observer fires as a microtask, still before the frame paints, so
+    // the band folds around the filled slot on the card's first frame.
+    // `data-folded` is not observed: measure() writes it.
+    const off: Array<() => void> = [];
+    if (typeof ResizeObserver === 'function') {
+      const ro = new ResizeObserver(measure);
+      ro.observe(band);
+      off.push(() => ro.disconnect());
+    }
+    if (typeof MutationObserver === 'function') {
+      const mo = new MutationObserver(measure);
+      mo.observe(band, { childList: true, subtree: true, characterData: true });
+      off.push(() => mo.disconnect());
+    }
+    return () => { off.forEach((f) => f()); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [foldable, hasPreview, primary.map((a) => a.key + a.label).join('|')]);
   // Tell the ⋯ menu which specs it now carries.

@@ -42,7 +42,7 @@
  * link on the open card.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { ChevronRightIcon } from '@/components/ui/icons';
 
@@ -567,8 +567,11 @@ export function DevWorkshop(): ReactNode {
   // The two legacy fillers, re-run whenever the set of unfolded entries
   // changes — see the header. `_wireFeedComments` replaces its observer, so
   // calling it again is idempotent; `_fillKudosHosts` skips filled hosts.
+  // A layout effect, so a merged card's kudos pill is in its band on the
+  // card's first frame rather than popping in after it (dev-kanban.tsx has
+  // the same note).
   const openSig = Object.values(openRows).join('|') + (sinceOpen ? '|since' : '');
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     callAppView('_wireFeedComments', host);

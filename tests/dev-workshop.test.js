@@ -1149,7 +1149,7 @@ test('the status row and the facts row are two elements, not one band with a bre
   // when it has no bar and no vote, so the sibling chain the checks walk
   // stays intact) and the facts row only with something visible in it.
   assert.match(CARD_TSX, /<div className="dev-card-badges dev-card-status" data-empty=\{pill \|\| voteBtn \? undefined : '1'\}>\{pill\}\{voteBtn\}<\/div>/);
-  assert.match(CARD_TSX, /const factsShown = kept\.length > 0 \|\| chatVisible;/);
+  assert.match(CARD_TSX, /const factsShown = kept\.length > 0;/);
   assert.match(CARD_TSX, /const factsRow = dense && factsShown \? \(\s*<div className="dev-card-badges dev-card-facts">/);
   assert.ok(!CARD_TSX.includes('dev-card-band-break'));
 });

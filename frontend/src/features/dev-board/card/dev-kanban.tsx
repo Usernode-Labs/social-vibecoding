@@ -36,7 +36,7 @@
  * the state the declared checks that read a card's anatomy run in.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { useNarrowViewport } from '../../../lib/use-narrow';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -93,7 +93,15 @@ function Column(
   // run by app-view.js after every publish). A fold happens BETWEEN
   // publishes, so the slot a card just unfolded with would stay empty until
   // the next repaint; re-run the filler here. It skips filled hosts.
-  useEffect(() => {
+  //
+  // A LAYOUT effect, not a plain one: a plain effect runs after the browser
+  // has painted the card with the slot empty, so the kudos pill popped in a
+  // frame later and shoved "Open card" along the band — the flicker at the
+  // bottom-left of every merged card on open. Before paint, the card is
+  // whole on its first frame, and the band's fold measurement (which
+  // watches its own subtree) re-folds around the filled slot in the same
+  // frame.
+  useLayoutEffect(() => {
     if (hostRef.current) callAppView('_fillKudosHosts', hostRef.current);
   }, [openKey, unfolded]);
   let cards: ReactNode;

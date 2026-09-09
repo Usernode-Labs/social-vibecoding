@@ -175,7 +175,9 @@ test('shared card: single-row shell; noNav drops nav and chevron, and its band h
   // The preview is a labelled pill closing the action band, so it comes
   // BEFORE the chevron on the card's right edge — where the chevron now
   // stands alone: the rail column that once held the ⋯ and the eye is gone.
-  assertOrder(nav, ['dev-card-title', SPINNER, 'dev-chat-badge', 'gc-vote-btn-preview', CHEVRON]);
+  // The count rides the meta line now, so it comes BEFORE the badge row's
+  // spinner; the preview still precedes the chevron.
+  assertOrder(nav, ['dev-card-title', 'dev-chat-badge', SPINNER, 'gc-vote-btn-preview', CHEVRON]);
   assert.doesNotMatch(nav, /dev-card-rail/, 'no right-edge column');
 
   const noNav = sharedSessionCardHtml(AppView, s, { noNav: true });

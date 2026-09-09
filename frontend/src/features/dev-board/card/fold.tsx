@@ -123,10 +123,11 @@ export const ROW_BADGE_MAX = 3;
 
 /**
  * The folded row's last line: the card's status row and facts row in one —
- * a chip of the composite pill's state, the state chips, the message count,
- * and the vote button at the right end, where the card's bar puts it. One
- * line, clipped, for the same reason the card's rows are: a band that
- * wrapped would push every row under it out of rhythm.
+ * a chip of the composite pill's state, the state chips, and the vote
+ * button at the right end, where the card's bar puts it. One line, clipped,
+ * for the same reason the card's rows are: a band that wrapped would push
+ * every row under it out of rhythm. (The message count is the meta line's,
+ * with the tags, at both sizes.)
  *
  * The composite pill used to be flattened to `pill.state.label` and printed in
  * `.dev-ws-row-meta`, in the same muted grey the author's name wears — so
@@ -155,15 +156,13 @@ export function RowBand({ card, trailing }: { card: DevCardModel; trailing?: Rea
   // The state chips only: the tags and the linked-issue chips are the meta
   // line's (metaLineNodes), on the row as on the card.
   const chips = (card.badges || []).filter((b) => b && b.t !== 'attr' && b.t !== 'issueChip').slice(0, ROW_BADGE_MAX);
-  const count = card.chatCount || 0;
-  if (!s && !chips.length && !count && !trailing) return null;
+  if (!s && !chips.length && !trailing) return null;
   return (
     <span className="dev-ws-row-band">
       {s ? (
         <span className={`dev-ws-row-state dev-ws-row-state-${s.tone}`} title={s.title}>{s.label}</span>
       ) : null}
       {chips.map((b) => <Badge key={b.key} b={flatBadge(b)} />)}
-      {count ? <Badge b={{ t: 'chat', key: 'chat', count }} /> : null}
       {trailing ? <span className="dev-ws-row-trailing" onClick={(e) => e.stopPropagation()}>{trailing}</span> : null}
     </span>
   );
