@@ -13,10 +13,12 @@ The sweep preserves:
 
 - All `apps.build_ref` and `chat_sessions.staging_build_ref` references,
   regardless of app or session status.
+- Builds whose `status.latestImage` matches `apps.image_ref` or
+  `chat_sessions.staging_image_ref`, including migrated apps without `build_ref`.
 - Pending, running, failed, recently completed, and already deleting Builds.
 - Objects outside the configured build namespace, objects without platform
   ownership labels, and Builds controlled by another object (such as kpack Images).
-- Objects without a known completion time, UID, or resource version.
+- Objects without a known completion time, image, UID, or resource version.
 
 Deletion targets the parent Build with background cascading deletion and UID
 and resource-version preconditions. Kubernetes garbage collection removes its

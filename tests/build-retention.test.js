@@ -13,17 +13,20 @@ function build(name, hours = 49) {
   return {
     metadata: { name, namespace: 'social-builds', uid: `uid-${name}`, resourceVersion: '10',
       labels: { 'app.kubernetes.io/managed-by': 'social-vibecoding-runtime', 'social.usernode.io/app-id': '7' } },
-    status: { conditions: [{ type: 'Succeeded', status: 'True', lastTransitionTime: new Date(now - hours * hour).toISOString() }] },
+    status: { latestImage: `registry.example/${name}@sha256:${'a'.repeat(64)}`,
+      conditions: [{ type: 'Succeeded', status: 'True', lastTransitionTime: new Date(now - hours * hour).toISOString() }] },
   };
 }
 function harness(builds = [build('old')]) {
-  const state = { refs: [], freshRefs: [], deleted: [], events: [], busy: false, released: [], current: new Map() };
-  const rows = (refs) => ({ rows: refs.map((ref) => ({ ref })) });
+  const state = { refs: [], freshRefs: [], images: [], freshImages: [], deleted: [], events: [], busy: false, released: [], current: new Map() };
+  const rows = (refs, images) => ({ rows: [...refs.map((ref) => ({ ref })), ...images.map((image) => ({ ref: null, image }))] });
   const pool = {
     query: async (sql) => {
       assert.match(sql, /FROM apps/);
       assert.match(sql, /FROM chat_sessions/);
-      return rows(state.refs);
+      assert.match(sql, /image_ref AS image FROM apps/);
+      assert.match(sql, /staging_image_ref AS image FROM chat_sessions/);
+      return rows(state.refs, state.images);
     },
     connect: async () => ({
       query: async (sql, args) => {
@@ -33,7 +36,7 @@ function harness(builds = [build('old')]) {
           return { rows: [{ acquired: !state.busy }] };
         }
         if (sql.includes('pg_advisory_unlock')) return { rows: [] };
-        return rows(state.freshRefs);
+        return rows(state.freshRefs, state.freshImages);
       },
       release: (err) => state.released.push(err),
     }),
@@ -61,6 +64,7 @@ test('only expired, successful, standalone, managed Builds with reliable metadat
     (b) => { b.status.conditions[0].status = 'Unknown'; },
     (b) => { b.status.conditions[0].status = 'False'; },
     (b) => { delete b.status; },
+    (b) => { delete b.status.latestImage; },
     (b) => { delete b.status.conditions[0].lastTransitionTime; b.metadata.creationTimestamp = '2020-01-01T00:00:00Z'; },
     (b) => { b.status.conditions[0].lastTransitionTime = 'invalid'; },
     (b) => { b.metadata.namespace = 'other'; },
@@ -96,6 +100,38 @@ test('an active deployment in any instance defers cleanup without waiting', asyn
   assert.deepEqual(h.state.deleted, []);
   assert.equal(h.state.events.length, 1);
   assert.deepEqual(h.state.released, [undefined]);
+});
+
+test('legacy production and preview image references protect Builds even without build_ref', async () => {
+  const production = build('legacy-production');
+  const preview = build('legacy-preview');
+  const h = harness([production, preview, build('expired')]);
+  h.state.images = [production.status.latestImage, preview.status.latestImage];
+  h.state.freshImages = [...h.state.images];
+  const dryRun = await h.run({ dryRun: true });
+  assert.deepEqual(dryRun.candidates, ['social-builds/expired']);
+  await h.run();
+  assert.deepEqual(h.state.deleted, ['expired']);
+});
+
+test('an image reference added during inventory is rechecked under the deployment lock', async () => {
+  const current = build('newly-deployed-image');
+  const h = harness([current, build('expired')]);
+  h.state.freshImages = [current.status.latestImage];
+  await h.run();
+  assert.deepEqual(h.state.deleted, ['expired']);
+  assert.match(h.state.events[0], /pg_try_advisory_lock/);
+  assert.match(h.state.events[1], /image_ref AS image/);
+});
+
+test('all Builds producing the deployed digest remain protected', async () => {
+  const first = build('first');
+  const second = build('second');
+  second.status.latestImage = first.status.latestImage;
+  const h = harness([first, second]);
+  h.state.images = [first.status.latestImage];
+  assert.deepEqual((await h.run()).candidates, []);
+  assert.deepEqual(h.state.deleted, []);
 });
 
 test('completion window is configurable and invalid values cannot delete anything', async () => {
