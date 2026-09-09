@@ -166,22 +166,29 @@ test('a PRIVATE own session carries the muted shell; a visible one does not', ()
   assert.doesNotMatch(vis, /dev-card-muted/, 'a visible session is not muted');
 });
 
-test('shared card: single-row shell; noNav drops nav, chevron and the actions row', () => {
+test('shared card: single-row shell; noNav drops nav and chevron, and its band holds only the menu', () => {
   const AppView = makeAppView();
   const s = sharedSess({ busy: true, staging_url: 'https://example.invalid' });
   const nav = sharedSessionCardHtml(AppView, s);
   assert.match(nav, /data-shared-session-row="71"/);
   assert.ok(nav.includes(SHELL), 'uses the standard single-row card shell');
-  // The preview is a labelled pill at the end of the action band (round
-  // three), so it comes BEFORE the chevron on the card's right edge — and
-  // check inspection shares the rail with that chevron.
-  assertOrder(nav, ['dev-card-title', SPINNER, 'dev-chat-badge', 'gc-vote-btn-preview', CHEVRON]);
-  assert.match(nav, /dev-card-rail/, 'check inspection shares the rail with the chevron');
+  // The preview is a labelled pill closing the action band, so it comes
+  // BEFORE the chevron on the card's right edge — where the chevron now
+  // stands alone: the rail column that once held the ⋯ and the eye is gone.
+  // The count rides the meta line now, so it comes BEFORE the badge row's
+  // spinner; the preview still precedes the chevron.
+  assertOrder(nav, ['dev-card-title', 'dev-chat-badge', SPINNER, 'gc-vote-btn-preview', CHEVRON]);
+  assert.doesNotMatch(nav, /dev-card-rail/, 'no right-edge column');
 
   const noNav = sharedSessionCardHtml(AppView, s, { noNav: true });
   assert.doesNotMatch(noNav, /data-shared-session-row/, 'noNav variant has no row hook');
   assert.ok(!noNav.includes(CHEVRON), 'noNav variant has no chevron');
-  assert.doesNotMatch(noNav, /gc-card-actions/, 'noNav variant has no actions row');
+  // The topic head's menu (View checks, …) used to sit in the rail's
+  // corner; the band is the trigger's one seat now, so the head keeps an
+  // action band with the hamburger alone in it, and nothing else.
+  assert.match(noNav, /<div class="gc-card-actions"><button [^>]*dev-card-menu-btn" data-card-menu="session:71"[^>]*>[\s\S]*?<\/button><\/div>/,
+    'noNav variant\'s band holds only its menu trigger');
+  assert.doesNotMatch(noNav, /gc-card-actions"><button[^>]*data-act=/, 'and no pills');
 });
 
 test('an owned imported PR shows proposal metadata with one promotion action', () => {

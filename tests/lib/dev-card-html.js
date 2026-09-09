@@ -213,8 +213,9 @@ function hasAction(model, fn, ...args) {
     && args.every((v, i) => (r.args || [])[i] === v));
 }
 
-/** The two budgets, which live in the component now. */
-const budgets = () => ({ ACTION_PRIMARY_MAX: mod().ACTION_PRIMARY_MAX, BADGE_MAX: mod().BADGE_MAX });
+/** The badge budget, which lives in the component now. (The action band's
+ * count cap is gone: its one line folds what does not fit into the menu.) */
+const budgets = () => ({ BADGE_MAX: mod().BADGE_MAX });
 
 module.exports = {
   // The minimal card a topic head needs, for tests that care about the

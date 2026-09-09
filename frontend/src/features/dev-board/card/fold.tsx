@@ -28,27 +28,47 @@
  * hook, so an item is findable whichever size it is at.
  *
  * What those hooks USED to do on a click is open the item full-screen,
- * through `AppView._wireDevBody`'s delegated handler on `#dev-body`. That
- * handler now stands aside for any click inside a `.dev-ws-rowwrap`: the
- * fold owns its clicks, and the full-screen route is the link on the open
- * card. The Workshop used to get the same effect by stripping the hooks off
- * the open card's model (`withoutOpenHooks`) — necessary then, because this
- * component renders through a portal whose React root sits ABOVE
- * `#dev-body`, so a synthetic `stopPropagation` here would have run after
- * the delegated handler had already navigated. Having the handler check for
- * the wrapper does the same job without the model losing what the checks
- * select on.
+ * through the delegated click handler app-view.js binds on `#dev-body`.
+ * That handler now stands aside for any click whose path passed through a
+ * `.dev-ws-rowwrap` (`AppView._inFoldWrapper`): the fold owns its clicks,
+ * and the full-screen route is the link on the open card. The Workshop used
+ * to get the same effect by stripping the hooks off the open card's model
+ * (`withoutOpenHooks`); checking for the wrapper does the same job without
+ * the model losing what the checks select on.
+ *
+ * One subtlety decides how that check is written. This component renders
+ * through a portal, and React listens on the portal host, which sits
+ * BELOW `#dev-body` — so React's handler runs first, and the state update
+ * it makes is flushed in a microtask, which a real click runs between
+ * listeners. By the time the event reaches `#dev-body` the row (or card)
+ * that was clicked has been swapped for its other size: the target is
+ * detached, and `closest()` from it cannot find the wrapper. The handler
+ * reads the event's composed path instead, which is captured at dispatch.
  */
 
 import { useEffect, useState, type ReactNode } from 'react';
 
-import { Badge, CardIcon, DevCard, edgeFor, VoteButton } from './dev-card';
+import { Badge, CardIcon, DevCard, edgeFor, metaLineNodes, VoteButton } from './dev-card';
 import { FeedThread } from './feed-thread';
 import type { ActionSpec, BadgeSpec, DevCardModel, ListRow } from './model';
 import { TopicBodySections } from '../topic/topic-head';
 import type { TopicBody } from '../topic/model';
 
 export type CardRow = Extract<ListRow, { t: 'card' }>;
+
+/**
+ * Where the open card's "Open card" toggle sits. `'facts'`: at the end of
+ * the facts line, and the card's own actions move up beside it (the
+ * Workshop, on a sheet wide enough). `'actions'`: at the end of the action
+ * band, the actions staying where they are (the Board's columns). `false`:
+ * no toggle.
+ */
+export type DetailPlacement = 'actions' | false;
+/**
+ * What "Open card" does: opens the item's sections in place under the card
+ * (the Workshop), or goes to the item's own page (the Board).
+ */
+export type OpenMode = 'inline' | 'page';
 
 /** Like `callAppView`, but for the calls that answer with a view model. */
 export function readAppView<T>(fn: string, ...args: unknown[]): T | null {
@@ -98,36 +118,16 @@ export function openHref(slug: string, card: DevCardModel): string | null {
   return null;
 }
 
-/**
- * The card's number from its meta line, when it has one.
- *
- * An issue's reads `#1575` and a proposal's reads `PR#1540`, and this used to
- * match only the first — so every proposal row on the lander was missing the
- * one identifier people actually cite it by, while the card it folds from
- * carried it. The two sizes disagreeing about whether an item HAS a number
- * is the kind of difference that makes them read as two objects.
- */
-export function numberOf(card: DevCardModel): string | null {
-  for (const m of card.meta) {
-    if (m.t === 'link' && /^(?:PR)?#\d+$/.test(m.s)) return m.s;
-  }
-  return null;
-}
-
-/** The author from the meta line: the first plain text part. */
-export function authorOf(card: DevCardModel): string | null {
-  for (const m of card.meta) if (m.t === 'text') return m.s;
-  return null;
-}
-
 /** How many of the card's own chips ride along on a folded row. */
 export const ROW_BADGE_MAX = 3;
 
 /**
- * The folded row's status band — a MINI of the dense card's own
- * (`.dev-card-badges.dev-card-status`), built from the same two model fields,
- * and clipped to one line for the same reason: a band that wrapped would push
- * every row under it out of rhythm.
+ * The folded row's last line: the card's status row and facts row in one —
+ * a chip of the composite pill's state, the state chips, and the vote
+ * button at the right end, where the card's bar puts it. One line, clipped,
+ * for the same reason the card's rows are: a band that wrapped would push
+ * every row under it out of rhythm. (The message count is the meta line's,
+ * with the tags, at both sizes.)
  *
  * The composite pill used to be flattened to `pill.state.label` and printed in
  * `.dev-ws-row-meta`, in the same muted grey the author's name wears — so
@@ -146,18 +146,24 @@ export function flatBadge(b: BadgeSpec): BadgeSpec {
     : b;
 }
 
-export function RowBand({ card }: { card: DevCardModel }): ReactNode {
+/** The card's tags — priority, assignee, category — which ride on the meta line at both sizes. */
+export function tagsOf(card: DevCardModel): BadgeSpec[] {
+  return (card.badges || []).filter((b) => b && b.t === 'attr');
+}
+
+export function RowBand({ card, trailing }: { card: DevCardModel; trailing?: ReactNode }): ReactNode {
   const s = card.pill?.state || null;
-  const linked = card.linked || [];
-  const chips = (card.badges || []).filter(Boolean).slice(0, ROW_BADGE_MAX);
-  if (!s && !linked.length && !chips.length) return null;
+  // The state chips only: the tags and the linked-issue chips are the meta
+  // line's (metaLineNodes), on the row as on the card.
+  const chips = (card.badges || []).filter((b) => b && b.t !== 'attr' && b.t !== 'issueChip').slice(0, ROW_BADGE_MAX);
+  if (!s && !chips.length && !trailing) return null;
   return (
     <span className="dev-ws-row-band">
       {s ? (
         <span className={`dev-ws-row-state dev-ws-row-state-${s.tone}`} title={s.title}>{s.label}</span>
       ) : null}
-      {linked.map((b) => <Badge key={b.key} b={flatBadge(b)} />)}
       {chips.map((b) => <Badge key={b.key} b={flatBadge(b)} />)}
+      {trailing ? <span className="dev-ws-row-trailing" onClick={(e) => e.stopPropagation()}>{trailing}</span> : null}
     </span>
   );
 }
@@ -168,23 +174,22 @@ export function RowBand({ card }: { card: DevCardModel }): ReactNode {
  * leaves it alone because it sits inside a `.dev-ws-rowwrap` — see the
  * header.
  *
- * A `div` with the button role rather than a `<button>`, because the vote
- * strip's rows carry the card's Vote button INSIDE them (`trailing`), and
- * a button cannot contain a button. The trailing control stops its clicks
- * from reaching the row; Enter and Space on the row itself toggle it.
+ * A `div` with the button role rather than a `<button>`, because the row
+ * carries real controls INSIDE it — the vote button, the number's link, the
+ * tag chips — and a button cannot contain a button. A click on any of them
+ * does its own job and does not toggle the row; Enter and Space on the row
+ * itself toggle it.
  */
 export function FoldedRow({
   row, open, onToggle,
 }: { row: CardRow; open: boolean; onToggle: () => void }): ReactNode {
   const c = row.card;
-  const n = numberOf(c);
-  const by = authorOf(c);
   // The vote control belongs to the ROW, on every row that has one — not just
   // the ones in the vote strip. It used to ride in the dense card's status
   // band for a row inside a theme, which meant opening that row moved the
   // control from nowhere to somewhere while "Closes #N" moved the other way:
-  // two objects, which is what this stops being. Now the head is identical
-  // folded and open, and nothing travels.
+  // two objects, which is what this stops being. It sits at the right end of
+  // the row's last line, which is where the card's bar puts it.
   const specs = voteSpecs(c);
   const trailing = specs ? <VoteButton yes={specs.yes} no={specs.no} /> : null;
   return (
@@ -200,7 +205,12 @@ export function FoldedRow({
       data-edge={edgeFor(c)}
       data-ws-row={row.key}
       {...itemHooks(c)}
-      onClick={onToggle}
+      onClick={(e) => {
+        // The row's own controls do their own job: the number's link, a tag
+        // chip, a "Closes #N" chip. Only the surface around them toggles.
+        if ((e.target as HTMLElement | null)?.closest('a, button')) return;
+        onToggle();
+      }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return;
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); }
@@ -213,14 +223,11 @@ export function FoldedRow({
           {row.fresh ? <span className="dev-ws-new">new</span> : null}
           {row.placing ? <span className="dev-ws-placing" title="Being placed into a category">placing…</span> : null}
         </span>
-        <span className="dev-ws-row-meta">
-          {n ? <span className="font-mono">{n}</span> : null}
-          {by ? <span>{by}</span> : null}
-        </span>
-        <RowBand card={c} />
+        {/* The card's own meta line, node for node: number · author · when,
+            the tags, the linked-issue chips. */}
+        <span className="dev-ws-row-meta">{metaLineNodes(c)}</span>
+        <RowBand card={c} trailing={trailing} />
       </span>
-      {c.chatCount ? <span className="dev-ws-row-chat" title={`${c.chatCount} replies`}>{`💬 ${c.chatCount}`}</span> : null}
-      {trailing ? <span className="dev-ws-row-trailing" onClick={(e) => e.stopPropagation()}>{trailing}</span> : null}
       {/* No chevron. It promises a destination, and this row has none: the
           whole surface is a toggle that unfolds the card in place. A theme
           header still wears one, because that is what it does. */}
@@ -240,8 +247,8 @@ export function FoldedRow({
  * card whole rather than growing a chimera.
  */
 export function UnfoldedRow({
-  row, slug, canPost, detail: withDetail = true,
-}: { row: CardRow; slug: string; canPost: boolean; detail?: boolean }): ReactNode {
+  row, slug, canPost, detail: placement = 'actions', expand: mode = 'inline',
+}: { row: CardRow; slug: string; canPost: boolean; detail?: DetailPlacement; expand?: OpenMode }): ReactNode {
   // ── "Open card" opens it HERE ──────────────────────────────────────
   //
   // It was a link out to the item's own screen, which meant the lander's
@@ -255,36 +262,51 @@ export function UnfoldedRow({
   // one of these is the expensive half of the topic screen, and a lander
   // showing forty rows would build forty of them to draw none. Held in state
   // so it survives re-renders, and dropped when the card is closed.
+  //
+  // On the Board it does not open here at all: `expand: 'page'` makes the
+  // pill a link to the item's own page. A column is the wrong width for the
+  // ledger and the transcript, and the Board is where the item's page is one
+  // tap away.
+  //
+  // And where the topic screen has no body for the kind — a session, a
+  // merged change, a governance item — the inline open goes to the page too,
+  // rather than doing nothing: `_workshopCardBody` answers null for those,
+  // and a control that answers a tap with nothing reads as broken.
   const [detail, setDetail] = useState<TopicBody | null>(null);
   const key = row.card.key;
   useEffect(() => { setDetail(null); }, [key]);
+  const href = openHref(slug, row.card);
   const toggleDetail = () => {
-    setDetail(detail ? null : readAppView<TopicBody>('_workshopCardBody', key));
+    if (detail) { setDetail(null); return; }
+    const body = readAppView<TopicBody>('_workshopCardBody', key);
+    if (!body) { if (href) window.location.hash = href; return; }
+    setDetail(body);
   };
-  // ── …on the Workshop. The Board's open card is the Board's card ──
+  // ── Where the toggle sits ──────────────────────────────────────────
   //
-  // The toggle rides as the card's `statusLead`, and a card given one moves
-  // its primary actions up beside it, onto the facts line (dev-card.tsx):
-  // right on a sheet 760px wide, and wrong in a kanban column of ~300px,
-  // where "Create proposal · Claim this issue · Open card · Preview" runs
-  // past the band's clip and the toggle is the pill that falls off. The
-  // Board's card also folds its second action into ⋯ by measuring the
-  // action band, which the inline placement defeats. So the Board passes
-  // `detail: false`: its open card is exactly the card the column drew
-  // before it folded — same bands, same folding, same declared checks —
-  // and the item's own page, one link below, is where the ledger and the
-  // transcript are read at a width that fits them.
+  // In the card's action band, after its own pills and before the hamburger
+  // and Preview (dev-card.tsx `actionEnd`), on both surfaces. The Workshop
+  // used to seat it on the facts line (`statusLead`), which moved the card's
+  // primary actions up beside it — right on a sheet 760px wide, but in a
+  // kanban column of ~300px that ran "Create proposal · Claim this issue ·
+  // Open card · Preview" past the band's clip and defeated the fold the
+  // Board's card does by measuring its band. The band seat works at both
+  // widths: the pills stay where the column has always drawn them and the
+  // band's own measurement folds them into the menu around the toggle. So
+  // it is the default now and the two surfaces draw one card, which is the
+  // point of the fold.
   //
   // The one thing the fold still cannot do: the item's own page, for a link
-  // somebody wants to share. It moved off the sheet's own strip and onto the
-  // card's meta line, which is where the topic screen puts GitHub too.
-  const href = openHref(slug, row.card);
+  // somebody wants to share. On the Workshop it is the link under the sheet;
+  // on the Board "Open card" itself is that link.
   // No chevron on the open card. It is the Board's "this opens" mark at the
   // card's right edge, and inside a fold a click on the card FOLDS it; the
   // way out is the link under the card. The row it folds to wears none
   // either, so nothing on the item promises a destination it does not have.
   const card: DevCardModel = { ...row.card, rail: { ...row.card.rail, chevron: false } };
-  const openBtn = withDetail ? (
+  const openBtn = !placement ? undefined : mode === 'page' ? (
+    href ? <a className="gc-vote-btn dev-ws-open-btn" href={href} data-ws-open-card={row.key}>Open card</a> : undefined
+  ) : (
     <button
       type="button"
       className="gc-vote-btn dev-ws-open-btn"
@@ -292,10 +314,10 @@ export function UnfoldedRow({
       data-ws-open-card={row.key}
       onClick={toggleDetail}
     >{detail ? 'Close card' : 'Open card'}</button>
-  ) : undefined;
+  );
   return (
     <div className="dev-feed-entry dev-ws-sheet" data-ws-sheet={row.key}>
-      <DevCard model={card} statusLead={openBtn} />
+      <DevCard model={card} actionEnd={placement ? openBtn : undefined} />
       {detail ? (
         <div className="dev-ws-detail" data-ws-detail={row.key}>
           <TopicBodySections body={detail} />
@@ -307,7 +329,7 @@ export function UnfoldedRow({
       {row.thread && slug ? (
         <FeedThread slug={slug} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
       ) : null}
-      {href ? (
+      {href && mode === 'inline' ? (
         <div className="dev-ws-sheet-actions">
           <a href={href} className="dev-ws-link">Open on its own page ›</a>
         </div>
@@ -333,11 +355,13 @@ export function voteSpecs(card: DevCardModel): { yes: ActionSpec; no: ActionSpec
  * nothing left to differ about — and the Board's columns are a sixth caller.
  */
 export function CardRowView({
-  row, slug, canPost, open, onToggle, detail,
+  row, slug, canPost, open, onToggle, detail, expand,
 }: {
   row: CardRow; slug: string; canPost: boolean; open: boolean; onToggle: () => void;
-  /** Offer "Open card" (the topic sections in place) on the open card. The Workshop does; the Board does not. */
-  detail?: boolean;
+  /** Where "Open card" sits on the open card: the action band (both surfaces today) or the facts line. */
+  detail?: DetailPlacement;
+  /** What "Open card" does: the sections in place (Workshop) or the item's page (Board). */
+  expand?: OpenMode;
 }): ReactNode {
   // EITHER the compressed row OR the card — never both. The two are one item
   // at two sizes, and drawing them together is what made the open state read
@@ -370,7 +394,7 @@ export function CardRowView({
       } : undefined}
     >
       {open ? (
-        <UnfoldedRow row={row} slug={slug} canPost={canPost} detail={detail} />
+        <UnfoldedRow row={row} slug={slug} canPost={canPost} detail={detail} expand={expand} />
       ) : (
         <FoldedRow row={row} open={open} onToggle={onToggle} />
       )}

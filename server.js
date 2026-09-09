@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
-const { load: loadConfig } = require('./src/config');
+const { load: loadConfig, runsClusterMaintenance } = require('./src/config');
 const { migrate } = require('./src/db/migrate');
 const {
   shellAssetCacheControl,
@@ -1202,10 +1202,22 @@ async function start() {
   // leader exits and frees the advisory lock. Single-instance / dev / tests
   // (PLATFORM_LEADER_LOCK unset) become leader instantly — identical to the
   // pre-blue-green boot path.
-  leadership = createLeadership({ databaseUrl: config.databaseUrl });
-  leadership.start(becomeLeader).catch((err) => {
-    log.error('server', 'Leadership coordinator failed', { err: err.message });
-  });
+  //
+  // #1771: a staging preview never stands for election. It is a throwaway
+  // clone with its own database, so it would win its own lock instantly and
+  // run every fleet duty above against a copy of production's rows — work it
+  // cannot do (no docker socket, no GitHub credentials, no fleet) on a timer
+  // that never stops. Previews last touched a week ago were measured still
+  // holding six warm Postgres connections each, on a server whose
+  // max_connections is the stock 100. See config.runsClusterMaintenance.
+  if (!runsClusterMaintenance()) {
+    log.info('server', 'Leader duties skipped — staging preview serves requests only');
+  } else {
+    leadership = createLeadership({ databaseUrl: config.databaseUrl });
+    leadership.start(becomeLeader).catch((err) => {
+      log.error('server', 'Leadership coordinator failed', { err: err.message });
+    });
+  }
 
   return server;
 }

@@ -445,7 +445,8 @@ function load() {
       activeDeadlineSeconds: parseInt(process.env.ACTIVE_DEADLINE_SECONDS || '1800', 10),
       ingressClassName: process.env.INGRESS_CLASS_NAME || 'cilium',
       clusterIssuer: process.env.CLUSTER_ISSUER || 'letsencrypt-public',
-      appDomain: process.env.USERNODE_DOMAIN || 'apps.example.invalid',
+      appDomain: process.env.USERNODE_APPS_DOMAIN || process.env.USERNODE_DOMAIN || 'apps.example.invalid',
+      platformDomain: process.env.USERNODE_DOMAIN || 'apps.example.invalid',
       workerImage: process.env.KUBERNETES_WORKER_IMAGE || '',
       captureImage: process.env.KUBERNETES_CAPTURE_IMAGE || '',
       workerStorageClass: process.env.WORKER_STORAGE_CLASS || '',
@@ -454,7 +455,24 @@ function load() {
     // Postgres connection pool size (pg `Pool.max`). pg's built-in default
     // is 10, which can bottleneck under many concurrent SSE turns + staging
     // DB work. Tunable via env so prod can widen it without a code change.
-    dbPoolMax: parseInt(process.env.DB_POOL_MAX || '10', 10),
+    //
+    // #1771: a STAGING PREVIEW gets its own, much smaller ceiling. Every
+    // preview is a separate clone on the SAME Postgres server as production,
+    // and that server's max_connections is the stock 100 — so the fleet, not
+    // any one process, is what the budget has to fit. A preview serves one
+    // reviewer and one capture run; capture drives 8 concurrent pages
+    // (capture/capture.js `concurrency`), so 8 is the number of connections
+    // it can actually use at once, and anything above that is a ceiling it
+    // would only reach by holding connections it is not using.
+    //
+    // This is read from the preview's OWN env rather than injected by
+    // services/staging-env.js on purpose: adding a key there moves the env
+    // fingerprint, which marks all ~20 live previews stale and rebuilds the
+    // fleet — twenty image builds and twenty database clones, which is the
+    // very load this issue is about.
+    dbPoolMax: IS_STAGING()
+      ? parseInt(process.env.STAGING_DB_POOL_MAX || '8', 10)
+      : parseInt(process.env.DB_POOL_MAX || '10', 10),
     // Session auto-pause: a DB-driven sweeper (server.js) flips idle
     // 'active' sessions to 'paused' so they stop counting against the
     // session caps. Now that pause is cheap (it no longer tears down
@@ -758,9 +776,40 @@ function usesMockGithubForImports() {
   return process.env.USERNODE_ENV === 'staging';
 }
 
+// #1771: cluster maintenance is not a staging preview's job.
+//
+// server.becomeLeader() is where every fleet-wide duty lives — role
+// bootstraps, container cleanup, backfills, the pollers, and nine sweepers.
+// It is gated to ONE leader so the two blue-green colors never double-run
+// it. A preview is neither color: it is a throwaway clone with its own
+// database, so it wins its own advisory lock instantly and runs the whole
+// suite against a copy of production's rows.
+//
+// It cannot do any of that work. A preview has no docker socket (no worker
+// to evict, no container to reap), no GitHub credentials (services/
+// github-mock.js stands in), and no fleet. What it does have is a timer
+// pool that queries every few seconds forever, which is why previews last
+// touched a week ago were measured holding six warm Postgres connections
+// each — twenty of them, on a server whose max_connections is 100. The pool
+// never sheds them because idleTimeoutMillis only fires on a connection
+// nobody reuses, and the sweepers keep reusing them.
+//
+// So a preview does not stand for election at all. Everything a reviewer
+// or a declared check touches is request-driven and unaffected; the
+// leader-scoped extras (the prod-debug SQL role) already degrade to a clean
+// 503, which is the same thing a follower color does during a rollout.
+//
+// The escape hatch is for a preview that is deliberately reviewing a change
+// TO this machinery.
+function runsClusterMaintenance() {
+  if (process.env.USERNODE_ENV !== 'staging') return true;
+  return process.env.STAGING_CLUSTER_MAINTENANCE === '1';
+}
+
 module.exports = {
   load,
   usesMockGithubForImports,
+  runsClusterMaintenance,
   canonicalCliOrigin,
   canonicalOpenRouterApiBase,
   canonicalNativeSessionV2Network,

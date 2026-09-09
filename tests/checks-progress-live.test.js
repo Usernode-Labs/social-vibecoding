@@ -478,9 +478,112 @@ test('the finished build rides every testing-half snapshot, from the timings sta
   const src = read('src/services/visuals.js');
   assert.match(src, /build: buildProgressFromTimings\(stagingResult && stagingResult\.timings\),/);
   const staging = read('src/services/staging.js');
-  for (const step of ['source_fetch', 'image_build', 'clone', 'health', 'done']) {
+  for (const step of ['source_fetch', 'image_build', 'clone', 'health', 'prepare_checks']) {
     assert.match(staging, new RegExp(`reportBuildStep\\(config, session, '${step}', timings,`), `the build reports ${step}`);
   }
+  assert.doesNotMatch(staging, /reportBuildStep\(config, session, 'done'/, 'the build no longer closes itself: captureForSession closes the fifth step');
+});
+
+// ── 2d. the fifth step: the hand-off to the checks ──────────────────────
+//
+// The container answering its healthcheck is not the checks starting. The
+// caller still verifies the edge and announces the preview, and
+// captureForSession may park the run behind an earlier capture on the same
+// proposal — on the self-app, minutes. The bar used to read 4/4 under a
+// title still saying "Preparing the staging preview…" for all of it.
+
+test('the build opens prepare_checks when the container is up, and the capture closes it at the testing flip', async () => {
+  const calls = [];
+  const pool = { query: async (sql, params) => { calls.push({ sql, params }); return { rowCount: 1 }; } };
+  const ws = require('../src/services/ws');
+  const saved = ws.broadcastGlobal;
+  const seen = [];
+  ws.broadcastGlobal = (e) => seen.push(e);
+  const poolMod = require('../src/db/pool');
+  const savedGetPool = poolMod.getPool;
+  poolMod.getPool = () => pool;
+  try {
+    const deployedAt = Date.now() - 5000;
+    const timings = { sourceFetchMs: 2000, imageBuildMs: 5000, cloneMs: 2000, cloneVia: 'template', healthMs: 9000, totalMs: 18000, deployedAt };
+    const stagingResult = { timings };
+    // Not queued: the step is open, nothing marks a wait.
+    visuals.reportPrepareChecks({}, { id: 7 }, stagingResult);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].checkPhase, 'building');
+    assert.equal(seen[0].progress.build.step, 'prepare_checks');
+    assert.equal(seen[0].progress.build.startedAt, new Date(deployedAt).toISOString());
+    assert.equal('queued' in seen[0].progress.build, false);
+    assert.deepEqual(seen[0].progress.build.steps.map((s) => s.key), ['source_fetch', 'image_build', 'clone', 'health']);
+    assert.equal(seen[0].progress.build.totalMs, 18000, 'the build total is the four steps; the hand-off is not in it');
+    // Queued behind an earlier run: the step says so, and the timings remember it.
+    visuals.reportPrepareChecks({}, { id: 7 }, stagingResult, { queued: true });
+    assert.equal(seen[1].progress.build.queued, true);
+    assert.equal(timings.prepareChecksVia, 'queued');
+    // The flip to testing closes it, with its time and its reason, under the testing phase.
+    await visuals.finishPrepareChecks(pool, { id: 7 }, 'abc', stagingResult, 'pr-import');
+    assert.ok(Number.isFinite(timings.prepareChecksMs) && timings.prepareChecksMs >= 5000, 'measured from deployedAt');
+    const closing = seen[2];
+    assert.equal(closing.checkPhase, 'testing');
+    assert.equal(closing.commitSha, 'abc');
+    assert.equal(closing.checkTrigger, 'pr-import');
+    assert.equal(closing.progress.build.step, 'done');
+    assert.deepEqual(closing.progress.build.steps[4], { key: 'prepare_checks', ms: timings.prepareChecksMs, via: 'queued' });
+    assert.equal(closing.progress.build.totalMs, 18000);
+    assert.match(calls[calls.length - 1].sql, /jsonb_build_object\('build', \$2::jsonb/);
+    // Idempotent: a second close keeps the first measurement.
+    const first = timings.prepareChecksMs;
+    await visuals.finishPrepareChecks(pool, { id: 7 }, 'abc', stagingResult, 'pr-import');
+    assert.equal(timings.prepareChecksMs, first);
+    // And the finished build rides the testing-half snapshots with all five.
+    const state = visuals.makeChecksProgressState({ expected: 2, flush: () => {}, build: visuals.buildProgressFromTimings(timings) });
+    assert.equal(state.snapshot().build.steps.length, 5);
+    // A run with no build (a re-check against a live preview) reports nothing:
+    // a lone fifth step over four "todo" ones would claim a build that never ran.
+    seen.length = 0;
+    visuals.reportPrepareChecks({}, { id: 7 }, null, { queued: true });
+    await visuals.finishPrepareChecks(pool, { id: 7 }, 'abc', null, 'manual-recheck');
+    assert.equal(seen.length, 0);
+  } finally {
+    ws.broadcastGlobal = saved;
+    poolMod.getPool = savedGetPool;
+  }
+  const src = read('src/services/visuals.js');
+  // Queued: reported from the re-queue branch, before it returns.
+  assert.match(src, /_queued\.set\(key, \{ config, session, app, commitHash, stagingResult, trigger, force \}\);[\s\S]{0,900}reportPrepareChecks\(config, session, stagingResult, \{ queued: true \}\);\n\s+return;/);
+  // Closed right after the phase flips, before anything slow (the compare, the capture image).
+  assert.match(src, /notifyChecksPending\(session\.id, commitHash, 'testing', trigger\);[\s\S]{0,600}await finishPrepareChecks\(pool, session, commitHash, stagingResult, trigger\);/);
+  assert.match(read('src/services/staging.js'), /timings\.deployedAt = deployedAt;\n\s+reportBuildStep\(config, session, 'prepare_checks', timings, deployedAt\);/);
+});
+
+test('the fifth step reads "prepare checks", names the queued wait, and keeps the build total to the build', () => {
+  const AppView = makeAppView();
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  const four = [{ key: 'source_fetch', ms: 2000 }, { key: 'image_build', ms: 5000 }, { key: 'clone', ms: 2000, via: 'template' }, { key: 'health', ms: 9000 }];
+  // Live, not queued.
+  const live = AppView._checksProgressView({ checks_progress: { build: { step: 'prepare_checks', startedAt: 'x', steps: four, totalMs: 18000 } } });
+  assert.equal(live.build.sentence, 'Preview build: branch fetched (2s), image built (5s), database cloned from template (2s), preview started (9s), now preparing the checks.');
+  assert.equal(live.sub, 'build: preparing the checks');
+  assert.deepEqual(plain(live.bar.build).map((s) => [s.key, s.state, s.label]).slice(3), [['health', 'done', 'start preview'], ['prepare_checks', 'now', 'prepare checks']]);
+  // Live, queued behind an earlier run: the step says why it is waiting.
+  const queued = AppView._checksProgressView({ checks_progress: { build: { step: 'prepare_checks', startedAt: 'x', steps: four, totalMs: 18000, queued: true } } });
+  assert.equal(queued.build.sentence, 'Preview build: branch fetched (2s), image built (5s), database cloned from template (2s), preview started (9s), now waiting for an earlier run on this proposal to finish.');
+  assert.equal(queued.sub, 'build: waiting for an earlier run on this proposal to finish');
+  assert.equal(plain(queued.bar.build)[4].label, 'prepare checks (waiting for an earlier run)');
+  // Finished: the wait is its own clause, outside the build's total.
+  const done = AppView._checksProgressView({ checks_progress: { ran: 1, passed: 1, failed: 0, expected: 5,
+    build: { step: 'done', steps: [...four, { key: 'prepare_checks', ms: 580000, via: 'queued' }], totalMs: 18000 } } });
+  assert.equal(done.build.sentence, 'Preview built in 18s, checks prepared in 9m 40s after waiting for an earlier run: branch fetched (2s), image built (5s), database cloned from template (2s), preview started (9s).');
+  assert.equal(done.sub, '1 of 5 run · 1 passed');
+  assert.equal(plain(done.bar.build)[4].label, 'prepare checks (waited for an earlier run)');
+  assert.equal(plain(done.bar.build)[4].ms, 580000);
+  const quick = AppView._checksProgressView({ checks_progress: { build: { step: 'done', steps: [...four, { key: 'prepare_checks', ms: 3000 }], totalMs: 18000 } } });
+  assert.equal(quick.build.sentence, 'Preview built in 18s, checks prepared in 3s: branch fetched (2s), image built (5s), database cloned from template (2s), preview started (9s).');
+  assert.equal(quick.build.sub, 'built in 18s');
+  // A row written before the step existed reads exactly as it did.
+  const legacy = AppView._checksProgressView({ checks_progress: { build: { step: 'done', steps: four, totalMs: 18000 } } });
+  assert.equal(legacy.build.sentence, 'Preview built in 18s: branch fetched (2s), image built (5s), database cloned from template (2s), preview started (9s).');
+  assert.equal(plain(legacy.bar.build).length, 5, 'the bar always draws the whole pipeline');
+  assert.match(read('frontend/src/features/dev-board/topic/model.ts'), /fetch, image, database, start, prepare checks/);
 });
 
 test('the build steps render as a line and a step row, live and finished', () => {
@@ -490,7 +593,7 @@ test('the build steps render as a line and a step row, live and finished', () =>
   assert.equal(live.build.sentence, 'Preview build: branch fetched (2s), image built (48s), now cloning the database.');
   assert.equal(live.sub, 'build: cloning the database', 'the build owns the sub line while nothing else has reported');
   assert.deepEqual(plain(live.bar.build).map((s) => [s.key, s.state, s.ms]), [
-    ['source_fetch', 'done', 2000], ['image_build', 'done', 48000], ['clone', 'now', null], ['health', 'todo', null],
+    ['source_fetch', 'done', 2000], ['image_build', 'done', 48000], ['clone', 'now', null], ['health', 'todo', null], ['prepare_checks', 'todo', null],
   ]);
   const done = AppView._checksProgressView({ checks_progress: { ran: 3, passed: 3, failed: 0, expected: 10,
     build: { step: 'done', steps: [{ key: 'source_fetch', ms: 2000 }, { key: 'image_build', ms: 48000 }, { key: 'clone', ms: 3900, via: 'template' }, { key: 'health', ms: 6000 }], totalMs: 60000 } } });

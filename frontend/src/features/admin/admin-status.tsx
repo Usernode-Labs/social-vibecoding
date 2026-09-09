@@ -169,6 +169,12 @@ function Capacity({ data }: { data: StatusData }) {
   const loadTone: Tone = loadPct >= 100 ? 'red' : loadPct >= 70 ? 'yellow' : 'zinc';
   const poolPct = db && db.max ? (db.total / db.max) * 100 : 0;
   const poolTone: Tone = db && db.waiting > 0 ? 'red' : poolPct >= 80 ? 'yellow' : 'zinc';
+  // #1771: the figure the pool above is competing FOR. One Postgres backs the
+  // platform, every app and every preview; the pool meter can read 3 / 60
+  // while the server is one connection from refusing work.
+  const server = db ? db.server : null;
+  const serverPct = server && server.max ? (server.used / server.max) * 100 : 0;
+  const serverTone: Tone = serverPct >= 90 ? 'red' : serverPct >= 75 ? 'yellow' : 'green';
 
   return (
     <>
@@ -222,6 +228,24 @@ function Capacity({ data }: { data: StatusData }) {
       {db ? (
         <MeterRow label="DB pool (open / max)" pct={poolPct} tone={poolTone}
           value={`${db.total} / ${db.max}${db.waiting > 0 ? ` · ${db.waiting} waiting` : ''}`} />
+      ) : null}
+
+      {server ? (
+        <>
+          <MeterRow label="Postgres server (backends / max_connections)" pct={serverPct} tone={serverTone}
+            value={`${server.used} / ${server.max}${server.idle ? ` · ${server.idle} idle` : ''}`} />
+          {server.topDatabases?.length ? (
+            <div className="text-xs mb-3 text-zinc-600 dark:text-zinc-400">
+              {server.topDatabases.slice(0, 4).map((row: any, index: number) => (
+                <span key={row.name}>
+                  {index ? ' · ' : ''}
+                  <span className="mono text-zinc-800 dark:text-zinc-200">{row.name}</span>
+                  {` ${row.count}`}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </>
       ) : null}
 
       <div className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800 grid grid-cols-2 gap-x-4 gap-y-1 text-xs">

@@ -133,9 +133,17 @@ test('the builder drops falsy entries before the cap counts them', () => {
   assert.ok(model.badges.every(Boolean));
 });
 
-test('a null chat count omits the 💬 badge entirely', () => {
+test('a null chat count omits the 💬 badge entirely, and a 0 count draws none at either size', () => {
   assert.doesNotMatch(BANDS({ badges: CHIPS(1), chatCount: null }), /dev-chat-badge/);
-  assert.match(BANDS({ badges: CHIPS(1), chatCount: 0 }), /dev-chat-badge/);
+  // The dense card's facts row is emitted only with something visible in
+  // it, and a live bump repaints from the model, so no hidden 0 waits there.
+  assert.doesNotMatch(BANDS({ badges: CHIPS(1), chatCount: 0 }), /dev-chat-badge/);
+  assert.match(BANDS({ badges: CHIPS(1), chatCount: 2 }), /<div class="dev-card-meta"><span class="dev-chat-badge/,
+    'a real count rides the meta line with the tags, at both sizes');
+  // The detail head draws nothing at 0 either: the count is the meta line's
+  // at every size, and there only when there is one.
+  assert.doesNotMatch(BANDS({ dense: false, badges: CHIPS(1), chatCount: 0 }), /dev-chat-badge/);
+  assert.match(BANDS({ dense: false, badges: CHIPS(1), chatCount: 4 }), /<div class="dev-card-meta"><span class="dev-chat-badge/);
 });
 
 test('the detail head opts OUT of the cap (every chip must be reachable there)', () => {
@@ -221,7 +229,7 @@ test('read-only viewers get no attribute rows at all', () => {
 
 // ── The four badges that survive, in order ──────────────────────────────
 
-test('proposal: the pill LEADS one merged status band, chips beside it', () => {
+test('proposal: the pill LEADS one merged status band; the chips ride the meta line', () => {
   const AppView = makeAppView();
   const model = AppView._proposalCardModel(PR({ ...ATTRS, my_vote: 'yes', check_state: 'passing' }));
   const html = cardHtml(model);
@@ -229,15 +237,21 @@ test('proposal: the pill LEADS one merged status band, chips beside it', () => {
   // then got a full-width row of its own (.dev-status-row) underneath. The
   // four-band card merges those two rows back into ONE reserved status band,
   // because two variable rows are what made card heights disagree. The pill
-  // keeps its bar shape — it just flexes to whatever width the chips leave.
+  // keeps its bar shape — it just flexes to whatever width the band leaves.
   assert.doesNotMatch(html, /dev-status-row/, '.dev-status-row is retired');
   assert.match(html, /dev-card-badges dev-card-status/, 'one merged band');
   assert.match(html, /dev-status-pill-block/, 'the pill keeps its bar treatment');
-  assert.ok(html.indexOf('dev-status-pill-block') < html.indexOf('Bug'),
-    'the pill LEADS the band now — it is the card\'s headline state');
-  // The chips keep their own order within the band.
-  assert.ok(html.indexOf('High') < html.indexOf('@maya'));
-  assert.ok(html.indexOf('@maya') < html.indexOf('Bug'));
+  // The TAGS — priority, assignee, category — moved up to the meta line
+  // beside the number and the author (#1787): the band keeps what is a
+  // STATE, and the pill is the card's headline state, so it leads it.
+  const meta = html.slice(html.indexOf('class="dev-card-meta"'), html.indexOf('class="dev-card-badges dev-card-status"'));
+  for (const chip of ['High', '@maya', 'Bug']) assert.ok(meta.includes(chip), `${chip} is on the meta line`);
+  const band = html.slice(html.indexOf('class="dev-card-badges dev-card-status"'), html.indexOf('class="gc-card-actions"'));
+  assert.doesNotMatch(band, /High|@maya|>Bug</, 'and not in the band');
+  assert.match(band, /^class="dev-card-badges dev-card-status"[^>]*><span class="[^"]*dev-status-pill-block/, 'the pill leads the band');
+  // The chips keep their own order on the meta line.
+  assert.ok(meta.indexOf('High') < meta.indexOf('@maya'));
+  assert.ok(meta.indexOf('@maya') < meta.indexOf('Bug'));
 });
 
 test('the detail head keeps the INLINE capsule, not a second full-width bar', () => {
@@ -265,13 +279,17 @@ test('the pill is exempt from the cap, so four chips still fit beside it', () =>
   }
 });
 
-test('issue: the work-state chip leads, then the three chips', () => {
+test('issue: the work-state chip is the band\'s; the three tags are the meta line\'s', () => {
   const AppView = makeAppView();
   const model = AppView._issueCardModel(ISSUE({
     ...ATTRS, in_progress: { count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [{ sessionId: 1, username: 'maya', mine: false, status: 'active', busy: false, lastActivityAt: null }], target: null },
   }));
   const html = cardHtml(model);
-  assert.ok(html.indexOf('Being worked on · maya') < html.indexOf('High'));
+  const meta = html.slice(html.indexOf('class="dev-card-meta"'), html.indexOf('class="dev-card-badges dev-card-status"'));
+  const band = html.slice(html.indexOf('class="dev-card-badges dev-card-status"'), html.indexOf('class="gc-card-actions"'));
+  assert.match(band, /Being worked on · maya/, 'the work state is a state: it stays in the band');
+  assert.doesNotMatch(band, /High|@maya|>Bug</);
+  for (const chip of ['High', '@maya', 'Bug']) assert.ok(meta.includes(chip), `${chip} rides the meta line`);
 });
 
 test('an over-budget proposal drops the LOWEST-priority chip, never the pill', () => {

@@ -29,14 +29,14 @@
  * is the COLUMN's state — one per column, so a board with four open cards
  * is still four columns of rows — and it lives in the component, so the
  * WS-driven republishes that repaint the board leave it alone. The open card
- * is exactly the card the column drew before it folded (no "Open card"
- * toggle: a column is too narrow for the actions it moves onto the facts
- * line), with the item's own page one link below. `?cards=open` draws every
- * card unfolded: the board as it was, and the state the declared checks that
- * read a card's anatomy run in.
+ * is the card the column always drew, with the Workshop's "Open card" toggle
+ * as the last pill of its action band (the facts-line seat moves the actions
+ * up beside it, which a column cannot hold) and the item's own page one link
+ * below. `?cards=open` draws every card unfolded: the board as it was, and
+ * the state the declared checks that read a card's anatomy run in.
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { useNarrowViewport } from '../../../lib/use-narrow';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -93,7 +93,15 @@ function Column(
   // run by app-view.js after every publish). A fold happens BETWEEN
   // publishes, so the slot a card just unfolded with would stay empty until
   // the next repaint; re-run the filler here. It skips filled hosts.
-  useEffect(() => {
+  //
+  // A LAYOUT effect, not a plain one: a plain effect runs after the browser
+  // has painted the card with the slot empty, so the kudos pill popped in a
+  // frame later and shoved "Open card" along the band — the flicker at the
+  // bottom-left of every merged card on open. Before paint, the card is
+  // whole on its first frame, and the band's fold measurement (which
+  // watches its own subtree) re-folds around the filled slot in the same
+  // frame.
+  useLayoutEffect(() => {
     if (hostRef.current) callAppView('_fillKudosHosts', hostRef.current);
   }, [openKey, unfolded]);
   let cards: ReactNode;
@@ -130,9 +138,14 @@ function Column(
               canPost,
               open: unfolded || openKey === row.key,
               onToggle: () => setOpenKey((k) => (k === row.key ? null : row.key)),
-              // The Board's open card is the Board's card, bands and all; the
-              // topic sections are read on the item's own page (fold.tsx).
-              detail: false,
+              // "Open card" rides in the action band here, not on the facts
+              // line: a column is too narrow for the actions that seat moves
+              // up beside it (fold.tsx).
+              detail: 'actions',
+              // And it is a link to the item's page, not the sections in
+              // place: a column is the wrong width for a ledger and a
+              // transcript, and the page is one tap away from here.
+              expand: 'page',
             }}
           />
         ))}

@@ -21,7 +21,7 @@ import { useState, type ReactNode } from 'react';
 import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { CardIcon, DevCard } from './dev-card';
-import { CardRowView } from './fold';
+import { CardRowView, type DetailPlacement, type OpenMode } from './fold';
 import type { ArchivedRow, ListRow } from './model';
 
 /**
@@ -35,11 +35,13 @@ export interface RowFold {
   open: boolean;
   onToggle: () => void;
   /**
-   * Offer "Open card" on the open card. Off for a kanban column: the toggle
-   * moves the card's actions onto the facts line, which a ~300px column
-   * cannot hold (see fold.tsx), and the item's own page is a link below.
+   * Where the open card's "Open card" toggle sits. A kanban column asks for
+   * the action band: the facts-line seat moves the card's actions up beside
+   * it, which ~300px cannot hold (see fold.tsx).
    */
-  detail?: boolean;
+  detail?: DetailPlacement;
+  /** What "Open card" does there: the Board sends it to the item's page. */
+  expand?: OpenMode;
 }
 
 function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
@@ -86,7 +88,7 @@ export function ListRowView({ row, fold }: { row: ListRow; fold?: RowFold | null
   switch (row.t) {
     case 'card':
       return fold
-        ? <CardRowView row={row} slug={fold.slug} canPost={fold.canPost} open={fold.open} onToggle={fold.onToggle} detail={fold.detail} />
+        ? <CardRowView row={row} slug={fold.slug} canPost={fold.canPost} open={fold.open} onToggle={fold.onToggle} detail={fold.detail} expand={fold.expand} />
         : <DevCard model={row.card} />;
     case 'divider':
       return (
