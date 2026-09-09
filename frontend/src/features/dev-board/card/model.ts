@@ -320,10 +320,31 @@ export interface DevWorkshopView {
   slug?: string;
   /** Whether the viewer may post into a row's thread (collab-gated server-side). */
   canPost?: boolean;
+  /** Who is reading, so a dismissal is per account on a shared device. */
+  viewerId?: number | null;
   /** The no-items note, with its load-failure prefix. */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
   /** Proposals awaiting THIS viewer's vote — pinned above the themes. */
-  votes: { count: number; rows: ListRow[] };
+  votes: {
+    /** Still owed by this viewer. */
+    count: number;
+    /** Everything they COULD vote on, answered or not: the ring's denominator. */
+    total: number;
+    /** How many of `rows` the lander draws before "N more waiting on you". */
+    shown: number;
+    /** ALL of them: the rest are revealed in place, not on another screen. */
+    rows: ListRow[];
+  };
+  /**
+   * The viewer's OWN work in flight on this app: their dev sessions and the
+   * proposals they opened. Unfiltered, like `votes` — your own work is yours
+   * whatever the board is narrowed to.
+   */
+  mine: {
+    count: number;
+    shown: number;
+    rows: ListRow[];
+  };
   /**
    * What happened since the viewer last opened this app's Workshop, or null
    * on a first visit (the welcome takes its place). `baseline` is epoch ms.
@@ -387,6 +408,8 @@ export interface DevWorkshopView {
     pendingStage: 'discovery' | 'placement' | null;
     /** Why the last stage failed, so the footnote can say so. */
     lastError: string | null;
+    /** Why the model's summary paragraph is missing, when the last attempt failed. */
+    digestError: string | null;
     /** How much of the board the themes hold, as the server counts it. */
     coverage: { total: number; placed: number; unplaced: number; pending: number } | null;
     /** Cards on screen the server has themes for but has not placed yet. */
@@ -412,6 +435,15 @@ export interface KanbanColView {
 export interface DevKanbanView {
   activeTab: string;
   cols: KanbanColView[];
+  /** The app, for the open card's "Open on its own page" link. */
+  slug?: string;
+  canPost?: boolean;
+  /**
+   * `?cards=open`: every card drawn unfolded — the board as it was before its
+   * columns folded, and the state the declared checks that read a card's
+   * anatomy run in.
+   */
+  unfolded?: boolean;
   /**
    * True until the board's first fetch lands. Every column draws placeholder
    * cards, and its count draws as a bar rather than `· 0` — an empty board

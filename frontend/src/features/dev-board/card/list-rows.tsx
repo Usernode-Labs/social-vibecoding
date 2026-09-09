@@ -21,7 +21,26 @@ import { useState, type ReactNode } from 'react';
 import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { CardIcon, DevCard } from './dev-card';
+import { CardRowView, type DetailPlacement } from './fold';
 import type { ArchivedRow, ListRow } from './model';
+
+/**
+ * How a column folds its cards: which one is open, how to toggle, and what
+ * the open sheet needs. A caller that passes none draws every card at full
+ * size, as the board did before its columns folded.
+ */
+export interface RowFold {
+  slug: string;
+  canPost: boolean;
+  open: boolean;
+  onToggle: () => void;
+  /**
+   * Where the open card's "Open card" toggle sits. A kanban column asks for
+   * the action band: the facts-line seat moves the card's actions up beside
+   * it, which ~300px cannot hold (see fold.tsx).
+   */
+  detail?: DetailPlacement;
+}
 
 function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
   const [open, setOpen] = useState(false);
@@ -59,11 +78,16 @@ function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
   );
 }
 
-/** One row. The kanban's drag shell wraps this from the outside. */
-export function ListRowView({ row }: { row: ListRow }): ReactNode {
+/**
+ * One row. A card draws folded when the column hands it a fold — the
+ * Board's columns do — and at full size otherwise.
+ */
+export function ListRowView({ row, fold }: { row: ListRow; fold?: RowFold | null }): ReactNode {
   switch (row.t) {
     case 'card':
-      return <DevCard model={row.card} />;
+      return fold
+        ? <CardRowView row={row} slug={fold.slug} canPost={fold.canPost} open={fold.open} onToggle={fold.onToggle} detail={fold.detail} />
+        : <DevCard model={row.card} />;
     case 'divider':
       return (
         <div className="dev-col-divider">

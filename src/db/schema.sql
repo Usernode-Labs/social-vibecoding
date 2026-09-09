@@ -107,19 +107,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL
 -- it on; the deployment gate still applies on top.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS session_bridge_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Home-screen panels the viewer has dismissed (issue #911) — the keys of
--- the cards that sit on the home screen next to the app grid ('challenges'
--- today; see PANEL_REGISTRY in src/routes/home-panels.js, the only reader
--- and writer of this column). ABSENCE MEANS VISIBLE: an empty array — the
--- default for every existing and future row — means every panel in the
--- registry shows, which is what makes the challenges card default-on for
--- everyone with no backfill. Written only through
--- POST /api/home-panels/:key/visibility, which validates the key against
--- the registry, so the array can never accumulate unknown values. Called
--- "panels" and not "widgets" deliberately: the client half,
--- frontend/src/features/home/home.js, already uses "widget" for the iOS
--- home-screen widget's pinned app grid.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DEFAULT '{}';
+-- Home sections are permanent (#1801). Remove the obsolete preference from
+-- existing databases; IF EXISTS also makes fresh installs and repeat boots safe.
+ALTER TABLE users DROP COLUMN IF EXISTS home_panels_hidden;
 
 -- RETIRED — superseded by the `user_home_layout` table (free-form home-grid
 -- placement). It used to hold an iOS-homescreen-style drag position per
@@ -128,9 +118,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DE
 -- (column, row) cells per breakpoint instead, and holes are a first-class
 -- concept a card-count can't represent.
 --
--- The column is LEFT IN PLACE, unread and unwritten: this file is
--- append-only (it has no DROP COLUMN anywhere) and a dead JSONB default of
--- '{}' costs nothing. Nothing may read it — see user_home_layout below.
+-- This separate legacy placement field is left in place, unread and
+-- unwritten. Nothing may read it — see user_home_layout below.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panel_positions JSONB NOT NULL DEFAULT '{}';
 
 -- Platform-level user language preference (issue #757). A BCP-47 language
@@ -6406,6 +6395,21 @@ ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS reconcile_started_at TI
 -- client falls back to a sentence derived from the counts.
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_text TEXT;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_at TIMESTAMPTZ;
+-- Why the last digest attempt got nothing, or NULL when it succeeded. Read by
+-- the lander's footnote, and it picks the retry window (an hour after a
+-- failure, a day after a success).
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_error TEXT;
+-- Which version of each stage's prompt the row was last produced by: the
+-- WORKSHOP_*_VERSION constants beside the prompts in services/llm.js. A
+-- bump makes that stage due on the app's next pass whatever its clocks say
+-- (discovery re-drafts, placement re-places every card, the digest is
+-- rewritten). Stamped on the ATTEMPT, like digest_at, so a bump against a
+-- failing model keeps its backoff instead of retrying on every view. The
+-- default grandfathers the rows written before the columns existed: a
+-- deploy re-drafts nothing by itself.
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovery_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS placement_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_version INTEGER NOT NULL DEFAULT 1;
 
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,

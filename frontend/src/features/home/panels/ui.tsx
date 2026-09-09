@@ -21,7 +21,6 @@ import type { ReactNode } from 'react';
 import {
   ChevronDownIcon,
   ChevronRightIcon,
-  EllipsisVerticalIcon,
 } from '@/components/ui/icons';
 
 import type { PanelStamps } from '../panels-store';
@@ -132,7 +131,7 @@ export function tintOf(key: string): string {
  * area title rather than a caption, with the area's link beside it at 14px
  * semibold in the brand periwinkle (--brand-ink) and no glyph in front of it.
  * The row's shape is label + link: the ⋮ that used to ride here is gone
- * (see PanelMenuButton).
+ * Section hiding is retired (#1801).
  */
 export function SectionHeading({ children, action }: {
   children: ReactNode;
@@ -147,40 +146,10 @@ export function SectionHeading({ children, action }: {
 }
 
 /**
- * The ⋮ that opens a block's own menu (hide this widget, and the rows
- * HomePanels.menuItems builds for it).
- *
- * NOT RENDERED since the homescreen design: the design's area rows are label
- * + link and nothing else, so the Discover and Challenges headings dropped it.
- * The component and HomePanels.openMenu stay — "Hide widget" has no other
- * affordance yet, and whichever surface takes that over (an edit mode, a
- * settings row) can mount this or call openMenu directly. `data-panel-key`
- * names which block it acts on.
- */
-export function PanelMenuButton({ panelKey }: { panelKey: string }) {
-  return (
-    <button
-      type="button"
-      className="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-[color:var(--brand-ink)] opacity-60 hover:opacity-100 leading-none"
-      data-panel-key={panelKey}
-      aria-haspopup="menu"
-      title="Widget options"
-      aria-label="Widget options"
-      onClick={(e) => {
-        e.stopPropagation();
-        panels()?.openMenu?.(panelKey, e.currentTarget);
-      }}
-    >
-      <EllipsisVerticalIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-    </button>
-  );
-}
-
-/**
  * Discover's one destination — the `#apps` directory.
  *
  * Lifted out of DiscoverPanel with the rest of the block's chrome, so the
- * section heading can render it beside the ⋮. Same id, same classes, same
+ * section heading can render it beside the label. Same id, same classes, same
  * hash navigation: `#home-browse-btn` is selected on from dapp.json.
  */
 export function BrowseLink() {
@@ -295,33 +264,51 @@ export function LeaderboardLink() {
  * the bare `#leaderboard`, and two affordances one card apart both reading
  * "leaderboard" but opening different tabs is worse than the ambiguity the
  * label was written to fix.
+ *
+ * THE TOGGLE IS CONDITIONAL (#1824). It used to render whenever the block had
+ * any rows, so a season with three challenges drew "See all 3 challenges"
+ * under all three of them — a control whose label was false and whose click
+ * refetched the same list. `expandable` is the view's answer to "would
+ * expanding show a row that is not already on screen?", and when it is no,
+ * the footer is just the way out. The count in the label is `total` for the
+ * same reason it always was: the toggle only appears when there is more than
+ * is drawn, so the number is never the number already on screen.
  */
 export function PanelFooter({
-  panelKey, total, expanded,
-}: { panelKey: string; total: number; expanded: boolean }) {
+  panelKey, total, expanded, expandable = true,
+}: { panelKey: string; total: number; expanded: boolean; expandable?: boolean }) {
   const label = expanded
     ? 'Show less'
     : (total ? `See all ${total} challenges` : 'See all challenges');
+  // One justify utility, never two: `justify-between` seats the toggle left
+  // and the door right, and with no toggle a lone flex child would drift to
+  // the left edge instead of staying under the rows it belongs to.
   return (
-    <div className="home-panel-footer flex-none flex items-center justify-between gap-2 px-2.5">
-      <button
-        type="button"
-        className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
-        data-panel-key={panelKey}
-        aria-expanded={expanded}
-        title={expanded ? 'Collapse this widget' : 'Show every challenge in this widget'}
-        onClick={(e) => {
-          e.stopPropagation();
-          panels()?.toggleExpanded?.(panelKey);
-        }}
-      >
-        <ChevronDownIcon
-          className={`w-3 h-3 shrink-0 transition-transform${expanded ? ' rotate-180' : ''}`}
-          strokeWidth="2.5"
-          aria-hidden="true"
-        />
-        <span className="whitespace-nowrap">{label}</span>
-      </button>
+    <div
+      className={expandable
+        ? 'home-panel-footer flex-none flex items-center justify-between gap-2 px-2.5'
+        : 'home-panel-footer flex-none flex items-center justify-end gap-2 px-2.5'}
+    >
+      {expandable ? (
+        <button
+          type="button"
+          className="home-panel-expand flex items-center gap-1 text-[12px] font-medium text-violet-700 dark:text-violet-400 hover:underline whitespace-nowrap"
+          data-panel-key={panelKey}
+          aria-expanded={expanded}
+          title={expanded ? 'Collapse this widget' : 'Show every challenge in this widget'}
+          onClick={(e) => {
+            e.stopPropagation();
+            panels()?.toggleExpanded?.(panelKey);
+          }}
+        >
+          <ChevronDownIcon
+            className={`w-3 h-3 shrink-0 transition-transform${expanded ? ' rotate-180' : ''}`}
+            strokeWidth="2.5"
+            aria-hidden="true"
+          />
+          <span className="whitespace-nowrap">{label}</span>
+        </button>
+      ) : null}
       <button
         type="button"
         className="home-panel-open flex items-center gap-1 text-[12px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400 whitespace-nowrap"

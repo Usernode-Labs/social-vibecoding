@@ -275,7 +275,14 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
       expanded={view.expanded}
       plate="soft"
       stamps={{ rows: view.rows.length }}
-      footer={<PanelFooter panelKey={view.key} total={view.total} expanded={view.expanded} />}
+      footer={(
+        <PanelFooter
+          panelKey={view.key}
+          total={view.total}
+          expanded={view.expanded}
+          expandable={view.expandable !== false}
+        />
+      )}
     >
       {view.season ? <SeasonRing view={view.season} /> : null}
       {view.onboardingNote ? (

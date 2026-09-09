@@ -7724,6 +7724,7 @@ const DevChat = {
     const session = DevChat.currentSession;
     const s = session || {};
     return {
+      sessionId: s.id || null,
       // Streamlined Concept: the strip's Building chip. `_composerBusy` is
       // set synchronously by _setStreamingUI — which also repaints this
       // strip — so the chip tracks every turn transition without a new hook.

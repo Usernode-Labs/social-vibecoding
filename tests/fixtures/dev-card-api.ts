@@ -10,10 +10,11 @@
  */
 
 export { ActionButton, DevCard, StatusPill, Badge, Preview, CardIcon, fmtCountdown, BADGE_MAX, ACTION_PRIMARY_MAX } from '../../frontend/src/features/dev-board/card/dev-card';
+export { SessionCheckResults, SessionChecks } from '../../frontend/src/features/dev-board/modals/session-checks';
 export { FooterView } from '../../frontend/src/features/dev-board/card/footer';
 export { DevWorkshop } from '../../frontend/src/features/dev-board/workshop/workshop';
 export { DevKanban } from '../../frontend/src/features/dev-board/card/dev-kanban';
-export { TopicHead, NoteBoxView, ChecksVerdictView, ProposalBody } from '../../frontend/src/features/dev-board/topic/topic-head';
+export { TopicHead, TopicBodySections, NoteBoxView, ChecksVerdictView, ProposalBody } from '../../frontend/src/features/dev-board/topic/topic-head';
 export { topicHeadStore } from '../../frontend/src/features/dev-board/topic/topic-store';
 export { ListRowView } from '../../frontend/src/features/dev-board/card/list-rows';
 export {

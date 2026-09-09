@@ -38,10 +38,25 @@
 // The reconcile runs from three triggers, all through the same function:
 // a board change (ws.pushSessionUpdate / pushIssueUpdate → noteBoardChange,
 // debounced per app), the hourly leader sweep over apps viewed in the last
-// week (sweep), and a GET that finds no draft or cards the row does not
-// know (getThemes), so a first visit still starts one. GET never waits on
-// the model: it serves what the row has, with `coverage` saying how much of
-// the board that is.
+// week (sweep), and a GET that finds no draft, cards the row does not know,
+// a stage run under another prompt version or a paragraph that is due
+// (getThemes), so a first visit still starts one. GET never waits on the
+// model: it serves what the row has, with `coverage` saying how much of the
+// board that is.
+//
+// ── Prompt versions ───────────────────────────────────────────────────
+//
+// Each stage's prompt carries an integer version (llm.WORKSHOP_*_VERSION)
+// and the row records the version each stage last ran with. A mismatch
+// makes that stage due now, whatever its clocks and churn say: discovery
+// re-drafts, placement re-places every card against the standing
+// definitions, the digest is rewritten (needsDiscovery, reconcile,
+// digestDue). The version is stamped on the ATTEMPT, so a bump against a
+// failing model is one call and then the usual backoff, never a retry on
+// every view. Before this a prompt change reached an app only when its own
+// window ran out — a day, or never on a settled board.
+// tests/workshop-prompt-versions.test.js pins each prompt's source to its
+// version so a prompt edit cannot ship without deciding whether to bump.
 //
 // Spend lands on the platform's own account (fleet-maintenance's
 // usernode-platform user), never on whoever opened the page or filed the
@@ -287,7 +302,7 @@ async function buildThemeInput(pool, app) {
   // week is this week's news. Older history is the board's Done column's.
   const window = `${MERGED_WINDOW_DAYS} days`;
   const { rows: mergedRows } = await pool.query(
-    `SELECT cs.id, cs.pr_number, cs.pr_title, cs.linked_issues, u.username, cs.created_at, cs.merged_at
+    `SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.linked_issues, u.username, cs.created_at, cs.merged_at
        FROM chat_sessions cs
        LEFT JOIN users u ON u.id = cs.user_id
       WHERE cs.app_id = $1 AND cs.status = 'merged'
@@ -304,6 +319,12 @@ async function buildThemeInput(pool, app) {
       state: 'merged',
       pr: r.pr_number,
       title: clip(r.pr_title, TITLE_MAX),
+      // The plain-language summary voters read, as the review rows already
+      // carry. A merged row had only its title, and a title on this board
+      // reads like "the row is the card compressed" — evocative, and useless
+      // for saying what a person using the app will notice. The summary is
+      // written for exactly that reader.
+      excerpt: excerpt(r.pr_summary_md),
       by: r.username || null,
       linked,
       category: linked.map((n) => categoryOf.get(n)).find(Boolean) || null,
@@ -483,7 +504,7 @@ function stagingDemoGrouping(input) {
     id: `staging-demo-${i + 1}`,
     name,
     description: 'A staging-only grouping of real board items, dealt out to show the Workshop\'s shape.',
-    saying: 'Staging demo: what people are asking for in this theme would be summarised here by the model.',
+    saying: 'Staging demo: what people are asking for in this category would be summarised here by the model.',
     icon: STAGING_THEME_ICONS[i] || '',
     items: [],
   }));
@@ -496,7 +517,15 @@ function stagingDemoGrouping(input) {
 const ROW_COLUMNS = `app_id, input_hash, themes_json, placements_json, unplaced_json, source, model,
           generated_at, discovered_at, discovery_key_count, churn_added, churn_removed,
           last_error, last_failed_at, last_viewed_at, reconcile_started_at,
-          digest_text, digest_at`;
+          digest_text, digest_at, digest_error,
+          discovery_version, placement_version, digest_version`;
+
+// A version column as the row holds it; absent (a fixture from before the
+// columns) is the schema's default. Not `|| 1`: 0 is a version too, and one
+// a bump test reaches for.
+function versionOf(v) {
+  return v == null ? 1 : Number(v);
+}
 
 function shapeRow(r) {
   if (!r) return null;
@@ -520,6 +549,12 @@ function shapeRow(r) {
     reconcileStartedAt: r.reconcile_started_at || null,
     digest: r.digest_text || null,
     digestAt: r.digest_at || null,
+    digestError: r.digest_error || null,
+    // The prompt version each stage last ran with (llm.WORKSHOP_*_VERSION).
+    // 1 for a row written before the columns existed: the schema's default.
+    discoveryVersion: versionOf(r.discovery_version),
+    placementVersion: versionOf(r.placement_version),
+    digestVersion: versionOf(r.digest_version),
   };
 }
 
@@ -581,8 +616,26 @@ async function writeRow(pool, appId, next) {
             -- that did not (no model, the call failed, nothing changed) keeps
             -- the last one rather than blanking the paragraph: a stale
             -- sentence beside fresh themes is worth more than no sentence.
+            --
+            -- The CLOCK, though, moves on any pass that TRIED. Staleness is
+            -- what schedules the next attempt, so stamping only successes
+            -- would put a failing model back on the wire at every single
+            -- view, forever. Tried and got nothing is still tried.
             digest_text = COALESCE($12::text, digest_text),
-            digest_at = CASE WHEN $12::text IS NULL THEN digest_at ELSE NOW() END,
+            digest_at = CASE WHEN $13::boolean THEN NOW() ELSE digest_at END,
+            -- The error travels with the clock: a pass that tried records
+            -- why it got nothing (or NULL, on success); one that did not try
+            -- leaves the last verdict standing. It is what the footnote
+            -- shows and what picks the retry window.
+            digest_error = CASE WHEN $13::boolean THEN $14::text ELSE digest_error END,
+            -- The prompt version each stage ran with, stamped on the ATTEMPT
+            -- like the digest clock: a discovery that ran, a pass that placed
+            -- EVERY card (a re-draft or a re-place, never an incremental
+            -- batch), a digest that was tried. A bump against a failing model
+            -- then waits its backoff rather than retrying on every view.
+            discovery_version = CASE WHEN $7::boolean THEN $15::integer ELSE discovery_version END,
+            placement_version = CASE WHEN $16::boolean THEN $17::integer ELSE placement_version END,
+            digest_version = CASE WHEN $13::boolean THEN $18::integer ELSE digest_version END,
             reconcile_started_at = NULL
       WHERE app_id = $1
       RETURNING ${ROW_COLUMNS}`,
@@ -590,6 +643,8 @@ async function writeRow(pool, appId, next) {
       appId, next.inputHash, JSON.stringify(next.themes), JSON.stringify(next.placements),
       JSON.stringify(next.unplaced), next.model || null, !!next.discovered, next.discoveryKeyCount,
       next.churnAdded, next.churnRemoved, next.lastError || null, next.digest || null,
+      !!next.digestTried, next.digestError || null,
+      llm.WORKSHOP_DISCOVERY_VERSION, !!next.placedAll, llm.WORKSHOP_PLACEMENT_VERSION, llm.WORKSHOP_DIGEST_VERSION,
     ]
   );
   return shapeRow(rows[0]);
@@ -622,13 +677,24 @@ function backingOff(row) {
 
 // ── 2. The diff, and what it says about the definitions ──────────────
 
+// Pure. A stage's recorded prompt version against the one in the code
+// (llm.WORKSHOP_*_VERSION). Behind in either direction: after a rollback the
+// row should match the code that is running, not the code that was. Unknown
+// (a caller that passed none) is not behind, so the pure predicates keep
+// answering from the fields they are about.
+function versionBehind(ran, current) {
+  return ran != null && Number(ran) !== Number(current);
+}
+
 // Pure. Why a discovery is due, or null: 'first' with no definitions yet,
-// 'drift' when churn since the last discovery is a tenth of the board it
-// was drafted from, 'age' when the definitions are a day old and anything
-// has changed since. Churn is cards added, cards removed and cards the
-// placer could not fit — never a vote, a comment or an edit.
-function needsDiscovery({ hasThemes, discoveredAt, discoveryKeyCount, churnAdded, churnRemoved, unplacedCount, now }) {
+// 'version' when they were drafted under an older prompt, 'drift' when churn
+// since the last discovery is a tenth of the board it was drafted from,
+// 'age' when the definitions are a day old and anything has changed since.
+// Churn is cards added, cards removed and cards the placer could not fit —
+// never a vote, a comment or an edit.
+function needsDiscovery({ hasThemes, discoveredAt, discoveryKeyCount, churnAdded, churnRemoved, unplacedCount, discoveryVersion, now }) {
   if (!hasThemes) return 'first';
+  if (versionBehind(discoveryVersion, llm.WORKSHOP_DISCOVERY_VERSION)) return 'version';
   const churn = (churnAdded || 0) + (churnRemoved || 0) + (unplacedCount || 0);
   const base = Math.max(Number(discoveryKeyCount) || 0, 1);
   if (churn / base >= DRIFT_RATIO) return 'drift';
@@ -738,19 +804,97 @@ async function discover({ pool, app, input, previous }) {
 // carries on. Only ever attempted on a pass that re-drafted the themes —
 // between drafts nothing about the board's shape has moved enough to say
 // anything new, and it would be a Sonnet call per placement batch.
+/**
+ * How long a digest stands before it is written again.
+ *
+ * Round three tied the digest to discovery alone, which sounded frugal and
+ * was in fact a bug with no symptom in the tests: an app whose themes are
+ * settled never re-drafts, so the paragraph was never written AT ALL and
+ * every reader saw the client's derived fallback instead. It was invisible
+ * because the fallback is a complete sentence — nothing looked broken, it
+ * just was not the feature.
+ *
+ * A day is the cadence the paragraph itself talks in ("this week", "right
+ * now"), and it bounds the cost at one call per app per day.
+ */
+const DIGEST_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+/**
+ * How long after a FAILED attempt the next one waits. A day was the rule for
+ * every attempt, which meant a paragraph that hit the output limit at 4pm
+ * stayed missing until 4pm tomorrow, with nothing on the page saying why.
+ * An hour is long enough that a model outage does not become a retry storm
+ * and short enough that a transient failure costs one refresh, not a day.
+ */
+const DIGEST_RETRY_MS = 60 * 60 * 1000;
+
+/**
+ * `digestAt` is when the digest was last ATTEMPTED, not when text last
+ * landed — see writeRow. That is what stops a model that is failing from
+ * being retried on every view: a pass that tried and got nothing still
+ * stamps the clock and keeps the previous text. `digestError` says whether
+ * that last attempt failed, and picks the window: an hour after a failure,
+ * a day after a success. Never attempted at all is due now.
+ *
+ * A row with NO text and NO error is never a success, whatever its clock
+ * says. The day's window is earned by a paragraph the page can show; the
+ * hour by a failure that was recorded. Neither is there, so it is due now.
+ * This is the state a row is left in by the code that ran before
+ * `digest_error` existed: it stamped the clock on every attempt and could
+ * not record that the attempt got nothing, so a fresh clock, no text and no
+ * error read as "written an hour ago" and the page kept its worked-out
+ * sentence for a day.
+ *
+ * `digestDue` answers WHY the paragraph is due ('version', 'never', 'retry',
+ * 'age') or null; `digestStale` is the same as a yes or no.
+ */
+function digestDue(row, now = Date.now()) {
+  if (!row) return 'never';
+  // Written under another prompt: due whatever the clocks say. The version
+  // is stamped on the attempt (writeRow), so a failing model is asked once
+  // and then waits its hour like any other failure.
+  if (versionBehind(row.digestVersion, llm.WORKSHOP_DIGEST_VERSION)) return 'version';
+  const at = Date.parse(row.digestAt || '');
+  if (!Number.isFinite(at)) return 'never';
+  if (!row.digest && !row.digestError) return 'never';
+  if (row.digestError) return now - at >= DIGEST_RETRY_MS ? 'retry' : null;
+  return now - at >= DIGEST_MAX_AGE_MS ? 'age' : null;
+}
+function digestStale(row, now = Date.now()) {
+  return digestDue(row, now) !== null;
+}
+
+/** The merged rows from the last seven days: the "last week" the paragraph opens with. */
+function landedThisWeek(input, now = Date.now()) {
+  const cutoff = now - 7 * 24 * 60 * 60 * 1000;
+  return (input.items || []).filter((i) => {
+    if (i.state !== 'merged') return false;
+    const t = Date.parse(i.at || '');
+    return Number.isFinite(t) && t >= cutoff;
+  });
+}
+
 async function makeDigest({ pool, app, input, themes }) {
   try {
     const out = await llm.generateWorkshopDigest({
       inputJson: JSON.stringify(input),
+      // The week, as its own list. It was left to the model to work out
+      // which of a 30-day merge window counted as "the last week" from the
+      // dates on each row; it now gets that answer instead of the exam.
+      landedJson: JSON.stringify(landedThisWeek(input)),
       themesJson: JSON.stringify(themes.map((t) => ({ id: t.id, name: t.name, description: t.description }))),
       appName: app.name || app.slug,
       telemetryContext: { pool, appId: app.id },
     });
     await recordSpend(pool, app, out.usage, out.model);
-    return out.digest || null;
+    // An answer with nothing usable in it is a failure with a name, not a
+    // success with no text: it must retry on the failure clock and show up
+    // in the footnote, or it is the silent day-long gap this replaces.
+    if (!out.digest) return { digest: null, error: 'the model returned nothing usable' };
+    return { digest: out.digest, error: null };
   } catch (err) {
-    log.warn('workshop-themes', 'digest failed', { app: app.slug, message: err.message });
-    return null;
+    const message = String((err && err.message) || err).slice(0, 160);
+    log.warn('workshop-themes', 'digest failed', { app: app.slug, message });
+    return { digest: null, error: message };
   }
 }
 
@@ -824,7 +968,11 @@ const inFlight = new Set();
 const dirty = new Set();
 
 async function reconcile({ pool, app, reason }) {
-  const result = { reason: reason || null, skipped: null, discovered: false, placed: 0, none: 0, failed: 0, removed: 0 };
+  const result = {
+    reason: reason || null, skipped: null, discovered: false, replaced: false, placed: 0, none: 0, failed: 0, removed: 0,
+    // The stages this pass re-ran because their prompt version had moved.
+    outdated: [],
+  };
   if (inFlight.has(app.id)) { dirty.add(app.id); return { ...result, skipped: 'in-flight' }; }
   if (!llm.isEnabled()) return { ...result, skipped: 'no-model' };
   inFlight.add(app.id);
@@ -847,9 +995,21 @@ async function reconcile({ pool, app, reason }) {
     const why = needsDiscovery({
       hasThemes: row.themes.length > 0, discoveredAt: row.discoveredAt,
       discoveryKeyCount: row.discoveryKeyCount, churnAdded, churnRemoved,
-      unplacedCount: diff.unplaced.size,
+      unplacedCount: diff.unplaced.size, discoveryVersion: row.discoveryVersion,
     });
-    if (!why && !diff.added.length && !diff.removed && !row.lastError) {
+    // Cards placed under an older prompt are placed again, all of them,
+    // against the definitions as they stand. A re-draft does that anyway.
+    const replace = !why && versionBehind(row.placementVersion, llm.WORKSHOP_PLACEMENT_VERSION);
+    // A pass with nothing else to do still runs when the paragraph is due:
+    // on a settled board this branch is the ONLY one that ever fires, which
+    // is exactly why the digest never got written before.
+    const digestWhy = why ? 'discovery' : digestDue(row);
+    const wantDigest = !!digestWhy;
+    if (why === 'version') result.outdated.push('discovery');
+    if (replace) result.outdated.push('placement');
+    if (digestWhy === 'version') result.outdated.push('digest');
+    if (result.outdated.length) log.info('workshop-themes', 'prompt version moved', { app: app.slug, stages: result.outdated });
+    if (!why && !replace && !wantDigest && !diff.added.length && !diff.removed && !row.lastError) {
       await releaseLease(pool, app.id);
       leased = false;
       return { ...result, skipped: 'unchanged' };
@@ -862,6 +1022,7 @@ async function reconcile({ pool, app, reason }) {
       churnAdded, churnRemoved, discovered: false, discoveryKeyCount: row.discoveryKeyCount,
     };
     let toPlace = diff.added;
+    let placedAll = false;
     if (why) {
       const previous = row.themes.map((t) => ({ id: t.id, name: t.name, description: t.description }));
       const disc = await discover({ pool, app, input, previous });
@@ -876,7 +1037,19 @@ async function reconcile({ pool, app, reason }) {
       next.churnAdded = 0;
       next.churnRemoved = 0;
       result.discovered = true;
+      placedAll = true;
       log.info('workshop-themes', 'themes drafted', { app: app.slug, reason: why, themes: themes.length, cards: keys.length });
+    } else if (replace) {
+      // The anchors stay where the draft put them: they are the draft's own
+      // examples, not the placer's work. Everything else is placed afresh.
+      const keySet = new Set(keys);
+      next.placements = {};
+      next.unplaced = new Set();
+      for (const t of themes) for (const k of t.anchors || []) if (keySet.has(k) && !(k in next.placements)) next.placements[k] = t.id;
+      toPlace = keys.filter((k) => !(k in next.placements));
+      placedAll = true;
+      result.replaced = true;
+      log.info('workshop-themes', 'cards re-placed', { app: app.slug, reason: 'version', cards: toPlace.length });
     }
 
     let lastError = null;
@@ -891,13 +1064,15 @@ async function reconcile({ pool, app, reason }) {
       result.failed = out.failed.length;
     }
 
-    const digest = next.discovered ? await makeDigest({ pool, app, input, themes }) : null;
+    const dig = wantDigest ? await makeDigest({ pool, app, input, themes }) : { digest: null, error: null };
 
     await writeRow(pool, app.id, {
       inputHash: fingerprintKeys(keys), themes, placements: next.placements,
       unplaced: [...next.unplaced], model, discovered: next.discovered,
       discoveryKeyCount: next.discoveryKeyCount, churnAdded: next.churnAdded,
-      churnRemoved: next.churnRemoved, lastError, digest,
+      churnRemoved: next.churnRemoved, lastError,
+      digest: dig.digest, digestTried: wantDigest, digestError: dig.error,
+      placedAll,
     });
     leased = false;
     notify(app, why ? 'discovery' : 'placement');
@@ -1008,7 +1183,8 @@ async function getThemes({ pool, app }) {
       return {
         themes: stagingDemoGrouping(input), source: 'demo', generatedAt: null, discoveredAt: null,
         stale: true, pending: false, pendingStage: null, lastError: null, coverage: null, unplaced: [],
-        digest: 'Staging demo: the model\u2019s two sentences on the week just gone and what is in flight would sit here.',
+        digest: 'Staging demo: the model\u2019s paragraph on what landed last week and what is under way would sit here.',
+        digestError: null,
       };
     }
     return {
@@ -1016,6 +1192,7 @@ async function getThemes({ pool, app }) {
       digest: null,
       stale: true, pending, pendingStage: pending ? 'discovery' : null,
       lastError: enabled && row ? row.lastError : null, coverage: null, unplaced: [],
+      digestError: null,
     };
   }
 
@@ -1027,10 +1204,17 @@ async function getThemes({ pool, app }) {
   const why = needsDiscovery({
     hasThemes: true, discoveredAt: row.discoveredAt, discoveryKeyCount: row.discoveryKeyCount,
     churnAdded: row.churnAdded + diff.added.length, churnRemoved: row.churnRemoved + diff.removed,
-    unplacedCount: unplacedKeys.length,
+    unplacedCount: unplacedKeys.length, discoveryVersion: row.discoveryVersion,
   });
+  const replace = !why && versionBehind(row.placementVersion, llm.WORKSHOP_PLACEMENT_VERSION);
+  const digestWhy = digestDue(row);
   let pending = inFlight.has(app.id);
-  if (!pending && enabled && (pendingCount > 0 || why) && !backingOff(row) && kickAllowed(app.id)) {
+  // A view starts a pass for anything the row does not know or holds under
+  // an older prompt, the paragraph included. It used to wait for unplaced
+  // cards or a due draft alone, so a version bump, or a day-old paragraph,
+  // reached the page only when the hourly sweep came round.
+  const due = pendingCount > 0 || !!why || replace || !!digestWhy;
+  if (!pending && enabled && due && !backingOff(row) && kickAllowed(app.id)) {
     pending = true;
     void reconcile({ pool, app, reason: 'get' });
   }
@@ -1039,21 +1223,22 @@ async function getThemes({ pool, app }) {
     source: row.source || 'ai',
     generatedAt: row.generatedAt,
     discoveredAt: row.discoveredAt,
-    stale: !!why || pendingCount > 0,
+    stale: !!why || replace || pendingCount > 0,
     pending,
-    pendingStage: pending ? (why ? 'discovery' : 'placement') : null,
+    pendingStage: pending ? (why ? 'discovery' : (pendingCount > 0 || replace ? 'placement' : 'digest')) : null,
     lastError: row.lastError,
     coverage: { total: keys.length, placed: placedCount, unplaced: unplacedKeys.length, pending: pendingCount },
     unplaced: unplacedKeys,
     digest: row.digest || null,
+    digestError: row.digestError || null,
   };
 }
 
 module.exports = {
   buildThemeInput, fingerprint, fingerprintKeys, fallbackThemes, stagingDemoGrouping, assignIds, slugify, excerpt,
-  needsDiscovery, diffRow, themesWithItems,
+  needsDiscovery, versionBehind, digestDue, digestStale, diffRow, themesWithItems,
   getCached, getThemes, reconcile, noteBoardChange, sweep, setNotifier,
-  DISCOVERY_MAX_AGE_MS, DRIFT_RATIO, CHANGE_DEBOUNCE_MS, FAILURE_BACKOFF_MS, PLACEMENT_BATCH,
+  DISCOVERY_MAX_AGE_MS, DIGEST_MAX_AGE_MS, DIGEST_RETRY_MS, landedThisWeek, DRIFT_RATIO, CHANGE_DEBOUNCE_MS, FAILURE_BACKOFF_MS, PLACEMENT_BATCH,
   _inFlightForTests: inFlight,
   _dirtyForTests: dirty,
   _changeTimersForTests: changeTimers,
