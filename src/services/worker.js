@@ -51,14 +51,14 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
-async function execWorkerCommand(runtimeName, command, stdinText = null) {
+async function execWorkerCommand(runtimeName, command, stdinText = null, { timeoutMs = stdinText === null ? 30000 : 20000 } = {}) {
   if (usesKubernetesWorkers()) {
-    return kubernetes.execInWorker(kubernetesWorkerConfig(), runtimeName, command, stdinText);
+    return kubernetes.execInWorker(kubernetesWorkerConfig(), runtimeName, command, stdinText, { timeoutMs });
   }
   if (stdinText !== null) {
-    return docker.execShellStdin(runtimeName, stdinText, { timeoutMs: 20000, label: 'worker exec' });
+    return docker.execShellStdin(runtimeName, stdinText, { timeoutMs, label: 'worker exec' });
   }
-  return docker.execFileAsync('docker', ['exec', runtimeName, ...command], { timeout: 30000 });
+  return docker.execFileAsync('docker', ['exec', runtimeName, ...command], { timeout: timeoutMs });
 }
 
 // URL the worker container uses to reach the platform's internal API
@@ -2486,7 +2486,7 @@ async function execInWorker(sessionId, {
         .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
         .join('\n');
       const detached = `${exports}\nnohup sh -c ${shellQuote(args[args.length - 1])} >/dev/null 2>&1 &\n`;
-      await execWorkerCommand(containerName, ['sh', '-s'], detached);
+      await execWorkerCommand(containerName, ['sh', '-s'], detached, { timeoutMs: 30000 });
     } else {
       await docker.execFileAsync('docker', args, {
         timeout: 30000,
@@ -3383,7 +3383,7 @@ function buildTurnStopScript(journal) {
 async function isWorkerExecuting(containerName, { timeoutMs = 5000 } = {}) {
   try {
     const { stdout } = usesKubernetesWorkers()
-      ? await execWorkerCommand(containerName, ['sh', '-c', TURN_PROC_PROBE_SCRIPT])
+      ? await execWorkerCommand(containerName, ['sh', '-c', TURN_PROC_PROBE_SCRIPT], null, { timeoutMs })
       : await docker.execFileAsync('docker', [
           'exec', containerName, 'sh', '-c', TURN_PROC_PROBE_SCRIPT,
         ], { timeout: timeoutMs });
@@ -3558,7 +3558,7 @@ async function execPushFromWorker(sessionId, branchName) {
     let stderr;
     if (usesKubernetesWorkers()) {
       const script = `export PAT=${shellQuote(botToken)}\nexport BRANCH=${shellQuote(branchName)}\n${inlineScript}\n`;
-      ({ stdout, stderr } = await execWorkerCommand(containerName, ['bash', '-s'], script));
+      ({ stdout, stderr } = await execWorkerCommand(containerName, ['bash', '-s'], script, { timeoutMs: 60000 }));
     } else {
       ({ stdout, stderr } = await docker.execFileAsync('docker', args, {
         timeout: 60000,

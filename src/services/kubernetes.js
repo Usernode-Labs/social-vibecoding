@@ -1023,23 +1023,72 @@ function attachLineObserver(readable, onLine, { skipBytes = 0 } = {}) {
   readable.on('error', () => {});
 }
 
-async function execInWorker(config, runtimeName, command, stdinText = null) {
+async function execInWorker(config, runtimeName, command, stdinText = null, { timeoutMs = 30000 } = {}) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('Worker exec timeout must be a positive finite number');
   const namespace = config.kubernetes.workerNamespace;
-  const pods = await getClients().core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${runtimeName}` });
-  const pod = pods.items?.[0];
-  if (!pod) throw new Error(`Worker Pod for ${runtimeName} not found`);
   const stdout = new stream.PassThrough();
   const stderr = new stream.PassThrough();
   let out = ''; let err = '';
-  stdout.on('data', (chunk) => { out += chunk.toString(); });
-  stderr.on('data', (chunk) => { err += chunk.toString(); });
+  stdout.setEncoding('utf8');
+  stderr.setEncoding('utf8');
+  stdout.on('data', (chunk) => { out += chunk; });
+  stderr.on('data', (chunk) => { err += chunk; });
   const input = stdinText === null ? null : stream.Readable.from([stdinText]);
-  let status;
-  const exec = new k8s.Exec(getClients().kc);
-  const socket = await exec.exec(namespace, pod.metadata.name, 'worker', command, stdout, stderr, input, false, (value) => { status = value; });
-  await new Promise((resolve, reject) => { socket.onclose = resolve; socket.onerror = reject; });
-  if (status?.status === 'Failure') throw new Error(err || status.message || 'Worker exec failed');
-  return { stdout: out, stderr: err };
+  return new Promise((resolve, reject) => {
+    let socket;
+    let status;
+    let settled = false;
+    const disconnect = () => {
+      if (!socket || socket.readyState === 3) return;
+      try { socket.terminate(); } catch (_) { /* transport already gone */ }
+    };
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      input?.destroy();
+      stdout.destroy();
+      stderr.destroy();
+      disconnect();
+      if (error) {
+        error.stdout = out;
+        error.stderr = err;
+        reject(error);
+      } else resolve({ stdout: out, stderr: err });
+    };
+    // Bound discovery, connection setup and execution together. A timeout
+    // releases the caller; it cannot prove that the remote command stopped.
+    const timer = setTimeout(() => {
+      const error = new Error(`Worker exec timed out after ${timeoutMs}ms`);
+      error.code = 'ETIMEDOUT';
+      finish(error);
+    }, timeoutMs);
+    const onClose = () => {
+      if (status?.status === 'Success') return finish();
+      const error = new Error(status?.status === 'Failure'
+        ? err || status.message || 'Worker exec failed'
+        : 'Worker exec closed without a successful exit status');
+      const exitCode = status?.details?.causes?.find(cause => cause.reason === 'ExitCode')?.message;
+      if (exitCode !== undefined) error.code = Number(exitCode);
+      finish(error);
+    };
+    (async () => {
+      const api = getClients();
+      const pods = await api.core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${runtimeName}` });
+      if (settled) return;
+      const pod = pods.items?.[0];
+      if (!pod) throw new Error(`Worker Pod for ${runtimeName} not found`);
+      const exec = api.exec || new k8s.Exec(api.kc);
+      socket = await exec.exec(namespace, pod.metadata.name, 'worker', command, stdout, stderr, input, false, value => { status = value; });
+      // Keep an error handler even after settling: terminating a late socket
+      // can emit an error. Never let a timed-out connection resume stdin.
+      socket.on('error', error => finish(error instanceof Error ? error : new Error('Worker exec transport failed')));
+      if (settled) { disconnect(); return; }
+      socket.on('close', onClose);
+      // A short command may finish before Exec.exec returns its socket.
+      if (socket.readyState === 3) onClose();
+    })().catch(finish);
+  });
 }
 
 module.exports = {
