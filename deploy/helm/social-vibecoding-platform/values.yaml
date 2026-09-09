@@ -104,6 +104,15 @@ config:
   workerCpus: "2"
   captureMemory: 4g
   captureCpus: "4"
+  # Match application defaults here; each cluster declares its own capacity.
+  maxGlobalSessions: 25
+  maxUserSessions: 3
+  maxUserPromotedSessions: 5
+  maxAdminUserSessions: 5
+  maxAdminUserPromotedSessions: 8
+  workerIdleEvictionMs: 600000
+  sessionAutopauseIdleMs: 300000
+  stagingIdleTeardownMs: 21600000
 
 secrets:
   create: false

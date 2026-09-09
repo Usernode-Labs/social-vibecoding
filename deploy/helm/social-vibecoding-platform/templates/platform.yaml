@@ -98,6 +98,14 @@ spec:
             - {name: WORKER_CPUS, value: {{ .Values.config.workerCpus | quote }}}
             - {name: CAPTURE_MEMORY, value: {{ .Values.config.captureMemory | quote }}}
             - {name: CAPTURE_CPUS, value: {{ .Values.config.captureCpus | quote }}}
+            - {name: MAX_GLOBAL_SESSIONS, value: {{ .Values.config.maxGlobalSessions | int64 | quote }}}
+            - {name: MAX_USER_SESSIONS, value: {{ .Values.config.maxUserSessions | int64 | quote }}}
+            - {name: MAX_USER_PROMOTED_SESSIONS, value: {{ .Values.config.maxUserPromotedSessions | int64 | quote }}}
+            - {name: MAX_ADMIN_USER_SESSIONS, value: {{ .Values.config.maxAdminUserSessions | int64 | quote }}}
+            - {name: MAX_ADMIN_USER_PROMOTED_SESSIONS, value: {{ .Values.config.maxAdminUserPromotedSessions | int64 | quote }}}
+            - {name: WORKER_IDLE_EVICTION_MS, value: {{ .Values.config.workerIdleEvictionMs | int64 | quote }}}
+            - {name: SESSION_AUTOPAUSE_IDLE_MS, value: {{ .Values.config.sessionAutopauseIdleMs | int64 | quote }}}
+            - {name: STAGING_IDLE_TEARDOWN_MS, value: {{ .Values.config.stagingIdleTeardownMs | int64 | quote }}}
             - {name: KUBERNETES_WORKER_IMAGE, value: {{ include "social-vibecoding-platform.image" .Values.platform.workerImage | quote }}}
             - {name: KUBERNETES_CAPTURE_IMAGE, value: {{ include "social-vibecoding-platform.image" .Values.platform.captureImage | quote }}}
           ports:
