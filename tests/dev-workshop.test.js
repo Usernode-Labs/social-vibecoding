@@ -1466,13 +1466,13 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   assert.ok(!unfolded.expectSelector.includes('data-ws-open-card'));
 
   // The preview moved to the facts line and then back to the action band —
-  // after the hamburger, closing it — and the declared check moved with it
-  // each time. This is the sweep that was missed the first time: the unit
+  // at its right end, just before the hamburger — and the declared check
+  // moved with it each time. This is the sweep that was missed the first time: the unit
   // tests for the new position were all updated and dapp.json was not, so
   // the gate found it instead.
   const preview = byName(/Preview is a labelled pill/);
   assert.ok(preview, 'the board still pins where the preview lives');
-  assert.match(preview.expectSelector, /\.gc-card-actions > \.dev-card-menu-btn\[data-card-menu\] ~ \.gc-vote-btn-preview:last-child:not\(\.gc-vote-btn-icon\)/);
+  assert.match(preview.expectSelector, /\.gc-card-actions > \.gc-vote-btn-preview:not\(\.gc-vote-btn-icon\) \+ \.dev-card-menu-btn\[data-card-menu\]:last-child/);
   for (const t of dapp.tests) {
     assert.ok(!/dev-card-status-end[^,]*gc-vote-btn-preview/.test(t.expectSelector || ''),
       `${t.name}: no check still looks for the preview on the facts line`);

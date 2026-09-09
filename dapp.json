@@ -725,9 +725,9 @@
       "expectText": "Vote"
     },
     {
-      "name": "Dev board: Preview is a labelled pill closing the action band, after the card's other controls",
+      "name": "Dev board: Preview is a labelled pill at the band's right end, just before the hamburger that closes it",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .gc-vote-item .gc-card-actions > .dev-card-menu-btn[data-card-menu] ~ .gc-vote-btn-preview:last-child:not(.gc-vote-btn-icon), #dev-kanban .gc-vote-item .gc-card-actions > .dev-ws-open-btn ~ .gc-vote-btn-preview:last-child:not(.gc-vote-btn-icon)",
+      "expectSelector": "#dev-kanban .gc-vote-item .gc-card-actions > .gc-vote-btn-preview:not(.gc-vote-btn-icon) + .dev-card-menu-btn[data-card-menu]:last-child, #dev-kanban .gc-vote-item .gc-card-actions > .dev-ws-open-btn ~ .gc-vote-btn-preview:not(.gc-vote-btn-icon)",
       "expectText": "Preview"
     },
     {

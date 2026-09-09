@@ -11025,7 +11025,11 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   color: var(--accent);
 }
 /* The menu trigger: a hamburger at the far right of the band, the row's own
-   "more" — that is where the pills that do not fit the line go. */
+   "more" — that is where the pills that do not fit the line go. Preview,
+   when there is one, sits just before it: the pair is pushed to the band's
+   right edge by whichever of the two comes first, and the second keeps the
+   band's gap (the override below), or two auto margins would split the free
+   space between them. */
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn {
   margin-left: auto;
   width: 28px;
@@ -11034,8 +11038,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn svg { width: 16px; height: 16px; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview {
-  /* After the hamburger, which is what pushes the pair to the band's right
-     edge; a second auto margin here would split the free space between them. */
+  margin-left: auto;
   gap: 5px;
   padding: 0 10px 0 9px;
   color: var(--accent);
@@ -11043,6 +11046,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   border-color: transparent;
 }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview:hover { background: var(--accent-tint); border-color: var(--accent-light); }
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview + .dev-card-menu-btn { margin-left: 0; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview svg { width: 16px; height: 16px; }
 /* The two badge states of the preview, in the band at the same height. */
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-checks-running-badge,
@@ -11839,10 +11843,17 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    `statusPillState`'s vocabulary (neutral / ok / attention / blocked /
    progress), not the merge badge's colour names — an unknown one falls
    through to the neutral base rather than rendering unstyled. */
+/* At the card's bar's height and shape (30px, r14, 12.5px — the dense
+   `.dev-status-pill-block` above) rather than a 10px chip: the row's last
+   line is 30px tall whenever it carries the vote button, and a chip that
+   grows into the bar when the card opens was the one thing on that line
+   that still jumped. Content-width, ellipsising, where the card's bar
+   flexes to fill. */
 .dev-ws-row-state {
   display: inline-block; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  font-size: 10px; font-weight: 600; line-height: 1.5; white-space: nowrap;
-  padding: 1px 7px; border-radius: 9999px;
+  height: 30px; line-height: 30px; box-sizing: border-box;
+  font-size: 12.5px; font-weight: 500; white-space: nowrap;
+  padding: 0 10px; border-radius: 14px;
   background: var(--state-neutral-bg); color: var(--state-neutral);
 }
 .dev-ws-row-state-blocked   { background: var(--state-blocked-bg);   color: var(--state-blocked); }

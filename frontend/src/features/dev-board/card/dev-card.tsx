@@ -601,7 +601,8 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
 }
 
 /**
- * The card's menu trigger: a hamburger at the far right of the action band.
+ * The card's menu trigger: a hamburger at the far right of the action band,
+ * after Preview when there is one.
  *
  * It was a ⋯ in the card's top-right rail. The band is where the card's
  * other controls are, and the menu is where the pills that do not fit the
@@ -798,7 +799,7 @@ export function DevCard(
   const states = chips.filter((b) => b.t !== 'attr' && b.t !== 'issueChip');
   const kept = m.uncapped ? states : states.slice(0, BADGE_MAX);
 
-  // The preview is the last thing in the action band, after the hamburger,
+  // The preview sits at the band's right end just before the hamburger,
   // with the card's other controls: a fixed child of the band, which the
   // pills fold around, and always the LABELLED pill — the eye and the word —
   // whichever builder handed it over. (It closed the facts line for a round,
@@ -812,10 +813,11 @@ export function DevCard(
   // ── Where the primary actions go ──────────────────────────────────
   //
   // Every action the card has goes in the band, then the caller's
-  // `actionEnd` control, then the hamburger, then Preview. The band's
-  // measurement (useFoldedActions) shows as many pills as fit its one line
-  // and folds the rest, from the end, into the menu behind the hamburger;
-  // the three controls after the pills are fixed children it folds around.
+  // `actionEnd` control, then Preview, then the hamburger closing the band.
+  // The band's measurement (useFoldedActions) shows as many pills as fit
+  // its one line and folds the rest, from the end, into the menu behind the
+  // hamburger; the three controls after the pills are fixed children it
+  // folds around.
   // The old cap of three text pills is gone: the line is the cap now. That
   // is the seat both surfaces use for "Open card" (card/fold.tsx), so an
   // open card on the Board and on the Workshop is one drawing.
@@ -854,8 +856,8 @@ export function DevCard(
         <ActionButton key={a.key} a={a} fold={a.kudos == null ? i + 1 : undefined} hidden={i >= bandPrimary.length - folded.n} />
       ))}
       {actionEnd}
-      {menuTrigger}
       {bandPreview}
+      {menuTrigger}
     </div>
   ) : (dense ? <div className="gc-card-actions"></div> : null);
   const edge = edgeFor(m);

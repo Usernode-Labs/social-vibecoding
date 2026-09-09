@@ -198,7 +198,7 @@ test('the column owns which card is open, one per column, through the shared fol
   // three as fixed children (no data-fold).
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
   assert.match(CARD, /const hasActions = bandPrimary\.length > 0 \|\| !!actionEnd \|\| !!menuTrigger \|\| !!bandPreview;/);
-  assert.match(CARD, /\{actionEnd\}\s*\{menuTrigger\}\s*\{bandPreview\}\s*<\/div>/);
+  assert.match(CARD, /\{actionEnd\}\s*\{bandPreview\}\s*\{menuTrigger\}\s*<\/div>/);
   assert.match(CARD, /if \(k\.dataset\.fold\) continue;\s*used \+= k\.offsetWidth/, 'a child without data-fold is counted as used width');
   // A merged card's kudos slot is legacy-filled after every publish; a fold
   // happens between publishes, so the column re-runs the filler.
@@ -336,11 +336,11 @@ test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and 
 // ── The card's controls and lines, after the fold (#1787) ─────────────────
 //
 // With both surfaces drawing one card, the card itself was reworked: blue
-// pills, a hamburger at the band's right edge with Preview after it, every
+// pills, a hamburger at the band's right edge with Preview before it, every
 // pill foldable, the tags on the meta line at both sizes, that line tabbed
 // in under the title and snug beneath it, and folded rows 4px apart.
 
-test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds the band’s right edge, Preview after it', () => {
+test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds the band’s right edge, Preview just before it', () => {
   // The neutral grey fill read as a third colour beside the blue Vote and
   // the blue Preview; the pills take `.dev-vote-btn-yes`'s accent on tint.
   const at = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn {');
@@ -353,7 +353,8 @@ test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds 
   // The ⋯ was a well in the card's top-right rail. The menu is where the
   // pills that do not fit the band go, so its trigger is the band's own
   // "more": a hamburger at its far right, and Preview, when there is one,
-  // after it — the hamburger's auto margin pushes the pair to the edge.
+  // just before it. Whichever of the two comes first carries the auto
+  // margin that pushes the pair to the edge; the second keeps the gap.
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
   assert.match(CARD, /<Bars3Icon aria-hidden="true" \/>/);
   assert.ok(!CARD.includes('EllipsisHorizontalIcon'));
@@ -363,7 +364,9 @@ test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds 
   assert.match(CSS.slice(tr, CSS.indexOf('\n}', tr)), /margin-left: auto;/);
   const pv = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview {');
   assert.ok(pv > 0);
-  assert.doesNotMatch(CSS.slice(pv, CSS.indexOf('\n}', pv)), /margin-left/, 'a second auto margin would split the free space');
+  assert.match(CSS.slice(pv, CSS.indexOf('\n}', pv)), /margin-left: auto;/, 'Preview pushes the pair when it is the first of them');
+  assert.match(CSS, /\.gc-card-actions > \.gc-vote-btn-preview \+ \.dev-card-menu-btn \{ margin-left: 0; \}/,
+    'and the hamburger after it keeps the gap, or two auto margins would split the free space');
   assert.ok(!/\n\.dev-card-rail \{/.test(CSS), 'and from app.css');
 });
 
