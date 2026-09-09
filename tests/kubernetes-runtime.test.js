@@ -488,3 +488,86 @@ test('namespace capacity reports requests and pod quota without claiming live us
   assert.equal(kubernetes._quantityNumberForTest('1Gi'), 2 ** 30);
   assert.equal(kubernetes._quantityNumberForTest('250m'), 0.25);
 });
+
+
+for (const failed of [false, true]) {
+  test(`unit-suite Job ${failed ? 'preserves failures' : 'completes'} with private input and no cluster credentials`, async () => {
+    let job, secret, removed;
+    kubernetes._setClientsForTest({
+      batch: {
+        async createNamespacedJob(r) { job = r.body; },
+        async readNamespacedJob() { return { status: failed ? { failed: 1 } : { succeeded: 1 } }; },
+      },
+      core: {
+        async createNamespacedSecret(r) { secret = r.body; },
+        async deleteNamespacedSecret(r) { removed = r.name; },
+        async listNamespacedPod() { return { items: [{ metadata: { name: 'suite-pod' }, status: { containerStatuses: [{ name: 'unit-suite', state: { terminated: { exitCode: 1, reason: 'Error' } } }] } }] }; },
+        async readNamespacedPodLog(r) { assert.equal(r.container, 'unit-suite'); return '# tests 2\n# fail 1\nnot ok 2 - regression\n'; },
+      },
+    });
+    const options = { sessionId: 42, cmd: ['bash', '-c', 'npm test'], env: { REPO_URL: 'https://private-token@example.test/repo' }, memory: '2g', cpus: '4', timeoutMs: 60000 };
+    if (failed) {
+      await assert.rejects(kubernetes.runUnitSuiteJob(config(), options), err => {
+        assert.equal(err.code, 1);
+        assert.match(err.stdout, /not ok 2 - regression/);
+        return true;
+      });
+    } else {
+      assert.match((await kubernetes.runUnitSuiteJob(config(), options)).stdout, /# tests 2/);
+    }
+    const pod = job.spec.template.spec;
+    assert.equal(pod.automountServiceAccountToken, false);
+    assert.equal(pod.securityContext.runAsUser, 1000);
+    assert.equal(job.spec.backoffLimit, 0);
+    assert.equal(job.spec.activeDeadlineSeconds, 60);
+    assert.equal(job.spec.ttlSecondsAfterFinished, 3600);
+    assert.equal(pod.containers[0].image, config().kubernetes.workerImage);
+    assert.equal(pod.containers[0].resources.limits.memory, '2Gi');
+    assert.equal(pod.containers[0].resources.limits.cpu, '4');
+    assert.deepEqual(pod.containers[0].command, options.cmd);
+    assert.ok(!JSON.stringify(job).includes('private-token'));
+    assert.equal(secret.stringData.REPO_URL, options.env.REPO_URL);
+    assert.equal(removed, secret.metadata.name);
+  });
+}
+
+test('unit-suite input Secret is removed when Job admission fails', async () => {
+  let removed = false;
+  kubernetes._setClientsForTest({
+    batch: { async createNamespacedJob() { throw new Error('quota'); } },
+    core: { async createNamespacedSecret() {}, async deleteNamespacedSecret() { removed = true; } },
+  });
+  await assert.rejects(kubernetes.runUnitSuiteJob(config(), { sessionId: 1, env: {}, cmd: ['true'] }), /quota/);
+  assert.equal(removed, true);
+});
+
+
+test('unit-suite credentials are owned by the Job and cleaned after its deadline', async (t) => {
+  let secret, deletedJob, deletedSecret, owned;
+  let clock = 0;
+  t.mock.method(Date, 'now', () => ++clock <= 2 ? 0 : 20000);
+  kubernetes._setClientsForTest({
+    batch: {
+      async createNamespacedJob() { return { metadata: { uid: 'job-uid' } }; },
+      async deleteNamespacedJob(r) { deletedJob = r; },
+    },
+    core: {
+      async createNamespacedSecret(r) { secret = r.body; },
+      async readNamespacedSecret() { return secret; },
+      async replaceNamespacedSecret(r) { owned = r.body.metadata.ownerReferences; },
+      async deleteNamespacedSecret(r) { deletedSecret = r.name; },
+    },
+  });
+  await assert.rejects(kubernetes.runUnitSuiteJob(config(), { sessionId: 1, env: {}, cmd: ['sleep', '60'], timeoutMs: 1000 }), err => err.killed === true);
+  assert.equal(owned[0].uid, 'job-uid');
+  assert.equal(owned[0].kind, 'Job');
+  assert.equal(deletedJob.propagationPolicy, 'Background');
+  assert.equal(deletedSecret, secret.metadata.name);
+});
+
+test('unit suite refuses a mutable worker image before creating any resources', async () => {
+  const cfg = config();
+  cfg.kubernetes.workerImage = 'example/worker:latest';
+  kubernetes._setClientsForTest({});
+  await assert.rejects(kubernetes.runUnitSuiteJob(cfg, { sessionId: 1 }), /immutable digest/);
+});
