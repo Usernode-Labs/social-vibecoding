@@ -561,7 +561,16 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // revealing the preview button.
 
     timings.totalMs = Date.now() - buildStartedAt;
-    reportBuildStep(config, session, 'done', timings, Date.now());
+    // The container is up, but the checks are not yet running: the caller
+    // still verifies the edge, persists the URL and announces the preview,
+    // and captureForSession may then park this run behind an earlier one on
+    // the same proposal. That hand-off used to be invisible — the bar read
+    // 4/4 under a title still saying "Preparing…" — so it is the fifth step,
+    // 'prepare_checks', opened here and closed by captureForSession when the
+    // phase flips to testing (see visuals.finishPrepareChecks).
+    const deployedAt = Date.now();
+    timings.deployedAt = deployedAt;
+    reportBuildStep(config, session, 'prepare_checks', timings, deployedAt);
     log.info('staging', 'Staging deployed', {
       sessionId: session.id, url: stagingUrl, ...timings,
     });

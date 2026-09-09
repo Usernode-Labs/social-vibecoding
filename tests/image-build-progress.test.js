@@ -345,7 +345,7 @@ test('BuildKit can be turned off without a code change', () => {
     { index: 4, total: 9, phase: 'shell', detail: 'RUN npm ci --ignore-scripts' });
 });
 
-test('the four-step pipeline draws as a segmented bar', () => {
+test('the five-step pipeline draws as a segmented bar', () => {
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
   assert.match(tsx, /className="dev-ledger-build-bar"/);
   assert.match(tsx, /data-build-progress=\{`\$\{doneCount\}\/\$\{steps\.length\}`\}/);

@@ -498,6 +498,41 @@ function stagingMockProposals(viewer) {
       test_results: [],
       checks_checked_at: hoursAgo(0.02),
     },
+    // The fifth build step. The container is up (four steps done, 20s) but
+    // the run is parked behind an earlier capture on the same proposal —
+    // the state the card used to spend minutes in reading "4/4" under
+    // "Preparing the staging preview…". The step row names the wait; the
+    // only way to review it, since a real preview has no queued run to show.
+    {
+      ...mk(9000028, 900128,
+        '[Mock] Checks-phase test: preview built, waiting behind an earlier run',
+        0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
+      check_state: 'pending',
+      check_phase: 'building',
+      check_trigger: 'pr-import',
+      recheckable: true,
+      test_results: [],
+      checks_checked_at: hoursAgo(0.02),
+      checks_progress: {
+        build: {
+          step: 'prepare_checks',
+          queued: true,
+          startedAt: hoursAgo(0.015),
+          steps: [
+            { key: 'source_fetch', ms: 2555 },
+            { key: 'image_build', ms: 5372, phases: [
+              { name: 'FROM docker.io/library/node:22-…', ms: 212 },
+              { name: 'COPY . .', ms: 276 },
+              { name: 'COPY --from=css /build/public/c…', ms: 3708 },
+            ] },
+            { key: 'clone', ms: 2426, via: 'template' },
+            { key: 'health', ms: 9585 },
+          ],
+          totalMs: 19964,
+        },
+        updatedAt: hoursAgo(0.015),
+      },
+    },
     // #607: a freshly promoted proposal whose first checks run hasn't even
     // stamped 'pending' yet (staging build still going) — NO verdict, NO
     // console snapshot. The grey "Checks starting…" spinner badge + the

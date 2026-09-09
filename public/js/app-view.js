@@ -9147,6 +9147,18 @@ const AppView = {
     image_build: { label: 'build image', doing: 'building the preview image', done: 'image built' },
     clone: { label: 'clone database', doing: 'cloning the database', done: 'database cloned' },
     health: { label: 'start preview', doing: 'starting the preview', done: 'preview started' },
+    // The hand-off after the container is up and before the first test
+    // runs: edge verification, the ready note, and — the long case — a wait
+    // behind an earlier run on the same proposal. "Prepare", not "start":
+    // it is still this phase, and a queued run is not starting anything.
+    prepare_checks: { label: 'prepare checks', doing: 'preparing the checks', done: 'checks prepared' },
+  },
+  // The queued wait, as a label suffix on the step and as its live verb.
+  PREPARE_QUEUED_COPY: {
+    label: ' (waiting for an earlier run)',
+    doneLabel: ' (waited for an earlier run)',
+    doing: 'waiting for an earlier run on this proposal to finish',
+    done: ' after waiting for an earlier run',
   },
   _fmtMs(ms) {
     const s = Math.max(0, Math.round(ms / 1000));
@@ -9155,10 +9167,12 @@ const AppView = {
   },
   _buildProgressView(b) {
     if (!b || typeof b !== 'object') return null;
-    const keys = ['source_fetch', 'image_build', 'clone', 'health'];
+    const keys = ['source_fetch', 'image_build', 'clone', 'health', 'prepare_checks'];
     const doneSteps = Array.isArray(b.steps) ? b.steps.filter((s) => s && keys.includes(s.key)) : [];
     const current = typeof b.step === 'string' ? b.step : null;
     const done = current === 'done';
+    const queued = current === 'prepare_checks' && !!b.queued;
+    const q = AppView.PREPARE_QUEUED_COPY;
     // The image build's own progress (see _imageProgressView): live under
     // the running "build image" step, and as the finished step's phases.
     const image = current === 'image_build' ? AppView._imageProgressView(b.image) : null;
@@ -9166,7 +9180,10 @@ const AppView = {
       const copy = AppView.BUILD_STEP_COPY[key];
       const rec = doneSteps.find((s) => s.key === key);
       const state = rec ? 'done' : (key === current ? 'now' : 'todo');
-      const via = rec && rec.via === 'template' ? ' (from template)' : '';
+      let via = '';
+      if (rec && rec.via === 'template') via = ' (from template)';
+      else if (rec && rec.via === 'queued') via = q.doneLabel;
+      else if (key === 'prepare_checks' && queued) via = q.label;
       const step = { key, label: copy.label + via, ms: rec && Number.isFinite(rec.ms) ? rec.ms : null, state };
       if (key === 'image_build') {
         if (image) { step.phases = image.phases; step.detail = image.detail; }
@@ -9176,7 +9193,10 @@ const AppView = {
       }
       return step;
     });
-    const parts = doneSteps.map((s) => {
+    // The fifth step is not part of the build's own time, so it gets its
+    // own clause rather than a place in the list (see `prepared` below).
+    const prepared = doneSteps.find((s) => s.key === 'prepare_checks') || null;
+    const parts = doneSteps.filter((s) => s.key !== 'prepare_checks').map((s) => {
       const copy = AppView.BUILD_STEP_COPY[s.key];
       const via = s.via === 'template' ? ' from template' : '';
       // The image step names its phases so a slow build says which phase
@@ -9189,12 +9209,20 @@ const AppView = {
     let sentence;
     let sub;
     if (done) {
-      const total = Number.isFinite(b.totalMs) ? b.totalMs : doneSteps.reduce((n, s) => n + (s.ms || 0), 0);
-      sentence = `Preview built in ${AppView._fmtMs(total)}: ${parts.join(', ')}.`;
+      const total = Number.isFinite(b.totalMs) ? b.totalMs
+        : doneSteps.filter((s) => s.key !== 'prepare_checks').reduce((n, s) => n + (s.ms || 0), 0);
+      // "Preview built in 20s, checks prepared in 9m 40s": the wait is the
+      // finding, so it is a clause of its own rather than a fifth item
+      // inside the build's total.
+      const preparedClause = prepared && Number.isFinite(prepared.ms)
+        ? `, checks prepared in ${AppView._fmtMs(prepared.ms)}${prepared.via === 'queued' ? q.done : ''}`
+        : '';
+      sentence = `Preview built in ${AppView._fmtMs(total)}${preparedClause}: ${parts.join(', ')}.`;
       sub = `built in ${AppView._fmtMs(total)}`;
     } else {
       const copy = current && AppView.BUILD_STEP_COPY[current];
       let doing = copy ? copy.doing : 'building';
+      if (queued) doing = q.doing;
       if (image && image.doing) doing = `${doing} (${image.doing})`;
       sentence = parts.length
         ? `Preview build: ${parts.join(', ')}, now ${doing}.`

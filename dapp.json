@@ -2060,6 +2060,12 @@
       "expectText": "Running the automated tests"
     },
     {
+      "name": "Checks card names the fifth build step while the run waits behind an earlier one",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000028",
+      "expectSelector": ".dev-ledger-row[data-note=\"checks\"] .dev-ledger-progress-build[data-build-step=\"prepare_checks\"] .dev-ledger-build-bar[data-build-progress=\"4/5\"] > .dev-ledger-build-seg.is-now[data-step=\"prepare_checks\"]",
+      "expectText": "prepare checks (waiting for an earlier run)"
+    },
+    {
       "name": "Checks card says an author's commit started the run (#1144)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000022",
       "expectText": "Triggered by a new commit on this proposal."

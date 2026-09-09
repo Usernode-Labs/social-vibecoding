@@ -618,7 +618,7 @@ function shapeBranch(session) {
 // used since #1144. They have very different expected durations, which is the
 // entire reason an agent wants to know which one it is waiting on.
 const PHASE_CAPTION = {
-  building: 'the staging preview is still building (container build + database clone), so no test has run yet',
+  building: 'the staging preview is still building (container build + database clone) or being handed to the checks, so no test has run yet',
   testing: 'the automated tests are running against the preview',
 };
 
@@ -2016,7 +2016,9 @@ function registerTools(server, ctx) {
         // unrecognised value arrives as null rather than as itself.
         phase: z.enum(['building', 'testing']).nullable()
           .describe("Which half of a pending run is in flight. 'building' means the staging preview is still being "
-            + "built, so no test has run yet and a `total` of 0 is expected; 'testing' means the suite is running "
+            + "built — or, once `progress.build.step` reads 'prepare_checks', is up and being handed to the checks, "
+            + "which can mean waiting behind an earlier run on the same proposal (`progress.build.queued`) — so no "
+            + "test has run yet and a `total` of 0 is expected; 'testing' means the suite is running "
             + 'against the preview. Null on a row that predates the column. Neither is a reason to push again.'),
         trigger: z.string().nullable()
           .describe('What started this run — e.g. commit-push, proposal-open, manual-recheck, boot-reconcile, '
