@@ -326,3 +326,26 @@ for (const action of ['idle-gc', 'archive']) {
     });
   }
 }
+
+for (const removed of [true, false]) {
+  test(`discarding a withdrawn imported Kubernetes preview: ${removed ? 'removes the fresh runtime first' : 'preserves references and database when removal fails'}`, async () => {
+    const staging = setup();
+    fx.removed = removed;
+    const { discardStagingResult } = require('../src/services/pr-import-sync');
+    await discardStagingResult({
+      staging,
+      // This is the object from BEFORE the first build. Only the result
+      // knows the Kubernetes identity, even though the build persisted it.
+      session: { id: 4242, staging_container_id: null, staging_runtime_name: null },
+      app: APP,
+      result: {
+        containerId: null, runtimeKind: 'kubernetes', runtimeName: 'sv-preview-10-s4242',
+        stagingUrl: 'https://x--s4242--abc123.example',
+      },
+    });
+    assert.deepEqual(fx.stopCalls, [{ nameOrId: 'sv-preview-10-s4242', runtimeKind: 'kubernetes' }]);
+    assert.equal(fx.dropCalls.length, removed ? 1 : 0);
+    assert.equal(nullingQueries().length, removed ? 1 : 0);
+    if (removed) assert.equal(fx.dropCalls[0], 'app_tier-lists-abc123_staging_s4242_abc123');
+  });
+}
