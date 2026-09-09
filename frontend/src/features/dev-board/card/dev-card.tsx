@@ -728,9 +728,31 @@ function ExtraRow({ x }: { x: ExtraSpec }): ReactNode {
   );
 }
 
+/**
+ * The meta line's content, shared by both sizes of the card (the folded row
+ * in card/fold.tsx draws the same nodes): the parts ' · '-joined — number,
+ * author, when — then the TAGS (priority, assignee, category) and the
+ * linked-issue chips ("Closes #N", the session's "#N"). All of it is what
+ * the item IS rather than what state it is in, so all of it rides under the
+ * title, and the line may wrap.
+ */
+export function metaLineNodes(m: DevCardModel): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  (m.meta || []).forEach((p, i) => {
+    if (i) nodes.push(' · ');
+    nodes.push(<MetaPartView key={`p${i}`} p={p} />);
+  });
+  for (const b of (m.badges || []).filter((b) => b && b.t === 'attr')) nodes.push(<Badge key={b.key} b={b} />);
+  // A proposal's linkage arrives as `linked`; a session's "#N" chips arrive
+  // among its badges. Same chip, same line.
+  for (const b of m.linked || []) nodes.push(<Badge key={b.key} b={b} />);
+  for (const b of (m.badges || []).filter((b) => b && b.t === 'issueChip')) nodes.push(<Badge key={b.key} b={b} />);
+  return nodes;
+}
+
 /** The whole card. `m.attrs` carries the outer element's data-*, role and title. */
 export function DevCard(
-  { model: m, statusLead, actionEnd }: { model: DevCardModel; statusLead?: ReactNode; actionEnd?: ReactNode },
+  { model: m, actionEnd }: { model: DevCardModel; actionEnd?: ReactNode },
 ): ReactNode {
   const attrs: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(m.attrs || {})) {
@@ -748,22 +770,35 @@ export function DevCard(
   const noSpec = allActions.find((a) => isVoteSpec(a, 'no'));
   const voteBtn = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
   const bandActions = voteBtn ? allActions.filter((a) => a !== yesSpec && a !== noSpec) : allActions;
+  // ── One anatomy, two sizes ──────────────────────────────────────────
+  //
+  // The folded row (card/fold.tsx) is this card compressed, and the two are
+  // built from the same fields in the same order so they read as one object:
+  //
+  //   head   the glyph, then the title, wrapping in full at both sizes
+  //   meta   number · author · when, the tags, the linked-issue chips —
+  //          tabbed in under the title (metaLineNodes, shared with the row)
+  //   status the STATE: on the card the full bar with the vote button beside
+  //          it, spanning the card; on the row a chip of the same state,
+  //          with the vote button at the row's bottom-right
+  //   facts  the state chips — the work-state chip, the imported / paused
+  //          chips — and the message count, tabbed in like the meta line
+  //   band   the actions, spanning the card (the card only)
+  //
+  // So the card is the row plus the bar expanded and the buttons added, and
+  // nothing else moves between the two.
   const chips = (m.badges || []).filter(Boolean);
-  // The TAGS — priority, assignee, category — ride on the meta line beside
-  // the number and the author, and may wrap it to a second line. The status
-  // band keeps what is a STATE rather than a label: the composite pill, the
-  // work-state chip, the imported / paused chips, Closes #N, the chat count.
-  const tags = chips.filter((b) => b.t === 'attr');
-  const states = chips.filter((b) => b.t !== 'attr');
+  const states = chips.filter((b) => b.t !== 'attr' && b.t !== 'issueChip');
   const kept = m.uncapped ? states : states.slice(0, BADGE_MAX);
-  const linked = m.linked || [];
-  // #1139: a status band with nothing a reader can see is emitted (the node
-  // must stay — app.css caps the action band through the sibling chain) but
-  // stamped data-empty and hidden by CSS. A 0 chat count is NOT content.
-  const statusHasContent = states.length > 0 || !!m.pill || linked.length > 0
-    || (m.chatCount !== null && m.chatCount !== undefined && (m.chatCount || 0) > 0);
-  const chat = m.chatCount !== null && m.chatCount !== undefined
-    ? <Badge b={{ t: 'chat', key: 'chat', count: m.chatCount || 0 }} />
+  const chatCount = m.chatCount !== null && m.chatCount !== undefined ? (m.chatCount || 0) : null;
+  // The dense card draws the count only when there is one: the facts row is
+  // emitted only with something visible in it (see below), and a live bump
+  // repaints from the model rather than revealing a hidden badge in place.
+  // The detail head keeps drawing it at 0, hidden, as it always has — but a
+  // hidden badge is not a reason to draw the row (#1139).
+  const chatVisible = (chatCount || 0) > 0;
+  const chat = chatCount !== null && (dense ? chatVisible : true)
+    ? <Badge b={{ t: 'chat', key: 'chat', count: chatCount }} />
     : null;
   // The preview is the last thing in the action band, after the hamburger,
   // with the card's other controls: a fixed child of the band, which the
@@ -787,56 +822,33 @@ export function DevCard(
   // is the seat both surfaces use for "Open card" (card/fold.tsx), so an
   // open card on the Board and on the Workshop is one drawing.
   //
-  // `statusLead` is the other seat, kept for a surface that wants it: the
-  // caller's control at the right-hand end of the facts line, with the
-  // card's own primary actions moved up beside it. Nothing passes one today.
-  // It only ever made sense on a card the full width of its sheet — the
-  // band's fold measurement is meaningless inside a content-width group at
-  // the end of a wrapping line, so a ~300px column could never take it.
-  const primary = bandActions;
-  const inlineActions = !!statusLead;
-  const bandPrimary = inlineActions ? [] : primary;
+  // (A second seat, the right end of the facts line with the card's own
+  // pills moved up beside it, existed for a round and had no caller left;
+  // the band is the one seat now.)
+  const bandPrimary = bandActions;
   const menuTrigger = m.rail.menuKey ? <MenuTrigger menuKey={m.rail.menuKey} /> : null;
   const hasActions = bandPrimary.length > 0 || !!actionEnd || !!menuTrigger || !!bandPreview;
   const folded = useFoldedActions(bandPrimary, m.rail.menuKey || '', !!bandPreview);
-  const statusEnd = statusLead || (inlineActions && primary.length) ? (
-    <span className="dev-card-status-end">
-      {inlineActions ? primary.map((a) => <ActionButton key={a.key} a={a} />) : null}
-      {statusLead}
-    </span>
-  ) : null;
 
-  // The facts — linkage, metadata, message count — read as one line under
-  // the bar, so a full-width break separates the bar row from them.
+  // ── The status row, then the facts row ──
   //
-  // The END GROUP counts as facts-line content. It did not, and a proposal
-  // with a bar and a vote button but no chips therefore had no break at all
-  // — which put "Open card" and "Preview" on the bar's own line, wedged
-  // beside the vote. The controls belong under the bar whether or not the
-  // card happens to have something else to say down there.
-  const factsVisible = linked.length > 0 || kept.length > 0 || (m.chatCount || 0) > 0 || !!statusEnd;
-  const brk = (m.pill || voteBtn) && factsVisible
-    ? <span className="dev-card-band-break" aria-hidden="true"></span>
-    : null;
-  const badgeRow = (
-    <>
-      {m.pill ? <StatusPill s={m.pill.state} inline={m.pill.inline} /> : null}
-      {voteBtn}
-      {brk}
-      {linked.map((b) => <Badge key={b.key} b={b} />)}
-      {kept.map((b) => <Badge key={b.key} b={b} />)}
-      {chat}
-    </>
-  );
-  const statusBody = (
-    <>
-      {badgeRow}
-      {statusEnd}
-    </>
-  );
+  // Two rows, not one wrapping band with a break in it: the bar spans the
+  // card with the vote button at its right end, and the facts under it are
+  // tabbed in with the meta line. A dense card always emits the status row —
+  // stamped data-empty and hidden when it has no bar and no vote (#1139), so
+  // the sibling chain the checks walk stays intact — and emits the facts row
+  // only when a reader could see something in it. The detail head keeps its
+  // one uncapped row, the pill as an inline capsule among the chips.
+  const pill = m.pill ? <StatusPill s={m.pill.state} inline={m.pill.inline} /> : null;
+  const factsShown = kept.length > 0 || chatVisible;
   const statusRow = dense ? (
-    <div className="dev-card-badges dev-card-status" data-empty={statusHasContent || statusEnd ? undefined : '1'}>{statusBody}</div>
-  ) : (statusHasContent || statusEnd ? <div className="dev-card-badges">{statusBody}</div> : null);
+    <div className="dev-card-badges dev-card-status" data-empty={pill || voteBtn ? undefined : '1'}>{pill}{voteBtn}</div>
+  ) : (pill || voteBtn || factsShown ? (
+    <div className="dev-card-badges">{pill}{voteBtn}{kept.map((b) => <Badge key={b.key} b={b} />)}{chat}</div>
+  ) : null);
+  const factsRow = dense && factsShown ? (
+    <div className="dev-card-badges dev-card-facts">{kept.map((b) => <Badge key={b.key} b={b} />)}{chat}</div>
+  ) : null;
 
   const actionRow = hasActions ? (
     <div className="gc-card-actions" ref={folded.ref}>
@@ -850,21 +862,10 @@ export function DevCard(
   ) : (dense ? <div className="gc-card-actions"></div> : null);
   const edge = edgeFor(m);
 
-  // The meta line, ' · '-joined. Dense reserves the band even when empty;
-  // the detail head collapses it, exactly as `_cardContentHtml` did.
-  const metaNodes: ReactNode[] = [];
-  (m.meta || []).forEach((p, i) => {
-    if (i) metaNodes.push(' · ');
-    metaNodes.push(<MetaPartView key={i} p={p} />);
-  });
-  const metaRow = dense || metaNodes.length || tags.length
-    ? (
-      <div className="dev-card-meta">
-        {metaNodes}
-        {tags.map((b) => <Badge key={b.key} b={b} />)}
-      </div>
-    )
-    : null;
+  // The meta line. Dense reserves the line even when empty; the detail head
+  // collapses it, exactly as `_cardContentHtml` did.
+  const metaNodes = metaLineNodes(m);
+  const metaRow = dense || metaNodes.length ? <div className="dev-card-meta">{metaNodes}</div> : null;
 
   return (
     <div className={`${m.cls} ${dense ? 'dev-card-dense' : 'dev-card-topic'}`} data-edge={edge} {...attrs}>
@@ -873,11 +874,13 @@ export function DevCard(
           {m.icon ? <CardIcon spec={m.icon} /> : null}
           <div className="dev-card-head-main">
             <div
-              className={dense ? 'dev-card-title dev-card-title-clamp' : 'dev-card-title'}
+              // The title wraps in full at both sizes, as the row's does: the
+              // two-line clamp (and the tooltip that made up for it) lined a
+              // column of open cards up, and a column holds one open card now.
+              className="dev-card-title"
               data-issue-title={m.title.edit || m.title.editing
                 ? (m.title.edit ? m.title.edit.issue : m.title.editing!.issue)
                 : undefined}
-              title={m.title.title || undefined}
             >
               <TitleContent t={m.title} />
             </div>
@@ -885,6 +888,7 @@ export function DevCard(
         </div>
         {metaRow}
         {statusRow}
+        {factsRow}
         {actionRow}
         {(m.extra || []).map((x) => <ExtraRow key={x.key} x={x} />)}
       </div>
