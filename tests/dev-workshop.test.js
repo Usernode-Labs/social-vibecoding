@@ -1022,10 +1022,11 @@ test('Open card builds the topic screen\u2019s own sections, without navigating'
   assert.equal(AppView._workshopCardBody('proposal:99999'), null, 'an item the board no longer holds');
   assert.equal(AppView._workshopCardBody('nonsense'), null, 'and a key that is not one');
 
-  // The sheet renders it under the card, and the toggle rides at the right
-  // end of the card's own facts line rather than in a strip below it.
+  // The sheet renders it under the card, and the toggle rides in the card's
+  // own action band — the Board's seat too — rather than in a strip below it.
   const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
-  assert.match(unfolded, /statusLead=\{placement === 'facts' \? openBtn : undefined\}/, 'on the Workshop, the facts-line seat');
+  assert.match(unfolded, /actionEnd=\{placement === 'actions' \? openBtn : undefined\}/, 'the band seat, on both surfaces');
+  assert.match(unfolded, /detail: placement = 'actions',/, 'and it is the default, so the Workshop passes nothing');
   assert.match(unfolded, /<TopicBodySections body=\{detail\} \/>/);
   assert.match(unfolded, /detail \? 'Close card' : 'Open card'/);
   assert.match(unfolded, /readAppView<TopicBody>\('_workshopCardBody', key\)/,
@@ -1122,11 +1123,14 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
   assert.equal(AppView._workshopView().mine.count, 2, 'a search does not hide your own work');
 });
 
-test('a card\u2019s own actions join Open card on the facts line, in the Workshop only', () => {
-  // "The same line as open card", and open card only exists here. A board
-  // card sits in a ~165px kanban column, its actions fold into the overflow
-  // menu by measuring the band they are in, and that measurement is
-  // meaningless inside a content-width group at the end of a wrapping line.
+test('the facts-line seat still moves a card\u2019s own actions up beside its control, for a caller that wants it', () => {
+  // `statusLead` puts a caller's control at the right end of the facts line
+  // and the card's own pills beside it. Nothing passes one since the
+  // Workshop's open card took the band seat (so both surfaces draw one
+  // card), but the seat stays for a surface the full width of its sheet: a
+  // board card sits in a ~300px column, its actions fold into the menu by
+  // measuring the band they are in, and that measurement is meaningless
+  // inside a content-width group at the end of a wrapping line.
   const src = CARD_TSX;
   assert.match(src, /const inlineActions = !!statusLead;/);
   assert.match(src, /const bandPrimary = inlineActions \? \[\] : primary;/,
@@ -1457,16 +1461,17 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   // The toggle is pinned against rendered markup in this file instead.
   assert.ok(!unfolded.expectSelector.includes('data-ws-open-card'));
 
-  // The preview moved to the facts line, and the declared check moved with
-  // it. This is the sweep that was missed the first time: the unit tests for
-  // the new position were all updated and dapp.json was not, so the gate
-  // found it instead.
+  // The preview moved to the facts line and then back to the action band —
+  // after the hamburger, closing it — and the declared check moved with it
+  // each time. This is the sweep that was missed the first time: the unit
+  // tests for the new position were all updated and dapp.json was not, so
+  // the gate found it instead.
   const preview = byName(/Preview is a labelled pill/);
   assert.ok(preview, 'the board still pins where the preview lives');
-  assert.match(preview.expectSelector, /\.dev-card-status > \.dev-card-status-end > \.gc-vote-btn-preview/);
+  assert.match(preview.expectSelector, /\.gc-card-actions > \.dev-card-menu-btn\[data-card-menu\] ~ \.gc-vote-btn-preview:last-child:not\(\.gc-vote-btn-icon\)/);
   for (const t of dapp.tests) {
-    assert.ok(!/\.gc-card-actions[^,]*gc-vote-btn-preview/.test(t.expectSelector || ''),
-      `${t.name}: no check still looks for the preview in the action band`);
+    assert.ok(!/dev-card-status-end[^,]*gc-vote-btn-preview/.test(t.expectSelector || ''),
+      `${t.name}: no check still looks for the preview on the facts line`);
     assert.ok(!/#dev-(kanban|body)[^,]*gc-explore-chat-btn/.test(t.expectSelector || ''),
       `${t.name}: nor for Explore on a card face`);
   }

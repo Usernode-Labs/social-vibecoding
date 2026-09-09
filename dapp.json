@@ -110,7 +110,7 @@
       "key": "DB_POOL_MAX",
       "group": "Scaling",
       "default": "60",
-      "description": "Maximum Postgres connections in the platform's pool. One postgres container backs the platform, every production app and every staging preview, and its max_connections is the stock 100 \u2014 so this has to leave room for the whole fleet, not just for this process. Previews take STAGING_DB_POOL_MAX instead."
+      "description": "Maximum Postgres connections in the platform's pool. One postgres container backs the platform, every production app and every staging preview, and its max_connections is the stock 100 — so this has to leave room for the whole fleet, not just for this process. Previews take STAGING_DB_POOL_MAX instead."
     },
     {
       "key": "STAGING_DB_POOL_MAX",
@@ -670,7 +670,7 @@
       "expectText": "See all 7 challenges"
     },
     {
-      "name": "Dev board: one composite status pill and a ⋯ menu per card (card-as-pointer)",
+      "name": "Dev board: one composite status pill and a menu trigger per card (card-as-pointer)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item .dev-status-pill ~ .dev-chat-badge, #dev-kanban .gc-vote-item [data-card-menu]",
       "expectText": "Create proposal"
@@ -681,12 +681,12 @@
       "expectSelector": "#dev-body .gc-vote-item > .flex-1 > .dev-card-head > span[class*=\"rounded-lg\"] + .dev-card-head-main"
     },
     {
-      "name": "Dev board: a card's subtitle is the first full-width row under the title, not inside the indent",
+      "name": "Dev board: a card's meta line is the first row under the head, tabbed in under the title by CSS rather than nested in the indent",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta"
     },
     {
-      "name": "Dev board: the rows under a card's title span its full width (no icon indent)",
+      "name": "Dev board: the bands under a card's meta line span its full width (no icon indent)",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head ~ .dev-card-badges, #dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head ~ .gc-card-actions"
     },
@@ -718,9 +718,9 @@
       "expectText": "Vote"
     },
     {
-      "name": "Dev board, round four: Preview is a labelled pill closing the card's facts line",
+      "name": "Dev board: Preview is a labelled pill closing the action band, after the card's other controls",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .gc-vote-item .dev-card-status > .dev-card-status-end > .gc-vote-btn-preview:last-child:not(.gc-vote-btn-icon)",
+      "expectSelector": "#dev-kanban .gc-vote-item .gc-card-actions > .dev-card-menu-btn[data-card-menu] ~ .gc-vote-btn-preview:last-child:not(.gc-vote-btn-icon), #dev-kanban .gc-vote-item .gc-card-actions > .dev-ws-open-btn ~ .gc-vote-btn-preview:last-child:not(.gc-vote-btn-icon)",
       "expectText": "Preview"
     },
     {
@@ -734,7 +734,7 @@
       "expectSelector": "#dev-kanban .gc-vote-item .dev-card-status > .dev-card-band-break + .dev-badge"
     },
     {
-      "name": "Dev board, round three: a second action pill can fold into ⋯ (one-line band)",
+      "name": "Dev board, round three: a second action pill can fold into the menu (one-line band)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-col-issues [data-issue-row] .gc-card-actions > .gc-vote-btn[data-act=\"markIssueInProgress\"][data-fold]",
       "expectText": "Claim this issue"
@@ -750,9 +750,9 @@
       "expectSelector": "#dev-body [data-issue-row=\"900013\"] .dev-card-meta + .dev-card-badges.dev-card-status[data-empty=\"1\"] + .gc-card-actions"
     },
     {
-      "name": "Dev board: a card that has pills keeps its status band (#1139)",
+      "name": "Dev board: an issue's tags ride its meta line beside the number; the status band keeps only states (#1139)",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body [data-issue-row=\"900001\"] .dev-card-badges.dev-card-status:not([data-empty]) .dev-badge"
+      "expectSelector": "#dev-body [data-issue-row=\"900001\"] .dev-card-head + .dev-card-meta > button.attr-chip.dev-badge[data-attr-field=\"priority\"] ~ button.attr-chip.dev-badge[data-attr-field=\"assignee\"]"
     },
     {
       "name": "Dev board: a card title clamps to two lines instead of pushing the bands below it out of step",
@@ -760,9 +760,9 @@
       "expectSelector": "#dev-kanban .gc-vote-item .dev-card-title.dev-card-title-clamp[title]"
     },
     {
-      "name": "Dev board: the status pill shares one band with the chips and the Closes-#N pills",
+      "name": "Dev board: the status pill shares one band with the Closes-#N pills; the chips left it for the meta line",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body .gc-vote-item .dev-card-status > .dev-status-pill-block ~ .dev-badge"
+      "expectSelector": "#dev-body .gc-vote-item .dev-card-status > .dev-status-pill-block ~ .dev-badge:not(.attr-chip)"
     },
     {
       "name": "Dev board: an issue card offers its claim toggle as a pill, not only in ⋯",
@@ -816,7 +816,7 @@
       "expectSelector": ".dev-card-menu .dev-card-menu-item .dev-card-menu-icon[aria-hidden=\"true\"] + .dev-card-menu-label"
     },
     {
-      "name": "Dev board: a session card’s ⋯ opens (and survives the board’s own repaints)",
+      "name": "Dev board: a session card’s menu opens (and survives the board’s own repaints)",
       "path": "/?demo=1&view=kanban&col=inprogress&shot=card-menu&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-col-inprogress [data-session-chip] [data-card-menu][aria-expanded=\"true\"]"
     },
@@ -1086,10 +1086,10 @@
       "expectText": "1 of 2 app slots used"
     },
     {
-      "name": "Issue cards keep ONE primary action; the claim moves into the ⋯ menu",
+      "name": "Issue cards show every action that fits the band, each foldable; the rest fold into the menu behind the hamburger",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectText": "Create proposal",
-      "expectSelector": "#dev-kanban-col-issues .gc-vote-item [data-card-menu]"
+      "expectSelector": "#dev-kanban-col-issues .gc-vote-item .gc-card-actions > [data-act=\"createPrForIssue\"][data-fold=\"1\"] ~ [data-card-menu]"
     },
     {
       "name": "Session/proposal cards render reverse #N issue chips",
@@ -1816,9 +1816,10 @@
       "expectSelector": "#dev-body #dev-workshop"
     },
     {
-      "name": "Kanban survives as the resolved mode on a ?view=kanban deep link, and a tap unfolds a row into its card",
+      "name": "Kanban survives as the resolved mode on a ?view=kanban deep link, and a tap unfolds a row into its card, whose Open card leads to its page",
       "path": "/?demo=1&view=kanban&shot=board-unfold#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-kanban-board .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item.dev-card-dense[data-edge] .gc-card-actions > .dev-ws-open-btn[aria-expanded=\"false\"]"
+      "expectSelector": "#dev-body #dev-kanban-board .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item.dev-card-dense[data-edge] .gc-card-actions > a.dev-ws-open-btn[href*=\"/dev/\"]",
+      "expectText": "Open card"
     },
     {
       "name": "The Workshop renders its themes into #dev-workshop; the deep link opens one, with its items as folded rows under stage lanes",

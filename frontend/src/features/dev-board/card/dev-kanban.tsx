@@ -134,6 +134,10 @@ function Column(
               // line: a column is too narrow for the actions that seat moves
               // up beside it (fold.tsx).
               detail: 'actions',
+              // And it is a link to the item's page, not the sections in
+              // place: a column is the wrong width for a ledger and a
+              // transcript, and the page is one tap away from here.
+              expand: 'page',
             }}
           />
         ))}

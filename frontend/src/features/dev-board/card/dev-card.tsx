@@ -381,13 +381,15 @@ export function Badge({ b }: { b: BadgeSpec }): ReactNode {
 }
 
 /**
- * The board caps the metadata chips at four; the pill, the linkage and the
+ * The status band caps the STATE chips at four; the pill, the linkage and the
  * 💬 count ride outside the cap (`_cardBadgesHtml`'s contract, transcribed
- * with the markup it governed).
+ * with the markup it governed). The tags — priority, assignee, category —
+ * are not under it: they ride on the meta line, which wraps for them.
+ *
+ * The action band has no count cap any more. It shows as many pills as fit
+ * its one line and folds the rest into the menu (useFoldedActions).
  */
 export const BADGE_MAX = 4;
-/** And the action band at three text pills (`ACTION_PRIMARY_MAX`). */
-export const ACTION_PRIMARY_MAX = 3;
 
 /**
  * The card's vote control: one button beside the state bar.
@@ -599,14 +601,6 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
 }
 
 /**
- * The card's right-edge rail (`_cardRailHtml`): ⋯ up top, the chevron below.
- *
- * The eye used to be pinned at the bottom of this column. A board card now
- * draws its preview as a LABELLED pill at the end of the action band (see
- * DevCard), so `rail.preview` is only drawn here by a caller that still
- * wants the corner form — none of the board's builders do.
- */
-/**
  * The card's menu trigger: a hamburger at the far right of the action band.
  *
  * It was a ⋯ in the card's top-right rail. The band is where the card's
@@ -631,13 +625,18 @@ function MenuTrigger({ menuKey }: { menuKey: string }): ReactNode {
   );
 }
 
+/**
+ * The card's right edge: the tap-through chevron, or nothing.
+ *
+ * This was a column (`.dev-card-rail`) holding the ⋯ up top, the preview eye
+ * at the bottom and the chevron centred between them. Both controls live in
+ * the action band now — the hamburger at its right edge, the labelled
+ * Preview after it — so the chevron is the card's only right-edge child and
+ * needs no column to be centred in. `rail.preview` is still handed over by
+ * the builders; DevCard draws it in the band, never here.
+ */
 function Rail({ rail }: { rail: RailSpec }): ReactNode {
-  const chevron = rail.chevron ? <Chevron /> : null;
-  const preview = rail.preview ? <Preview spec={rail.preview} /> : null;
-  if (!chevron && !preview) return null;
-  // A lone chevron is already the card's only right-edge child — no column.
-  if (!preview) return chevron;
-  return <div className="dev-card-rail">{chevron}{preview}</div>;
+  return rail.chevron ? <Chevron /> : null;
 }
 
 function MetaPartView({ p }: { p: MetaPart }): ReactNode {
@@ -766,44 +765,34 @@ export function DevCard(
   const chat = m.chatCount !== null && m.chatCount !== undefined
     ? <Badge b={{ t: 'chat', key: 'chat', count: m.chatCount || 0 }} />
     : null;
-  // The preview rides at the right end of the FACTS line, not on an action
-  // row of its own. It is the one control that is about looking rather than
-  // doing, and a whole row for it pushed the card taller while the facts
-  // line beside it had space to spare. (The builders still hand it over as
-  // `rail.preview`; the model did not move.) The detail head's arrives as
-  // `actionPreview`, already labelled.
-  // The preview used to close the FACTS line; it sits at the far right of
-  // the action band now, after the hamburger, with the card's other controls
-  // — a fixed child of the band, which the pills fold around.
-  const previewSpec = m.actionPreview
-    || (m.rail.preview ? { ...m.rail.preview, iconOnly: false } : null);
+  // The preview is the last thing in the action band, after the hamburger,
+  // with the card's other controls: a fixed child of the band, which the
+  // pills fold around, and always the LABELLED pill — the eye and the word —
+  // whichever builder handed it over. (It closed the facts line for a round,
+  // and before that sat as a bare eye in the corner rail; the board's
+  // builders still hand it over as `rail.preview`, the detail head's as
+  // `actionPreview`, and the model did not move.)
+  const previewSource = m.actionPreview || m.rail.preview;
+  const previewSpec = previewSource ? { ...previewSource, iconOnly: false } : null;
   const bandPreview = previewSpec ? <Preview spec={previewSpec} /> : null;
 
   // ── Where the primary actions go ──────────────────────────────────
   //
-  // `statusLead` is a caller's own control at the right-hand end of the
-  // facts line; only the Workshop passes one ("Open card"). Where it does,
-  // the card's own primary actions join it there — "Create proposal" and
-  // "Claim this issue" beside "Open card" and "Preview", one line of things
-  // you can do to this item instead of two rows saying it twice.
+  // Every action the card has goes in the band, then the caller's
+  // `actionEnd` control, then the hamburger, then Preview. The band's
+  // measurement (useFoldedActions) shows as many pills as fit its one line
+  // and folds the rest, from the end, into the menu behind the hamburger;
+  // the three controls after the pills are fixed children it folds around.
+  // The old cap of three text pills is gone: the line is the cap now. That
+  // is the seat both surfaces use for "Open card" (card/fold.tsx), so an
+  // open card on the Board and on the Workshop is one drawing.
   //
-  // Only there. A board card sits in a kanban column ~165px wide, its
-  // actions fold into ⋯ by measuring the band they are in, and that
-  // measurement is meaningless inside a content-width group at the end of a
-  // wrapping line. The Workshop's card is the full width of the sheet and
-  // needs no folding, so this moves the pills exactly where there is room
-  // for them and nowhere else.
-  //
-  // `actionEnd` is the other seat for such a control: the END of the action
-  // band, after the card's own pills. That is where the Board's open card
-  // puts its "Open card" (card/fold.tsx), because a kanban column has no
-  // facts line wide enough for the actions to move onto. The band's fold
-  // measurement (useFoldedActions) counts every child without `data-fold`
-  // as fixed width, so the pills fold into ⋯ AROUND it rather than under it.
-  // Every action the card has goes in the band; the band's measurement
-  // (useFoldedActions) shows as many as fit on its one line and folds the
-  // rest, from the end, into the menu behind the hamburger. The old cap of
-  // three text pills (ACTION_PRIMARY_MAX) is gone: the line is the cap now.
+  // `statusLead` is the other seat, kept for a surface that wants it: the
+  // caller's control at the right-hand end of the facts line, with the
+  // card's own primary actions moved up beside it. Nothing passes one today.
+  // It only ever made sense on a card the full width of its sheet — the
+  // band's fold measurement is meaningless inside a content-width group at
+  // the end of a wrapping line, so a ~300px column could never take it.
   const primary = bandActions;
   const inlineActions = !!statusLead;
   const bandPrimary = inlineActions ? [] : primary;
@@ -859,7 +848,6 @@ export function DevCard(
       {bandPreview}
     </div>
   ) : (dense ? <div className="gc-card-actions"></div> : null);
-  const rail: RailSpec = { ...m.rail, preview: null };
   const edge = edgeFor(m);
 
   // The meta line, ' · '-joined. Dense reserves the band even when empty;
@@ -900,7 +888,7 @@ export function DevCard(
         {actionRow}
         {(m.extra || []).map((x) => <ExtraRow key={x.key} x={x} />)}
       </div>
-      <Rail rail={rail} />
+      <Rail rail={m.rail} />
     </div>
   );
 }

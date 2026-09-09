@@ -21,7 +21,7 @@ import { useState, type ReactNode } from 'react';
 import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { CardIcon, DevCard } from './dev-card';
-import { CardRowView, type DetailPlacement } from './fold';
+import { CardRowView, type DetailPlacement, type OpenMode } from './fold';
 import type { ArchivedRow, ListRow } from './model';
 
 /**
@@ -40,6 +40,8 @@ export interface RowFold {
    * it, which ~300px cannot hold (see fold.tsx).
    */
   detail?: DetailPlacement;
+  /** What "Open card" does there: the Board sends it to the item's page. */
+  expand?: OpenMode;
 }
 
 function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
@@ -86,7 +88,7 @@ export function ListRowView({ row, fold }: { row: ListRow; fold?: RowFold | null
   switch (row.t) {
     case 'card':
       return fold
-        ? <CardRowView row={row} slug={fold.slug} canPost={fold.canPost} open={fold.open} onToggle={fold.onToggle} detail={fold.detail} />
+        ? <CardRowView row={row} slug={fold.slug} canPost={fold.canPost} open={fold.open} onToggle={fold.onToggle} detail={fold.detail} expand={fold.expand} />
         : <DevCard model={row.card} />;
     case 'divider':
       return (

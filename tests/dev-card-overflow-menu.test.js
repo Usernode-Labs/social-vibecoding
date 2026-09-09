@@ -139,7 +139,7 @@ test('the trigger registers its descriptors under a stable key', () => {
   assert.match(html, /dev-card-menu-btn/, 'and the corner-placement class');
 });
 
-test('the trigger is pinned in the top-right RAIL on every card type that has one', () => {
+test('the trigger sits at the right end of the action band on every card type that has one', () => {
   const AppView = makeAppView({ admin: true });
   AppView._sharedById = {};
   const cards = {
@@ -151,19 +151,17 @@ test('the trigger is pinned in the top-right RAIL on every card type that has on
   };
   for (const [kind, html] of Object.entries(cards)) {
     assert.match(html, /dev-card-head-main/, `${kind}: uses the shared head`);
-    // The rail is the card's LAST child — a right-edge column with the ⋯ on
-    // top, the icon Preview (when there is one) pinned at the bottom, and the
-    // chevron centred in between.
-    assert.match(html, /dev-card-rail/, `${kind}: rail present`);
-    const rail = html.slice(html.indexOf('dev-card-rail'));
-    assert.match(rail, /dev-card-menu-btn/, `${kind}: trigger inside the rail`);
-    // Never inside the badge row (where the 💬 lives) or the action row.
-    const actions = html.match(/<div class="gc-card-actions">[\s\S]*?<\/div>/);
-    if (actions) {
-      assert.ok(!/data-card-menu/.test(actions[0]),
-        `${kind}: the trigger is in the rail, not the action row`);
-    }
-    const badgeRow = html.match(/<div class="dev-card-badges">[\s\S]*?<\/div>/);
+    // The trigger was a ⋯ in a right-edge column (.dev-card-rail). It is the
+    // band's own "more" now — the hamburger after the card's pills, pushed
+    // to the band's right edge, because the menu is where the pills that do
+    // not fit the band go — and the column is gone.
+    assert.doesNotMatch(html, /dev-card-rail/, `${kind}: no rail`);
+    const actions = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
+    assert.ok(actions && /data-card-menu/.test(actions[1]), `${kind}: trigger inside the action band`);
+    assert.ok(actions[1].lastIndexOf('data-act=') < actions[1].indexOf('data-card-menu'),
+      `${kind}: after every pill`);
+    // Never inside the badge row (where the 💬 lives).
+    const badgeRow = html.match(/<div class="dev-card-badges[^"]*"[^>]*>[\s\S]*?<\/div>/);
     if (badgeRow) {
       assert.ok(!/data-card-menu/.test(badgeRow[0]),
         `${kind}: the trigger cannot collide with the 💬 badge`);
@@ -184,8 +182,8 @@ test('a card with no ⋯ still gets its chevron, with no empty rail around it', 
   assert.match(html, /M9 5l7 7-7 7/, 'the chevron survives on its own');
 
   // Give that same card a preview and there is STILL no column: the preview
-  // is a labelled pill at the end of the action band now (round three), so
-  // the chevron stays the only thing on the right edge.
+  // is a labelled pill closing the action band, so the chevron stays the
+  // only thing on the right edge.
   const withPreviewModel = AppView._sharedSessionCardModel({
     id: 71, session_title: 'Theirs', username: 'them', user_id: 9, staging_url: 'https://s',
   });
@@ -193,10 +191,8 @@ test('a card with no ⋯ still gets its chevron, with no empty rail around it', 
   const withPreview = cardHtml(withPreviewModel);
   assert.equal(menuKeyOf(withPreview), null, 'still nothing demoted');
   assert.doesNotMatch(withPreview, /dev-card-rail/);
-  assert.match(withPreview, /class="dev-card-badges dev-card-status"><span class="dev-card-status-end"><button [^>]*gc-vote-btn-preview[^>]*>[\s\S]*?Preview<\/button><\/span>/,
-    'the Preview pill closes the facts line (#1787 round four), not a row of its own');
-  assert.match(withPreview, /Preview<\/button><\/span><\/div><div class="gc-card-actions"><\/div><\/div><svg [^>]*class="w-4 h-4/,
-    'and the bare chevron after the content column');
+  assert.match(withPreview, /class="dev-card-badges dev-card-status"[^>]*><\/div><div class="gc-card-actions"><button [^>]*gc-vote-btn-preview[^>]*>[\s\S]*?Preview<\/button><\/div><\/div><svg [^>]*class="w-4 h-4/,
+    'the Preview pill is the band\'s only content, and the bare chevron follows the content column');
 });
 
 test('an applied close-issue card has no ⋯ and no action row at all', () => {
