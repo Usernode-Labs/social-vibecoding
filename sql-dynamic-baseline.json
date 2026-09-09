@@ -362,16 +362,16 @@
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "bc985dc7d04a921eaa79",
+      "fingerprint": "6342aec040e022e3a331",
       "count": 1,
-      "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
+      "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, COUNT(*)::int AS all_total, COUNT(*) FILTER ( WHERE ${scopeFilter} AND (${totalSql(doneExpr)}) )::"
     },
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "c714fb518d47b4a81b6f",
+      "fingerprint": "bc985dc7d04a921eaa79",
       "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${totalSql(doneExpr)})::int AS done, COALESCE( array_agg(COALESCE(c.reward, ct.reward)) FILTER (WHERE NOT"
+      "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
     },
     {
       "source": "src/routes/kudos.js",

@@ -250,8 +250,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // The ⋯ menu capture needs a card up to have a trigger to tap.
   const menu = DAPP.tests.find((t) => /shot=card-menu/.test(t.path || '') && /#dev-kanban/.test(t.expectSelector || ''));
   assert.ok(menu && /cards=open/.test(menu.path), 'the card-menu shot runs with the cards open');
-  // The manifest did not grow: the fold is pinned by extending two checks.
-  assert.equal(DAPP.tests.length, 560);
+  // The manifest did not grow FOR THE FOLD: it is pinned by extending two
+  // existing checks rather than declaring new ones. The literal is the whole
+  // manifest's size, so a later change that legitimately declares a check
+  // bumps it by exactly that many and says so here (560 → 562: the two #1824
+  // challenges-footer checks).
+  assert.equal(DAPP.tests.length, 562);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

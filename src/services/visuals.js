@@ -118,7 +118,11 @@ const CONTENT_TYPES = {
 //
 // 680s → 690s with 560 → 580 (a proposal in flight at the same time): the
 // deadline moved to 570s, and 120s above it is exactly 690s.
-const RUN_TIMEOUT_MS = 690 * 1000;
+//
+// 690s → 710s with 580 → 600 (#1824, which found the manifest sitting exactly
+// on the 20-slot floor): the deadline moved to 590s, and 120s above it is
+// 710s.
+const RUN_TIMEOUT_MS = 710 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 
 // The capture container drives up to TEST_CONCURRENCY headless pages at
@@ -156,7 +160,11 @@ const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
 // 560s → 570s with MAX_DECLARED_TESTS 560 → 580, a proposal in flight at the
 // same time: ~283s of ideal work for a full suite, so 570s keeps the 2x
 // margin with ~4s to spare. RUN_TIMEOUT_MS moves 680s → 690s with it again.
-const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '570000';
+//
+// 570s → 590s with MAX_DECLARED_TESTS 580 → 600 (#1824): ~293s of ideal work
+// for a full suite, so 590s keeps the 2x margin with ~5s to spare, and
+// RUN_TIMEOUT_MS moves 690s → 710s with it.
+const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '590000';
 
 // Mint a 15-minute capture identity token for a seeded capture identity
 // row, scoped to the app being captured.

@@ -647,6 +647,17 @@
       "expectText": "No challenges are running right now"
     },
     {
+      "name": "Challenges: a block showing every challenge there is draws no \"see all\" (#1824)",
+      "path": "/?demo=1&challenges=few",
+      "expectSelector": "#home-challenges-section article.home-panel > .home-panel-footer:not(:has(.home-panel-expand)) .home-panel-open"
+    },
+    {
+      "name": "Challenges: a truncated list still draws the toggle that opens the rest (#1824)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-challenges-section article.home-panel > .home-panel-footer > .home-panel-expand[aria-expanded=\"false\"]",
+      "expectText": "See all 7 challenges"
+    },
+    {
       "name": "Dev board: one composite status pill and a ⋯ menu per card (card-as-pointer)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item .dev-status-pill ~ .dev-chat-badge, #dev-kanban .gc-vote-item [data-card-menu]",

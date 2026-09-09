@@ -132,7 +132,21 @@ export interface ChallengesView {
   onboardingNote?: string | null;
   /** Null between seasons, and on the empty block. */
   season: SeasonView | null;
+  /** How many challenges are OPEN — what "See all N challenges" counts. */
   total: number;
+  /**
+   * How many rows an expansion would draw: the open ones plus the season's
+   * finished and out-of-window ones. `total` cannot tell a full-but-short
+   * list from a short list with finished challenges behind it.
+   */
+  allTotal?: number;
+  /**
+   * Whether the footer draws its expand toggle at all — false when the rows
+   * on screen already ARE every challenge there is, which is the "See all 3
+   * challenges" under three challenges of #1824. Always true once expanded:
+   * that is the way back to "Show less".
+   */
+  expandable?: boolean;
   expanded: boolean;
   rows: ChallengeRowView[];
 }

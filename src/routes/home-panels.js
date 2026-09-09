@@ -162,21 +162,29 @@ function buildChallengeRow(r) {
 // is over"), never a per-user signal — see the schema comment and
 // frontend/src/features/leaderboard/topochain-challenges.js (which was
 // public/js/topochain-challenges.js until #1083 chunk F).
-const OPEN_CHALLENGE_WHERE = `
-        se.internal = FALSE
-    AND c.enabled = TRUE
-    AND c.completed = FALSE
-    AND COALESCE(c.schedule_start, ct.schedule_start, NOW() - INTERVAL '1 second') <= NOW()
-    AND COALESCE(c.schedule_end, ct.schedule_end, NOW() + INTERVAL '1 second') >= NOW()`;
-
-// The EXPANDED view's predicate: the same season and public-event scope,
+//
+// The EXPANDED view's predicate is the same season and public-event scope,
 // still organiser-enabled, but WITHOUT the not-completed and in-window
 // filters — expanding is how a viewer sees the season's finished
 // challenges (and their own ✓ marks on them) without leaving home. The
-// collapsed panel stays strictly "open" per OPEN_CHALLENGE_WHERE.
+// collapsed panel stays strictly "open". So the two live as a base and the
+// extra predicate that narrows it, rather than as two hand-kept copies:
+// `all_total` counts the base set and `total` counts the narrowed one, from
+// one query, and the client needs both to know whether expanding would
+// reveal anything at all (#1824).
 const ALL_CHALLENGE_WHERE = `
         se.internal = FALSE
     AND c.enabled = TRUE`;
+
+// What "open" adds on top: the organiser hasn't marked it over, and now is
+// inside its effective schedule window (or it carries no window at all).
+const OPEN_ONLY_WHERE = `
+        c.completed = FALSE
+    AND COALESCE(c.schedule_start, ct.schedule_start, NOW() - INTERVAL '1 second') <= NOW()
+    AND COALESCE(c.schedule_end, ct.schedule_end, NOW() + INTERVAL '1 second') >= NOW()`;
+
+const OPEN_CHALLENGE_WHERE = `${ALL_CHALLENGE_WHERE}
+    AND ${OPEN_ONLY_WHERE}`;
 
 // Hard ceiling on the expanded list. A season can accumulate dozens of
 // challenges (production's Season 1 has 58 rows across its events), and
@@ -236,14 +244,21 @@ async function buildChallengesPanel(pool, user, opts) {
     // Between seasons. The panel still renders — one "nothing running" line —
     // so the area explains itself instead of vanishing.
     return {
-      season: null, total: 0, done: 0, points_remaining: null,
+      season: null, total: 0, all_total: 0, done: 0, points_remaining: null,
       challenges: [], expanded,
     };
   }
 
   const onboarding = await loadOnboarding(pool, user.id, { seasonId: season.id });
   const locked = onboarding && !onboarding.summary.unlocked;
-  if (locked) scopeWhere += ' AND c.id = ANY($4::bigint[])';
+  // The totals query counts the EXPANDED scope and narrows to the collapsed
+  // one with a FILTER, so both counts come from one statement. The locked
+  // onboarding restriction is part of the scope either way.
+  let totalsWhere = ALL_CHALLENGE_WHERE;
+  if (locked) {
+    scopeWhere += ' AND c.id = ANY($4::bigint[])';
+    totalsWhere += ' AND c.id = ANY($4::bigint[])';
+  }
   // Keep the ring, sorting and remaining rewards in sync with lifetime
   // onboarding progress, including credits earned in a previous season.
   const doneExpr = onboarding
@@ -293,17 +308,31 @@ async function buildChallengesPanel(pool, user, opts) {
   // returned rows would understate "pts left" the moment a fifth challenge
   // opens — so collect every open not-done row's effective reward here (a
   // handful of short strings) and parse them below.
+  //
+  // `all_total` is the size of the EXPANDED set — the same season and
+  // public-event scope with the open-only predicate dropped. It is what the
+  // footer's expand toggle needs to know whether it has anything to reveal:
+  // a block already showing every challenge there is draws no toggle at all
+  // (#1824), rather than a "See all 3 challenges" beside three challenges.
+  // `scopeFilter` narrows every OTHER aggregate back to the rows above, so
+  // `total`, `done` and `open_rewards` keep the exact meaning they had.
+  const scopeFilter = expanded ? 'TRUE' : `(${OPEN_ONLY_WHERE})`;
   const { rows: totalRows } = await pool.query(
-    `SELECT COUNT(*)::int AS total,
-            COUNT(*) FILTER (WHERE ${totalSql(doneExpr)})::int AS done,
+    `SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total,
+            COUNT(*)::int AS all_total,
+            COUNT(*) FILTER (
+              WHERE ${scopeFilter} AND (${totalSql(doneExpr)})
+            )::int AS done,
             COALESCE(
-              array_agg(COALESCE(c.reward, ct.reward)) FILTER (WHERE NOT (${totalSql(doneExpr)})),
+              array_agg(COALESCE(c.reward, ct.reward)) FILTER (
+                WHERE ${scopeFilter} AND NOT (${totalSql(doneExpr)})
+              ),
               '{}'
             ) AS open_rewards
        FROM challenges c
        JOIN season_events se ON se.id = c.season_event_id
        LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
-      WHERE se.season_id = $2 AND ${totalSql(scopeWhere)}`,
+      WHERE se.season_id = $2 AND ${totalSql(totalsWhere)}`,
     [user.id, season.id, ...onboardingParams]
   );
 
@@ -335,6 +364,10 @@ async function buildChallengesPanel(pool, user, opts) {
     // than repeated on each row.
     season: { id: Number(season.id), name: season.name, ends_at: season.ends_at },
     total: totalRows[0]?.total ?? challenges.length,
+    // How many rows an expansion would show. `total` is the OPEN count, so
+    // on its own it cannot tell a full-but-short list ("nothing to expand")
+    // from a short list with finished challenges behind it (#1824).
+    all_total: totalRows[0]?.all_total ?? totalRows[0]?.total ?? challenges.length,
     done: totalRows[0]?.done ?? 0,
     points_remaining: pointsRemaining,
     ...(onboarding ? { onboarding: onboarding.summary } : {}),
@@ -363,7 +396,7 @@ function demoChallengesPanel(opts) {
   const username = opts && opts.username;
   if (variant === 'none') {
     return {
-      season: null, total: 0, done: 0, points_remaining: null,
+      season: null, total: 0, all_total: 0, done: 0, points_remaining: null,
       challenges: [], expanded,
       demo: true,
     };
@@ -475,15 +508,21 @@ function demoChallengesPanel(opts) {
 
   // The SHORT-LIST variant: two open rows, one metered and one binary, so
   // the progress-bar lane is still exercised at the smaller size. `total`
-  // matches the rows shown — there is nothing past the cap to "see all" of.
+  // AND `all_total` both match the rows shown — nothing is past the cap and
+  // nothing is behind an expansion either, so this is the state where the
+  // footer draws NO expand toggle (#1824). It carries no finished rows for
+  // exactly that reason: a "See all 2 challenges" beside two challenges is
+  // the bug, and this route is what the check and the screenshots navigate
+  // to in order to prove it is gone.
   if (variant === 'few') {
     const few = [rows[0], rows[1]];
     return {
       season: { id: 900500, name: 'Staging Demo Season — Topochain', ends_at: demoSeasonEndsAt() },
       total: 2,
+      all_total: 2,
       done: 0,
       points_remaining: null,
-      challenges: expanded ? [...few, ...finished] : few,
+      challenges: few,
       expanded,
       demo: true,
     };
@@ -499,6 +538,10 @@ function demoChallengesPanel(opts) {
   return {
     season: { id: 900500, name: 'Staging Demo Season — Topochain', ends_at: demoSeasonEndsAt() },
     total: expanded ? all.length : 7,
+    // Seven either way: the four drawn rows, the one open row past the cap,
+    // and the two finished ones an expansion reveals. More than is shown, so
+    // this route keeps the toggle the `few` route no longer draws.
+    all_total: 7,
     done: expanded ? 3 : 2,
     points_remaining: null,
     challenges: all,
