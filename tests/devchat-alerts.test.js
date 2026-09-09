@@ -25,8 +25,15 @@ const read = (...p) => fs.readFileSync(path.join(PUBLIC, ...p), 'utf8');
 const DEV_ALERTS_SRC = read('js', 'dev-alerts.js');
 // #1079 chunk B moved this module into the React bundle (it is the same
 // file — see the note at the top of it); only the path changed here.
+// #1808: notifications.js has one bundle import now (`agoStamp` from
+// lib/timestamp.ts, which gave the rows a stamp with a floor). This harness
+// evaluates the shipped source raw in a vm, so it stands in for the bundler:
+// the import statement is dropped and the REAL helper is put in the sandbox
+// under the same name, so a row's stamp is the one that ships.
+const { agoStamp } = require('./lib/render-tsx').loadTsx('frontend/src/lib/timestamp.ts');
 const NOTIF_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'), 'utf8');
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'), 'utf8')
+  .replace(/^import \{ agoStamp \}.*$/m, '');
 
 // Minimal fake DOM element tracking class list, text and attributes for the
 // badge tests.
@@ -71,6 +78,7 @@ function makeNotifEnv() {
     addEventListener: () => {},
     createElement: () => ({ set textContent(v) { this._t = v; }, get innerHTML() { return this._t || ''; } }),
   };
+  sandbox.agoStamp = agoStamp;
   vm.runInNewContext(NOTIF_SRC, sandbox);
   return { Notifications: sandbox.window.Notifications, elements };
 }

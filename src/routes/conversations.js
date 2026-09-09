@@ -90,6 +90,9 @@ function demoConversations(user) {
       id: 910003, kind: 'group', title: 'Design review', status: 'active', archived: false,
       members: [], memberCount: 4, membershipStatus: 'invited', myRole: 'member',
       requester: lin, peer: null, latestMessage: null, latestSummary: '',
+      // Fixed, and therefore always further back than the relative form's
+      // seven-day floor (#1808): this row's stamp is a DATE, not an age. It
+      // used to read "412d ago" here, which is a duration and not an answer.
       lastActivityAt: '2026-08-13T11:00:00Z', unreadCount: 0,
       canSend: false, canInvite: false, canManage: false,
     },
@@ -100,6 +103,18 @@ function demoMessages(user, conversationId) {
   const self = demoUser(user.id, user.username || 'you');
   const ada = demoUser(910001, 'ada');
   if (conversationId === 910001) return [
+    {
+      // #1808: the thread's oldest row, fixed in an earlier YEAR so the
+      // transcript's third stamp branch is on screen in every preview. The
+      // rows below it are this year's, so one scroll of this pane shows all
+      // three spellings the transcript uses. It used to print "08:40 AM"
+      // here and "01:20 PM" below, with nothing to say the two were two
+      // years apart.
+      id: 9100100, conversationId, sender: ada,
+      content: 'This is where the thread started, back in 2024.',
+      createdAt: '2024-11-02T08:40:00Z', editedAt: null,
+      reply: null, reactions: [], attachments: [], objects: [],
+    },
     {
       // `saved: true` on exactly one demo row, so the staging preview and the
       // declared checks show BOTH states of the save button on one screen —

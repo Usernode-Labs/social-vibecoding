@@ -12,19 +12,9 @@ export function initials(label: string): string {
     .join('') || '?';
 }
 
-export function relativeTime(value: string): string {
-  const time = Date.parse(value);
-  if (!Number.isFinite(time)) return '';
-  const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000));
-  if (seconds < 60) return 'now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
-  return new Date(time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
+// `relativeTime` lived here — the conversation list's own copy of the ago
+// ladder, one of five that had each drifted to a different cutoff. It is
+// `agoStamp` from lib/timestamp.ts now (#1808); import that directly.
 
 export function fullTime(value: string): string {
   return messageStamp(value).title;

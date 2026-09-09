@@ -46,6 +46,13 @@
 // than cosmetic: `_showMoreGroup` was the only caller of `loadMore()` in the
 // codebase, so removing the group chrome without replacing it would have
 // stranded server pagination on page one.
+
+// The module's one import (#1808). Notification rows used to carry a
+// hand-rolled relative age with no floor, so a year-old row read "412d ago";
+// the shared helper prints a real date past a week. Bundled, not imported by
+// Node, in tests/notification-row-lines.test.js — see the note there.
+import { agoStamp } from '../../lib/timestamp';
+
 const NATIVE_INVALIDATION_TIMEOUT_MS = 10000;
 const NATIVE_INVALIDATION_REFRESH_VERSION = 1;
 
@@ -824,9 +831,10 @@ const Notifications = {
     // Painting it by id is the sanctioned arrangement rather than an
     // exception: the span is rendered once by <PlatformHeader/> with a
     // CONSTANT className and a constant `data-session-done="0"`, so React
-    // never reconciles over what is written here. This module cannot import
-    // the store in any case — nine test harnesses evaluate its real source as
-    // a classic script in a vm, where a top-level `import` is a syntax error.
+    // never reconciles over what is written here. This module also does not
+    // import the store: most of its test harnesses rebuild individual method
+    // bodies with `new Function`, so a method that closed over a module-scope
+    // binding would be a method those harnesses cannot run.
     paint('notifications-badge', notifCount);
 
     // How many of those are specifically "your session finished", published
@@ -1322,7 +1330,7 @@ function savedView(s) {
     appName: conversationId
       ? (s.conversationTitle || 'a conversation')
       : (s.appName || s.appSlug || 'an app'),
-    time: relativeTime(s.savedAt),
+    ...stampFields(s.savedAt),
     text: (s.content || '').slice(0, 140),
   };
 }
@@ -1341,7 +1349,7 @@ function inviteView(inv) {
     who: inv.invitedBy ? `@${inv.invitedBy}` : 'Someone',
     verb: isApprover ? 'invited you to be an approver on' : 'invited you to collaborate on',
     appName: inv.appName || inv.appSlug || 'an app',
-    time: relativeTime(inv.createdAt),
+    ...stampFields(inv.createdAt),
   };
 }
 
@@ -1519,7 +1527,7 @@ function rowView(n) {
     id: n.id,
     unread: !n.readAt,
     unreadCls,
-    time: relativeTime(n.createdAt),
+    ...stampFields(n.createdAt),
     // The sheet buckets rows into Today/Earlier and leads each with an
     // avatar-initial chip, so the raw timestamp and the resolved names ride
     // along as data.
@@ -1811,15 +1819,16 @@ function rowView(n) {
   };
 }
 
-function relativeTime(ts) {
-  if (!ts) return '';
-  const then = new Date(ts).getTime();
-  const now = Date.now();
-  const diff = Math.max(0, now - then) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
+// `relativeTime` lived here. It never stopped being relative, so a row from
+// last spring read "412d ago" — a duration, not a date. It is `agoStamp` from
+// lib/timestamp.ts now, which prints "Mar 4" past a week (#1808).
+//
+// Both halves of a row's stamp cross to the component as descriptor fields:
+// `time` is what the row prints and `timeTitle` is what it hangs on `title`,
+// so a "3d ago" is one hover from the exact instant.
+function stampFields(ts) {
+  const { text, title } = agoStamp(ts);
+  return { time: text, timeTitle: title };
 }
 
 // #1079 chunk B published this row builder on the object rather than leaving
