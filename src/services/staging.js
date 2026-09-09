@@ -1,3 +1,4 @@
+const { withBuildUse } = require('./build-retention-guard');
 const log = require('./logger');
 const docker = require('./docker');
 const applicationRuntime = require('./application-runtime');
@@ -123,8 +124,8 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
   // Run after the predecessor settles either way — a failed build must
   // not block the next one (it's often exactly the retry that heals it).
   const promise = prevTail.then(
-    () => buildAndDeployStagingInner(config, session, app, commitHash),
-    () => buildAndDeployStagingInner(config, session, app, commitHash)
+    () => withBuildUse(config, () => buildAndDeployStagingInner(config, session, app, commitHash)),
+    () => withBuildUse(config, () => buildAndDeployStagingInner(config, session, app, commitHash))
   );
   // The stored tail never rejects, so waiters always run and no unhandled
   // rejection is parked on the chain; callers still get the real result
@@ -795,7 +796,7 @@ function serializeRebuild(slug, fn) {
 }
 
 async function rebuildProduction(config, app) {
-  return serializeRebuild(app.slug, () => rebuildProductionInner(config, app));
+  return serializeRebuild(app.slug, () => withBuildUse(config, () => rebuildProductionInner(config, app)));
 }
 
 async function rebuildProductionInner(config, app) {

@@ -51,14 +51,14 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
-async function execWorkerCommand(runtimeName, command, stdinText = null) {
+async function execWorkerCommand(runtimeName, command, stdinText = null, { timeoutMs = stdinText === null ? 30000 : 20000 } = {}) {
   if (usesKubernetesWorkers()) {
-    return kubernetes.execInWorker(kubernetesWorkerConfig(), runtimeName, command, stdinText);
+    return kubernetes.execInWorker(kubernetesWorkerConfig(), runtimeName, command, stdinText, { timeoutMs });
   }
   if (stdinText !== null) {
-    return docker.execShellStdin(runtimeName, stdinText, { timeoutMs: 20000, label: 'worker exec' });
+    return docker.execShellStdin(runtimeName, stdinText, { timeoutMs, label: 'worker exec' });
   }
-  return docker.execFileAsync('docker', ['exec', runtimeName, ...command], { timeout: 30000 });
+  return docker.execFileAsync('docker', ['exec', runtimeName, ...command], { timeout: timeoutMs });
 }
 
 // URL the worker container uses to reach the platform's internal API
@@ -1511,10 +1511,8 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
   );
   if (filesToRemove.length) {
     const containerName = _registryGet(sessionId)?.containerName
-      || workerContainerName(sessionId);
-    await docker.execFileAsync('docker', [
-      'exec', containerName, 'rm', '-f', ...filesToRemove,
-    ], { timeout: 5000 }).catch(() => {});
+      || workerRuntimeName(sessionId);
+    await execWorkerCommand(containerName, ['rm', '-f', ...filesToRemove], null, { timeoutMs: 5000 }).catch(() => {});
   }
 
   if (ownsCleanup) {
@@ -2486,7 +2484,7 @@ async function execInWorker(sessionId, {
         .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
         .join('\n');
       const detached = `${exports}\nnohup sh -c ${shellQuote(args[args.length - 1])} >/dev/null 2>&1 &\n`;
-      await execWorkerCommand(containerName, ['sh', '-s'], detached);
+      await execWorkerCommand(containerName, ['sh', '-s'], detached, { timeoutMs: 30000 });
     } else {
       await docker.execFileAsync('docker', args, {
         timeout: 30000,
@@ -2777,28 +2775,55 @@ async function inspectContainerState(containerName) {
 // the lines we already consumed.
 async function _consumeJournal(containerName, journal, progress, state, { sessionId = null } = {}) {
   if (usesKubernetesWorkers()) {
-    let linesConsumed = 0;
+    let charsConsumed = 0;
+    const counters = newWatchdogCounters();
+    let lastProbeAt = Date.now();
     // WORKER_JWT_TTL is the jsonwebtoken duration string "24h". Use its
     // numeric twin for arithmetic; coercing the string produces NaN and
     // makes this loop return probe_unobservable before its first poll.
     const deadline = Date.now() + WORKER_JWT_TTL_MS;
-    while (Date.now() < deadline) {
+    const readJournal = async () => {
       try {
         const { stdout } = await execWorkerCommand(containerName, ['cat', journal]);
-        const lines = stdout.split('\n');
-        for (let i = linesConsumed; i < lines.length; i++) {
-          if (!lines[i]) continue;
-          linesConsumed += 1;
-          state.rawStdout += `${lines[i]}\n`;
-          parseLine(lines[i], progress, state);
-          if (state.execExitSeen) return state;
+        // cat may race a writer halfway through a JSON record or marker.
+        // Advance only past complete lines, including blank lines. The next
+        // cumulative read supplies the remainder without losing or replaying
+        // records (and therefore provider usage) at a polling boundary.
+        let newline;
+        while ((newline = stdout.indexOf('\n', charsConsumed)) !== -1) {
+          const line = stdout.slice(charsConsumed, newline);
+          charsConsumed = newline + 1;
+          state.rawStdout += `${line}\n`;
+          parseLine(line, progress, state);
+          if (state.execExitSeen) return;
         }
       } catch (_) { /* journal may not exist yet */ }
-      const busy = await isWorkerExecuting(containerName);
-      if (busy === false && linesConsumed > 0) {
-        state.exitCode = state.exitCode ?? -1;
-        state.markerlessCause = 'turn_process_gone';
-        return state;
+    };
+    while (Date.now() < deadline) {
+      await readJournal();
+      if (state.execExitSeen) return state;
+      const stopRequested = sessionId != null && !!_registryGet(sessionId)?.stopRequestedAt;
+      const interval = stopRequested ? WATCHDOG_STOP_INTERVAL_MS : WATCHDOG_INTERVAL_MS;
+      if (Date.now() - lastProbeAt >= interval) {
+        const busy = await isWorkerExecuting(containerName, { timeoutMs: WATCHDOG_PROBE_TIMEOUT_MS });
+        lastProbeAt = Date.now();
+        const verdict = recordWatchdogProbe(counters, busy, {
+          idleLimit: stopRequested ? WATCHDOG_STOP_IDLE_STRIKE_LIMIT : WATCHDOG_IDLE_STRIKE_LIMIT,
+        });
+        if (busy === null) {
+          log.warn('worker', 'Turn liveness probe failed', { containerName, sessionId, journal,
+            consecutiveFailures: counters.probeFailures });
+        }
+        if (verdict.abandon) {
+          // The wrapper can append its terminal marker between the last
+          // journal read and the idle probe. Give that durable result the
+          // final word, even if the journal was empty until this point.
+          await readJournal();
+          if (state.execExitSeen) return state;
+          state.exitCode = state.exitCode ?? -1;
+          state.markerlessCause = verdict.cause;
+          return state;
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
@@ -2994,7 +3019,7 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
 // a fallback for the case where this append doesn't land at all.
 async function stopTurn(sessionId) {
   const meta = _registryGet(sessionId);
-  const containerName = meta?.containerName || workerContainerName(sessionId);
+  const containerName = meta?.containerName || workerRuntimeName(sessionId);
   _registryUpsert(sessionId, { stopRequestedAt: Date.now() });
   await execWorkerCommand(containerName, ['sh', '-c',
     buildTurnStopScript(meta?.journal || null),
@@ -3085,7 +3110,7 @@ async function resumeTurnFromJournal(sessionId, {
 } = {}) {
   if (!journal) throw new Error('resumeTurnFromJournal: journal path required');
   const meta = _registryGet(sessionId);
-  const containerName = meta?.containerName || workerContainerName(sessionId);
+  const containerName = meta?.containerName || workerRuntimeName(sessionId);
   // #664: seed the per-turn BYOK counters from the persisted active_turn
   // record (callers pass active_turn.byokCents) so post-restart switched
   // calls accumulate on top instead of restarting from zero, and the
@@ -3379,7 +3404,7 @@ function buildTurnStopScript(journal) {
 async function isWorkerExecuting(containerName, { timeoutMs = 5000 } = {}) {
   try {
     const { stdout } = usesKubernetesWorkers()
-      ? await execWorkerCommand(containerName, ['sh', '-c', TURN_PROC_PROBE_SCRIPT])
+      ? await execWorkerCommand(containerName, ['sh', '-c', TURN_PROC_PROBE_SCRIPT], null, { timeoutMs })
       : await docker.execFileAsync('docker', [
           'exec', containerName, 'sh', '-c', TURN_PROC_PROBE_SCRIPT,
         ], { timeout: timeoutMs });
@@ -3554,7 +3579,7 @@ async function execPushFromWorker(sessionId, branchName) {
     let stderr;
     if (usesKubernetesWorkers()) {
       const script = `export PAT=${shellQuote(botToken)}\nexport BRANCH=${shellQuote(branchName)}\n${inlineScript}\n`;
-      ({ stdout, stderr } = await execWorkerCommand(containerName, ['bash', '-s'], script));
+      ({ stdout, stderr } = await execWorkerCommand(containerName, ['bash', '-s'], script, { timeoutMs: 60000 }));
     } else {
       ({ stdout, stderr } = await docker.execFileAsync('docker', args, {
         timeout: 60000,

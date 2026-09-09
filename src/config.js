@@ -433,6 +433,7 @@ function load() {
     captureRuntime: process.env.CAPTURE_RUNTIME || appRuntime,
     kubernetes: {
       buildNamespace: process.env.BUILD_NAMESPACE || 'social-builds',
+      successfulBuildRetentionHours: Number(process.env.KPACK_SUCCESS_RETENTION_HOURS || '48'),
       appNamespace: process.env.APP_NAMESPACE || 'social-apps',
       workerNamespace: process.env.WORKER_NAMESPACE || 'social-workers',
       buildServiceAccount: process.env.BUILD_SERVICE_ACCOUNT || 'social-kpack-builder',

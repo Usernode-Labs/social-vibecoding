@@ -8,6 +8,12 @@ function mode(config) {
   return value;
 }
 
+function productionRef(config, app) {
+  const runtimeKind = app.runtime_kind || mode(config);
+  return { runtimeKind, runtimeName: app.runtime_name || (runtimeKind === 'kubernetes'
+    ? kubernetes.appResourceName(app, 'production') : `usernode-app-${app.slug}`) };
+}
+
 // `onProgress(image)` reports the image build as it goes, in the runtime's
 // own terms: kpack lifecycle phases with their times on kubernetes, the
 // builder's step counter on docker. See each module for the shape.
@@ -80,12 +86,32 @@ async function deploy(config, {
     // persist the deterministic name rather than the opaque run result.
     return { runtimeKind: 'docker', runtimeName: dockerName, imageRef, hostname, url };
   }
-  return kubernetes.deployApplication(config, { app, environment, sessionId, imageRef, env, cpus });
+  return kubernetes.deployApplication(config, { app, environment, sessionId, imageRef, env, cpus, labels });
+}
+
+async function inspect(config, ref) {
+  if ((ref.runtimeKind || mode(config)) === 'docker') return docker.inspectContainer(ref.runtimeName);
+  return kubernetes.inspectApplication(config, ref.runtimeName);
 }
 
 async function status(config, ref) {
   if ((ref.runtimeKind || mode(config)) === 'docker') return docker.getContainerStatus(ref.runtimeName);
   return kubernetes.getApplicationStatus(config, ref.runtimeName);
+}
+
+async function probeHealth(config, ref, { timeoutMs = 3000 } = {}) {
+  if ((ref.runtimeKind || mode(config)) === 'docker') {
+    return docker.probeHealthOnce(ref.runtimeName, 3000, '/health', { timeoutMs });
+  }
+  if (!ref.runtimeName) return false;
+  const namespace = config?.kubernetes?.appNamespace || process.env.APP_NAMESPACE || 'social-apps';
+  try {
+    const response = await fetch(`http://${ref.runtimeName}.${namespace}.svc:3000/health`, {
+      signal: AbortSignal.timeout(timeoutMs), redirect: 'error',
+    });
+    await response.body?.cancel();
+    return response.ok;
+  } catch (_) { return false; }
 }
 
 async function logs(config, ref, tailLines) {
@@ -109,5 +135,5 @@ async function remove(config, ref, options = {}) {
 }
 
 module.exports = {
-  mode, build, cleanupFailedBuilds, deploy, dnsAlias, status, logs, restart, remove,
+  mode, productionRef, build, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
 };

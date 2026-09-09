@@ -88,6 +88,9 @@ stub(ids.staging, {
   rebuildProduction: async (config, app) => {
     fx.rebuildCalls.push(app.slug);
     if (fx.rebuildError) throw fx.rebuildError;
+    if (config.appRuntime === 'kubernetes') return {
+      containerId: null, runtimeKind: 'kubernetes', runtimeName: 'sv-app-1-puzzle-chain', sha: 'abc1234def',
+    };
     return { containerId: 'rebuilt-id', sha: 'abc1234def' };
   },
 });
@@ -153,6 +156,52 @@ function app(overrides = {}) {
 test.beforeEach(() => {
   fx = freshFixtures();
   appHeal._resetForTests();
+});
+
+for (const scenario of ['respawn', 'rebuild', 'restart-fallback', 'probe-running', 'missing-repo']) {
+  test(`Kubernetes app heal: ${scenario} preserves runtime identity without Docker`, async (t) => {
+    const kube = require('../src/services/kubernetes');
+    const runtime = require('../src/services/application-runtime');
+    fx.respawnResult = 'sv-app-1-puzzle-chain';
+    if (scenario === 'respawn') fx.githubEnabled = false;
+    const statusCalls = [];
+    t.mock.method(kube, 'getApplicationStatus', async (cfg, name) => {
+      statusCalls.push(name);
+      assert.equal(cfg.appRuntime, 'kubernetes');
+      return scenario === 'probe-running' ? 'running' : scenario === 'restart-fallback' ? 'created' : 'not_found';
+    });
+    let restarts = 0;
+    t.mock.method(kube, 'restartApplication', async () => {
+      restarts++;
+      if (scenario === 'restart-fallback') throw new Error('replacement failed');
+    });
+    t.mock.method(runtime, 'probeHealth', async () => false);
+    for (const method of ['getContainerStatus', 'restartContainer', 'startContainer', 'waitForHealthy']) {
+      t.mock.method(require('../src/services/docker'), method, () => assert.fail(`Docker ${method} called`));
+    }
+    const result = await appHeal.checkAndHealOne({ ...config, appRuntime: 'kubernetes' }, fakePool,
+      app({ repo_url: ['respawn', 'missing-repo'].includes(scenario) ? null : 'https://github.com/x/puzzle-chain' }),
+      { probeRunning: scenario === 'probe-running' });
+    assert.equal(result.status, { respawn: 'respawned', rebuild: 'rebuilt', 'restart-fallback': 'rebuilt',
+      'probe-running': 'restarted', 'missing-repo': 'repo_provisioned' }[scenario]);
+    if (scenario !== 'missing-repo') assert.deepEqual(statusCalls, ['sv-app-1-puzzle-chain']);
+    assert.equal(restarts, ['restart-fallback', 'probe-running'].includes(scenario) ? 1 : 0);
+    if (scenario !== 'probe-running') {
+      const update = fx.queries.find(q => /UPDATE apps SET container_id/.test(q.sql));
+      assert.match(update.sql, /runtime_kind = \$\d+, runtime_name = \$\d+/);
+      assert.equal(update.params[0], null);
+      assert.deepEqual(update.params.slice(-2), ['kubernetes', 'sv-app-1-puzzle-chain']);
+    }
+  });
+}
+
+test('failed Kubernetes recovery retains cooldown and does not persist success', async (t) => {
+  t.mock.method(require('../src/services/kubernetes'), 'getApplicationStatus', async () => 'not_found');
+  fx.rebuildError = new Error('build failed');
+  const cfg = { ...config, appRuntime: 'kubernetes' };
+  assert.equal((await appHeal.checkAndHealOne(cfg, fakePool, app())).status, 'heal_failed');
+  assert.equal((await appHeal.checkAndHealOne(cfg, fakePool, app())).status, 'cooldown');
+  assert.equal(fx.queries.some(q => /UPDATE apps SET container_id/.test(q.sql)), false);
 });
 
 test('running container is healthy — nothing touched', async () => {

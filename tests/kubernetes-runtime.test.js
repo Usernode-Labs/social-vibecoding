@@ -30,6 +30,32 @@ function config() {
 
 test.afterEach(() => kubernetes._setClientsForTest(null));
 
+for (const conflict of ['terminating', 'disappeared']) {
+  test(`kpack recreates a pruned Build when its conflicting object is ${conflict}`, async () => {
+    let creates = 0;
+    let reads = 0;
+    kubernetes._setClientsForTest({ custom: {
+      async createNamespacedCustomObject() {
+        if (++creates === 1) throw Object.assign(new Error('exists'), { code: 409 });
+      },
+      async getNamespacedCustomObject() {
+        if (++reads === 1) {
+          if (conflict === 'disappeared') throw notFound();
+          return { metadata: { deletionTimestamp: new Date().toISOString() },
+            status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: 'old-image' } };
+        }
+        return { status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: 'new-image' } };
+      },
+    } });
+    const result = await kubernetes.createBuild(config(), {
+      app: { id: 7, slug: 'demo', repo_url: 'https://github.com/example/demo' },
+      revision: 'a'.repeat(40), environment: 'production',
+    });
+    assert.equal(creates, 2);
+    assert.equal(result.imageRef, 'new-image');
+  });
+}
+
 test('kpack Build is isolated in social-builds and returns status.latestImage', async () => {
   let created;
   kubernetes._setClientsForTest({
@@ -51,9 +77,16 @@ test('kpack Build is isolated in social-builds and returns status.latestImage', 
   assert.deepEqual(created.body.spec.env, [
     { name: 'BP_NODE_VERSION', value: '22.*' },
     { name: 'NODE_ENV', value: 'production' },
+    { name: 'GIT_SHA', value: revision },
+    { name: 'BPE_OVERRIDE_GIT_SHA', value: revision },
   ]);
   assert.equal(result.imageRef, 'ghcr.io/example/social-apps/demo@sha256:deadbeef');
   assert.match(result.buildRef, /^social-builds\//);
+  const unstampedRecipe = crypto.createHash('sha256').update(JSON.stringify({
+    builder: config().kubernetes.builderImage,
+    env: created.body.spec.env.filter(entry => !['GIT_SHA', 'BPE_OVERRIDE_GIT_SHA'].includes(entry.name)),
+  })).digest('hex').slice(0, 12);
+  assert.ok(!created.body.spec.tags[0].endsWith(`-${unstampedRecipe}`), 'the same commit must rebuild its previously unstamped image');
 });
 
 test('kpack runs the shell generator during build when the checked-out app declares it', async (t) => {
@@ -80,6 +113,8 @@ test('kpack runs the shell generator during build when the checked-out app decla
   assert.deepEqual(created.body.spec.env, [
     { name: 'BP_NODE_VERSION', value: '22.*' },
     { name: 'NODE_ENV', value: 'production' },
+    { name: 'GIT_SHA', value: 'b'.repeat(40) },
+    { name: 'BPE_OVERRIDE_GIT_SHA', value: 'b'.repeat(40) },
     { name: 'BP_NODE_RUN_SCRIPTS', value: 'ensure:shell' },
   ]);
   // The source SHA is unchanged: adding production mode must invalidate the
@@ -191,7 +226,8 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     readNamespacedService: async () => { throw notFound(); },
     readNamespacedDeployment: async ({ name }) => {
       if (written.some((item) => item.kind === 'Deployment')) {
-        return { metadata: { name, generation: 1 }, status: { observedGeneration: 1, availableReplicas: 1 } };
+        return { ...written.find(item => item.kind === 'Deployment').body,
+          metadata: { name, generation: 1 }, status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
       }
       throw notFound();
     },
@@ -203,13 +239,18 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     apps: { ...missingReads, createNamespacedDeployment: record('Deployment') },
     networking: { ...missingReads, createNamespacedIngress: record('Ingress') },
   });
-  const result = await kubernetes.deployApplication(config(), {
+  const result = await require('../src/services/application-runtime').deploy({ ...config(), appRuntime: 'kubernetes' }, {
     app: { id: 7, slug: 'demo' }, environment: 'production',
     imageRef: 'ghcr.io/example/social-apps/demo@sha256:deadbeef',
     env: { DATABASE_URL: 'postgres://redacted', PORT: '3000' },
+    labels: { 'usernode.env.fp': '0123456789abcdef', 'app.kubernetes.io/managed-by': 'cannot-override-owner' },
   });
   assert.deepEqual(written.map((item) => item.kind).sort(), ['Deployment', 'Ingress', 'Secret', 'Service']);
   const deployment = written.find((item) => item.kind === 'Deployment').body;
+  assert.equal(deployment.spec.template.metadata.labels['usernode.env.fp'], '0123456789abcdef');
+  assert.equal(deployment.metadata.labels['app.kubernetes.io/managed-by'], 'social-vibecoding-runtime');
+  assert.deepEqual(deployment.spec.selector.matchLabels, { 'social.usernode.io/runtime-name': result.runtimeName });
+  assert.equal((await kubernetes.inspectApplication(config(), result.runtimeName)).labels['usernode.env.fp'], '0123456789abcdef');
   assert.equal(deployment.spec.template.spec.containers[0].image, 'ghcr.io/example/social-apps/demo@sha256:deadbeef');
   assert.equal(deployment.spec.template.spec.serviceAccountName, 'social-generated-app');
   assert.equal(
@@ -288,7 +329,7 @@ test('worker runtime reconciles a retained PVC, Secret and warm Deployment', asy
     apps: {
       readNamespacedDeployment: async ({ name }) => {
         if (written.some((item) => item.kind === 'Deployment')) {
-          return { metadata: { name, generation: 1 }, status: { observedGeneration: 1, availableReplicas: 1 } };
+          return { metadata: { name, generation: 1 }, status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
         }
         throw notFound();
       },
@@ -362,7 +403,7 @@ test('capture runtime uses a bounded Job and caps log retrieval', async () => {
   assert.equal(created.body.spec.template.spec.securityContext.runAsUser, 1000);
   assert.equal(created.body.spec.template.spec.securityContext.runAsGroup, 1000);
   assert.equal(created.body.spec.template.spec.securityContext.fsGroup, 1000);
-  assert.equal(logRequest.limitBytes, 64 * 1024 * 1024);
+  assert.equal(logRequest.limitBytes, 64 * 1024 * 1024 + 1);
   assert.equal(result.stdout, 'result');
 });
 

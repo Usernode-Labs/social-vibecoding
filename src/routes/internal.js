@@ -7,6 +7,8 @@ const { internalAuth, internalAuthPurpose } = require('../middleware/internal-au
 const log = require('../services/logger');
 const worker = require('../services/worker');
 const docker = require('../services/docker');
+const applicationRuntime = require('../services/application-runtime');
+const kubernetes = require('../services/kubernetes');
 const statusSvc = require('../services/status');
 const debugAccess = require('../services/debug-access');
 const github = require('../services/github');
@@ -923,7 +925,8 @@ function internalRoutes(_config) {
     requireProdDebug,
     async (req, res) => {
       const name = String(req.params.container || '');
-      if (!debugAccess.isAllowedLogContainer(name)) {
+      const runtimeKind = applicationRuntime.mode(_config);
+      if (!debugAccess.isAllowedLogContainer(name, runtimeKind)) {
         return res.status(400).json({ ok: false, code: 'bad_container' });
       }
       const tail = debugAccess.clampTail(req.query.tail);
@@ -931,15 +934,21 @@ function internalRoutes(_config) {
         sessionId: req.prodDebug.sessionId, container: name, tail,
       });
       try {
-        const { stdout, stderr } = await docker.execFileAsync('docker', [
-          'logs', '--tail', String(tail), name,
-        ], { timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
-        // docker writes the container's stderr stream to its own stderr;
-        // both are log content here.
-        let text = `${stdout || ''}${stderr ? `\n${stderr}` : ''}`;
+        let text;
+        if (runtimeKind === 'kubernetes') {
+          text = String(await kubernetes.getDebugLogs(_config, name, { tailLines: tail, maxBytes: debugAccess.MAX_LOG_BYTES }) || '');
+        } else {
+          const { stdout, stderr } = await docker.execFileAsync('docker', [
+            'logs', '--tail', String(tail), name,
+          ], { timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
+          text = `${stdout || ''}${stderr ? `\n${stderr}` : ''}`;
+        }
         let truncated = false;
-        if (text.length > debugAccess.MAX_LOG_BYTES) {
-          text = text.slice(-debugAccess.MAX_LOG_BYTES);
+        if (Buffer.byteLength(text, 'utf8') > debugAccess.MAX_LOG_BYTES) {
+          const bytes = Buffer.from(text, 'utf8');
+          let start = bytes.length - debugAccess.MAX_LOG_BYTES;
+          while ((bytes[start] & 0xc0) === 0x80) start++; // do not split a UTF-8 character
+          text = bytes.subarray(start).toString('utf8');
           truncated = true;
         }
         return res.json({
