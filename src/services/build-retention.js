@@ -7,8 +7,12 @@ const log = require('./logger');
 
 const INTERVAL_MS = 60 * 60 * 1000;
 const MAX_DELETIONS = 20;
-const REFERENCES_SQL = `SELECT build_ref AS ref FROM apps WHERE build_ref IS NOT NULL
-  UNION SELECT staging_build_ref AS ref FROM chat_sessions WHERE staging_build_ref IS NOT NULL`;
+// Migrated apps can have an image_ref without a build_ref. Their current
+// successful Build is still live history and must survive the retention sweep.
+const REFERENCES_SQL = `SELECT build_ref AS ref, image_ref AS image FROM apps
+  WHERE build_ref IS NOT NULL OR image_ref IS NOT NULL
+  UNION SELECT staging_build_ref AS ref, staging_image_ref AS image FROM chat_sessions
+  WHERE staging_build_ref IS NOT NULL OR staging_image_ref IS NOT NULL`;
 
 function retentionHours(config) {
   const hours = Number(config.kubernetes.successfulBuildRetentionHours ?? 48);
@@ -26,14 +30,22 @@ function candidate(build, namespace, cutoff) {
     || meta.deletionTimestamp || meta.ownerReferences?.length
     || meta.labels?.['app.kubernetes.io/managed-by'] !== 'social-vibecoding-runtime'
     || !/^[1-9][0-9]*$/.test(meta.labels?.['social.usernode.io/app-id'] || '')
-    || condition?.status !== 'True' || !Number.isFinite(finished) || finished > cutoff) return null;
+    || condition?.status !== 'True' || !build.status.latestImage
+    || !Number.isFinite(finished) || finished > cutoff) return null;
   return { ref: `${namespace}/${meta.name}`, finished, build };
 }
 
 async function references(pool) {
   const result = await pool.query(REFERENCES_SQL);
   if (!Array.isArray(result?.rows)) throw new Error('Invalid Build reference inventory');
-  return new Set(result.rows.map((row) => row.ref));
+  return {
+    builds: new Set(result.rows.map((row) => row.ref).filter(Boolean)),
+    images: new Set(result.rows.map((row) => row.image).filter(Boolean)),
+  };
+}
+
+function isReferenced(entry, refs) {
+  return refs.builds.has(entry.ref) || refs.images.has(entry.build.status.latestImage);
 }
 
 async function sweep(config, { dryRun = true, now = Date.now(), pool = null, runtime = kubernetes,
@@ -49,7 +61,7 @@ async function sweep(config, { dryRun = true, now = Date.now(), pool = null, run
   const refs = await references(pool);
   result.examined = builds.length;
   const candidates = builds.map((build) => candidate(build, namespace, cutoff))
-    .filter((entry) => entry && !refs.has(entry.ref)).sort((a, b) => a.finished - b.finished);
+    .filter((entry) => entry && !isReferenced(entry, refs)).sort((a, b) => a.finished - b.finished);
   if (dryRun) {
     result.candidates = candidates.slice(0, MAX_DELETIONS).map((entry) => entry.ref);
     return result;
@@ -74,7 +86,7 @@ async function sweep(config, { dryRun = true, now = Date.now(), pool = null, run
         if (!fresh || current.metadata.uid !== entry.build.metadata.uid
           || current.metadata.resourceVersion !== entry.build.metadata.resourceVersion) continue;
         // Re-read both kinds of references while holding the deployment lock.
-        if ((await references(client)).has(fresh.ref)) continue;
+        if (isReferenced(fresh, await references(client))) continue;
         result.candidates.push(fresh.ref);
         attempts++;
         await runtime.deleteBuildSnapshot(config, current);
