@@ -10889,6 +10889,14 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 :is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge {
   height: 19px; font-size: 11.5px; vertical-align: middle; margin-left: 4px;
 }
+/* Tabbed in under the title, as the folded row's meta line is: the row keeps
+   its icon in a column of its own and the title and meta share the next, so
+   the two sizes of one card put the number and the tags on the same left
+   edge (#1787). The indent is the head's — the 22px glyph plus its 8px gap
+   — and only a head that has a glyph earns it. The bands below stay at the
+   padding edge: the bar wants the card's full width beside its vote button,
+   and the pills already fold to fit. */
+:is(.dev-card-dense, .dev-card-topic) .dev-card-head:has(> .dev-card-icon) + .dev-card-meta { padding-left: 30px; }
 :is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge.font-mono { font-size: 11px; }
 :is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge .attr-avatar { width: 14px; height: 14px; }
 
