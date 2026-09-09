@@ -36,6 +36,7 @@
 'use strict';
 
 const docker = require('./docker');
+const kubernetes = require('./kubernetes');
 const github = require('./github');
 const checkHistory = require('./check-history');
 const appManifest = require('./app-manifest');
@@ -257,7 +258,7 @@ async function storeExpectedTests(pool, appId, total) {
 // `onProgress(snapshot)` is called with the tracker's snapshot each time a
 // stdout line changes it, and once more with phase 'done' when the run
 // ends; the caller owns any throttling. Never throws.
-async function maybeRunUnitSuite({ pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null }) {
+async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null }) {
   if (!isEnabled() || !github.isEnabled() || !repoOwner || !repoName || !ref) return null;
 
   let rawPkg = null;
@@ -290,12 +291,19 @@ async function maybeRunUnitSuite({ pool, appId, sessionId, repoOwner, repoName, 
   };
   const observe = (line) => { if (tracker.feed(line)) report(tracker.snapshot()); };
 
+  // Final logs cover fast jobs that finish before a progress stream attaches.
+  // Replay only summary counters, avoiding double-counting streamed TAP lines.
+  const readSummary = (stdout) => {
+    for (const line of String(stdout || '').split('\n')) {
+      if (/^# (tests|pass|fail|skipped|cancelled|todo) /.test(line)) tracker.feed(line);
+    }
+  };
   const startedAt = Date.now();
   let passed = false;
   let reason = '';
   try {
     const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
-    await docker.runOneShot(`usernode-unit-suite-${sessionId}`, {
+    const options = {
       onStdoutLine: observe,
       image: UNIT_SUITE_IMAGE,
       cmd: ['bash', '-c', RUN_SCRIPT],
@@ -311,9 +319,14 @@ async function maybeRunUnitSuite({ pool, appId, sessionId, repoOwner, repoName, 
       cpus: UNIT_SUITE_CPUS,
       timeoutMs: UNIT_SUITE_TIMEOUT_MS,
       maxBuffer: UNIT_SUITE_MAX_BUFFER,
-    });
+    };
+    const result = config?.workerRuntime === 'kubernetes'
+      ? await kubernetes.runUnitSuiteJob(config, { sessionId, ...options })
+      : await docker.runOneShot(`usernode-unit-suite-${sessionId}`, options);
+    readSummary(result?.stdout);
     passed = true;
   } catch (err) {
+    readSummary(err.stdout);
     const timedOut = err.killed === true || err.signal === 'SIGTERM' || err.signal === 'SIGKILL';
     reason = failureDetail(err.stdout, err.stderr, { timedOut });
     if (!reason) reason = String(err.message || 'npm test failed').slice(0, FAILURE_DETAIL_MAX);

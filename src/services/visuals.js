@@ -38,6 +38,22 @@ const { connectionCensus } = require('../db/connection-census');
 
 const CAPTURE_IMAGE = 'usernode-capture:latest';
 
+// Match the ingress created by deployApplication. Browser sessions use Secure
+// cookies in Paketo's production runtime, including staging previews.
+function kubernetesCaptureOrigin(config, app, sessionId = null) {
+  const cfg = config.kubernetes;
+  if (!cfg?.appDomain) throw new Error('Kubernetes capture requires a configured ingress hostname');
+  const hostname = sessionId != null
+    ? `${app.slug}--s${sessionId}.${cfg.appDomain}`
+    : app.slug === config.selfAppSlug
+      ? cfg.platformDomain
+      : `${app.slug}.${cfg.appDomain}`;
+  if (!hostname || !/^[a-z0-9.-]+$/i.test(hostname)) {
+    throw new Error('Kubernetes capture requires a configured ingress hostname');
+  }
+  return `https://${hostname}`;
+}
+
 function captureRuntimeMode() {
   const mode = process.env.CAPTURE_RUNTIME || process.env.APP_RUNTIME || 'docker';
   if (!['docker', 'kubernetes'].includes(mode)) {
@@ -1721,7 +1737,6 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     })();
 
     const kubernetesCapture = config.captureRuntime === 'kubernetes';
-    const appNamespace = config.kubernetes?.appNamespace || 'social-apps';
     const stagingName = usableRuntimeName(stagingResult?.runtimeName)
       || usableRuntimeName(session.staging_runtime_name)
       || `usernode-staging-${app.slug}--${session.id}`;
@@ -1763,10 +1778,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       ? prodName
       : dnsHostname(prodName, prodAlias, { aliasConfirmed: prodAliasOk });
     const stagingOrigin = kubernetesCapture
-      ? `http://${stagingHost}.${appNamespace}.svc.cluster.local:3000`
+      ? kubernetesCaptureOrigin(config, app, session.id)
       : `http://${stagingHost}:3000`;
     const prodOrigin = kubernetesCapture && prodRuntimeKind === 'kubernetes'
-      ? `http://${prodHost}.${appNamespace}.svc.cluster.local:3000`
+      ? kubernetesCaptureOrigin(config, app)
       : `http://${prodHost}:3000`;
 
     // Self-app "before" auth: the production platform never honours the
@@ -1988,7 +2003,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // .catch collapses every failure mode to null (no row) — the checks
     // run must never die because the unit-suite runner did.
     const unitSuitePromise = unitSuite.maybeRunUnitSuite({
-      pool, appId: app.id, sessionId: session.id,
+      config, pool, appId: app.id, sessionId: session.id,
       repoOwner, repoName, ref: gitRef,
       prNumber: Number(session.pr_number) || null,
       onProgress: progress.observeUnit,
@@ -2872,6 +2887,7 @@ function notifyChecks(sessionId, result, commitSha, send) {
 }
 
 module.exports = {
+  kubernetesCaptureOrigin,
   captureForSession,
   // Exported for the regression test: the capture hostname is the only
   // consumer of these columns that needs a NAME rather than any handle

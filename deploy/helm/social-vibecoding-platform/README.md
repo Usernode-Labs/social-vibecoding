@@ -101,3 +101,30 @@ helm template social-vibecoding-platform ./social-vibecoding-platform \
   --set secrets.create=false \
   --set secrets.existingSecret=social-vibecoding
 ```
+
+
+## Proposal checks in Kubernetes
+
+Capture Jobs visit the generated app and preview HTTPS ingress hostnames. The
+self-app's production capture uses the canonical platform hostname. Worker
+namespace DNS and egress must reach these ingress endpoints with valid TLS;
+there is no HTTP or certificate-verification fallback. This preserves Secure
+session cookies in Paketo's production-mode previews. Docker captures retain
+their existing network path.
+
+When `WORKER_RUNTIME=kubernetes`, repo unit suites run as separate Jobs using
+`KUBERNETES_WORKER_IMAGE`, pinned by the same chart release. That image includes
+Node, git and a local disposable PostgreSQL 17 for repositories opting into SQL
+checks. Each Job has no service-account token or shared workspace volume,
+uses the existing worker service account for image pulls, and runs as UID 1000.
+Clone credentials are in a temporary Secret owned by the Job and deleted when
+the runner finishes. Jobs have no retries, a default ten-minute deadline, and
+a one-hour cleanup TTL. The default limit is four CPUs / 2 GiB, with requests
+of one CPU / 1 GiB; existing `UNIT_SUITE_CPUS`, `UNIT_SUITE_MEMORY` and
+`UNIT_SUITE_TIMEOUT_MS` settings apply. Allow worker quota for simultaneous
+capture and unit-suite Jobs. Unit-suite log reads are bounded to 32 MiB.
+
+Failed Jobs preserve their exit code and available test output in the check
+result; timeouts remain failures. Checks and earned merge gating are not
+bypassed. Existing previews can be rechecked after the platform release; a
+preview rebuild is not required just to change its capture URL.

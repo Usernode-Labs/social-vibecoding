@@ -601,3 +601,13 @@ test('mediaEnabled is true unless MEDIA is exactly "0"', () => {
   assert.equal(mediaEnabled(undefined), true);
   assert.equal(mediaEnabled({ MEDIA: '0' }), false);
 });
+
+
+test('Kubernetes captures use the deployed HTTPS ingress for Secure browser sessions', () => {
+  const config = { selfAppSlug: 'platform', kubernetes: { appDomain: 'apps.example.test', platformDomain: 'my.example.test' } };
+  const app = { slug: 'platform' };
+  assert.equal(visuals.kubernetesCaptureOrigin(config, app, 3994), 'https://platform--s3994.apps.example.test');
+  assert.equal(visuals.kubernetesCaptureOrigin(config, app), 'https://my.example.test');
+  assert.equal(visuals.kubernetesCaptureOrigin(config, { slug: 'demo' }), 'https://demo.apps.example.test');
+  assert.throws(() => visuals.kubernetesCaptureOrigin({ kubernetes: { appDomain: 'bad/path' } }, app, 1), /hostname/);
+});
