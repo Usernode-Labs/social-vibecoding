@@ -88,6 +88,21 @@ async function status(config, ref) {
   return kubernetes.getApplicationStatus(config, ref.runtimeName);
 }
 
+async function probeHealth(config, ref, { timeoutMs = 3000 } = {}) {
+  if ((ref.runtimeKind || mode(config)) === 'docker') {
+    return docker.probeHealthOnce(ref.runtimeName, 3000, '/health', { timeoutMs });
+  }
+  if (!ref.runtimeName) return false;
+  const namespace = config?.kubernetes?.appNamespace || process.env.APP_NAMESPACE || 'social-apps';
+  try {
+    const response = await fetch(`http://${ref.runtimeName}.${namespace}.svc:3000/health`, {
+      signal: AbortSignal.timeout(timeoutMs), redirect: 'error',
+    });
+    await response.body?.cancel();
+    return response.ok;
+  } catch (_) { return false; }
+}
+
 async function logs(config, ref, tailLines) {
   if ((ref.runtimeKind || mode(config)) === 'docker') {
     const { stdout, stderr } = await docker.execFileAsync('docker', ['logs', '--tail', String(tailLines || 200), ref.runtimeName]);
@@ -109,5 +124,5 @@ async function remove(config, ref, options = {}) {
 }
 
 module.exports = {
-  mode, build, cleanupFailedBuilds, deploy, dnsAlias, status, logs, restart, remove,
+  mode, build, cleanupFailedBuilds, deploy, dnsAlias, status, probeHealth, logs, restart, remove,
 };
