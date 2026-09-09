@@ -21,7 +21,7 @@ import { useState, type ReactNode } from 'react';
 import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { CardIcon, DevCard } from './dev-card';
-import { CardRowView } from './fold';
+import { CardRowView, type DetailPlacement } from './fold';
 import type { ArchivedRow, ListRow } from './model';
 
 /**
@@ -35,11 +35,11 @@ export interface RowFold {
   open: boolean;
   onToggle: () => void;
   /**
-   * Offer "Open card" on the open card. Off for a kanban column: the toggle
-   * moves the card's actions onto the facts line, which a ~300px column
-   * cannot hold (see fold.tsx), and the item's own page is a link below.
+   * Where the open card's "Open card" toggle sits. A kanban column asks for
+   * the action band: the facts-line seat moves the card's actions up beside
+   * it, which ~300px cannot hold (see fold.tsx).
    */
-  detail?: boolean;
+  detail?: DetailPlacement;
 }
 
 function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {

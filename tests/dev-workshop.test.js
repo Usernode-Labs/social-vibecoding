@@ -740,7 +740,7 @@ test('a folded row carries the card\'s status band, in the tone the pill already
 
 test('an open row IS the Board\'s card, not a headless copy under a row', () => {
   const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
-  assert.match(unfolded, /<DevCard model=\{card\} statusLead=\{openBtn\} \/>/);
+  assert.match(unfolded, /<DevCard model=\{card\} statusLead=\{placement === 'facts' \? openBtn : undefined\}/);
 
   // #1799 kept the compressed row as a head and hid the card's head, meta and
   // status band so they would not repeat it — which made the open state a
@@ -1025,7 +1025,7 @@ test('Open card builds the topic screen\u2019s own sections, without navigating'
   // The sheet renders it under the card, and the toggle rides at the right
   // end of the card's own facts line rather than in a strip below it.
   const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
-  assert.match(unfolded, /statusLead=\{openBtn\}/);
+  assert.match(unfolded, /statusLead=\{placement === 'facts' \? openBtn : undefined\}/, 'on the Workshop, the facts-line seat');
   assert.match(unfolded, /<TopicBodySections body=\{detail\} \/>/);
   assert.match(unfolded, /detail \? 'Close card' : 'Open card'/);
   assert.match(unfolded, /readAppView<TopicBody>\('_workshopCardBody', key\)/,
@@ -1339,7 +1339,7 @@ test('an unfolded row is the Activity entry: the sheet, the card, the slot, the 
   // entry wrapper and its three children, in the order the feed drew them.
   const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
   assert.match(unfolded, /className="dev-feed-entry dev-ws-sheet"/, 'the sheet wrapper the feed used');
-  assert.match(unfolded, /<DevCard model=\{card\} statusLead=\{openBtn\} \/>/, 'the same card builder');
+  assert.match(unfolded, /<DevCard model=\{card\} statusLead=\{placement === 'facts' \? openBtn : undefined\}/, 'the same card builder');
   // Minus the rail chevron: inside a fold a click on the card folds it, so the
   // Board's "this opens" mark would promise a destination the card no longer
   // has. Everything else on the model is the Board's, untouched.
