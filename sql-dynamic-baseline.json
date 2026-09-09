@@ -80,6 +80,13 @@
       "preview": "`INSERT INTO token_allocation (id, user_id, season_id, total_points, total_season_tokens, allocated_tokens, description, created_at, updated_at) VALUES (${base}"
     },
     {
+      "source": "src/db/reindex-after-host-move.js",
+      "kind": "structural-template",
+      "fingerprint": "fc7626a63bf5115a5be2",
+      "count": 1,
+      "preview": "`REINDEX TABLE ${quoteIdent(table.name)}`"
+    },
+    {
       "source": "src/routes/admin.js",
       "kind": "structural-template",
       "fingerprint": "398169416381769c08fe",
