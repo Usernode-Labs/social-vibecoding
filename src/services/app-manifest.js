@@ -342,6 +342,7 @@ const PLATFORM_ENV_UNWRITABLE = new Set([
   'USERNODE_APP_SECRET_KEY',
   // Ingress / TLS, owned by the Caddy half of the deploy.
   'USERNODE_DOMAIN',
+  'USERNODE_APPS_DOMAIN',
   'ZEROSSL_API_KEY',
   'ZEROSSL_EAB_KID',
   'ZEROSSL_EAB_HMAC',

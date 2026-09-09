@@ -14,6 +14,16 @@ const https = require('https');
 const log = require('./logger');
 
 const USERNODE_DOMAIN = process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org';
+// Keep platform links/auth on USERNODE_DOMAIN while apps and previews may
+// live beside it, e.g. my.example.com and <slug>.example.com.
+const USERNODE_APPS_DOMAIN = process.env.USERNODE_APPS_DOMAIN || USERNODE_DOMAIN;
+
+function assertAppHostname(hostname, platformDomain = USERNODE_DOMAIN) {
+  if (hostname.toLowerCase() === platformDomain.toLowerCase()) {
+    throw new Error('App hostname conflicts with the platform hostname');
+  }
+  return hostname;
+}
 
 // Bound on a single edge probe (#767).
 //
@@ -29,7 +39,7 @@ const CERT_WARM_TIMEOUT_MS = parseInt(process.env.CERT_WARM_TIMEOUT_MS || '15000
 const CERT_PROBE_SLOW_MS = parseInt(process.env.CERT_PROBE_SLOW_MS || '5000', 10);
 
 function productionHostname(slug) {
-  return `${slug}.${USERNODE_DOMAIN}`;
+  return assertAppHostname(`${slug}.${USERNODE_APPS_DOMAIN}`);
 }
 
 // Staging preview hostname. Stable per session (no commit hash): the label
@@ -41,7 +51,7 @@ function productionHostname(slug) {
 // `s<id>` -> `usernode-staging-<slug>--<id>`, matching the container name the
 // platform already assigns. `sessionLabel` is `s${session.id}`.
 function stagingHostname(slug, sessionLabel) {
-  return `${slug}--${sessionLabel}.${USERNODE_DOMAIN}`;
+  return assertAppHostname(`${slug}--${sessionLabel}.${USERNODE_APPS_DOMAIN}`);
 }
 
 // One-level wildcard match, the same rule browsers apply: `*.a.b` covers
@@ -239,6 +249,8 @@ module.exports = {
   summarizeCert,
   matchesName,
   USERNODE_DOMAIN,
+  USERNODE_APPS_DOMAIN,
+  assertAppHostname,
   CERT_WARM_TIMEOUT_MS,
   CERT_PROBE_SLOW_MS,
 };
