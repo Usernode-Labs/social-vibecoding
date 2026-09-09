@@ -196,15 +196,44 @@ test('the column owns which card is open, one per column, through the shared fol
 
 test('the delegated #dev-body open handler leaves a fold’s clicks and keys to the fold', () => {
   const click = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf("if (e.target.closest('a, button, input, form')) return;"));
-  const guard = click.indexOf("if (e.target.closest('.dev-ws-rowwrap')) return;");
-  assert.ok(guard > 0, 'the click handler checks for the wrapper');
+  const guard = click.indexOf('if (AppView._inFoldWrapper(e)) return;');
+  assert.ok(guard > 0, 'the click handler asks whether the event was inside a wrapper');
   assert.ok(guard < click.indexOf("e.target.closest('[data-session-chip]')"),
     'before it reads any of the item hooks, which both sizes now carry');
-  assert.match(APP_VIEW_SRC, /if \(ev\.target\.closest && ev\.target\.closest\('\.dev-ws-rowwrap'\)\) return;/,
+  assert.match(APP_VIEW_SRC, /if \(AppView\._inFoldWrapper\(ev\)\) return;/,
     'and the keydown handler, which would otherwise open a session on the Enter that toggles its row');
   // The folded row carries the hooks, so a lookup by hook finds it either way.
   assert.match(FOLD, /const ITEM_HOOKS = \[\s*'data-issue-row', 'data-proposal-row', 'data-gov-row',\s*'data-shared-session-row', 'data-session-chip', 'data-discussion-row',\s*\];/);
   assert.match(FOLD, /\{\.\.\.itemHooks\(c\)\}/);
+});
+
+test('the guard reads the event’s composed path, because the target is detached by the time it runs', () => {
+  // The fold's React listener sits on the portal host BELOW #dev-body and
+  // flushes its state update in a microtask, which a real click runs between
+  // listeners: when the event reaches #dev-body the clicked row has already
+  // been swapped for the card. `closest()` from that detached node finds no
+  // wrapper, and the row's own data-issue-row hook opened the item
+  // full-screen — on production, after the fold merged. The composed path is
+  // captured at dispatch and still holds the ancestors the target had.
+  const AppView = makeAppView();
+  const wrapper = { classList: { contains: (c) => c === 'dev-ws-rowwrap' } };
+  const column = { classList: { contains: () => false } };
+  // A detached row: no ancestors to walk, but the path remembers the wrapper.
+  const detachedRow = { closest: () => null };
+  assert.equal(AppView._inFoldWrapper({ target: detachedRow, composedPath: () => [detachedRow, wrapper, column] }), true,
+    'a click whose path passed through a wrapper is the fold\u2019s, attached or not');
+  assert.equal(AppView._inFoldWrapper({ target: detachedRow, composedPath: () => [detachedRow, column] }), false,
+    'a click that never passed through one is not');
+  // Nodes without a classList (the document, the window) sit on every path.
+  assert.equal(AppView._inFoldWrapper({ target: detachedRow, composedPath: () => [detachedRow, {}, null, column] }), false);
+  // No composedPath at all: fall back to the ancestors the target still has.
+  const attachedRow = { closest: (sel) => (sel === '.dev-ws-rowwrap' ? wrapper : null) };
+  assert.equal(AppView._inFoldWrapper({ target: attachedRow }), true);
+  assert.equal(AppView._inFoldWrapper({ target: detachedRow }), false);
+  assert.equal(AppView._inFoldWrapper(null), false);
+  // And the handlers no longer ask the target for its ancestors at all.
+  assert.ok(!/e\.target\.closest\('\.dev-ws-rowwrap'\)/.test(APP_VIEW_SRC));
+  assert.ok(!/ev\.target\.closest\('\.dev-ws-rowwrap'\)/.test(APP_VIEW_SRC));
 });
 
 test('?shot=board-unfold taps the first folded row, through the real event path', () => {
