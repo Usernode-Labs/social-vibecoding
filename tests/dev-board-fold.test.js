@@ -297,8 +297,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // existing checks rather than declaring new ones. The literal is the whole
   // manifest's size, so a later change that legitimately declares a check
   // bumps it by exactly that many and says so here (560 → 562: the two #1824
-  // challenges-footer checks).
-  assert.equal(DAPP.tests.length, 562);
+  // challenges-footer checks; 562 → 563: the fifth build step's queued-wait
+  // check on the checks card).
+  assert.equal(DAPP.tests.length, 563);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

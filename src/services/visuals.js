@@ -1488,6 +1488,12 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     log.info('visuals', 'Capture already in flight — re-queued for after it finishes', {
       sessionId: session.id, commitHash: commitHash || null, trigger,
     });
+    // Say so on the card. This wait is the long version of the
+    // 'prepare_checks' step — a self-app run ahead of this one is bounded
+    // by the suite deadline, minutes rather than seconds — and until now the
+    // only record of it was this log line, while the card read "Preparing
+    // the staging preview…" over a build that had finished.
+    reportPrepareChecks(config, session, stagingResult, { queued: true });
     return;
   }
   _inFlight.add(key);
@@ -1585,6 +1591,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // #607: flip open clients' badges to "Checks running…" right away —
     // the terminal notifyChecks below can be minutes out.
     notifyChecksPending(session.id, commitHash, 'testing', trigger);
+    // The build half is over: close its fifth step with the time the
+    // hand-off took (and whether it was spent queued), and publish the
+    // finished build so the card does not keep a step pulsing under
+    // "Running the automated tests…" until the first test frame.
+    await finishPrepareChecks(pool, session, commitHash, stagingResult, trigger);
 
     // Heuristic gate. If the compare call fails, default to capturing —
     // staging exists, and a wasted screenshot is cheaper than a missed one.
@@ -2627,9 +2638,18 @@ function notifyChecksProgress(sessionId, commitSha, progress, phase = null, trig
 // the row's commit pin is necessarily settled), and carried through the
 // testing half by makeChecksProgressState so the ledger can keep saying
 // how long the build took beside the checks bar.
-//   { step: 'source_fetch'|'image_build'|'clone'|'health'|'done',
-//     startedAt, steps: [{ key, ms, via? }], totalMs? }
-const BUILD_STEP_KEYS = ['source_fetch', 'image_build', 'clone', 'health'];
+//   { step: 'source_fetch'|'image_build'|'clone'|'health'|'prepare_checks'|'done',
+//     startedAt, steps: [{ key, ms, via? }], totalMs?, queued? }
+//
+// 'prepare_checks' is the hand-off between the container answering its
+// healthcheck and the phase flipping to testing: edge verification, the
+// staging_ready note, and — the long case — waiting in the capture queue
+// behind an earlier run on the same proposal (`queued: true` while it is,
+// `via: 'queued'` on the finished step). Opened by staging.js, closed by
+// captureForSession, and NOT counted in totalMs, which stays the build
+// alone: "Preview built in 20s, checks prepared in 9m 40s" is the sentence
+// that says where the wait was.
+const BUILD_STEP_KEYS = ['source_fetch', 'image_build', 'clone', 'health', 'prepare_checks'];
 
 async function setChecksBuildProgress(pool, sessionId, build) {
   if (!pool || !sessionId || !build) return false;
@@ -2662,12 +2682,56 @@ function buildProgressFromTimings(timings) {
     : null);
   push('clone', timings.cloneMs, timings.cloneVia ? { via: timings.cloneVia } : null);
   push('health', timings.healthMs);
+  push('prepare_checks', timings.prepareChecksMs, timings.prepareChecksVia ? { via: timings.prepareChecksVia } : null);
   if (!steps.length) return null;
   return {
     step: 'done',
     steps,
     ...(Number.isFinite(timings.totalMs) ? { totalMs: Math.round(timings.totalMs) } : {}),
   };
+}
+
+// The 'prepare_checks' step while it runs. Reported only for a run that
+// carries build timings — a re-check against a live preview has no build
+// steps at all, and a lone fifth step over four "todo" ones would claim a
+// build that never happened. `queued` marks the wait behind an earlier run.
+// Best-effort and swallowed: status must never fail, or delay, a capture.
+function reportPrepareChecks(config, session, stagingResult, { queued = false } = {}) {
+  try {
+    const timings = stagingResult && stagingResult.timings;
+    if (!timings || !Number.isFinite(timings.deployedAt)) return;
+    if (queued) timings.prepareChecksVia = 'queued';
+    const build = {
+      step: 'prepare_checks',
+      startedAt: new Date(timings.deployedAt).toISOString(),
+      steps: buildProgressFromTimings(timings)?.steps || [],
+      ...(queued ? { queued: true } : {}),
+      ...(Number.isFinite(timings.totalMs) ? { totalMs: Math.round(timings.totalMs) } : {}),
+    };
+    setChecksBuildProgress(getPool(config), session.id, build).catch(() => {});
+    notifyChecksBuildProgress(session.id, build);
+  } catch { /* status only */ }
+}
+
+// Close the 'prepare_checks' step: the phase has just flipped to testing.
+// Records how long the hand-off took on the timings — so every testing-half
+// snapshot (makeChecksProgressState reads them next) carries the finished
+// five-step build — and publishes the finished build at once, under the
+// testing phase, so the card stops pulsing the step before the first test
+// frame arrives. Idempotent on the timings: a re-drive of the same
+// stagingResult keeps the first measurement.
+async function finishPrepareChecks(pool, session, commitSha, stagingResult, trigger) {
+  try {
+    const timings = stagingResult && stagingResult.timings;
+    if (!timings || !Number.isFinite(timings.deployedAt)) return;
+    if (!Number.isFinite(timings.prepareChecksMs)) {
+      timings.prepareChecksMs = Math.max(0, Date.now() - timings.deployedAt);
+    }
+    const build = buildProgressFromTimings(timings);
+    if (!build) return;
+    await setChecksBuildProgress(pool, session.id, build).catch(() => {});
+    notifyChecksProgress(session.id, commitSha, { build }, 'testing', trigger);
+  } catch { /* status only */ }
 }
 
 // Minimum gap between two persisted/broadcast snapshots for one run. A pool
@@ -2814,6 +2878,7 @@ module.exports = {
   setChecksPending,
   notifyChecksPending, makeChecksProgressTracker, makeChecksProgressState, setChecksProgress, notifyChecksProgress,
   setChecksBuildProgress, notifyChecksBuildProgress, buildProgressFromTimings, BUILD_STEP_KEYS,
+  reportPrepareChecks, finishPrepareChecks,
   checksAlreadyDecided,
   normalizeCheckTrigger,
   CHECK_TRIGGERS,
