@@ -8,6 +8,30 @@ RUN npm ci --ignore-scripts
 WORKDIR /build
 COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
+# The ONE server-tree file the shell bundle imports:
+# frontend/src/features/admin/topochain/countries.ts reads the same ISO table
+# the server does rather than mirroring 249 names into a second copy that
+# would drift. Everything else this stage needs lives under frontend/, which
+# is why nothing but the stamp above was copied before — and why this stage
+# is where a `../../../src/...` import goes wrong. It resolves in every local
+# run (the whole repo is on disk) and in no image build, so the first sign is
+# a staging preview that never boots. tests/shell-build.test.js pins this
+# list against the imports themselves.
+COPY src/services/countries.json ./src/services/countries.json
+# The commit this image is being built from, so the generated document can
+# carry its OWN build identity (a <meta name="platform-build">) instead of the
+# running tab having to infer one from the first /api/version answer it sees —
+# which a tab booting off the service worker's shell cache gets wrong, in
+# exactly the case the reload offer exists for. docker-compose.yml already
+# passes this arg on the platform service anchor, so all three build paths
+# (deploy.sh, platform-rollout.sh, rollback.sh) already supply it and each
+# patches .env's GIT_SHA BEFORE building. It was simply never declared here,
+# so it was dropped. Declared LAST in this stage so a new commit does not
+# invalidate the npm ci layer above.
+# `dev` is the honest default: staging previews of the platform are built
+# without a GIT_SHA and /api/version reports `dev` there too.
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
 RUN node frontend/scripts/build-shell.mjs
 
 # Stage 2 — compile Tailwind after the shell prerender. public/index.html is a
@@ -32,10 +56,16 @@ FROM node:22-alpine
 # daemon (see src/services/docker.js — `execFile('docker', [...])`).
 # That needs the docker CLI inside the container; the daemon itself
 # is reached via a bind-mounted /var/run/docker.sock from the host.
+# docker-cli-buildx is the BuildKit half of that CLI, and it is a SEPARATE
+# Alpine package: `docker-cli` alone gives a CLI that answers every
+# DOCKER_BUILDKIT=1 build with "BuildKit is enabled but the buildx
+# component is missing or broken", which is what #1746 taught the builder
+# to fall back from. Installing it is what makes #1736's BuildKit path the
+# one that actually runs; the fallback stays as the net under it.
 # git is for the import-existing flow's `git clone` of foreign repos.
 # postgresql-client lets DB administration work over the normal Postgres
 # Service/network connection in both Docker and Kubernetes modes.
-RUN apk add --no-cache docker-cli git postgresql-client
+RUN apk add --no-cache docker-cli docker-cli-buildx git postgresql-client
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --production
@@ -43,13 +73,18 @@ COPY . .
 # COPY generated assets after the source tree so a developer's ignored local
 # builds can never replace the artifacts generated from this image's sources.
 COPY --from=shell /build/public/index.html ./public/index.html
-COPY --from=shell /build/public/shell/assets/shell.js ./public/shell/assets/shell.js
+# The whole directory, not shell.js alone: the React build emits lazy route
+# chunks beside the entry now (frontend/vite.config.ts — today
+# assets/shell-sections.js, the admin console). Naming one file meant a new
+# chunk 404'd in the image while every test passed locally, where the build
+# output is simply on disk.
+COPY --from=shell /build/public/shell/assets/ ./public/shell/assets/
 COPY --from=css /build/public/css/tailwind.css ./public/css/tailwind.css
 # docker-compose.dev.yml bind-mounts ./public for live source editing, which
 # hides the three generated files above on a clean checkout. Keep a protected
 # image copy that its startup helper can restore into that mount when missing.
 COPY --from=shell /build/public/index.html /opt/usernode-shell-assets/index.html
-COPY --from=shell /build/public/shell/assets/shell.js /opt/usernode-shell-assets/shell/assets/shell.js
+COPY --from=shell /build/public/shell/assets/ /opt/usernode-shell-assets/shell/assets/
 COPY --from=css /build/public/css/tailwind.css /opt/usernode-shell-assets/css/tailwind.css
 EXPOSE 3000
 CMD ["node", "server.js"]

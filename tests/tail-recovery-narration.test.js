@@ -30,7 +30,7 @@ const recoveryPills = require('../src/services/recovery-pills');
 
 test('buildCodeLandedBreadcrumb reports what landed and never asks for a resend', () => {
   const withPr = recoveryPills.buildCodeLandedBreadcrumb({ prNumber: 922 });
-  assert.equal(withPr, 'Your changes are committed and pushed to PR #922 — rebuilding the preview now.');
+  assert.equal(withPr, 'Your changes are committed and pushed to PR #922. Rebuilding the preview now.');
   // The whole point: no "send your request again".
   assert.ok(!/again/i.test(withPr));
   // #896: a platform restart is plumbing the user can't act on — it stays
@@ -40,7 +40,7 @@ test('buildCodeLandedBreadcrumb reports what landed and never asks for a resend'
   // A tail can die after the push but before the PR exists; naming a PR
   // that isn't there would be worse than staying vague.
   const noPr = recoveryPills.buildCodeLandedBreadcrumb({});
-  assert.equal(noPr, 'Your changes are committed and pushed to your branch — rebuilding the preview now.');
+  assert.equal(noPr, 'Your changes are committed and pushed to your branch. Rebuilding the preview now.');
 
   // Only promise a rebuild when one is actually starting (the watchdog
   // reap doesn't start one — the heal sweep owns that, on its own clock).
@@ -281,7 +281,7 @@ test('an imported proposal is narrated in its thread, not a dev chat it lacks', 
     assert.equal(inserts.length, 0, 'no chat_session_messages row — nobody could open it');
     assert.equal(bus.systemMessages.length, 1);
     const msg = bus.systemMessages[0];
-    assert.match(msg.body, /Rebuilding the staging preview for PR #41 — Tier colors/);
+    assert.match(msg.body, /Rebuilding the staging preview for PR #41: Tier colors/);
     assert.deepEqual(msg.thread, { type: 'session', ref: 2869 });
     assert.equal(msg.metadata.stagingBuild, 'running');
   } finally { restore(); }

@@ -13,7 +13,7 @@ const github = require('../services/github');
 // #945: the issue's Usernode-side Discussion thread, merged into the
 // by-number issue response the worker's usernode-issues CLI prints.
 const threadContext = require('../services/thread-context');
-const { USERNODE_DOMAIN } = require('../services/caddy');
+const { USERNODE_DOMAIN, USERNODE_APPS_DOMAIN } = require('../services/caddy');
 const appAccess = require('../services/app-access');
 // #1037: shared draft-card creation (validation, de-dupe, insert, live
 // push), also used by the Mayor's in-process draft_issue_report tool
@@ -36,7 +36,7 @@ async function isKnownHost(pool, rawDomain) {
   // defensively so a stray on-demand handshake for it never gets stuck.
   if (domain === USERNODE_DOMAIN) return true;
 
-  const suffix = '.' + USERNODE_DOMAIN;
+  const suffix = '.' + USERNODE_APPS_DOMAIN;
   if (!domain.endsWith(suffix)) return false;
   const label = domain.slice(0, -suffix.length);
   // Only single-level subdomains are routable (the wildcard matches one
@@ -376,10 +376,15 @@ function internalRoutes(_config) {
         const { sha } = await worker.execPushFromWorker(sessionId, session.branch_name);
         return res.json({ ok: true, branch: session.branch_name, sha });
       } catch (err) {
+        // #1376: `message` is the raw failure; `detail`/`permanent` carry the
+        // operator-readable version so the worker's __USERNODE_WARN__ line
+        // (and anything reading this response) says why, not just that.
         return res.status(502).json({
           ok: false,
           code: err.code || 'push_failed',
           message: err.message,
+          detail: err.userMessage || null,
+          permanent: err.permanent === true,
         });
       }
     }

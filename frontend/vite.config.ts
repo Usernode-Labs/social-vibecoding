@@ -37,7 +37,7 @@ export default defineConfig({
     rollupOptions: {
       input: path.resolve(dirname, 'src/main.tsx'),
       output: {
-        // UNHASHED, SINGLE CHUNK — on purpose.
+        // UNHASHED — on purpose, and still.
         //
         // public/sw.js precaches a hand-maintained SHELL_ASSETS list and
         // tests/pwa-shell-wiring.test.js asserts it covers every local asset
@@ -45,11 +45,26 @@ export default defineConfig({
         // churn on every build. Freshness is already handled the way the rest
         // of the shell handles it: `no-cache, must-revalidate` on .js/.css
         // (src/services/static-cache.js) plus a network-first service worker.
+        //
+        // NO LONGER A SINGLE CHUNK. `inlineDynamicImports` folded every
+        // dynamic import back into shell.js, which meant a lazy route could
+        // not exist: the admin console's twenty section modules were 422KB of
+        // the 1.75MB bundle, downloaded and executed by every visitor so an
+        // admin could open a console behind an isAdmin gate. A CPU profile of
+        // a warm mobile board load put 558ms of self time in this bundle
+        // against 83ms in all of app-view.js, so this is where the shell's
+        // JavaScript cost actually is.
+        //
+        // The names stay deterministic — `assets/shell-<name>.js`, from the
+        // chunk's own module id — so SHELL_ASSETS stays a list a person can
+        // maintain and read. A lazily-imported chunk is deliberately NOT in
+        // it: index.html does not load it, the module graph does, on the
+        // route that needs it. See the LAZY CHUNKS note in public/sw.js.
         entryFileNames: 'assets/shell.js',
         chunkFileNames: 'assets/shell-[name].js',
         assetFileNames: 'assets/shell.[ext]',
         manualChunks: undefined,
-        inlineDynamicImports: true,
+        inlineDynamicImports: false,
       },
     },
   },

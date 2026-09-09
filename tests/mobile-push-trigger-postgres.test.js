@@ -122,13 +122,16 @@ async function addRegistration(client, {
   userId, installationId, environment = 'production', platform = 'android',
   permission = 'authorized', expiresInMs = 60 * 60 * 1000,
 }) {
+  const credentialReference = `nsc_${String(userId).padStart(43, '0')}`;
   const { rows } = await client.query(
     `INSERT INTO mobile_push_registrations
-       (user_id, environment, installation_id, registration_hash,
-        registration_enc, platform, permission_status, session_expires_at)
-     VALUES ($1, $2, $3, $4, 'enc:opaque', $5, $6, NOW() + ($7 || ' milliseconds')::interval)
+       (user_id, native_session_credential_reference, environment, installation_id,
+        registration_hash, registration_enc, platform, permission_status, session_expires_at)
+     VALUES ($1, $2, $3, $4, $5, 'enc:opaque', $6, $7,
+             NOW() + ($8 || ' milliseconds')::interval)
      RETURNING id`,
-    [userId, environment, installationId, uniqueHash(), platform, permission, expiresInMs]
+    [userId, credentialReference, environment, installationId, uniqueHash(),
+      platform, permission, expiresInMs]
   );
   // BIGSERIAL comes back as a string; normalize for comparisons.
   return Number(rows[0].id);
@@ -227,7 +230,20 @@ pgTest('the closed kind policy and account preferences gate enqueue at insert ti
 
   const { rows: policy } = await client.query(
     'SELECT kind, default_enabled FROM mobile_push_kind_categories ORDER BY kind');
-  assert.equal(policy.length, 19, 'the seed carries the reviewed closed set');
+  // 22 includes #1795's explicit test alert, under developer_sessions.
+  // 19 -> 21: #1405's two connector kinds. This number is a TRIPWIRE, not
+  // bookkeeping — a new push-eligible kind has to be looked at rather than
+  // merely added, which is what it just forced. Both land in
+  // `developer_sessions` beside session_done and auto_solve_done, both
+  // default_enabled, and that is the whole point of the feature: "your agent
+  // submitted work" and "your agent is waiting on you" are exactly the
+  // moments somebody is away from the screen.
+  //
+  // Bumping it weakens nothing. The loop below fires a notification for
+  // EVERY row this query returns and asserts the delivery count matches
+  // default_enabled, so the two new kinds gain real coverage from the same
+  // assertion the existing nineteen have.
+  assert.equal(policy.length, 22, 'the seed carries the reviewed closed set');
   for (const { kind, default_enabled: enabled } of policy) {
     const row = await notify(client, { userId: alice, kind });
     assert.equal((await deliveriesFor(client, row.id)).length, enabled ? 1 : 0,
@@ -308,4 +324,33 @@ pgTest('the deployment kill switch and activation cutoff suppress the outbox', a
   // A notification at/after the cutoff flows again.
   const fresh = await notify(client, { userId: alice, kind: 'session_done' });
   assert.equal((await deliveriesFor(client, fresh.id)).length, 1);
+});
+
+pgTest('test alerts use the durable ten-second delay and respect developer-session preferences', async (client) => {
+  const { queueTestAlert, TEST_DELAY_MS } = require('../src/services/test-alert');
+  await enableSending(client);
+  const alice = await addUser(client);
+  await addRegistration(client, { userId: alice, installationId: DEVICE_A });
+  const pool = { connect: async () => ({
+    query: (...args) => client.query(...args), release() {},
+  }) };
+  const result = await queueTestAlert(pool, alice);
+  assert.equal(result.queued, true);
+  assert.equal(result.delayMs, TEST_DELAY_MS);
+  const { rows: [delivery] } = await client.query(
+    `SELECT d.status, d.available_at - n.created_at AS delay,
+            EXTRACT(EPOCH FROM (d.available_at - n.created_at)) * 1000 AS delay_ms,
+            d.available_at > NOW() AS waits
+       FROM mobile_push_deliveries d JOIN notifications n ON n.id = d.notification_id
+      WHERE n.id = $1`, [result.notificationId]);
+  assert.equal(delivery.status, 'pending');
+  assert.equal(Number(delivery.delay_ms), TEST_DELAY_MS);
+  assert.equal(delivery.waits, true, 'a worker cannot claim it immediately');
+  await client.query(`INSERT INTO mobile_push_preferences (user_id, category, enabled)
+    VALUES ($1, 'developer_sessions', FALSE)`, [alice]);
+  assert.equal((await queueTestAlert(pool, alice)).reason, 'preference_disabled');
+  const bob = await addUser(client);
+  assert.equal((await queueTestAlert(pool, bob)).reason, 'no_eligible_device');
+  assert.equal((await client.query('SELECT id FROM notifications')).rowCount, 1,
+    'unqueueable tests do not leave misleading inbox entries');
 });

@@ -274,7 +274,7 @@ test("'invited' policy + empty roster names the platform-admin fallback (no 'Inv
   const l = h.live();
   assert.equal(l.section.classList.contains('hidden'), false, 'section shown under invited');
   assert.equal(l.dormantNote.classList.contains('hidden'), true, 'no dormant note under invited');
-  assert.match(l.list.innerHTML, /platform admins can approve proposals/);
+  assert.match(l.list.innerHTML, /Platform admins can approve proposals/);
   assert.doesNotMatch(l.list.innerHTML, /Invite one below/);
 });
 

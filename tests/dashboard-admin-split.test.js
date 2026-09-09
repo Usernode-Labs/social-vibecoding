@@ -276,7 +276,7 @@ const CARD_IDS = [
 ];
 
 test('admin-analytics.js: a per-card tooltip definition exists for each of the ten cards', () => {
-  const src = read('frontend/src/features/admin/admin-analytics.js');
+  const src = read('frontend/src/features/admin/admin-analytics.tsx');
   const mapStart = src.indexOf('const CARD_INFO');
   assert.ok(mapStart !== -1, 'CARD_INFO map must be defined');
   const mapBody = src.slice(mapStart, src.indexOf('};', mapStart));
@@ -289,32 +289,35 @@ test('admin-analytics.js: a per-card tooltip definition exists for each of the t
 });
 
 test('admin-analytics.js: renderCounters renders + wires a (?) icon per card', () => {
-  const src = read('frontend/src/features/admin/admin-analytics.js');
-  assert.match(src, /data-card-info="\$\{c\.id\}"/, 'each card must render a (?) icon');
-  // The local holding the icon element is named freely (#860 renamed it to
-  // `icon` when the counters container took over the name `el`) — what
-  // matters is that each card's icon is registered under its own tip-store
-  // key with its CARD_INFO copy.
-  assert.match(src, /wireInfoIcon\(\w+, `card-\$\{c\.id\}`, CARD_INFO\[c\.id\]\)/,
-    'each card icon must be registered in the tip store with focus wiring');
+  const src = read('frontend/src/features/admin/admin-analytics.tsx');
+  // `.tsx` since #1120 slice 15. The card renders an <InfoIcon card={c.id}/>,
+  // which emits the same `data-card-info` attribute; the registration that
+  // used to be a post-render `wireInfoIcon` pass over the DOM is a constant
+  // now, because CARD_INFO never changes.
+  assert.match(src, /<InfoIcon card=\{c\.id\} \/>/, 'each card must render a (?) icon');
+  assert.match(src, /'data-card-info': card/, 'the icon must carry its card id as a data attribute');
+  assert.match(src, /for \(const \[k, v\] of Object\.entries\(CARD_INFO\)\) tipStore\[`card-\$\{k\}`\] = v;/,
+    "each card's copy must be registered in the tip store");
+  assert.match(src, /showTipAt\(ev\.currentTarget, html\)/, 'and reachable by keyboard focus');
 });
 
 test('admin-analytics.js: the amber admin colour + Non-admin/Admin legend are wired', () => {
-  const src = read('frontend/src/features/admin/admin-analytics.js');
+  const src = read('frontend/src/features/admin/admin-analytics.tsx');
   assert.match(src, /const ADMIN_COLOR = '#f59e0b'/, 'amber admin colour constant must exist');
-  assert.match(src, /function adminLegend/, 'a reusable Non-admin/Admin legend helper must exist');
-  // barChart stacks admin sub-rects; funnel splits a second amber segment;
-  // top-users swaps the fill; spend-by-builder uses an amber outline.
-  assert.match(src, /opts\.adminValues/, 'barChart must accept a parallel admin series');
-  assert.match(src, /stroke="\$\{ADMIN_COLOR\}"/, 'spend-by-builder must outline admin bars in amber');
+  assert.match(src, /function AdminLegend/, 'a reusable Non-admin/Admin legend must exist');
+  // BarChart stacks admin sub-rects; Funnel splits a second amber segment;
+  // TopUsers swaps the fill; SpendByBuilder uses an amber outline.
+  assert.match(src, /adminValues\?: number\[\]/, 'BarChart must accept a parallel admin series');
+  assert.match(src, /\{ stroke: ADMIN_COLOR, strokeWidth: 2 \}/,
+    'spend-by-builder must outline admin bars in amber');
 });
 
 test('admin-analytics.js: renderSpend stacks an amber admin segment on Daily spend', () => {
-  const src = read('frontend/src/features/admin/admin-analytics.js');
-  const start = src.indexOf('function renderSpend');
-  const end = src.indexOf('function renderSpendByBuilder');
+  const src = read('frontend/src/features/admin/admin-analytics.tsx');
+  const start = src.indexOf('function Spend({');
+  const end = src.indexOf('function SpendByBuilder({');
   const body = src.slice(start, end);
-  assert.ok(start !== -1 && end !== -1, 'renderSpend must be defined before renderSpendByBuilder');
+  assert.ok(start !== -1 && end !== -1, 'Spend must be defined before SpendByBuilder');
   // Non-admin remainder = colour total minus the admin portion, clamped at 0.
   assert.match(body, /Math\.max\(0, plat\[i\] - pAdmin\)/,
     'platform/both modes must subtract the admin portion from the violet segment');

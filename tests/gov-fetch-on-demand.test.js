@@ -297,3 +297,49 @@ test('a missing ISSUE topic stays silent (unchanged behaviour)', async () => {
   assert.deepEqual(switchTabCalls, [['dev']], 'fell back to the dev board');
   assert.deepEqual(toasts, [], 'a closed GitHub issue legitimately misses — no toast');
 });
+
+// ── The governance cache went stale for the same reason ───────────────
+//
+// _topicGov is _topicProposal's twin and had the identical defect: written
+// once when the topic opens, cleared only by openTopic, refreshed by
+// nothing. A settled close proposal opened from beyond the cached page
+// repainted a snapshot frozen at page-open on every WS-driven refresh.
+
+test('_refreshTopicOnDemandRow re-fetches a governance row the lists cannot supply', async () => {
+  let fetches = 0;
+  const { AppView } = makeAppView({
+    fetchImpl: async (url) => {
+      fetches += 1;
+      assert.match(url, /\/api\/apps\/demo\/governance\/9100062/, 'hits the governance by-id endpoint');
+      return { ok: true, json: async () => ({ proposal: closeRow({ status: 'applied' }) }) };
+    },
+  });
+  AppView._govProposals = [];
+  AppView._merged = [];
+  AppView._topicGov = closeRow({ status: 'open' });
+  AppView._devTopic = { kind: 'gov', id: 9100062 };
+
+  await AppView._refreshTopicOnDemandRow();
+  assert.equal(fetches, 1, 'the stale governance row is re-fetched');
+  assert.equal(AppView._findTopicItem().status, 'applied',
+    'and resolves to the LIVE state rather than the opening snapshot');
+});
+
+test('the governance refresh no-ops when a list holds the row', async () => {
+  let fetches = 0;
+  const { AppView } = makeAppView({ fetchImpl: async () => { fetches += 1; return { ok: false }; } });
+  AppView._devTopic = { kind: 'gov', id: 9100062 };
+  AppView._topicGov = closeRow();
+
+  AppView._govProposals = [closeRow()];
+  AppView._merged = [];
+  await AppView._refreshTopicOnDemandRow();
+  assert.equal(fetches, 0, 'the open governance list holds it');
+
+  // …and the applied twin, which lives in _merged as a close_issue row —
+  // matched on row_type too, exactly as _findTopicItem matches it.
+  AppView._govProposals = [];
+  AppView._merged = [closeRow({ row_type: 'close_issue' })];
+  await AppView._refreshTopicOnDemandRow();
+  assert.equal(fetches, 0, 'the completed page holds it');
+});

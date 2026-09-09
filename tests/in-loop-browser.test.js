@@ -8,8 +8,8 @@
 //     reuses the TESTING-block paths, carries the "blank page = missing
 //     seed data" reminder, a time/cycle budget, and the graceful
 //     "commit anyway if it won't boot" instruction
-//   - the build prompt actually interpolates the guidance while the scout
-//     prompt does not mention a browser
+//   - the build prompt interpolates backend-appropriate guidance while the
+//     scout prompt does not mention a browser
 //
 // Run with: node --test tests/in-loop-browser.test.js
 
@@ -90,13 +90,17 @@ test('guidance carries the usage hooks that make it likely to be used', () => {
 
 // ── wiring: build prompt includes the guidance; scout prompt does not ────
 
-test('the build prompt interpolates the guidance; the scout prompt has no browser', () => {
+test('the build prompt interpolates backend guidance; the scout prompt has no browser', () => {
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'src', 'routes', 'sessions.js'),
     'utf8'
   );
-  // build prompt (claudePrompt) interpolates the shared constant
-  assert.match(src, /\$\{IN_LOOP_BROWSER_GUIDANCE\}/);
+  // The build prompt uses the pure backend selector. Hosted Claude receives
+  // the compact system-handbook reminder; unchanged backends receive the full
+  // inline constant through the same selector.
+  assert.match(src, /buildCodingAgentBuildGuidance\(\{/);
+  assert.match(src, /\$\{buildGuidance\.browserGuidance\}/);
+  assert.match(src, /\$\{buildGuidance\.testingGuidance\}/);
   assert.match(src, /require\('\.\.\/services\/in-loop-browser'\)/);
 
   // The scout prompt template must NOT offer a browser. Slice out the

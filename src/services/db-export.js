@@ -85,12 +85,13 @@ const STDERR_CAP = 4000;
 // two in sync.
 const MAX_PER_DAY = 3;
 
-// Keep table definitions in a backup, but never restore device destinations
-// or a stale delivery outbox into another deployment/environment.
+// Keep table definitions in a backup, but never restore device destinations,
+// lifecycle history, or a stale delivery outbox into another deployment.
 const EXCLUDED_TABLE_DATA = Object.freeze([
   'mobile_push_deployment_state',
   'mobile_push_installation_mutations',
   'mobile_push_registrations',
+  'mobile_push_registration_events',
   'mobile_push_deliveries',
 ]);
 

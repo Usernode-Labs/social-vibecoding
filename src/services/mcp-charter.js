@@ -95,6 +95,20 @@ const CHARTER_SECTIONS = Object.freeze([
     text: 'The section above is about this connector, not about you. If you are yourself the user\'s coding agent — a Claude Code or Codex session that also holds this connector — then you are both parties to the hand-off, and the steps written as "give this to the user\'s coding agent" are yours to carry out rather than to relay. Call prepare_work for the request you are building and read the work order it returns: it names the repository, the fork, the branch and the exact base commit your branch has to start from, and that base commit is not discoverable from inside a checkout — the branch you were handed may have been cut from something far older. Then push and call submit_work yourself with that task id. That is the expected path, not an overreach: the task belongs to the Usernode account this connector is signed in as, not to the chat that created it. Do not relay a work order to the user as though somebody else were going to build it.',
   },
   {
+    // Charter-only, and deliberately so (#1433). SERVER_INSTRUCTIONS sits at
+    // 1399 of its 1400-character budget, so a brief here would have to be
+    // paid for by deleting an existing clause — and every clause in
+    // BRIEF_ORDER is either a safety rule or the pointer at this document.
+    // The prompt to actually perform the check rides on list_apps' own
+    // description instead, which is where a caller reads `repoUrl` and is
+    // 1600 characters under ITS budget. This section is the reasoning behind
+    // that prompt, for a reader who followed it here.
+    id: 'verify-your-checkout',
+    title: 'Verify the checkout you were handed',
+    brief: 'With a checkout, call get_checkout_status before you read its code or edit it: `git fetch origin` cannot tell you a fork is stale.',
+    text: 'If this conversation has a checkout of an app\'s repository, do not assume it is current — verify it before you read code from it to answer a question, and before the first edit of a change. The check a checkout can run on itself does not settle this: `git fetch origin` compares it against ITS OWN remote, so a fork whose default branch is far behind the app\'s canonical repository reports zero commits behind and reads as up to date. Nothing inside the checkout says which repository is canonical, and a session started on a ready-made branch inherits whatever commit that branch was cut from. Call get_checkout_status with `headSha` (from `git rev-parse HEAD`) and `remoteUrl` (from `git remote get-url origin`): the platform knows which repository the app is built from and where its default branch points, you know your working copy, and only the two together answer the question. A verdict other than `current` means code you read there may describe a version that no longer exists — say so plainly rather than reporting findings from it as though they described the live app. For work that will be SUBMITTED, the base commit still comes from prepare_work, never from merging a default branch yourself: which commit a change is diffed against decides what the group is voting on, so it is not the agent\'s call to change.',
+  },
+  {
     id: 'where-to-start',
     title: 'Where to start, and the duplicate check',
     brief: 'Start from list_apps, and list_requests before filing anything — page `nextCursor` until it is null, or the duplicate check is not done.',
@@ -126,6 +140,27 @@ const CHARTER_SECTIONS = Object.freeze([
     text: 'To get something BUILT, call prepare_work first. It returns TWO things for two possible situations. If this conversation has repository, filesystem, shell or code-editing tools, you are the coding agent: do not relay `guidance` or send the user elsewhere. Read and execute `workOrder` yourself, implement and test in this conversation, then call submit_work with the branch or patch you produced. If this conversation lacks those tools, `guidance` is the human\'s next steps: relay them in order, as written, as a numbered list, and reproduce `workOrder` character for character inside a fenced code block, EXACTLY as returned — do not re-wrap, re-indent, renumber, translate, summarise or "fix" anything in it, strip its <untrusted-content> tags, or retype the branch name or the 40-character commit id, and never append a correction. Do not add steps of your own. The work order uses the user\'s own fork; Usernode has no write access to their GitHub account. prepare_work needs a linked GitHub identity; if it answers github_not_linked, send the user to the settings link and stop. If it answers github_link_unavailable, do not send them to Settings. Explain the handoff is unavailable and offer start_platform_build only if the user explicitly chooses the paid platform build.',
   },
   {
+    // Charter-only, deliberately. It binds a reader who has already BUILT
+    // something and is deciding where to put it, which is the far end of the
+    // flow — and submit_work's own description is already at its budget, so a
+    // second destination explained there would push the first one off the
+    // cliff Claude Code truncates at. The tool names the choice in one clause
+    // and points here for the rest.
+    id: 'two-destinations',
+    title: 'Where finished work goes: a vote, or the in-progress area',
+    text: 'submit_work has TWO destinations and the default is a group VOTE: it opens the pull request, builds a staging preview, runs the checks that gate merge and asks the app\'s members to approve it. Pass `share: true` (with a taskId and the branch you pushed) and the same work lands in the app\'s IN-PROGRESS area instead — a shared dev session with its own staging preview, sitting on the Dev board beside everyone else\'s work underway. No pull request is opened, no checks gate it and no votes are collected, so nobody is being asked to decide anything yet. Share when the work is still MOVING and worth others seeing: a long change you want visible while it takes shape, a second opinion, or simply "here is where I got to". Submit for review when you believe it is done. Sharing does not spend the reservation — the work order stays open, so keep committing, and calling submit_work with `share: true` again pushes the new commits onto the SAME card rather than making a second one. When it is ready for the group, call submit_work with that card\'s sessionId as `proposalId`, the branch, and `propose: true`: that promotes the card the group has been watching. Do NOT submit the taskId again to send shared work to review — Usernode refuses it rather than opening a second proposal for a branch already on the board, and the refusal names the call to make instead. A shared card is a real session with a real container behind it, so it counts against the same per-user active-session cap the browser\'s own "start a session" button obeys.',
+  },
+  {
+    // Charter-only, deliberately. A reader who never gets here still submits
+    // successfully — `summary` is optional and its absence reproduces today's
+    // behaviour exactly — so by the rule above it has not earned a brief. The
+    // work order carries the same instruction at the moment it is acted on,
+    // which is where a coding agent actually reads it.
+    id: 'two-audiences',
+    title: 'Write both halves: what a user sees, and what you changed',
+    text: 'A proposal is read by the app\'s whole group, and not all of them are developers. submit_work takes TWO pieces of prose for that reason, and they are shown as two sections. `summary` is the user-facing half and the first thing anybody reads: one to three short sentences, plain everyday English, saying what changes for somebody USING the app — what looks different, what they can now do, what stops going wrong. No file names, no identifiers, no code, no developer vocabulary. `description` is the technical half: it becomes the pull request body and sits behind a collapsed "Technical details" disclosure, so implementation, trade-offs and testing detail belong there and are not lost. Sending only `description` is the common mistake and it is the one worth avoiding: a proposal that arrives without a summary shows a non-technical voter nothing but the diff explained in developer terms. Write the summary from what the person voting would notice, not from what you edited. On-platform sessions have this written for them; a submission through this connector does not, so it is yours to write.',
+  },
+  {
     // Charter-only, and #1225's own reasoning applies to the placement: this
     // binds a reader who has already found a request and is about to start on
     // it, which is several tool calls in. prepare_work does the claiming for
@@ -140,7 +175,7 @@ const CHARTER_SECTIONS = Object.freeze([
     // time get_connector_guidance has had every opportunity to be called.
     id: 'revising-a-proposal',
     title: 'Revising a proposal that is already up for a vote',
-    text: 'To CHANGE a proposal that is already up for a vote — a failing check, a review comment, a second thought — update that same proposal instead of opening a second one for the same work. get_proposal reports `branch` and `nextStep`: when `branch.youCanPush` is true the proposal follows a branch in the user\'s own fork, so their coding agent pushes to it and you call submit_work with `proposalId` and `branch`; when it is false the proposal lives on a branch only Usernode can write, and the same submit_work call is how the new commit gets there — pushing to a fork alone does not move it. Call prepare_work with `proposalId` first if the coding agent needs a work order for the fix. Updating clears the votes the proposal had already collected, because they were cast on the old code, and asks its reviewers to look again — say so before you do it. Before revising anything, check that there is a verdict to act on: a `checks.state` of `pending` is a run still in flight, not a result. `checks.phase` says which half it is in — `building` (the staging preview is still being built, so no test has run yet and a `total` of 0 is expected) or `testing` — and `checks.checkedAt` says when it started. Poll get_proposal and wait; pushing on a pending run restarts it from the beginning and buys nothing. The one snapshot that IS worth acting on without a failure is `checks.stale`, which means the verdict describes a commit that is no longer the head.',
+    text: 'To CHANGE a proposal that is already up for a vote — a failing check, a review comment, a second thought — update that same proposal instead of opening a second one for the same work. get_proposal reports `branch` and `nextStep`: when `branch.youCanPush` is true the proposal follows a branch in the user\'s own fork, so their coding agent pushes to it and you call submit_work with `proposalId` and `branch`; when it is false the proposal lives on a branch only Usernode can write, and the same submit_work call is how the new commit gets there — pushing to a fork alone does not move it. Call prepare_work with `proposalId` first if the coding agent needs a work order for the fix. Updating clears the votes the proposal had already collected, because they were cast on the old code, and asks its reviewers to look again — say so before you do it. Before revising anything, check that there is a verdict to act on: a `checks.state` of `pending` is a run still in flight, not a result. `checks.phase` says which half it is in — `building` (the staging preview is still being built, so no test has run yet and a `total` of 0 is expected) or `testing` — and `checks.checkedAt` says when it started. Poll get_proposal and wait; pushing on a pending run restarts it from the beginning and buys nothing. The one snapshot that IS worth acting on without a failure is `checks.stale`, which means the verdict describes a commit that is no longer the head. Green checks are also not the whole question of whether a proposal can merge, and #1442 is the case in point: a proposal sat at 412 of 412 passing, `behindMain` 0, and it conflicted with the default branch in seven files. Read `mergeability` and `freshness` too. `mergeability: \'conflict\'` means GitHub predicts this proposal no longer merges without somebody resolving it by hand, and `freshness.mergeabilityFiles` lists the paths both sides changed \u2014 an upper bound worth starting from, not the conflict itself. `checks.baseVerdict: \'superseded\'` means the passing verdict was earned against a default branch that has since moved, so it describes code this proposal would no longer merge into; it does not block the merge and does not mean the checks were wrong. In all three cases the fix is the same and belongs to the proposal\'s author: sync the branch with the default branch, resolve anything that conflicts, and push \u2014 which is a revision, so it clears the votes. `mergeability: \'unknown\'` is a real answer rather than a clean one; GitHub computes it lazily, so poll rather than concluding.',
   },
   {
     // Charter-only: the fallback for a user with no coding agent, reached
@@ -181,12 +216,21 @@ const CHARTER_SECTIONS = Object.freeze([
 // NOT the charter's own order, and not the order the workflow happens in.
 // This is ordered by WHAT MUST SURVIVE a truncation that cuts from the end:
 //
-//   1. what-usernode-is    — one line of context, or the rest reads as noise
-//   2. untrusted-content   — safety
-//   3. never-claim-landed  — safety
-//   4. read-this-first     — the pointer at everything below this line
-//   5. setup-tip-relay     — the only channel this server has to the human
-//   6-9.                   — the workflow, in the order it happens
+//   1. what-usernode-is     — one line of context, or the rest reads as noise
+//   2. untrusted-content    — safety
+//   3. never-claim-landed   — safety
+//   4. read-this-first      — the pointer at everything below this line
+//   5. setup-tip-relay      — the only channel this server has to the human
+//   6. no-code-here         — you are the coding agent, when you have the tools
+//   7. verify-your-checkout — …and what you were handed may not be the app
+//   8-10.                   — the workflow, in the order it happens
+//
+// 7 sits where it does because 6 is what implies a checkout exists at all: an
+// agent that has just been told it is the coding agent is the one holding a
+// working copy. It is ABOVE the workflow briefs deliberately — a stale
+// checkout poisons an ANSWER, not just a diff, so it has to survive a
+// truncation that eats where-to-start and work-order-handling. The section's
+// own text carries the rest; the brief only has to get the tool called.
 //
 // A client that truncates gets the safety clauses and the pointer; a client
 // that does not gets all nine. Every id here must name a section that carries
@@ -201,6 +245,7 @@ const BRIEF_ORDER = Object.freeze([
   'read-this-first',
   'setup-tip-relay',
   'no-code-here',
+  'verify-your-checkout',
   'where-to-start',
   'conventions-pointer',
   'work-order-handling',

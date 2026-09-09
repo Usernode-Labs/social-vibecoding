@@ -52,6 +52,9 @@ Ordered by how badly an agent working offline gets each one wrong.
    that URL, including any copy of the CDN hostname in the app's `sw.js`
    precache list. The staging preview the platform builds is the
    authority on styling.
+   **The bridge tag is not conditional on calling a bridge API.** It is
+   also how the app ANSWERS the shell, so an app that omits it is invisible
+   to anything that asks the frame a question — offline launch included.
 2. **`USERNODE_ENV` is `staging` or `production`.** Gate DATA and
    irreversible outbound side effects on it — `const IS_STAGING =
    process.env.USERNODE_ENV === 'staging'` — never a feature, a screen,
@@ -232,31 +235,29 @@ iframe token only exists inside the platform shell. The scaffold
 redirects such visits to the platform's chromeless view of the app:
 
 ```
-<PLATFORM_BASE_URL>/#app/<slug>/full?path=<req.originalUrl>
+<PLATFORM_BASE_URL>/app/<slug>/full?path=<encoded req.originalUrl>
 ```
 
 The shell then embeds the app with a real token AND forwards the inner
 path+query into the iframe, so the visitor lands on the shared screen
-instead of the app's home. Contract for the `?path=` param (all inside
-the URL **fragment**):
+instead of the app's home. Contract for the `?path=` query parameter:
 
-- The value is the app-relative path+query **verbatim in wire format**
-  (exactly `req.originalUrl` — already percent-encoded; do NOT
-  `encodeURIComponent` it, the shell does not decode it).
-- `path` must be the **final** fragment param — the shell takes
-  everything after the first `path=` as the value, so an inner query's
-  own `&`/`=`/`?` survive.
-- Relative-only: the value must start with a single literal `/` (a
-  `%2F`-encoded leading slash is rejected), never `//`, no scheme or
+- The value is the app-relative path+query encoded as one query value
+  (`encodeURIComponent(req.originalUrl)`). The shell decodes it once and
+  validates it before use.
+- `path` may contain an inner query after decoding; encoding it as one value
+  ensures that query's own `&`/`=`/`?` survive.
+- Relative-only after decoding: the value must start with a single `/`, never
+  `//`, no scheme or
   host, no whitespace or `` \ ` ' " < > ``, ≤ 512 chars. The shell
   drops anything else and loads the app root.
 
 When redirecting, gate on `req.get('sec-fetch-dest') === 'document'`
 (as the scaffold does) so the platform shell is never loaded inside its
 own app iframe. Apps generated before this convention can adopt it by
-appending `'?path=' + req.originalUrl` to their existing chromeless
-redirect (see the current scaffold's `server.js` for the attribute-safe
-character check used on the landing-page anchor).
+appending `'?path=' + encodeURIComponent(req.originalUrl)` to their clean
+chromeless redirect (see the current scaffold's `server.js` for the
+attribute-safe character check used on the landing-page anchor).
 
 ## Database
 
@@ -553,30 +554,27 @@ Two related notes on `path:` form:
   annotation (`path: /board @mobile`) is still accepted but redundant
   now; just point `path:` at the route where the change is visible.
 
-### Testing `path:` for a hash-routed SPA (the self-app)
+### Testing `path:` for the hybrid-routed self-app
 
 The before/after screenshots and the "Test this change" button visit the
 testing block's `path:` joined onto the staging origin. Most apps are
 path-routed, so a plain pathname (`/board`, `/settings?demo=1`) lands on
 the right screen.
 
-**The self-app (social-vibecoding) is a hash-routed single-page app**:
-its internal screens are addressed by the URL **fragment**
-(`#app/<slug>/dev/proposals/<id>`, `#leaderboard`,
-`#app/<slug>/dev/sessions/<id>`, …), never by server pathname — a
-pathname just loads `index.html`, which boots to the home feed. So when
-your change is to a self-app screen, write the `path:` using the in-app
-route segments exactly as they appear after the `#`, with a leading
-slash:
+**The self-app (social-vibecoding) uses clean path routes for app screens**
+(`/app/<slug>`, `/app/<slug>/dev/proposals/<id>`,
+`/app/<slug>/dev/sessions/<id>`, …). Other platform screens remain fragment
+routes (`#leaderboard`, `#admin/...`). So when your change is to a self-app
+screen, write the `path:` with a leading slash:
 
 - `path: /app/<self-slug>/dev/proposals/<id>`
 - `path: /leaderboard`
 - `path: /admin/analytics`
 
-The platform recognises these self-app routes and moves them into the
-fragment when capturing and when previewing, so the shot shows the
-changed screen instead of the homepage. **The admin surfaces are in-app
-hash routes too**: the former standalone pages (`/dashboard`, `/admin`,
+The platform keeps `/app/...` routes as clean paths when capturing and
+previewing. It moves the other listed self-app routes into the fragment so
+the shot shows the changed screen instead of the homepage. **The admin
+surfaces are in-app hash routes too**: the former standalone pages (`/dashboard`, `/admin`,
 `/status`, `/node-status`, `/debug`, `/gallery`, `/admin-features`) are
 now sections of the single `#admin` console — write them as
 `/admin/analytics`, `/admin/estimator`, `/admin/status`, `/admin/node`,
@@ -623,8 +621,9 @@ Per-test fields:
 
 - `path` — **required.** A relative route within the app (same rules as a
   testing-block `path:`: starts with a single `/`, no scheme/host). For
-  the hash-routed self-app, use the in-app route segments (e.g.
-  `/leaderboard`) — the platform normalises them into the fragment.
+  non-app self-app screens, use the in-app route segments (e.g.
+  `/leaderboard`) — the platform normalises those into the fragment. Clean
+  `/app/<slug>/...` paths remain paths.
 - `name` — short label shown in the checks detail. Defaults to the path.
 - `expectSelector` — optional CSS selector that must be present after the
   page settles.
@@ -1761,13 +1760,67 @@ Rules:
   the bridge from upstream prod, or fork the dapps and edit the URL.
   See [SELF-HOSTING.md](../../SELF-HOSTING.md) for details.
 
+## Offline — apps that open with no connection
+
+The shell opens an app while the device is offline **only when that app's
+own service worker was serving its document on a previous online visit.**
+Everything else gets a placeholder — "This app needs a connection —
+reconnect to open it." — because the app lives on its own subdomain, which
+the platform's service worker cannot cache. That placeholder is the
+correct, expected outcome for an app with no worker of its own; it is not
+a platform bug.
+
+Nothing here is self-declared. The bridge reads
+`navigator.serviceWorker.controller` inside the app frame — the browser's
+own statement that a worker served this document — and announces it to the
+shell, which remembers it per app and reads it back on the next offline
+load. An app cannot claim the capability, and one that loses its worker
+stops being opened offline on its next load.
+
+To earn it:
+
+- **Load the bridge.** Without the tag the app has no channel to announce
+  on, and the shell will never open it offline no matter what else it
+  does. See the section above.
+- **Register a service worker that precaches your shell**, and let it take
+  control (`skipWaiting()` + `clients.claim()`), so the first visit
+  announces rather than waiting for a second one. Registration can fail
+  outright in a third-party iframe — some WebViews refuse storage to a
+  cross-origin frame — and that is a normal degradation, not something to
+  work around: no worker means no announcement means the placeholder.
+- **Never serve `/api/*` from the worker.** Writes and event streams must
+  always reach the network; keep the app's own read cache separate.
+
+Two consequences worth designing for:
+
+- **An offline load carries NO `?token=`.** The shell cannot mint one with
+  no network, so the iframe src has no token at all. Recover identity from
+  the app's own storage, remembered from a load that did have one — and
+  never destroy per-user data when the token is absent. An app that keys
+  its cache on "the current user" and falls back to an anonymous namespace
+  will delete the real user's saved data on the first offline boot.
+- **The frame reloads when the connection returns.** The shell mints a
+  token and re-points the frame, so anything unsent must be persisted, not
+  held in memory. Queue mutations durably and replay them on reconnect.
+
+Be honest in the UI about which of the two worlds the app is in. A device
+that refuses durable storage cannot promise "3 changes will sync", and
+saying so is better than a queue that silently disappears.
+
 ## User language preference
 
-The platform owns a single per-user language/locale setting
-(Settings → Language on the platform shell). Apps that localize their
-UI should treat it as the **default** instead of building their own
-detection from `navigator.language` (which reflects the device, not
-the user's Usernode-level choice). It reaches apps two ways:
+The platform owns a single per-user language/locale setting. Apps that
+localize their UI should treat it as the **default** instead of building
+their own detection from `navigator.language` (which reflects the device,
+not the user's Usernode-level choice). It reaches apps two ways:
+
+**Expect `null` for nearly every user (SV #1556).** The setting is still
+stored and still delivered on both paths below, but the platform shell is
+English-only, so its Settings picker is hidden pending platform i18n and is
+offered only to the few users who had already chosen a language. So make
+device-language fallback the PRIMARY path and the platform tag an override
+when present. Do not build a feature that only works once the user sets a
+platform locale, and do not tell users to go and set one.
 
 - **JWT claim (server-side).** The iframe token carries a `locale`
   claim alongside `id` / `username` / `usernode_pubkey`, so after
@@ -1842,6 +1895,48 @@ Notes:
   the forwarded properties to work (it is still required for bare `env()`
   to work standalone).
 
+## Browser capabilities in the app frame
+
+Apps run in a cross-origin iframe, and the powerful browser capabilities
+are gated by **Permissions Policy**, which is delegated **downward** by the
+embedding page. An app cannot grant itself one: the grant is the shell's to
+make, through the `allow` attribute on the frame.
+
+The shell delegates these to every app frame (the App tab, the landing
+page's in-page viewer, and the staging preview alike):
+
+| Capability | Use it through |
+|---|---|
+| `geolocation` | `navigator.geolocation.getCurrentPosition()` |
+| `clipboard-write` | `navigator.clipboard.writeText()` |
+| `pointer-lock` | `element.requestPointerLock()` |
+
+Delegation is not a grant. The browser still prompts the user the first
+time your app asks, per origin, and they can refuse. Always handle the
+error path.
+
+**Everything else is not delegated**, `camera`, `microphone`,
+`display-capture`, `midi`, `payment` and `xr-spatial-tracking` among them.
+The failure mode is worth knowing because it is so easy to misread: an
+undelegated capability is not refused with a distinct error and it does not
+prompt. `getCurrentPosition` and friends reject in a couple of
+milliseconds with `PERMISSION_DENIED`, the *same* code the browser uses
+when a person taps "block". So an app that treats code 1 as "the user said
+no" will tell people to check a permission they were never asked for.
+
+Ask the frame before offering the control, and tell the two cases apart:
+
+```js
+const policy = document.permissionsPolicy || document.featurePolicy;
+const allowed = !policy || policy.allowsFeature('geolocation');
+// `allowed` is true where the browser does not expose the API to ask,
+// so treat it as "try it and see" rather than a guarantee.
+```
+
+If your app needs a capability that is not on the list, that is a missing
+platform capability, not something to work around in the app: see
+"Platform-level problems & missing capabilities" below.
+
 ## Native-feel UI kit — centrally hosted (`usernode-native`)
 
 An **opt-in** CSS + JS kit that makes an app's mobile UI feel native on
@@ -1913,7 +2008,10 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   one. **The puck never paints over the app's header**: it lives in an
   overflow-clipped layer stacked underneath the header, anchored by
   default at the scroller's own top edge (element mode) or the safe-area
-  inset (window mode, which also tucks it under `.un-navbar`). For a
+  inset (window mode, which also tucks it under `.un-navbar`). During the
+  pull it emerges from under that anchor line, and **at rest it sits
+  entirely below it, with equal space above and below the puck** — the
+  whole pose is derived from the puck's box, so no call site tunes it. For a
   custom **fixed** header in window mode, pass `opts.topEl` (the header
   element — re-measured on resize and at each pull, so a collapsing bar
   stays correct) or `opts.top` (a px offset); a header that lives
@@ -1921,7 +2019,9 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   anchor. For element containers, give them
   `overscroll-behavior-y: contain` (the kit also sets it defensively).
   No-op on desktop. Never throws: invalid input logs a console warning
-  and returns a no-op `{ detach() }`.
+  and returns a no-op `{ detach() }`. The returned handle also carries
+  `refresh()` — start a refresh with no gesture (the kit's
+  `beginRefreshing()`), a no-op while one is already running.
 - **Drag-to-reorder lists.**
   `unNative.attachReorder(listEl, { handle?, itemSelector?,
   longPressMs?, canDrop?, onReorder })`. Native-feel reordering: on
@@ -2066,6 +2166,24 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   on touch platforms and an anchored popover on desktop — one call
   site, both idioms, no `unNative.platform` branching. Always resolves
   the chosen item or `null`.
+- **Menu-row icons.** Any row in `menu()` / `popover()` /
+  `actionSheet()` takes an optional `icon: '<name>'` from the kit's own
+  set — `home`, `globe`, `terminal`, `link`, `laptop`, `cloud`, `trash`
+  — or `iconEl: <Element>` for artwork the kit doesn't ship (a node,
+  not a string, and a fresh one per row: it is used, not cloned).
+  Icons are stroked in `currentColor`, so a destructive row's icon goes
+  red and a disabled row's dims with no work from you. **Give the whole
+  menu icons or don't** — the kit aligns every label to a common left
+  edge as soon as ONE row has an icon, spacing the icon-less rows out
+  so they line up, but a menu where only one row in six drew a glyph
+  reads as a mistake rather than a style. A row with no icon in a menu
+  with no icons renders exactly the DOM it always did, so adding this
+  changed nothing for existing callers. An unknown name draws nothing —
+  it does not throw and does not fall back to some other icon, so check
+  the list above rather than inventing a name. The set is deliberately
+  small and grows additively in `/v1`; if your app needs one that isn't
+  there, that's a platform request, not an `iconEl` workaround you keep
+  forever.
 - **Keyboard avoidance (automatic).** On mobile the kit tracks the
   on-screen keyboard via `visualViewport` and maintains
   `--un-kb-inset` (the keyboard's occlusion of the layout viewport,
@@ -2435,6 +2553,25 @@ feature):
   without console errors — it does **not** prove behaviour, so
   behavioural regressions slip through unless you add a test for them.
 
+## Starter-template notice — meant to be deleted
+
+Freshly scaffolded apps ship `public/index.html` as a template welcome
+screen — a "Starter template" hero and a "What's already working" card —
+wrapped in sentinel comments:
+
+- opens with `<!-- usernode-starter-notice@1 … -->`
+- closes with `<!-- /usernode-starter-notice@1 -->`
+
+Unlike the dev-console forwarder block above, this one is **meant to be
+deleted**: the whole screen is placeholder content, not product intent.
+When the user asks for their first real feature, replace the template
+screen rather than building alongside it — remove the sentinel block
+(both comments and everything between them), remove or repurpose the
+"Try the example" card and its demo endpoints (`/api/press`,
+`/api/leaderboard`, the `presses` table) as appropriate, and rewrite the
+scaffolded `README.md` to describe the actual app. Keep the dev-console
+forwarder `<script>` when rewriting the HTML.
+
 ## Platform-level problems & missing capabilities: escalate, don't file workarounds
 
 You can only edit and push **this app's** repo. Some things the app
@@ -2602,8 +2739,8 @@ locally inside the worker the same way a staging container does:
 - Private secrets resolve from the manifest's `staging_default` /
   `default` only, same as a real staging build — never the prod store.
 - Navigate to `http://127.0.0.1:$INLOOP_PORT` joined with the SAME
-  route(s) you put in the TESTING block's `path:` lines. For the
-  hash-routed self-app, put the route after the `#`.
+  route(s) you put in the TESTING block's `path:` lines. Self-app app screens
+  stay under `/app/<slug>/...`; put its other SPA routes after the `#`.
 - **EXPECTED when you added a screenshot-state deep link this turn**
   (see "Make the changed screen URL-reachable"): load the exact `path:`
   URL and confirm the changed UI is actually visible before committing —
@@ -2624,6 +2761,40 @@ locally inside the worker the same way a staging container does:
 This is an agent-facing quality aid. The before/after screenshots and
 the "Test this change" button (driven by the TESTING block) remain the
 reviewer-facing tools and are unchanged.
+
+## Writing user-facing copy: no em dashes
+
+**Do not use an em dash (`—`) in any string a user reads.** Button
+labels, headings, empty states, toasts, validation errors, push and email
+bodies, `dapp.json` descriptions: all of it. A dash-heavy line is the single
+strongest tell that copy was machine-written, and an app full of them feels
+generated rather than made. The rule covers every encoding an em dash arrives
+in (the raw character, `&mdash;`, `&#8212;`, and the `\u2014` escape), because
+a sweep that only greps for the raw character misses whole files.
+
+Reach for the punctuation the sentence actually wants:
+
+- **Status then instruction** (`Upload failed — try again`) becomes two
+  sentences: `Upload failed. Try again.` This is the default when nothing
+  else fits, and on a push body or a table cell it is also the shortest fix.
+- **Label and value**, or a heading and its qualifier, takes a colon:
+  `Failed step: cloning the repository`.
+- **A trailing qualifier**, especially `optional`, takes parentheses:
+  `Display name (optional)`.
+- **Cause and consequence** takes `, so` or `, because`, or a colon.
+- **A mid-sentence aside** takes commas, or gets restructured. If you remove
+  one dash of a bracketing pair, remove the other one too. A single leftover
+  dash reads worse than the pair did.
+
+**Never substitute a plain hyphen or a spaced hyphen.** `Upload failed - try
+again` reads as a typo and keeps exactly the texture the rule exists to
+remove.
+
+Three uses are not prose punctuation and stay: a lone `—` rendered as the
+placeholder for a missing value, a `— Section —` separator row in a picker,
+and an en dash in a numeric range (`20–60 seconds`). Comments, README and
+docs prose, and LLM prompt text are agent-facing rather than user-facing, so
+they are out of scope, this document's own prose included.
 
 ## Outputting file edits
 

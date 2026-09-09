@@ -36,7 +36,7 @@ function PublicAvatar({ profile }: { profile: any }): ReactNode {
     <div
       className={
         'w-20 h-20 relative rounded-full overflow-hidden bg-violet-100 '
-        + 'dark:bg-violet-950 flex items-center justify-center text-violet-700 '
+        + 'dark:bg-violet-950 flex items-center justify-center text-violet-700  dark:text-violet-400'
         + 'dark:text-violet-300 text-2xl font-bold shrink-0'
       }
     >
@@ -112,7 +112,7 @@ function ReportForm({ username }: { username: string }): ReactNode {
       >
         Send report
       </button>
-      <div className="mt-2 text-xs text-zinc-500" role="status" aria-live="polite">{status}</div>
+      <div className="mt-2 text-xs text-zinc-500 dark:text-zinc-400" role="status" aria-live="polite">{status}</div>
     </details>
   );
 }
@@ -128,7 +128,7 @@ export function PublicProfileCard({
     <>
       <article
         id="public-profile-card"
-        className="rounded-xl border border-zinc-200 dark:border-zinc-800 p-5"
+        className="rounded-2xl bg-white dark:bg-zinc-900 p-5"
       >
         <div className="flex items-start gap-4">
           <PublicAvatar profile={profile} />

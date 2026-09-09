@@ -155,26 +155,55 @@ test('route() is idempotent, so a duplicate dispatch never repaints twice', () =
 test('the header back button defers to the console, then goes home', () => {
   const handler = appJs.slice(appJs.indexOf("document.getElementById('back-btn').addEventListener"));
   // Wide enough for every screen hook the handler chains (admin, settings,
-  // browse) plus the navigateHome fallthrough below them.
-  const body = handler.slice(0, 800);
+  // browse, the dev session), the follow-the-href step and the navigateHome
+  // fallthrough below them.
+  const body = handler.slice(0, 1800);
   assert.match(body, /App\._inAdmin && window\.AdminConsole\?\.handleBack\?\.\(\)/,
     'the console only gets a say while the admin screen is actually mounted');
+  assert.match(body, /window\.location\.hash = href/,
+    'a screen that named a parent goes THERE — the arrow\'s href is the answer');
   assert.match(body, /App\.navigateHome\(\)/,
-    'every other screen keeps the plain go-home behaviour');
+    'and home is the fallback for a screen that named none');
 });
 
 test('the back button has both icons and one named toggle', () => {
-  assert.ok(html.includes('id="back-icon-home"'), 'the house icon ships');
+  // TWO icons, exactly one shown. #back-icon-home retired in #1443 — Home is
+  // a row of the chip's menu, so a house an inch to its left answered one
+  // question twice — and came back when the rule became "every page has a
+  // back or a home button, except Home": that retirement left the app itself,
+  // Profile, Settings, Admin and Messages with nothing in the bar at all.
+  //
+  // BOTH SHIP IN THE COLD DOCUMENT and one carries `hidden`. Rendering only
+  // the active glyph would take an id out of the shipped inventory whenever
+  // the initial mode is the other one, and that inventory is a contract
+  // (tests/shell-id-inventory.test.js, plus the dapp.json selectors).
+  assert.ok(html.includes('id="back-icon-home"'), 'the house ships');
   assert.ok(html.includes('id="back-icon-arrow"'), 'the chevron ships');
   // #1036 widened it to setBackIcon(mode, href): the control is a real
   // anchor now, so the same choke point that owns which icon shows also
   // owns where it points.
   assert.match(appJs, /setBackIcon\(mode, href\)\s*\{/, 'App.setBackIcon owns the toggle');
   const fn = appJs.slice(appJs.indexOf('  setBackIcon(mode, href) {'));
-  const body = fn.slice(0, 900);
-  assert.match(body, /back-icon-home/, 'it toggles the home icon');
-  assert.match(body, /back-icon-arrow/, 'it toggles the arrow icon');
-  assert.match(body, /aria-label/, 'and relabels the button for screen readers');
+  const body = fn.slice(0, fn.indexOf('\n  },'));
+  // The slot is React's, so the toggle PUBLISHES first — a rendered
+  // className belongs to React and it rewrites the attribute from its own
+  // props on every render of that island, which silently undid the
+  // classList writes below once the header gained state (the app glyph,
+  // the session status pill). See features/header/back-button-store.js.
+  assert.match(body, /UsernodeReact\?\.backButton\?\.set\?\.\(/,
+    'setBackIcon publishes the slot state rather than only writing to the DOM');
+  assert.ok(body.indexOf('backButton') < body.indexOf('back-btn'),
+    'the publish comes first; the DOM writes are the pre-hydration fallback');
+  // The pre-hydration fallback toggles all three nodes again: the anchor for
+  // 'none', and one glyph each for which of the two remaining modes it is.
+  assert.match(body, /back-icon-home/, 'the fallback toggles the house');
+  assert.match(body, /back-icon-arrow/, 'and the chevron');
+  assert.match(body, /back-btn/, 'it toggles the anchor itself');
+  // 'none' is what hides the slot now — NOT 'home', which draws a house.
+  // The distinction is the whole point: a screen that publishes the default
+  // gets a way out, while the Home and Browse roots publish 'none' (#1569).
+  assert.match(body, /slot === 'none'/,
+    "the anchor hides on 'none' alone");
   assert.match(body, /setAttribute\('href'/, 'and retargets the anchor (#1036)');
   // Leaving the console must hand the button back, or every later screen
   // inherits a chevron that means "home" — but NOT from _exitAdminConsole
@@ -186,8 +215,8 @@ test('the back button has both icons and one named toggle', () => {
   assert.ok(!exit.slice(0, exit.indexOf('\n  },')).includes('setBackIcon'),
     '_exitAdminConsole leaves the icon to _showOnlyScreen');
   const swap = appJs.slice(appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {'));
-  assert.match(swap.slice(0, swap.indexOf('\n  },')), /App\.setBackIcon\('home'\)/,
-    '_showOnlyScreen restores the home icon on every screen swap');
+  assert.match(swap.slice(0, swap.indexOf('\n  },')), /App\.setBackIcon\(revealId === 'home-screen' \|\| revealId === 'browse-screen' \? 'none' : 'home'\)/,
+    '_showOnlyScreen restores Home on secondary screens and hides it on the Home/Browse roots');
 });
 
 test('the admin gate runs before the already-open route() shortcut', () => {
@@ -240,10 +269,14 @@ test('the header becomes the section nav bar on mobile level 2 only', () => {
   assert.match(body, /AdminConsole\._isMobile\(\) && AdminConsole\._level === 2/,
     'only a mobile section view borrows the header');
   // #1036: the second argument is the anchor's href — inside a section
-  // the chevron pops to the console's own menu, so that is where it
-  // points; everywhere else it falls through to home.
+  // the chevron pops to the console's own menu, so that is where it points.
+  // LEVEL 2 ONLY. The root's arrow (which pointed at Profile) is gone with the
+  // other two account screens': Admin, Settings and Profile are reached from
+  // the Home account row and left through it, and a header arrow duplicating
+  // the row one tap below it read as chrome. The mobile drill-in keeps its
+  // chevron because it is the only way up a level INSIDE this screen.
   assert.match(body, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
-    'the arrow appears exactly there, and targets the console menu');
+    'the chevron is the section view\'s alone; the root draws no back control');
   assert.match(body, /App\.setHeaderTitle\(s \? s\.label : /,
     'the title becomes the section label (which also feeds the native AppBar)');
   assert.match(body, /'Platform status'/,

@@ -1,7 +1,7 @@
 // Kanban filter bar (#482): AppView._devCardMatches() is the pure per-card
 // predicate behind the board's filter controls (text search, priority,
-// assignee, "needs my vote"). It takes (kind, item, filters) with kind ∈
-// 'issue' | 'proposal' | 'gov' | 'merged' and reads no DOM or AppView
+// person, "needs my vote"). It takes (kind, item, filters) with kind ∈
+// 'issue' | 'proposal' | 'gov' | 'merged' | 'session' and reads no DOM or AppView
 // state, so — like _bucketDevItems — we load app-view.js into a vm context
 // (same harness as dev-kanban-buckets.test.js) and call it directly with
 // synthetic rows.
@@ -13,6 +13,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { renderComponent } = require('./lib/render-tsx');
+const { kanbanHtml } = require('./lib/dev-card-html');
+
+const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -63,11 +67,24 @@ function makeCtx(over) {
 }
 
 function makeAppView() {
-  return makeCtx().__AppView;
+  const sandbox = makeCtx();
+  // Every test here drives a board that has ALREADY loaded — filtering,
+  // bucketing, counts. `_devDataReady` is what tells the view models that,
+  // and without it `_kanbanView()` reports `loading` and the columns render
+  // placeholders instead of cards (see card/skeleton.tsx). Set once here
+  // rather than per test: an unloaded board has its own coverage in
+  // tests/dev-board-loading.test.js.
+  sandbox.__AppView._devDataReady = true;
+  // The bar's markup is features/dev-board/kanban-filters.tsx's since #1191,
+  // so a test that drives the module needs the sandbox back to see what was
+  // published — and `document.activeElement`, which decides whether a select
+  // the reader has open keeps its options.
+  sandbox.__AppView.__sandbox = sandbox;
+  return sandbox.__AppView;
 }
 
 // Default (empty) filters — the fast-path that must match everything.
-const none = { q: '', priority: null, assignee: null, category: null, needsVote: false };
+const none = { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null };
 
 const issue = (over) => ({
   number: 42, title: 'Dark mode toggle resets', created_by_username: 'evan',
@@ -214,9 +231,12 @@ test('category filter matches a CUSTOM category slug like a built-in', () => {
   assert.equal(AppView._devCardMatches('issue', issue({ category: { top: 'bug', count: 5 } }), f), false);
 });
 
-// #780: the filter dropdown is built from the app's vocabulary — built-ins
-// first, then customs — instead of the hardcoded six.
-test('category filter options list built-ins then the app custom categories', () => {
+// #780: the category vocabulary is built from the app's registry — built-ins
+// first, then customs — instead of the hardcoded six. The Streamlined
+// Concept moved the select into the Filters dialog, so the vocabulary is
+// DATA now (_kanbanCategoryChoices feeds the dialog's payload); the "Any
+// category" default is the dialog's own leading option, not an entry here.
+test('category choices list built-ins then the app custom categories', () => {
   const AppView = makeAppView();
   AppView._kanbanFilters = { ...none };
   AppView._appCategories = [
@@ -224,40 +244,108 @@ test('category filter options list built-ins then the app custom categories', ()
     { value: 'dev experience', label: 'Dev Experience', custom: true },
     { value: 'performance', label: 'Performance', custom: true },
   ];
-  const html = AppView._kanbanCategoryOptionsHtml();
-  assert.match(html, /<option value="">Any category<\/option>/, 'the any-category default leads');
-  // Built-ins keep their fixed display labels and come first.
-  const order = [...html.matchAll(/<option value="([^"]*)"/g)].map((m) => m[1]);
+  const choices = Array.from(AppView._kanbanCategoryChoices());
   assert.deepEqual(
-    order,
-    ['', ...AppView.ATTR_CATEGORY_VALUES, 'dev experience', 'performance'],
+    Array.from(choices, (c) => c.value),
+    [...Array.from(AppView.ATTR_CATEGORY_VALUES), 'dev experience', 'performance'],
     'built-ins precede the customs, in registry order'
   );
-  assert.match(html, /Dev Experience/, 'a custom option shows its registered label');
+  assert.equal(
+    choices.find((c) => c.value === 'dev experience').label,
+    'Dev Experience',
+    'a custom choice shows its registered label'
+  );
 
   // With no vocabulary loaded it degrades to built-ins only (pre-#780 view).
   AppView._appCategories = null;
-  const bare = [...AppView._kanbanCategoryOptionsHtml().matchAll(/<option value="([^"]*)"/g)].map((m) => m[1]);
-  assert.deepEqual(bare, ['', ...AppView.ATTR_CATEGORY_VALUES]);
+  assert.deepEqual(
+    Array.from(AppView._kanbanCategoryChoices(), (c) => c.value),
+    Array.from(AppView.ATTR_CATEGORY_VALUES)
+  );
 });
 
-// Mirrors the assignee select's rule: an active selection is never dropped
-// from the list, so a filter can't silently self-clear on a refresh.
-test('category filter keeps an active selection that left the vocabulary', () => {
+// Mirrors the assignee list's rule: an active selection is never dropped
+// from the vocabulary, so a filter can't silently self-clear on a refresh.
+test('category choices keep an active selection that left the vocabulary', () => {
   const AppView = makeAppView();
   AppView._appCategories = null;
   AppView._kanbanFilters = { ...none, category: 'retired category' };
-  const html = AppView._kanbanCategoryOptionsHtml();
-  assert.match(html, /<option value="retired category" selected>/, 'the active filter survives');
+  const values = Array.from(AppView._kanbanCategoryChoices(), (c) => c.value);
+  assert.ok(values.includes('retired category'), 'the active filter survives');
 });
 
-test('assignee filter matches the top-voted assignee; unassigned cards fail', () => {
+// The Filters dialog's write-back merges the dialog-owned keys over the
+// current set — search stays the bar's own — and repaints through the
+// normal surface path.
+test('applyKanbanFilters merges dialog keys and preserves the search text', () => {
+  const AppView = makeAppView();
+  let repainted = 0;
+  AppView._repaintBoardSurface = () => { repainted += 1; };
+  AppView._kanbanFilters = { ...none, q: 'ripple', priority: 'low' };
+  AppView.applyKanbanFilters({ priority: 'high', category: 'bug', assignee: null, needsVote: true });
+  // Field-by-field (the object comes from the vm realm, so deepEqual would
+  // trip on its foreign Object prototype rather than its contents).
+  const f = AppView._kanbanFilters;
+  assert.equal(f.q, 'ripple', 'search text is preserved');
+  assert.equal(f.priority, 'high');
+  assert.equal(f.category, 'bug');
+  assert.equal(f.assignee, null);
+  assert.equal(f.needsVote, true);
+  assert.equal(repainted, 1, 'one repaint per apply');
+});
+
+// The bar itself is features/dev-board/kanban-filters.tsx's — search, the
+// `Filters (n)` chip that opens the dialog, and one dismissable chip per
+// active filter. The selects it used to render live in the dialog now.
+test('the bar renders search, the Filters chip, and dismissable active chips', () => {
+  const html = renderComponent(
+    'frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
+    {
+      mounted: true,
+      q: '',
+      seq: 0,
+      count: 2,
+      chips: [
+        { key: 'priority', label: 'High priority' },
+        { key: 'needsVote', label: 'Waiting on you' },
+      ],
+    },
+  );
+  assert.match(html, /id="dev-kanban-search"[^>]*placeholder="Search title, author, or #"/);
+  assert.match(html, /id="dev-kanban-filters-btn"[^>]*aria-haspopup="dialog"/);
+  assert.match(html, />Filters \(2\)</, 'the chip counts the dialog-owned filters');
+  // The chip reads as SET while any dialog filter is on — the filled tonal state.
+  assert.match(html, /id="dev-kanban-filters-btn"[^>]*bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900/);
+  assert.match(html, /data-filter-chip="priority"/);
+  assert.match(html, /aria-label="Remove filter: High priority"/);
+  assert.match(html, /data-filter-chip="needsVote"/);
+  // No select survives in the strip.
+  assert.ok(!/<select/.test(html), 'the selects moved into the Filters dialog');
+});
+
+test('person filter matches either the top-voted assignee or the author', () => {
   const AppView = makeAppView();
   const f = { ...none, assignee: 'sam' };
+  // Explicit assignment still matches even when someone else authored it.
   assert.equal(AppView._devCardMatches('issue', issue({ assignee: { top: 'sam', count: 3 } }), f), true);
   assert.equal(AppView._devCardMatches('issue', issue({ assignee: { top: 'kim', count: 1 } }), f), false);
-  assert.equal(AppView._devCardMatches('proposal', prop({ assignee: null }), f), false);
-  assert.equal(AppView._devCardMatches('gov', gov({}), f), false);
+  // Authored-but-unassigned is the behavior this change adds.
+  assert.equal(AppView._devCardMatches('proposal', prop({ assignee: null }), f), true);
+  assert.equal(AppView._devCardMatches('proposal', prop({ username: 'kim', assignee: null }), f), false);
+});
+
+test('person filter uses every card kind\'s existing author field', () => {
+  const AppView = makeAppView();
+  const by = (name) => ({ ...none, assignee: name });
+  assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'evan' }), by('evan')), true);
+  assert.equal(AppView._devCardMatches('issue',
+    issue({ created_by_username: null, user: 'octocat' }), by('octocat')), true);
+  assert.equal(AppView._devCardMatches('proposal', prop({ username: 'sam' }), by('sam')), true);
+  assert.equal(AppView._devCardMatches('gov', gov({ created_by_username: 'evan' }), by('evan')), true);
+  assert.equal(AppView._devCardMatches('merged', merged({ username: 'kim' }), by('kim')), true);
+  assert.equal(AppView._devCardMatches('merged', closedIssue({ created_by_username: 'casey' }), by('casey')), true);
+  assert.equal(AppView._devCardMatches('session', { username: 'maya' }, by('maya')), true);
+  assert.equal(AppView._devCardMatches('session', { username: 'maya' }, by('someone-else')), false);
 });
 
 test('Unassigned sentinel matches only cards with no top assignee; gov excluded', () => {
@@ -336,7 +424,7 @@ test('_kanbanFiltersActive reflects any non-default filter', () => {
   assert.equal(AppView._kanbanFiltersActive(), true);
 });
 
-test('_kanbanAssigneeOptions unions board data and keeps the current selection', () => {
+test('_kanbanAssigneeOptions unions assignees and authors and keeps the current selection', () => {
   const AppView = makeAppView();
   AppView._ghIssues = [
     issue({ number: 1, assignee: { top: 'zoe', count: 1 } }),
@@ -344,20 +432,25 @@ test('_kanbanAssigneeOptions unions board data and keeps the current selection',
   ];
   AppView._envIssueNumbers = new Set();
   AppView._proposals = [prop({ assignee: { top: 'sam', count: 2 } })];
+  AppView._govProposals = [gov({ created_by_username: 'casey' })];
   AppView._merged = [merged({ assignee: { top: 'kim', count: 1 } })];
+  AppView._mySessions = [{ username: 'maya' }];
+  AppView._sharedSessions = [{ username: 'evan' }];
   AppView._kanbanFilters = { q: '', priority: null, assignee: null, needsVote: false };
   // Options come back as the vm realm's Array — map into the host realm
   // before comparing (same trick as dev-kanban-buckets' numbersOf/idsOf).
   const names = () => Array.from(AppView._kanbanAssigneeOptions());
-  assert.deepEqual(names(), ['kim', 'sam', 'zoe']);
+  assert.deepEqual(names(), ['casey', 'evan', 'kim', 'maya', 'sam', 'zoe']);
   // A selected assignee that vanished from the data stays listed so the
   // active filter never silently self-clears.
-  AppView._kanbanFilters.assignee = 'evan';
-  assert.deepEqual(names(), ['evan', 'kim', 'sam', 'zoe']);
+  AppView._kanbanFilters.assignee = 'alex';
+  assert.deepEqual(names(), ['alex', 'casey', 'evan', 'kim', 'maya', 'sam', 'zoe']);
   // The Unassigned sentinel is a fixed dropdown option, never a name —
   // an active Unassigned filter must not leak into the alphabetized list.
+  // (The "Anyone" / "Unassigned" leading options are the Filters dialog's
+  // own now — this list is just the names its payload carries.)
   AppView._kanbanFilters.assignee = AppView.KANBAN_ASSIGNEE_UNASSIGNED;
-  assert.deepEqual(names(), ['kim', 'sam', 'zoe']);
+  assert.deepEqual(names(), ['casey', 'evan', 'kim', 'maya', 'sam', 'zoe']);
 });
 
 // ── Persistence helpers (sessionStorage-backed, per app slug) ──────────
@@ -380,7 +473,7 @@ test('_saveKanbanFilters round-trips through _loadKanbanFilters under the slug',
   AppView._kanbanFilters = { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true };
   AppView._saveKanbanFilters('my-app');
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true });
+    { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true, theme: null });
 });
 
 test('_saveKanbanFilters clears the key when filters are at defaults', () => {
@@ -413,7 +506,7 @@ test('_loadKanbanFilters merges over defaults for a partial stored object', () =
   store.setItem(`${AppView.KANBAN_FILTERS_KEY}:my-app`, JSON.stringify({ q: 'hi' }));
   // Missing fields fall back to their defaults rather than becoming undefined.
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'hi', priority: null, assignee: null, category: null, needsVote: false });
+    { q: 'hi', priority: null, assignee: null, category: null, needsVote: false, theme: null });
 });
 
 test('_loadKanbanFilters yields defaults on corrupt stored JSON', () => {
@@ -437,11 +530,10 @@ test('persistence helpers survive a storage-less environment', () => {
   assert.doesNotThrow(() => AppView._saveKanbanFilters('my-app'));
 });
 
-// ── Session cards are exempt from the filter bar ────────────────────────────
+// ── Session cards have only the filters their data supports ─────────────────
 // The In progress column now holds the viewer's pinned sessions (top) and
 // other users' shared sessions (bottom). The filter bar's vocabulary
-// (text/priority/assignee/needs-vote) doesn't apply to sessions, so an
-// active filter must keep every session card while filtering issue cards.
+// Priority/category do not apply to sessions; text and the person filter do.
 
 test('a text filter now applies to session cards too (they used to be exempt)', () => {
   const AppView = makeAppView();
@@ -466,7 +558,7 @@ test('a text filter now applies to session cards too (they used to be exempt)', 
   ];
   AppView._archivedSessions = [];
   AppView._kanbanFilters = { q: 'zzz-no-match', priority: null, assignee: null, needsVote: false };
-  const html = AppView._renderKanbanInner();
+  const html = kanbanHtml(AppView);
   // Session cards used to be EXEMPT from the filter bar entirely — type a
   // search term and they just sat there unexplained. Now they filter on
   // their displayed label like every other card.
@@ -496,16 +588,16 @@ test('a session matches on its LABEL and on the issue numbers it links', () => {
 
   const byTitle = { q: 'dark', priority: null, category: null, assignee: null, needsVote: false };
   AppView._kanbanFilters = byTitle;
-  assert.match(AppView._renderKanbanInner(), /Dark mode work/, 'matches its displayed label');
+  assert.match(kanbanHtml(AppView), /Dark mode work/, 'matches its displayed label');
 
   AppView._kanbanFilters = { ...byTitle, q: '#900002' };
-  assert.match(AppView._renderKanbanInner(), /Dark mode work/, 'matches a linked issue number');
+  assert.match(kanbanHtml(AppView), /Dark mode work/, 'matches a linked issue number');
 
   AppView._kanbanFilters = { ...byTitle, q: '#900999' };
-  assert.doesNotMatch(AppView._renderKanbanInner(), /Dark mode work/, 'an unrelated number does not');
+  assert.doesNotMatch(kanbanHtml(AppView), /Dark mode work/, 'an unrelated number does not');
 });
 
-test('priority / category / assignee are a VISIBLE no-op on session cards', () => {
+test('priority / category are a VISIBLE no-op on session cards', () => {
   const AppView = makeAppView();
   AppView._ghIssues = [];
   AppView._envIssueNumbers = new Set();
@@ -522,19 +614,72 @@ test('priority / category / assignee are a VISIBLE no-op on session cards', () =
       created_at: '2026-06-01T01:00:00Z', last_activity_at: '2026-06-01T01:00:00Z' },
   ];
   AppView._kanbanFilters = { q: '', priority: 'high', category: null, assignee: null, needsVote: false };
-  const html = AppView._renderKanbanInner();
+  const html = kanbanHtml(AppView);
   // A dev session carries no such metadata, so hiding it would be silently
   // wrong — it stays, and the column SAYS why the filter didn't apply.
   assert.match(html, /Dark mode work/, 'the session survives an inapplicable filter');
-  assert.match(html, /Dev sessions don't carry priority, category or assignee/);
+  assert.match(html, /Regular dev sessions don&#x27;t carry priority, category or assignee/);
   assert.match(html, /not filtered by priority/);
 
-  // The predicate itself is the explicit no-op.
+  // The predicate itself keeps the attribute filters as an explicit no-op.
   assert.equal(
     AppView._devCardMatches('session', { session_title: 'x' },
-      { priority: 'high', assignee: 'someone', category: 'bug' }),
+      { priority: 'high', category: 'bug' }),
     true
   );
+});
+
+test('a named person filters sessions by author while Unassigned stays a no-op', () => {
+  const AppView = makeAppView();
+  const session = { session_title: 'Dark mode work', username: 'maya' };
+  assert.equal(AppView._devCardMatches('session', session, { ...none, assignee: 'maya' }), true);
+  assert.equal(AppView._devCardMatches('session', session, { ...none, assignee: 'sam' }), false);
+  assert.equal(AppView._devCardMatches('session', session,
+    { ...none, assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED }), true);
+});
+
+test('an imported Underway PR uses proposal attributes, not regular-session exemptions', () => {
+  const AppView = makeAppView();
+  const imported = {
+    id: 88,
+    source: 'imported',
+    session_title: 'Imported checks work',
+    username: 'maya',
+    priority: { top: 'high', count: 1 },
+    category: { top: 'bug', count: 1 },
+    assignee: { top: 'sam', count: 1 },
+  };
+  assert.equal(AppView._devCardMatches('session', imported,
+    { ...none, priority: 'high', category: 'bug', assignee: 'sam' }), true);
+  assert.equal(AppView._devCardMatches('session', imported,
+    { ...none, priority: 'low' }), false);
+  assert.equal(AppView._devCardMatches('session', imported,
+    { ...none, assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED }), false);
+  assert.equal(AppView._devCardMatches('session', imported,
+    { ...none, needsVote: true }), false, 'voting has not started yet');
+});
+
+test('imported Underway cards do not trigger the regular-session filter exception note', () => {
+  const AppView = makeAppView();
+  AppView._ghIssues = [];
+  AppView._envIssueNumbers = new Set();
+  AppView._proposals = [];
+  AppView._govProposals = [];
+  AppView._merged = [];
+  AppView._mergedCtx = { majority: 1, activeUsers: 1 };
+  AppView._mergedTotal = 0;
+  AppView._mergedHasMore = false;
+  AppView._archivedSessions = [];
+  AppView._sharedSessions = [];
+  AppView._mySessions = [{
+    id: 88, source: 'imported', session_title: 'Imported checks work', status: 'active',
+    priority: { top: 'high', count: 1 },
+    created_at: '2026-06-01T01:00:00Z', last_activity_at: '2026-06-01T01:00:00Z',
+  }];
+  AppView._kanbanFilters = { ...none, priority: 'high' };
+  const html = kanbanHtml(AppView);
+  assert.match(html, /Imported checks work/);
+  assert.doesNotMatch(html, /Regular dev sessions don&#x27;t carry/);
 });
 
 // ── #1112: the column is titled "Underway", keyed `inprogress` ─────────────
@@ -559,7 +704,7 @@ test('the second column reads "Underway" but keeps its inprogress key and id', (
   AppView._sharedSessions = [];
   AppView._archivedSessions = [];
   AppView._kanbanFilters = { q: '', priority: null, category: null, assignee: null, needsVote: false };
-  const html = AppView._renderKanbanInner();
+  const html = kanbanHtml(AppView);
 
   assert.match(html, /Underway <span[^>]*>· 1<\/span>/, 'column head retitled');
   assert.ok(!/In progress <span/.test(html), 'the old title is gone');
@@ -578,4 +723,70 @@ test('the second column reads "Underway" but keeps its inprogress key and id', (
   assert.match(head[1], /paused/i);
   // …and only that column has one, so the other three heads are unchanged.
   assert.equal((html.match(/dev-kanban-col-head[^>]*title="/g) || []).length, 1);
+});
+
+// ── The bar itself (#1191, then Streamlined Concept) ────────────────────
+//
+// The strip was an `innerHTML` template plus six re-bound listeners; #1191
+// made it React's, and the Streamlined Concept slimmed it to search + the
+// `Filters (n)` chip + the active-filter chips. One property carried through
+// every shape and still needs pinning:
+//
+//   An ordinary board repaint must NOT disturb the search box. That is why
+//   `#dev-kanban-filterbar` was left untouched while `#dev-kanban-board` was
+//   rewritten around it — a rebuild would have taken the caret with it. The
+//   box is uncontrolled for the same reason, and dismissing the Search chip
+//   is the one path allowed to replace it (through a `seq` that is its React
+//   key).
+
+test('the search box survives a repaint; only its chip dismissal replaces it', () => {
+  // Uncontrolled: the typed text is the DOM's, seeded once. A `value` prop
+  // here would re-render the box on every repaint and move the caret.
+  const html = renderComponent(
+    'frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
+    { mounted: true, q: 'photo', seq: 0, count: 0, chips: [] },
+  );
+  assert.match(html, /id="dev-kanban-search"[^>]*value="photo"/);
+  const tsx = read('frontend/src/features/dev-board/kanban-filters.tsx');
+  assert.match(tsx, /defaultValue=\{q\}/, 'the search field is uncontrolled');
+  assert.doesNotMatch(tsx, /\bvalue=\{q\}/, 'a controlled one would move the caret on every repaint');
+  assert.match(tsx, /key=\{`q\$\{seq\}`\}/, 'and its identity is the seq the dismissal bumps');
+
+  // Dismissing the Search chip bumps that seq — the one write that empties
+  // the box. The dialog-owned keys just null out, seq untouched.
+  const AppView = makeAppView();
+  AppView._repaintBoardSurface = () => {};
+  AppView._kanbanFilters = { ...none, q: 'photo', priority: 'high' };
+  const seq0 = AppView._kanbanFilterSeq;
+  AppView._dismissKanbanFilter('priority');
+  assert.equal(AppView._kanbanFilters.priority, null);
+  assert.equal(AppView._kanbanFilterSeq, seq0, 'a non-search dismissal leaves the box alone');
+  AppView._dismissKanbanFilter('q');
+  assert.equal(AppView._kanbanFilters.q, '');
+  assert.equal(AppView._kanbanFilterSeq, seq0 + 1, 'the Search dismissal re-keys the field');
+});
+
+test('a repaint republishes the whole strip: count and chips track the filters', () => {
+  const AppView = makeAppView();
+  AppView._kanbanFilters = {
+    ...none, q: ' ripple ', priority: 'high', assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED, needsVote: true,
+  };
+  const seen = [];
+  AppView._reactDevBoard = () => ({ publishKanbanFilters: (p) => seen.push(p) });
+  // `_updateKanbanFilterBarUI` bails when the host is absent, so give it one.
+  AppView.__sandbox.document.getElementById =
+    (id) => (id === 'dev-kanban-filterbar' ? { id } : null);
+  AppView._updateKanbanFilterBarUI();
+  const view = seen[0];
+  assert.equal(view.count, 3, 'search stays out of the Filters (n) count');
+  // One chip per active filter, in the module's fixed order, labels resolved.
+  assert.deepEqual(
+    Array.from(view.chips, (c) => ({ ...c })),
+    [
+      { key: 'q', label: 'Search: ripple' },
+      { key: 'priority', label: 'High priority' },
+      { key: 'assignee', label: 'Unassigned' },
+      { key: 'needsVote', label: 'Waiting on you' },
+    ],
+  );
 });

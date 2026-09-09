@@ -1,13 +1,6 @@
-// Profile on the web: the drawer row is no longer gated on the native
-// bridge, and a signed-out visitor gets a sign-in prompt instead of a
-// generic failure.
-//
-// The bug this pins: #profile worked perfectly in an ordinary browser —
-// /challenges-api/me/* scopes to the platform session server-side since
-// the topochain merge — but the drawer entry was revealed only when the
-// bridge reported the `getProfileInfo` capability. On the web the screen
-// therefore existed and was unreachable. The capability probe was the ONLY
-// thing hiding it.
+// Profile belongs to the authenticated Social session: the drawer row works
+// without a native bridge and a signed-out visitor gets a sign-in prompt
+// instead of a generic failure.
 //
 // Second half: those routes require a session (requireSessionUser), so an
 // anonymous visitor got an opaque `HTTP 401` funnelled into "Could not
@@ -32,7 +25,10 @@ const indexHtml = read('public/index.html');
 const shellSource = read('frontend/src/Shell.tsx');
 // #1079 chunk B moved the drawer (#header-menu-panel) out of Shell.tsx into its
 // own island — same markup, same comments, new file.
-const menuSource = read('frontend/src/features/header/header-menu.tsx');
+// The entrance to #profile. It was a row at the foot of Home; Home dropped
+// that area once the chip's menu carried the same door (#1443), so the live
+// one is a row of the menu.
+const switcherSheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
 const nativeChrome = read('public/js/native-chrome.js');
 const profileJs = read('frontend/src/features/profile/profile.js');
 // #1083 chunk F did the same for the screen itself: <main id="profile-screen">
@@ -52,39 +48,33 @@ const profileViewTsx = read('frontend/src/features/profile/profile-view.tsx');
 const profileSheetTsx = read('frontend/src/features/profile/profile-edit-sheet.tsx');
 const profilePublicTsx = read('frontend/src/features/profile/public-profile-card.tsx');
 
-// ─── The drawer row ships visible ───────────────────────────────────────
+// ─── The entrance ships visible, in the chip's menu ─────────────────────
+//
+// The row was in the hamburger drawer until the Streamlined Concept retired
+// it, then at the foot of Home for a while, and it is a row of the chip's
+// menu now — which is what keeps Profile reachable at all, and with it
+// Settings and Admin. dapp.json pins its POSITION among the destinations;
+// this pins that it ships visible and navigates by hash.
 
-test('drawer-row-profile carries no `hidden` class', () => {
-  const anchor = indexHtml.slice(
-    indexHtml.indexOf('<a id="drawer-row-profile"'),
-    indexHtml.indexOf('</a>', indexHtml.indexOf('<a id="drawer-row-profile"'))
-  );
-  assert.ok(anchor, 'the profile anchor must exist');
+test('the menu ships the profile entrance, with no `hidden` class', () => {
+  const at = indexHtml.indexOf('id="switcher-row-profile"');
+  assert.ok(at > -1, 'the profile row must exist in the shipped shell');
+  const anchor = indexHtml.slice(indexHtml.lastIndexOf('<a ', at), indexHtml.indexOf('</a>', at));
   const classAttr = (anchor.match(/class="([^"]*)"/) || [])[1] || '';
   assert.ok(!/\bhidden\b/.test(classAttr),
     'the row must ship visible — a `hidden` class puts it back behind the bridge');
+  assert.match(anchor, /href="#profile"/, 'and hash navigation drives the screen');
 });
 
-test('native-chrome no longer gates the profile row on getProfileInfo', () => {
-  const fn = nativeChrome.slice(
-    nativeChrome.indexOf('_initDrawerRows()'),
-    nativeChrome.indexOf('// ── Platform login handoff')
-  );
-  assert.ok(fn.length, '_initDrawerRows must still exist');
-  assert.doesNotMatch(fn, /has\(['"]getProfileInfo['"]\)/,
-    'the capability probe was the only thing keeping #profile off the web');
-  // The drawer-close wiring is the reason the function still exists.
-  assert.match(fn, /drawer-row-profile/);
-  assert.match(fn, /HeaderMenu\.close\(\)/);
-});
-
-test('the stale "hidden unless the bridge reports getProfileInfo" comments are gone', () => {
-  // Comments that describe behaviour the code no longer has are worse than
-  // no comment: the next reader trusts them.
-  const profileAt = menuSource.indexOf('id="drawer-row-profile"');
-  assert.ok(profileAt > 0, 'the drawer row must still live in the menu island');
-  const anchorComment = menuSource.slice(Math.max(0, profileAt - 900), profileAt);
-  assert.doesNotMatch(anchorComment, /Hidden unless/i);
+test('nothing gates the profile entrance on getProfileInfo any more', () => {
+  // The capability probe was the only thing keeping #profile off the web.
+  // /challenges-api/me/* scopes to the platform session server-side since the
+  // topochain merge, so the screen works in any browser.
+  assert.doesNotMatch(switcherSheet, /getProfileInfo/);
+  const chromeCode = nativeChrome
+    .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.ok(!/_initDrawerRows/.test(chromeCode),
+    'the drawer-row wiring went with the drawer (the note explaining that stays)');
   assert.doesNotMatch(
     nativeChrome.slice(0, nativeChrome.indexOf('const NativeChrome')),
     /shown\s*\n?\/\/\s*when the bridge reports getProfileInfo/,
@@ -108,7 +98,6 @@ test('the screen-host comments no longer describe an external leaderboard', () =
   const hosts = shellSource.slice(Math.max(0, shellAt - 1200), shellAt)
     + profileIsland.slice(0, islandAt + 400);
   assert.doesNotMatch(hosts, /public leaderboard service/);
-  assert.doesNotMatch(hosts, /using the bridge's\s*\n?\s*getProfileInfo participant id/);
   assert.match(hosts, /in-process/,
     'the comments should say where the data actually comes from');
 });
@@ -218,13 +207,21 @@ test('outbound handle links are scheme-guarded and rel-protected', () => {
   assert.match(profileViewTsx, /rel: 'noopener noreferrer'/);
 });
 
-test('the username is shown read-only, with the reason', () => {
+test('the username is shown read-only, with somewhere to go', () => {
   assert.match(profileSheetTsx, /id="profile-edit-username"/);
   assert.match(profileSheetTsx, /\breadOnly\b/);
   assert.match(profileSheetTsx, /\bdisabled\b/);
-  assert.match(profileSheetTsx, /can’t be changed/,
-    'a greyed-out field with no explanation reads as a bug');
-  // Nothing may ever PATCH it.
+  // The field is still read-only HERE, and still explains itself — a
+  // greyed-out field with no explanation reads as a bug. What changed with
+  // username changes is that the explanation is a ROUTE rather than a refusal: the
+  // rename exists, it just needs the current password, so it lives in
+  // Settings next to Change password.
+  assert.match(profileSheetTsx, /#settings\/username/,
+    'the footnote must point at the screen that can actually do it');
+  assert.doesNotMatch(profileSheetTsx, /can’t be changed/,
+    'the handle CAN be changed since username changes — this copy would be a lie');
+  // Nothing may ever PATCH it: the rename is its own credential-gated
+  // endpoint (POST /api/me/username), never a profile field write.
   const save = profileJs.slice(profileJs.indexOf('async _save('));
   assert.doesNotMatch(save.slice(0, 2500), /username:/);
 });
@@ -437,18 +434,6 @@ test('the stale "organiser flag" comments are gone', () => {
     'the header must explain what the list means now, and what it used to mean');
   assert.doesNotMatch(header, /completed challenges from the in-process/,
     'the old header described the /challenges-api grid read that is gone');
-});
-
-test('the drawer row can show the viewer’s picture', () => {
-  const app = read('public/js/app.js');
-  assert.match(indexHtml, /id="drawer-avatar"/);
-  assert.match(indexHtml, /id="drawer-profile-glyph"/);
-  // Ships hidden with NO src, so a signed-out shell requests nothing.
-  const img = indexHtml.slice(indexHtml.indexOf('<img id="drawer-avatar"'));
-  assert.match(img.slice(0, 200), /class="hidden/);
-  assert.doesNotMatch(img.slice(0, 200), /\ssrc=/);
-  assert.match(app, /applyUserAvatar\(\) \{/);
-  assert.match(app, /App\.applyUserAvatar\(\);/, 'called on sign-in');
 });
 
 test('?shot=profile-edit opens the sheet for the screenshot capture', () => {

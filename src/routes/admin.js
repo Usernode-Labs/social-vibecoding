@@ -1,3 +1,4 @@
+const appAllowance = require('../services/app-allowance');
 const { Router } = require('express');
 const crypto = require('crypto');
 const bcrypt = require('bcrypt');
@@ -18,6 +19,8 @@ const stagingEnv = require('../services/staging-env');
 const mail = require('../services/mail');
 const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
+const managedOpenRouter = require('../services/openrouter-managed-keys');
+const discoveryCuration = require('../services/discovery-curation');
 const {
   accountRecovery,
   withTransaction,
@@ -301,13 +304,35 @@ function adminRoutes(config) {
   router.get('/api/admin/users', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.created_at,
-                u.daily_limit_cents, u.usernode_pubkey,
+        `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.app_quota_requested_at, u.created_at,
+                u.daily_limit_cents, u.weekly_limit_cents, u.usernode_pubkey,
+                EXISTS (
+                  SELECT 1 FROM user_social_identities identity
+                   WHERE identity.user_id = u.id
+                ) AS social_verified,
+                managed.id AS openrouter_key_id,
+                managed.status AS openrouter_key_status,
+                managed.remote_key_hash AS openrouter_key_hash,
+                managed.remote_label AS openrouter_key_label,
+                managed.daily_limit_usd AS openrouter_daily_limit_usd,
+                managed.limit_reset AS openrouter_limit_reset,
+                managed.issued_at AS openrouter_issued_at,
+                managed.disabled_at AS openrouter_disabled_at,
+                managed.deleted_at AS openrouter_deleted_at,
                 (u.id = $1) AS is_self,
                 ac.code as activation_code,
                 COALESCE(lu.total_cost_cents, 0) as cost_today_cents,
+                -- #1788: week-to-date platform-key spend, over the same
+                -- Monday-00:00-UTC week the weekly cap is enforced on. A
+                -- correlated subquery rather than a second join so the
+                -- cost_today_cents join above keeps its one-row shape.
+                (SELECT COALESCE(SUM(w.total_cost_cents), 0)
+                   FROM llm_usage w
+                  WHERE w.user_id = u.id
+                    AND w.date >= date_trunc('week', CURRENT_DATE)::date) AS cost_week_cents,
                 COALESCE(ac2.n, 0) AS apps_created
          FROM users u
+         LEFT JOIN credentials.managed_openrouter_keys managed ON managed.user_id = u.id
          LEFT JOIN activation_codes ac ON ac.used_by = u.id
          LEFT JOIN llm_usage lu ON lu.user_id = u.id AND lu.date = CURRENT_DATE
          LEFT JOIN (
@@ -325,6 +350,47 @@ function adminRoutes(config) {
     }
   });
 
+  // Company OpenRouter child-key controls. Raw keys are deliberately absent
+  // from every admin response: ownership is correlated by local id + remote
+  // hash, while the management credential performs provider mutations.
+  router.patch('/api/admin/openrouter-keys/:id', requireAdminWrite, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0 || typeof req.body?.disabled !== 'boolean') {
+      return res.status(400).json({ error: 'A valid key id and boolean disabled value are required.' });
+    }
+    try {
+      const key = await managedOpenRouter.setDisabled({
+        pool, id, disabled: req.body.disabled, config, actorId: req.user.id,
+      });
+      return res.json({ ok: true, key });
+    } catch (err) {
+      if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
+        return res.status(err.statusCode).json({ error: err.message, code: err.code });
+      }
+      log.error('admin', 'Managed OpenRouter key update failed', { id, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.delete('/api/admin/openrouter-keys/:id', requireAdminWrite, async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'A valid key id is required.' });
+    }
+    try {
+      const key = await managedOpenRouter.remove({
+        pool, id, config, actorId: req.user.id,
+      });
+      return res.json({ ok: true, key });
+    } catch (err) {
+      if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
+        return res.status(err.statusCode).json({ error: err.message, code: err.code });
+      }
+      log.error('admin', 'Managed OpenRouter key removal failed', { id, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Bulk set every user's app-creation quota (see users.app_quota in
   // schema.sql). Body `{ quota }` — a non-negative integer applied to ALL
   // users. Admins are included; since they bypass enforcement this is
@@ -335,11 +401,11 @@ function adminRoutes(config) {
   router.put('/api/admin/users/app-quota', requireAdminWrite, async (req, res) => {
     const { quota } = req.body || {};
     const n = Number(quota);
-    if (!Number.isInteger(n) || n < 0) {
-      return res.status(400).json({ error: 'quota must be a non-negative integer' });
+    if (typeof quota !== 'number' || !Number.isInteger(n) || n < 0 || n > 2147483647) {
+      return res.status(400).json({ error: 'quota must be a non-negative integer up to 2147483647' });
     }
     try {
-      await pool.query('UPDATE users SET app_quota = $1', [n]);
+      await appAllowance.setQuota(pool, { quota: n, actorId: req.user.id });
       log.info('admin', 'App quota set for all users', { quota: n, by: req.user.username });
       res.json({ ok: true, quota: n });
     } catch (err) {
@@ -353,30 +419,56 @@ function adminRoutes(config) {
   // daily-limit handler below. Quota 0 means the user cannot create apps;
   // admins bypass enforcement regardless (their quota is cosmetic).
   router.put('/api/admin/users/:id/app-quota', requireAdminWrite, async (req, res) => {
-    const userId = parseInt(req.params.id, 10);
-    if (!Number.isFinite(userId)) {
+    const userId = Number(req.params.id);
+    if (!Number.isInteger(userId) || userId <= 0 || userId > 2147483647) {
       return res.status(400).json({ error: 'Invalid user id' });
     }
     const { quota } = req.body || {};
     const n = Number(quota);
-    if (!Number.isInteger(n) || n < 0) {
-      return res.status(400).json({ error: 'quota must be a non-negative integer' });
+    if (typeof quota !== 'number' || !Number.isInteger(n) || n < 0 || n > 2147483647) {
+      return res.status(400).json({ error: 'quota must be a non-negative integer up to 2147483647' });
     }
     try {
-      const { rows } = await pool.query(
-        `UPDATE users SET app_quota = $1 WHERE id = $2
-         RETURNING id, username, app_quota`,
-        [n, userId]
-      );
+      const rows = await appAllowance.setQuota(pool, { userId, quota: n, actorId: req.user.id });
       if (!rows.length) return res.status(404).json({ error: 'User not found' });
       log.info('admin', 'App quota updated', {
         id: rows[0].id, username: rows[0].username,
-        appQuota: rows[0].app_quota, by: req.user.username,
+        appQuota: n, by: req.user.username,
       });
-      res.json({ ok: true, app_quota: rows[0].app_quota });
+      res.json({ ok: true, app_quota: n });
     } catch (err) {
       log.error('admin', 'App quota update failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/admin/users/:id/app-quota-request/approve', requireAdminWrite, async (req, res) => {
+    const userId = Number(req.params.id);
+    if (!Number.isInteger(userId) || userId <= 0 || userId > 2147483647) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    try {
+      const granted = await appAllowance.grantRequest(pool, { userId, actorId: req.user.id });
+      if (!granted) return res.status(409).json({ error: 'This request has already been reviewed or its allowance cannot be increased. Refresh the user list.' });
+      log.info('admin', 'App allowance request granted', { userId, quota: granted.app_quota, by: req.user.username });
+      res.json({ ok: true, app_quota: granted.app_quota });
+    } catch (err) {
+      log.error('admin', 'App allowance request approval failed', { message: err.message });
+      res.status(500).json({ error: 'Could not approve the request. Please try again.' });
+    }
+  });
+
+  router.delete('/api/admin/users/:id/app-quota-request', requireAdminWrite, async (req, res) => {
+    const userId = Number(req.params.id);
+    if (!Number.isInteger(userId) || userId <= 0 || userId > 2147483647) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    try {
+      await appAllowance.declineRequest(pool, { userId, actorId: req.user.id });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('admin', 'App allowance request decline failed', { message: err.message });
+      res.status(500).json({ error: 'Could not decline the request. Please try again.' });
     }
   });
 
@@ -527,6 +619,17 @@ function adminRoutes(config) {
         await client.query('ROLLBACK');
         return res.status(404).json({ error: 'User not found' });
       }
+      const { rows: managedKeys } = await client.query(
+        `SELECT id FROM credentials.managed_openrouter_keys
+          WHERE user_id = $1 AND status <> 'deleted'`,
+        [userId],
+      );
+      if (managedKeys.length) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({
+          error: 'Delete this user\'s company OpenRouter key before deleting the account.',
+        });
+      }
       // Only a FULL admin counts toward the "at least one admin" invariant
       // (issue #311) — deleting a view-only admin never threatens it.
       if (existing[0].is_admin && !existing[0].admin_readonly) {
@@ -646,19 +749,26 @@ function adminRoutes(config) {
 
   // ── LLM Spend Limits ───────────────────────────────────────
   //
-  // Admin-tunable daily caps on LLM spend. Backed by the
-  // `platform_settings` table (default per-user + global) plus the
-  // `users.daily_limit_cents` per-user override. Reads are cached for
-  // 10s in src/services/limits.js; PUTs invalidate that cache so the
-  // new value takes effect on the next request from any worker.
+  // Admin-tunable caps on LLM spend. Backed by the `platform_settings`
+  // table (default per-user daily + per-user weekly + global) plus the
+  // `users.daily_limit_cents` / `users.weekly_limit_cents` per-user
+  // overrides. Reads are cached for 10s in src/services/limits.js; PUTs
+  // invalidate that cache so the new value takes effect on the next
+  // request from any worker.
+  //
+  // #1788: the weekly cap layers on top of the daily one — a turn stops at
+  // whichever is exhausted first, and either set to 0 means that cap does
+  // not apply. limits.resolveCaps owns the full interaction.
 
   router.get('/api/admin/limits', async (_req, res) => {
     try {
       const userCents = await limits.getDefaultUserLimitCents(pool);
       const globalCents = await limits.getGlobalLimitCents(pool);
       const systemCents = await limits.getSystemTokensLimitCents(pool);
+      const weeklyCents = await limits.getDefaultUserWeeklyLimitCents(pool);
       res.json({
         user_daily_limit_cents: userCents,
+        user_weekly_limit_cents: weeklyCents,
         global_daily_limit_cents: globalCents,
         system_tokens_daily_limit_cents: systemCents,
       });
@@ -669,7 +779,7 @@ function adminRoutes(config) {
   });
 
   router.put('/api/admin/limits', requireAdminWrite, async (req, res) => {
-    const { user, global, system } = req.body || {};
+    const { user, weekly, global, system } = req.body || {};
     const updates = [];
     const validate = (label, v) => {
       if (v === undefined) return null;
@@ -685,10 +795,13 @@ function adminRoutes(config) {
     if (typeof globalN === 'string') return res.status(400).json({ error: globalN });
     const systemN = validate('system', system);
     if (typeof systemN === 'string') return res.status(400).json({ error: systemN });
-    if (userN === null && globalN === null && systemN === null) {
-      return res.status(400).json({ error: 'Provide at least one of: user, global, system' });
+    const weeklyN = validate('weekly', weekly);
+    if (typeof weeklyN === 'string') return res.status(400).json({ error: weeklyN });
+    if (userN === null && globalN === null && systemN === null && weeklyN === null) {
+      return res.status(400).json({ error: 'Provide at least one of: user, weekly, global, system' });
     }
     if (userN !== null) updates.push([limits.KEY_USER, String(userN)]);
+    if (weeklyN !== null) updates.push([limits.KEY_WEEKLY, String(weeklyN)]);
     if (globalN !== null) updates.push([limits.KEY_GLOBAL, String(globalN)]);
     if (systemN !== null) updates.push([limits.KEY_SYSTEM, String(systemN)]);
 
@@ -707,13 +820,15 @@ function adminRoutes(config) {
       limits.invalidate(...updates.map(([k]) => k));
       log.info('admin', 'Platform limits updated', {
         by: req.user.username,
-        user: userN, global: globalN, system: systemN,
+        user: userN, weekly: weeklyN, global: globalN, system: systemN,
       });
       const userCents = await limits.getDefaultUserLimitCents(pool);
       const globalCents = await limits.getGlobalLimitCents(pool);
       const systemCents = await limits.getSystemTokensLimitCents(pool);
+      const weeklyCents = await limits.getDefaultUserWeeklyLimitCents(pool);
       res.json({
         user_daily_limit_cents: userCents,
+        user_weekly_limit_cents: weeklyCents,
         global_daily_limit_cents: globalCents,
         system_tokens_daily_limit_cents: systemCents,
       });
@@ -744,14 +859,18 @@ function adminRoutes(config) {
   router.get('/api/admin/featured-apps', async (_req, res) => {
     try {
       const { rows: featured } = await pool.query(
-        `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id, fa.sort_order
+        `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id, fa.sort_order,
+                a.main_sha, a.last_deploy_at, a.directory_review_status,
+                a.directory_reviewed_at, a.directory_reviewed_sha
            FROM featured_apps fa
            JOIN apps a ON a.id = fa.app_id
           WHERE NOT a.self_hosted
           ORDER BY fa.sort_order ASC, a.name ASC`
       );
       const { rows: available } = await pool.query(
-        `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id
+        `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id,
+                a.main_sha, a.last_deploy_at, a.directory_review_status,
+                a.directory_reviewed_at, a.directory_reviewed_sha
            FROM apps a
           WHERE NOT a.self_hosted
             AND NOT EXISTS (SELECT 1 FROM featured_apps f WHERE f.app_id = a.id)
@@ -766,11 +885,68 @@ function adminRoutes(config) {
         icon_emoji: r.icon_emoji || null,
         icon_url: r.icon_image_id ? `/app-icons/${r.icon_image_id}` : null,
         sort_order: r.sort_order ?? null,
+        main_sha: r.main_sha || null,
+        last_deploy_at: r.last_deploy_at || null,
+        directory_review_status: r.directory_review_status || 'unreviewed',
+        directory: discoveryCuration.describe(r),
       });
       res.json({ featured: featured.map(shape), available: available.map(shape) });
     } catch (err) {
       log.error('admin', 'Read featured apps failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Review the exact version the admin opened. The row lock and deployment
+  // snapshot check prevent a deploy during review from certifying untested
+  // code. This never launches a probe or changes app access/visibility.
+  router.put('/api/admin/apps/:slug/directory-review', requireAdminWrite, async (req, res) => {
+    const { status, confirmWorking, mainSha, lastDeployAt } = req.body || {};
+    if (!discoveryCuration.REVIEW_STATES.has(status)) {
+      return res.status(400).json({ error: 'Choose unreviewed, working, demo, or broken.' });
+    }
+    if (status === 'working' && confirmWorking !== true) {
+      return res.status(400).json({ error: 'Confirm that you tested the app’s main flow before marking it working.' });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        `SELECT id, self_hosted, status, main_sha, last_deploy_at, icon_emoji, icon_image_id
+           FROM apps WHERE slug = $1 FOR UPDATE`, [req.params.slug]
+      );
+      const app = rows[0];
+      if (!app || app.self_hosted) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (status === 'working') {
+        if (app.status !== 'running' || !app.main_sha || !discoveryCuration.hasIcon(app)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'A reviewed working app must be running, have a deployed version, and have an image or emoji icon.' });
+        }
+        if (mainSha !== app.main_sha || lastDeployAt === undefined
+          || (lastDeployAt !== null && discoveryCuration.timestamp(lastDeployAt) === null)
+          || discoveryCuration.timestamp(lastDeployAt) !== discoveryCuration.timestamp(app.last_deploy_at)) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: 'The app changed while you were reviewing it. Refresh and test the current version.' });
+        }
+      }
+      await client.query(
+        `UPDATE apps SET directory_review_status = $2::text,
+           directory_reviewed_at = CASE WHEN $2::text = 'unreviewed' THEN NULL ELSE NOW() END,
+           directory_reviewed_sha = CASE WHEN $2::text = 'unreviewed' THEN NULL ELSE main_sha END
+         WHERE id = $1`, [app.id, status]
+      );
+      await client.query('COMMIT');
+      log.info('admin', 'Directory review updated', { by: req.user.username, slug: req.params.slug, status, sha: app.main_sha });
+      return res.json({ ok: true });
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+      log.error('admin', 'Directory review failed', { message: err.message });
+      return res.status(500).json({ error: 'Could not save the directory review.' });
+    } finally {
+      client.release();
     }
   });
 
@@ -803,7 +979,9 @@ function adminRoutes(config) {
       const ids = [];
       for (const slug of slugs) {
         const { rows } = await client.query(
-          'SELECT id, self_hosted FROM apps WHERE slug = $1',
+          `SELECT id, self_hosted, status, main_sha, last_deploy_at, icon_emoji, icon_image_id,
+                  directory_review_status, directory_reviewed_at, directory_reviewed_sha
+             FROM apps WHERE slug = $1 FOR UPDATE`,
           [slug]
         );
         if (!rows.length) {
@@ -813,6 +991,10 @@ function adminRoutes(config) {
         if (rows[0].self_hosted) {
           await client.query('ROLLBACK');
           return res.status(400).json({ error: `The platform app cannot be featured: ${slug}` });
+        }
+        if (discoveryCuration.describe(rows[0]).tier !== 'ready') {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `Review ${slug} as working and add an icon before featuring it.` });
         }
         ids.push(rows[0].id);
       }
@@ -974,6 +1156,47 @@ function adminRoutes(config) {
       res.json({ ok: true, daily_limit_cents: rows[0].daily_limit_cents });
     } catch (err) {
       log.error('admin', 'Per-user limit update failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #1788: the weekly twin of the route above. Body `{ cents }` sets a
+  // weekly cap for this user only, `{ cents: null }` clears it back to the
+  // platform default, and `{ cents: 0 }` means "no weekly cap applies to
+  // this user" (see limits.resolveCaps). No cache invalidation for the same
+  // reason as the daily route: per-user values are read fresh from `users`
+  // on every gate.
+  router.put('/api/admin/users/:id/weekly-limit', requireAdminWrite, async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    const { cents } = req.body || {};
+    let value;
+    if (cents === null) {
+      value = null;
+    } else {
+      const n = Number(cents);
+      if (!Number.isInteger(n) || n < 0) {
+        return res.status(400).json({ error: 'cents must be a non-negative integer or null' });
+      }
+      value = n;
+    }
+    try {
+      const { rows } = await pool.query(
+        `UPDATE users SET weekly_limit_cents = $1 WHERE id = $2
+         RETURNING id, username, weekly_limit_cents`,
+        [value, userId]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'User not found' });
+      log.info('admin', 'Per-user weekly limit updated', {
+        id: rows[0].id, username: rows[0].username,
+        weeklyLimitCents: rows[0].weekly_limit_cents,
+        by: req.user.username,
+      });
+      res.json({ ok: true, weekly_limit_cents: rows[0].weekly_limit_cents });
+    } catch (err) {
+      log.error('admin', 'Per-user weekly limit update failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -1424,7 +1647,7 @@ function adminRoutes(config) {
         if (dbExport.isExportInProgress()) {
           await recordExportAudit(req, { status: 'denied', deniedReason: 'in_progress', dbName: target.dbName });
           return res.status(409).json({
-            error: 'An export is already in progress — try again shortly.',
+            error: 'An export is already in progress. Try again shortly.',
             code: 'in_progress',
           });
         }
@@ -1434,7 +1657,7 @@ function adminRoutes(config) {
         // export that dies before producing a byte is on the books.
         const auditId = await recordExportAudit(req, { status: 'requested', dbName: target.dbName });
         if (!auditId) {
-          return res.status(500).json({ error: 'Could not record the export — refusing to run it.' });
+          return res.status(500).json({ error: 'Could not record the export, so it will not be run.' });
         }
 
         const { token, expiresInSeconds } = dbExport.issueTicket({
@@ -1478,7 +1701,7 @@ function adminRoutes(config) {
           by: req.user.username, ip: clientIp(req),
         });
         return res.status(403).json({
-          error: 'This export link has expired — start the export again.',
+          error: 'This export link has expired. Start the export again.',
           code: 'ticket_invalid',
         });
       }
@@ -1505,7 +1728,7 @@ function adminRoutes(config) {
       if (!dbExport.beginExport({ userId: req.user.id, username: req.user.username })) {
         await finishExportAudit(auditId, { status: 'denied', error: 'another export was already running' });
         return res.status(409).json({
-          error: 'An export is already in progress — try again shortly.',
+          error: 'An export is already in progress. Try again shortly.',
           code: 'in_progress',
         });
       }

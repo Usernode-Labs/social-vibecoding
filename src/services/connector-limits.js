@@ -111,6 +111,43 @@ async function checkPromotedCap(pool, config, user) {
   return null;
 }
 
+// ── 1b. The active-session cap, for shared in-progress work ────────────
+//
+// #1347 lets a connector share work to the IN-PROGRESS area instead of only
+// submitting it for review. That card is a real dev session with a real
+// staging preview behind it, so it costs a warm container — which is exactly
+// what config.maxUserSessions already bounds for the browser's own "start a
+// session" button (routes/sessions.js).
+//
+// So this reuses that bound rather than inventing a connector-only one. The
+// promoted cap above says why: a connector doing what the browser permits
+// must not be cut off earlier than the browser, and a full admin keeps the
+// admin tier here as they do everywhere else. Headless rows are excluded, as
+// they are in every other count in this module — an auto run holds no warm
+// worker of the user's.
+//
+// Counted BEFORE the session row is inserted, so an over-cap share leaves no
+// card behind and no branch copied into the app's repository.
+async function checkActiveCap(pool, config, user) {
+  const caps = effectiveSessionCaps(config, user);
+  const count = await countOr(
+    pool,
+    `SELECT COUNT(*) AS cnt FROM chat_sessions
+      WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
+    [user.id],
+    'active-cap'
+  );
+  if (count === null) return UNAVAILABLE;
+  if (count >= caps.activeSessions) {
+    return limitError(
+      'at_capacity',
+      `You already have ${caps.activeSessions} sessions open. Pause or archive one first, `
+      + 'or submit this work for review instead of sharing it as in-progress.'
+    );
+  }
+  return null;
+}
+
 // ── 2. prepare_work reservations ───────────────────────────────────────
 //
 // How many work orders are held open at once — a stock, and the only bound
@@ -123,11 +160,26 @@ async function checkPromotedCap(pool, config, user) {
 // order the caller already holds is free even at the cap, and after the
 // `restart` branch, so starting one over frees its own slot before the
 // count is taken.
+//
+// `session_id IS NULL` — the same clause listOpenWorkOrders selects on, and
+// that is the whole point: the denominator has to be the list the user can
+// actually SEE. A work order the connector has shared (#1347) keeps its row
+// open on purpose, and the Improve panel excludes it because the share
+// already shows on the Dev board as a session card. Counting it here charged
+// it a second budget as well, one with no card to pause and no row in any
+// list — a user at this cap was told to "submit one" while the panel showed
+// them nothing to submit.
+//
+// Nothing is widened by dropping them: sharing obeys checkActiveCap above,
+// which is the real bound on a session with a live preview behind it. This
+// cap is what it says it is — how many work orders are held open and NOT yet
+// handed anywhere.
 async function checkOpenWorkOrders(pool, userId) {
   const open = await countOr(
     pool,
     `SELECT COUNT(*) AS cnt FROM external_agent_tasks
-      WHERE user_id = $1 AND status = 'open' AND expires_at > NOW()`,
+      WHERE user_id = $1 AND status = 'open' AND expires_at > NOW()
+        AND session_id IS NULL`,
     [userId],
     'open-tasks'
   );
@@ -136,7 +188,7 @@ async function checkOpenWorkOrders(pool, userId) {
     return limitError(
       'at_capacity',
       `You have ${LIMITS.openTasks} pieces of work started and not yet submitted, which is the limit. `
-      + 'Submit one, or start one of them over, before starting another — a slot comes back as soon '
+      + 'Submit one, or start one of them over, before starting another. A slot comes back as soon '
       + 'as one is submitted.'
     );
   }
@@ -177,6 +229,7 @@ async function checkFallbackStart(pool, config, user) {
 module.exports = {
   LIMITS,
   checkPromotedCap,
+  checkActiveCap,
   checkOpenWorkOrders,
   checkFallbackStart,
 };

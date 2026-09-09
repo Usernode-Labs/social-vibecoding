@@ -1,4 +1,6 @@
 const { Router } = require('express');
+const { rateLimit } = require('express-rate-limit');
+const { queueTestAlert } = require('../services/test-alert');
 const { getPool } = require('../db/pool');
 const notifications = require('../services/notifications');
 const messageBookmarks = require('../services/message-bookmarks');
@@ -10,10 +12,11 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // ── Staging mock data ──────────────────────────────────────────────────
 // Request-time (?demo=1) injection of the four session-related
 // notification kinds — session_done, auto_solve_done (failed), stale_pr,
-// check_failed — so the header cog's pinned "Needs attention" section,
-// its green badge, and the bell's EXCLUSION of these kinds are all
-// reviewable in a staging preview without waiting for a real session to
-// finish. Same conventions as the other mock feeds (stagingMockProposals
+// check_failed — so the green session badge and the bell's EXCLUSION of
+// these kinds from its own count are reviewable in a staging preview
+// without waiting for a real session to finish, plus a
+// `conversation_message` row so the message notifications the bell counts
+// are reviewable without a real conversation existing in the clone. Same conventions as the other mock feeds (stagingMockProposals
 // in votes.js): fixed 99xxxx ids, "[Mock]" titles, never persisted,
 // strictly a no-op outside staging. Mark-read calls on these ids match
 // no DB row and no-op harmlessly.
@@ -34,6 +37,57 @@ function stagingMockNotifications() {
     detail: null,
   };
   return [
+    // A MESSAGE notification, and the reason it has to be here: this feed is
+    // what the bell's sheet renders, and a staging clone has no conversations
+    // in it (`conversation_messages` is staging:private — see rule 4), so
+    // without this row a preview shows the sheet with no message in it and
+    // the one thing a reviewer is being asked to look at is invisible.
+    //
+    // Newest of the set on purpose: it leads the list, and it is what the
+    // before/after screenshots of `/?shot=notifications&demo=1` are shot on.
+    //
+    // The app fields are NULLED rather than inherited from `base`: serialize()
+    // fails a conversation row closed when it also carries legacy app fields,
+    // so a mock that kept `appId: 0` would be describing a shape the real
+    // pipeline refuses to emit. Same conventions as the rows below otherwise —
+    // a fixed 99xxxx id, "[Mock]" copy, request-time only, never persisted, a
+    // strict no-op outside staging. Opening it routes to a conversation id
+    // that matches no row and lands on the ordinary "no longer available"
+    // state, exactly as the mock invite hits a nonexistent app.
+    {
+      ...base,
+      id: 990207, kind: 'conversation_message',
+      createdAt: new Date(now - 2 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      sourceUsername: 'staging-demo-user',
+      conversationId: 990401,
+      conversationKind: 'direct',
+      conversationTitle: '[Mock] Staging demo conversation',
+      conversationMessageId: 990501,
+      messageContent: '[Mock] Did the notifications change land yet?',
+      sessionId: null, sessionTitle: null,
+      prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
+    // ...and its predecessor in the SAME conversation, one minute older and
+    // adjacent to it in this list. That adjacency is the point: a run of
+    // consecutive same-conversation rows collapses to one row carrying a
+    // count (collapseConversationRuns in the notifications module), which is
+    // the behaviour a preview has to be able to show. One demo message would
+    // render an ordinary uncollapsed row and prove nothing.
+    {
+      ...base,
+      id: 990208, kind: 'conversation_message',
+      createdAt: new Date(now - 3 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      sourceUsername: 'staging-demo-user',
+      conversationId: 990401,
+      conversationKind: 'direct',
+      conversationTitle: '[Mock] Staging demo conversation',
+      conversationMessageId: 990502,
+      messageContent: '[Mock] Ping - are you around?',
+      sessionId: null, sessionTitle: null,
+      prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     // #971: the issue's exact case — a session that finished BEFORE it was
     // promoted, so it has a session title but no PR title. The row must show
     // the title, never the `dev/…` branch name beside it.
@@ -81,6 +135,48 @@ function stagingMockNotifications() {
       sessionId: 990105,
       sessionTitle: null, prTitle: null,
       branchName: 'dev/mockuser-1700000000001',
+      prNumber: null, headlessIssueNumber: null,
+    },
+    // An ALREADY-READ row. The drawer lists unread notifications and parks the
+    // read ones behind "See N older notifications", so without one of these a
+    // staging preview has nothing behind that button — it does not render at
+    // all, the "you're all caught up" state can never be reached, and the two
+    // things a reviewer is being asked to look at are both invisible.
+    //
+    // `readAt` in the past is the whole point of the row, and it is the only
+    // thing that distinguishes it from the four above. Same conventions as
+    // they use: a fixed 99xxxx id, a "[Mock]" title, request-time only, never
+    // persisted, and a no-op outside staging — marking it read again matches
+    // no DB row and harmlessly does nothing.
+    {
+      ...base,
+      id: 990206, kind: 'session_done',
+      createdAt: new Date(now - 3 * 24 * 60 * 60 * 1000).toISOString(),
+      readAt: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(),
+      sessionId: 990106,
+      sessionTitle: '[Mock] Something you already read',
+      prTitle: null, branchName: 'dev/mockuser-1700000000002',
+      prNumber: null, headlessIssueNumber: null,
+    },
+    // #1808: the row that is PAST the relative form's seven-day floor, and
+    // fixed in an earlier year so it stays past it. Every other row here is
+    // minutes or days old, so without this one a preview shows only the "12m
+    // ago" half of the change and never the date the old code could not
+    // reach: these rows had no floor at all and printed "412d ago".
+    //
+    // UNREAD on purpose, which is both where the bug was worst and the only
+    // way a preview can see it: the sheet opens on the Unread tab, so a read
+    // row of this age is one click away from every screenshot and declared
+    // check. An old unread notification is exactly the row that used to read
+    // as a four-hundred-day duration.
+    {
+      ...base,
+      id: 990209, kind: 'session_done',
+      createdAt: '2024-05-21T14:05:00Z',
+      readAt: null,
+      sessionId: 990108,
+      sessionTitle: '[Mock] Something from an earlier year',
+      prTitle: null, branchName: 'dev/mockuser-1700000000003',
       prNumber: null, headlessIssueNumber: null,
     },
   ];
@@ -132,6 +228,27 @@ function stagingMockSavedMessages() {
 function notificationsRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+
+  const testAlertLimiter = rateLimit({
+    windowMs: 60000,
+    limit: 3,
+    keyGenerator: (req) => String(req.user.id),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Please wait a minute before sending another test alert.' },
+  });
+  router.post('/api/me/test-alert', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    return next();
+  }, testAlertLimiter, async (req, res) => {
+    try {
+      return res.json(await queueTestAlert(pool, req.user.id));
+    } catch (err) {
+      log.error('test-alert', 'queue failed', { message: err.message });
+      return res.status(500).json({ error: 'Could not queue the test push. Please try again.' });
+    }
+  });
 
   // Account-level mobile-push policy. This is intentionally a browser-
   // session surface rather than a phone-registration surface: any signed-in
@@ -198,7 +315,18 @@ function notificationsRoutes(config) {
         };
       }
 
-      const rows = await notifications.listForUser(pool, req.user.id, { limit, before });
+      // `?kind=conversation` narrows the page to the conversation kinds — the
+      // bell's Messages tab. That tab filters the shared feed client-side, so
+      // its pager used to walk the WHOLE feed 100 rows at a time looking for
+      // messages, which is why it did not page in place at all. A named group
+      // rather than a free list of kinds: the client does not get to select
+      // arbitrary rows out of its own feed, and the grouping stays defined in
+      // one place (services/notifications.js).
+      const kinds = req.query.kind === 'conversation'
+        ? [...notifications.CONVERSATION_NOTIFICATION_KINDS]
+        : null;
+
+      const rows = await notifications.listForUser(pool, req.user.id, { limit, before, kinds });
       const serialized = rows.map(notifications.serialize);
 
       const hasMore = rows.length === limit;
@@ -228,17 +356,41 @@ function notificationsRoutes(config) {
         // cursor follow-up would only re-send what the client already has.
         // Best-effort: a failure here renders an empty section rather than
         // 500ing the whole dropdown.
-        payload.savedMessages = await messageBookmarks.listForUserSafe(
-          pool, req.user.id, { isAdmin: !!req.user.isAdmin }
-        );
+        //
+        // Both kinds of save land in this one list: an app's group chat and
+        // the Messages area's conversations. They are separate tables (see
+        // src/services/message-bookmarks.js) but one SECTION, so they are
+        // merged here and sorted by save time — the section is "what I
+        // saved, most recent first", and splitting it by where the message
+        // happened to be posted would make the reader do the merge instead.
+        // The cap is applied after the merge for the same reason.
+        const [appSaved, conversationSaved] = await Promise.all([
+          messageBookmarks.listForUserSafe(
+            pool, req.user.id, { isAdmin: !!req.user.isAdmin }
+          ),
+          messageBookmarks.listConversationsForUserSafe(pool, req.user.id),
+        ]);
+        payload.savedMessages = [...appSaved, ...conversationSaved]
+          .sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt))
+          .slice(0, messageBookmarks.MAX_SAVED);
         // Staging-only demo rows (?demo=1) — see stagingMockNotifications.
         // First page only (they'd duplicate on cursor follow-ups), unread
-        // count bumped to match so the client's red-badge subtraction
-        // (account unread minus loaded session-kind unread) stays honest.
+        // count bumped to match so the bell's number counts the mocks it is
+        // showing. (It used to be phrased as keeping a subtraction honest:
+        // the client held back the session kinds for a second badge on
+        // #improve-btn. #1610 folded that count into the bell, so the total
+        // is simply the total now.)
+        //
+        // Only the UNREAD mocks are counted. This used to add `mocks.length`
+        // outright, which was right while every mock was unread; one of them
+        // now ships with a `readAt` (so the drawer's "older notifications"
+        // view has something behind it), and counting that one would claim an
+        // already-read row as unread — inflating the red badge by one and
+        // leaving "Mark all read" enabled with nothing left to mark.
         if (IS_STAGING && req.query.demo === '1') {
           const mocks = stagingMockNotifications();
           payload.notifications = [...mocks, ...payload.notifications];
-          payload.unread += mocks.length;
+          payload.unread += mocks.filter((m) => !m.readAt).length;
           // Pinned-invite demo row: drives the drawer's Invites section
           // and its swipe Accept/Decline path in a staging preview.
           // Obviously fake (staging-demo-*); acting on it hits a

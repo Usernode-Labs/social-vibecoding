@@ -30,7 +30,15 @@ function harness() {
   ];
   const state = {
     deployments: [],
-    registrations: [{ id: 1, environment: 'production' }],
+    registrations: [{
+      id: 1,
+      user_id: 7,
+      environment: 'production',
+      installation_id: '123e4567-e89b-12d3-a456-426614174000',
+      platform: 'ios',
+      permission_status: 'authorized',
+    }],
+    registrationEvents: [],
     deliveries: [
       { id: 1, environment: 'production', status: 'pending' },
       { id: 2, environment: 'production', status: 'sending' },
@@ -87,11 +95,20 @@ function harness() {
         }
         return { rows: [] };
       }
-      if (sql.startsWith('DELETE FROM mobile_push_registrations')) {
+      if (sql.startsWith('WITH removed AS')
+          && sql.includes("'firebase_project_reset'")) {
+        const removed = state.registrations.filter((row) => (
+          row.environment === params[0]
+        ));
         state.registrations = state.registrations.filter((row) => (
           row.environment !== params[0]
         ));
-        return { rows: [] };
+        state.registrationEvents.push(...removed.map((row) => ({
+          ...row,
+          event_kind: 'firebase_project_reset',
+          reason_code: 'firebase_project_changed',
+        })));
+        return { rows: [], rowCount: removed.length };
       }
       if (sql.startsWith('UPDATE mobile_push_deliveries')) {
         for (const delivery of state.deliveries) {
@@ -176,6 +193,13 @@ test('Firebase project changes remove old-project registrations', async () => {
   }));
   assert.equal(changed.firebase_project_id, 'social-prod-v2');
   assert.deepEqual(state.registrations, []);
+  assert.deepEqual(state.registrationEvents.map((event) => [
+    event.event_kind, event.reason_code, event.installation_id,
+  ]), [[
+    'firebase_project_reset',
+    'firebase_project_changed',
+    '123e4567-e89b-12d3-a456-426614174000',
+  ]]);
   assert.equal(state.deliveries[2].last_error_code, 'firebase_project_changed');
 });
 

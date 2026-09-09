@@ -190,8 +190,16 @@ test('the stop route still answers with a stopped flag the client can branch on'
 });
 
 test('/status exposes stopping so a reload repaints the Stopping button', () => {
-  assert.match(SRC, /const\s+stopping\s*=\s*!!stopRegistry\.get\(sessionId\)\?\.stopped;/,
-    '/status derives stopping from the live stop registry');
+  // #1378 widened the derivation: an in-process handle still answers first,
+  // but a stop clicked just before a restart lives on the turn record, so
+  // with no handle /status falls back to the durable stamp. Without that
+  // fallback a reload repaints a calm red Stop for a turn already ending.
+  assert.match(SRC, /const\s+stopHandleNow\s*=\s*stopRegistry\.get\(sessionId\);/,
+    '/status still reads the live stop registry');
+  assert.match(SRC, /const\s+stopping\s*=\s*stopHandleNow\s*\?\s*!!stopHandleNow\.stopped\s*:\s*!!durableStop;/,
+    '/status derives stopping from the handle, falling back to the durable stop stamp');
+  assert.match(SRC, /const\s+durableStop\s*=\s*turnLifecycle\.stopRequestOf\(durableTurn\);/,
+    'and the durable half comes from the turn record via stopRequestOf');
   // Window widened from 200 in #907, which added runner/runnerLabel/
   // localAgent as siblings; the assertion below is key presence, not size.
   const payload = SRC.match(/res\.json\(\{\s*\n?\s*busy,[\s\S]{0,400}?\}\);/);

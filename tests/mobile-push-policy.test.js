@@ -75,6 +75,34 @@ test('reviewed interaction kinds build and unknown kinds stay closed', () => {
   assert.throws(() => buildMessage({ ...INPUT, notificationId: 2147483648 }), /id_invalid/);
 });
 
+test('the unread total rides as the icon badge on both platforms', () => {
+  // #1445: iOS only badges the homescreen icon when a push carries
+  // `aps.badge`; Android launchers read `notificationCount`.
+  const message = buildMessage({ ...INPUT, unreadCount: 5 });
+  assert.deepEqual(message.apns.payload.aps, {
+    category: 'USERNODE_SOCIAL', threadId: 'usernode-social', badge: 5,
+  });
+  assert.equal(message.android.notification.notificationCount, 5);
+
+  // Zero is a valid count (it clears the badge), even though the worker
+  // clamps to 1 in practice because the delivered notification is unread.
+  const cleared = buildMessage({ ...INPUT, unreadCount: 0 });
+  assert.equal(cleared.apns.payload.aps.badge, 0);
+  assert.equal(cleared.android.notification.notificationCount, 0);
+});
+
+test('a missing or invalid unread count degrades to the pre-badge payload', () => {
+  // The badge is display-only: a count problem must never fail a delivery,
+  // so anything but a non-negative safe integer omits both fields.
+  for (const unreadCount of [undefined, null, -1, 1.5, NaN, '5', Infinity]) {
+    const message = buildMessage({ ...INPUT, unreadCount });
+    assert.equal('badge' in message.apns.payload.aps, false,
+      `aps.badge omitted for ${String(unreadCount)}`);
+    assert.equal('notificationCount' in message.android.notification, false,
+      `notificationCount omitted for ${String(unreadCount)}`);
+  }
+});
+
 const CONTEXT = {
   appName: 'MyPage',
   conversationTitle: 'Design crew',
@@ -117,31 +145,31 @@ test('each kind renders its own title and body from send-time context', () => {
       'Your work is getting noticed'],
     ['collab_invite', CONTEXT,
       '@alice wants to build MyPage with you',
-      'Join as a collaborator — accept or decline in the app'],
+      'Join as a collaborator. Accept or decline in the app'],
     ['collab_invite_accepted', CONTEXT,
       '@alice is in! · MyPage',
-      'Your invite was accepted — you can start building together'],
+      'Your invite was accepted. You can start building together'],
     ['approver_invite', CONTEXT,
       '@alice asked you to be an approver · MyPage',
-      "You'd review and vote on proposals — accept in the app"],
+      "You'd review and vote on proposals. Accept in the app"],
     ['approver_invite_accepted', CONTEXT,
       '@alice is now an approver · MyPage',
       'They can review and vote on proposals from now on'],
     ['spec_shared', { ...CONTEXT, detail: '3' },
       '@alice shared "Fix login redirect loop" with you · MyPage',
-      'Spec v3 — take a look and leave feedback'],
+      'Spec v3. Take a look and leave feedback'],
     ['session_done', CONTEXT,
       'Your build is ready · MyPage',
-      '"Fix login redirect loop" finished — review it while it\'s fresh'],
+      '"Fix login redirect loop" finished. Review it while it\'s fresh'],
     ['pr_proposed', { ...CONTEXT, prTitle: 'Fix login redirect loop', sessionTitle: null },
       '@alice proposed "Fix login redirect loop" · MyPage',
-      'Take a look — your vote decides'],
+      '@alice would love your eyes on this'],
     ['check_failed', CONTEXT,
       'Checks failed on "Fix login redirect loop" · MyPage',
       'Needs a fix before it can merge'],
     ['stale_pr', CONTEXT,
-      '"Fix login redirect loop" is waiting for votes · MyPage',
-      'Nudge collaborators or share the preview'],
+      '"Fix login redirect loop" is waiting for eyes · MyPage',
+      'Share the preview or ask a friend to try it'],
   ];
   for (const [kind, context, title, body] of cases) {
     const message = buildMessage({ ...INPUT, kind, context });
@@ -152,15 +180,15 @@ test('each kind renders its own title and body from send-time context', () => {
 test('auto-solve outcomes surface urgency in the title, next step in the body', () => {
   const cases = [
     ['spec', 'Auto-solve finished "Fix login redirect loop" · MyPage',
-      'Spec ready — review it in the app'],
+      'Spec ready. Review it in the app'],
     ['code', 'Auto-solve finished "Fix login redirect loop" · MyPage',
-      "Code ready — review and promote when you're happy"],
+      "Code ready. Review and promote when you're happy"],
     ['spec_code', 'Auto-solve finished "Fix login redirect loop" · MyPage',
-      "Spec and code ready — review and promote when you're happy"],
+      "Spec and code ready. Review and promote when you're happy"],
     ['question', 'Auto-solve is waiting on you · MyPage',
       '"Fix login redirect loop" needs an answer before it can continue'],
     ['failed', 'Auto-solve hit a wall · MyPage',
-      '"Fix login redirect loop" failed — open the log to see what happened'],
+      '"Fix login redirect loop" failed. Open the log to see what happened'],
   ];
   for (const [detail, title, body] of cases) {
     const message = buildMessage({
@@ -178,14 +206,14 @@ test('a stale proposal names how long it has been waiting when the promotion tim
   }).notification.body;
   assert.equal(
     bodyAfter(3 * day + 60_000),
-    'No votes in 3 days — nudge collaborators or share the preview'
+    'Nobody has weighed in for 3 days. Share the preview or ask a friend to try it'
   );
   assert.equal(
     bodyAfter(day + 60_000),
-    'No votes in 1 day — nudge collaborators or share the preview'
+    'Nobody has weighed in for 1 day. Share the preview or ask a friend to try it'
   );
   // Under a day, or promoted_at missing entirely: the nudge stands alone.
-  assert.equal(bodyAfter(60_000), 'Nudge collaborators or share the preview');
+  assert.equal(bodyAfter(60_000), 'Share the preview or ask a friend to try it');
 });
 
 test('machine-generated branch names never appear as a label', () => {
@@ -303,4 +331,14 @@ test('enabled delivery requires a matching Firebase project and explicit environ
     firebaseProjectId: 'social-prod',
     firebaseServiceAccountJsonB64: encoded,
   }));
+});
+
+test('test alert uses explicit copy with the normal opaque push envelope', () => {
+  const message = buildMessage({ ...INPUT, kind: 'test_alert' });
+  assert.deepEqual(message.notification, {
+    title: 'Usernode test alert',
+    body: 'Your phone can receive push notifications from Usernode.',
+  });
+  assert.equal(message.data.notification_id, '42');
+  assert.equal(message.android.notification.channelId, 'social_activity');
 });

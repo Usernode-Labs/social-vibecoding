@@ -30,6 +30,9 @@ import * as React from 'react';
  *                   the DOM.
  *   `filled`      — `fill="currentColor"`, no stroke. One: the GitHub mark.
  *
+ * One glyph is written out instead of built: `EllipsisVerticalIcon` is three
+ * <circle>s on the 20 grid, and there is no `d` to hand a factory.
+ *
  * Everything else — `fill="none"`, `stroke="currentColor"`,
  * `viewBox="0 0 24 24"`, `strokeLinecap`/`strokeLinejoin` on every path — was
  * already identical at all 36 sites, so it lives in the factory.
@@ -111,6 +114,34 @@ export const ChevronLeftInsetIcon = stroked('ChevronLeftInsetIcon', 'M15 18l-6-6
 
 export const ChevronRightIcon = stroked('ChevronRightIcon', 'M9 5l7 7-7 7');
 
+// Heroicons v1 outline view-grid — the drawer's "Your apps" row (owner
+// review round 2: the section header is a nav item of its own).
+export const Squares2X2Icon = stroked('Squares2X2Icon', 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z');
+
+/**
+ * An app WINDOW — a framed rectangle with a title bar (#1367).
+ *
+ * The "App" segment of the App/Feed/Kanban toggle, sitting beside BoardIcon
+ * (kanban columns) and ListLinesIcon (a feed). Those two draw what their view
+ * looks like, so this one does too: the running app in its frame, which is the
+ * one of the three that is not a view OF the development work.
+ */
+export const AppWindowIcon = stroked('AppWindowIcon', [
+  'M4 6a1 1 0 011-1h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V6z',
+  'M4 9.5h16',
+]);
+
+/**
+ * The pencil with a spark — "back to building" on a session screen while its
+ * preview is up (Streamlined Concept: the Figma bar names lucide's
+ * pencil-sparkles; this is the shell's own transcription of that idea — the
+ * composer's pencil body plus a four-point spark in the freed corner).
+ */
+export const PencilSparklesIcon = stroked('PencilSparklesIcon', [
+  'M16.5 6.5a2.12 2.12 0 0 1 3 3L9 20l-4 1 1-4z',
+  'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
+]);
+
 export const ArrowRightIcon = stroked('ArrowRightIcon', 'M14 5l7 7m0 0l-7 7m7-7H3');
 
 /**
@@ -123,9 +154,36 @@ export const ArrowRightShortIcon = stroked('ArrowRightShortIcon', 'M13 7l5 5m0 0
 
 export const XIcon = stroked('XIcon', 'M6 18L18 6M6 6l12 12');
 
+/**
+ * The dev composer's send mark (Streamlined Concept). Its button is a 44px
+ * circle now rather than a rectangle carrying the word "Send", so the arrow
+ * IS the label — drawn on the full 24 grid, like PlusWideIcon and for the
+ * same reason: it is the content of a round control, not a glyph beside a
+ * word.
+ */
+export const ArrowUpIcon = stroked('ArrowUpIcon', 'M12 19V5M5 12l7-7 7 7');
+
 export const Bars3Icon = stroked('Bars3Icon', 'M4 6h16M4 12h16M4 18h16');
 
 export const PlusIcon = stroked('PlusIcon', 'M12 5v14M5 12h14');
+
+/**
+ * The plus that spans the whole 24 grid rather than PlusIcon's inset one, and
+ * is always drawn at a heavier stroke. Three sites want the bolder mark
+ * because it is the CONTENT of a small round badge or an empty tile rather
+ * than a label's leading glyph: the home card menu's Add control, Discover's
+ * add badge, and the Create app tile.
+ *
+ * Two of those still live in HTML strings (features/home/home.js's card menu)
+ * — this export is the source of truth for that duplicate.
+ */
+export const PlusWideIcon = stroked('PlusWideIcon', 'M12 4v16m8-8H4');
+
+/**
+ * The disclosure caret the home panels' expand toggle rotates — and
+ * (Streamlined Concept) the header title tab's "name ⌄" caret.
+ */
+export const ChevronDownIcon = stroked('ChevronDownIcon', 'M19 9l-7 7-7-7');
 
 export const HomeIcon = strokedPath(
   'HomeIcon',
@@ -165,6 +223,87 @@ export const TrophyIcon = stroked(
  */
 export const CheckIcon = stroked('CheckIcon', 'M5 13l4 4L19 7');
 
+// ── The dev chat's banner glyphs ─────────────────────────────────────────
+//
+// Five ports, moved here from inline `<svg>`s in `renderChatView`'s four
+// banner templates when that strip converted. Each is the heroicons 24-outline
+// path the templates carried; none is a redraw, and none of the four glyphs
+// above is the same shape — `CheckIcon` and `PlusWideIcon` are the shell's own
+// smaller-box spellings, and swapping either in would have been a visual
+// change on a strip this slice does not otherwise touch.
+export const CheckLongIcon = stroked('CheckLongIcon', 'M4.5 12.75l6 6 9-13.5');
+export const PlusThinIcon = stroked('PlusThinIcon', 'M12 4.5v15m7.5-7.5h-15');
+export const ClockIcon = stroked('ClockIcon', 'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z');
+export const UserCircleIcon = stroked(
+  'UserCircleIcon',
+  'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z'
+);
+export const WarningTriangleIcon = stroked(
+  'WarningTriangleIcon',
+  'M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z'
+);
+
+// Five more ports, from `renderChatView`'s composer and `_renderSavedDrafts`'
+// three row actions, moved here when that block converted. Each is the path
+// the template carried, unchanged.
+//
+// Their FRAME is normalised onto `stroked`, which is a real DOM difference
+// and a deliberate one: the templates wrote `stroke-linecap` and
+// `stroke-linejoin` on the `<svg>`, this factory writes them on each `<path>`.
+// Both inherit, so nothing draws differently — and the alternative is a
+// fourth renderer whose only job is to hold five glyphs' attribute placement.
+// Size still comes from `width`/`height` attributes, which is how the
+// composer wrote them (every other call site in the shell uses a class).
+export const PaperclipIcon = stroked(
+  'PaperclipIcon',
+  'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48'
+);
+export const SaveDraftIcon = stroked('SaveDraftIcon', [
+  'M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z',
+  'M17 21v-8H7v8',
+  'M7 3v5h8',
+]);
+export const DraftSendIcon = stroked('DraftSendIcon', ['M22 2 11 13', 'M22 2 15 22l-4-9-9-4z']);
+export const DraftEditIcon = stroked('DraftEditIcon', [
+  'M12 20h9',
+  'M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
+]);
+export const DraftTrashIcon = stroked('DraftTrashIcon', [
+  'M3 6h18',
+  'M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2',
+  'M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6',
+]);
+
+/**
+ * The spinning arc, as the sync banner draws it.
+ *
+ * Not a `stroked()` glyph: it is a faint ring with a bright quarter-arc laid
+ * over it — a `<circle>` and a FILLED `<path>`, two different kinds of child —
+ * so the helpers above cannot express it. The colour and the size come from
+ * `className`, like every other icon here; `animate-spin` is the caller's, so
+ * a still frame of it can be rendered where a capture would otherwise be
+ * non-deterministic.
+ */
+export const SpinnerArcIcon = ({ id, className, ...rest }: IconProps) => (
+  <svg id={id} className={className} fill="none" viewBox="0 0 24 24" {...rest}>
+    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+  </svg>
+);
+SpinnerArcIcon.displayName = 'SpinnerArcIcon';
+
+/**
+ * A trophy on a plinth — the door to the Leaderboard screen, drawn on the
+ * 24 grid at a finer weight than TrophyIcon's blockier mark. TrophyIcon was
+ * the hamburger drawer's row glyph; this is the one the home screen's
+ * Challenges bar and its standings footer carry, and the two are genuinely
+ * different drawings rather than two spellings of one.
+ */
+export const TrophyOutlineIcon = stroked(
+  'TrophyOutlineIcon',
+  'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
+);
+
 export const ShieldCheckIcon = stroked(
   'ShieldCheckIcon',
   'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z',
@@ -192,12 +331,6 @@ export const ChatIcon = stroked(
 export const ChatBubbleTailIcon = stroked(
   'ChatBubbleTailIcon',
   'M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H7l-4 2 1.3-4A9 9 0 1121 12z',
-);
-
-/** The dev board's discussion glyph — a squared bubble with a tail. */
-export const DiscussionIcon = stroked(
-  'DiscussionIcon',
-  'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z',
 );
 
 export const ThumbsUpIcon = stroked(
@@ -232,6 +365,46 @@ export const UserGroupIcon = stroked(
 
 // ── Tooling ──────────────────────────────────────────────────────────────
 
+/**
+ * Board columns — the Dev screen's Kanban tab, and the Improve panel's row
+ * that opens it.
+ *
+ * Transcribed verbatim from `VIEW_ICON_PATHS.kanban` in
+ * features/dev-board/board-frame.tsx, which is where this glyph has been drawn
+ * since the board shipped. THE UI OVERHAUL gave it a second call site (the
+ * Improve panel), and a second inline copy of a path is exactly the drift this
+ * module exists to prevent — so it became an export rather than a duplicate.
+ */
+export const BoardIcon = stroked('BoardIcon', 'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z');
+
+/**
+ * A NEWSPAPER — the Activity row and screen.
+ *
+ * The Figma board names this slot `lucide/newspaper`, and the glyph is right:
+ * Activity is the project's record of what happened, not a chat. The path is
+ * the shell's own set's Heroicons v1 outline newspaper rather than lucide's,
+ * for the reason in this file's header — one grid, one stroke rhythm.
+ */
+export const NewspaperIcon = stroked(
+  'NewspaperIcon',
+  'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
+);
+
+/**
+ * Three equal rules — the Dev screen's Feed tab, and the Improve panel's row
+ * that opens it.
+ *
+ * The same path `VIEW_ICON_PATHS.list` drew for the retired List view, kept
+ * deliberately: Feed IS that surface, refocused on recent activity, and giving
+ * it a new glyph would have said "something else lives here now" to everyone
+ * who already knew where to look.
+ *
+ * Identical to Bars3Icon's path, which is not a mistake — the hamburger and a
+ * list of rules are the same three lines. Two names, because the call sites
+ * mean different things and a `Bars3Icon` in a Feed row would read as a bug.
+ */
+export const ListLinesIcon = stroked('ListLinesIcon', 'M4 6h16M4 12h16M4 18h16');
+
 export const TerminalIcon = stroked(
   'TerminalIcon',
   'M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z',
@@ -247,9 +420,28 @@ export const SunIcon = stroked(
   'M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z',
 );
 
+/**
+ * An ⓘ in a circle — a help affordance beside a heading, not a status. The
+ * home screen's widget strip uses it for "how do I add this to my home
+ * screen?"; it is the only glyph in the set drawn as a filled counter inside a
+ * ring, which is what keeps it from reading as an error or a warning.
+ */
+export const InfoCircleIcon = stroked(
+  'InfoCircleIcon',
+  'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z',
+);
+
 export const LightBulbIcon = stroked(
   'LightBulbIcon',
   'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
+);
+
+// Heroicons' arrow-path: the "there is a new build, reload onto it" glyph on
+// the Improve button, and the only rotational arrow in the set — ArrowRightIcon
+// and its short twin are directional, not cyclic.
+export const ArrowPathIcon = stroked(
+  'ArrowPathIcon',
+  'M16.023 9.348h4.992V4.356m-4.992 4.992l3.181-3.183a8.25 8.25 0 00-13.803 3.7M4.031 9.865v4.99m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7',
 );
 
 export const CameraIcon = stroked('CameraIcon', [
@@ -271,12 +463,11 @@ export const PhotoIcon = stroked(
  * `strokeWidth="1.5"` — both call sites pass it, rather than the default '2'
  * this file's older v1 glyphs want.
  *
- * These two paths are ALSO inlined in public/js/group-chat.js, and that is
- * deliberate: the message's own save button is rendered by a classic script
- * that cannot import this module. It is the one duplication in the set, so
- * tests/notifications-saved-section.test.js reads the strings out of here and
- * asserts the script still carries them — redrawing the glyph in one place
- * fails rather than quietly shipping two bookmarks.
+ * These two paths used to be inlined in public/js/group-chat.js as well —
+ * the one duplication in the set, because the message's save button was
+ * rendered by a classic script that cannot import this module. The transcript
+ * is React and that button is `<RowActions>`, so the copy is gone and this is
+ * the only place either glyph is drawn.
  */
 export const BookmarkIcon = stroked(
   'BookmarkIcon',
@@ -286,6 +477,76 @@ export const BookmarkIcon = stroked(
 export const BookmarkSolidIcon = filled(
   'BookmarkSolidIcon',
   'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
+);
+
+/**
+ * The ⋮ overflow control — three filled dots on the 20 grid, not the 24 one.
+ *
+ * It is written out rather than built by `filled()` because it is the only
+ * glyph in the set drawn from <circle>s: three round dots on a 24 grid have to
+ * be described as three arcs each, and the path data for that is unreadable
+ * next to `cx`/`cy`/`r`. The 20 viewBox is the reason the radii are whole
+ * numbers.
+ */
+export const EllipsisVerticalIcon = ({ id, className, ...rest }: IconProps) => (
+  <svg id={id} className={className} viewBox="0 0 20 20" fill="currentColor" {...rest}>
+    <circle cx="10" cy="4.2" r="1.6" />
+    <circle cx="10" cy="10" r="1.6" />
+    <circle cx="10" cy="15.8" r="1.6" />
+  </svg>
+);
+EllipsisVerticalIcon.displayName = 'EllipsisVerticalIcon';
+
+/**
+ * The Dev card's ⋯ trigger — three dots on a HORIZONTAL row, in a 20×20 box.
+ *
+ * Its own component rather than a `stroked` entry for the same reason
+ * `EllipsisVerticalIcon` above is: circles, not a path, and a viewBox that
+ * matches the pill it sits in rather than the 24×24 outline grid.
+ */
+export const EllipsisHorizontalIcon = ({ id, className, ...rest }: IconProps) => (
+  <svg id={id} className={className} viewBox="0 0 20 20" fill="currentColor" {...rest}>
+    <circle cx="4" cy="10" r="1.6" />
+    <circle cx="10" cy="10" r="1.6" />
+    <circle cx="16" cy="10" r="1.6" />
+  </svg>
+);
+EllipsisHorizontalIcon.displayName = 'EllipsisHorizontalIcon';
+
+/**
+ * "Open the staging preview" — the eye, and the same eye struck through.
+ *
+ * The two `d` strings are named constants rather than inline attributes for
+ * one reason: tests/shell-icon-set.test.js reads this module's path data as
+ * the QUOTED literals in it, and compares the prerendered document against
+ * that set. Inline `d="…"` on the element is invisible to it, which read as
+ * a re-inlined glyph the moment the eye started shipping in the document
+ * (#1606 put it on every password field). The rendered output is unchanged.
+ */
+const EYE_OUTLINE = 'M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z';
+const EYE_SLASH = 'M4 20 20 4';
+
+export const EyeIcon = ({ id, className, strokeWidth = '2', ...rest }: IconProps) => (
+  <svg id={id} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} {...rest}>
+    <path strokeLinecap="round" strokeLinejoin="round" d={EYE_OUTLINE} />
+    <circle cx="12" cy="12" r="2.75" />
+  </svg>
+);
+EyeIcon.displayName = 'EyeIcon';
+
+export const EyeOffIcon = ({ id, className, strokeWidth = '2', ...rest }: IconProps) => (
+  <svg id={id} className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth} {...rest}>
+    <path strokeLinecap="round" strokeLinejoin="round" d={EYE_OUTLINE} />
+    <circle cx="12" cy="12" r="2.75" />
+    <path strokeLinecap="round" d={EYE_SLASH} />
+  </svg>
+);
+EyeOffIcon.displayName = 'EyeOffIcon';
+
+/** The author-only inline title edit: a pencil over a document corner. */
+export const PencilSquareIcon = stroked(
+  'PencilSquareIcon',
+  'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
 );
 
 export const GitHubIcon = filled(

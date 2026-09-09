@@ -47,6 +47,7 @@ poolMod.getPool = () => ({
 });
 
 const { authRoutes, DEV_FLOWS } = require('../src/routes/auth');
+const { shellMarkup } = require('./lib/shell-markup');
 
 // With OAuth credentials configured the hand-off is offerable; the
 // no-credentials case gets its own server below.
@@ -210,19 +211,37 @@ test('Settings offers the same preference as a dropdown', () => {
   assert.match(js, /_renderDevFlowSection/);
   assert.match(js, /_saveDevFlow/);
   assert.match(js, /\/api\/me\/dev-flow/);
-  assert.match(js, /id="settings-dev-flow"/);
-  assert.match(js, /devFlowPreference/, 'the section must render from the /me value');
-  // The shell body was frozen against a pre-migration fixture when this was
-  // written (#1078 replaced that with the id/script baselines in
-  // tests/baselines/), so this section is INJECTED by JS
-  // rather than added to frontend/src/Shell.tsx. If that ever changes, the
-  // injection can go — but silently adding static markup instead would fail
-  // the parity test, so the reason is recorded where the code is.
-  assert.match(js, /data-settings-section="connectors"/,
-    'the injected section must land in the Connections settings section');
-  const html = read('public/index.html');
-  assert.ok(!html.includes('id="settings-dev-flow"'),
-    'the dropdown must NOT be static markup — the shell document is frozen');
+  assert.match(js, /devFlowPreference/, 'the control renders from the /me value');
+
+  // ── This assertion INVERTED, on purpose (#1191) ────────────────────
+  //
+  // It used to require that the block be INJECTED and that the dropdown NOT
+  // appear in public/index.html. The reason was real at the time: the shell
+  // body was a hand-written document frozen against a pre-migration fixture,
+  // so a new settings control could only be added by
+  // `document.createElement` at runtime. #1078 replaced that fixture with the
+  // id/script baselines, and the Connections pane is a React component, so
+  // the injection became a legacy module writing a node into a subtree React
+  // owns — the one thing the ownership rule forbids.
+  //
+  // The block is markup now, its three ids are declared in
+  // tests/shell-id-inventory.test.js's ADDED_IDS with that reason, and the
+  // module keeps exactly what it keeps for every other control on the screen.
+  const pane = read('frontend/src/features/settings/sections/connectors.tsx');
+  assert.match(pane, /id="dev-flow-pref-section"/);
+  assert.match(pane, /id="settings-dev-flow"/);
+  assert.match(pane, /data-settings-section="connectors"/,
+    'and it is in the Connections pane, where the flows it configures live');
+  const html = shellMarkup();
+  assert.ok(html.includes('id="settings-dev-flow"'),
+    'so the dropdown IS in the prerendered document');
+  assert.ok(html.indexOf('id="dev-flow-pref-section"') < html.indexOf('id="github-link-section"'),
+    'above the GitHub block, where the injection put it — the preference reads '
+    + 'as the question and the link below it as one of the answers');
+  // Nothing builds it any more.
+  const render = js.slice(js.indexOf('    _renderDevFlowSection() {'));
+  assert.doesNotMatch(render.slice(0, 1400), /createElement|innerHTML|insertBefore/,
+    'the renderer binds and reflects; it does not build');
 });
 
 test('Settings disables the hand-offs when the deployment cannot offer them', () => {
@@ -231,38 +250,49 @@ test('Settings disables the hand-offs when the deployment cannot offer them', ()
     'a deployment with no GitHub link must not offer a preference it cannot honour');
 });
 
-test('the dev chat honours the preference instead of asking again', () => {
+test('the dev chat asks nothing at creation, and assumes nothing either', () => {
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
-  // The saved value is no longer read as a raw string here: it is one input
-  // to BuildVenues.currentVenue, which resolves the whole precedence chain
-  // (imported > lease > backend > saved flow) in one place. 'platform' and
-  // an unset preference both come back as a venue with no `flow`, which is
-  // exactly the "build here, render nothing" case the old
-  // `pref === 'platform'` branch spelled out by hand.
-  assert.match(devChat, /devFlowPreference/, 'the gate reads the value from App.user');
-  assert.match(devChat, /BuildVenues\.preselect\(BuildVenues\.currentVenue\(/,
-    'the saved preference is resolved through the shared venue list');
   assert.doesNotMatch(devChat, /forcePicker/,
-    'nothing re-asks at creation time — the venue line is the door now');
+    'nothing re-asks at creation time — the venue dropdown is the door now');
+  // #1353: and nothing ANSWERS for the user either. The saved default used
+  // to turn any untouched session into a web hand-off before a word was
+  // typed — while the venue derivation, which never read the preference,
+  // went on telling the header and the sheet that the session was
+  // On-Platform. One preference, two screens, and the only way back was per
+  // tab. A hand-off is a choice made about THIS session now, through the
+  // dropdown, and recorded on it (chat_sessions.build_venue).
+  const target = devChat.match(/_devFlowTarget\(\) \{[\s\S]*?\n  \},/);
+  assert.ok(target, '_devFlowTarget must exist');
+  assert.doesNotMatch(target[0], /devFlowPreference/,
+    'the walkthrough is not summoned by a standing preference');
+  const venue = devChat.match(/_currentVenueId\(\) \{[\s\S]*?\n  \},/);
+  assert.ok(venue, '_currentVenueId must exist');
+  assert.doesNotMatch(venue[0], /devFlowPreference/,
+    'nor does the venue the whole session paints from claim one');
 });
 
-test('the walkthrough only appears where the hand-off can still be started', () => {
-  // Otherwise it would sit above a conversation already in progress, or on a
-  // session whose proposal exists — offering to start work somewhere else
-  // when the work is already underway here.
+test('the walkthrough appears exactly where the session says it is handed over', () => {
+  // The gates this used to check — no PR, still active, nothing typed —
+  // existed to keep a walkthrough summoned by a standing PREFERENCE from
+  // landing on work already under way. With that door closed (#1353) the
+  // walkthrough has one cause left: the venue this session is in, which is
+  // a deliberate act and outranks all three of those states by design
+  // (#1281 — a hand-off chosen halfway through a session is still a
+  // hand-off). So the assertion is that there is ONE input, not four.
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
   const fnStart = devChat.indexOf('_devFlowTarget() {');
   assert.ok(fnStart !== -1, '_devFlowTarget must exist');
   const fn = devChat.slice(fnStart, devChat.indexOf('\n  },', fnStart));
-  assert.match(fn, /pr_number/, 'a session with a proposal is past the choice');
-  assert.match(fn, /status !== 'active'/, 'an inactive session is past the choice');
-  assert.match(fn, /role === 'user'/, 'a session with a typed message is past the choice');
-  assert.match(fn, /externalFlowsAvailable/,
-    'with no hand-off available there is no choice to offer, so nothing renders');
-  // …but an EXPLICIT choice from the venue sheet outranks all of it: the
-  // user just asked for this flow, in this session, out loud.
-  assert.match(fn, /flow\.mode === 'wizard' && flow\.agent/,
-    'an explicit pick renders the walkthrough regardless of the gates above');
+  assert.match(fn, /DevChat\._currentVenueId\(\)/, 'the venue is the whole question');
+  assert.match(fn, /'web-codex'/);
+  assert.match(fn, /'web-claude-code'/);
+  assert.doesNotMatch(fn, /pr_number|status !== 'active'|role === 'user'/,
+    'no second set of gates to fall out of step with the header');
+  // And the surface asks the same one thing, which is the invariant
+  // tests/venue-surface-sync.test.js drives for real.
+  const launchpad = devChat.match(/_launchpadVenue\(\) \{[\s\S]*?\n  \},/);
+  assert.ok(launchpad, '_launchpadVenue must exist');
+  assert.match(launchpad[0], /DevChat\._currentVenueId\(\)/);
 });
 
 test('the "+" menu asks nothing about venue', () => {
@@ -285,9 +315,10 @@ test('the "+" menu is two named groups, not one flat list', () => {
   const appView = read('public/js/app-view.js');
   // #1084 chunk G converted the menu to JSX: the two headings are
   // <PlusMenuHeading> elements in the board frame now, not
-  // AppView._plusMenuHeading() calls. Same two groups, same labels.
+  // AppView._plusMenuHeading() calls. #1490 leaves import as the only build
+  // action here, since a new change starts in Improve.
   const frame = read('frontend/src/features/dev-board/board-frame.tsx');
-  assert.match(frame, /label="Build a change" groupKey="build" divider=\{false\}/);
+  assert.match(frame, /label="Import a change" groupKey="build" divider=\{false\}/);
   assert.match(frame, /label="Settings &amp; rules"[\s\S]{0,80}groupKey="settings"[\s\S]{0,40}divider/);
   // A heading must not be a <button>: _wirePlusMenu collects
   // `button[data-plus]` for the touch action sheet, and a heading that

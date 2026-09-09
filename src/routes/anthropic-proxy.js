@@ -152,6 +152,45 @@ async function refreshUserBudget(pool, userId) {
   }
 }
 
+// #1788: process-local mirror of userBudgetCache for the WEEKLY per-user
+// cap. Same checkpoint+liveDelta shape and the same fail-open posture as
+// refreshUserBudget above — a bookkeeping read must never be what refuses
+// a turn. Keyed by user; only populated when a weekly cap actually
+// applies, so users with the weekly layer switched off pay nothing for it.
+const weeklyBudgetCache = new Map();
+//   userId -> { totalAtCheckpointCents, fetchedAt, liveDeltaCents }
+
+async function refreshUserWeeklySpend(pool, userId) {
+  const cached = weeklyBudgetCache.get(userId);
+  const now = Date.now();
+  if (cached && now - cached.fetchedAt < BUDGET_CACHE_TTL_MS) return cached;
+  try {
+    const { rows } = await pool.query(
+      `SELECT COALESCE(SUM(total_cost_cents), 0) AS total
+         FROM llm_usage
+        WHERE user_id = $1 AND date >= $2`,
+      [userId, limits.weekStartUtc()]
+    );
+    const totalAtCheckpointCents = parseFloat(rows[0]?.total || 0);
+    const fresh = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
+    weeklyBudgetCache.set(userId, fresh);
+    return fresh;
+  } catch (err) {
+    log.warn('anthropic-proxy', 'Weekly budget refresh failed; failing open', {
+      userId, err: err.message,
+    });
+    const fresh = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
+    weeklyBudgetCache.set(userId, fresh);
+    return fresh;
+  }
+}
+
+// #1788: shown when BOTH caps are switched off for an account. Fails
+// closed by design — an account with no allowance configured has nothing
+// to draw from, so it is refused rather than granted the platform key.
+const NO_ALLOWANCE_MESSAGE =
+  'No AI allowance is configured for this account. An admin can set a daily or weekly cap in the admin console.';
+
 // #664: process-local mirror of userBudgetCache for the GLOBAL daily cap
 // (sum across every user's platform-billed spend today). One tracker, same
 // checkpoint+liveDelta shape; platform-billed call costs fold into it at
@@ -218,8 +257,10 @@ async function hasByokKeyOnFile(pool, userId) {
 // out; it now runs at most once per user per UTC day
 // (limits.claimByokSwitchNotice). The copy is day-scoped to match — it is no
 // longer describing just "this turn".
-async function emitSwitchNotice(pool, sessionId, userId) {
-  const text = 'Your free daily AI credits ran out — work is now continuing on your Anthropic API key. Credits reset at midnight UTC.';
+async function emitSwitchNotice(pool, sessionId, userId, window = 'daily') {
+  const text = window === 'weekly'
+    ? 'Your free weekly AI credits ran out. Work is now continuing on your Anthropic API key. Credits reset Monday 00:00 UTC.'
+    : 'Your free daily AI credits ran out. Work is now continuing on your Anthropic API key. Credits reset at midnight UTC.';
   try {
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
@@ -354,16 +395,45 @@ function anthropicProxyRoutes(config) {
     // per-user / system budget tracker for the daily total) so the
     // steady-state cost per Anthropic call is one hash-map lookup, not a
     // DB roundtrip.
-    const capCents = isSyncTurn
-      ? await limits.getSystemTokensLimitCents(pool)
-      : await limits.getEffectiveUserLimitCents(pool, userId);
+    // #1788: the per-user allowance is two caps now — daily and weekly —
+    // and either may be switched off (0/unset), so every gate below asks
+    // resolveCaps which ones apply rather than comparing one number.
+    // Sync turns are unchanged: they bill the single system-token bucket,
+    // which has no weekly layer.
+    const caps = isSyncTurn
+      ? {
+          dailyApplies: true,
+          dailyLimitCents: await limits.getSystemTokensLimitCents(pool),
+          weeklyApplies: false,
+          weeklyLimitCents: 0,
+        }
+      : limits.resolveCaps(await limits.getUserCreditEntitlement(pool, userId));
+    const capCents = caps.dailyLimitCents;
     const budget = isSyncTurn
       ? await refreshSystemBudget(pool)
       : await refreshUserBudget(pool, userId);
-    const overMessage = isSyncTurn
-      ? `System token budget reached ($${(capCents / 100).toFixed(2)}). Resets at midnight UTC.`
-      : `Daily limit reached ($${(capCents / 100).toFixed(2)}). Resets at midnight UTC.`;
+    const weeklyBudget = caps.weeklyApplies
+      ? await refreshUserWeeklySpend(pool, userId)
+      : null;
     const spentBeforeCall = budget.totalAtCheckpointCents + budget.liveDeltaCents;
+    const weeklySpentBeforeCall = weeklyBudget
+      ? weeklyBudget.totalAtCheckpointCents + weeklyBudget.liveDeltaCents
+      : 0;
+    const dailyOver = caps.dailyApplies && spentBeforeCall >= caps.dailyLimitCents;
+    const weeklyOver = caps.weeklyApplies && weeklySpentBeforeCall >= caps.weeklyLimitCents;
+    const noAllowance = !caps.dailyApplies && !caps.weeklyApplies;
+    // Whichever window is actually binding decides the copy the user sees.
+    const boundWindow = weeklyOver ? 'weekly' : 'daily';
+    const messageFor = (win) => {
+      if (isSyncTurn) {
+        return `System token budget reached ($${(capCents / 100).toFixed(2)}). Resets at midnight UTC.`;
+      }
+      if (noAllowance) return NO_ALLOWANCE_MESSAGE;
+      return win === 'weekly'
+        ? `Weekly limit reached ($${(caps.weeklyLimitCents / 100).toFixed(2)}). Resets ${limits.WEEKLY_RESET_LABEL}.`
+        : `Daily limit reached ($${(capCents / 100).toFixed(2)}). Resets at midnight UTC.`;
+    };
+    const overMessage = messageFor(boundWindow);
 
     const upstreamPath = req.params[0] ? `/${req.params[0]}` : '/';
     const qs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
@@ -377,7 +447,7 @@ function anthropicProxyRoutes(config) {
     // gate/kill behaviour below (the global-cap crossing deliberately
     // does NOT add a new 429 for them — non-regressive).
     if (!isSyncTurn) {
-      const userOver = spentBeforeCall >= capCents;
+      const userOver = dailyOver || weeklyOver || noAllowance;
       const globalCap = await limits.getGlobalLimitCents(pool);
       const globalSpend = await refreshGlobalSpend(pool);
       const globalOver =
@@ -398,7 +468,7 @@ function anthropicProxyRoutes(config) {
             log.info('anthropic-proxy', 'Turn switched to BYOK key mid-turn', {
               sessionId, userId, notified: noticed,
             });
-            if (noticed) await emitSwitchNotice(pool, sessionId, userId);
+            if (noticed) await emitSwitchNotice(pool, sessionId, userId, boundWindow);
           }
           // The user's own key pays this call: no budget kill (it draws
           // nothing from the allowance) and the observed cost lands in
@@ -439,9 +509,12 @@ function anthropicProxyRoutes(config) {
     // mid-stream kill catches anything the gate misses. Since #664 this
     // only fires for callers with NO usable BYOK key (key-holders were
     // switched above).
-    if (spentBeforeCall >= capCents) {
+    if (dailyOver || weeklyOver || noAllowance) {
       log.info('anthropic-proxy', 'Start-of-call gate fired', {
         sessionId, userId, isSyncTurn, spentCents: spentBeforeCall, capCents,
+        window: noAllowance ? 'none' : boundWindow,
+        weeklySpentCents: weeklySpentBeforeCall,
+        weeklyCapCents: caps.weeklyApplies ? caps.weeklyLimitCents : null,
       });
       return res.status(429).json({
         ok: false,
@@ -474,14 +547,27 @@ function anthropicProxyRoutes(config) {
         const spentEffectiveCents =
           (live ? live.totalAtCheckpointCents + live.liveDeltaCents : spentBeforeCall) +
           currentCallCents;
-        if (spentEffectiveCents > capCents) {
+        // #1788: the weekly bucket runs the same checkpoint+liveDelta
+        // arithmetic against its own tracker, and either cap crossing kills.
+        const liveWeekly = caps.weeklyApplies ? weeklyBudgetCache.get(userId) : null;
+        const weeklyEffectiveCents = caps.weeklyApplies
+          ? (liveWeekly
+              ? liveWeekly.totalAtCheckpointCents + liveWeekly.liveDeltaCents
+              : weeklySpentBeforeCall) + currentCallCents
+          : 0;
+        const overDailyNow = caps.dailyApplies && spentEffectiveCents > capCents;
+        const overWeeklyNow = caps.weeklyApplies && weeklyEffectiveCents > caps.weeklyLimitCents;
+        if (overDailyNow || overWeeklyNow) {
           if (killSuppressed) {
             if (!suppressionLogged) {
               suppressionLogged = true;
               log.info('anthropic-proxy', 'Over budget mid-call — kill suppressed (BYOK fallback available)', {
                 sessionId, userId,
+                window: overWeeklyNow ? 'weekly' : 'daily',
                 spentEffectiveCents: spentEffectiveCents.toFixed(2),
                 capCents,
+                weeklyEffectiveCents: weeklyEffectiveCents.toFixed(2),
+                weeklyCapCents: caps.weeklyApplies ? caps.weeklyLimitCents : null,
                 currentCallCents: currentCallCents.toFixed(4),
                 model,
               });
@@ -490,8 +576,11 @@ function anthropicProxyRoutes(config) {
           }
           log.info('anthropic-proxy', 'Mid-stream kill — over budget', {
             sessionId, userId,
+            window: overWeeklyNow ? 'weekly' : 'daily',
             spentEffectiveCents: spentEffectiveCents.toFixed(2),
             capCents,
+            weeklyEffectiveCents: weeklyEffectiveCents.toFixed(2),
+            weeklyCapCents: caps.weeklyApplies ? caps.weeklyLimitCents : null,
             currentCallCents: currentCallCents.toFixed(4),
             model,
           });
@@ -511,6 +600,12 @@ function anthropicProxyRoutes(config) {
       const live = isSyncTurn ? systemBudgetCache : userBudgetCache.get(userId);
       if (live) {
         live.liveDeltaCents += result.costCents;
+      }
+      if (!isSyncTurn) {
+        // #1788: platform-billed user spend draws down the weekly bucket
+        // as well, so a mid-turn weekly crossing is visible to the next call.
+        const liveWeekly = weeklyBudgetCache.get(userId);
+        if (liveWeekly) liveWeekly.liveDeltaCents += result.costCents;
       }
       if (!isSyncTurn && globalBudgetCache) {
         globalBudgetCache.liveDeltaCents += result.costCents;

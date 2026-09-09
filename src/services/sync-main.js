@@ -179,18 +179,58 @@ async function backfillPlatformPushParent(pool, sessionId, sha, firstParentSha) 
 // This lives in the service—not the HTTP route—so resume auto-sync and conflict
 // resolution get identical semantics while runSyncMain's cross-surface
 // operation claim is still held.
+// Is this imported row's head a branch the PLATFORM wrote — the connector's
+// mirror (`usernode/from-…`) or an applied patch (`usernode/patch-…`)?
+// services/proposal-update.js owns that question (`branchHomeOf`); it is
+// required lazily because it reaches back into this module's neighbours.
+function isImportedMirror(session) {
+  if (!session || session.source !== 'imported') return false;
+  // eslint-disable-next-line global-require
+  const { branchHomeOf } = require('./proposal-update');
+  return branchHomeOf(session) === 'app_repo';
+}
+
 async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) {
-  if (!session || session.source === 'imported') return false;
+  if (!session) return false;
+  // An IMPORTED row pins its votes and checks to `imported_pr_head_sha`, and
+  // the pr-import sweeper reads any head it does not recognise as an author
+  // push: tally cleared, "was updated on GitHub" posted. For a head in the
+  // author's own fork that is the truth — the platform never writes there,
+  // so nothing else can have moved it. The connector's mirror is the other
+  // case (task 153): its head is a `usernode/from-…` branch the platform
+  // wrote and just synced, so the sync commit is carried exactly as it is
+  // for a native row — the pin is simply the other column, and the sweeper
+  // then finds the head where it expects it and leaves the tally alone.
+  const importedMirror = isImportedMirror(session);
+  if (session.source === 'imported' && !importedMirror) return false;
   if (!['clean', 'resolved'].includes(result?.syncResult)
       || !result.pushOk || typeof result.sha !== 'string'
       || !COMMIT_SHA_RE.test(result.sha)) return false;
   const { config = null, dstep = null } = opts;
   const nextSha = result.sha.toLowerCase();
   const priorChecksSha = session.checks_commit_sha || session.handoff_head_sha || null;
-  const priorReviewedSha = session.reviewed_head_sha
-    ? session.reviewed_head_sha.toLowerCase()
+  const pinColumn = importedMirror ? 'imported_pr_head_sha' : 'reviewed_head_sha';
+  const priorReviewedSha = session[pinColumn]
+    ? String(session[pinColumn]).toLowerCase()
     : null;
-  const carryChecks = result.syncResult === 'clean';
+  // A clean sync carries the checks verdict onto the sync commit: the tree
+  // is the reviewed code plus main, and re-running a green suite for that
+  // is pure cost. EXCEPT while a run is in flight. That run tested the
+  // PRE-sync commit, and its verdict write is keyed to the commit it
+  // started on (visuals.storeChecks' CAS), so carrying the pin under it
+  // means the verdict lands nowhere: the row stays 'pending' with a
+  // checked_at that no longer advances, and nothing touches it until the
+  // stale-checks sweeper picks it up CHECKS_STALE_MS later. Observed on
+  // #1728: two syncs, two abandoned runs (one of them 490 checks in), two
+  // ten-minute dead waits, three full runs for one proposal.
+  //
+  // So a pending row is treated like the resolved path — pin moved, run
+  // re-kicked immediately. captureForSession's in-flight guard queues the
+  // new run behind the one still going and drains it the moment that ends,
+  // so the restart costs the wait for the container already running rather
+  // than ten minutes of nothing.
+  const runInFlight = session.check_state === 'pending';
+  const carryChecks = result.syncResult === 'clean' && !runInFlight;
 
   // eslint-disable-next-line global-require
   const github = require('./github');
@@ -242,43 +282,49 @@ async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) 
     if (dstep) {
       await dstep({
         phase: 'platform_advance', level: 'warn',
-        message: 'Sync commit does not sit directly on the reviewed revision — votes are not carried.',
+        message: 'Sync commit does not sit directly on the reviewed revision, so votes are not carried.',
         detail: { reviewedHead: priorReviewedSha, firstParent, pushed: nextSha },
       });
     }
     return false;
   }
 
+  // $6 is the imported-mirror licence: an imported row is advanced ONLY when
+  // the caller established above that its head is the platform's own branch,
+  // and then it is the import pin that moves, never the native one.
   const { rows = [] } = await pool.query(
     `WITH advanced AS (
        UPDATE chat_sessions
           SET checks_commit_sha = CASE WHEN $5::boolean THEN $1 ELSE checks_commit_sha END,
-              reviewed_head_sha = $1,
+              reviewed_head_sha = CASE WHEN $6::boolean THEN reviewed_head_sha ELSE $1 END,
+              imported_pr_head_sha = CASE WHEN $6::boolean THEN $1 ELSE imported_pr_head_sha END,
               last_activity_at = NOW()
-        WHERE id = $2 AND COALESCE(source, '') <> 'imported'
+        WHERE id = $2 AND (COALESCE(source, '') <> 'imported' OR $6::boolean)
           AND status IN ('active', 'promoted', 'merging')
-          AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
+          AND (CASE WHEN $6::boolean THEN imported_pr_head_sha ELSE reviewed_head_sha END)
+              IS NOT DISTINCT FROM $3::varchar
           AND checks_commit_sha IS NOT DISTINCT FROM $4::varchar
-        RETURNING id, reviewed_head_sha, checks_commit_sha
+        RETURNING id, reviewed_head_sha, imported_pr_head_sha, checks_commit_sha
      ), moved_votes AS (
        UPDATE pr_votes SET head_sha = $1
         WHERE session_id IN (SELECT id FROM advanced)
           AND head_sha IS NOT DISTINCT FROM $3::varchar
         RETURNING 1
      )
-     SELECT reviewed_head_sha, checks_commit_sha,
+     SELECT reviewed_head_sha, imported_pr_head_sha, checks_commit_sha,
             (SELECT COUNT(*)::int FROM moved_votes) AS votes_moved
        FROM advanced`,
-    [nextSha, session.id, priorReviewedSha, priorChecksSha, carryChecks]
+    [nextSha, session.id, priorReviewedSha, priorChecksSha, carryChecks, importedMirror]
   );
   if (!rows.length) return false;
 
   const votesMoved = parseInt(rows[0]?.votes_moved, 10) || 0;
-  session.reviewed_head_sha = nextSha;
+  session[pinColumn] = nextSha;
   if (carryChecks) session.checks_commit_sha = nextSha;
 
   log.info('sync-main', 'Proposal review advanced after platform sync', {
     sessionId: session.id,
+    runInFlight,
     reviewedFrom: priorReviewedSha,
     checksFrom: priorChecksSha,
     to: nextSha,
@@ -289,7 +335,7 @@ async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) 
   if (dstep) {
     await dstep({
       phase: 'platform_advance',
-      message: `Review advanced to the pushed sync commit — ${votesMoved} vote${votesMoved === 1 ? '' : 's'} carried, checks ${carryChecks ? 'carried forward' : 're-running'}.`,
+      message: `Review advanced to the pushed sync commit: ${votesMoved} vote${votesMoved === 1 ? '' : 's'} carried, checks ${carryChecks ? 'carried forward' : `re-running${runInFlight ? ' (the run in flight tested the pre-sync commit)' : ''}`}.`,
       detail: {
         from: priorReviewedSha, to: nextSha,
         syncResult: result.syncResult, votesCarried: votesMoved,
@@ -324,12 +370,12 @@ async function advanceReviewAfterPlatformSync(pool, session, result, opts = {}) 
       : 'was synced with main';
     const checksNote = carryChecks
       ? ''
-      : ' Its checks are re-running against the new commit and it will merge on its own once they pass.';
+      : ` Its checks are re-running against the new commit${runInFlight ? ' (the run that was in flight was testing the code from before the sync)' : ''} and it will merge on its own once they pass.`;
     try {
       const { sendSystemMessage } = require('./ws');
       await sendSystemMessage(
         pool, session.app_id,
-        `${label} ${how} — existing votes were kept (now pinned to commit ${nextSha.slice(0, 8)}).${checksNote}`,
+        `${label} ${how}. Existing votes were kept (now pinned to commit ${nextSha.slice(0, 8)}).${checksNote}`,
         'system',
         { headChanged: true, votesKept: true, headSha: nextSha },
         { type: 'session', ref: session.id }
@@ -613,7 +659,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
     let message;
     switch (syncResult) {
       case 'already_synced':
-        message = 'Already up to date with main — nothing to merge.';
+        message = 'Already up to date with main, so there is nothing to merge.';
         break;
       case 'clean':
         message = `Merged main cleanly. Pushed ${result.sha ? result.sha.slice(0, 7) : 'merge commit'}.`;
@@ -637,7 +683,7 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
       dstep({ phase: 'sync_result', level: 'error', message: 'Worker sync: Claude could not resolve the conflicts.', detail: { syncResult, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0, pushOk: !!result.pushOk } });
     } else {
       await persistConflictState(pool, session, { state: 'clean', files: [] });
-      dstep({ phase: 'sync_result', message: `Worker sync ${syncResult}${result.sha ? ` — pushed ${String(result.sha).slice(0, 9)}` : ''}.`, detail: { syncResult, sha: result.sha || null, behind: result.behind || 0, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0, pushOk: !!result.pushOk } });
+      dstep({ phase: 'sync_result', message: `Worker sync ${syncResult}${result.sha ? `, pushed ${String(result.sha).slice(0, 9)}` : ''}.`, detail: { syncResult, sha: result.sha || null, behind: result.behind || 0, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0, pushOk: !!result.pushOk } });
     }
 
     // #788 follow-up: a sync that pushed changed the branch's contents,

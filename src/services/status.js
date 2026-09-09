@@ -1,4 +1,5 @@
 const { getPool } = require('../db/pool');
+const { connectionCensus } = require('../db/connection-census');
 const log = require('./logger');
 const workerProgress = require('./worker-progress');
 const deployStatus = require('./deploy-status');
@@ -57,7 +58,7 @@ async function gatherFull(config) {
   const [appsQ, sessionsQ, llmQ, sessionCountsQ, runtimeQ] = await Promise.all([
     pool.query(
       `SELECT a.id, a.name, a.slug, a.repo_url, a.container_id, a.status, a.created_at,
-              a.image_ref, a.build_ref, a.runtime_kind, a.runtime_name,
+              a.image_ref, a.build_ref, a.runtime_kind, a.runtime_name, a.self_hosted,
               u.username AS created_by_username,
               (SELECT COUNT(*) FROM chat_sessions cs
                  WHERE cs.app_id = a.id AND cs.status = 'active') AS open_sessions,
@@ -268,7 +269,19 @@ async function gatherFull(config) {
         uptimeSeconds: uptimeSeconds(prodStarted),
         stats: stats[prodName] || null,
       } : null,
-      prodMissing: prodState === 'not_found' && app.status !== 'creating',
+      selfHosted: !!app.self_hosted,
+      // A self-hosted app IS this platform, and the platform does not run as
+      // `usernode-app-<slug>` — it runs as the blue/green pair the deploy
+      // workflow manages. So the container this lookup wants has never
+      // existed and never will, and reporting it as missing is a permanent
+      // false positive: one phantom entry in `prodMissing` and one in
+      // `driftContainers`, on every status poll, forever. That noise is not
+      // free. It sat at the top of the admin status screen while three real
+      // worker bootstrap failures went unnoticed below it, which is exactly
+      // the failure mode a always-red indicator produces.
+      prodMissing: prodState === 'not_found'
+        && app.status !== 'creating'
+        && !app.self_hosted,
       sessions: appSessions,
     };
   }));
@@ -339,7 +352,13 @@ async function gatherFull(config) {
   //                           /proc, so freemem reflects the whole box,
   //                           not just the platform container).
   //   db                    — pg pool saturation; `waiting > 0` means
-  //                           handlers are queuing on connections.
+  //                           handlers are queuing on connections. `server`
+  //                           is the figure the pool is competing FOR
+  //                           (#1771): one Postgres backs the platform,
+  //                           every app and every preview, and its
+  //                           max_connections is the stock 100. A pool
+  //                           reporting `total: 3, max: 60` looks healthy
+  //                           right up to the server refusing the fourth.
   const sc = sessionCountsQ.rows[0] || {};
   const num = (v) => parseInt(v, 10) || 0;
   const globalCap = config.maxGlobalSessions || MAX_STAGING_GLOBAL;
@@ -368,6 +387,9 @@ async function gatherFull(config) {
       idle: pool.idleCount,
       waiting: pool.waitingCount,
       max: config.dbPoolMax || 10,
+      // Null when the census could not run — including, pointedly, when it
+      // could not run because the server had no connection left to give.
+      server: await connectionCensus(pool),
     };
   } catch { /* pg internals not present — leave null */ }
 

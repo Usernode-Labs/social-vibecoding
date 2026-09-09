@@ -18,6 +18,8 @@
 // event arrives so any visible button gets its count + state bumped
 // without a panel reload.
 
+import { agoStamp } from '../../lib/timestamp';
+
 const Kudos = {
   // appSlug => Map<sessionId, { count, my_kudos, givers? }>. We cache
   // the giver list per session so re-hovering doesn't refetch.
@@ -150,14 +152,14 @@ const Kudos = {
           popover.classList.remove('hidden');
           const entry = Kudos._ensureCache(sid);
           if (entry.count === 0) {
-            popover.innerHTML = '<span class="text-zinc-500">No kudos yet — be the first.</span>';
+            popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">No kudos yet. Be the first.</span>';
             return;
           }
           if (!entry.givers && !loadPromise) {
             loadPromise = Kudos.fetchGivers(sid).then(() => {
               if (!popover.classList.contains('hidden')) Kudos._renderPopover(sid, popover);
             });
-            popover.innerHTML = '<span class="text-zinc-500">Loading…</span>';
+            popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">Loading…</span>';
             return;
           }
           Kudos._renderPopover(sid, popover);
@@ -172,15 +174,19 @@ const Kudos = {
   _renderPopover(sid, popover) {
     const entry = Kudos._ensureCache(sid);
     if (!entry.givers || !entry.givers.length) {
-      popover.innerHTML = '<span class="text-zinc-500">No kudos yet — be the first.</span>';
+      popover.innerHTML = '<span class="text-zinc-500 dark:text-zinc-400">No kudos yet. Be the first.</span>';
       return;
     }
     const items = entry.givers.map((g) => {
       const who = escapeHtml(g.username || 'someone');
-      const when = relativeTime(g.createdAt);
+      // #1808: the age, with the unelided instant one hover away.
+      const when = agoStamp(g.createdAt);
+      const stamp = when.text
+        ? `<span class="text-zinc-500 dark:text-zinc-400" title="${escapeAttr(when.title)}">${escapeHtml(when.text)}</span>`
+        : '';
       return `<div class="flex items-center justify-between gap-2 py-0.5">
         <span class="font-medium">@${who}</span>
-        <span class="text-zinc-500">${when}</span>
+        ${stamp}
       </div>`;
     }).join('');
     popover.innerHTML = `<div class="mb-1 text-zinc-500 dark:text-zinc-400">Kudos givers (${entry.givers.length})</div>${items}`;
@@ -363,13 +369,13 @@ const Kudos = {
         btn.classList.add('gc-vote-active');
         btn.classList.remove('opacity-60', 'cursor-not-allowed');
         btn.disabled = false;
-        btn.setAttribute('title', 'You gave kudos to this PR — click again to retract');
+        btn.setAttribute('title', 'You gave kudos to this PR. Click again to retract');
       } else if (entry.my_kudos) {
         // Bounty-derived credit: shows as the viewer's but isn't a
         // pr_kudos row, so there's nothing to retract here.
         btn.classList.add('gc-vote-active', 'opacity-60', 'cursor-not-allowed');
         btn.disabled = true;
-        btn.setAttribute('title', 'Credited via an issue bounty award — can’t be retracted');
+        btn.setAttribute('title', 'Credited via an issue bounty award, so it can’t be retracted');
       } else {
         // No kudos from the viewer (incl. just-retracted): back to the
         // plain give state.
@@ -442,7 +448,7 @@ const Kudos = {
       const tip = `${remaining} of ${limit} kudos left this week. Resets Monday 00:00 UTC.`;
       const tone = remaining === 0
         ? 'text-zinc-500 dark:text-zinc-400'
-        : 'text-violet-600 dark:text-violet-400';
+        : 'text-violet-700 dark:text-violet-400';
       // Plain inline text, NOT a pill: the row already labels itself
       // "Kudos", so the badge chrome was framing a number that needed no
       // frame — and it read as a tappable chip competing with the nav
@@ -480,16 +486,9 @@ function escapeAttr(str) {
   return escapeHtml(str).replace(/"/g, '&quot;');
 }
 
-function relativeTime(ts) {
-  if (!ts) return '';
-  const then = new Date(ts).getTime();
-  const now = Date.now();
-  const diff = Math.max(0, now - then) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
-}
+// `relativeTime` lived here — the fourth hand-rolled copy of the ago ladder,
+// and one that never stopped being relative, so a kudos from last spring read
+// "412d ago". It is `agoStamp` from lib/timestamp.ts now (#1808).
 
 // Still published as a global. This module rides in the React bundle as of
 // #1083 chunk F, but app.js (Budget.init on authed boot, applyLiveUpdate on

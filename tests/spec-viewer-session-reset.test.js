@@ -7,9 +7,12 @@
 //      session id changes, BEFORE the _readSpecViewerOpen restore
 //      branch — ordering is what makes the restore start from a clean
 //      slate instead of stale content.
-//   2. _renderSpecViewer() fails closed on a session mismatch: if
-//      specViewer.sessionId doesn't match currentSession.id, it renders
-//      nothing rather than another session's spec.
+//   2. _specViewerView() fails closed on a session mismatch: if
+//      specViewer.sessionId doesn't match currentSession.id, it says
+//      `closed` rather than describing another session's spec. #1078 moved
+//      the panel's markup into a component, so the guard has to SAY closed —
+//      the pane reconciles now, and a bare `return` would leave the previous
+//      session's panel standing inside it.
 //
 // Same coarse source-guard style as tests/spec-sections.test.js layer 2:
 // dev-chat.js is a plain browser script (no module.exports), so we
@@ -62,8 +65,10 @@ test('openSession resets BEFORE the localStorage restore branch', () => {
     'the session-change reset must run before the _readSpecViewerOpen restore branch');
 });
 
-test('_renderSpecViewer fails closed on a session mismatch', () => {
-  const src = methodSource('_renderSpecViewer');
+test('_specViewerView fails closed on a session mismatch', () => {
+  const src = methodSource('_specViewerView');
   assert.ok(/specViewer\.sessionId[\s\S]{0,200}currentSession\.id/.test(src),
-    '_renderSpecViewer must compare specViewer.sessionId against currentSession.id and bail on mismatch');
+    '_specViewerView must compare specViewer.sessionId against currentSession.id and bail on mismatch');
+  assert.ok(/!==\s*Number\(DevChat\.currentSession\.id\)\)\s*\{\s*\n\s*return \{ kind: 'closed' \};/.test(src),
+    'the mismatch branch must return the closed model, not merely return');
 });

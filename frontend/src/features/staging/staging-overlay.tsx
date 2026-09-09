@@ -32,11 +32,12 @@
  *    reconcile the dev console's away.
  */
 
-import { useRef, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 
 import { ChevronLeftIcon, TerminalIcon } from '@/components/ui/icons';
 
 import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { improveStore } from '../improve/improve-store.js';
 import { stagingHandlers, stagingRefs, stagingStore } from './staging-store.js';
 import { useStoreState } from '../../lib/use-store-state';
 
@@ -58,6 +59,67 @@ export function StagingOverlay(): ReactNode {
 
   useHiddenClass(overlayRef, !state.open);
   useClassToggle(overlayRef, 'staging-overlay-docked', state.mode === 'docked');
+
+  // ── Fullscreen, but UNDER the session's own chrome ────────────────────
+  //
+  // A preview opened from a dev session used to cover the whole viewport,
+  // header and session strip included — so the strip's doing<->seeing switch
+  // was on screen in one direction only. You could press the eye to get here
+  // and then had to use this overlay's own "Back to session" bar to get out,
+  // which is two controls doing one job. The Streamlined Concept board draws
+  // the preview UNDER the persistent bars (its APP PREVIEW frame), and that
+  // is also what makes the switch a real toggle.
+  //
+  // ── AND ONLY WHEN THE STRIP IS ACTUALLY THERE ────────────────────────
+  //
+  // `previewActive` was doing this job alone, and it cannot: AppView.
+  // ensureStaging publishes it whenever a preview opens, from a session or
+  // not. So a preview opened from anywhere else went under-chrome too — and
+  // under-chrome hides BOTH of this overlay's exits (app.css puts
+  // `display:none` on #staging-back and leaves .staging-dock-only hidden
+  // outside docked mode) on the promise that the strip's pencil segment is
+  // the way back. With no session on screen there is no strip and no pencil,
+  // so the preview had no exit at all.
+  //
+  // The route gate is what "belongs to a session that is still behind it"
+  // actually means, and it is the same pair <SessionStatusPill/> and the chip
+  // already read. Components agreeing by construction, rather than one flag
+  // standing in for a condition it only usually implies.
+  //
+  // The tell was already in this file: the measure effect below falls back to
+  // the HEADER's bottom edge when #dc-session-header is missing — it knew the
+  // strip might not exist, while the class that hides both exits assumed it
+  // did.
+  const { previewActive, tab, subTab } = useStoreState(improveStore) as {
+    previewActive: boolean; tab: string; subTab: string;
+  };
+  const onSession = tab === 'dev' && subTab === 'sessions';
+  const underChrome = state.open && state.mode !== 'docked' && !!previewActive && onSession;
+  useClassToggle(overlayRef, 'staging-overlay-under-chrome', underChrome);
+
+  // The chrome's height is the strip's bottom edge — two stacked bars whose
+  // height moves with the safe-area inset, the status pill wrapping, and the
+  // strip's own content. Measured rather than assumed, and re-measured on
+  // resize, the same contract the docked geometry sync runs under.
+  const [chromeBottom, setChromeBottom] = useState(0);
+  useIsomorphicLayoutEffect(() => {
+    if (!underChrome) { setChromeBottom(0); return undefined; }
+    const measure = () => {
+      const strip = document.getElementById('dc-session-header');
+      const header = document.getElementById('platform-header');
+      const edge = strip?.getBoundingClientRect().bottom
+        ?? header?.getBoundingClientRect().bottom ?? 0;
+      setChromeBottom(Math.max(0, Math.round(edge)));
+    };
+    measure();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    for (const id of ['platform-header', 'dc-session-header']) {
+      const el = document.getElementById(id);
+      if (ro && el) ro.observe(el);
+    }
+    window.addEventListener('resize', measure);
+    return () => { ro?.disconnect(); window.removeEventListener('resize', measure); };
+  }, [underChrome]);
   useHiddenClass(loaderRef, !state.loaderVisible);
   useHiddenClass(panelRef, state.testPanelHidden);
   useHiddenClass(testBtnRef, state.testBtnHidden);
@@ -70,7 +132,10 @@ export function StagingOverlay(): ReactNode {
   const rect = state.dockRect;
   const style = rect
     ? { top: `${rect.top}px`, left: `${rect.left}px`, width: `${rect.width}px`, height: `${rect.height}px` }
-    : undefined;
+    // Under-chrome carries ONE property, and only while a session preview is
+    // up — the prerender is closed, so the element still ships with no style
+    // attribute at all and byte-parity holds.
+    : (underChrome && chromeBottom ? { top: `${chromeBottom}px` } : undefined);
 
   return (
     <div
@@ -91,7 +156,7 @@ export function StagingOverlay(): ReactNode {
       <div className="staging-chrome-bar flex items-center gap-3 px-4 py-2 border-b border-zinc-800 shrink-0">
         <button
           id="staging-back"
-          className="text-zinc-400 hover:text-zinc-100 text-sm flex items-center gap-1"
+          className="text-zinc-500 hover:text-zinc-100 text-sm flex items-center gap-1 dark:text-zinc-400"
           onClick={() => stagingHandlers.onBack?.()}
         >
           <ChevronLeftIcon className="w-4 h-4" />
@@ -129,7 +194,7 @@ export function StagingOverlay(): ReactNode {
         >
           {state.fsBtnText}
         </button>
-        <span id="staging-url-label" className="text-xs text-zinc-500 font-mono truncate">
+        <span id="staging-url-label" className="text-xs text-zinc-500 font-mono truncate dark:text-zinc-400">
           {state.urlLabel}
         </span>
         {/*
@@ -142,7 +207,7 @@ export function StagingOverlay(): ReactNode {
         */}
         <button
           id="staging-dev-console-btn"
-          className="relative text-zinc-400 hover:text-zinc-200"
+          className="relative text-zinc-500 hover:text-zinc-200 dark:text-zinc-400"
           aria-label="Open developer console"
         >
           <TerminalIcon className="w-5 h-5" />
@@ -159,7 +224,7 @@ export function StagingOverlay(): ReactNode {
         */}
         <button
           id="staging-dock-close"
-          className="staging-dock-only text-zinc-400 hover:text-zinc-100 text-lg leading-none px-1 shrink-0"
+          className="staging-dock-only text-zinc-500 hover:text-zinc-100 text-lg leading-none px-1 shrink-0 dark:text-zinc-400"
           aria-label="Close preview"
           onClick={() => stagingHandlers.onDockClose?.()}
         >
@@ -170,8 +235,8 @@ export function StagingOverlay(): ReactNode {
           Explains why this change isn't live yet — a common point of
           confusion the first time someone previews their own PR.
       */}
-      <div className="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-400 shrink-0">
-        Private preview — only you can see this until the app's users vote your change in.
+      <div className="px-4 py-1.5 bg-violet-500/10 border-b border-violet-500/20 text-xs text-zinc-500 shrink-0 dark:text-zinc-400">
+        Private preview. Only you can see this until the app's users vote your change in.
       </div>
       <div className="relative flex-1">
         {/*
@@ -183,8 +248,8 @@ export function StagingOverlay(): ReactNode {
           id="staging-iframe"
           ref={iframeRef}
           className="absolute inset-0 w-full h-full border-0"
-          style={{ background: "#08080f" }}
-          allow="pointer-lock"
+          style={{ background: state.background || "#08080f" }}
+          allow="pointer-lock; geolocation"
         >
         </iframe>
         {/*
@@ -207,7 +272,7 @@ export function StagingOverlay(): ReactNode {
             </span>
             <button
               id="staging-testing-close"
-              className="text-zinc-500 hover:text-zinc-200 text-sm leading-none px-1"
+              className="text-zinc-500 hover:text-zinc-200 text-sm leading-none px-1 dark:text-zinc-400"
               aria-label="Dismiss testing instructions"
               onClick={() => stagingHandlers.onTestingClose?.()}
             >
@@ -241,7 +306,7 @@ export function StagingOverlay(): ReactNode {
           <div id="staging-loader-title" className="text-sm text-zinc-200 font-medium">
             {state.loaderTitle}
           </div>
-          <div id="staging-loader-sub" className="text-xs text-zinc-500 max-w-xs leading-relaxed">
+          <div id="staging-loader-sub" className="text-xs text-zinc-500 max-w-xs leading-relaxed dark:text-zinc-400">
             {state.loaderSub}
           </div>
         </div>

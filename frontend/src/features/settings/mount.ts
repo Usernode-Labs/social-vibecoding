@@ -25,11 +25,13 @@ import { flushSync } from 'react-dom';
 
 import { createPlaceholderHome, type PlaceholderHome } from '../../lib/kit-surface';
 import './settings.js';
-// First-run terms-consent trigger (issue #1297): rides in the bundle here,
-// after settings.js, because it presents Settings.showTermsSheet on the
-// once-per-document `sv:authed` boot signal.
-import './terms-first-run.js';
+// The first-run terms trigger (./terms-first-run.js) is NOT imported here any
+// more: this module is inside the lazy settings chunk, and a boot listener
+// that only exists once the screen has been opened would never fire. It rides
+// the shell from ../settings/index.tsx and presents through window.Settings,
+// which the façade answers by loading this chunk.
 import { settingsNavStore } from './settings-nav-store.js';
+import { usernodeSectionStore, type UsernodeSectionState } from './sections/usernode-store';
 
 settingsNavStore.setFlush(flushSync);
 
@@ -70,4 +72,10 @@ if (typeof window !== 'undefined') {
   }
   const bridge = (host.UsernodeReact ||= {});
   bridge.settings = host.Settings;
+  // #settings-usernode-section's seam. settings.js is a 5,000-line module a
+  // dozen tests load in a `vm`, so it reaches React by name rather than
+  // importing — the same constraint dev-chat.js has.
+  bridge.settingsUsernode = {
+    publish(state: UsernodeSectionState) { usernodeSectionStore.set(state); },
+  };
 }

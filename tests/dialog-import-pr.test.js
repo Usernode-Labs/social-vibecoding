@@ -91,7 +91,7 @@ test('the fork label is per-row and never renders blank', () => {
   // can only ever belong to the row it labels.
   assert.ok(SRC.indexOf('#{num} · ') < at, 'the label follows its own PR number');
   assert.ok(at < SRC.indexOf('{c.htmlUrl ? ('), '…and precedes that row’s GitHub link');
-  assert.equal((SRC.match(/from a fork —/g) || []).length, 1,
+  assert.equal((SRC.match(/from a fork: /g) || []).length, 1,
     'exactly one fork label in the component, rendered per fork-headed row');
 });
 
@@ -136,7 +136,7 @@ test('the freeze covers the list, both buttons and the progress row', () => {
   assert.match(SRC, /\{busy \? 'Importing…' : 'Import'\}/, 'the submit label says what is happening');
 
   const freeze = fnBody('setImportBusy');
-  assert.match(freeze, /Importing PR #\$\{prNumber\} — checking it on GitHub/, 'progress names the PR');
+  assert.match(freeze, /Importing PR #\$\{prNumber\}: checking it on GitHub/, 'progress names the PR');
   assert.match(freeze, /clearTimeout\(slowTimer\.current\)/, 'every call clears the slow timer first');
   assert.match(freeze, /if \(!on\) return;/, 'unfreezing never arms a new one');
   assert.match(freeze, /setTimeout\(\(\) => \{[\s\S]*setSlow\(true\);[\s\S]*\}, 8000\)/,
@@ -213,7 +213,7 @@ test('a network error surfaces without navigating', () => {
   const submit = fnBody('submit');
   const net = submit.slice(submit.indexOf('} catch {'));
   assert.match(net, /setImportBusy\(false\)/, 'unfrozen');
-  assert.match(net, /setError\('Network error — please try again\.'\)/, 'named for what it was');
+  assert.match(net, /setError\('Network error. Please try again\.'\)/, 'named for what it was');
   assert.match(net, /return;/, 'and nothing is navigated to');
 });
 
@@ -226,6 +226,6 @@ test('a throwing navigation still closes the dialog and toasts', () => {
   assert.match(tail, /PR #\$\{pr\} was imported/, 'by PR number');
   // #866: and told that the Preview button isn't there yet — the staging
   // build takes minutes.
-  assert.match(tail, /its preview is being built now/, 'with the preview expectation set');
+  assert.match(tail, /Its preview is being built now/, 'with the preview expectation set');
   assert.ok(tail.indexOf('dialog.close()') > tail.indexOf('toast'), 'the dialog closes either way');
 });

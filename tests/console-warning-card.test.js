@@ -15,6 +15,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { consoleCheckHtml, detailActionsHtml, proposalCardHtml } = require('./lib/dev-card-html');
 
 // #405: the proposal card's merge-state badge is driven by window.MergeStatus;
 // load it into the sandbox first (mirrors index.html's load order).
@@ -67,7 +68,7 @@ const baseProposal = (over) => ({
 
 test('console_check_state="errors" renders the amber warning badge with a count', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     console_check_state: 'errors',
     console_errors: [{ kind: 'pageerror', message: 'boom' }, { kind: 'console', message: 'splat' }],
   }));
@@ -78,18 +79,18 @@ test('console_check_state="errors" renders the amber warning badge with a count'
 
 test('console_check_state="clean" renders NO warning badge', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({ console_check_state: 'clean', console_errors: [] }));
+  const html = proposalCardHtml(AppView, baseProposal({ console_check_state: 'clean', console_errors: [] }));
   assert.doesNotMatch(html, /gc-warning-badge/, 'clean proposal has no warning');
 });
 
 test('console_check_state="unknown" / missing renders NO warning badge', () => {
   const AppView = makeAppView(ME);
   assert.doesNotMatch(
-    AppView._renderProposalCard(baseProposal({ console_check_state: 'unknown' })),
+    proposalCardHtml(AppView, baseProposal({ console_check_state: 'unknown' })),
     /gc-warning-badge/, 'unknown state shows nothing'
   );
   assert.doesNotMatch(
-    AppView._renderProposalCard(baseProposal()),
+    proposalCardHtml(AppView, baseProposal()),
     /gc-warning-badge/, 'absent state shows nothing'
   );
 });
@@ -105,9 +106,9 @@ test('two reasons at once: the pill names the worst and counts the rest', () => 
     console_check_state: 'errors',
     console_errors: [{ kind: 'console', message: 'oops' }],
   });
-  const html = AppView._renderProposalCard(pr);
+  const html = proposalCardHtml(AppView, pr);
   assert.match(html, /Behind main · 3/, 'the worst reason is the pill label');
-  assert.match(html, /and 1 more reason — open for details/, 'the rest are counted, not hidden');
+  assert.match(html, /and 1 more reason, open for details/, 'the rest are counted, not hidden');
   assert.doesNotMatch(html, /gc-warning-badge/, 'no second badge stacked beside it');
 
   // blockReasons is the shared source of truth for both.
@@ -115,10 +116,23 @@ test('two reasons at once: the pill names the worst and counts the rest', () => 
   assert.equal(reasons.length, 2);
   assert.equal(reasons.map((r) => r.key).join(','), 'behind,console_errors');
 
-  const detail = AppView._detailActionsHtml('proposal', pr);
-  assert.match(detail, /Worth knowing before you vote/, 'neither reason blocks, so the heading says so');
-  assert.match(detail, /Behind main · 3/);
-  assert.match(detail, /Console errors · 1/);
+  // The reasons list is the ledger's material now (round three): the head
+  // draws them as "Where it stands" rows, so the assertion is on the model.
+  const reasonsView = AppView._detailActionsView('proposal', pr).reasons;
+  assert.equal(reasonsView.heading, 'Worth knowing before you vote', 'neither reason blocks, so the heading says so');
+  assert.equal(reasonsView.items.map((r) => r.label).join('|'), 'Behind main · 3|Console errors · 1');
+  const ledger = AppView._proposalDetailsView(pr).ledger;
+  const behind = ledger.find((r) => r.key === 'behind');
+  assert.ok(behind, '"Behind main" — which never had a box — is a ledger row');
+  assert.equal(behind.tone, 'warn');
+  // It is step 1 of the path now (_topicLedgerPath), so the small line under
+  // the label says who acts and when instead of repeating the count, and the
+  // count moves into the sentence where it can carry its unit.
+  assert.equal(behind.step, 1);
+  assert.equal(behind.label, 'Sync with main');
+  assert.equal(behind.sub, 'automatic, now', 'nobody is being asked to do this one');
+  assert.match(behind.text.join(''), /Main has moved 3 commits ahead/);
+  assert.ok(ledger.some((r) => r.key === 'console' || r.key === 'console_errors'), 'and so are the console errors');
 });
 
 test('a HARD reason beside a soft one: the heading names the block', () => {
@@ -130,19 +144,35 @@ test('a HARD reason beside a soft one: the heading names the block', () => {
     console_check_state: 'errors',
     console_errors: [{ kind: 'console', message: 'oops' }],
   });
-  const html = AppView._renderProposalCard(pr);
+  const html = proposalCardHtml(AppView, pr);
   assert.match(html, /Checks failing · 1/, 'the hard reason wins the label');
   assert.match(html, /gc-vote-count-blocked/);
   assert.match(html, /and 2 more reasons/);
-  const detail = AppView._detailActionsHtml('proposal', pr);
-  assert.match(detail, /Why this can’t merge yet/);
-  assert.match(detail, /Checks failing · 1[\s\S]*Behind main · 2[\s\S]*Console errors · 1/,
+  const reasonsView = AppView._detailActionsView('proposal', pr).reasons;
+  assert.equal(reasonsView.heading, 'Why this can’t merge yet');
+  assert.equal(reasonsView.items.map((r) => r.label).join('|'), 'Checks failing · 1|Behind main · 2|Console errors · 1',
     'enumerated severity-first');
+  // On the page: the checks verdict row (with the failing test), then the
+  // rows the verdict does not already say.
+  const ledger = AppView._proposalDetailsView(pr).ledger;
+  // The path leads with the sync, because that is what happens first — but
+  // the sync here is automatic, so the failing check keeps its full weight
+  // and its own wording: it is still the author's next move.
+  assert.equal(ledger[0].key, 'behind');
+  assert.equal(ledger[0].sub, 'automatic, now');
+  const checks = ledger.find((r) => r.key === 'checks');
+  assert.equal(checks.tone, 'bad');
+  assert.equal(checks.step, 2);
+  assert.equal(checks.sub, 'automatic, after 1');
+  assert.equal(checks.fails[0].name, 'Feed');
+  assert.match(checks.text.join(''), /checks failed/i, 'not demoted to "nothing to do here"');
+  assert.ok(ledger.some((r) => r.key === 'console_errors' || r.key === 'console'),
+    'console errors are said once, as a row');
 });
 
 test('the console-error detail block lists the captured messages', () => {
   const AppView = makeAppView(ME);
-  const html = AppView._consoleCheckDetailHtml(baseProposal({
+  const html = consoleCheckHtml(AppView, baseProposal({
     console_check_state: 'errors',
     console_checked_at: '2026-06-01T00:00:00Z',
     console_errors: [{ kind: 'pageerror', message: "TypeError: x is undefined", source: 'app.js:1' }],
@@ -155,5 +185,5 @@ test('the console-error detail block lists the captured messages', () => {
 
 test('the detail block is empty for a clean proposal', () => {
   const AppView = makeAppView(ME);
-  assert.equal(AppView._consoleCheckDetailHtml(baseProposal({ console_check_state: 'clean' })), '');
+  assert.equal(consoleCheckHtml(AppView, baseProposal({ console_check_state: 'clean' })), '');
 });

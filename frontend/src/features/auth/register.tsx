@@ -16,14 +16,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { ChevronLeftIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 
+import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
+  fetchSessionMint,
   finishLogin,
   hiddenLast,
+  sessionMintFailureMessage,
   useAuthScreensPatch,
 } from './shared';
 
@@ -35,11 +40,21 @@ import {
  * focus:ring-2 focus:ring-violet-500 focus:border-transparent`. #reg-code
  * appends `font-mono` through className, where its string appends it.
  */
-const AUTHFIELD = { box: 'auth', hint: 'muted', ring: 'seamless' } as const;
+const AUTHFIELD = { box: 'card', hint: 'dim', ring: 'bare' } as const;
+const AUTH_CARD = 'rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden';
+const AUTH_ROW = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
+const AUTH_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
+const PILL_LINK = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors';
 
 export function RegisterScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.register, false);
+  // The screen's interior mounts on its first reveal, not in the prerender —
+  // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
+  // window.UsernodeReact.mount) before it wires or reveals the screen, so the
+  // hooks this component patches onto AuthScreens are installed and the
+  // interior's nodes exist by the time the on-show hook runs.
+  const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.register);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -64,7 +79,7 @@ export function RegisterScreen() {
     setError(null);
     if (blockedOffline(setError)) return;
     try {
-      const res = await fetch('/api/auth/register', {
+      const res = await fetchSessionMint('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -79,8 +94,8 @@ export function RegisterScreen() {
         return;
       }
       finishLogin();
-    } catch {
-      setError('Network error');
+    } catch (error) {
+      setError(sessionMintFailureMessage(error));
     }
   }, []);
 
@@ -110,34 +125,38 @@ export function RegisterScreen() {
     <main
       ref={rootRef}
       id="auth-register-screen"
-      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
+      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll"
     >
+      {mounted ? (
+        <>
       <a
         href="#"
         data-auth-back=""
-        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
-        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
+        className="fixed left-4 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+        aria-label="Back"
         onClick={(e) => {
           e.preventDefault();
           location.hash = '#landing';
         }}
       >
-        &larr; Back
+        <ChevronLeftIcon className="w-6 h-6" aria-hidden="true" />
       </a>
       <div className="min-h-full flex items-center justify-center">
         <div className="w-full max-w-sm px-6 py-16">
-          <h1 className="text-2xl font-bold text-center mb-1">
+          <h1 className="text-[28px] font-extrabold leading-tight tracking-tight text-center mb-1 text-zinc-900 dark:text-zinc-100">
             Usernode Social Vibecoding
           </h1>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 text-center mb-2 italic">
+          <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-2 italic">
             A place where users own and build apps together
           </p>
-          <p className="text-sm text-zinc-500 dark:text-zinc-400 text-center mb-8">
+          <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-8">
             Create your account
           </p>
           <form id="register-form" className="space-y-4" onSubmit={onSubmit}>
-            <div>
-              <label htmlFor="reg-code" className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+            <div className={AUTH_CARD}>
+            <div className={AUTH_ROW}>
+              <label htmlFor="reg-code" className={AUTH_LABEL}>
                 Activation Code
               </label>
               <Input
@@ -152,10 +171,10 @@ export function RegisterScreen() {
                 placeholder="enter activation code"
               />
             </div>
-            <div>
+            <div className={AUTH_ROW}>
               <label
                 htmlFor="reg-username"
-                className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+                className={AUTH_LABEL}
               >
                 Username
               </label>
@@ -170,39 +189,41 @@ export function RegisterScreen() {
                 placeholder="choose a username"
               />
             </div>
-            <div>
+            <div className={AUTH_ROW}>
               <label
                 htmlFor="reg-password"
-                className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+                className={AUTH_LABEL}
               >
                 Password
               </label>
-              <Input
+              <PasswordInput
                 ref={password}
                 id="reg-password"
                 name="password"
-                type="password"
                 required={true}
                 autoComplete="new-password"
                 {...AUTHFIELD}
                 placeholder="choose a password"
               />
             </div>
+            </div>
             <div id="reg-error" className={hiddenLast(!error, 'text-red-400 text-sm')}>
               {error}
             </div>
-            <Button type="submit" layout="full" size="plain" ink="solidLate">
+            <Button type="submit" layout="full" variant="pillAccent" size="pillLg" ink="solidLate">
               Register
             </Button>
           </form>
-          <p className="text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6">
-            Already have an account?
-            <a href="#login" className="text-violet-400 hover:text-violet-300">
-              Log in
+          <p className="mt-3">
+            <a href="#login" className={PILL_LINK}>
+              {'Already have an account? '}
+              <span className="ml-1 text-violet-700 dark:text-violet-400">Log in</span>
             </a>
           </p>
         </div>
       </div>
+        </>
+      ) : null}
     </main>
   );
 }

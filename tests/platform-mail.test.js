@@ -171,6 +171,40 @@ test('a waitlist confirmation goes out once a day per address', () => {
   }).allowed, true);
 });
 
+test('a requested code is not swallowed by the join mail\'s daily cap', () => {
+  // The bug the separate kind exists to prevent: reusing waitlist_joined for
+  // a resend means the second send of the day is recorded
+  // suppressed_rate_limit and silently dropped, which is precisely the
+  // situation somebody pressing "send a new code" is already in.
+  const joined = [{ status: 'sent', created_at: new Date(T0 - 2 * 60 * 1000) }];
+  assert.equal(rateLimit.decide({
+    kind: 'waitlist_joined', now: T0, recipientHistory: joined,
+  }).allowed, false);
+  assert.equal(rateLimit.decide({
+    kind: 'waitlist_code', now: T0, recipientHistory: joined,
+  }).allowed, true, 'a different kind keeps its own history');
+});
+
+test('requested codes are one a minute, five a day, per address', () => {
+  const at = (msAgo) => ({ status: 'sent', created_at: new Date(T0 - msAgo) });
+  // The minute gap the endpoint's advertised cooldown corresponds to.
+  assert.equal(rateLimit.decide({
+    kind: 'waitlist_code', now: T0, recipientHistory: [at(30 * 1000)],
+  }).allowed, false);
+  assert.equal(rateLimit.decide({
+    kind: 'waitlist_code', now: T0, recipientHistory: [at(61 * 1000)],
+  }).allowed, true);
+  // And the ceiling that bounds a determined one. Four earlier sends, the
+  // most recent well outside the gap, so only the daily count can refuse it.
+  const four = [2, 3, 4, 5].map((h) => at(h * 60 * 60 * 1000));
+  assert.equal(rateLimit.decide({
+    kind: 'waitlist_code', now: T0, recipientHistory: four,
+  }).allowed, true, 'the fifth of the day is allowed');
+  assert.equal(rateLimit.decide({
+    kind: 'waitlist_code', now: T0, recipientHistory: [...four, at(6 * 60 * 60 * 1000)],
+  }).allowed, false, 'the sixth is not');
+});
+
 test('the global ceiling outranks every per-recipient allowance', () => {
   const d = rateLimit.decide({ kind: 'otp', now: T0, globalCount: 300, maxPerHour: 300 });
   assert.equal(d.allowed, false);
@@ -341,19 +375,54 @@ test('an unknown kind never reaches a provider and never throws', async () => {
 
 // ─── templates ──────────────────────────────────────────────────────────
 
-test('the join mail carries the confirm link AND the survey link', async () => {
+test('the join mail carries the CODE, the confirm link AND the survey link', async () => {
+  const seen = [];
+  await mail.sendWaitlistJoinMail(
+    { mailTransport: { send: async (m) => { seen.push(m); } } },
+    'a@b.invalid', { moreToken: 'b'.repeat(48), code: '123456' });
+  assert.match(seen[0].confirmUrl, /\/api\/public\/waitlist\/confirm\/b{48}$/);
+  assert.match(seen[0].url, /#more\/b{48}$/);
+  assert.equal(seen[0].code, '123456');
+
+  const msg = templates.buildMessage('waitlist_joined', seen[0]);
+  // Both ways to confirm ride in one mail: the code for a phone, where
+  // leaving for the mail app loses the WebView's place, and the link for
+  // a desktop, where it is one click. Either stamps the same row.
+  assert.match(msg.text, /verification code is 123456/);
+  assert.ok(msg.text.includes(seen[0].confirmUrl), 'the confirm CTA must be in the copy');
+  // #1540: the sentence is shorter and the HTML half is a button, but the
+  // text part must still carry the URL for a reader who cannot see HTML.
+  assert.match(msg.text, /confirm in one tap/i);
+  // Andrea's copy for the optional questions, and the rolling-groups
+  // promise that replaced the placeholder "[September 9]" date — no wave
+  // has been committed to, and a date that slips is worse than none.
+  assert.match(msg.text, /increase your chances of getting into an earlier group/i);
+  assert.match(msg.text, /rolling basis/i);
+  assert.doesNotMatch(msg.text, /September/i);
+  assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
+  // #1516: the code leads the mail, in the same large type the login-code
+  // and resend mails use — not buried in a sentence three paragraphs down.
+  assert.match(msg.html, /font-size:28px[^>]*>123456</);
+  assert.ok(
+    msg.html.indexOf('123456') < msg.html.indexOf('Thanks for joining'),
+    'the code must come before the welcome copy in the HTML part');
+  assert.ok(
+    msg.text.indexOf('123456') < msg.text.indexOf('Thanks for joining'),
+    'the code must come before the welcome copy in the text part');
+});
+
+test('a join mail with no code still renders, and prints no stray placeholder', async () => {
   const seen = [];
   await mail.sendWaitlistJoinMail(
     { mailTransport: { send: async (m) => { seen.push(m); } } },
     'a@b.invalid', { moreToken: 'b'.repeat(48) });
-  assert.match(seen[0].confirmUrl, /\/api\/public\/waitlist\/confirm\/b{48}$/);
-  assert.match(seen[0].url, /#more\/b{48}$/);
-
+  assert.equal(seen[0].code, null);
   const msg = templates.buildMessage('waitlist_joined', seen[0]);
-  assert.ok(msg.text.includes(seen[0].confirmUrl), 'the confirm CTA must be in the copy');
-  assert.match(msg.text, /Confirm this email address/);
-  assert.match(msg.text, /Want in sooner\?/);
-  assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
+  // Minting the code is best-effort — a failure must not cost the signer
+  // their confirm link, nor leak a placeholder into the mail.
+  assert.doesNotMatch(msg.text, /verification code/);
+  assert.doesNotMatch(msg.text, /undefined|null/);
+  assert.ok(msg.text.includes(seen[0].confirmUrl));
 });
 
 test('a re-join carries neither link and no stray "undefined"', async () => {
@@ -366,6 +435,63 @@ test('a re-join carries neither link and no stray "undefined"', async () => {
   assert.doesNotMatch(msg.text, /undefined|null/);
   assert.equal(msg.text.includes('Confirm this email address'), false);
   assert.equal(msg.text.includes('Want in sooner?'), false);
+});
+
+test('a requested code mail carries the code and the one-click link', async () => {
+  const seen = [];
+  await mail.sendWaitlistCodeMail(
+    { mailTransport: { send: async (m) => { seen.push(m); } } },
+    'a@b.invalid', { code: '424242', moreToken: 'c'.repeat(48) });
+  assert.equal(seen[0].kind, 'waitlist_code');
+  assert.match(seen[0].confirmUrl, /\/api\/public\/waitlist\/confirm\/c{48}$/);
+  // No stage-2 survey link: this mail answers one question, and the offer
+  // belongs to the join and to the screen after confirming.
+  assert.equal(seen[0].statusUrl, null);
+
+  const msg = templates.buildMessage('waitlist_code', seen[0]);
+  assert.match(msg.text, /confirmation code is 424242/);
+  assert.match(msg.text, /15 minutes/);
+  // Issuing a code invalidates the previous one, and somebody with two
+  // mails open needs to be told which to type.
+  assert.match(msg.text, /earlier code has stopped working/i);
+  assert.ok(msg.text.includes(seen[0].confirmUrl));
+  assert.doesNotMatch(msg.text, /undefined|null/);
+  assert.ok(msg.html.includes('424242'));
+  // Not a second welcome: this is a code somebody asked for, and greeting
+  // them again would misread the moment.
+  assert.doesNotMatch(msg.text, /welcome/i);
+});
+
+test('an already-confirmed address is told so in the mail, and only there', async () => {
+  // The single place the platform ever resolves the membership question.
+  // The HTTP response cannot, so the inbox has to — it belongs to the
+  // address itself, which is why saying it here leaks nothing.
+  const seen = [];
+  await mail.sendWaitlistCodeMail(
+    { mailTransport: { send: async (m) => { seen.push(m); } } },
+    'a@b.invalid', { code: null, moreToken: 'c'.repeat(48) });
+  assert.equal(seen[0].code, null);
+  assert.equal(seen[0].confirmUrl, null, 'no code means nothing to confirm with');
+  assert.match(seen[0].statusUrl, /#more\/c{48}$/);
+
+  const msg = templates.buildMessage('waitlist_code', seen[0]);
+  assert.match(msg.subject, /already confirmed/i);
+  assert.match(msg.text, /already confirmed/i);
+  assert.doesNotMatch(msg.text, /undefined|null/);
+  assert.doesNotMatch(msg.text, /15 minutes/, 'there is no code, so there is no expiry to quote');
+  assert.ok(msg.text.includes(seen[0].statusUrl));
+});
+
+test('a requested code mail renders with neither link', async () => {
+  const seen = [];
+  await mail.sendWaitlistCodeMail(
+    { mailTransport: { send: async (m) => { seen.push(m); } } },
+    'a@b.invalid', { code: '424242' });
+  assert.equal(seen[0].confirmUrl, null);
+  const msg = templates.buildMessage('waitlist_code', seen[0]);
+  assert.doesNotMatch(msg.text, /undefined|null/);
+  assert.doesNotMatch(msg.text, /one click/i);
+  assert.match(msg.text, /confirmation code is 424242/);
 });
 
 test('the password-reset mail carries the reset link and no secrets beyond it', async () => {
@@ -382,15 +508,37 @@ test('the password-reset mail carries the reset link and no secrets beyond it', 
   const msg = templates.buildMessage('password_reset', seen[0]);
   assert.ok(msg.text.includes(seen[0].url), 'the reset link must be in the copy');
   assert.match(msg.text, /30 minutes/);
-  assert.match(msg.text, /ignore this email/i);
+  assert.match(msg.text, /you can ignore it/i);
   assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
+});
+
+test('the release mail promises the code only on the arm that sends one (#1548)', () => {
+  // Following the no-account link asks for a code straight away, so the copy
+  // has to say so: the recipient is about to get a second email, and without
+  // this line they read the code request as something going wrong.
+  const fresh = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/#signup/a%40b.invalid', hasAccount: false,
+  });
+  assert.match(fresh.text, /emails you a 6-digit code/);
+  // The figure must track OTP_TTL_MS, so pin it rather than the sentence.
+  assert.match(fresh.text, /expires in 10 minutes/);
+  assert.match(fresh.html, /emails you a 6-digit code/);
+
+  // Somebody who already has an account is sent to #login and never asked
+  // for a code, so promising one there would be a plain lie.
+  const returning = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/#login', hasAccount: true,
+  });
+  assert.doesNotMatch(returning.text, /6-digit code/);
+  assert.doesNotMatch(returning.html, /6-digit code/);
 });
 
 test('every kind renders subject, text and html with no leaked undefined', () => {
   const payloads = {
     otp: { code: '123456' },
     waitlist_joined: { url: 'https://x.invalid/#more/aa', confirmUrl: 'https://x.invalid/c/aa' },
-    waitlist_released: { url: 'https://x.invalid/#login', hasAccount: true },
+    // The no-account arm, because that is the one that grew copy in #1548.
+    waitlist_released: { url: 'https://x.invalid/#signup/a%40b.invalid', hasAccount: false },
     password_reset: { url: 'https://x.invalid/#reset-password?token=aa' },
     admin_test: {
       provider: 'gmail', from: 'Usernode <no-reply@x.invalid>',
@@ -533,8 +681,8 @@ test('a gmail failure body is bounded in the surfaced error', async () => {
 
 test('GET /api/public/waitlist/confirm/:token stamps once and redirects', async () => {
   // Drives the REAL router from src/routes/public-api.js over a loopback
-  // listener (same idiom as tests/topochain-mobile-auth.test.js) against a
-  // mock pool, so this pins the wiring and not a re-implementation.
+  // listener against a mock pool, so this pins the actual route wiring
+  // and not a re-implementation.
   const express = require('express');
   const TOKEN = 'c'.repeat(48);
   let confirmedAt = null;
@@ -542,7 +690,10 @@ test('GET /api/public/waitlist/confirm/:token stamps once and redirects', async 
 
   const pool = {
     async query(sql, params) {
-      if (/SELECT id, email, answers FROM waitlist_signups/.test(sql)) {
+      // getSignupByMoreToken also selects the status timestamps now; match
+      // the head of the column list so this mock is not re-broken by the
+      // next additive widening.
+      if (/SELECT id, email, answers[\s\S]*FROM waitlist_signups/.test(sql)) {
         return params[0] === TOKEN
           ? { rows: [{ id: 7, email: 'a@b.invalid', answers: null }] }
           : { rows: [] };
@@ -690,8 +841,10 @@ test('the staging mail fixture only writes when USERNODE_ENV=staging', async () 
     process.env.USERNODE_ENV = 'staging';
     await seedStagingPlatformMail(pool);
     const inserts = seen.filter((s) => /INSERT INTO mail_deliveries/.test(s));
-    assert.equal(inserts.length, 8,
-      'one row per status the card renders, plus three admin_test rows');
+    assert.equal(inserts.length, 11,
+      'one row per status the card renders, plus three admin_test rows, plus '
+      + 'the admission mail behind the admitted waitlist fixture, plus the '
+      + 'delivered and throttled shapes of a requested waitlist code');
     for (const sql of inserts) {
       assert.match(sql, /WHERE NOT EXISTS/, 'a re-boot must not grow the table');
     }
@@ -709,7 +862,12 @@ test('the staging fixture uses only unroutable, obviously fake addresses', () =>
   const emails = [...body.matchAll(/'([^']*@[^']*)'/g)].map((m) => m[1]);
   assert.ok(emails.length >= 5, 'sanity: the scrape found the seeded addresses');
   for (const email of emails) {
-    assert.match(email, /^staging-demo-[a-z]+@example\.invalid$/,
+    // The suffix may be hyphenated AND numbered: the waitlist fixtures are
+    // one per queue state (…-waitlist-confirmed, …-waitlist-admitted) and
+    // one per thing the admin screen renders differently
+    // (…-topochain-waitlist-3), and each still has to read as fake at a
+    // glance.
+    assert.match(email, /^staging-demo-[a-z0-9-]+@example\.invalid$/,
       `${email} must be visibly fake and unroutable (RFC 2606)`);
   }
 });

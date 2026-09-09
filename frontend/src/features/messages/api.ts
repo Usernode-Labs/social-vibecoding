@@ -160,6 +160,11 @@ export function normalizeMessage(input: unknown, fallbackConversationId = 0): Co
     reactions: array(pick(row, 'reactions')).map(normalizeReaction).filter((reaction) => reaction.emoji),
     attachments: array(pick(row, 'attachments')).map((attachment) => normalizeAttachment(attachment, conversationId)),
     objects: array(pick(row, 'objects', 'objectCards', 'object_cards', 'sharedObjects', 'shared_objects')).map(normalizeObject),
+    // This normalizer builds an explicit object rather than spreading the row,
+    // so a field the server adds is DROPPED until it is named here — which is
+    // exactly what happened to `saved` the first time: the API returned it,
+    // the star rendered empty, and nothing anywhere errored.
+    saved: pick(row, 'saved', 'bookmarked') === true,
   };
 }
 
@@ -353,6 +358,21 @@ export async function reportMessage(
 ): Promise<void> {
   await request<unknown>(`/api/conversations/${conversationId}/messages/${messageId}/report`, {
     method: 'POST', body: JSON.stringify({ reason, ...(detail ? { detail: detail.slice(0, 500) } : {}) }),
+  });
+}
+
+/**
+ * Save or unsave one message — the Messages half of the bookmark app group
+ * chat has carried since #1280. PUT saves, DELETE unsaves, matching that
+ * surface's verbs so the two behave identically.
+ */
+export async function setMessageSaved(
+  conversationId: number,
+  messageId: number,
+  saved: boolean,
+): Promise<void> {
+  await request<unknown>(`/api/conversations/${conversationId}/messages/${messageId}/bookmark`, {
+    method: saved ? 'PUT' : 'DELETE', ...(saved ? { body: '{}' } : {}),
   });
 }
 

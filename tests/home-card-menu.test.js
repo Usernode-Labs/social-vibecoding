@@ -2,7 +2,7 @@
 // frontend/src/features/home/home.js.
 //
 // Contract pinned here:
-//   - renderAppCard emits exactly one `.card-menu-btn` trigger and none
+//   - launcher cards emit no `.card-menu-btn` badge and none
 //     of the old corner buttons (star / lock / delete / check-updates);
 //   - the inline Retry button appears ONLY on errored cards, for the
 //     creator or a full admin (canAdminWrite — view-only admins are
@@ -28,7 +28,8 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
 
-const { HOME_SRC } = require('./helpers/home-modules');
+const { HOME_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
+const { installGridStore } = require('./helpers/home-grid-store');
 
 function makeHome(user) {
   return makeHomeEnv(user).Home;
@@ -110,7 +111,12 @@ function makeHomeEnv(user) {
   // builders (frontend/src/features/apps/app-card.js) since #1083 chunk F.
   // It imports them; this declares what the stripped import would have bound.
   installAppCard(sandbox);
-  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  // #1191: Home.render() no longer bails when #app-list is absent — it
+  // publishes a view model instead of assigning innerHTML, so it now runs
+  // for real here and needs both the geometry module it lays out against
+  // and the store binding ./helpers/home-modules strips the import for.
+  installGridStore(sandbox);
+  vm.runInContext(`${LAYOUT_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   return { Home: sandbox.__Home, sandbox };
 }
 
@@ -157,7 +163,7 @@ test('card-menu shot retries after the initial empty home paint', () => {
   const button = { dataset: { slug: 'demo-app' } };
   const populated = {
     offsetParent: {},
-    querySelector: (selector) => (selector === '.card-menu-btn' ? button : null),
+    querySelector: (selector) => (selector === '.app-card[data-slug]' ? button : null),
   };
   Home._apps = [baseApp()];
   Home._maybeOpenShotMenu(populated);
@@ -168,13 +174,10 @@ test('card-menu shot retries after the initial empty home paint', () => {
 
 // ── Compact card markup ───────────────────────────────────────────
 
-test('card: one hamburger trigger, none of the old corner buttons', () => {
+test('card: no hamburger or old corner buttons on launcher tiles', () => {
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const html = Home.renderAppCard(baseApp());
-  assert.equal((html.match(/card-menu-btn/g) || []).length, 1, 'exactly one menu trigger');
-  // The trigger is a hamburger SVG (three horizontal lines), not the
-  // old "⋯" glyph.
-  assert.match(html, /card-menu-btn[\s\S]*?M4 6h16M4 12h16M4 18h16/, 'hamburger icon path');
+  assert.doesNotMatch(html, /card-menu-btn|M4 6h16M4 12h16M4 18h16/);
   assert.doesNotMatch(html, /⋯/, 'no ⋯ glyph anywhere on the card');
   assert.doesNotMatch(html, /star-btn/, 'no inline star');
   assert.doesNotMatch(html, /lock-btn/, 'no inline lock');
@@ -217,21 +220,12 @@ test('menu header: always carries the app’s FULL pill set, inert', () => {
   assert.doesNotMatch(Home.renderMenuHeaderHtml(baseApp()), /card-menu-pills/);
 });
 
-test('card layout: icon first with the hamburger badged on its corner, title below', () => {
+test('card layout: unobstructed icon first, title below', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ active_users: '3' }));
   assert.match(html, /w-14 h-14/, 'large icon');
-  // The hamburger badge lives inside the icon wrapper, overlapping its
-  // top-right corner — so in markup order: icon initial → menu button
-  // → title name.
-  const iconIdx = html.indexOf('app-icon-tile');
-  const menuIdx = html.indexOf('card-menu-btn');
-  const nameIdx = html.indexOf('Demo App');
-  assert.ok(iconIdx !== -1 && iconIdx < menuIdx && menuIdx < nameIdx,
-    'icon → hamburger badge → title order');
-  assert.match(html, /card-menu-btn[^"]*absolute -top-1\.5 -right-1\.5/,
-    'badge overlaps the icon corner');
-  assert.match(html, /card-menu-btn[^"]*rounded-full/, 'badge is round');
+  assert.ok(html.indexOf('app-icon-tile') < html.indexOf('Demo App'));
+  assert.doesNotMatch(html, /card-menu-btn/);
   // The old measured-slot machinery is gone from the markup.
   assert.doesNotMatch(html, /card-actions/, 'no floating actions block');
   assert.doesNotMatch(html, /card-footer/, 'no footer row');
@@ -254,11 +248,11 @@ test('card layout: centered launcher tile, no visible border, capped title width
     `no border classes on the card element (got: ${cardCls})`);
 });
 
-test('card: Retry pins to the card corner on errored cards, outside the hamburger badge', () => {
+test('card: Retry remains available on errored cards', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ status: 'error', created_by: ME }));
   assert.match(html, /retry-btn[^"]*absolute top-2 right-2/, 'Retry corner-pinned');
-  assert.match(html, /card-menu-btn/, 'hamburger badge still present');
+  assert.doesNotMatch(html, /card-menu-btn/, 'launcher badge removed');
   // No Retry on a running card.
   assert.doesNotMatch(Home.renderAppCard(baseApp({ created_by: ME })), /retry-btn/);
 });
@@ -327,7 +321,10 @@ test('missing secrets: key names never render; the chip lives in the menu header
   assert.doesNotMatch(card, /Missing secrets/, 'no chip on the card face');
   assert.doesNotMatch(card, /STRIPE_SECRET_KEY|SENDGRID_API_KEY/, 'key names stay off the card');
   const header = Home.renderMenuHeaderHtml(app);
-  assert.match(header, /bg-red-500\/10 text-red-500[^>]*>Missing secrets</, 'red chip in the header');
+  // The chip's INK moved a step darker for the light theme (a -500 on a 10%
+  // tint of itself measured 2.3:1 there); the tint behind it is unchanged, and
+  // the assertion is still that this chip is the RED one.
+  assert.match(header, /bg-red-500\/10 text-red-700[^>]*>Missing secrets</, 'red chip in the header');
   assert.doesNotMatch(header, /STRIPE_SECRET_KEY|SENDGRID_API_KEY/, 'key names stay out of the header too');
 });
 
@@ -419,8 +416,25 @@ const keys = (items) => Array.from(items, (i) => i.key);
 test('menu: plain user on a non-member app gets App details + the favorite toggle', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['app-details', 'favorite'], 'nothing admin-gated leaks');
-  assert.equal(items[1].label, 'Add to Your apps');
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite'],
+    'nothing admin-gated leaks');
+  assert.equal(items[2].label, 'Add to Your apps');
+});
+
+// "View on GitHub" was a row in the hamburger drawer's reference footer,
+// revealed by hand while an app was OPEN. As a menu item it reaches both
+// surfaces that render this list — the card's "…" menu and the app's own page
+// — and gates on the one fact that decides whether it can work at all.
+test('menu: View on GitHub appears only for an app with a repository', () => {
+  const Home = makeHome({ id: ME });
+  const withRepo = Home.menuItemsFor(baseApp());
+  const gh = withRepo.find((i) => i.key === 'github');
+  assert.ok(gh, 'an app with a repo_url offers it');
+  assert.equal(gh.label, 'View on GitHub');
+
+  const without = Home.menuItemsFor(baseApp({ repo_url: null }));
+  assert.ok(!keys(without).includes('github'),
+    'an app with no repository does not');
 });
 
 test('menu: favorited app flips the label to Remove', () => {
@@ -472,6 +486,21 @@ test('menu: member toggle sends the explicit desired value, not !is_favorited (#
     [false, true, false, true],
     'visible member → hide, hidden member → re-add, favorite → remove, plain → add'
   );
+});
+
+test('menu: the favorite entry IS toggleAdded now, so the menu paints like the rails (#1567)', () => {
+  // Two implementations of one write is how the menu and the Discover rails
+  // came to disagree about how fast "Your apps" updates. This one delegates,
+  // so the optimistic flip, the immediate repaint and the revert-on-failure
+  // are the same code from every entry point.
+  const Home = makeHome({ id: ME });
+  const calls = [];
+  Home.toggleAdded = (slug, desired) => { calls.push([slug, desired]); };
+  Home._menuToggleFavorite(baseApp({ slug: 'plain' }), true);
+  Home._menuToggleFavorite(baseApp({ slug: 'mine', is_collaborator: true }), false);
+  // The !is_favorited fallback for a legacy caller that passes no value.
+  Home._menuToggleFavorite(baseApp({ slug: 'starred', is_favorited: true }));
+  assert.deepEqual(calls, [['plain', true], ['mine', false], ['starred', false]]);
 });
 
 // ── App details ───────────────────────────────────────────────────
@@ -548,7 +577,8 @@ test('menu: every app carries a favorite entry — no card menu omits it', () =>
 test('menu: full admin on a running repo app gets check-updates, lock and delete', () => {
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['app-details', 'favorite', 'check-updates', 'lock', 'delete']);
+  assert.deepEqual(keys(items),
+    ['app-details', 'github', 'favorite', 'check-updates', 'lock', 'delete']);
   assert.equal(items.find((i) => i.key === 'lock').label, 'Lock app');
   assert.equal(items.find((i) => i.key === 'delete').danger, true);
 });
@@ -573,14 +603,15 @@ test('menu: view-only admins (no canAdminWrite) get no mutating items (#311)', (
   const Home = makeHome({ id: ME, isAdmin: true, canAdminWrite: false });
   const items = Home.menuItemsFor(baseApp({ status: 'error' }));
   // App details is navigation, not a mutation, so it survives the gate.
-  assert.deepEqual(keys(items), ['app-details', 'favorite'],
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite'],
     'no retry/check/lock/delete');
 });
 
 test('menu: errored app adds Retry + View build log for the creator (#416)', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp({ status: 'error', created_by: ME }));
-  assert.deepEqual(keys(items), ['app-details', 'favorite', 'retry', 'build-log']);
+  assert.deepEqual(keys(items),
+    ['app-details', 'github', 'favorite', 'retry', 'build-log']);
 });
 
 // ── "View build log" gating (#416) ────────────────────────────────
@@ -646,7 +677,8 @@ test('menu: shortcut item renders when the bridge reports support', () => {
   Home._shortcutSupport = { mechanism: 'pinned-shortcut' };
   // "Your apps" only — favorited (or collaborator) apps get the item.
   const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
-  assert.deepEqual(keys(items), ['app-details', 'favorite', 'add-to-homescreen']);
+  assert.deepEqual(keys(items),
+    ['app-details', 'github', 'favorite', 'add-to-homescreen']);
   assert.equal(
     items.find((i) => i.key === 'add-to-homescreen').label,
     'Add to phone home screen'
@@ -710,29 +742,44 @@ test('menu: shortcut item becomes "Edit in Usernode widget" once added', () => {
 
 // ── Usernode widget section ───────────────────────────────────────
 //
-// renderWidgetSection is the iOS-only strip above "Your apps". It must
-// render nothing unless BOTH the bridge reported mechanism 'widget' AND
-// the registry fetch succeeded (_widgetItems is an array) — old app
-// builds time out to null and plain browsers never probe, so the
-// section (and its management calls) can't appear where they'd fail.
+// The iOS-only strip above "Your apps". It must render nothing unless BOTH
+// the bridge reported mechanism 'widget' AND the registry fetch succeeded
+// (_widgetItems is an array) — old app builds time out to null and plain
+// browsers never probe, so the section (and its management calls) can't
+// appear where they'd fail.
+//
+// #1191 split the one `renderWidgetSection()` these were written against into
+// the two halves the React conversion makes: `Home.widgetSectionView()`
+// decides (it is where all three gates above still live) and
+// features/home/widget-strip.tsx's `WidgetStripBody` draws. `sectionHtml`
+// runs both, so every assertion below still executes the rendering rather
+// than grepping for it — and `''` still means "nothing", because the body
+// returns null for an inactive strip.
+const { renderComponent } = require('./lib/render-tsx');
+
+const WIDGET_STRIP = 'frontend/src/features/home/widget-strip.tsx';
+
+function sectionHtml(Home) {
+  return renderComponent(WIDGET_STRIP, 'WidgetStripBody', { strip: Home.widgetSectionView() });
+}
 
 test('widget section: hidden unless revealed + widget mechanism + registry', () => {
   const Home = makeHome({ id: ME });
-  assert.equal(Home.renderWidgetSection(), '', 'no probe → nothing');
+  assert.equal(sectionHtml(Home), '', 'no probe → nothing');
   Home._shortcutSupport = { mechanism: 'widget' };
   Home._widgetItems = [
     { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app' },
   ];
   // Everything supported and fetched, but the user hasn't clicked
   // "Add to Usernode widget" yet → still hidden by default.
-  assert.equal(Home.renderWidgetSection(), '', 'hidden until revealed');
+  assert.equal(sectionHtml(Home), '', 'hidden until revealed');
   Home._widgetSectionVisible = true;
-  assert.match(Home.renderWidgetSection(), /id="widget-strip"/, 'revealed');
+  assert.match(sectionHtml(Home), /id="widget-strip"/, 'revealed');
   Home._widgetItems = null;
-  assert.equal(Home.renderWidgetSection(), '', 'no registry fetched → nothing');
+  assert.equal(sectionHtml(Home), '', 'no registry fetched → nothing');
   Home._shortcutSupport = { mechanism: 'pinned-shortcut' };
   Home._widgetItems = [];
-  assert.equal(Home.renderWidgetSection(), '', 'Android pins → no section');
+  assert.equal(sectionHtml(Home), '', 'Android pins → no section');
 });
 
 test('menu click: reveals the section and auto-adds when there is room', async () => {
@@ -749,7 +796,7 @@ test('menu click: reveals the section and auto-adds when there is room', async (
   await Home._menuAddShortcut(baseApp({ is_favorited: true }));
   assert.equal(Home._widgetSectionVisible, true, 'click reveals the section');
   assert.equal(added.length, 1, 'app auto-added when the widget has room');
-  assert.match(added[0].url, /#app\/demo-app/);
+  assert.equal(added[0].url, 'https://sv.test/app/demo-app');
 });
 
 test('menu click: full widget shakes instead of adding', async () => {
@@ -781,7 +828,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
     { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app' },
     { id: 'w2', name: 'Other Dapp', url: 'https://elsewhere.test/thing' },
   ];
-  const html = Home.renderWidgetSection();
+  const html = sectionHtml(Home);
   assert.match(html, /Usernode widget/, 'section header');
   assert.match(html, /id="widget-section-close"/, 'header has a Done/close button');
   assert.match(html, /id="widget-strip"/);
@@ -796,7 +843,7 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   assert.doesNotMatch(html, /data-wslug="other/i);
   // Empty registry still renders the strip as a drop target.
   Home._widgetItems = [];
-  const empty = Home.renderWidgetSection();
+  const empty = sectionHtml(Home);
   assert.match(empty, /id="widget-strip"/);
   assert.doesNotMatch(empty, /widget-tile /);
   // The hint names "Your apps" as the drag source now: the home grid holds
@@ -809,11 +856,11 @@ test('widget section: help icon toggles the add-widget instructions', () => {
   Home._shortcutSupport = { mechanism: 'widget' };
   Home._widgetSectionVisible = true;
   Home._widgetItems = [];
-  let html = Home.renderWidgetSection();
+  let html = sectionHtml(Home);
   assert.match(html, /id="widget-section-help"/, 'header has the info button');
   assert.doesNotMatch(html, /widget-help-panel/, 'panel hidden by default');
   Home._widgetHelpVisible = true;
-  html = Home.renderWidgetSection();
+  html = sectionHtml(Home);
   assert.match(html, /id="widget-help-panel"/, 'panel shown after toggle');
   assert.match(html, /Add Widget/, 'panel explains the iOS add-widget flow');
 });
@@ -876,7 +923,7 @@ test('icon heal: has_icon:false entries are silently re-added once', async () =>
   // the foreign shortcut are left alone. The re-add is marked silent so
   // the app skips the add-the-widget walkthrough.
   assert.equal(added.length, 1);
-  assert.match(added[0].url, /#app\/demo-app/);
+  assert.equal(added[0].url, 'https://sv.test/app/demo-app');
   assert.equal(added[0].silent, true);
   // Second refresh: already tried — no repeat even though the mock
   // still reports has_icon:false.
@@ -1117,7 +1164,7 @@ test('icon heal: a system light→dark flip re-sends every canvas tile once', as
   setDark(true);
   await new Promise((r) => setTimeout(r, 0));
   assert.equal(added.length, 1, 'exactly the canvas tile re-sends');
-  assert.match(added[0].url, /#app\/demo-app/);
+  assert.equal(added[0].url, 'https://sv.test/app/demo-app');
   assert.equal(added[0].silent, true, 're-send stays silent — no walkthrough');
   const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
   assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:dark:`, 'dark source recorded');
@@ -1809,7 +1856,7 @@ test('a foreground re-fetches the registry, not just the snapshot', async () => 
   await flushAsync();
   assert.equal(Home._widgetItems.length, 2, 'the registry was re-read');
   assert.equal(added.length, 1, 'and the new entry gets its icon');
-  assert.equal(added[0].url, 'https://sv.test/#app/second');
+  assert.equal(added[0].url, 'https://sv.test/app/second');
 });
 
 // A foreground whose registry read failed learned nothing, so it must
@@ -1911,4 +1958,111 @@ test('menu: shortcut item hidden when unsupported or app not running', () => {
       `hidden on ${status} apps`
     );
   }
+});
+
+function holdHarness({ yours = false, demo = false, placement = false } = {}) {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const timers = new Map();
+  const listeners = new Map();
+  const cardListeners = new Map();
+  const opened = [];
+  let seq = 0;
+  sandbox.setTimeout = (fn, ms) => { timers.set(++seq, { fn, ms }); return seq; };
+  sandbox.clearTimeout = (id) => timers.delete(id);
+  sandbox.addEventListener = (name, fn) => listeners.set(name, fn);
+  sandbox.removeEventListener = (name, fn) => { if (listeners.get(name) === fn) listeners.delete(name); };
+  sandbox.PlatformUI = { gestures: () => ({ claim: () => true }) };
+  Home._placementHandle = placement ? {} : null;
+  Home.openCardMenu = (slug, anchor) => { opened.push({ slug, anchor }); };
+  Home.closeCardMenu = () => { opened.push('closed'); };
+  const card = {
+    dataset: { slug: 'demo-app' },
+    hasAttribute: (key) => key === 'data-yours' ? yours : key === 'data-demo' && demo,
+    addEventListener: (name, fn) => cardListeners.set(name, fn),
+    removeEventListener: (name) => cardListeners.delete(name),
+  };
+  const dispose = Home._wireCardLongPressMenu(card);
+  const event = { pointerId: 1, pointerType: 'touch', button: 0, clientX: 20, clientY: 20, target: { closest: () => null } };
+  const fire = (name, extra = {}) => (cardListeners.get(name) || listeners.get(name))?.({ ...event, type: name, ...extra });
+  const tick = (ms) => {
+    for (const [id, timer] of [...timers]) {
+      if (timer.ms <= ms) { timers.delete(id); timer.fn(); }
+    }
+  };
+  return { Home, card, opened, fire, tick, dispose, timers, listeners };
+}
+
+test('long hold anchors to its tile and suppresses launch until release', () => {
+  const h = holdHarness();
+  h.fire('pointerdown');
+  h.tick(400);
+  assert.equal(h.opened[0].anchor, h.card);
+  h.tick(5000);
+  assert.equal(h.Home._suppressClick, true, 'a prolonged hold cannot expire the click guard');
+  h.fire('pointerup');
+  assert.equal(h.Home._suppressClick, true, 'the release click is still guarded');
+  h.tick(0);
+  assert.equal(h.Home._suppressClick, false, 'later taps are available');
+  assert.equal(h.listeners.size, 0);
+});
+
+test('short tap, scrolling, cancellation and unmount never open a held menu', () => {
+  for (const action of ['pointerup', 'pointermove', 'pointercancel', 'unmount']) {
+    const h = holdHarness();
+    h.fire('pointerdown');
+    if (action === 'unmount') h.dispose();
+    else h.fire(action, { clientY: 45 });
+    h.tick(400);
+    assert.deepEqual(h.opened, [], action);
+    assert.equal(h.listeners.size, 0, action);
+  }
+});
+
+test('another pointer cannot cancel a hold; cancelled open menus dismiss', () => {
+  const h = holdHarness();
+  h.fire('pointerdown');
+  h.fire('pointerup', { pointerId: 2 });
+  h.tick(400);
+  assert.equal(h.opened.length, 1);
+  h.fire('pointercancel');
+  assert.equal(h.opened[1], 'closed');
+});
+
+test('placed touch tiles leave long press to the placement recognizer', () => {
+  const h = holdHarness({ yours: true, placement: true });
+  h.fire('pointerdown');
+  h.tick(400);
+  assert.deepEqual(h.opened, []);
+  const pen = holdHarness({ yours: true, placement: true });
+  pen.fire('pointerdown', { pointerType: 'pen' });
+  pen.tick(400);
+  assert.equal(pen.opened.length, 1, 'pens still get the context menu');
+  pen.dispose();
+});
+
+test('app menus use an anchored popover even on touch', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  Home._apps = [baseApp()];
+  Home.renderMenuHeaderHtml = () => 'Demo App';
+  sandbox.document.createElement = () => ({});
+  let options;
+  sandbox.PlatformUI = { popover: (opts) => { options = opts; return Promise.resolve(null); } };
+  const anchor = { getBoundingClientRect: () => ({ left: 20, top: 20, right: 76, bottom: 76 }) };
+  Home.openCardMenu('demo-app', anchor);
+  assert.equal(options.anchorEl, anchor);
+  assert.equal(options.headerEl.className, 'card-menu-header');
+  assert.ok(options.items.length > 0);
+});
+
+test('movement dismissing an open search menu still suppresses the release click', () => {
+  const h = holdHarness();
+  h.fire('pointerdown');
+  h.tick(400);
+  h.fire('pointermove', { clientY: 50 });
+  h.tick(5000);
+  assert.equal(h.opened[1], 'closed');
+  assert.equal(h.Home._suppressClick, true);
+  h.fire('pointerup', { clientY: 50 });
+  h.tick(0);
+  assert.equal(h.Home._suppressClick, false);
 });

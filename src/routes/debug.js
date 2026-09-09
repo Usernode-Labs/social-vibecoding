@@ -68,7 +68,7 @@ function stagingMockMergeRuns() {
     mk(9500001, 900201, 'Add a dark-mode toggle to the settings drawer',
       'merge', 'vote', 'merged', 2, 1, [
         { phase: 'gate:majority', message: 'Majority reached: 3 of 3 active users voted yes.', detail: { yesCount: 3, majority: 3, activeCount: 3 } },
-        { phase: 'gate:lock', message: 'App is not locked — no admin-yes requirement.' },
+        { phase: 'gate:lock', message: 'App is not locked, so there is no admin-yes requirement.' },
         { phase: 'gate:behind_main', message: 'Branch is up to date with main (0 behind).', detail: { behind: 0 } },
         { phase: 'gate:checks', message: 'Checks gate: state = passing.', detail: { checkState: 'passing' } },
         { phase: 'claim', message: 'Claimed merge (promoted → merging).' },
@@ -83,7 +83,7 @@ function stagingMockMergeRuns() {
     mk(9500002, 900202, 'Refactor the feed renderer for infinite scroll',
       'conflict_resolution', 'merge_conflict', 'merged', 5, 3, [
         { phase: 'github_merge', message: 'GitHub returned 405: merge conflict.', level: 'warn', detail: { status: 405 } },
-        { phase: 'conflict_detected', message: 'Conflict detected — starting automatic resolution.' },
+        { phase: 'conflict_detected', message: 'Conflict detected. Starting automatic resolution.' },
         { phase: 'pollMergeable', message: 'GitHub mergeability settled: mergeable = false.', detail: { mergeable: false } },
         { phase: 'needs_sync', message: 'Branch needs a worker sync with main (behind 2, conflicting).', detail: { behind: 2 } },
         { phase: 'persist:resolving', message: 'Snapshot → resolving.' },
@@ -106,17 +106,17 @@ function stagingMockMergeRuns() {
         { phase: 'sync:sync_conflict_cc', message: 'Worker sync: resolving conflicts with Claude…' },
         { phase: 'sync_result', message: 'Claude could not resolve the conflicts; branch left unchanged.', level: 'error', detail: { syncResult: 'conflict', conflictFiles: ['src/services/leaderboard.js', 'src/db/schema.sql'] } },
         { phase: 'persist:failed', message: 'Snapshot → failed.', level: 'warn' },
-        { phase: 'group_chat', message: "Posted to group chat: couldn't auto-merge — owner must resolve in dev-chat.", detail: { reason: 'unresolved_conflict' } },
+        { phase: 'group_chat', message: "Posted to group chat: couldn't auto-merge, so the owner must resolve it in dev-chat.", detail: { reason: 'unresolved_conflict' } },
         { phase: 'outcome', message: 'Resolution failed (unresolved_conflict).', level: 'error', detail: { reason: 'unresolved_conflict' } },
       ]),
     // 4. Blocked at a gate (votes reached, checks failing) — the #421/#431 case.
     mk(9500004, 900204, 'Add a copy-link button to merged proposals',
       'merge', 'vote', 'blocked', 1, 0, [
         { phase: 'gate:majority', message: 'Majority reached: 4 of 3 active users voted yes.', detail: { yesCount: 4, majority: 3, activeCount: 3 } },
-        { phase: 'gate:lock', message: 'App is not locked — no admin-yes requirement.' },
+        { phase: 'gate:lock', message: 'App is not locked, so there is no admin-yes requirement.' },
         { phase: 'gate:behind_main', message: 'Branch is up to date with main (0 behind).', detail: { behind: 0 } },
         { phase: 'gate:checks', message: 'Merge blocked: checks not passing (state = failing, 2 tests failing).', level: 'warn', detail: { checkState: 'failing', failingCount: 2 } },
-        { phase: 'outcome', message: 'Blocked — votes reached but checks must pass first.', level: 'warn', detail: { checksBlocked: true } },
+        { phase: 'outcome', message: 'Blocked: votes reached, but checks must pass first.', level: 'warn', detail: { checksBlocked: true } },
       ]),
     // 5. PR closed on GitHub, reopen refused — the terminal pr_closed
     // outcome (a withdrawn-then-re-promoted proposal whose head branch
@@ -125,14 +125,14 @@ function stagingMockMergeRuns() {
       'conflict_resolution', 'conflict_resolver', 'pr_closed', 3, 1, [
         { phase: 'pollMergeable', message: 'GitHub mergeability settled: mergeable = false (state = closed).', detail: { mergeable: false, state: 'closed', merged: false } },
         { phase: 'pr_closed', message: "PR #900205 is closed on GitHub and couldn't be reopened: head branch was deleted.", level: 'error', detail: {} },
-        { phase: 'group_chat', message: 'Posted to group chat: PR is closed on GitHub — taken off the vote panel, re-propose from dev-chat.', detail: { reason: 'pr_closed' } },
+        { phase: 'group_chat', message: 'Posted to group chat: PR is closed on GitHub, taken off the vote panel; re-propose from dev-chat.', detail: { reason: 'pr_closed' } },
       ]),
     // 6. PR closed on GitHub, auto-reopened, then resolved + merged — the
     // happy path of the same detection.
     mk(9500006, 900206, 'Add per-row swipe actions to the todo list',
       'conflict_resolution', 'conflict_resolver', 'merged', 4, 2, [
         { phase: 'pollMergeable', message: 'GitHub mergeability settled: mergeable = false (state = closed).', detail: { mergeable: false, state: 'closed', merged: false } },
-        { phase: 'reopened_closed_pr', message: 'PR #900206 was closed on GitHub — reopened it to restore the proposal.' },
+        { phase: 'reopened_closed_pr', message: 'PR #900206 was closed on GitHub. Reopened it to restore the proposal.' },
         { phase: 'pollMergeable', message: 'GitHub mergeability settled: mergeable = true.', detail: { mergeable: true, state: 'open' } },
         { phase: 'waitForMergeableTrue', message: 'Waiting for GitHub to confirm mergeability… mergeable = true.', detail: { mergeable: true } },
         { phase: 'retry_merge', message: 'Re-attempting merge… merged as commit 5566778.', detail: { sha: '5566778ee' } },

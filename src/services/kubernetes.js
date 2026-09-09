@@ -1,4 +1,6 @@
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const stream = require('stream');
 const k8s = require('@kubernetes/client-node');
 const log = require('./logger');
@@ -100,7 +102,34 @@ function requireBuildConfig(config) {
   return cfg;
 }
 
-async function createBuild(config, { app, revision, environment, sessionId }) {
+function packageRunsScript(sourceDir, scriptName) {
+  if (!sourceDir) return false;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(sourceDir, 'package.json'), 'utf8'));
+    return typeof pkg.scripts?.[scriptName] === 'string';
+  } catch {
+    return false;
+  }
+}
+
+async function deleteBuild(config, name) {
+  await deleteIfPresent(
+    getClients().custom,
+    'deleteNamespacedCustomObject',
+    name,
+    config.kubernetes.buildNamespace,
+    {
+      group: 'kpack.io', version: 'v1alpha2', plural: 'builds',
+      propagationPolicy: 'Background',
+    }
+  );
+}
+
+// `onProgress(image)` is called as the kpack Build advances: `{ phase,
+// phases: [{ name, ms }], detail }` — which lifecycle phase (init container)
+// is running, how long the finished ones took, and the last line the running
+// phase printed. Best-effort throughout; a status read that fails is skipped.
+async function createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress = null }) {
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) {
     throw new Error('Kubernetes builds require a full 40-character Git commit SHA');
   }
@@ -109,10 +138,29 @@ async function createBuild(config, { app, revision, environment, sessionId }) {
   }
   const cfg = requireBuildConfig(config);
   const suffix = sessionId ? `s${sessionId}-` : '';
-  const buildName = dnsName(`sv-${app.id}-${suffix}${revision.slice(0, 12)}`);
   const repository = `${cfg.repositoryPrefix}/${dnsName(app.slug)}`;
   const cacheTag = `${cfg.cacheRepositoryPrefix}/${dnsName(app.slug)}:cache`;
-  const tag = `${repository}:git-${revision}`;
+  const buildEnv = [{ name: 'BP_NODE_VERSION', value: cfg.nodeVersion }];
+  // The platform self-app generates ignored React/Tailwind artifacts. Paketo
+  // must materialize them while /workspace is writable; the launch container
+  // deliberately runs as non-root and treats the image filesystem as built.
+  // Detect the script from the exact checked-out source instead of coupling
+  // this runtime adapter to one app id or slug.
+  if (packageRunsScript(sourceDir, 'ensure:shell')) {
+    buildEnv.push({ name: 'BP_NODE_RUN_SCRIPTS', value: 'ensure:shell' });
+  } else if (packageRunsScript(sourceDir, 'build')) {
+    // Standard generated/imported apps declare their asset build in npm.
+    // Keep ensure:shell first: its prerender -> CSS ordering is load-bearing.
+    buildEnv.push({ name: 'BP_NODE_RUN_SCRIPTS', value: 'build' });
+  }
+  // A new builder must rebuild an unchanged app revision, not reuse an old
+  // successful immutable Build after create returns 409. Include this in the
+  // tag too, so the artifact address identifies the source AND build recipe.
+  const recipe = crypto.createHash('sha256')
+    .update(JSON.stringify({ builder: cfg.builderImage, env: buildEnv }))
+    .digest('hex').slice(0, 12);
+  const buildName = dnsName(`sv-${app.id}-${suffix}${revision.slice(0, 12)}-${recipe}`);
+  const tag = `${repository}:git-${revision}-${recipe}`;
   const body = {
     apiVersion: 'kpack.io/v1alpha2',
     kind: 'Build',
@@ -124,7 +172,7 @@ async function createBuild(config, { app, revision, environment, sessionId }) {
       cache: { registry: { tag: cacheTag } },
       source: { git: { url: app.repo_url.replace(/\.git$/, ''), revision } },
       activeDeadlineSeconds: cfg.activeDeadlineSeconds,
-      env: [{ name: 'BP_NODE_VERSION', value: cfg.nodeVersion }],
+      env: buildEnv,
       resources: {
         requests: { cpu: process.env.BUILD_REQUESTS_CPU || '500m', memory: process.env.BUILD_REQUESTS_MEMORY || '1Gi', 'ephemeral-storage': process.env.BUILD_REQUESTS_EPHEMERAL_STORAGE || '2Gi' },
         limits: { cpu: process.env.BUILD_LIMITS_CPU || '2', memory: process.env.BUILD_LIMITS_MEMORY || '2Gi', 'ephemeral-storage': process.env.BUILD_LIMITS_EPHEMERAL_STORAGE || '8Gi' },
@@ -137,24 +185,120 @@ async function createBuild(config, { app, revision, environment, sessionId }) {
   } catch (err) {
     if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err;
   }
-  const result = await waitForBuild(config, buildName);
-  return { buildRef: `${cfg.buildNamespace}/${buildName}`, imageRef: result.status.latestImage, requestedTag: tag };
+  try {
+    const result = await waitForBuild(config, buildName, { onProgress });
+    return {
+      buildRef: `${cfg.buildNamespace}/${buildName}`, imageRef: result.status.latestImage, requestedTag: tag,
+      phases: result.phases || null,
+    };
+  } catch (err) {
+    await deleteBuild(config, buildName).catch((cleanupErr) => {
+      log.warn('kubernetes', 'Failed kpack Build cleanup failed', {
+        buildName, err: cleanupErr.message,
+      });
+    });
+    throw err;
+  }
 }
 
-async function waitForBuild(config, name) {
+// The kpack pod runs the buildpack lifecycle as init containers, in order
+// (prepare, analyze, detect, restore, build, export on current kpack), each
+// with its own start and finish stamps. That is the whole per-phase timing,
+// read straight off the pod: no log parsing is needed for the phases, only
+// for the `detail` line.
+function buildPhasesFromPod(pod) {
+  const spec = (pod && pod.spec && Array.isArray(pod.spec.initContainers)) ? pod.spec.initContainers : [];
+  const statuses = (pod && pod.status && Array.isArray(pod.status.initContainerStatuses)) ? pod.status.initContainerStatuses : [];
+  const byName = new Map(statuses.map((s) => [s.name, s]));
+  const phases = [];
+  let phase = null;
+  let runningSince = null;
+  for (const c of spec) {
+    const st = byName.get(c.name) || {};
+    const t = st.state && st.state.terminated;
+    const r = st.state && st.state.running;
+    if (t) {
+      const ms = Date.parse(t.finishedAt) - Date.parse(t.startedAt);
+      phases.push({ name: c.name, ms: Number.isFinite(ms) ? Math.max(0, ms) : null });
+    } else if (r && !phase) {
+      phase = c.name;
+      runningSince = r.startedAt || null;
+    }
+  }
+  if (!phase) {
+    const main = (pod && pod.status && Array.isArray(pod.status.containerStatuses)) ? pod.status.containerStatuses[0] : null;
+    if (main && main.state && main.state.running) phase = main.name || 'completion';
+    else if (spec.length && phases.length === spec.length) phase = 'completion';
+    else if (spec.length) phase = spec[0].name; // scheduled, nothing running yet
+  }
+  return { phase, phases, runningSince, order: spec.map((c) => c.name) };
+}
+
+async function waitForBuild(config, name, { onProgress = null } = {}) {
   const cfg = config.kubernetes;
   const deadline = Date.now() + (cfg.activeDeadlineSeconds + 60) * 1000;
-  const { custom } = getClients();
-  while (Date.now() < deadline) {
-    const build = await custom.getNamespacedCustomObject({ group: 'kpack.io', version: 'v1alpha2', namespace: cfg.buildNamespace, plural: 'builds', name });
-    const succeeded = build.status?.conditions?.find((condition) => condition.type === 'Succeeded');
-    if (succeeded?.status === 'True' && build.status?.latestImage) return build;
-    if (succeeded?.status === 'False') {
-      throw new Error(`kpack Build ${name} failed: ${succeeded.message || succeeded.reason || 'unknown error'}`);
+  const clients = getClients();
+  const { custom, core } = clients;
+  const report = typeof onProgress === 'function';
+  let image = { phase: null, phases: [], detail: null };
+  let followed = null;
+  let followAbort = null;
+  const stopFollow = () => {
+    if (followAbort && typeof followAbort.abort === 'function') { try { followAbort.abort(); } catch { /* closed */ } }
+    followAbort = null;
+    followed = null;
+  };
+  const emit = () => { if (report) { try { onProgress({ ...image, phases: image.phases.slice() }); } catch { /* observer only */ } } };
+  // The running phase's log, followed, for the `detail` line. Re-attached
+  // when the running phase changes (kpack runs them one after another).
+  const followPhase = async (podName, phase) => {
+    if (!report || !core || !podName || !phase || phase === followed) return;
+    const logApi = clientsLogApi(clients);
+    if (!logApi) return;
+    stopFollow();
+    try {
+      const sink = new stream.PassThrough();
+      attachLineObserver(sink, (line) => {
+        const text = String(line || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
+        if (!text) return;
+        image.detail = text.length > 160 ? `${text.slice(0, 157)}...` : text;
+        emit();
+      });
+      followAbort = await logApi.log(cfg.buildNamespace, podName, phase, sink, { follow: true });
+      followed = phase;
+    } catch { /* not started yet; next tick */ }
+  };
+  const observe = async (build) => {
+    if (!report || !core) return;
+    const podName = build.status && build.status.podName;
+    if (!podName) return;
+    try {
+      const pod = await core.readNamespacedPod({ name: podName, namespace: cfg.buildNamespace });
+      const derived = buildPhasesFromPod(pod);
+      const phaseChanged = derived.phase !== image.phase;
+      image = { ...image, phase: derived.phase, phases: derived.phases, ...(phaseChanged ? { detail: null } : {}) };
+      emit();
+      if (derived.phase && derived.phase !== 'completion') await followPhase(podName, derived.phase);
+    } catch { /* progress is best-effort */ }
+  };
+  try {
+    while (Date.now() < deadline) {
+      const build = await custom.getNamespacedCustomObject({ group: 'kpack.io', version: 'v1alpha2', namespace: cfg.buildNamespace, plural: 'builds', name });
+      const succeeded = build.status?.conditions?.find((condition) => condition.type === 'Succeeded');
+      if (succeeded?.status === 'True' && build.status?.latestImage) {
+        await observe(build);
+        return { ...build, phases: image.phases.length ? image.phases : null };
+      }
+      if (succeeded?.status === 'False') {
+        throw new Error(`kpack Build ${name} failed: ${succeeded.message || succeeded.reason || 'unknown error'}`);
+      }
+      await observe(build);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
     }
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    throw new Error(`Timed out waiting for kpack Build ${name}`);
+  } finally {
+    stopFollow();
   }
-  throw new Error(`Timed out waiting for kpack Build ${name}`);
 }
 
 function appResourceName(app, environment, sessionId) {
@@ -178,7 +322,12 @@ function containerSecurityContext() {
   return { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] }, readOnlyRootFilesystem: false };
 }
 
-async function deployApplication(config, { app, environment, sessionId, imageRef, env }) {
+// `cpus` is the container's CPU LIMIT (a ceiling, not a request — requests
+// stay at 100m so scheduling is unchanged). Staging previews pass
+// docker.STAGING_CPUS through application-runtime.deploy so the capture
+// run's eight concurrent pages get the same headroom on both runtimes;
+// production apps pass nothing and keep the 1-CPU limit they always had.
+async function deployApplication(config, { app, environment, sessionId, imageRef, env, cpus = null }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
   const cfg = config.kubernetes;
   const namespace = cfg.appNamespace;
@@ -189,6 +338,8 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   const hostname = environment === 'production'
     ? `${app.slug}.${cfg.appDomain}`
     : `${app.slug}--s${sessionId}.${cfg.appDomain}`;
+  // Check before creating or updating any Kubernetes resources.
+  require('./caddy').assertAppHostname(hostname, cfg.platformDomain);
   const { core, apps, networking } = getClients();
 
   await upsert(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, {
@@ -218,11 +369,14 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
           containers: [{
             name: 'app', image: imageRef, imagePullPolicy: 'IfNotPresent',
             ports: [{ name: 'http', containerPort: 3000 }],
+            env: app.slug === config.selfAppSlug
+              ? [{ name: 'USERNODE_SHELL_ASSETS_PREBUILT', value: '1' }]
+              : [],
             envFrom: [{ secretRef: { name: secretName } }],
             startupProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 3, failureThreshold: 40 },
             readinessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 5, failureThreshold: 3 },
             livenessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 15, failureThreshold: 3 },
-            resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: '1', memory: '1Gi' } },
+            resources: { requests: { cpu: '100m', memory: '128Mi' }, limits: { cpu: String(cpus || '1'), memory: '1Gi' } },
             securityContext: containerSecurityContext(),
           }],
         },
@@ -240,7 +394,21 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
       tls: [{ hosts: [hostname], secretName: withSuffix(name, 'tls') }],
     },
   });
-  await waitForDeployment(namespace, name);
+  try {
+    await waitForDeployment(namespace, name);
+  } catch (err) {
+    // A failed preview has no serving value but its declared CPU limit still
+    // consumes ResourceQuota. Production keeps its prior ReplicaSet for a
+    // recoverable rollout; previews are disposable and are rebuilt on retry.
+    if (environment !== 'production') {
+      await deleteApplication(config, name).catch((cleanupErr) => {
+        log.warn('kubernetes', 'Failed preview cleanup failed', {
+          namespace, name, err: cleanupErr.message,
+        });
+      });
+    }
+    throw err;
+  }
   return { runtimeKind: 'kubernetes', runtimeName: name, imageRef, hostname, url: `https://${hostname}` };
 }
 
@@ -303,6 +471,23 @@ async function deleteBuilds(config, appId) {
     plural: 'builds', labelSelector: `social.usernode.io/app-id=${appId}`,
     propagationPolicy: 'Background',
   });
+}
+
+async function deleteFailedBuilds(config) {
+  const namespace = config.kubernetes.buildNamespace;
+  const { custom } = getClients();
+  const response = await custom.listNamespacedCustomObject({
+    group: 'kpack.io', version: 'v1alpha2', namespace, plural: 'builds',
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY}`,
+  });
+  const items = response.items || [];
+  const failed = items.filter((build) => build.status?.conditions?.some(
+    (condition) => condition.type === 'Succeeded' && condition.status === 'False'
+  ));
+  for (const build of failed) {
+    await deleteBuild(config, build.metadata.name);
+  }
+  return { examined: items.length, deleted: failed.length };
 }
 
 async function ensureWorker(config, { sessionId, env }) {
@@ -599,8 +784,16 @@ async function cloneWorkerVolume(config, sourceSessionId, targetSessionId) {
   throw new Error(`Timed out waiting for worker PVC copy Job ${name}`);
 }
 
+// `onStdoutLine(line)`: the same observer contract as docker.runOneShot —
+// complete stdout lines as the run progresses, on top of the final log the
+// verdict is read from. A Job has no stdout to listen to, so while polling
+// for completion the pod log is re-read every few ticks and only the lines
+// past the last consumed offset are handed over. Errors reading the log are
+// swallowed: progress is a courtesy, the verdict still comes from the final
+// read below, unchanged.
 async function runCaptureJob(config, {
   sessionId, env, stdinPayload = null, timeoutMs = 180000,
+  onStdoutLine = null,
 }) {
   const cfg = config.kubernetes;
   if (!cfg.captureImage?.includes('@sha256:')) throw new Error('KUBERNETES_CAPTURE_IMAGE must be an immutable digest');
@@ -613,7 +806,8 @@ async function runCaptureJob(config, {
   const captureContainer = {
     name: 'capture', image: cfg.captureImage, imagePullPolicy: 'IfNotPresent',
     env: Object.entries(env || {}).map(([key, value]) => ({ name: key, value: String(value) })),
-    resources: { requests: { cpu: '250m', memory: '512Mi', 'ephemeral-storage': '1Gi' }, limits: { cpu: '2', memory: '2Gi', 'ephemeral-storage': '4Gi' } },
+    // Eight concurrent Chromium pages need the same memory budget as Docker captures.
+    resources: { requests: { cpu: '250m', memory: '512Mi', 'ephemeral-storage': '1Gi' }, limits: { cpu: '2', memory: '4Gi', 'ephemeral-storage': '4Gi' } },
     securityContext: containerSecurityContext(),
   };
   const podVolumes = [];
@@ -634,6 +828,9 @@ async function runCaptureJob(config, {
   } };
   const { batch, core } = getClients();
   let inputSecretCreated = false;
+  // Follow state lives outside the try so the finally can close the stream.
+  let following = false;
+  let followAbort = null;
   try {
     if (inputSecretName) {
       await core.createNamespacedSecret({ namespace, body: {
@@ -645,6 +842,57 @@ async function runCaptureJob(config, {
     }
     await batch.createNamespacedJob({ namespace, body });
     const deadline = Date.now() + timeoutMs + 15000;
+    // Progress observer state. Two ways to see the container's stdout as it
+    // streams: FOLLOW the pod log (one long request; each line reaches the
+    // observer as it is printed, the same cadence docker's stdout gives),
+    // or, until the follow is up or where it is unavailable, re-read the
+    // cumulative log every PROGRESS_EVERY_TICKS and hand over what is new.
+    // The polled read arrives in ~6s steps, which on a fast document group
+    // is 50-100 checks at once; the follow is what makes the bar move
+    // smoothly. `consumed` is how much of the log either path has already
+    // delivered, so a follow that starts after a poll skips what the poll
+    // handed over instead of replaying it.
+    const PROGRESS_EVERY_TICKS = 3;
+    let progressPodName = null;
+    let consumed = 0;
+    let tick = 0;
+    const findPod = async () => {
+      if (progressPodName) return progressPodName;
+      const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
+      progressPodName = pods.items?.[0]?.metadata?.name || null;
+      return progressPodName;
+    };
+    const startFollow = async () => {
+      if (typeof onStdoutLine !== 'function' || following) return;
+      try {
+        if (!(await findPod())) return;
+        const logApi = clientsLogApi(getClients());
+        if (!logApi) return;
+        const sink = new stream.PassThrough();
+        attachLineObserver(sink, onStdoutLine, { skipBytes: consumed });
+        // The API refuses a container that has not started ("is waiting to
+        // start"); the next tick tries again, and the polled read covers
+        // the gap.
+        followAbort = await logApi.log(namespace, progressPodName, 'capture', sink, { follow: true });
+        following = true;
+      } catch { /* the polled read stays in charge */ }
+    };
+    const observeProgress = async () => {
+      if (typeof onStdoutLine !== 'function' || following) return;
+      try {
+        if (!(await findPod())) return;
+        const text = await core.readNamespacedPodLog({ name: progressPodName, namespace, container: 'capture', limitBytes: 64 * 1024 * 1024 });
+        const log = String(text || '');
+        if (log.length <= consumed) return;
+        const fresh = log.slice(consumed);
+        const lastNl = fresh.lastIndexOf('\n');
+        if (lastNl === -1) return; // no complete new line yet
+        for (const line of fresh.slice(0, lastNl).split('\n')) {
+          try { onStdoutLine(line); } catch { /* observer must not break the run */ }
+        }
+        consumed += lastNl + 1;
+      } catch { /* progress is best-effort */ }
+    };
     while (Date.now() < deadline) {
       const job = await batch.readNamespacedJob({ name, namespace });
       if (job.status?.failed) throw new Error(`Capture Job ${name} failed`);
@@ -653,15 +901,68 @@ async function runCaptureJob(config, {
         const pod = pods.items?.[0];
         return { stdout: pod ? await core.readNamespacedPodLog({ name: pod.metadata.name, namespace, container: 'capture', limitBytes: 64 * 1024 * 1024 }) : '', runtimeName: name };
       }
+      tick += 1;
+      if (!following) await startFollow();
+      if (!following && tick % PROGRESS_EVERY_TICKS === 0) await observeProgress();
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
     throw new Error(`Timed out waiting for capture Job ${name}`);
   } finally {
+    if (followAbort && typeof followAbort.abort === 'function') {
+      try { followAbort.abort(); } catch { /* already closed */ }
+    }
     if (inputSecretCreated) {
       await deleteIfPresent(core, 'deleteNamespacedSecret', inputSecretName, namespace)
         .catch(() => {});
     }
   }
+}
+
+// The pod-log follow client: an injected `logs` for tests, else one built
+// on the real kube config. Null where neither exists (a test that injected
+// only the typed API clients), which leaves the polled read in charge.
+function clientsLogApi(clients) {
+  if (!clients) return null;
+  if (clients.logs && typeof clients.logs.log === 'function') return clients.logs;
+  if (clients.kc) {
+    try { clients.logs = new k8s.Log(clients.kc); return clients.logs; } catch { return null; }
+  }
+  return null;
+}
+
+// Feed a readable's bytes to `onLine` one complete line at a time, after
+// skipping the first `skipBytes` CHARACTERS (what a polled read already
+// delivered — `consumed` above counts characters of the decoded log, so the
+// skip does too; a StringDecoder keeps a multi-byte character split across
+// chunks whole). Chunk boundaries fall anywhere; the trailing partial is
+// flushed at end. Same contract as docker.attachLineObserver, kept local so
+// the two runtime modules do not import each other.
+function attachLineObserver(readable, onLine, { skipBytes = 0 } = {}) {
+  const { StringDecoder } = require('string_decoder');
+  const decoder = new StringDecoder('utf8');
+  let toSkip = Math.max(0, skipBytes | 0);
+  let carry = '';
+  const deliver = (line) => { try { onLine(line); } catch { /* observer must not break the run */ } };
+  readable.on('data', (chunk) => {
+    let text = Buffer.isBuffer(chunk) ? decoder.write(chunk) : String(chunk);
+    if (toSkip > 0) {
+      const n = Math.min(toSkip, text.length);
+      text = text.slice(n);
+      toSkip -= n;
+      if (!text) return;
+    }
+    carry += text;
+    let nl;
+    while ((nl = carry.indexOf('\n')) !== -1) {
+      deliver(carry.slice(0, nl));
+      carry = carry.slice(nl + 1);
+    }
+  });
+  readable.on('end', () => {
+    carry += decoder.end();
+    if (carry) { deliver(carry); carry = ''; }
+  });
+  readable.on('error', () => {});
 }
 
 async function execInWorker(config, runtimeName, command, stdinText = null) {
@@ -685,11 +986,13 @@ async function execInWorker(config, runtimeName, command, stdinText = null) {
 
 module.exports = {
   dnsName, withSuffix, labels, createBuild, deployApplication, getApplicationStatus,
-  getApplicationLogs, restartApplication, deleteApplication, deleteBuilds, ensureWorker,
+  getApplicationLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   runCaptureJob, execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, deleteWorker, listWorkers, cloneWorkerVolume,
   listStatusResources, listNamespaceCapacity,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
+  _attachLineObserverForTest: attachLineObserver,
+  _buildPhasesFromPodForTest: buildPhasesFromPod,
   _deploymentStateForTest: deploymentState,
   _normalizeDeploymentForTest: normalizeDeployment,
   _quantityNumberForTest: quantityNumber,

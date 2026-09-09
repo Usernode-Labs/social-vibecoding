@@ -15,15 +15,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { runModules, workDrawerImports } = require('./helpers/bundle-module');
+const { govCardHtml } = require('./lib/dev-card-html');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 const MERGE_STATUS_SRC = read('merge-status.js');
 const APP_VIEW_SRC = read('app-view.js');
-// #1079 chunk B moved this module into the React bundle (it is the same
-// file — see the note at the top of it); only the path changed here.
-const WORK_DRAWER_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'work-drawer', 'work-drawer.js'), 'utf8');
 
 // `opts.el` backs document.getElementById (the roster paints into it);
 // `opts.fetchData` backs fetch().json() (the roster endpoint's payload).
@@ -59,20 +55,6 @@ function makeAppView(opts) {
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 3, activeUsers: 5, locked: false };
   return AppView;
-}
-
-// work-drawer.js is a bundle module and imports the kit-surface seam and (since
-// #1191 slice 6 conversion 4) its own store, neither of which a classic-script
-// `runInContext` can compile — runModules rewrites the imports into reads of
-// the stub table and leaves the rest of the source alone. See
-// tests/helpers/bundle-module.js.
-function makeWorkDrawer(opts) {
-  const sandbox = makeSandbox(opts);
-  return runModules(
-    sandbox,
-    [['merge-status.js', MERGE_STATUS_SRC], ['work-drawer.js', WORK_DRAWER_SRC]],
-    { imports: workDrawerImports(), tail: 'return WorkDrawer;' },
-  );
 }
 
 // The pill is a descriptor now, not a fragment of HTML. `{ yes, majority }` is
@@ -154,7 +136,7 @@ test('voteButtonsHtml: default-policy rows keep the raw totals unchanged', () =>
 test('_renderGovCard: threads the qualified fields into the pill and buttons', () => {
   const AppView = makeAppView();
   AppView.readOnly = false;
-  const html = AppView._renderGovCard({
+  const html = govCardHtml(AppView, {
     id: 9, kind: 'secret_change', title: 'Set FOO_KEY',
     payload: { key: 'FOO_KEY', action: 'set', hasValue: true },
     created_by: 2, created_by_username: 'alice',
@@ -168,36 +150,48 @@ test('_renderGovCard: threads the qualified fields into the pill and buttons', (
   // The advisory surplus rides INSIDE the composite pill as a muted "+N"
   // suffix now, rather than as a separate chip beside it.
   assert.match(html, /gc-vote-count-suffix[^>]*>\+2</);
-  assert.match(html, /Yes \(0✓ \+2\)/);
-  assert.match(html, /No \(0✓\)/);
+  // The Yes/No pair is one vote button on the card now (round three); the
+  // qualified tallies ride in the model's labels and in the button's tooltip.
+  const model = AppView._govCardModel({
+    id: 9, kind: 'secret_change', title: 'Set FOO_KEY',
+    payload: { key: 'FOO_KEY', action: 'set', hasValue: true },
+    created_by: 2, created_by_username: 'alice',
+    created_at: new Date().toISOString(),
+    up_count: 2, down_count: 0, my_vote: null, chat_count: 0,
+    qualified_yes_count: 0, qualified_no_count: 0,
+    approval_policy: 'invited', approvals_required: 1, votes_required: 1,
+    contested: false,
+  }, {});
+  assert.equal(model.actions.map((a) => a.label).join('|'), 'Yes (0✓ +2)|No (0✓)');
+  assert.match(html, /dev-vote-btn[^>]*title="Cast your vote · Yes 0✓ \+2 · No 0✓"/);
 });
 
 // ── _loadVoteRoster ──────────────────────────────────────────────────
 
+// The roster used to be written into a `#dev-vote-roster-N` node; it is a
+// field on the topic head's model now (topic/model.ts), so the fetch caches
+// its answer under `_voteRoster` and the head renders it.
 test('_loadVoteRoster: invited roster splits the headline into Q✓ + A advisory', async () => {
-  const el = { innerHTML: '', textContent: '' };
   const AppView = makeAppView({
-    el,
     fetchData: { yes: ['alice', 'bob'], no: [], approvers: ['alice'] },
   });
   AppView._proposals = [];
   await AppView._loadVoteRoster(1);
-  assert.match(el.innerHTML, /Yes \(1✓ \+ 1 advisory\):/);
-  assert.match(el.innerHTML, /No \(0✓\):/);
-  assert.match(el.innerHTML, /@alice&nbsp;✓/);
-  assert.match(el.innerHTML, /only invited approvers/);
+  const r = AppView._voteRoster[1];
+  assert.equal(r.phase, 'ready');
+  assert.match(r.yes.label, /Yes \(1✓ \+ 1 advisory\)/);
+  assert.match(r.no.label, /No \(0✓\)/);
+  assert.match(r.yes.names, /@alice\u00a0✓/);
+  assert.match(r.needs, /only invited approvers/);
 });
 
 test('_loadVoteRoster: default policy keeps the plain totals', async () => {
-  const el = { innerHTML: '', textContent: '' };
-  const AppView = makeAppView({
-    el,
-    fetchData: { yes: ['alice', 'bob'], no: [] },
-  });
+  const AppView = makeAppView({ fetchData: { yes: ['alice', 'bob'], no: [] } });
   AppView._proposals = [];
   await AppView._loadVoteRoster(1);
-  assert.match(el.innerHTML, /Yes \(2\):/);
-  assert.doesNotMatch(el.innerHTML, /advisory/);
+  const r = AppView._voteRoster[1];
+  assert.match(r.yes.label, /Yes \(2\)/);
+  assert.doesNotMatch(JSON.stringify(r), /advisory/);
 });
 
 // ── _votingHelpText ──────────────────────────────────────────────────
@@ -216,42 +210,8 @@ test('_votingHelpText: invited default-clock branch names the rule + advisory ta
   assert.match(txt, /2 advisory votes from non-approvers are recorded but don’t count/);
 });
 
-// ── header-cog drawer "Your proposals" section (ex-home strip) ────────
-
-test('cog drawer: pill uses the qualified tally vs votes_required, with the advisory chip', () => {
-  const WorkDrawer = makeWorkDrawer();
-  WorkDrawer.proposals = [{
-    id: 42, app_slug: 'demo', app_name: 'Demo App', pr_title: 'Add a thing',
-    status: 'promoted', yes_count: 2, no_count: 0,
-    qualified_yes_count: 0, qualified_no_count: 0,
-    approval_policy: 'invited', votes_required: 1, majority: 3,
-    check_state: 'passing',
-  }];
-  WorkDrawer.governance = [{
-    id: 300, app_slug: 'demo', app_name: 'Demo App', title: 'Set FOO_KEY',
-    up_count: 2, down_count: 0,
-    qualified_yes_count: 0, qualified_no_count: 0,
-    approval_policy: 'invited', votes_required: 1, majority: 3,
-  }];
-  const pills = pillsOf(WorkDrawer.proposalsSection());
-  // PR row: 0 (approver yes) / 1 (governed requirement), +2 advisory —
-  // NOT the raw-tally "2 / 3" (nor a false-green "2 / 1").
-  // Governance row gets the same treatment.
-  assert.deepEqual(pills, [
-    { yes: 0, majority: 1, advisory: 2 },
-    { yes: 0, majority: 1, advisory: 2 },
-  ]);
-});
-
-test('cog drawer: default-policy rows keep the raw tally, no advisory chip', () => {
-  const WorkDrawer = makeWorkDrawer();
-  WorkDrawer.proposals = [{
-    id: 42, app_slug: 'demo', app_name: 'Demo App', pr_title: 'Add a thing',
-    status: 'promoted', yes_count: 2, no_count: 0, majority: 3,
-    check_state: 'passing',
-  }];
-  WorkDrawer.governance = [];
-  // advisory: 0 is what makes the renderer omit the chip entirely.
-  assert.deepEqual(pillsOf(WorkDrawer.proposalsSection()),
-    [{ yes: 2, majority: 3, advisory: 0 }]);
-});
+// The header-cog drawer's "Your proposals" section was asserted here too —
+// it rendered the same advisory pill from the same descriptor. THE UI OVERHAUL
+// retired that drawer (its session list is the Improve panel's, its pinned rows
+// are ordinary notifications in the merged hamburger), so the pill has one
+// renderer again and AppView.voteCountPill above is the whole contract.

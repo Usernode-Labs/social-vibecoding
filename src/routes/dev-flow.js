@@ -82,6 +82,17 @@ const STATUS_BY_CODE = {
   branch_moved: 409,
   session_busy: 409,
   fork_branch_not_found: 404,
+  // #1350: the session exists and is the caller's, but no turn has run on
+  // it yet so there is no branch to continue from. A 409 for the same
+  // reason as the three above: the caller's picture of the session is out
+  // of date, and the remedy is an action, not a permission.
+  session_not_started: 409,
+  // #1347's two. `already_shared` is a 409 for the same reason the three
+  // above are: the caller's picture of the work is out of date — it is already
+  // a card in the In-progress area — rather than forbidden. `share_failed`
+  // matches import_failed, its exact twin on the other destination.
+  already_shared: 409,
+  share_failed: 502,
 };
 
 // Same-origin guard for the two writes, copied in spirit from
@@ -455,7 +466,7 @@ function devFlowRoutes(config) {
     const proposalId = hasProposal ? rawProposal : null;
     if (!brief.trim() && !issueNumber) {
       return res.status(400).json({
-        error: 'Describe the change you want first — the work order needs something to hand your agent.',
+        error: 'Describe the change you want first: the work order needs something to hand your agent.',
         code: 'invalid_request',
       });
     }
@@ -719,7 +730,10 @@ function demoStatus(app, parsed, targetKind) {
     demo: true,
     repo: { owner, repo },
     github: { linked: true, login, available: true },
-    connectors: { count: 1 },
+    // Zero, so the fixture shows the hand-off step's connector note — the
+    // one line a first-time user most needs to review — rather than the
+    // "you already have N" hint a connected account gets instead.
+    connectors: { count: 0 },
     fork: {
       state: 'ready',
       owner: login,
@@ -743,7 +757,7 @@ function demoStatus(app, parsed, targetKind) {
       // An array, exactly as renderPreparedTask returns — a reviewer looking
       // at the demo payload should see the real shape, not a stand-in one.
       guidance: [
-        `Fork ${owner}/${repo} on GitHub — your fork is ${login}/${repo}.`,
+        `Fork ${owner}/${repo} on GitHub. Your fork is ${login}/${repo}.`,
         'Open https://claude.ai/code and start a new session.',
         `Choose ${login}/${repo} as its repository.`,
         'Paste the work order below in exactly as written.',
@@ -763,7 +777,7 @@ function demoStatus(app, parsed, targetKind) {
           '- Its title:                             [staging fixture] Session and billing options',
           '- Where its head lives:                  a branch in the app\'s own repository',
           '',
-          'NOBODY HAS VOTED ON THIS YET, so there is nothing to invalidate — but this is',
+          'NOBODY HAS VOTED ON THIS YET, so there is nothing to invalidate, but this is',
           'a session somebody is still working in, and they may take more turns on it',
           'after you.',
           '',

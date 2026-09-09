@@ -4,7 +4,7 @@
  * public/js/** is 50-odd classic scripts that each publish one object on
  * `window`; a converted region needs the same names, and #1079 chunk B moved
  * two of those modules INTO this bundle (features/notifications/
- * notifications.js and features/work-drawer/work-drawer.js) while keeping
+ * notifications.js) while keeping
  * their `window.X = X` publication so their remaining legacy callers — app.js,
  * app-view.js, dev-chat.js, home.js — keep working untouched.
  *
@@ -38,19 +38,34 @@ declare global {
     Notifications?: {
       init(): void;
       refresh(): Promise<void>;
+      /**
+       * Clear this document's copy of one conversation's notifications, after
+       * the server has already cleared them (features/messages/store.ts calls
+       * it on the local read and on a `conversation_read` for this viewer).
+       * Declared rather than left to the index signature below, which types a
+       * lookup as `unknown` and so makes the call itself an error.
+       */
+      markConversationRead(conversationId: number): void;
       open: boolean;
       [key: string]: unknown;
     };
-    /** features/work-drawer/work-drawer.js */
-    WorkDrawer?: {
-      init(): void;
-      refresh(): Promise<void>;
-      open: boolean;
+    /**
+     * The three platform SHEETS, each built by lib/sheet-controller.js and
+     * published at its controller's module scope. Classic scripts and the
+     * header glyphs reach them here.
+     */
+    NotificationsSheet?: {
+      open(): void;
+      close(): Promise<void> | void;
+      toggle(): void;
+      isOpen(): boolean;
       [key: string]: unknown;
     };
     /** features/settings/settings.js */
     Settings?: {
       init(): void;
+      /** Reads /api/auth/me into Settings.state; runs at hydration on every route. */
+      refresh(): Promise<void>;
       open(section?: string | null, opts?: unknown): void;
       [key: string]: unknown;
     };
@@ -61,11 +76,31 @@ declare global {
         id?: number;
         username?: string;
         avatarUrl?: string | null;
+        appCreationQuota?: {
+          used: number | null;
+          limit: number | null;
+          remaining: number | null;
+        };
         [key: string]: unknown;
       } | null;
       eventsWs?: WebSocket | null;
+      navigateToApp?(slug: string, tab?: string, ref?: unknown, subTab?: string | null): Promise<void>;
+      openAppTab?(slug: string, tab?: string, opts?: unknown): void;
+      _appUrl?(slug: string, tab?: string, ref?: unknown, subTab?: string | null,
+        options?: unknown): string;
+      _rootUrl?(hash?: string): string;
       setBackIcon?(mode: 'home' | 'arrow', href?: string): void;
       setHeaderTitle?(title: string): void;
+      /**
+       * Paints the platform build into #platform-version-pill-slot, the host
+       * Settings → About renders for it. Declared rather than left to the
+       * index signature below, which types a lookup as `unknown` and so makes
+       * the call itself an error — and that pane calls it on mount, to paint
+       * an answer that arrived before the host existed.
+       */
+      renderPlatformVersionPill?(info: unknown): void;
+      /** app.js's last /api/version answer; null until the first one lands. */
+      _lastVersionInfo?: unknown;
       [key: string]: unknown;
     };
     /**
@@ -110,9 +145,8 @@ declare global {
     };
     /**
      * features/header/header-menu-controller.js — the hamburger drawer's
-     * open/close, and the app-scoped drawer rows' visibility. Both were
-     * App.HeaderMenu / App.DrawerStatus in app.js, which now forwards onto
-     * these so its own call sites (plus app-view.js, native-chrome.js,
+     * open/close. It was App.HeaderMenu in app.js, which now forwards onto
+     * this so its own call sites (plus app-view.js, native-chrome.js,
      * node-pill.js, wallet-sheet.js) are untouched.
      */
     HeaderMenu?: {
@@ -123,10 +157,9 @@ declare global {
       consumeNavPending(): boolean;
       [key: string]: unknown;
     };
-    /** features/header/header-menu-controller.js */
-    DrawerStatus?: {
+    /** features/improve/improve-status.js */
+    ImproveStatus?: {
       setAppOpen(open: boolean): void;
-      setForkVisible(visible: boolean): void;
       refreshDeployDot(): void;
       [key: string]: unknown;
     };
@@ -191,6 +224,8 @@ declare global {
         syncChrome(): void;
         handleEvent(event: Record<string, unknown>): void;
         share(reference?: unknown): Promise<void> | void;
+        /** Repaint one row's save state — the notifications drawer's unsave. */
+        paintSaved(messageId: number, saved: boolean): void;
         refresh(): Promise<void> | void;
       };
       [key: string]: unknown;
@@ -198,6 +233,7 @@ declare global {
     /** features/dev-chat/dev-chat.js — sanitized Markdown renderer. */
     DevChat?: {
       renderMarkdown(text: string, opts?: { breaks?: boolean; images?: boolean }): string;
+      dismissReturnHint(): void;
       [key: string]: unknown;
     };
     /** The inline head-blocking theme module in src/head.html. */

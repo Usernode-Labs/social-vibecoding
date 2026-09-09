@@ -860,7 +860,7 @@ test('get_request reads at the write limit, and says where that limit comes from
   assert.match(block, /bodyMax: MAX_REQUEST_BODY_CHARS/,
     'the full read is capped by what create_request can store, not by the display cap');
   assert.match(block, /annotations: readAnnotations/);
-  assert.ok(!/_meta: ACTING_TOOL_META/.test(block), 'reading a request acts on nothing');
+  assert.ok(!/_meta:/.test(block), 'reading a request acts on nothing');
   const desc = block.slice(block.indexOf('description:'), block.indexOf('inputSchema:'));
   assert.match(desc, /\$\{MAX_REQUEST_BODY_CHARS\}/, 'the description names both caps');
   assert.match(desc, /\$\{MAX_BODY_CHARS\}/);
@@ -942,18 +942,29 @@ test('submit_work takes shape (4) exactly as documented: proposalId + branch', a
 // caller's own token — the route applies every gate — reopening a paused
 // session first, since an external update usually lands on one.
 
-function proposeHarness(platform) {
+function proposeHarness(platform, { taskRows = [] } = {}) {
   const gh = require('../src/services/github');
   const githubLink = require('../src/services/github-link');
   const realGhEnabled = gh.isEnabled;
   const realLinkEnabled = githubLink.isEnabled;
   gh.isEnabled = () => true;
   githubLink.isEnabled = () => true;
-  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  // SQL-aware, because the promote now has bookkeeping of its own to do:
+  // `taskRows` is the open work order the session is carrying (none by
+  // default), and `queries` is what the tool actually asked the database.
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (sql.includes("AND session_id = $2 AND status = 'open'")) return { rows: taskRows };
+      return { rows: [{ app_slug: 'recipe-box' }] };
+    },
+  };
   const { handlers, calls, restore } = connector(platform, { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
   return {
     handlers,
     calls,
+    queries,
     restore: () => {
       restore();
       gh.isEnabled = realGhEnabled;
@@ -1081,6 +1092,93 @@ test('propose on a target that is already a proposal promotes nothing', async ()
     assert.match(res.structuredContent.nextStep, /already up for the group's vote/);
     assert.ok(!h.calls.some((c) => c.pathname.includes('/promote')),
       'a proposal already up for a vote is never re-promoted');
+  } finally {
+    h.restore();
+  }
+});
+
+// ── The work order the promote has to close ────────────────────────────
+//
+// `share: true` leaves the work order OPEN by design — the agent keeps
+// committing onto the in-progress card — and stamps `session_id` on the row.
+// The promote that ends that arrangement is this call, and it carries no
+// taskId, so nothing downstream of the share ever closed the reservation:
+// each share -> promote held a slot of the caller's ten-open-work-order cap
+// for the fourteen days until it expired.
+//
+// It is closed HERE rather than inside the service because the promote is a
+// separate loopback that runs after submitWork has already returned, and
+// this is the first moment the work is genuinely in front of the group.
+
+const CLOSE_SQL = "SET status = 'submitted'";
+
+test('a successful promote closes the work order the share left open', async () => {
+  const h = proposeHarness((method, pathname) => {
+    if (pathname.endsWith('/update-from-fork')) {
+      return {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: null,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+        submittedVia: 'update_branch', targetKind: 'session', resumeRequired: false,
+      };
+    }
+    if (pathname.endsWith('/promote')) return { prNumber: 77 };
+    return {};
+  }, { taskRows: [{ id: 91, session_id: 3140 }] });
+  try {
+    const res = await h.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', propose: true });
+    assert.equal(res.structuredContent.proposed, true);
+    const close = h.queries.find((q) => q.sql.includes(CLOSE_SQL));
+    assert.ok(close, 'the reservation is finished — the work is up for the vote');
+    // Scoped to the caller as well as to the session: `user` here is the
+    // connector's own account, and a work order belongs to an ACCOUNT.
+    assert.deepEqual(close.params.slice(0, 4), [91, 3140, 7, 'my-fix']);
+    assert.equal(close.params[4], 'update_branch');
+  } finally {
+    h.restore();
+  }
+});
+
+test('a promote that failed leaves the work order open — the work is not up for a vote', async () => {
+  const h = proposeHarness((method, pathname) => {
+    if (pathname.endsWith('/update-from-fork')) {
+      return {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: null,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+        submittedVia: 'update_branch', targetKind: 'session', resumeRequired: false,
+      };
+    }
+    if (pathname.endsWith('/promote')) {
+      return { __http: { ok: false, status: 409, body: { error: 'promoted_cap' } } };
+    }
+    if (pathname.endsWith('/resume')) return { ok: true };
+    return {};
+  }, { taskRows: [{ id: 91, session_id: 3140 }] });
+  try {
+    const res = await h.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', propose: true });
+    assert.equal(res.structuredContent.proposed, false);
+    assert.equal(h.queries.filter((q) => q.sql.includes(CLOSE_SQL)).length, 0,
+      'the commit is safe on the session and the agent is told to try again — the order is still live');
+  } finally {
+    h.restore();
+  }
+});
+
+test('a promote with no work order behind it writes nothing', async () => {
+  const h = proposeHarness((method, pathname) => {
+    if (pathname.endsWith('/update-from-fork')) {
+      return {
+        updated: true, proposalId: 3140, appSlug: 'recipe-box', prNumber: null,
+        headSha: 'b1344508506dd8dc4a655f10c96c51389fcc30bb', votesCleared: 0,
+        submittedVia: 'update_branch', targetKind: 'session', resumeRequired: false,
+      };
+    }
+    if (pathname.endsWith('/promote')) return { prNumber: 77 };
+    return {};
+  });
+  try {
+    const res = await h.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', propose: true });
+    assert.equal(res.structuredContent.proposed, true);
+    assert.equal(h.queries.filter((q) => q.sql.includes(CLOSE_SQL)).length, 0);
   } finally {
     h.restore();
   }
@@ -1217,10 +1315,18 @@ test('the registered tool surface is exactly this, and nothing more', () => {
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(registered.sort(), [
     'answer_questions', 'claim_request', 'create_request', 'get_app',
+    // #1433. Read-only, and named `get_` so the shipped allow rules already
+    // cover it — a drift check that prompts every call is one nobody runs.
+    'get_checkout_status',
     'get_connector_guidance',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
     'get_request', 'list_apps',
-    'list_my_proposals', 'list_requests', 'prepare_work', 'release_request',
+    'list_my_proposals', 'list_requests',
+    // #1405. They write a row, but only into the CALLER'S OWN notification
+    // feed — see the allow-rule reasoning in services/mcp-connect-constants.js
+    // for why that is a different category from the acting tools below.
+    'notify_awaiting_input', 'notify_input_received',
+    'prepare_work', 'release_request',
     'start_platform_build', 'submit_platform_build', 'submit_work', 'whoami',
   ]);
   // Nothing that decides an app's future. The connector hands work to the
@@ -1347,41 +1453,50 @@ test('the build tools delegate rather than reimplement', () => {
   assert.doesNotMatch(SRC, /api\.github\.com/);
 });
 
-// ── #1218: the acting tools force a human confirmation ─────────────────
+// ── No tool forces a prompt ────────────────────────────────────────────
 
-test('exactly the five acting tools carry requiresUserInteraction', () => {
-  assert.deepEqual(tools.ACTING_TOOL_META, { 'anthropic/requiresUserInteraction': true });
-  assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
-    'create_request', 'prepare_work', 'start_platform_build',
-    'submit_platform_build', 'submit_work',
-  ]);
+test('no tool forces a prompt of its own', () => {
+  // #1218 marked the acting tools `anthropic/requiresUserInteraction`, which
+  // Claude Code checks BEFORE it looks up allow rules — so it overrode the
+  // connector's own allow-always setting and the setting looked broken. The
+  // marking is gone: what the acting tools file are requests, and the group
+  // vote is the confirmation. Asserted on the source rather than the export
+  // so that re-adding the metadata by hand on one tool fails too.
+  assert.equal(tools.ACTING_TOOL_META, undefined);
+  // The QUOTED key, so the note above ACTING_TOOLS that explains the history
+  // (and writes the key in backticks) does not trip this.
+  assert.doesNotMatch(SRC, /'anthropic\/requiresUserInteraction'/);
+  assert.doesNotMatch(SRC, /_meta:/, 'no tool definition carries _meta');
 
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
+  assert.ok(registered.length > 0, 'tools are registered');
   for (const name of registered) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);
     const next = SRC.indexOf('server.registerTool(', idx + 10);
     const body = SRC.slice(idx, next > 0 ? next : undefined);
-    const marked = /_meta: ACTING_TOOL_META/.test(body);
-    assert.equal(
-      marked, tools.ACTING_TOOLS.includes(name),
-      marked
-        ? `${name} forces a prompt but is not in ACTING_TOOLS`
-        : `${name} is in ACTING_TOOLS but does not carry the marking`
+    assert.doesNotMatch(
+      body, /requiresUserInteraction/,
+      `${name} forces a prompt that no allow rule can skip`
     );
   }
 });
 
-test('a tool that forces a prompt is a write, never a read', () => {
-  // The marking and the annotation have to agree: a read that forced a
-  // prompt would be noise, and an unmarked write is the failure #1218 is
-  // about. answer_questions is the deliberate exception — a write that is
-  // NOT marked, because it only feeds a build the user already started.
+test('ACTING_TOOLS still names the five, and every one is a write', () => {
+  // The list outlived the marking: it is what keeps the acting tools out of
+  // the setup hint and out of the shipped allow rules. A read in here would
+  // mean a read is being withheld from both for no reason, and a write left
+  // out of it would leak into the read-only globs.
+  assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
+    'create_request', 'prepare_work', 'start_platform_build',
+    'submit_platform_build', 'submit_work',
+  ]);
   for (const name of tools.ACTING_TOOLS) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);
     const next = SRC.indexOf('server.registerTool(', idx + 10);
     const body = SRC.slice(idx, next > 0 ? next : undefined);
     assert.match(body, /annotations: writeAnnotations/, `${name} is a write`);
   }
+  // answer_questions is a write that is deliberately not one of the five.
   assert.ok(!tools.ACTING_TOOLS.includes('answer_questions'));
 });
 
@@ -1394,9 +1509,15 @@ test('a tool that forces a prompt is a write, never a read', () => {
 
 test('read-only tools are named get_/list_ (or the one grandfathered whoami)', () => {
   const {
-    READ_ONLY_TOOL_PREFIXES, READ_ONLY_TOOL_EXCEPTIONS,
+    READ_ONLY_TOOL_PREFIXES, READ_ONLY_TOOL_EXCEPTIONS, SELF_SCOPED_ALLOW_TOOLS,
   } = require('../src/services/mcp-connect-constants');
+  // Still exactly one grandfathered READ. #1405's two tools are allow-listed
+  // as well, but they are writes and live in their own list — folding them in
+  // here would make this contract state something false about them, and the
+  // globs' safety rests on it being true.
   assert.deepEqual([...READ_ONLY_TOOL_EXCEPTIONS], ['whoami']);
+  assert.deepEqual([...SELF_SCOPED_ALLOW_TOOLS],
+    ['notify_awaiting_input', 'notify_input_received']);
 
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
   for (const name of registered) {
@@ -1404,6 +1525,14 @@ test('read-only tools are named get_/list_ (or the one grandfathered whoami)', (
     const next = SRC.indexOf('server.registerTool(', idx + 10);
     const body = SRC.slice(idx, next > 0 ? next : undefined);
     const isRead = /annotations: readAnnotations/.test(body);
+    // A self-scoped tool is deliberately BOTH allow-listed and a write, so it
+    // is the one shape this equality does not describe. Assert what actually
+    // has to hold for it instead: it must not be annotated as a read, or the
+    // annotation would be lying about a tool that writes.
+    if (SELF_SCOPED_ALLOW_TOOLS.includes(name)) {
+      assert.equal(isRead, false, `${name} writes, so it must not claim readOnlyHint`);
+      continue;
+    }
     const matchesReadRule = READ_ONLY_TOOL_PREFIXES.some((p) => name.startsWith(p))
       || READ_ONLY_TOOL_EXCEPTIONS.includes(name);
     assert.equal(
@@ -1440,13 +1569,21 @@ test('whoami hands the model the canonical name and the exact shipped rules', ()
   assert.match(body, /permissionAllowRules: \[\.\.\.READ_ONLY_ALLOW_RULES\]/,
     'the rules come from the constant, and are copied so a caller cannot mutate the frozen array');
   assert.equal(SERVER_NAME, 'usernode');
+  // Two globs and three literals per spelling. The two `notify_*` entries are
+  // #1405's self-scoped pair — writes, but only into the caller's own
+  // notification feed, which is why they are literals here and not a widening
+  // of the globs.
   assert.deepEqual([...READ_ONLY_ALLOW_RULES], [
     'mcp__usernode__get_*',
     'mcp__usernode__list_*',
     'mcp__usernode__whoami',
+    'mcp__usernode__notify_awaiting_input',
+    'mcp__usernode__notify_input_received',
     'mcp__Usernode__get_*',
     'mcp__Usernode__list_*',
     'mcp__Usernode__whoami',
+    'mcp__Usernode__notify_awaiting_input',
+    'mcp__Usernode__notify_input_received',
   ]);
 
   // The description has to say what the model should DO with them, or the
@@ -1976,7 +2113,7 @@ test('every route the connector could not use is named back to the caller', () =
   });
   assert.deepEqual(shaped.testingPaths.map((p) => p.path), ['/ok', '/a', '/b']);
   assert.deepEqual(shaped.rejectedPaths, [
-    'https://evil.example/x (not a usable in-app path — it must start with a single "/")',
+    'https://evil.example/x (not a usable in-app path: it must start with a single "/")',
     '/ok (already listed)',
     '/c (over the 3-route cap)',
   ]);
@@ -2293,7 +2430,11 @@ test('prepare_work reports the proposals already up for a vote on the request', 
   assert.match(block, /author: p\.author \? untrusted\(p\.author, MAX_TITLE_CHARS\) : null/);
   // It leads nextStep: that string is read BEFORE the work order is pasted,
   // which is the only point at which an hour of an agent's time can be saved.
-  assert.match(block, /nextStep: duplicateWarning\(result\)/);
+  // Still leads the workflow text, but behind the stale-checkout warning
+  // (#1462): a duplicate proposal wastes an agent's hour, while a stale
+  // checkout invalidates what the agent has ALREADY concluded, so that one
+  // goes first. Both still precede everything else in the string.
+  assert.match(block, /nextStep: staleCheckoutWarning\(checkout\)\s*\+ duplicateWarning\(result\)/);
 
   const warning = SRC.slice(
     SRC.indexOf('const duplicateWarning = (result) =>'),
@@ -2502,4 +2643,168 @@ test('a proposal reports the description the group is voting on', () => {
   // A row from before the mirror reports null — which is knowably "unknown",
   // not knowably "empty".
   assert.equal(tools.shapeProposal({ id: 8, app_slug: 'recipe-box' }, ORIGIN).description, null);
+});
+
+// ── #1442: proposal freshness on the connector surface ──────────────────
+//
+// The bug this covers is not a crash. A model asked "is proposal 3590 ready
+// to merge?" was told behindMain 0, checks 412/412 passing, and — for the
+// app it belonged to — zero proposals up for a vote. Every one of those was
+// wrong, and each was wrong in a way that reads as good news, so the model
+// recommended merging a proposal that conflicts in seven files.
+
+test('#1442 — checks report the BASE they ran against, not just the branch', () => {
+  const head = 'a'.repeat(40);
+  const shaped = tools.shapeChecks({
+    check_state: 'passing',
+    checks_commit_sha: head,
+    reviewed_head_sha: head,
+    checks_base_sha: 'd'.repeat(40),
+    checks_base_verdict: 'superseded',
+    checks_base_behind_by: 8,
+  });
+  // The branch has not moved, so the pre-existing signal is truthfully false.
+  // That is exactly why the base fields had to be additive: `stale: false` is
+  // a correct answer to a different question.
+  assert.equal(shaped.stale, false);
+  assert.equal(shaped.ranOnBase, 'd'.repeat(40));
+  assert.equal(shaped.baseVerdict, 'superseded');
+  assert.equal(shaped.baseBehindBy, 8);
+});
+
+test('#1442 — a base with no verdict yet reads unknown, never current', () => {
+  const measured = tools.shapeChecks({ checks_base_sha: 'd'.repeat(40) });
+  assert.equal(measured.baseVerdict, 'unknown',
+    'the column exists and nothing has compared it: that is not "current"');
+  assert.equal(measured.baseBehindBy, null);
+
+  // A row from before the column exists at all reports null across the board,
+  // which is knowably "this platform never recorded it".
+  const legacy = tools.shapeChecks({ check_state: 'passing' });
+  assert.equal(legacy.ranOnBase, null);
+  assert.equal(legacy.baseVerdict, null);
+  assert.equal(legacy.baseBehindBy, null);
+
+  // Zero is a measurement, not an absence.
+  assert.equal(
+    tools.shapeChecks({ checks_base_sha: 'd'.repeat(40), checks_base_verdict: 'current', checks_base_behind_by: 0 })
+      .baseBehindBy,
+    0
+  );
+});
+
+test('#1442 — a proposal reports predicted mergeability and its freshness snapshot', () => {
+  const shaped = tools.shapeProposal({
+    id: 3590, app_slug: 'social-vibecoding', pr_number: 1431, status: 'promoted',
+    behind_main: 8,
+    mergeability: 'conflict',
+    mergeability_files: ['src/db/migrate.js', 'src/routes/votes.js'],
+    mergeability_files_complete: true,
+    freshness_behind_by: 8,
+    freshness_ahead_by: 3,
+    freshness_main_sha: 'f'.repeat(40),
+    freshness_merge_base_sha: 'b'.repeat(40),
+    checks_base_sha: 'd'.repeat(40),
+    checks_base_verdict: 'superseded',
+    checks_base_behind_by: 8,
+    freshness_checked_at: new Date('2026-08-27T10:00:00.000Z'),
+  }, ORIGIN);
+
+  assert.equal(shaped.mergeability, 'conflict');
+  assert.equal(shaped.freshness.mergeability, 'conflict');
+  assert.deepEqual(shaped.freshness.mergeabilityFiles,
+    ['src/db/migrate.js', 'src/routes/votes.js']);
+  assert.equal(shaped.freshness.mergeabilityFilesComplete, true);
+  assert.equal(shaped.freshness.behindBy, 8);
+  assert.equal(shaped.freshness.aheadBy, 3);
+  assert.equal(shaped.freshness.checksBaseVerdict, 'superseded');
+  assert.equal(shaped.freshness.checkedAt, '2026-08-27T10:00:00.000Z');
+  // behindMain and freshness.behindBy are the same number reported twice, on
+  // purpose: the first is where every existing caller already looks.
+  assert.equal(shaped.behindMain, 8);
+});
+
+test('#1442 — an unmeasured proposal says so instead of saying clean', () => {
+  const shaped = tools.shapeProposal({ id: 9, app_slug: 'recipe-box' }, ORIGIN);
+  assert.equal(shaped.mergeability, null);
+  assert.equal(shaped.freshness.mergeability, null);
+  assert.equal(shaped.freshness.checkedAt, null);
+  assert.equal(shaped.freshness.mergeabilityFilesComplete, null,
+    'false would claim the (empty) file list was truncated');
+  assert.deepEqual(shaped.freshness.mergeabilityFiles, []);
+
+  // And a refresh that failed reports the reason rather than a verdict.
+  const errored = tools.shapeProposal({
+    id: 10, app_slug: 'recipe-box',
+    mergeability: 'unknown',
+    freshness_error: 'GitHub API unreachable',
+    freshness_checked_at: new Date('2026-08-27T10:00:00.000Z'),
+  }, ORIGIN);
+  assert.equal(errored.freshness.mergeability, 'unknown');
+  assert.equal(errored.freshness.error, 'GitHub API unreachable');
+});
+
+test('#1442 — the conflicting-file list is capped, and says when it is partial', () => {
+  const many = Array.from({ length: 300 }, (_, i) => `src/file-${i}.js`);
+  const shaped = tools.shapeProposal({
+    id: 11, app_slug: 'recipe-box',
+    mergeability: 'conflict',
+    mergeability_files: many,
+    mergeability_files_complete: false,
+  }, ORIGIN);
+  assert.equal(shaped.freshness.mergeabilityFiles.length, 50);
+  assert.equal(shaped.freshness.mergeabilityFilesComplete, false,
+    'the model must not read 50 names as the whole conflict');
+});
+
+test('#1442 — get_proposal describes both staleness axes so they cannot be conflated', () => {
+  const block = registration('get_proposal');
+  // The one-word field name is not enough: `stale` and `baseVerdict` are both
+  // "is this verdict still good?" and an agent that reads only the first
+  // recommends the merge that started this issue.
+  assert.match(block, /BRANCH staleness only; read baseVerdict for the other axis/);
+  assert.match(block, /ranOnBase/);
+  assert.match(block, /superseded/);
+  assert.match(block, /mergeability/);
+  // 'unknown' has to be documented as a real answer, because GitHub computes
+  // mergeability lazily and a null read is not a clean read.
+  assert.match(block, /'unknown' is a real answer/);
+});
+
+test('#1442 — get_app counts the proposals actually up for a vote', async () => {
+  const { handlers, restore } = connector((method, pathname) => {
+    if (pathname.endsWith('/github-issues')) return { issues: [] };
+    if (pathname.endsWith('/promoted')) {
+      // The shape the route has always returned. Reading `sessions` here is
+      // what pinned this number at 0 for every app ever asked.
+      return {
+        promoted: [
+          { id: 1, status: 'promoted' },
+          { id: 2, status: 'promoted' },
+          { id: 3, status: 'merging' },
+        ],
+      };
+    }
+    return { app: { slug: 'recipe-box', name: 'Recipe Box', status: 'running' } };
+  });
+  try {
+    const out = (await handlers.get('get_app')({ slug: 'recipe-box' })).structuredContent;
+    assert.equal(out.openProposalCount, 2,
+      'two up for a vote; the merging row is already on its way in');
+  } finally { restore(); }
+});
+
+test('#1442 — get_app still answers when the promoted route is unavailable', async () => {
+  const { handlers, restore } = connector((method, pathname) => {
+    if (pathname.endsWith('/github-issues')) return { issues: [] };
+    if (pathname.endsWith('/promoted')) {
+      return { __http: { ok: false, status: 500, body: { error: 'boom' } } };
+    }
+    return { app: { slug: 'recipe-box', name: 'Recipe Box' } };
+  });
+  try {
+    const out = (await handlers.get('get_app')({ slug: 'recipe-box' })).structuredContent;
+    assert.equal(out.openProposalCount, 0, 'degraded to 0 rather than failing the lookup');
+    assert.equal(out.slug, 'recipe-box');
+  } finally { restore(); }
 });

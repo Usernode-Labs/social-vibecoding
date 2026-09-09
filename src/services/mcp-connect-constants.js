@@ -151,22 +151,69 @@ const SERVER_VERSION = serverVersionFor(process.env.GIT_SHA);
 // not an attempt to guess them all.
 const ALLOW_RULE_SERVER_NAMES = Object.freeze([SERVER_NAME, 'Usernode']);
 
+// ── Allow-listed, but NOT reads (#1405) ────────────────────────────────
+//
+// A separate list on purpose. `READ_ONLY_TOOL_EXCEPTIONS` answers "is this
+// tool a read?", and these two are not — they write a row. Folding them in
+// would make the naming contract above say something false, and that contract
+// is what the `get_*` / `list_*` globs' safety rests on.
+//
+// What they are instead is SELF-SCOPED: the only thing they touch is the
+// caller's own notification feed. They spend nothing, reach no app, are
+// invisible to the group, and cannot be aimed at another user — the target is
+// the connection's own identity, never input. Every ACTING tool puts something
+// in front of other people; these put a line in front of you. Granting them is
+// a decision about your own attention, which a scaffolded repo may reasonably
+// make on a stranger's machine where "every call this connector can make"
+// would not be.
+//
+// Listed literally rather than as a `notify_*` glob: a glob is a standing
+// promise about every future tool that happens to start that way.
+const SELF_SCOPED_ALLOW_TOOLS = Object.freeze([
+  'notify_awaiting_input',
+  'notify_input_received',
+]);
+
 // The read-only allow rules Usernode ships in the app scaffold and
 // documents. Two globs plus one literal per covered spelling, and
-// deliberately NOT the whole-server `mcp__usernode__*`: the
-// `requiresUserInteraction` marking on the acting tools is version-gated
-// (Claude Code ≥ 2.1.199), so a blanket rule would auto-approve `submit_work`
-// on an older client and put a change to a group vote with nobody having
-// confirmed it. These are safe on every version because they can only ever
-// match reads.
+// deliberately NOT the whole-server `mcp__usernode__*`.
+//
+// The reason is the SCAFFOLD, not the tools. These rules are committed into
+// every app repo Usernode creates, and a repo that grants a connector blanket
+// approval on a stranger's machine is exactly what the workspace trust dialog
+// exists to catch — the dialog lists what is being granted, and "every call
+// this connector can make" is not a reviewable thing to hand someone. Reads
+// are. A user who wants the acting tools allowed too can say so on their own
+// account, in Settings → Connectors or their own `~/.claude/settings.json`;
+// that is their call to make about their own machine, not the scaffold's to
+// make for them.
 //
 // They stay durable only while the naming contract below holds. Tests
 // enforce it against the registered tool surface.
+//
+// #1405 adds a SECOND literal, for the same reason `whoami` is one: the two
+// awaiting-input tools do not fit the read prefixes, and they are called at the
+// boundaries of ordinary turns — a prompt on every call would make them worse
+// than not having the feature at all.
+//
+// They earn the exception on the same ground `whoami` does. Every ACTING tool
+// puts something in front of OTHER PEOPLE: a request on a board, a proposal at
+// a vote, a build against a credit balance. These put a line in the caller's
+// own notification feed and nothing else. They spend nothing, touch no app,
+// are invisible to the group, and cannot be aimed at another user — the target
+// is the connection's own identity, never input. Granting them is a decision
+// about your own attention, which is exactly the kind a scaffolded repo may
+// reasonably make on a stranger's machine.
+//
+// Still literals rather than a `notify_*` glob: a glob is a standing promise
+// about every future tool that happens to start that way, and this is a
+// promise about these two.
 const READ_ONLY_ALLOW_RULES = Object.freeze(
   ALLOW_RULE_SERVER_NAMES.flatMap((name) => [
     `mcp__${name}__get_*`,
     `mcp__${name}__list_*`,
     `mcp__${name}__whoami`,
+    ...SELF_SCOPED_ALLOW_TOOLS.map((tool) => `mcp__${name}__${tool}`),
   ])
 );
 
@@ -184,10 +231,12 @@ const READ_ONLY_ALLOW_RULES = Object.freeze(
 //
 // Adding a read-only tool: name it `get_`/`list_` and it is allowed by the
 // rules already in every scaffolded repo, with no migration. Adding an
-// acting tool: give it any other name and mark it per ACTING_TOOL_META in
-// services/mcp-tools.js.
+// acting tool: give it any other name and add it to ACTING_TOOLS in
+// services/mcp-tools.js, which keeps it out of the setup hint and out of
+// these rules.
 const READ_ONLY_TOOL_PREFIXES = Object.freeze(['get_', 'list_']);
 const READ_ONLY_TOOL_EXCEPTIONS = Object.freeze(['whoami']);
+
 
 // ── What the client silently cuts ──────────────────────────────────────
 //
@@ -212,7 +261,29 @@ const READ_ONLY_TOOL_EXCEPTIONS = Object.freeze(['whoami']);
 // tests/mcp-instruction-budget.test.js enforces both, measuring the RESOLVED
 // descriptions off a registration recorder rather than the source text, so a
 // description assembled from constants is measured as the client sees it.
-const SERVER_INSTRUCTIONS_MAX_CHARS = 1400;
+// 1400 -> 1536, which is the CEILING the headroom invariant permits, not a
+// number picked to fit one more sentence.
+//
+// The budget had been reached: SERVER_INSTRUCTIONS measured 1399 of 1400, so
+// the next brief of any length failed the build. That is the guard working
+// exactly as designed — it fails LOUDLY — but it meant the field was full,
+// and the section that hit it is one that protects an ANSWER rather than a
+// diff: an agent reading a stale fork reports findings about a version of the
+// app that no longer exists, and nothing inside the checkout can tell it so.
+//
+// Why 1536 and not more: tests/mcp-instruction-budget.test.js asserts this
+// budget keeps at least 512 characters clear of the client's 2048, and 1536
+// is where that runs out. That invariant is the whole point of having a
+// number below the client's — raising IT to make room would turn the guard
+// into a restatement of the bug, which is what its own comment warns against.
+// So the budget moves to the edge of what is already allowed and no further.
+//
+// What this deliberately does NOT buy is room for the next addition. At 1530
+// of 1536 the build fails again on anything substantial, and that is correct:
+// content sitting close under the budget is not a safety problem, because it
+// fails at require time rather than silently. A brief earns its place here or
+// it lives in the section's `text`, where nothing is capped.
+const SERVER_INSTRUCTIONS_MAX_CHARS = 1536;
 const TOOL_DESCRIPTION_MAX_CHARS = 1800;
 
 module.exports = {
@@ -236,6 +307,7 @@ module.exports = {
   serverVersionFor,
   ALLOW_RULE_SERVER_NAMES,
   READ_ONLY_ALLOW_RULES,
+  SELF_SCOPED_ALLOW_TOOLS,
   READ_ONLY_TOOL_PREFIXES,
   READ_ONLY_TOOL_EXCEPTIONS,
   SERVER_INSTRUCTIONS_MAX_CHARS,

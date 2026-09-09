@@ -16,8 +16,7 @@
 //
 // Identity comes from the platform session: since the topochain merge,
 // leaderboard participants ARE platform users, so the /me/* routes scope
-// to the signed-in session server-side. The bridge's getProfileInfo()
-// participant id (bridge v3) is no longer consulted for data.
+// to the signed-in session server-side. Native publishes no profile identity.
 //
 // THE COMPLETED LIST IS THE VIEWER'S OWN. It used to filter the season's
 // challenge grid on `c.completed`, which is an ORGANISER flag about the
@@ -93,6 +92,19 @@ const Profile = {
   // True once the ?shot=profile-edit deep link has opened the sheet, so a
   // later refresh landing doesn't reopen it.
   _shotFired: false,
+
+  // ?shot=profile-long-bio — the reviewable state for issue #1612. A bio with
+  // no space in it is the case that used to spill out of the identity card,
+  // and no real account has one, so the screenshots and the declared test
+  // could never reach it by navigating. Display only: it substitutes the bio
+  // in the store snapshot the card renders from and writes nothing, so it is
+  // deliberately NOT staging-gated (an env-gated link would starve the
+  // production-side "before" shot forever) and deliberately not visible to
+  // ./profile-edit-sheet.tsx, which reads `_user()` and could save it.
+  LONG_BIO_SHOT:
+    'Staging demo bio: https://social-vibecoding.usernodelabs.org/app/'
+    + 'a-very-long-unbroken-link-with-no-spaces-in-it-at-all/dev/proposals/1612'
+    + ' and ThisIsOneUnbrokenWordThatIsFarWiderThanTheProfileCardCouldEverBe.',
 
   isOpen() { return Profile._open; },
 
@@ -244,7 +256,7 @@ const Profile = {
     profileStore.set({
       open: Profile._open,
       data: Profile._data,
-      user: Profile._user(),
+      user: Profile._shotUser(),
       revealed: Profile._revealed(),
       pendingAvatarUrl: Profile._pendingAvatarUrl,
       pendingRemove: Profile._pendingAvatar === 'remove',
@@ -377,6 +389,19 @@ const Profile = {
   },
 
   hasPendingAvatar() { return Profile._pendingAvatar != null; },
+
+  // The signed-in user as the identity card should render it: the real one,
+  // unless ?shot=profile-long-bio asks for the overflow state above.
+  _shotUser() {
+    const user = Profile._user();
+    let shot = null;
+    try {
+      shot = new URLSearchParams(location.search).get('shot');
+    } catch (err) { /* ignore */ }
+    return shot === 'profile-long-bio'
+      ? { ...user, bio: Profile.LONG_BIO_SHOT }
+      : user;
+  },
 
   // ?shot=profile-edit — a screenshot-state deep link, so the before/after
   // capture and the declared dapp.json test can reach a sheet that plain
@@ -530,8 +555,8 @@ const Profile = {
     }
   },
 
-  // Re-read the session user so App.user (and therefore the identity card
-  // and the drawer row) reflects what was actually stored.
+  // Re-read the session user so App.user — and therefore the identity card
+  // this screen draws from it — reflects what was actually stored.
   async _refreshUser() {
     try {
       const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
@@ -539,7 +564,6 @@ const Profile = {
       const body = await res.json();
       if (body && body.user && window.App) {
         App.user = body.user;
-        if (typeof App.applyUserAvatar === 'function') App.applyUserAvatar();
       }
     } catch (_) { /* keep the stale copy — the next load corrects it */ }
   },

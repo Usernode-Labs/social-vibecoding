@@ -35,6 +35,10 @@
 //    App.init() registers its DOMContentLoaded handler last and therefore runs
 //    after every other module's init. Adding or retiring one means updating
 //    public/sw.js's SHELL_ASSETS and tests/shell-script-order.test.js.
+//    Each src goes through lib/asset-url.ts: in a deployed document it is
+//    `/b/<build sha>/js/…`, the build-scoped address the server serves
+//    immutable; in a checkout it is the plain path. The prerender and the
+//    browser read the same build id, so the attribute hydrates clean.
 //
 // 3. CONVERSION IS LIKE-FOR-LIKE. Component boundaries, props and state are
 //    free; rendered output is not. Same ids, same class strings, same `hidden`
@@ -44,6 +48,20 @@
 //    inventory; deliberate changes are recorded in the RETIRED_*/ADDED_* maps
 //    in tests/shell-id-inventory.test.js and tests/shell-script-order.test.js,
 //    never by refreshing the baseline.
+//
+// ── Why every island is wrapped in <Island> ────────────────────────────
+//
+// main.tsx hydrates `document.body`, so THIS TREE IS THE DOCUMENT. React's
+// answer to an uncaught render or commit error is to unmount the root — which
+// here means emptying the page: no header, no screens, no listeners, just
+// `html`'s background (near-black in dark mode). One mistake in one island
+// takes the whole app, and there is nothing left on screen to say so or to
+// act on.
+//
+// `<Island name="…">` is an error boundary and renders no DOM of its own, so
+// the markup, the prerender and the hydration match are unchanged (constraint
+// 3 holds). What changes is the blast radius: a throw costs that island and
+// nothing else. See ./lib/island-boundary.tsx.
 
 import { Button } from '@/components/ui/button';
 import { AdminScreen } from './features/admin';
@@ -58,17 +76,20 @@ import { WaitlistScreen } from './features/auth/waitlist';
 import { MoreScreen } from './features/auth/more';
 import { DevConsolePanel } from './features/dev-console';
 import { HomeScreen } from './features/home';
+import { ImproveIsland } from './features/improve';
+import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
-import { HeaderMenu } from './features/header/header-menu';
 import { PlatformHeader } from './features/header/platform-header';
-import { NotificationsPanel } from './features/notifications';
 import { MessagesScreen } from './features/messages';
+import { NotificationsIsland } from './features/notifications';
+import { MobileInstallBanner } from './features/mobile-install';
 import { SettingsScreen } from './features/settings';
-import { WorkDrawerPanel } from './features/work-drawer';
 import { Dialogs } from './features/dialogs';
 import { StagingOverlay, VisualCompareOverlay } from './features/staging';
 import { OfflineBanner, ViewAsNonAdminBanner } from './features/shell/banners';
 import { LegacyPortals } from './lib/legacy-portals';
+import { Island } from './lib/island-boundary';
+import { assetUrl } from './lib/asset-url';
 
 export function Shell() {
   return (
@@ -79,23 +100,28 @@ export function Shell() {
           features/header/platform-header.tsx, alongside the port of the
           retired public/js/header-layout.js that measures it.
       */}
-      <PlatformHeader />
+      <Island name="PlatformHeader"><PlatformHeader /></Island>
       {/*
           Offline indicator (#487) — a React island since #1078. Shown while
           the /health connectivity probe in src/lib/offline.ts fails;
           everything on screen is the last version that loaded successfully.
           Hidden the moment the probe succeeds.
       */}
-      <OfflineBanner />
+      <Island name="OfflineBanner"><OfflineBanner /></Island>
       {/*
-          Slide-out navigation drawer (all viewport widths — #122) — a React
-          island since #1079 chunk B. Overlay dims the page; panel slides in
-          from the right. Both nodes, the three native/credit modules that
-          write into the panel, and the theme row live in
-          features/header/header-menu.tsx; opening and closing is still
-          App.HeaderMenu in app.js.
+          Mobile-browser install strip (#1372) — a React island in
+          features/mobile-install. Offers the native app to a visitor who
+          opened the platform in a phone browser; the per-OS store URL comes
+          from GET /api/public/mobile-app, which reads the same
+          `app_version_configs.update_url` the native update gate uses.
+
+          Directly under the offline banner because it is the same kind of
+          element and app.css stacks the two: offline at z-60, this at z-59.
+          Rendered hidden and empty on the first pass (the URLs load in an
+          effect) — the island rule in AGENTS.md — so with no published store
+          listing this is inert markup nobody sees.
       */}
-      <HeaderMenu />
+      <Island name="MobileInstallBanner"><MobileInstallBanner /></Island>
       {/*
           Persistent banner shown only while an admin has flipped the
           "View as non-admin" toggle in Settings — a React island since
@@ -104,7 +130,7 @@ export function Shell() {
           a JS error elsewhere on the page then can't strand an admin in
           masked mode without the visible reminder.
       */}
-      <ViewAsNonAdminBanner />
+      <Island name="ViewAsNonAdminBanner"><ViewAsNonAdminBanner /></Island>
       {/*
           The "Platform updating… write actions are paused" banner that used
           to live here is GONE (#1015). It existed because a self-app merge
@@ -126,7 +152,7 @@ export function Shell() {
           App._isScreenVisible now falls back to the DOM for an unpublished
           converted screen.
       */}
-      <HomeScreen />
+      <Island name="HomeScreen"><HomeScreen /></Island>
       {/*
           Browse-all-apps screen (#apps). Sibling of #home-screen: every app
           this viewer may see, featured first, with per-tile add/remove badges.
@@ -134,7 +160,7 @@ export function Shell() {
           fills it both live in frontend/src/features/apps/. Still mounted by
           App.navigateToBrowse, which now shows it through the visibility store.
       */}
-      <BrowseScreen />
+      <Island name="BrowseScreen"><BrowseScreen /></Island>
       {/*
           Leaderboard screen (hidden by default): the one place the group's
           shared progress lives — the Topochain standings, the Kudos
@@ -164,7 +190,7 @@ export function Shell() {
           #leaderboard-event-bar by topochain-event-context.js and hidden
           while the Kudos tab is active.
       */}
-      <LeaderboardScreen />
+      <Island name="LeaderboardScreen"><LeaderboardScreen /></Island>
       {/*
           The Challenges screen used to be its own <main> here
           (#challenges-screen, app-as-SV-chrome migration), rendered by the
@@ -179,15 +205,14 @@ export function Shell() {
           Profile screen (profile-and-settings-to-web migration): the mobile
           app's native Profile screen rendered from the in-process
           /challenges-api/me/* routes, scoped to the signed-in platform
-          session server-side (the bridge's getProfileInfo participant id is
-          no longer consulted). Hash route #profile; mounted by
+          session server-side. Hash route #profile; mounted by
           App.navigateToProfile.
 
           A React island as of #1083 chunk F: the renderer moved with it, to
           frontend/src/features/profile/profile.js, and the island imports it.
           #profile-root is still that module's to fill.
       */}
-      <ProfileScreen />
+      <Island name="ProfileScreen"><ProfileScreen /></Island>
       {/*
           Admin & moderation console screen (#818, extended by #860): the
           full-page console behind the header shield icon (#588 shipped the
@@ -205,16 +230,25 @@ export function Shell() {
           hidden like its sibling screens, but through the visibility store —
           #admin-screen is in App.REACT_SCREEN_IDS.
       */}
-      <AdminScreen />
-      <SettingsScreen />
+      <Island name="AdminScreen"><AdminScreen /></Island>
+      <Island name="SettingsScreen"><SettingsScreen /></Island>
       {/*
           Platform-wide direct and group messaging (#488). This is a fully
           React-owned sibling screen: unlike app-scoped GroupChat, no legacy
           module writes inside it. It ships hidden and empty for prerender and
           hydration parity; the hash router publishes visibility and the
           feature loads authenticated data only after #messages opens.
+
+          A SCREEN, and #1443 put it back to one. #1431 made it a sheet on the
+          grounds that the header's chat bubble is on every route, so a
+          full-screen Messages had to answer "back to where?". That reasoning
+          died with the bubble: Messages is a row in the chip's menu now, and
+          the menu's rule is that everything in it has its own page. It is
+          also what the surface is FOR — reading past conversations and
+          sending from them is a place you go, not an overlay you dismiss,
+          which is how every messaging product on earth models it.
       */}
-      <MessagesScreen />
+      <Island name="MessagesScreen"><MessagesScreen /></Island>
       {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down
@@ -252,22 +286,22 @@ export function Shell() {
           app is open, so a visitor who likes what they just used can sign
           up without backing out first.
       */}
-      <LandingScreen />
+      <Island name="LandingScreen"><LandingScreen /></Island>
       {/*
           Login screen — features/auth/login.tsx (#1080 chunk C). Also hosts
           the #signup email-code sub-view, the forgot-password recovery
           sub-view, and the #reset-password/<token> redeem view.
       */}
-      <LoginScreen />
+      <Island name="LoginScreen"><LoginScreen /></Island>
       {/* Register screen (activation-code flow) — features/auth/register.tsx */}
-      <RegisterScreen />
+      <Island name="RegisterScreen"><RegisterScreen /></Island>
       {/*
           Waiting-room screen — features/auth/waiting.tsx (#1080 chunk C).
           The platform-access gate: an authed session without
           hasPlatformAccess lands here; it polls /api/auth/me and boots the
           full shell in place when access is granted.
       */}
-      <WaitingScreen />
+      <Island name="WaitingScreen"><WaitingScreen /></Island>
       {/*
           Stage-1 waitlist survey — features/auth/waitlist.tsx (#1080 chunk C).
           Its own screen (#waitlist), reached from the landing CTA block's link
@@ -280,7 +314,7 @@ export function Shell() {
           document.querySelector('header'), and a second <header> in the
           document would have hijacked it.
       */}
-      <WaitlistScreen />
+      <Island name="WaitlistScreen"><WaitlistScreen /></Island>
       {/*
           Stage-2 waitlist survey — features/auth/more.tsx (#1080 chunk C).
           "Want in sooner?" (#more/<token>, two-stage waitlist ported from the
@@ -289,7 +323,7 @@ export function Shell() {
           verify via the /waitlist/connect OAuth round-trip when the platform
           has creds.
       */}
-      <MoreScreen />
+      <Island name="MoreScreen"><MoreScreen /></Island>
       {/*
           App view (hidden by default).
           
@@ -325,25 +359,67 @@ export function Shell() {
           survive a tab switch instead of being reloaded by the next
           #app-content write — see features/app-frame/app-frame.tsx.
       */}
-      <AppViewIsland />
-      {/* Notifications dropdown (top-right anchored) — an ISLAND since #1079
-          chunk B: features/notifications owns the whole subtree and
-          public/js/notifications.js is retired. */}
-      <NotificationsPanel />
-      {/* Header-cog "your work" drawer — same chrome and position as the
-          notifications panel, same story: features/work-drawer owns it and
-          public/js/work-drawer.js is retired (#1079 chunk B). */}
-      <WorkDrawerPanel />
+      <Island name="AppViewIsland"><AppViewIsland /></Island>
+      {/*
+          #notifications-panel (the bell dropdown) and #work-drawer-panel (the
+          header-cog "your work" drawer) both used to be islands here — same
+          chrome, same top-right position, one icon apart. THE UI OVERHAUL
+          retired both roots:
+
+            * the notifications LIST moved into the hamburger, which is where
+              it renders now (features/header/header-menu.tsx, first thing in
+              the panel). features/notifications keeps its store, its list
+              components and its module — only the panel around them is gone.
+            * the cog drawer's contents were split by what they are ABOUT: its
+              session list is the Improve panel's, scoped to the app on screen
+              with an overflow area for every other, and its pinned "Needs
+              attention" rows are ordinary notifications in the merged drawer.
+
+          Three top-right drawers with three icons above them was the thing
+          the overhaul set out to remove; what is left is one.
+      */}
+      {/*
+          The Improve panel — the UI overhaul's centrepiece, and the one
+          surface for everything you do *to* the app on screen rather than
+          *with* it. It replaced the header's App/Dev segmented switch, the
+          feedback bubble, the work cog and the terminal icon, and it absorbed
+          the drawer's GitHub / Share / version footer.
+
+          A FULLY React-owned island: nothing in public/js/** writes a node
+          inside it, so it holds real state (features/improve/improve-store.js).
+          The classic scripts publish what it is about through window.Improve.
+
+          One element, two idioms: a right-edge slide-over at `sm` and up, a
+          bottom sheet below it (public/css/app.css), and a real native-kit
+          sheet on touch where the kit is loaded.
+      */}
+      <Island name="ImproveIsland"><ImproveIsland /></Island>
+      {/*
+          The app-context sheet (Streamlined Concept) — the surface behind
+          the header's "app name ⌄" tab: the app's three views, its changes
+          in progress and elsewhere, and the reference footer that moved
+          here from the Improve panel. Fully React-owned, always mounted,
+          same dual-idiom presentation as the Improve panel above.
+      */}
+      <Island name="AppContextIsland"><AppContextIsland /></Island>
+      {/*
+          Notifications (Streamlined Concept). A SHEET, not a screen: the bell
+          is in the header on every route, so a full-screen view had to answer
+          "back to where?" and answered "home" — wrong every time it was
+          opened from somewhere else. Presented over the current screen and
+          dismissed back to it, on the same chassis as the sheet above.
+      */}
+      <Island name="NotificationsIsland"><NotificationsIsland /></Island>
       {/* Developer console (slide-up panel, anchored to bottom) — an ISLAND
           since #1079 chunk B: features/dev-console owns the whole subtree and
           public/js/dev-console.js is retired. */}
-      <DevConsolePanel />
+      <Island name="DevConsolePanel"><DevConsolePanel /></Island>
       {/* Staging preview (fullscreen overlay) — an ISLAND since #1085 chunk H:
           features/staging owns the whole subtree, #staging-iframe included.
           public/js/app-view.js publishes state through the bridge on
           window.UsernodeReact.staging (it keeps the file, and every
           responsibility that is not shell markup). */}
-      <StagingOverlay />
+      <Island name="StagingOverlay"><StagingOverlay /></Island>
       {/*
           #353: before/after comparison (fullscreen overlay). Opened by
           clicking either tile rendered by AppView.visualsTilesHtml — shows
@@ -356,13 +432,13 @@ export function Shell() {
           seam (frontend/src/lib/static-modal.ts), so nothing moves its card
           out from under React and it may hold state.
       */}
-      <VisualCompareOverlay />
+      <Island name="VisualCompareOverlay"><VisualCompareOverlay /></Island>
       {/*
           Every dialog in the shell (#1078 chunk A). One component per modal
           root, rendered in the same order they were spelled out here — see
           features/dialogs/index.tsx.
       */}
-      <Dialogs />
+      <Island name="Dialogs"><Dialogs /></Island>
       {/*
           #1085 chunk H, step 3: the Dev board's runtime-injected regions.
           Renders NO DOM of its own — it is the anchor that lets
@@ -372,7 +448,7 @@ export function Shell() {
           no root to leak, and no `createRoot` on a live container. See
           lib/legacy-portals.tsx.
       */}
-      <LegacyPortals />
+      <Island name="LegacyPortals"><LegacyPortals /></Island>
       {/*
           PlatformUI — the platform's single wrapper over the native kit
           (toasts, alerts, confirms, sheets). Loaded FIRST in the bundle:
@@ -386,8 +462,8 @@ export function Shell() {
           features/home/home.js and features/leaderboard/leaderboard.js from
           inside the React bundle, so it loads ahead of the whole bundle.
       */}
-      <script src="/js/nav-link.js" />
-      <script src="/js/platform-ui.js" />
+      <script src={assetUrl('/js/nav-link.js')} />
+      <script src={assetUrl('/js/platform-ui.js')} />
       {/*
           /js/offline.js used to load here. #1078 retired it: the banner it
           owned is a React island (features/shell/banners.tsx), the
@@ -405,22 +481,22 @@ export function Shell() {
           features/header/use-header-layout.ts. All of them no-op outside the
           Usernode app webview.
       */}
-      <script src="/js/native-chrome.js" />
-      <script src="/js/dev-host.js" />
+      <script src={assetUrl('/js/native-chrome.js')} />
+      <script src={assetUrl('/js/dev-host.js')} />
       {/*
           #138: dev-chat completion alerts (chime + OS notification). Loaded
           before dev-chat.js, which references DevAlerts. The notifications
           module is in the React bundle now (#1079 chunk B) and runs later
           still, so it sees DevAlerts too.
       */}
-      <script src="/js/dev-alerts.js" />
-      <script src="/js/social-push.js" />
+      <script src={assetUrl('/js/dev-alerts.js')} />
+      <script src={assetUrl('/js/social-push.js')} />
       {/*
           Webview-safe replacement for window.confirm(). Loaded before any
           feature script that wants a "really?" gate (dev-chat archive,
           future settings/home destructive actions).
       */}
-      <script src="/js/confirm-modal.js" />
+      <script src={assetUrl('/js/confirm-modal.js')} />
       {/*
           The six build venues — the single list behind every "where should
           this be built?" surface. Pure data + copy + presentation; it reads
@@ -428,31 +504,38 @@ export function Shell() {
           dev-chat.js and app-view.js all read window.BuildVenues, so it must
           load before all four.
       */}
-      <script src="/js/build-venues.js" />
+      <script src={assetUrl('/js/build-venues.js')} />
       {/*
           Shared "you're out of daily AI credits — here's how to keep building"
           copy + destinations, used by the dev-chat card, the credits banner and
           the Generate-proposal modal. Loaded before its three consumers.
       */}
-      <script src="/js/credit-options.js" />
+      <script src={assetUrl('/js/credit-options.js')} />
+      {/*
+          #1281: the launchpad that replaces the composer when a session is
+          being built somewhere else — the MCP connect command and the
+          "tell your agent" prefill for `own-tools-pr`. Pure render + wire,
+          no fetching; dev-chat.js reads window.Launchpad.
+      */}
+      <script src={assetUrl('/js/launchpad.js')} />
       {/*
           #1049: the "how do you want to build this?" picker and its guided
           Claude Code / Codex walkthrough. Pure render + wire, no fetching —
           dev-chat.js owns the state and must load AFTER it.
       */}
-      <script src="/js/dev-flow-select.js" />
+      <script src={assetUrl('/js/dev-flow-select.js')} />
       {/*
           #1055: the "session and billing options" menu behind the ⋯ beside
           the dev-chat credit meter. Pure copy + gating + presentation;
           dev-chat.js owns the state and must load AFTER it.
       */}
-      <script src="/js/session-options.js" />
-      <script src="/js/group-chat.js" />
+      <script src={assetUrl('/js/session-options.js')} />
+      <script src={assetUrl('/js/group-chat.js')} />
       {/*
           Pure two-half spec splitter (#196). Must load BEFORE dev-chat.js,
           whose spec viewer calls window.splitSpecSections.
       */}
-      <script src="/js/spec-sections.js" />
+      <script src={assetUrl('/js/spec-sections.js')} />
       {/*
           Read-only renderer for a SHARED dev-chat transcript. Pure string
           builder; app-view.js's topic page calls SessionTranscript.renderHtml.
@@ -460,20 +543,20 @@ export function Shell() {
           DevChat.renderMarkdown at CALL time (and falls back to escaped text
           if it's missing), not at load time.
       */}
-      <script src="/js/session-transcript.js" />
+      <script src={assetUrl('/js/session-transcript.js')} />
       {/*
           Pure progress-indicator helpers (#50). Must load BEFORE dev-chat.js,
           whose elapsed ticker / live-activity summary call formatElapsed and
           summarizeCcProgress.
       */}
-      <script src="/js/cc-progress-summary.js" />
+      <script src={assetUrl('/js/cc-progress-summary.js')} />
       {/*
           Pure streaming/holdback helpers. Must load BEFORE dev-chat.js, whose
           live assistant bubble and spec-preview snippet call
           renderStreamingHtml / clipSpecSnippet to stop the task-checkbox
           flicker while output streams.
       */}
-      <script src="/js/streaming-markdown.js" />
+      <script src={assetUrl('/js/streaming-markdown.js')} />
       {/*
           #405: canonical merge-lifecycle helper (window.MergeStatus). Loaded
           before dev-chat.js / app-view.js so both derive and label proposal
@@ -481,7 +564,7 @@ export function Shell() {
           third consumer; it has never read MergeStatus, and it is in the React
           bundle as of #1083 chunk F either way.)
       */}
-      <script src="/js/merge-status.js" />
+      <script src={assetUrl('/js/merge-status.js')} />
       {/*
           #1038's live session working-state store (window.SessionState). It is
           a leaf — it reads window.App only at call time — but it must load
@@ -494,7 +577,7 @@ export function Shell() {
           reverse SHELL_ASSETS assertion in tests/pwa-shell-wiring.test.js,
           which now fails on a precached-but-unloaded /js/** entry.
       */}
-      <script src="/js/session-state.js" />
+      <script src={assetUrl('/js/session-state.js')} />
       {/*
           /js/dev-chat.js used to load here, last of the chat cluster, after
           every pure helper above that it consumes. #1084 chunk G moved it into
@@ -535,7 +618,7 @@ export function Shell() {
           that consumer is in the deferred bundle now, and it reads
           window.TopochainEvents at call time behind a guard either way.
       */}
-      <script src="/js/topochain-events.js" />
+      <script src={assetUrl('/js/topochain-events.js')} />
       {/*
           The profile screen's renderer (#profile hash route —
           profile-and-settings-to-web migration) used to be a classic script
@@ -598,8 +681,8 @@ export function Shell() {
           (features/home/home.js), and it reads `window.BuildLog` at click
           time, long after this script has run.
       */}
-      <script src="/js/build-log.js" />
-      <script src="/js/app-view.js" />
+      <script src={assetUrl('/js/build-log.js')} />
+      <script src={assetUrl('/js/app-view.js')} />
       {/*
           /js/app-secrets.js and /js/screenshot-select.js loaded here, in that
           order. #1078 chunk I moved both into the React bundle — the first as
@@ -633,15 +716,15 @@ export function Shell() {
           login / register / waiting logic. Must load before app.js so
           window.AuthScreens exists when App.init routes the boot.
       */}
-      <script src="/js/auth-screens.js" />
+      <script src={assetUrl('/js/auth-screens.js')} />
       {/*
           Offline feedback outbox (#1054): the durable queue behind the Send
           Feedback dialog. Loaded before app.js, which calls
           FeedbackQueue.init() while wiring the dialog and hands it a submit
           the network refused.
       */}
-      <script src="/js/feedback-queue.js" />
-      <script src="/js/app.js" />
+      <script src={assetUrl('/js/feedback-queue.js')} />
+      <script src={assetUrl('/js/app.js')} />
     </>
   );
 }

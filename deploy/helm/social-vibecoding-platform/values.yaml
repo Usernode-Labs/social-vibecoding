@@ -15,6 +15,7 @@ release:
   sourceRevision: ""
 
 platform:
+  enabled: true
   replicas: 1
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform
@@ -38,6 +39,15 @@ platform:
   tmpSizeLimit: 2Gi
 
 postgresql:
+  # Deploy the chart-owned StatefulSet by default. Set enabled=false and host
+  # to use an externally managed PostgreSQL cluster such as CloudNativePG.
+  enabled: true
+  host: ""
+  port: 5432
+  # Selects external PostgreSQL Pods for platform and migration egress.
+  # Leave namespace empty when PostgreSQL runs in the release namespace.
+  namespace: ""
+  podSelector: {}
   image:
     repository: postgres
     tag: 17-bookworm
@@ -59,6 +69,7 @@ postgresql:
   sharedMemorySizeLimit: 1Gi
 
 migration:
+  enabled: true
   activeDeadlineSeconds: 1800
   ttlSecondsAfterFinished: 3600
   backoffLimit: 1
@@ -73,9 +84,10 @@ migration:
       ephemeral-storage: 2Gi
 
 config:
-  # Canonical platform host and generated-application suffix. Generated apps
-  # are addressed as <slug>.<domain>.
+  # Canonical platform host for the UI, authentication, and platform API.
   domain: social-vibecoding.example.invalid
+  # Empty retains the historical <slug>.<domain> layout.
+  appsDomain: ""
   platformRepository: https://github.com/replace-me/social-vibecoding
   nodeRpcUrl: http://replace-me.invalid:3000
   # Explorer host[:port] without a scheme. Public hosts use HTTPS; private
@@ -83,6 +95,9 @@ config:
   explorerUpstream: testnet-explorer.usernodelabs.org
   explorerUpstreamBase: /api
   explorerUseHttp: false
+  # Canonical Rust ChainId for the current testnet. Override this only when
+  # deploying a different genesis; the application validates the exact value.
+  nativeSessionV2TestnetChainId: "utc1rq8tql3wr5w8u6nvkwepu7dazq89kv2838xwf02xmg2w5vzgly3s6xf63v"
   internalUrl: http://social-vibecoding.social-platform.svc.cluster.local:3000
   logLevel: INFO
   workerMemory: 2g
@@ -100,6 +115,7 @@ secrets:
   iframeJwtPublicKey: ""
   workerJwtSecret: ""
   edgeJwtSecret: ""
+  topochainPartnerApiKey: ""
   githubAppId: ""
   githubPrivateKey: ""
   githubBotToken: ""

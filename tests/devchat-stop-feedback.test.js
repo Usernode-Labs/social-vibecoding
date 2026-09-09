@@ -28,6 +28,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { makeComposerBridge, composerHtml } = require('./lib/dev-composer-html');
+
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
@@ -70,6 +72,11 @@ function makeElement(id) {
 }
 
 function makeHarness() {
+  // #1078: the send button is a FIELD of the composer's view model now —
+  // `_setStreamingUI` published the four states it used to paint by hand.
+  // These tests are about which state a stop lands in, so they read the
+  // descriptor; the rendering of each is pinned once, at the bottom.
+  const composer = makeComposerBridge();
   const registry = new Map();
   const getEl = (id) => {
     if (!registry.has(id)) registry.set(id, makeElement(id));
@@ -102,8 +109,13 @@ function makeHarness() {
   // of reaching past the real _armStoppingLadder to mutate rows by hand.
   const timers = new Map();
   let nextTimerId = 1;
+  // Keep Date.now on the same controlled clock as the manually fired timers.
+  // Even 1ms of wall time between entering Stop and arming its ladder would
+  // otherwise change the recorded delays and prevent fireRung finding them.
+  const now = 1735689600000;
   const sandbox = {
     console,
+    Date: class extends Date { static now() { return now; } },
     setInterval: () => 0,
     clearInterval: () => {},
     setTimeout: (fn, ms) => {
@@ -124,6 +136,7 @@ function makeHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  sandbox.UsernodeReact = { devChat: composer.bridge };
 
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
@@ -148,7 +161,10 @@ function makeHarness() {
   DevChat._restoreComposer = () => {};
   DevChat._reconcileAfterFallbackDone = () => {};
 
-  return { DevChat, sandbox, document, getEl, timers };
+  // The send button's state, straight off the model `_setStreamingUI`
+  // publishes — `kind` IS the branch it used to paint.
+  const send = () => composer.state().send;
+  return { DevChat, sandbox, document, getEl, timers, composer, send, now };
 }
 
 // #937: run the escalation rung scheduled for `ms` (15000 = "taking longer
@@ -190,11 +206,10 @@ function arriveMidTurn(DevChat) {
 const stoppingRows = (DevChat) => DevChat.messages.filter((m) => m._stopping);
 
 test('clicking Stop paints the stopping button + one transient row', async () => {
-  const { DevChat, sandbox, document } = makeHarness();
+  const { DevChat, sandbox, send } = makeHarness();
   arriveMidTurn(DevChat);
 
-  const btn = document.getElementById('dc-send-btn');
-  assert.equal(btn.classList.contains('dc-btn-stop'), true, 'precondition: red Stop is mounted');
+  assert.equal(send().kind, 'stop', 'precondition: red Stop is mounted');
 
   let posted = null;
   sandbox.fetch = async (url, opts) => {
@@ -209,11 +224,7 @@ test('clicking Stop paints the stopping button + one transient row', async () =>
 
   // Button: muted stopping state, not the red square, and unclickable.
   assert.equal(DevChat._stopping, true);
-  assert.equal(btn.classList.contains('dc-btn-stopping'), true);
-  assert.equal(btn.classList.contains('dc-btn-stop'), false);
-  assert.equal(btn.disabled, true);
-  assert.match(btn.innerHTML, /Stopping…/);
-  assert.equal(btn.getAttribute('aria-label'), 'Stopping');
+  assert.equal(send().kind, 'stopping');
 
   // Transcript: exactly one live stopping row…
   const rows = stoppingRows(DevChat);
@@ -231,7 +242,7 @@ test('clicking Stop paints the stopping button + one transient row', async () =>
 });
 
 test('the `stopped` event splices the transient row and restores Send', async () => {
-  const { DevChat, sandbox, document } = makeHarness();
+  const { DevChat, sandbox, document, send } = makeHarness();
   arriveMidTurn(DevChat);
   sandbox.fetch = async () => ({
     ok: true, status: 200, json: async () => ({ ok: true, stopped: true, phase: 'cc' }),
@@ -248,15 +259,11 @@ test('the `stopped` event splices the transient row and restores Send', async ()
   // user message and the frozen CC line are untouched.
   assert.equal(DevChat.messages.length, 2);
 
-  const btn = document.getElementById('dc-send-btn');
-  assert.equal(btn.classList.contains('dc-btn-stopping'), false);
-  assert.equal(btn.classList.contains('dc-btn-stop'), false);
-  assert.equal(btn.disabled, false);
-  assert.equal(btn.textContent, 'Send');
+  assert.equal(send().kind, 'send');
 });
 
 test('a failed stop request explains itself and hands back the Stop button', async () => {
-  const { DevChat, sandbox, document } = makeHarness();
+  const { DevChat, sandbox, document, send } = makeHarness();
   arriveMidTurn(DevChat);
   sandbox.fetch = async () => { throw new Error('network down'); };
 
@@ -269,15 +276,12 @@ test('a failed stop request explains itself and hands back the Stop button', asy
   assert.match(last.content, /Couldn’t stop the agent/);
 
   // The turn is still running, so the red Stop must come back for a retry.
-  const btn = document.getElementById('dc-send-btn');
   assert.equal(DevChat.isStreaming, true);
-  assert.equal(btn.classList.contains('dc-btn-stop'), true);
-  assert.equal(btn.classList.contains('dc-btn-stopping'), false);
-  assert.equal(btn.disabled, false);
+  assert.equal(send().kind, 'stop');
 });
 
 test('a non-ok HTTP response takes the same failure path', async () => {
-  const { DevChat, sandbox, document } = makeHarness();
+  const { DevChat, sandbox, document, send } = makeHarness();
   arriveMidTurn(DevChat);
   sandbox.fetch = async () => ({ ok: false, status: 500, json: async () => ({}) });
 
@@ -285,11 +289,11 @@ test('a non-ok HTTP response takes the same failure path', async () => {
 
   assert.equal(stoppingRows(DevChat).length, 0);
   assert.match(DevChat.messages[DevChat.messages.length - 1].content, /Couldn’t stop the agent/);
-  assert.equal(document.getElementById('dc-send-btn').classList.contains('dc-btn-stop'), true);
+  assert.equal(send().kind, 'stop');
 });
 
 test('"wrap-up cannot be stopped" switches to the finishing-up spinner', async () => {
-  const { DevChat, sandbox, document } = makeHarness();
+  const { DevChat, sandbox, document, send } = makeHarness();
   arriveMidTurn(DevChat);
   sandbox.fetch = async () => ({
     ok: true,
@@ -306,16 +310,13 @@ test('"wrap-up cannot be stopped" switches to the finishing-up spinner', async (
     /wrap-up can’t be interrupted/
   );
 
-  const btn = document.getElementById('dc-send-btn');
-  assert.equal(btn.classList.contains('dc-btn-streaming'), true, 'mayor2 spinner state');
-  assert.equal(btn.classList.contains('dc-btn-stopping'), false);
-  assert.equal(btn.classList.contains('dc-btn-stop'), false);
-  assert.equal(btn.disabled, true);
+  assert.deepEqual(send(), { kind: 'busy', label: 'Finishing up', title: 'Finishing up…' },
+    'mayor2 spinner state');
   assert.equal(DevChat.isStreaming, true);
 });
 
 test('"no active turn" tears down streaming and reconciles from the DB', async () => {
-  const { DevChat, sandbox, document } = makeHarness();
+  const { DevChat, sandbox, document, send } = makeHarness();
   arriveMidTurn(DevChat);
   let reconciled = null;
   let streamingAtReconcile = null;
@@ -340,7 +341,67 @@ test('"no active turn" tears down streaming and reconciles from the DB', async (
   assert.equal(DevChat.isStreaming, false);
   // No `stopped` event is coming for a turn that already ended, so the
   // composer has to be usable again on our own.
-  assert.equal(document.getElementById('dc-send-btn').textContent, 'Send');
+  assert.equal(send().kind, 'send');
+});
+
+// #1378: the SAME 'no active turn' answer, but the session is still busy.
+// That is what the server says for a turn adopted after a platform restart:
+// it is very much alive, it just has no in-process stop handle. The teardown
+// above must NOT happen here — it was the reported bug, because dropping the
+// ladder is what made Force stop (the one path that ends such a turn)
+// unreachable, leaving a Send button in front of a running agent.
+test('"no active turn" keeps the ladder armed while the session is still busy', async () => {
+  const { DevChat, sandbox, document, timers, send } = makeHarness();
+  arriveMidTurn(DevChat);
+  let reconciled = false;
+  DevChat._reconcileAfterFallbackDone = () => { reconciled = true; };
+  sandbox.fetch = async (url) => ({
+    ok: true,
+    status: 200,
+    json: async () => (String(url).endsWith('/status')
+      ? { busy: true, stoppable: false }
+      : { ok: true, stopped: false, reason: 'no active turn', hasDurableTurn: true }),
+  });
+
+  await DevChat._stopCurrentTurn();
+
+  assert.equal(reconciled, false, 'no reload — the turn has not ended');
+  assert.equal(DevChat.isStreaming, true, 'the agent is still running');
+  assert.equal(DevChat._stopping, true);
+  assert.equal(stoppingRows(DevChat).length, 1, 'the stopping row stays up');
+  assert.notEqual(send().kind, 'send');
+  // The rungs are what matter: rung 2 is where Force stop is offered.
+  assert.deepEqual(armedDelays(timers), [DevChat.STOPPING_SLOW_MS, DevChat.STOPPING_STUCK_MS]);
+  assert.equal(fireRung(timers, DevChat.STOPPING_STUCK_MS), true);
+  const row = DevChat._stoppingRow();
+  assert.equal(row._forceOffered, true, 'Force stop is reachable');
+});
+
+// #1378: /status reports whether POST /stop can do anything at all. When it
+// cannot, the composer must not paint a red Stop the click would not honour.
+test('a not-stoppable turn paints a spinner instead of the red Stop', () => {
+  const { DevChat, send } = makeHarness();
+  DevChat.currentSession = { id: SESSION_ID, status: 'active' };
+  DevChat.isStreaming = true;
+  DevChat._setStreamingUI(true, null, { stoppable: false });
+
+  assert.deepEqual(send(), {
+    kind: 'busy',
+    label: 'Working',
+    title: 'This turn is still running but can’t be stopped from here',
+  }, 'no red Stop');
+  assert.equal(DevChat._streamingStoppable, false);
+
+  // A repaint that only knows the phase must not silently re-offer Stop —
+  // every one of those call sites now carries the remembered stoppability.
+  DevChat._stopRequestFailed();
+  assert.equal(send().kind, 'busy');
+
+  // …and it is not sticky: the next turn starts stoppable again.
+  DevChat._setStreamingUI(false);
+  assert.equal(DevChat._streamingStoppable, true);
+  DevChat._setStreamingUI(true, 'cc');
+  assert.equal(send().kind, 'stop');
 });
 
 test('duplicate `stopping` events collapse into a single row', async () => {
@@ -385,7 +446,7 @@ test('_enterStoppingState is a no-op when nothing is streaming', () => {
 });
 
 test('a fresh send never inherits the previous turn stopping state', () => {
-  const { DevChat, document } = makeHarness();
+  const { DevChat, document, send } = makeHarness();
   arriveMidTurn(DevChat);
   // Reload-recovery sets the flag with no row to hang it on.
   DevChat._stopping = true;
@@ -393,9 +454,7 @@ test('a fresh send never inherits the previous turn stopping state', () => {
   DevChat._clearStoppingState();
   DevChat._setStreamingUI(true, 'mayor1');
 
-  const btn = document.getElementById('dc-send-btn');
-  assert.equal(btn.classList.contains('dc-btn-stopping'), false);
-  assert.equal(btn.classList.contains('dc-btn-stop'), true, 'a new turn is interruptible again');
+  assert.equal(send().kind, 'stop', 'a new turn is interruptible again');
 });
 
 // ── #937: the escalation ladder ─────────────────────────────────────────
@@ -468,7 +527,7 @@ test('rung 2 (40s): admits it is stuck and offers Force stop', async () => {
 
   const row = DevChat.messages.find((m) => m._stopping);
   // The wording drops the euphemism — by now it genuinely is not coming.
-  assert.equal(row.content, 'Still stopping — the agent isn’t responding.');
+  assert.equal(row.content, 'Still stopping. The agent isn’t responding.');
   // The flag renderMessages branches on to draw the in-row button.
   assert.equal(row._forceOffered, true);
   // Still exactly one row: escalation mutates, never appends.
@@ -543,7 +602,7 @@ test('duplicate `stopped` events (force + the owning request) settle cleanly', a
   // The force path announces the stop itself, because the request that
   // owns the turn may be the wedged thing being rescued. That request then
   // unwinds and announces it again. Both must collapse to one clean UI.
-  const { DevChat, sandbox, timers } = makeHarness();
+  const { DevChat, sandbox, timers, send } = makeHarness();
   arriveMidTurn(DevChat);
   sandbox.fetch = async () => ({ ok: true, status: 200, json: async () => ({ ok: true, stopped: true }) });
 
@@ -556,10 +615,7 @@ test('duplicate `stopped` events (force + the owning request) settle cleanly', a
   assert.equal(stoppingRows(DevChat).length, 0);
   assert.equal(DevChat._stopping, false);
   assert.equal(DevChat.isStreaming, false);
-  const btn = sandbox.document.getElementById('dc-send-btn');
-  assert.equal(btn.textContent, 'Send');
-  assert.equal(btn.disabled, false);
-  assert.equal(btn.classList.contains('dc-btn-stopping'), false);
+  assert.equal(send().kind, 'send');
 });
 
 // ── #937: reload / second-tab recovery ──────────────────────────────────
@@ -569,33 +625,29 @@ test('a tab joining a long-pending stop lands on the stuck rung immediately', ()
   // seeding the clock from the server is what stops a refreshed tab from
   // restarting a calm "Stopping…" that would never escalate — which is
   // exactly what the reporter would have seen on reload.
-  const { DevChat, timers } = makeHarness();
+  const { DevChat, timers, now } = makeHarness();
   arriveMidTurn(DevChat);
 
-  DevChat._enterStoppingState({ stopRequestedAt: Date.now() - 90000 });
+  DevChat._enterStoppingState({ stopRequestedAt: now - 90000 });
 
   const row = DevChat.messages.find((m) => m._stopping);
-  assert.equal(row.content, 'Still stopping — the agent isn’t responding.');
+  assert.equal(row.content, 'Still stopping. The agent isn’t responding.');
   assert.equal(row._forceOffered, true, 'Force stop is offered without waiting 40 more seconds');
   assert.deepEqual(armedDelays(timers), [], 'nothing left to wait for');
 });
 
-test('a tab joining a fresh stop still waits out both rungs', () => {
-  const { DevChat, timers } = makeHarness();
+test('a tab joining a recent stop waits the remaining time for both rungs', () => {
+  const { DevChat, timers, now } = makeHarness();
   arriveMidTurn(DevChat);
 
   // A stop started by someone else (the harness user is `evan`).
-  DevChat._enterStoppingState({ by: 'dana', stopRequestedAt: Date.now() });
+  DevChat._enterStoppingState({ by: 'dana', stopRequestedAt: now - 5000 });
 
   const row = DevChat.messages.find((m) => m._stopping);
   assert.equal(row.content, '@dana is stopping the agent…');
   assert.ok(!row._forceOffered, 'no premature escape hatch');
-  const delays = armedDelays(timers);
-  assert.equal(delays.length, 2);
-  assert.ok(delays[0] >= 14990 && delays[0] <= 15000,
-    'the slow rung accounts for only the clock time spent entering the state');
-  assert.ok(delays[1] >= 39990 && delays[1] <= 40000,
-    'the stuck rung accounts for only the clock time spent entering the state');
+  assert.deepEqual(armedDelays(timers), [10000, 35000],
+    'both rungs account for the five seconds already elapsed');
 });
 
 test('a later server timestamp re-arms the ladder on the already-showing row', () => {
@@ -603,16 +655,88 @@ test('a later server timestamp re-arms the ladder on the already-showing row', (
   // server's stamp is authoritative and arrives on the echoed `stopping`.
   // Both tabs must converge on one clock, or they escalate at different
   // moments and disagree about whether Force stop is available.
-  const { DevChat, timers } = makeHarness();
+  const { DevChat, timers, now } = makeHarness();
   arriveMidTurn(DevChat);
 
   DevChat._enterStoppingState();
   assert.deepEqual(armedDelays(timers), [15000, 40000]);
 
-  DevChat._enterStoppingState({ stopRequestedAt: Date.now() - 45000 });
+  DevChat._enterStoppingState({ stopRequestedAt: now - 45000 });
 
   const row = DevChat.messages.find((m) => m._stopping);
   assert.equal(row._forceOffered, true);
   assert.equal(stoppingRows(DevChat).length, 1, 'still one row');
   assert.deepEqual(armedDelays(timers), [], 'the stale timers were replaced, not stacked');
+});
+
+// ── The five states, as markup ──────────────────────────────────────────
+//
+// Everything above reads the DESCRIPTOR, which is the branch `_setStreamingUI`
+// used to paint by hand. This is the other half: that each descriptor draws
+// the class attribute its CSS keys off — `.dc-btn-stop { background: #dc2626
+// !important }` and its siblings.
+//
+// The button is a 44px CIRCLE now (Streamlined Concept) rather than a
+// rectangle carrying the word "Send", and `save` is a fifth state: while a
+// turn runs and the box has text, parking it is the only useful action, so it
+// takes the button rather than sitting beside it as a separate icon.
+test('each send state renders the class, the label and the glyph it should', () => {
+  const base = {
+    venueNoteHtml: '', hidden: false, models: null, openRouter: null,
+    drafts: { rows: [], busy: false }, attachError: null, placeholder: '',
+  };
+  // The button now sits inside the card's control row, so the slice ends at
+  // its own closing tag rather than at the form's.
+  const btn = (send) => {
+    const html = composerHtml({ ...base, send });
+    const at = html.indexOf('<button type="submit"');
+    return html.slice(at, html.indexOf('</button>', at) + '</button>'.length);
+  };
+
+  // cva emits `lead` first and className last, which is where both belong.
+  //
+  // The shell is now `lead` + a RADIUS and nothing else: the button renders
+  // `variant="roundedFull" size="icon" ink="none"`, so it carries no fill, no
+  // padding and no text colour, and each state class supplies all three. The
+  // radius has to come from here rather than from `.dc-send-btn` in app.css —
+  // the compiled utilities load LAST by design, so a `rounded-lg` in this
+  // table beats an app.css `border-radius` at equal specificity, which is
+  // exactly how this shipped as a rounded square once.
+  const SHELL = 'class="dc-send-btn rounded-full';
+
+  const idle = btn({ kind: 'send' });
+  assert.ok(idle.includes(`${SHELL} shrink-0 dc-circle-send"`),
+    'idle wears the wash, not the filled accent the rectangle had');
+  assert.doesNotMatch(idle, /rounded-lg|bg-violet-600|px-4/,
+    'no rectangle utilities survive, or the circle is not a circle');
+  assert.match(idle, /aria-label="Send" title="Send \(Ctrl\+Enter\)"/,
+    'the retired hint line\'s send spelling lives here now');
+  assert.doesNotMatch(idle, />Send</, 'the arrow IS the label; there is no word');
+  assert.match(idle, /<svg[^>]*><path[^>]*d="M12 19V5M5 12l7-7 7 7"/, 'the up arrow');
+
+  const save = btn({ kind: 'save' });
+  assert.ok(save.includes(`${SHELL} shrink-0 dc-circle-save"`));
+  assert.match(save, /aria-label="Save as draft" title="Save this text as a draft \(Ctrl\+Enter\)/,
+    'and the save spelling here');
+  assert.doesNotMatch(save, /disabled/, 'it is the live primary action, not a greyed-out icon');
+
+  const stop = btn({ kind: 'stop' });
+  assert.ok(stop.includes(`${SHELL} shrink-0 dc-btn-stop"`));
+  assert.match(stop, /aria-label="Stop" title="Stop"/);
+  assert.match(stop, /<span class="dc-stop-icon" aria-hidden="true"><\/span>/);
+  assert.doesNotMatch(stop, /disabled/, 'the red square is the one busy state you may press');
+
+  const stopping = btn({ kind: 'stopping' });
+  assert.ok(stopping.includes(`${SHELL} shrink-0 dc-btn-stopping"`));
+  assert.match(stopping, /disabled=""/);
+  assert.match(stopping, /aria-label="Stopping" title="Stopping…"/);
+  // The word still renders; app.css hides it, because a 44px circle has no
+  // room beside the spinner and the label survives in aria-label/title.
+  assert.match(stopping, /<span class="dc-send-spinner"><\/span><span class="dc-btn-stopping-label">Stopping…<\/span>/);
+
+  const busy = btn({ kind: 'busy', label: 'Working', title: 'nope' });
+  assert.ok(busy.includes(`${SHELL} shrink-0 dc-btn-streaming"`));
+  assert.match(busy, /disabled=""/);
+  assert.match(busy, /aria-label="Working" title="nope"/);
+  assert.match(busy, /<span class="dc-send-spinner"><\/span><\/button>$/, 'a spinner and nothing else');
 });

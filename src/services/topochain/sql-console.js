@@ -521,7 +521,7 @@ function validateStatement(query) {
   if (hasBareWildcard(body)) {
     return {
       ok: false,
-      reason: 'Query must list columns explicitly — a bare wildcard (*) is not allowed.',
+      reason: 'Query must list columns explicitly; a bare wildcard (*) is not allowed.',
     };
   }
 

@@ -140,6 +140,7 @@ function attachRenderer(store, refs) {
       }
       // Rendered props: a style change updates the existing node.
       r.el.style.opacity = faded ? '0' : '1';
+      r.el.style.backgroundColor = store.get().background || '';
       refs.iframe = r.el;
     }
     r.hostHidden = !active;
@@ -151,7 +152,8 @@ function attachRenderer(store, refs) {
 }
 
 // ── the harness ──────────────────────────────────────────────────────────
-async function makeHarness({ offline = false } = {}) {
+async function makeHarness({ offline = false, offlineReady = false } = {}) {
+  let offlineNow = offline;
   const storeMod = await import(
     new URL('../frontend/src/features/app-frame/app-frame-store.js', `file://${__filename}`).href
   );
@@ -164,10 +166,17 @@ async function makeHarness({ offline = false } = {}) {
   const stagingBridgeMod = await import(
     new URL('../frontend/src/features/staging/staging-bridge.js', `file://${__filename}`).href
   );
+  // The App tab's placeholder states publish a view model into this store
+  // (features/app-frame/app-status.tsx renders it). Plain JS, like the two
+  // above, so this harness can hold the real one.
+  const statusStoreMod = await import(
+    new URL('../frontend/src/features/app-frame/app-status-store.js', `file://${__filename}`).href
+  );
+  statusStoreMod.appStatusStore.set({ view: null });
 
   // The stores are module-scope singletons, like the islands they feed: reset
   // them to the prerendered state between cases.
-  storeMod.appFrameStore.set({ slug: '', active: false, faded: true, cover: null });
+  storeMod.appFrameStore.set({ slug: '', active: false, faded: true, background: '', cover: null });
   storeMod.appFrameRefs.iframe = null;
   stagingStoreMod.stagingStore.set({
     open: false, mode: 'fullscreen', dockRect: null, urlLabel: '',
@@ -232,7 +241,8 @@ async function makeHarness({ offline = false } = {}) {
     Home: { _apps: [record], iconTileFor: () => '<span>🛠</span>' },
     Kudos: { renderButton: () => '' },
     DevChat: { currentSession: null },
-    Offline: { isOffline: () => offline },
+    // Mutable, so a case can put the connection back (see setOffline).
+    Offline: { isOffline: () => offlineNow },
     document: {
       getElementById(id) {
         // The React-owned frame IS in the document, so a read for it resolves —
@@ -273,8 +283,28 @@ async function makeHarness({ offline = false } = {}) {
     resolveDevHost: (u) => u,
     location: { origin: 'https://platform.example', hostname: 'platform.example', href: 'https://platform.example/' },
     innerWidth: 390, innerHeight: 700,
-    addEventListener() {}, removeEventListener() {},
-    localStorage: { getItem: () => null, setItem() {} },
+    // A real registry, so `usernode:offline-change` can actually be
+    // dispatched — the reconnect ladder that re-mints a token for a frame
+    // mounted offline hangs off it.
+    _listeners: new Map(),
+    addEventListener(type, fn) {
+      if (!sandbox._listeners.has(type)) sandbox._listeners.set(type, new Set());
+      sandbox._listeners.get(type).add(fn);
+    },
+    removeEventListener(type, fn) { sandbox._listeners.get(type)?.delete(fn); },
+    dispatchEvent(ev) {
+      for (const fn of [...(sandbox._listeners.get(ev.type) || [])]) fn(ev);
+      return true;
+    },
+    // A real (in-memory) store: the offline-capable-app flag (#487
+    // follow-up) round-trips through it, so a stub that forgets every write
+    // would make offlineReadyFor() answer false no matter what was recorded.
+    localStorage: {
+      _m: new Map(),
+      getItem(k) { return this._m.has(k) ? this._m.get(k) : null; },
+      setItem(k, v) { this._m.set(k, String(v)); },
+      removeItem(k) { this._m.delete(k); },
+    },
     requestAnimationFrame: (fn) => { const t = setTimeout(fn, 0); if (t.unref) t.unref(); return t; },
     __nextToken: 'tok-1',
   };
@@ -285,13 +315,29 @@ async function makeHarness({ offline = false } = {}) {
     appFrame: bridgeMod.appFrameBridge,
     staging: stagingBridgeMod.stagingBridge,
     visualCompare: stagingBridgeMod.visualCompareBridge,
+    // The mount half of the placeholder bridge is React's (it mounts a
+    // portal); the STORE is the seam, and what this harness is about is
+    // which view app-view.js publishes into it.
+    appStatus: {
+      mount: (_host, view) => statusStoreMod.appStatusStore.set({ view }),
+      unmount: () => statusStoreMod.appStatusStore.set({ view: null }),
+      clear: () => statusStoreMod.appStatusStore.set({ view: null }),
+    },
   };
+  if (offlineReady) {
+    sandbox.localStorage.setItem(
+      'usernode:offline-ready', JSON.stringify({ [SLUG]: Date.now() }),
+    );
+  }
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView.appData = { ...record, self_hosted: false };
-  AppView.iframeToken = 'tok-1';
-  AppView.iframeTokenSlug = SLUG;
+  // Offline, the mint fetch never lands, so there is no token to attach —
+  // holding one here would hide the token-less src the offline mount
+  // actually produces.
+  AppView.iframeToken = offline ? null : 'tok-1';
+  AppView.iframeTokenSlug = offline ? null : SLUG;
 
   const bridge = bridgeMod.appFrameBridge;
   const baseline = bridge.stats();
@@ -299,11 +345,14 @@ async function makeHarness({ offline = false } = {}) {
     AppView, bridge, renderer, outside, asked, intervals, sandbox, record,
     store: storeMod.appFrameStore, refs: storeMod.appFrameRefs,
     stagingIframe,
+    setOffline: (v) => { offlineNow = !!v; },
     // The bridge's counters are module-scope and cumulative across cases, so
     // every assertion is made against this case's baseline.
     mounts: () => bridge.stats().mounts - baseline.mounts,
     navigations: () => bridge.stats().navigations - baseline.navigations,
     surface: () => outside['app-view'].getAttribute('data-app-surface'),
+    /** The placeholder currently published, or null when a frame is up. */
+    status: () => statusStoreMod.appStatusStore.get().view,
   };
 }
 
@@ -569,16 +618,177 @@ test('leaving the app drops the frame; a non-running app never gets one', async 
   AppView.renderAppTab();
   assert.equal(bridge.frame(), null, 'the creating placeholder has no frame');
   assert.equal(h.surface(), 'platform', 'and keeps the platform clearance');
-  assert.match(h.outside['app-content'].innerHTML, /spinning up/, 'the placeholder is in #app-content');
+  assert.match(h.status().message, /spinning up/, 'the placeholder is published');
 });
 
-test('offline shows the placeholder and drops the frame', async () => {
+// ── canEagerLaunch is a PREDICATE ────────────────────────────────────────
+//
+// It answers "would an eager launch mount the same frame renderAppTab would
+// build?", and it answers no far more often than yes: a demo card, a
+// self-hosted app, a non-app tab, and every app that is not running. It used
+// to tear down the interim React roots that own `#app-content` on its way to
+// that answer, which was invisible while the App tab's placeholders were
+// hand-written innerHTML — `unmountAllLegacyPortals` cannot touch those.
+//
+// #1085 chunk H made the placeholders a portal, and the side effect became a
+// blank App tab on exactly the apps the predicate refuses: `renderAppTab`
+// painted "App failed to start · View build log", `beginLaunch` asked the
+// predicate milliseconds later, and the answer arrived with the placeholder
+// already swept away. A declared check reported the build-log button missing
+// from a page that had rendered it.
+
+test('asking whether an app can eager-launch does not disturb the placeholder', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+
+  for (const status of ['error', 'creating', 'awaiting_secrets']) {
+    // Both sources say the app is not running: `renderAppTab` reads
+    // `appData`, `canEagerLaunch` reads the HOME list record.
+    h.sandbox.Home._apps[0].status = status;
+    h.sandbox.Home._apps[0].url = null;
+    AppView.appData = { slug: SLUG, status, url: null, lastFailure: { reason: 'boom' } };
+    AppView.renderAppTab();
+    const painted = h.status();
+    assert.ok(painted, `${status}: the placeholder is published`);
+
+    // The answer is no for every one of these — there is no running app to
+    // launch onto — and asking must not cost the surface that IS on screen.
+    assert.equal(AppView.canEagerLaunch(SLUG, 'app'), false, `${status}: no eager launch`);
+    assert.equal(h.status(), painted, `${status}: the placeholder survives the question`);
+    assert.equal(bridge.frame(), null, `${status}: and no frame appears`);
+  }
+});
+
+test('a refused beginLaunch leaves the screen exactly as it found it', async () => {
+  const h = await makeHarness();
+  const { AppView } = h;
+
+  h.sandbox.Home._apps[0].status = 'error';
+  h.sandbox.Home._apps[0].url = null;
+  AppView.appData = { slug: SLUG, status: 'error', url: null, lastFailure: { reason: 'boom' } };
+  AppView.renderAppTab();
+  const painted = h.status();
+
+  assert.equal(AppView.beginLaunch(SLUG, 'app'), false, 'nothing to launch onto');
+  assert.equal(h.status(), painted, 'the placeholder is still the one on screen');
+});
+
+test('offline shows the placeholder and drops the frame — for an app with no worker of its own', async () => {
   const h = await makeHarness({ offline: true });
   const { AppView, bridge } = h;
   AppView.renderAppTab();
   assert.equal(bridge.frame(), null, 'no cross-origin frame while offline');
-  assert.match(h.outside['app-content'].innerHTML, /needs a connection/, 'placeholder instead');
+  assert.match(h.status().message, /needs a connection/, 'placeholder instead');
   assert.equal(h.surface(), 'platform', 'platform surface');
+  assert.equal(AppView.canEagerLaunch(SLUG, 'app'), false, 'and no eager launch either');
+});
+
+// ── #487 follow-up: an app that brought its own service worker ───────────
+//
+// The placeholder above was applied to EVERY app, including ones that
+// precache their own shell on their own origin. For those the frame is
+// exactly what should be mounted: the document comes out of the app's own
+// worker cache, and refusing to create the iframe was the only thing
+// preventing the offline support the app had already built from running.
+
+test('offline MOUNTS the frame for an app that announced its own service worker', async () => {
+  const h = await makeHarness({ offline: true, offlineReady: true });
+  const { AppView, bridge } = h;
+  AppView.renderAppTab();
+
+  const el = bridge.frame();
+  assert.ok(el, 'the offline-capable app gets its frame');
+  assert.equal(h.status(), null, 'and no placeholder');
+  assert.equal(h.surface(), 'app', 'the app surface, not the platform one');
+  // No mint is possible offline, so the app boots token-less and recovers
+  // its identity from its own storage (that is the app-side contract).
+  assert.equal(el.src, `${APP_URL}/`, 'src carries no token offline');
+  assert.equal(el.loads, 1, 'exactly one document load');
+  assert.equal(AppView.canEagerLaunch(SLUG, 'app'), true, 'eager launch is allowed too');
+});
+
+test('coming back online re-mints and reloads a frame that was mounted token-less', async () => {
+  const h = await makeHarness({ offline: true, offlineReady: true });
+  const { AppView, bridge, sandbox } = h;
+  AppView.renderAppTab();
+  const el = bridge.frame();
+  assert.equal(el.src, `${APP_URL}/`, 'token-less to begin with');
+
+  // The connection returns. Offline.isOffline() flips and the shell's own
+  // `usernode:offline-change` event fires — the same signal the placeholder
+  // path has always used to re-render.
+  h.setOffline(false);
+  sandbox.__nextToken = 'tok-2';
+  sandbox.dispatchEvent({ type: 'usernode:offline-change', detail: { offline: false } });
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.equal(bridge.frame().src, `${APP_URL}/?token=tok-2`,
+    'the app is reloaded with a token so its API calls stop 401-ing');
+  assert.equal(bridge.frame().loads, 2, 'one deliberate reload, not a loop');
+});
+
+test('only the mounted production frame can mark an app offline-capable', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge, sandbox } = h;
+  AppView.renderAppTab();
+  const win = bridge.frame().contentWindow;
+
+  assert.equal(AppView.offlineReadyFor(SLUG), false, 'nothing recorded yet');
+
+  // A frame that is not the app frame (a staging preview runs unmerged
+  // code) must not be able to speak for the production app.
+  AppView.handleOfflineReadyMessage({
+    source: h.stagingIframe.contentWindow, data: { __usernode_offline_ready: 'ready' },
+  });
+  assert.equal(AppView.offlineReadyFor(SLUG), false, 'the staging frame is ignored');
+
+  AppView.handleOfflineReadyMessage({ source: win, data: { __usernode_offline_ready: 'ready' } });
+  assert.equal(AppView.offlineReadyFor(SLUG), true, 'the production frame is believed');
+
+  // An app that loses its worker stops being opened offline.
+  AppView.handleOfflineReadyMessage({ source: win, data: { __usernode_offline_ready: 'not-ready' } });
+  assert.equal(AppView.offlineReadyFor(SLUG), false, 'withdrawn again');
+
+  // And the flag does not survive a session ending.
+  AppView.handleOfflineReadyMessage({ source: win, data: { __usernode_offline_ready: 'ready' } });
+  AppView.clearOfflineReady();
+  assert.equal(AppView.offlineReadyFor(SLUG), false, 'cleared with the session');
+  assert.equal(sandbox.localStorage.getItem('usernode:offline-ready'), null, 'and the key is gone');
+});
+
+test('the offline-app screenshot states are self-contained — no running app required', async () => {
+  // The two dapp.json checks added with #1356 named a real slug and asserted
+  // on the App tab. The checks environment has no guarantee of a running app
+  // with a live origin behind the preview, so renderAppTab reached NEITHER
+  // branch and both checks failed — including the one for the behaviour the
+  // change did not touch. These states are synthesised now; this pins that.
+  const h = await makeHarness({ offline: true });
+  const { AppView, bridge } = h;
+
+  AppView.showOfflineAppShot(true);
+  assert.ok(bridge.frame(), 'the ready state mounts a frame');
+  assert.equal(h.surface(), 'app', 'on the app surface');
+  assert.equal(bridge.frame().src, 'https://platform.example/health',
+    "pointed at the shell's own /health, not a fabricated cross-origin app");
+  assert.equal(h.status(), null, 'and no placeholder underneath it');
+
+  AppView.showOfflineAppShot(false);
+  assert.equal(bridge.frame(), null, 'the blocked state drops the frame again');
+  assert.match(h.status().message, /needs a connection/,
+    'and paints the placeholder the unchanged path still produces');
+  assert.equal(h.surface(), 'platform', 'back on the platform surface');
+});
+
+test('an offline-ready record older than its TTL is not trusted', async () => {
+  const h = await makeHarness({ offline: true });
+  const { AppView, bridge, sandbox } = h;
+  sandbox.localStorage.setItem('usernode:offline-ready', JSON.stringify({
+    [SLUG]: Date.now() - (AppView.OFFLINE_READY_TTL_MS + 1000),
+  }));
+  assert.equal(AppView.offlineReadyFor(SLUG), false, 'expired');
+  AppView.renderAppTab();
+  assert.equal(bridge.frame(), null, 'so it gets the placeholder, not a dead frame');
 });
 
 test('the bridge refuses to act on a frame it does not own', async () => {
@@ -764,4 +974,27 @@ test('every path that owned #app-content goes through the frame seam', () => {
   const appJs = read('public/js/app.js');
   assert.ok(appJs.includes('AppView._unmountAppFrame();'),
     'closeApp drops the frame when the app is actually left');
+});
+
+test('background updates preserve the app frame and clear when another app opens', async () => {
+  const h = await makeHarness();
+  h.bridge.mount({ slug: SLUG, faded: false });
+  h.bridge.setSrc(APP_URL);
+  const frame = h.bridge.frame();
+  const win = frame.contentWindow;
+  const loads = frame.loads;
+  h.AppView.handleBackgroundBridgeMessage({ source: win,
+    data: { __usernode_background: 'changed', color: '#0a0d14' } });
+  assert.equal(h.renderer.el.style.backgroundColor, '#0a0d14');
+  h.bridge.park(); h.bridge.activate();
+  h.bridge.mount({ slug: SLUG, faded: false });
+  assert.equal(h.bridge.frame(), frame);
+  assert.equal(frame.contentWindow, win);
+  assert.equal(frame.loads, loads);
+  assert.equal(h.store.get().background, '#0a0d14');
+  h.bridge.mount({ slug: 'another-app', faded: false });
+  assert.equal(h.store.get().background, '');
+  h.AppView.handleBackgroundBridgeMessage({ source: win,
+    data: { __usernode_background: 'changed', color: '#0a0d14' } });
+  assert.equal(h.store.get().background, '', 'a departed app cannot paint the next frame');
 });

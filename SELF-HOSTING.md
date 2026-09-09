@@ -1271,7 +1271,7 @@ different and must not be collapsed:
 | Public | `/api/v4/leaderboard*`, `/api/v4/season-events*`, `/api/v4/users/:id/profile`, `/api/v4/app-version/check` | Session-**optional**. A signed-in session can enrich a response (only `/leaderboard/global` branches on admin), but no session is required and these never 401. |
 | Partner | `/api/v4/partner/*` | `X-API-Key` vs `TOPOCHAIN_PARTNER_API_KEY`. |
 | Ingest | `POST /api/v4/slot-outcomes`, `POST /api/v4/epoch-stats` | `X-Ingest-Key` vs `TOPOCHAIN_INGEST_API_KEY`. The group's reads (`GET /api/v4/onchain-accounts`) stay public. |
-| Mobile | `/api/v4/mobile/*` | Bearer token. The shell obtains one from its web session via `POST /api/v4/mobile/auth/from-session`. |
+| Mobile | `/api/v4/mobile/*` | Native establishment starts from the Social web-session cookie, then returns an encrypted credential to the OS-owned client. Data, delegation and push routes accept only that private Bearer credential; Social JavaScript never receives it. |
 | Admin | `/api/v4/admin/*` | The platform's own admin gate (`adminMiddleware` / `requireAdminWrite`), not a topochain-specific credential. |
 
 Separately, **`/challenges-api/*`** is the SV web shell's own read
@@ -1284,13 +1284,21 @@ isn't explicitly registered returns 404.
 
 ### Configuration
 
-Four optional settings, none of which block boot — each disables exactly
-one capability. In production set them in the platform's **Platform
-variables** panel (they are declared in `dapp.json`'s `platform_env`, not
-in a child app's `secrets` block); `.env.example` documents the same keys
-for local dev and standalone deploys.
+Canonical production requires `NODE_RPC_URL`,
+`NATIVE_SESSION_V2_TESTNET_CHAIN_ID`, and `TOPOCHAIN_PARTNER_API_KEY`;
+missing lifecycle data stops boot. The self-app staging preview may omit
+them and keeps the corresponding routes unavailable. Other integration
+settings remain optional and disable only their named capability. Set
+production values in the platform's **Platform variables** panel (they are
+declared in `dapp.json`'s `platform_env`, not in a child app's `secrets`
+block); `.env.example` documents the same keys for local dev and standalone
+deploys.
 
-- `TOPOCHAIN_PARTNER_API_KEY` — unset: every partner request 500s.
+- `NODE_RPC_URL` — canonical node endpoint used to sample the current epoch.
+- `NATIVE_SESSION_V2_TESTNET_CHAIN_ID` — exact canonical Rust ChainId for
+  the one supported native network mapping.
+- `TOPOCHAIN_PARTNER_API_KEY` — authenticates partner routes and the managed
+  producer's `/api/v1/delegations` read.
 - `TOPOCHAIN_INGEST_API_KEY` — unset: every ingest **write** 500s.
 - `TOPOCHAIN_ZK_BRIDGE_URL` — unset: `POST /api/v4/mobile/zkpassport/complete` 500s.
 - `TOPOCHAIN_MAIL_API_URL` / `TOPOCHAIN_MAIL_API_KEY` / `TOPOCHAIN_MAIL_FROM`
@@ -1563,7 +1571,7 @@ wording as the promote route. That asymmetry is deliberate: importing used
 to be a one-at-a-time human action, and the browser button's behaviour is
 out of scope here.
 
-## Waitlist social connect (GitHub / X)
+## Waitlist social connect (GitHub / X / LinkedIn)
 
 The second-stage waitlist form ("Want in sooner?", reached from the
 private link a signer receives) can **verify** a GitHub or an X account
@@ -1574,9 +1582,14 @@ round trip lives in `src/routes/waitlist-connect.js` — the classic
 authorize/token shape for GitHub, OAuth 2.0 with mandatory PKCE (S256) and
 an HTTP Basic token exchange for X.
 
+The two routes as a caller sees them, including the `connect=` outcomes the
+round trip lands back on, are documented in
+[docs/waitlist-public-api.md](./docs/waitlist-public-api.md); what follows is
+the provider-by-provider setup.
+
 ### Configuration
 
-Five settings, all `required: false`, all declared in `dapp.json`'s
+Ten settings, all `required: false`, all declared in `dapp.json`'s
 `platform_env` under the **Waitlist** group. None blocks boot or a merge.
 Set them in the platform's **Platform variables** panel (a full admin sets
 directly; anyone else proposes by vote), and note they take effect on the
@@ -1596,10 +1609,26 @@ as an "orphan" row until the deploy catches up.
   verifies a signer's X account. X supports multiple registered callbacks,
   so this pair may also serve account linking when `/api/me/x/callback` is
   registered and the dedicated `X_LINK_*` pair is unset.
-- `WAITLIST_OAUTH_ORIGIN` — overrides the origin both callback URLs are
-  built from (`connectOrigin()`). Unset it is the production origin in
-  production and `http://localhost:<PORT>` in dev. Change it and you must
-  register the matching callback URL with both providers.
+- `WAITLIST_LINKEDIN_CLIENT_ID` / `WAITLIST_LINKEDIN_CLIENT_SECRET` — the
+  LinkedIn app that verifies a signer's LinkedIn account. It needs the
+  "Sign In with LinkedIn using OpenID Connect" product; see the runbook
+  below.
+- `WAITLIST_FOLLOW_X_URL` / `WAITLIST_FOLLOW_LINKEDIN_URL` /
+  `WAITLIST_FOLLOW_INSTAGRAM_URL` — public profile addresses the stage-2
+  "Follow along" row links to. Independent of the OAuth pairs above and of
+  each other: a network with no URL set renders no link, and none of the
+  three is ever verified (see the closing note of the LinkedIn runbook for
+  why no network will confirm a follow).
+- `WAITLIST_INTEGRATION_KEYS` — trusted integrators; see the section below.
+- `WAITLIST_OAUTH_ORIGIN` — overrides the origin the callback URLs are
+  built from (`connectOrigin()`). Unset it is this deployment's canonical
+  origin; it is `http://localhost:<PORT>` only when `USERNODE_LOCAL_DEV=1`
+  says a developer is running the server locally. That default is
+  deliberate: a missing variable must not be able to produce a callback
+  that works nowhere but a laptop, because every provider rejects
+  `redirect_uri` on its own page, after the person has left your site.
+  Change it and you must register the matching callback URL with every
+  provider you have configured.
 
 **Each provider is judged on its own, and both halves must be set
 together.** An id without a secret counts as unconfigured, so GitHub can
@@ -1689,8 +1718,90 @@ is a separate GitHub App and is unrelated.
 - GitHub permits only one callback URL per OAuth app. Do not reuse this app
   for account linking; create the dedicated `GITHUB_LINK_*` app above.
 
+### Creating the LinkedIn OpenID Connect app
+
+LinkedIn Developers → Create app, then add the **Sign In with LinkedIn
+using OpenID Connect** product to it. Without that product the authorize
+call is rejected before any platform code runs.
+
+- **Authorized redirect URL:**
+  `https://<your-domain>/waitlist/connect/linkedin/callback` — on the
+  canonical deployment,
+  `https://social-vibecoding.usernodelabs.org/waitlist/connect/linkedin/callback`.
+- **Scopes: `openid profile`,** and nothing else. `email` is deliberately
+  not requested: the waitlist row already has an address. The token is used
+  once for `GET /v2/userinfo` to resolve the member's name, then dropped.
+- Client ID → `WAITLIST_LINKEDIN_CLIENT_ID`, client secret →
+  `WAITLIST_LINKEDIN_CLIENT_SECRET` (declared `private: true`, so encrypted
+  at rest and never returned by any API). Both halves must be set or the
+  Connect LinkedIn button stays hidden.
+- **This confirms the account is theirs. It cannot confirm a follow.**
+  LinkedIn exposes no API reporting whether a member follows a company
+  page, so the stage-2 copy says "connect" and never claims otherwise. The
+  same is true of Instagram; X can answer it, but only with the
+  `follows.read` scope on a paid API tier.
+
+## Waitlist trusted integrators
+
+`POST /api/public/waitlist` is an anonymous write, so it is rate-limited at
+**5 joins per 15 minutes per IP address**. That is the right bound for a
+visitor typing their own address into the landing page, and the wrong one
+for a partner running the signup form on their own site and posting the
+results here: every one of their visitors arrives from the same server
+address, so the sixth real person in a window is refused.
+
+`WAITLIST_INTEGRATION_KEYS` names the callers allowed out of that bucket.
+It is a comma-separated list of `label:secret` pairs:
+
+```
+WAITLIST_INTEGRATION_KEYS=acme:s3cret-one,partner-two:s3cret-two
+```
+
+The label is everything before the FIRST colon, so a base64 secret
+containing one is fine. Labels are `[a-z0-9][a-z0-9_-]{0,31}`; a malformed
+entry is logged and skipped rather than failing boot. Secrets are stored as
+SHA-256 digests in memory and compared with `crypto.timingSafeEqual`, and
+neither the secret nor the header is ever logged.
+
+A caller presents its secret in **`X-Waitlist-Client-Key`**. When it
+matches:
+
+- The anonymous per-IP bucket no longer applies. A **client ceiling of 200
+  joins per 15 minutes** applies instead, keyed on the label. A leaked key
+  is therefore a bounded faucet, not an open one.
+- The caller may additionally send the visitor's own address in
+  **`X-Waitlist-Client-IP`**. When it parses as an IP, that visitor gets the
+  same **5 per 15 minutes** a direct visitor would, and it is that address
+  the signup row records instead of the proxy's. Without it there is nothing
+  finer to key on and the client ceiling is the only bound.
+
+Everything else is unchanged: the same validation, the same
+already-on-the-list dedupe, the same confirmation mail, the same
+non-enumeration contract. This is a rate-limit key and nothing more, and it
+grants no read access to anything.
+
+**Unset is the normal state**, and an unrecognised or malformed key is
+treated as anonymous rather than refused, so a stale key on a partner's
+side degrades to the ordinary limit instead of breaking their form. That is
+deliberately unlike `TOPOCHAIN_PARTNER_API_KEY`, which 500s when the server
+has no key configured: this header is optional by design.
+
+**There is no CORS on the public API**, so an integrator cannot call this
+from a browser on its own origin. The integration is server-to-server, which
+is also what keeps the secret out of a page anyone can view.
+
+This section is the operator half: which variable to set and why the
+bounds are what they are. The caller half — every endpoint, its request
+and response bodies, and both headers in context — is
+[docs/waitlist-public-api.md](./docs/waitlist-public-api.md), which is the
+document to hand a partner.
+
 ## Cross-references
 
+- [docs/waitlist-public-api.md](./docs/waitlist-public-api.md) — the
+  public waitlist API as an outside integrator implements against it;
+  the caller-facing half of "Waitlist social connect" and "Waitlist
+  trusted integrators" above.
 - [EXTRACT-PLAN.md](./EXTRACT-PLAN.md) — the standalone-deploy
   prerequisite, now done.
 - [src/prompts/app-conventions.md](./src/prompts/app-conventions.md)

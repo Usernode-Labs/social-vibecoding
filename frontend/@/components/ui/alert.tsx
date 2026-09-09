@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils';
  * The `banner` variant reproduces, exactly:
  *
  *   #offline-banner   shrink-0 bg-amber-500/15 border-b border-amber-500/30
- *                     text-amber-600 dark:text-amber-400 text-xs text-center
+ *                     text-amber-800 dark:text-amber-400 text-xs text-center
  *                     px-3 py-1.5
  *
  * ── Why the OTHER amber banner is not in here ──────────────────────────
@@ -63,7 +63,7 @@ const alertVariants = cva('', {
       // #offline-banner — a full-bleed strip under the header. `shrink-0`
       // keeps it out of the flex column's height negotiation.
       banner:
-        'shrink-0 bg-amber-500/15 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs text-center px-3 py-1.5',
+        'shrink-0 bg-amber-500/15 border-b border-amber-500/30 text-amber-800 dark:text-amber-400 text-xs text-center px-3 py-1.5',
     },
   },
   defaultVariants: { variant: 'banner', startHidden: false },

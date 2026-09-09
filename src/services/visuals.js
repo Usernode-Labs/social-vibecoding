@@ -34,6 +34,7 @@ const checkHistory = require('./check-history');
 const unitSuite = require('./unit-suite');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
 const { getPool } = require('../db/pool');
+const { connectionCensus } = require('../db/connection-census');
 
 const CAPTURE_IMAGE = 'usernode-capture:latest';
 
@@ -59,7 +60,7 @@ const MOBILE_VIEWPORT = { width: 390, height: 844 };
 // Dedicated capture identity (seeded by src/db/migrate.js). A non-admin
 // service account so the public artifacts (/visuals/:id is unauthenticated;
 // PR bodies embed them on GitHub) never show anyone's personal data or
-// admin-only UI. The capture run is capped at RUN_TIMEOUT_MS (600s); 15
+// admin-only UI. The capture run is capped at RUN_TIMEOUT_MS (640s); 15
 // minutes covers the lazy image build + retry comfortably.
 const CAPTURE_USERNAME = 'usernode-capture';
 // Separate view-only-admin identity (is_admin + admin_readonly; seeded by
@@ -106,9 +107,23 @@ const CONTENT_TYPES = {
 // pass is unchanged, but the suite that follows it now has its own 420s
 // budget, and the container needs room to finish that budget and still emit
 // its sentinel. This is the OUTER bound — the suite stops dispatching at
-// TESTS_DEADLINE_MS long before we get here, so hitting 600s means the
+// TESTS_DEADLINE_MS long before we get here, so hitting it means the
 // container is genuinely wedged, not merely busy.
-const RUN_TIMEOUT_MS = 600 * 1000;
+//
+// 600s → 640s with the 480 → 530 ceiling bump: the suite deadline below
+// crossed 480s, and this one has to stay 120s above it (pinned by
+// tests/checks-budget.test.js and tests/capture-pool.test.js).
+//
+// 640s → 680s with 530 → 560 (#1699 crossed 512): the deadline moved to
+// 560s, and 120s above it is 680s.
+//
+// 680s → 690s with 560 → 580 (a proposal in flight at the same time): the
+// deadline moved to 570s, and 120s above it is exactly 690s.
+//
+// 690s → 710s with 580 → 600 (#1824, which found the manifest sitting exactly
+// on the 20-slot floor): the deadline moved to 590s, and 120s above it is
+// 710s.
+const RUN_TIMEOUT_MS = 710 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 
 // The capture container drives up to TEST_CONCURRENCY headless pages at
@@ -124,7 +139,33 @@ const CAPTURE_CPUS = process.env.CAPTURE_CPUS || '4';
 // container's agree by construction.
 const TEST_CONCURRENCY = process.env.TEST_CONCURRENCY || '8';
 const TEST_TIMEOUT_MS = process.env.TEST_TIMEOUT_MS || '25000';
-const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '420000';
+// 470s → 490s, moved together with MAX_DECLARED_TESTS 480 → 500 in
+// services/app-manifest.js — the two are one decision, and the note on that
+// constant says so. A full 500-check suite is ~244s of ideal work at the
+// measured ~3.9s per check over this pool of 8; 490s keeps the 2x margin
+// tests/checks-budget.test.js pins, which is what stops a real manifest's
+// tail being cut on every build. RUN_TIMEOUT_MS above stayed at 600s then: it
+// only has to clear this by 120s, and it cleared it by 130s.
+//
+// 470s → 520s with MAX_DECLARED_TESTS 480 → 530: ~258s of ideal work for a
+// full suite, so 520s keeps the 2x margin with ~3s to spare. This crossed the
+// 480s line the note above warned about, so RUN_TIMEOUT_MS moved with it.
+//
+// 520s → 560s with MAX_DECLARED_TESTS 530 → 560, when the manifest reached 512
+// and left 18 of the 20 slots the headroom rule requires. ~273s of ideal work
+// for a full suite, so 560s keeps the 2x margin by 14s — more room than the
+// last move left, deliberately, because the previous two both had to be redone
+// within a few hundred checks. RUN_TIMEOUT_MS moves 640s → 680s with it, the
+// required 120s clear and no more, as every one of these moves has done.
+//
+// 560s → 570s with MAX_DECLARED_TESTS 560 → 580, a proposal in flight at the
+// same time: ~283s of ideal work for a full suite, so 570s keeps the 2x
+// margin with ~4s to spare. RUN_TIMEOUT_MS moves 680s → 690s with it again.
+//
+// 570s → 590s with MAX_DECLARED_TESTS 580 → 600 (#1824): ~293s of ideal work
+// for a full suite, so 590s keeps the 2x margin with ~5s to spare, and
+// RUN_TIMEOUT_MS moves 690s → 710s with it.
+const TESTS_DEADLINE_MS = process.env.TESTS_DEADLINE_MS || '590000';
 
 // Mint a 15-minute capture identity token for a seeded capture identity
 // row, scoped to the app being captured.
@@ -173,12 +214,11 @@ function selectCaptureTokens({ captureToken, adminToken }) {
 // testing-notes.js), so the join must pick '?' vs '&'. An empty token
 // returns the URL unchanged (unauthenticated capture — current behaviour).
 //
-// Fragment-safe (#353): a self-app deep link carries a `#app/...` hash
-// (the SPA routes off location.hash), and a query param MUST sit before
-// the fragment or it never reaches the server. So split off any `#...`
-// tail, splice `token=` onto the path+query part, then re-attach the
-// fragment. Plain pathname URLs (no `#`) are byte-identical to the old
-// concat behaviour.
+// Fragment-safe (#353): the self-app's non-app screens still carry hashes,
+// and a query param MUST sit before the fragment or it never reaches the
+// server. Split off any `#...` tail, splice `token=` onto the path+query part,
+// then re-attach the fragment. Clean app pathname URLs (no `#`) are
+// byte-identical to the old concat behaviour.
 function withToken(url, token) {
   if (!token) return url;
   const hashAt = url.indexOf('#');
@@ -187,11 +227,11 @@ function withToken(url, token) {
   return base + (base.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token) + frag;
 }
 
-// The self-app is a hash-routed SPA (#353): App.restoreFromHash() in
-// public/js/app.js reads location.hash, so its internal screens are
-// addressed by fragment (`#app/<slug>/...`, `#leaderboard`, ...), NOT by
-// server pathname. A testing path joined as a pathname loads index.html
-// with an empty hash → the home feed, for both "before" and "after".
+// The self-app uses clean pathname routes for app screens
+// (`/app/<slug>/...`) and keeps the rest of its SPA screens in fragments
+// (`#leaderboard`, `#admin/...`, ...). A non-app testing path joined as a
+// pathname loads index.html with an empty fragment → the home feed, for both
+// "before" and "after".
 //
 // Normalise a self-app testing path into the form the SPA actually
 // routes off: if its first segment is one of the SPA hash routes, move
@@ -214,10 +254,10 @@ function withToken(url, token) {
 // pathname, so before it was listed here a `path: /apps` silently loaded
 // index.html with an empty hash and captured the home screen — the exact
 // failure mode this whole function exists to prevent. It is distinct from
-// the singular 'app' (the app-view route) and must be its own entry: the
-// first path segment is matched exactly, not by prefix.
+// the singular 'app' (the clean app-view route), which deliberately stays in
+// the pathname. The first path segment is matched exactly, not by prefix.
 const SELF_APP_HASH_ROUTES = new Set([
-  'app', 'apps', 'leaderboard', 'group-chat', 'individual-chat', 'create', 'admin', 'messages',
+  'apps', 'leaderboard', 'group-chat', 'individual-chat', 'create', 'admin', 'messages',
 ]);
 function selfAppHashPath(p) {
   const path = typeof p === 'string' ? p : '/';
@@ -258,6 +298,30 @@ const CONTAINER_ID_RE = /^[0-9a-f]{64}$/i;
 function usableRuntimeName(name) {
   const value = String(name == null ? '' : name).trim();
   return !value || CONTAINER_ID_RE.test(value) ? null : value;
+}
+
+// The same failure, one wall further out. A container ID is unresolvable
+// because Docker's DNS does not serve it; a container NAME longer than 63
+// bytes is unresolvable because 63 is the maximum length of a DNS label and
+// nothing — Chrome's resolver, Go's, glibc's — will even send the query.
+// `usernode-staging-<slug>--<sessionId>` crosses that line at a 43-character
+// slug, which is an app name a human can plausibly type, and the symptom is
+// identical: ERR_NAME_NOT_RESOLVED on every route, before a byte of app code
+// runs, scored as the app's fault.
+//
+// Containers therefore carry a short network ALIAS alongside the long name
+// (application-runtime.dnsAlias). Prefer it, but only when it is real: for a
+// name that still fits, an alias we could not confirm is strictly worse than
+// the name that has always worked. When the name does NOT fit there is no
+// safe fallback — the alias is the only thing that can resolve — so use it
+// either way and let the capture report honestly if it is missing too.
+const MAX_DNS_LABEL = 63;
+function dnsHostname(name, alias, { aliasConfirmed = false } = {}) {
+  const value = String(name == null ? '' : name).trim();
+  const short = String(alias == null ? '' : alias).trim();
+  if (!short) return value;
+  if (value.length > MAX_DNS_LABEL) return short;
+  return aliasConfirmed ? short : value;
 }
 
 function isFrontendFile(file) {
@@ -458,6 +522,10 @@ function parseTests(stdout) {
       loadStatus,
       consoleErrors: Array.isArray(payload.consoleErrors) ? payload.consoleErrors : [],
       failureReason: typeof payload.failureReason === 'string' ? payload.failureReason : '',
+      // Set on a frame that is a SECOND OPINION on another check rather
+      // than a check of its own: the container re-ran a failure on its own
+      // cold document. Names the index it is a retry of.
+      retryOf: Number.isInteger(payload.retryOf) ? payload.retryOf : null,
     });
     i += 2;
   }
@@ -493,6 +561,50 @@ function normalizeConsoleErrors(list) {
       message: String((e && e.message) || '').slice(0, CONSOLE_MAX_MSG_LEN),
       source: (e && e.source) ? String(e.source).slice(0, CONSOLE_MAX_MSG_LEN) : '',
     }));
+}
+
+// Origin-level browser failures: the request never reached the app because
+// the hostname did not resolve or nothing was listening. These are reported
+// as `kind: 'load'` console errors, and they are indistinguishable — from
+// inside a check row — from an app that renders a broken page.
+//
+// They are not the same thing, and scoring them the same way is what made
+// #1381 permanent. 'failing' is a verdict ABOUT THE APP: it sticks to the
+// commit, it records fail_count against the check's history, it schedules no
+// retry, and it escalates to nobody, because a failing test is the author's
+// problem to fix. An origin that does not resolve is the platform's problem,
+// and 'error' is the state that already handles it — backoff, a retry
+// schedule, `check_error_detail`, owner escalation, and "⚠ Checks couldn't
+// run" on the card instead of a red X next to the author's name.
+const UNREACHABLE_ORIGIN_RE = new RegExp([
+  'ERR_NAME_NOT_RESOLVED',
+  'ERR_CONNECTION_REFUSED',
+  'ECONNREFUSED',
+  'ERR_ADDRESS_UNREACHABLE',
+].join('|'), 'i');
+
+// Returns a human-readable detail string when EVERY container-produced row
+// failed at the origin, or null.
+//
+// "Every" is the load-bearing word. One unreachable route among passing ones
+// is an app-side deep link pointing at a host the app itself got wrong — a
+// real, author-fixable failure that must keep blocking. It is only when not a
+// single route could be reached that the origin, rather than the app, is the
+// thing that is broken.
+function unreachableOriginDetail(rows, origin) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return null;
+  let sample = '';
+  for (const r of list) {
+    if (r.status === 'pass') return null;
+    const hit = (Array.isArray(r.consoleErrors) ? r.consoleErrors : []).find(
+      (e) => e && e.kind === 'load' && UNREACHABLE_ORIGIN_RE.test(String(e.message || ''))
+    );
+    if (!hit) return null;
+    if (!sample) sample = String(hit.message || '').slice(0, CONSOLE_MAX_MSG_LEN);
+  }
+  const where = origin ? ` at ${origin}` : '';
+  return `Staging preview unreachable${where} — no route could be loaded (${sample}).`;
 }
 
 // Classify the parsed test frames into the persisted snapshot:
@@ -569,14 +681,66 @@ function classifyTests(frames, expectedCount, options) {
   let advisoryFailures = 0;
   let passed = 0;
 
+  // A check on its first appearance is dispatched NEW_CHECK_RUNS times, as
+  // one primary entry plus repeats pointing back at it. The repeats are not
+  // rows — the card shows one line per declared check, as it always has —
+  // they are extra OBSERVATIONS of it, and every one of them has to pass.
+  // A check that passes twice and fails once on its debut is flaky, and
+  // saying so on the proposal that introduces it is the whole point.
+  const repeatsOf = new Map();
   for (const d of dispatched) {
+    if (d.repeatOf == null) continue;
+    if (!repeatsOf.has(d.repeatOf)) repeatsOf.set(d.repeatOf, []);
+    repeatsOf.get(d.repeatOf).push(d);
+  }
+  // Retries are not dispatched — the container decides at runtime which
+  // failures to ask again — so they arrive only as frames, each naming the
+  // check it is a second opinion on.
+  const retriesOf = new Map();
+  for (const f of parsed) {
+    if (!Number.isInteger(f.retryOf)) continue;
+    if (!retriesOf.has(f.retryOf)) retriesOf.set(f.retryOf, []);
+    retriesOf.get(f.retryOf).push(f);
+  }
+
+  for (const d of dispatched) {
+    if (d.repeatOf != null) continue;
     const frame = byIndex.get(Number(d.index) || 0);
     const graduated = !!d.graduated;
     if (!frame) {
       (graduated ? missingGraduated : missingAdvisory).push(d);
       continue;
     }
-    const pass = frame.status === 'pass';
+    // Every observation of this check in this run: its own frame, plus one
+    // per first-appearance repeat that reported.
+    const observed = [frame];
+    for (const r of (repeatsOf.get(Number(d.index) || 0) || [])) {
+      const f = byIndex.get(Number(r.index) || 0);
+      if (f) observed.push(f);
+    }
+    const retried = retriesOf.get(Number(d.index) || 0) || [];
+    for (const f of retried) observed.push(f);
+    const passes = observed.filter((f) => f.status === 'pass').length;
+    const fails = observed.length - passes;
+    // Two rules, and the difference is who asked for the extra runs.
+    //
+    // DEBUT repeats are dispatched up front, before anything is known: all
+    // of them have to pass, because one failure among them is the check
+    // saying it is not deterministic and letting it land anyway is how a
+    // flake gets the power to block strangers.
+    //
+    // RETRIES are asked for BECAUSE the check already failed. Any pass
+    // among them means the failure was not reproducible, so the check did
+    // not really fail — but it did not really pass either, which is what
+    // the flaky tag and the reset streak are for. Demanding all of them
+    // would make the retry pointless; ignoring the failure entirely would
+    // lose the only evidence that the check is unreliable.
+    const passedOnRetry = retried.length > 0 && retried.some((f) => f.status === 'pass');
+    const pass = passedOnRetry || fails === 0;
+    // Disagreement inside one run is the loudest flake signal there is, and
+    // unlike the lifetime rate it needs no history to read.
+    const flakyRun = passes > 0 && fails > 0;
+    const worst = pass ? frame : (observed.find((f) => f.status !== 'pass') || frame);
     if (pass) passed += 1;
     else if (graduated) blockingFailures += 1;
     else advisoryFailures += 1;
@@ -585,12 +749,27 @@ function classifyTests(frames, expectedCount, options) {
       name: String(frame.name || d.name || '').slice(0, CONSOLE_MAX_MSG_LEN),
       path: String(frame.path || d.path || '').slice(0, CONSOLE_MAX_MSG_LEN),
       status: pass ? 'pass' : 'fail',
+      // What this run actually observed, so history records three passes as
+      // three rather than as one, and the card can say "1 of 3 runs failed".
+      runs: observed.length,
+      passes,
+      fails,
+      flakyRun,
+      // It failed, it was asked again, and it answered differently. The
+      // merge is not blocked on it — and nobody has to wonder why the run
+      // is green when the log shows a failure.
+      passedOnRetry,
       // The card renders advisory rows muted with a chip rather than
       // rewriting the name, so the check reads identically whichever power
       // it currently has.
       advisory: pass ? false : !graduated,
-      consoleErrors: normalizeConsoleErrors(frame.consoleErrors),
-      failureReason: pass ? '' : String(frame.failureReason || '').slice(0, CONSOLE_MAX_MSG_LEN),
+      // How often this check has failed across its whole recorded life.
+      // Carried on PASSING rows too: a check that passes today and failed
+      // four times last week is the one worth knowing about, and a chip
+      // that only ever appears beside a red row would never say so.
+      flakeRate: d.flakeRate != null ? d.flakeRate : null,
+      consoleErrors: normalizeConsoleErrors(worst.consoleErrors),
+      failureReason: pass ? '' : String(worst.failureReason || '').slice(0, CONSOLE_MAX_MSG_LEN),
     });
   }
 
@@ -600,7 +779,7 @@ function classifyTests(frames, expectedCount, options) {
     return {
       state: 'error', results: extraRows.slice(),
       blockingCount: 0, advisoryCount: 0, passingCount: 0,
-      ranCount: 0, declaredCount: dispatched.length,
+      ranCount: 0, declaredCount: dispatched.filter((d) => d.repeatOf == null).length,
     };
   }
   if (!rows.length && !dispatched.length && !extraRows.length) {
@@ -623,7 +802,7 @@ function classifyTests(frames, expectedCount, options) {
       results: rows.concat(extraRows),
       errorDetail: `${missingGraduated.length} merge-blocking check${missingGraduated.length === 1 ? '' : 's'} produced no result: ${names.join(', ')}${more}`,
       blockingCount: blockingFailures, advisoryCount: advisoryFailures, passingCount: passed,
-      ranCount: rows.length, declaredCount: dispatched.length,
+      ranCount: rows.length, declaredCount: dispatched.filter((d) => d.repeatOf == null).length,
     };
   }
 
@@ -659,7 +838,7 @@ function classifyTests(frames, expectedCount, options) {
     advisoryCount: advisoryFailures,
     passingCount: passed,
     ranCount: rows.length,
-    declaredCount: dispatched.length,
+    declaredCount: dispatched.filter((d) => d.repeatOf == null).length,
   };
 }
 
@@ -715,6 +894,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
     const write = await pool.query(
       `UPDATE chat_sessions
           SET check_state = $1,
+              checks_progress = NULL,
               test_results = $2,
               checks_commit_sha = $3::text,
               checks_checked_at = NOW(),
@@ -739,6 +919,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
     `UPDATE chat_sessions
        SET check_state = $1, test_results = $2, checks_commit_sha = $3::text, checks_checked_at = NOW(),
            check_phase = NULL,
+           checks_progress = NULL,
            check_error_detail = NULL,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
@@ -771,6 +952,7 @@ async function storeChecksSkipped(
   const write = await pool.query(
     `UPDATE chat_sessions
        SET check_state = 'skipped', test_results = '[]', checks_commit_sha = $1::text,
+           checks_progress = NULL,
            checks_checked_at = NOW(),
            check_phase = NULL,
            check_error_detail = $2,
@@ -805,6 +987,19 @@ async function storeChecksSkipped(
 // `trigger` records WHY the run started (see CHECK_TRIGGERS). Written on
 // every stamp, including as NULL when the caller does not name one, so a
 // label can never outlive the run it described.
+//
+// #1442: this is also where checks_base_sha is stamped — the commit on main
+// that this run's verdict is a statement ABOUT. Nothing recorded it before,
+// which is why checks staleness could only ever be branch-scoped: "did the
+// branch move since the tests ran?" was answerable, "is what they ran
+// against still what this would merge into?" was not, and a proposal whose
+// 412 checks had passed against a long-superseded base read as ready.
+//
+// It comes from apps.main_sha (kept current by main-drift-poller) via a
+// subquery, so this stays one round trip and spends no GitHub call — every
+// existing caller gets it for free, which matters because there are a dozen
+// of them across six modules. COALESCE keeps the previous value when the app
+// row has no main_sha yet rather than blanking a good one.
 async function setChecksPending(pool, sessionId, commitSha, phase = null, trigger = null) {
   // $2 is spliced into both an assignment to checks_commit_sha (varchar) and
   // IS DISTINCT FROM comparisons (inferred text). Without the explicit ::text
@@ -820,7 +1015,11 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null, trigge
        SET check_state = 'pending', checks_commit_sha = $2::text, checks_checked_at = NOW(),
            check_phase = $3::text,
            check_trigger = $4::text,
+           checks_progress = NULL,
            check_next_retry_at = NULL,
+           checks_base_sha = COALESCE(
+             (SELECT a.main_sha FROM apps a WHERE a.id = chat_sessions.app_id),
+             checks_base_sha),
            consecutive_check_failures = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                              THEN 0 ELSE consecutive_check_failures END,
            first_check_failure_at  = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
@@ -1290,6 +1489,12 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     log.info('visuals', 'Capture already in flight — re-queued for after it finishes', {
       sessionId: session.id, commitHash: commitHash || null, trigger,
     });
+    // Say so on the card. This wait is the long version of the
+    // 'prepare_checks' step — a self-app run ahead of this one is bounded
+    // by the suite deadline, minutes rather than seconds — and until now the
+    // only record of it was this log line, while the card read "Preparing
+    // the staging preview…" over a build that had finished.
+    reportPrepareChecks(config, session, stagingResult, { queued: true });
     return;
   }
   _inFlight.add(key);
@@ -1340,6 +1545,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   // outcome; 'error' is the default so a run that throws before reaching a
   // verdict is not left reading 'running' forever.
   let traceStatus = 'error';
+  // Set once the run's progress state exists (see makeChecksProgressState);
+  // a no-op until then so the catch below can always call it.
+  let closeProgress = () => {};
   try {
     const buildTimings = (stagingResult && stagingResult.timings) || null;
     if (buildTimings) {
@@ -1358,7 +1566,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         // Historically the single largest phase of the whole run: a full
         // logical dump/restore of the app's database. See
         // db-manager.privateDataExclusions for what shrank it.
-        traceStep('clone', 'Preview database cloned', { durationMs: buildTimings.cloneMs });
+        traceStep('clone', 'Preview database cloned', {
+          durationMs: buildTimings.cloneMs,
+          // 'template' is the file-level copy of the app's staging template;
+          // 'direct' is the dump/restore of the live database. The one that
+          // also refreshed the template paid the direct cost this run.
+          via: buildTimings.cloneVia || undefined,
+          templateRefreshed: buildTimings.templateRefreshed || undefined,
+        });
       }
       if (buildTimings.healthMs != null) {
         traceStep('staging_health', 'Preview answered its healthcheck', { durationMs: buildTimings.healthMs });
@@ -1377,6 +1592,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // #607: flip open clients' badges to "Checks running…" right away —
     // the terminal notifyChecks below can be minutes out.
     notifyChecksPending(session.id, commitHash, 'testing', trigger);
+    // The build half is over: close its fifth step with the time the
+    // hand-off took (and whether it was spent queued), and publish the
+    // finished build so the card does not keep a step pulsing under
+    // "Running the automated tests…" until the first test frame.
+    await finishPrepareChecks(pool, session, commitHash, stagingResult, trigger);
 
     // Heuristic gate. If the compare call fails, default to capturing —
     // staging exists, and a wasted screenshot is cheaper than a missed one.
@@ -1514,12 +1734,40 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     const prodRunning = (await applicationRuntime.status(config, {
       runtimeKind: prodRuntimeKind, runtimeName: prodName,
     })) === 'running';
+    // ── DNS-resolvable identities (#1381) ──
+    //
+    // Under the Kubernetes capture runtime the Service name is already
+    // clamped to 63 by kubernetes.dnsName(), so that branch is untouched.
+    // On docker, back-fill the short alias onto the LIVE containers first:
+    // a re-check reuses a running preview rather than rebuilding it, so a
+    // preview created before aliases existed would otherwise stay
+    // unreachable until a new commit — which would clear its votes. This is
+    // idempotent, costs one `docker inspect` on the overwhelmingly common
+    // already-aliased path, and never throws.
+    const stagingAlias = kubernetesCapture
+      ? null
+      : applicationRuntime.dnsAlias({ environment: 'staging', sessionId: session.id });
+    const prodAlias = kubernetesCapture && prodRuntimeKind === 'kubernetes'
+      ? null
+      : applicationRuntime.dnsAlias({ environment: 'production', dockerName: prodName });
+    const stagingAliasOk = stagingAlias
+      ? await docker.ensureNetworkAlias(stagingName, stagingAlias)
+      : false;
+    const prodAliasOk = prodAlias && prodRunning
+      ? await docker.ensureNetworkAlias(prodName, prodAlias)
+      : false;
+    const stagingHost = kubernetesCapture
+      ? stagingName
+      : dnsHostname(stagingName, stagingAlias, { aliasConfirmed: stagingAliasOk });
+    const prodHost = kubernetesCapture && prodRuntimeKind === 'kubernetes'
+      ? prodName
+      : dnsHostname(prodName, prodAlias, { aliasConfirmed: prodAliasOk });
     const stagingOrigin = kubernetesCapture
-      ? `http://${stagingName}.${appNamespace}.svc.cluster.local:3000`
-      : `http://${stagingName}:3000`;
+      ? `http://${stagingHost}.${appNamespace}.svc.cluster.local:3000`
+      : `http://${stagingHost}:3000`;
     const prodOrigin = kubernetesCapture && prodRuntimeKind === 'kubernetes'
-      ? `http://${prodName}.${appNamespace}.svc.cluster.local:3000`
-      : `http://${prodName}:3000`;
+      ? `http://${prodHost}.${appNamespace}.svc.cluster.local:3000`
+      : `http://${prodHost}:3000`;
 
     // Self-app "before" auth: the production platform never honours the
     // query token by design (replay protection — middleware/auth.js gates
@@ -1655,14 +1903,56 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         // First run for this app pre-graduates the head the merge gate used
         // to enforce, so turning this on never OPENS a gate that was closed.
         await checkHistory.bootstrapIfEmpty(pool, app.id, declaredTests);
-        const graduated = await checkHistory.loadGraduated(pool, app.id);
+        const passedOnce = await checkHistory.loadGraduated(pool, app.id);
+        // Cosmetic, and loaded beside the gating set so it costs one more
+        // query per run rather than one per check. A check with no failures
+        // in its whole history is simply absent from the map.
+        const flakes = await checkHistory.loadFlakeRates(pool, app.id);
+        // A check absent from this has never run against this app, so this
+        // run is its first. Null means the read failed, and then nothing is
+        // treated as new: an unreadable history must not turn every check
+        // in the suite into three.
+        const seen = await checkHistory.loadSeen(pool, app.id);
         dispatched = tests.map((t) => {
           const key = appManifest.checkKey(t.name, t.path);
+          const flake = flakes.get(key);
+          const firstRun = !!seen && !seen.has(key);
           return {
             index: t.index, checkKey: key, name: t.name, path: t.path,
-            graduated: graduated.has(key),
+            // A declared check blocks. The one exception is the legacy
+            // backlog: seen before, never once passing. Those are
+            // unfinished rather than broken-by-this-proposal, and they earn
+            // their gate by passing once. Nothing new can enter that state,
+            // because a new check has to pass its first runs to land.
+            graduated: passedOnce.has(key) || firstRun,
+            firstRun,
+            flakeRate: (flake && flake.rate != null) ? flake.rate : null,
           };
         });
+        // The first-appearance repeats. Each is its own dispatch entry with
+        // its own index and its own cold load (`solo`), and each reports a
+        // real verdict — a check that passes twice and fails once on its
+        // debut has told everyone something worth knowing before it ever
+        // gates a stranger's proposal.
+        const extras = [];
+        for (const d of dispatched) {
+          if (!d.firstRun) continue;
+          for (let i = 1; i < checkHistory.NEW_CHECK_RUNS; i++) extras.push(d);
+        }
+        for (const d of extras.slice(0, checkHistory.MAX_NEW_CHECK_REPEATS)) {
+          const base = tests[d.index];
+          if (!base) continue;
+          const index = tests.length;
+          tests.push({ ...base, index, solo: true });
+          dispatched.push({ ...d, index, repeatOf: d.index, solo: true });
+        }
+        if (extras.length) {
+          log.info('visuals', 'First-appearance repeats dispatched', {
+            sessionId: session.id,
+            newChecks: dispatched.filter((d) => d.firstRun && !d.repeatOf).length,
+            extraLoads: Math.min(extras.length, checkHistory.MAX_NEW_CHECK_REPEATS),
+          });
+        }
       } catch (err) {
         log.warn('visuals', 'Check-history lookup failed — legacy gating for this run', {
           sessionId: session.id, err: err.message,
@@ -1670,6 +1960,26 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         dispatched = null;
       }
     }
+
+    // Live progress. Two containers report into ONE snapshot: the capture
+    // run's per-check frames (the tracker dedupes them by index) and the
+    // unit suite's TAP lines (its own tracker, under `unit`). Both observers
+    // see stdout as it streams; persist and broadcast are throttled to one
+    // snapshot per second, with a done sentinel always flushed. Every step
+    // is best-effort and swallowed: the verdict below is still read from
+    // the whole stdout. `closeProgress` is called before the verdict is
+    // written so a late timer can never broadcast 'pending' after it.
+    const progress = makeChecksProgressState({
+      expected: tests.length,
+      // The build half, finished, rides every testing-half snapshot.
+      build: buildProgressFromTimings(stagingResult && stagingResult.timings),
+      flush: (snap) => {
+        setChecksProgress(pool, session.id, commitHash, snap).catch(() => {});
+        notifyChecksProgress(session.id, commitHash, snap, 'testing', trigger);
+      },
+    });
+    closeProgress = progress.close;
+    const progressObserver = progress.observeCapture;
 
     // Repo unit suite (aggregate `npm test` check). Launched BEFORE the
     // capture container and awaited after it, so the suite runs in its own
@@ -1681,6 +1991,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       pool, appId: app.id, sessionId: session.id,
       repoOwner, repoName, ref: gitRef,
       prNumber: Number(session.pr_number) || null,
+      onProgress: progress.observeUnit,
     }).catch((err) => {
       log.warn('visuals', 'Unit-suite check failed to run (non-fatal)', {
         sessionId: session.id, err: err.message,
@@ -1766,6 +2077,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       };
       if (kubernetesCapture) {
         ({ stdout, ...res } = await kubernetes.runCaptureJob(config, {
+          onStdoutLine: progressObserver,
           sessionId: session.id,
           env: captureEnv,
           stdinPayload: testsViaStdin ? testsJson : null,
@@ -1773,6 +2085,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         }));
       } else {
         ({ stdout, ...res } = await docker.runOneShot(`usernode-capture-${session.id}`, {
+          onStdoutLine: progressObserver,
           image: CAPTURE_IMAGE,
           env: captureEnv,
           stdinPayload: testsViaStdin ? testsJson : null,
@@ -1837,10 +2150,51 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // has usually been finished for minutes. Its own timeoutMs bounds this
     // await, and the .catch at launch made rejection impossible.
     const unitOutcome = await unitSuitePromise;
+    closeProgress();
     if (unitOutcome) extraRows.push(unitOutcome.row);
     const checksResult = classifyTests(parseTests(stdout), tests.length, dispatched
       ? { dispatched, sentinel: parseTestsDone(stdout), extraRows }
       : { extraRows });
+
+    // Re-label a whole-origin outage as 'error' rather than 'failing'
+    // (#1381). Only rows the container actually produced count — the
+    // synthesized extraRows (over-ceiling guard, unit suite) never load a
+    // page and would otherwise veto the override for free.
+    if (checksResult.state === 'failing') {
+      const containerRows = checksResult.results.filter((r) => !extraRows.includes(r));
+      const detail = unreachableOriginDetail(containerRows, stagingOrigin);
+      if (detail) {
+        checksResult.state = 'error';
+        checksResult.errorDetail = detail;
+        log.warn('visuals', 'Checks unreachable origin — recorded as error, not failing', {
+          sessionId: session.id, origin: stagingOrigin, rows: containerRows.length,
+        });
+      }
+    }
+
+    // #1771: a run that did not pass gets one line saying whether the shared
+    // Postgres was starved while it ran. Twenty previews each holding six
+    // warm connections, on a server whose max_connections is the stock 100,
+    // is how a proposal's checks came back with 65 failures all citing one
+    // endpoint's 500s and nothing anywhere naming the cause.
+    //
+    // Sampled HERE rather than at the write: this is the moment the run
+    // finished, and storeChecks has a call-order contract two tests pin. A
+    // log line, never a verdict — it does not excuse a single row, it only
+    // records what else was true.
+    if (checksResult.state !== 'passing') {
+      const census = await connectionCensus(getPool(config));
+      if (census && census.saturated) {
+        log.warn('visuals', 'Checks ran while Postgres was near its connection limit', {
+          sessionId: session.id,
+          used: census.used,
+          max: census.max,
+          idle: census.idle,
+          top: census.topDatabases.slice(0, 3),
+        });
+      }
+    }
+
     const blockingCount = Number.isInteger(checksResult.blockingCount)
       ? checksResult.blockingCount
       : checksResult.results.filter((r) => r.status !== 'pass' && !r.advisory).length;
@@ -1868,15 +2222,30 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         // result was discarded as stale must not graduate anything either.
         // Rows the container never produced are absent here, so a check that
         // did not run neither graduates nor records a failure.
-        if (dispatched || unitOutcome) {
+        // An 'error' verdict is "we could not find out", not "this check
+        // failed". Recording it would stamp fail_count on checks that never
+        // executed — which is how seven of WorkQuest's rows reached
+        // pass_count 0 / fail_count 2 for a container that logged zero
+        // inbound requests — and, worse, could graduate nothing while
+        // permanently colouring the app's history with a platform outage.
+        if ((dispatched || unitOutcome) && checksResult.state !== 'error') {
           const historyRows = [];
           if (dispatched) {
             const byIndex = new Map(dispatched.map((d) => [d.index, d]));
             for (const r of checksResult.results) {
               const d = byIndex.get(r.index);
               if (!d) continue;
+              // Counts, because a check on its first appearance was observed
+              // NEW_CHECK_RUNS times and all of them are evidence. classify
+              // folded the repeats into this one row, so they arrive here as
+              // `passes` / `fails` rather than as separate rows — which also
+              // keeps one conflict target per check in the upsert.
               historyRows.push({
-                checkKey: d.checkKey, name: d.name, path: d.path, passed: r.status === 'pass',
+                checkKey: d.checkKey,
+                name: d.name,
+                path: d.path,
+                passes: Number.isInteger(r.passes) ? r.passes : (r.status === 'pass' ? 1 : 0),
+                fails: Number.isInteger(r.fails) ? r.fails : (r.status === 'pass' ? 0 : 1),
               });
             }
           }
@@ -2014,6 +2383,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       durationMs: Date.now() - runStartedAt,
     });
   } catch (err) {
+    closeProgress();
     traceStep('capture_error', 'Checks run threw', { error: err.message, level: 'error' });
     log.warn('visuals', 'Capture failed (non-fatal)', { sessionId: session.id, err: err.message });
     // The run broke before an outcome could be computed (container build,
@@ -2189,6 +2559,262 @@ function notifyVisualsReady(sessionId, visuals, send) {
 //
 // `phase` rides along so a card that re-renders from the event alone shows
 // the right stage caption without waiting for its next fetch.
+// ── Live progress of a run in flight ──
+//
+// The capture container prints one `__USERNODE_TEST__ index=<n> status=…`
+// header per check, and `__USERNODE_TESTS_DONE__ ran=… expected=…` when the
+// suite stops dispatching. The verdict is read from the whole stdout after
+// exit (parseTests / classifyTests, unchanged); this tracker only listens to
+// the same lines as they stream past, so "checks running" can say how far
+// along it is. Dedup is by index, exactly as parseTests does, so a retried
+// frame counts once. Nothing here can change a verdict.
+function makeChecksProgressTracker(expected) {
+  const byIndex = new Map();
+  let done = false;
+  let doneRan = null;
+  const total = Number.isInteger(expected) && expected >= 0 ? expected : null;
+  return {
+    // Returns true when the line advanced the state (a new frame, or done).
+    feed(line) {
+      const l = String(line || '');
+      if (l.startsWith('__USERNODE_TEST__ ')) {
+        const m = /\bindex=(\d+)\b/.exec(l);
+        const st = /\bstatus=(pass|fail)\b/.exec(l);
+        if (!m) return false;
+        const index = parseInt(m[1], 10);
+        const status = st && st[1] === 'pass' ? 'pass' : 'fail';
+        const before = byIndex.get(index);
+        byIndex.set(index, status);
+        return before !== status;
+      }
+      if (l.startsWith('__USERNODE_TESTS_DONE__ ')) {
+        done = true;
+        const r = /\bran=(\d+)\b/.exec(l);
+        doneRan = r ? parseInt(r[1], 10) : null;
+        return true;
+      }
+      return false;
+    },
+    snapshot() {
+      let passed = 0;
+      let failed = 0;
+      for (const st of byIndex.values()) { if (st === 'pass') passed++; else failed++; }
+      const ran = byIndex.size;
+      return {
+        ran, passed, failed,
+        expected: total,
+        done,
+        updatedAt: new Date().toISOString(),
+        ...(done && doneRan !== null && doneRan !== ran ? { reportedRan: doneRan } : {}),
+      };
+    },
+  };
+}
+
+// Persist a progress snapshot on the row — only while THIS run is the one in
+// flight. `check_state = 'pending'` and the commit guard together mean a
+// verdict that has already landed, or a newer run that has since started,
+// can never be overwritten by a late frame from an older container.
+async function setChecksProgress(pool, sessionId, commitSha, progress) {
+  if (!pool || !sessionId) return false;
+  const res = await pool.query(
+    `UPDATE chat_sessions
+        SET checks_progress = $2::jsonb
+      WHERE id = $1
+        AND check_state = 'pending'
+        AND (checks_commit_sha IS NOT DISTINCT FROM $3::text)`,
+    [sessionId, JSON.stringify(progress || null), commitSha || null]
+  );
+  return !!(res && res.rowCount);
+}
+
+// The same event type the finished verdict rides on (#47), so no client has
+// to learn a second one: `checkState: 'pending'` plus a `progress` block.
+// A client that patches from the event gets a live bar; one that refetches
+// gets the same numbers from the row.
+// `commitSha` and `trigger` are OMITTED from the event when the caller
+// passes undefined (a build-step tick knows neither), so a client that
+// patches its row from the event keeps what it has instead of nulling it.
+function notifyChecksProgress(sessionId, commitSha, progress, phase = null, trigger) {
+  try {
+    const event = {
+      type: 'checks_ready',
+      _seq: `chk${Date.now().toString(36)}-${++_notifySeq}`,
+      sessionId,
+      checkState: 'pending',
+      failingCount: progress && Number.isInteger(progress.failed) ? progress.failed : 0,
+      ...(commitSha === undefined ? {} : { commitSha: commitSha || null }),
+      checkPhase: normalizeCheckPhase(phase),
+      ...(trigger === undefined ? {} : { checkTrigger: normalizeCheckTrigger(trigger) }),
+      progress: progress || null,
+    };
+    sessionBus.publish(sessionId, event);
+    const { broadcastGlobal } = require('./ws');
+    broadcastGlobal({ type: 'session_event', sessionId, event: 'checks_ready', ...event });
+  } catch (err) {
+    log.warn('visuals', 'checks_progress notify failed', { sessionId, err: err.message });
+  }
+}
+
+// The build half's progress: which step the staging build is on, and how
+// long the finished ones took. Merged INTO checks_progress rather than
+// replacing it, guarded only by the pending state (the build runs before
+// the row's commit pin is necessarily settled), and carried through the
+// testing half by makeChecksProgressState so the ledger can keep saying
+// how long the build took beside the checks bar.
+//   { step: 'source_fetch'|'image_build'|'clone'|'health'|'prepare_checks'|'done',
+//     startedAt, steps: [{ key, ms, via? }], totalMs?, queued? }
+//
+// 'prepare_checks' is the hand-off between the container answering its
+// healthcheck and the phase flipping to testing: edge verification, the
+// staging_ready note, and — the long case — waiting in the capture queue
+// behind an earlier run on the same proposal (`queued: true` while it is,
+// `via: 'queued'` on the finished step). Opened by staging.js, closed by
+// captureForSession, and NOT counted in totalMs, which stays the build
+// alone: "Preview built in 20s, checks prepared in 9m 40s" is the sentence
+// that says where the wait was.
+const BUILD_STEP_KEYS = ['source_fetch', 'image_build', 'clone', 'health', 'prepare_checks'];
+
+async function setChecksBuildProgress(pool, sessionId, build) {
+  if (!pool || !sessionId || !build) return false;
+  const res = await pool.query(
+    `UPDATE chat_sessions
+        SET checks_progress = COALESCE(checks_progress, '{}'::jsonb)
+                              || jsonb_build_object('build', $2::jsonb, 'updatedAt', $3::text)
+      WHERE id = $1
+        AND check_state = 'pending'`,
+    [sessionId, JSON.stringify(build), new Date().toISOString()]
+  );
+  return !!(res && res.rowCount);
+}
+
+function notifyChecksBuildProgress(sessionId, build) {
+  notifyChecksProgress(sessionId, undefined, { build: build || null }, 'building', undefined);
+}
+
+// The finished build, from the timings staging.js threads out, in the same
+// shape the live steps use — so the testing half's snapshots carry it.
+function buildProgressFromTimings(timings) {
+  if (!timings || typeof timings !== 'object') return null;
+  const steps = [];
+  const push = (key, ms, extra) => {
+    if (Number.isFinite(ms)) steps.push({ key, ms: Math.round(ms), ...(extra || {}) });
+  };
+  push('source_fetch', timings.sourceFetchMs);
+  push('image_build', timings.imageBuildMs, Array.isArray(timings.imagePhases) && timings.imagePhases.length
+    ? { phases: timings.imagePhases.map((ph) => ({ name: String(ph.name), ms: Number.isFinite(ph.ms) ? Math.round(ph.ms) : null })) }
+    : null);
+  push('clone', timings.cloneMs, timings.cloneVia ? { via: timings.cloneVia } : null);
+  push('health', timings.healthMs);
+  push('prepare_checks', timings.prepareChecksMs, timings.prepareChecksVia ? { via: timings.prepareChecksVia } : null);
+  if (!steps.length) return null;
+  return {
+    step: 'done',
+    steps,
+    ...(Number.isFinite(timings.totalMs) ? { totalMs: Math.round(timings.totalMs) } : {}),
+  };
+}
+
+// The 'prepare_checks' step while it runs. Reported only for a run that
+// carries build timings — a re-check against a live preview has no build
+// steps at all, and a lone fifth step over four "todo" ones would claim a
+// build that never happened. `queued` marks the wait behind an earlier run.
+// Best-effort and swallowed: status must never fail, or delay, a capture.
+function reportPrepareChecks(config, session, stagingResult, { queued = false } = {}) {
+  try {
+    const timings = stagingResult && stagingResult.timings;
+    if (!timings || !Number.isFinite(timings.deployedAt)) return;
+    if (queued) timings.prepareChecksVia = 'queued';
+    const build = {
+      step: 'prepare_checks',
+      startedAt: new Date(timings.deployedAt).toISOString(),
+      steps: buildProgressFromTimings(timings)?.steps || [],
+      ...(queued ? { queued: true } : {}),
+      ...(Number.isFinite(timings.totalMs) ? { totalMs: Math.round(timings.totalMs) } : {}),
+    };
+    setChecksBuildProgress(getPool(config), session.id, build).catch(() => {});
+    notifyChecksBuildProgress(session.id, build);
+  } catch { /* status only */ }
+}
+
+// Close the 'prepare_checks' step: the phase has just flipped to testing.
+// Records how long the hand-off took on the timings — so every testing-half
+// snapshot (makeChecksProgressState reads them next) carries the finished
+// five-step build — and publishes the finished build at once, under the
+// testing phase, so the card stops pulsing the step before the first test
+// frame arrives. Idempotent on the timings: a re-drive of the same
+// stagingResult keeps the first measurement.
+async function finishPrepareChecks(pool, session, commitSha, stagingResult, trigger) {
+  try {
+    const timings = stagingResult && stagingResult.timings;
+    if (!timings || !Number.isFinite(timings.deployedAt)) return;
+    if (!Number.isFinite(timings.prepareChecksMs)) {
+      timings.prepareChecksMs = Math.max(0, Date.now() - timings.deployedAt);
+    }
+    const build = buildProgressFromTimings(timings);
+    if (!build) return;
+    await setChecksBuildProgress(pool, session.id, build).catch(() => {});
+    notifyChecksProgress(session.id, commitSha, { build }, 'testing', trigger);
+  } catch { /* status only */ }
+}
+
+// Minimum gap between two persisted/broadcast snapshots for one run. A pool
+// of eight can finish several checks in the same second; the last frame
+// (and the done sentinel) always gets through regardless.
+const CHECKS_PROGRESS_MIN_GAP_MS = 1000;
+
+// One run's progress state: the capture tracker plus the latest unit-suite
+// snapshot, merged into one `{ ran, passed, failed, expected, done, unit }`
+// and handed to `flush` at most once per CHECKS_PROGRESS_MIN_GAP_MS. A
+// `done` from either side flushes at once. `close()` drops any pending
+// timer and makes every later observation a no-op: the verdict write that
+// follows it must be the last thing anyone hears about this run.
+function makeChecksProgressState({ expected, flush, minGapMs = CHECKS_PROGRESS_MIN_GAP_MS, build = null }) {
+  const tracker = makeChecksProgressTracker(expected);
+  let unit = null;
+  let lastFlushAt = 0;
+  let timer = null;
+  let closed = false;
+  const snapshot = () => ({
+    ...tracker.snapshot(),
+    ...(unit ? { unit } : {}),
+    ...(build ? { build } : {}),
+  });
+  const doFlush = () => {
+    timer = null;
+    if (closed) return;
+    lastFlushAt = Date.now();
+    try { flush(snapshot()); } catch { /* best-effort */ }
+  };
+  const schedule = (urgent) => {
+    if (closed) return;
+    const gap = Date.now() - lastFlushAt;
+    if (urgent || gap >= minGapMs) {
+      if (timer) { clearTimeout(timer); timer = null; }
+      doFlush();
+    } else if (!timer) {
+      timer = setTimeout(doFlush, minGapMs - gap);
+      if (typeof timer.unref === 'function') timer.unref();
+    }
+  };
+  return {
+    observeCapture(line) {
+      if (closed || !tracker.feed(line)) return;
+      schedule(tracker.snapshot().done);
+    },
+    observeUnit(snap) {
+      if (closed || !snap || typeof snap !== 'object') return;
+      unit = snap;
+      schedule(!!snap.done);
+    },
+    close() {
+      closed = true;
+      if (timer) { clearTimeout(timer); timer = null; }
+    },
+    snapshot,
+  };
+}
+
 function notifyChecksPending(sessionId, commitSha, phase = null, trigger = null) {
   try {
     const event = {
@@ -2267,12 +2893,16 @@ module.exports = {
   parseTests,
   parseTestsDone,
   classifyTests,
+  unreachableOriginDetail,
+  dnsHostname,
   serializeTestResults,
   overCeilingCheckRow,
   storeChecks,
   storeChecksSkipped,
   setChecksPending,
-  notifyChecksPending,
+  notifyChecksPending, makeChecksProgressTracker, makeChecksProgressState, setChecksProgress, notifyChecksProgress,
+  setChecksBuildProgress, notifyChecksBuildProgress, buildProgressFromTimings, BUILD_STEP_KEYS,
+  reportPrepareChecks, finishPrepareChecks,
   checksAlreadyDecided,
   normalizeCheckTrigger,
   CHECK_TRIGGERS,

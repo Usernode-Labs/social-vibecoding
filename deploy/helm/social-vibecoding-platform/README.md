@@ -1,9 +1,9 @@
 # Social Vibecoding Platform
 
-This application-owned chart deploys the platform process and its PostgreSQL
-database into `social-platform`. Generated applications, warm workers and
-capture Jobs are created later by the platform through the scoped runtime
-service account.
+This application-owned chart deploys the platform process and either its own
+PostgreSQL StatefulSet or an externally managed PostgreSQL cluster into
+`social-platform`. Generated applications, warm workers and capture Jobs are
+created later by the platform through the scoped runtime service account.
 
 The `Build Kubernetes images` workflow first publishes three immutable images,
 then packages their exact digests into `values.release.yaml` and publishes this
@@ -16,9 +16,35 @@ rendered manually but are outside Argo's stable version constraint. Cluster
 configuration and SOPS-encrypted secrets remain in the infra repository and
 are applied as external Helm values.
 
-`config.domain` is the single canonical domain expected by the application.
-The platform is served at that hostname and generated applications use
-`<slug>.<domain>` (with staging hosts beneath the same wildcard).
+`config.domain` is the canonical platform hostname (`USERNODE_DOMAIN`).
+`config.appsDomain` optionally sets a separate suffix for generated apps and
+session previews (`USERNODE_APPS_DOMAIN`). When empty, it defaults to
+`config.domain` and preserves existing deployments. For example:
+
+```yaml
+config:
+  domain: my.onhomeroom.com
+  appsDomain: onhomeroom.com
+```
+
+This serves the platform at `my.onhomeroom.com`, production apps at
+`<slug>.onhomeroom.com`, and previews at `<slug>--s<sessionId>.onhomeroom.com`.
+Platform links, CLI authentication, and access-grant redirects continue to use
+`config.domain`. The platform hostname is reserved: app deployment rejects a
+collision before writing Kubernetes resources, and app access parsing never
+treats the platform as a generated app.
+
+DNS and cert-manager must support both hostname sets before rollout. Keep
+session cookies host-only. Update external OAuth callback URLs and any
+registered origins for the platform hostname. This change does not migrate
+existing generated-app Ingresses or persisted preview URLs automatically:
+redeploy existing apps and rebuild active previews through their normal
+platform workflows after the platform release. Keep the prior DNS records
+until migration and rollback checks are complete. A deployment restart alone
+does not reconcile existing child-app routes.
+
+The bundled standalone Caddyfile still uses its existing single-domain layout;
+the separate-domain configuration described here is for the Kubernetes chart.
 
 The OCI chart package must be public for unauthenticated Argo CD pulls. If it
 is kept private, Argo CD needs a read-only GHCR repository credential with OCI
@@ -31,6 +57,15 @@ Resource ordering within the Application is:
 2. PostgreSQL Service and StatefulSet at sync wave `-2`.
 3. Idempotent migration `Sync` hook at wave `-1`.
 4. Platform Deployment, Service and Ingress at wave `0`.
+
+The master `enabled` gate is split further into `platform.enabled`,
+`migration.enabled`, and `postgresql.enabled`. All three default to `true` for
+backward compatibility. To use CloudNativePG or another external database, set
+`postgresql.enabled=false`, configure `postgresql.host`, `postgresql.port`, and
+the narrow `postgresql.podSelector`, then let the database-owning deployment
+control ingress to its Pods. This also permits a cutover-ready configuration
+with the platform, migration Job, and ingress disabled until the database is
+writable.
 
 Platform upgrades use a Kubernetes-native blue/green equivalent: a
 `RollingUpdate` Deployment creates a new ReplicaSet beside the live one,

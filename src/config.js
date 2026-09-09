@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { bech32m } = require('bech32');
 const platformJwt = require('./services/platform-jwt');
 const { PRODUCTION_ORIGIN } = require('./services/cli-auth-constants');
 
@@ -32,6 +33,16 @@ const REQUIRED_PROD = [
   'IFRAME_JWT_PUBLIC_KEY',
   'WORKER_JWT_SECRET',
   'EDGE_JWT_SECRET',
+];
+
+// Canonical lifecycle deployment data. Kept separate from REQUIRED_PROD:
+// that list is also the key-separation deny-list for child containers, while
+// these values are operational configuration rather than host secrets as a
+// class (only the partner key is private).
+const REQUIRED_LIFECYCLE_PROD = [
+  'NODE_RPC_URL',
+  'TOPOCHAIN_PARTNER_API_KEY',
+  'NATIVE_SESSION_V2_TESTNET_CHAIN_ID',
 ];
 
 // HMAC keys below this are a self-hosting footgun, not a boot failure —
@@ -126,6 +137,28 @@ function canonicalOpenRouterApiBase(value, source) {
   return url.toString().replace(/\/$/, '');
 }
 
+// Protocol 2 is a closed deployment capability, not a caller-selectable
+// network switch. Rust's canonical ChainId is a lower-case bech32m string
+// with HRP `utc` and exactly 32 payload bytes (crates/core/src/chain_id.rs).
+// Returning null lets the staging self-preview omit native infrastructure.
+// Canonical deployments treat null as a boot error below: the chain identity
+// is required protocol data, never an enable/disable switch.
+// TODO(native-session-v3): authenticate network/genesis provenance. Protocol
+// 2 treats this operator config as consistency only and keeps ordinary
+// configured-origin HTTPS/TLS as the server-authenticity boundary.
+function canonicalNativeSessionV2Network(value) {
+  if (typeof value !== 'string' || !value || value !== value.toLowerCase()) return null;
+  try {
+    const decoded = bech32m.decode(value, 1023);
+    const bytes = Buffer.from(bech32m.fromWords(decoded.words));
+    if (decoded.prefix !== 'utc' || bytes.length !== 32) return null;
+    if (bech32m.encode('utc', bech32m.toWords(bytes), 1023) !== value) return null;
+    return { id: 'testnet', chainId: value };
+  } catch {
+    return null;
+  }
+}
+
 function load() {
   const staging = IS_STAGING();
   const appRuntime = process.env.APP_RUNTIME || 'docker';
@@ -140,7 +173,9 @@ function load() {
     process.env.DATA_ENCRYPTION_KEY = process.env.JWT_SECRET;
   }
 
-  const required = staging ? REQUIRED : REQUIRED.concat(REQUIRED_PROD);
+  const required = staging
+    ? REQUIRED
+    : REQUIRED.concat(REQUIRED_PROD, REQUIRED_LIFECYCLE_PROD);
   const missing = required.filter((k) => !process.env[k]);
   if (missing.length) {
     console.error(`[config] Missing required env vars: ${missing.join(', ')}`);
@@ -194,6 +229,30 @@ function load() {
     console.error('[config] OPENROUTER_API_BASE must be an HTTPS URL without credentials, query parameters, or a fragment.');
     process.exit(1);
   }
+  const openrouterManagedDailyLimitUsd = Number(
+    process.env.OPENROUTER_MANAGED_DAILY_LIMIT_USD || '1',
+  );
+
+  const nativeSessionV2Network = canonicalNativeSessionV2Network(
+    process.env.NATIVE_SESSION_V2_TESTNET_CHAIN_ID
+  );
+  if (!staging && !nativeSessionV2Network) {
+    console.error('[config] NATIVE_SESSION_V2_TESTNET_CHAIN_ID must be a canonical Rust ChainId.');
+    process.exit(1);
+  }
+  if (!Number.isFinite(openrouterManagedDailyLimitUsd)
+      || openrouterManagedDailyLimitUsd <= 0) {
+    console.error('[config] OPENROUTER_MANAGED_DAILY_LIMIT_USD must be a positive dollar amount.');
+    process.exit(1);
+  }
+  const openrouterManagedRequireVerifiedIdentityValue =
+    process.env.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY || 'false';
+  if (!['true', 'false'].includes(openrouterManagedRequireVerifiedIdentityValue)) {
+    console.error('[config] OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY must be either true or false.');
+    process.exit(1);
+  }
+  const openrouterManagedRequireVerifiedIdentity =
+    openrouterManagedRequireVerifiedIdentityValue === 'true';
   let cliAuthOrigin = null;
   let cliAuthEnabled = !staging;
   if (cliAuthEnabled && cliLocalMode) {
@@ -238,15 +297,18 @@ function load() {
     // KDF input for services/secrets.js (AES-256-GCM at rest). Never
     // injected into a child container, never used to sign anything.
     dataEncryptionKey: staging ? stagingDataKey() : process.env.DATA_ENCRYPTION_KEY,
+    // Required protocol-2 deployment binding outside the self-app staging
+    // preview. There is one supported network mapping and no caller input.
+    nativeSessionV2Network,
     // Signing keys. Read straight from env by services/platform-jwt.js
     // at call time; mirrored here for the boot log and for the container
     // env builders that need the PUBLIC half.
     iframeJwtPublicKey: (process.env.IFRAME_JWT_PUBLIC_KEY || '').replace(/\\n/g, '\n'),
     workerJwtSecret: process.env.WORKER_JWT_SECRET || '',
     edgeJwtSecret: process.env.EDGE_JWT_SECRET || '',
-    // OpenRouter BYOK + Codex backend. Available alongside Claude by
-    // default; this is an availability/kill switch, never a global provider
-    // choice. Each user explicitly chooses the backend for their session.
+    // OpenRouter + Codex backend. OpenRouter is the preferred backend once a
+    // user has a usable key; Claude remains the safe fallback for accounts
+    // that have not configured or claimed one.
     codexOpenrouterEnabled: String(process.env.CODEX_OPENROUTER_ENABLED || 'true') === 'true',
     // #717: collection-only emergency switch. Reporting remains readable so
     // operators can inspect already-recorded aggregates after disabling new
@@ -254,10 +316,19 @@ function load() {
     llmTelemetryEnabled: String(process.env.LLM_TELEMETRY_ENABLED || 'true') === 'true',
     openrouterBetaUserIds: (process.env.CODEX_OPENROUTER_BETA_USER_IDS || '')
       .split(',').map((s) => s.trim()).filter(Boolean),
-    openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || '',
+    openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
     openrouterApiBase,
     openrouterAllowInsecureBase: String(process.env.OPENROUTER_ALLOW_INSECURE_BASE || 'false') === 'true',
     openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
+    // Management credentials stay in the platform process only. They create
+    // and administer limited child keys; unlike child keys, a management key
+    // cannot be used for model inference.
+    openrouterManagementApiKey: process.env.OPENROUTER_MANAGEMENT_API_KEY || '',
+    openrouterManagedDailyLimitUsd,
+    openrouterManagedWorkspaceId: process.env.OPENROUTER_MANAGED_WORKSPACE_ID || '',
+    // Default-open claim policy. Operators may opt into requiring a linked
+    // GitHub or X identity before the one lifetime managed key is reserved.
+    openrouterManagedRequireVerifiedIdentity,
     // The former single shared JWT_SECRET is GONE. All four token
     // authorities (app identity RS256, worker, edge grant, edge cookie)
     // read their own key from env via services/platform-jwt.js, and a
@@ -283,6 +354,24 @@ function load() {
     waitlistGithubClientSecret: process.env.WAITLIST_GITHUB_CLIENT_SECRET || '',
     waitlistXClientId: process.env.WAITLIST_X_CLIENT_ID || '',
     waitlistXClientSecret: process.env.WAITLIST_X_CLIENT_SECRET || '',
+    waitlistLinkedinClientId: process.env.WAITLIST_LINKEDIN_CLIENT_ID || '',
+    waitlistLinkedinClientSecret: process.env.WAITLIST_LINKEDIN_CLIENT_SECRET || '',
+    // "Follow along" targets for the stage-2 form. Profile addresses,
+    // not credentials: they render a link and nothing more. Unset means
+    // that network's link is not rendered, which is the only honest
+    // default — see the platform_env descriptions for why a follow
+    // through one of them cannot be verified.
+    waitlistFollowXUrl: process.env.WAITLIST_FOLLOW_X_URL || '',
+    waitlistFollowLinkedinUrl: process.env.WAITLIST_FOLLOW_LINKEDIN_URL || '',
+    waitlistFollowInstagramUrl: process.env.WAITLIST_FOLLOW_INSTAGRAM_URL || '',
+    // Optional shared secrets for partners who proxy waitlist signups
+    // server-to-server, so their whole audience does not share one IP
+    // budget. Comma-separated `label:secret` pairs; the label names the
+    // caller in throttle logs and in its own rate-limit bucket. Unset
+    // means the feature is off and every caller is anonymous — it must
+    // never make the public join endpoint fail. See
+    // src/services/waitlist-integrator.js.
+    waitlistIntegrationKeys: process.env.WAITLIST_INTEGRATION_KEYS || '',
     // Account-linking OAuth is separate from the waitlist. GitHub requires
     // a dedicated OAuth app because an OAuth app has one callback URL. X can
     // reuse the waitlist client when its app has both callbacks registered.
@@ -356,7 +445,8 @@ function load() {
       activeDeadlineSeconds: parseInt(process.env.ACTIVE_DEADLINE_SECONDS || '1800', 10),
       ingressClassName: process.env.INGRESS_CLASS_NAME || 'cilium',
       clusterIssuer: process.env.CLUSTER_ISSUER || 'letsencrypt-public',
-      appDomain: process.env.USERNODE_DOMAIN || 'apps.example.invalid',
+      appDomain: process.env.USERNODE_APPS_DOMAIN || process.env.USERNODE_DOMAIN || 'apps.example.invalid',
+      platformDomain: process.env.USERNODE_DOMAIN || 'apps.example.invalid',
       workerImage: process.env.KUBERNETES_WORKER_IMAGE || '',
       captureImage: process.env.KUBERNETES_CAPTURE_IMAGE || '',
       workerStorageClass: process.env.WORKER_STORAGE_CLASS || '',
@@ -365,7 +455,24 @@ function load() {
     // Postgres connection pool size (pg `Pool.max`). pg's built-in default
     // is 10, which can bottleneck under many concurrent SSE turns + staging
     // DB work. Tunable via env so prod can widen it without a code change.
-    dbPoolMax: parseInt(process.env.DB_POOL_MAX || '10', 10),
+    //
+    // #1771: a STAGING PREVIEW gets its own, much smaller ceiling. Every
+    // preview is a separate clone on the SAME Postgres server as production,
+    // and that server's max_connections is the stock 100 — so the fleet, not
+    // any one process, is what the budget has to fit. A preview serves one
+    // reviewer and one capture run; capture drives 8 concurrent pages
+    // (capture/capture.js `concurrency`), so 8 is the number of connections
+    // it can actually use at once, and anything above that is a ceiling it
+    // would only reach by holding connections it is not using.
+    //
+    // This is read from the preview's OWN env rather than injected by
+    // services/staging-env.js on purpose: adding a key there moves the env
+    // fingerprint, which marks all ~20 live previews stale and rebuilds the
+    // fleet — twenty image builds and twenty database clones, which is the
+    // very load this issue is about.
+    dbPoolMax: IS_STAGING()
+      ? parseInt(process.env.STAGING_DB_POOL_MAX || '8', 10)
+      : parseInt(process.env.DB_POOL_MAX || '10', 10),
     // Session auto-pause: a DB-driven sweeper (server.js) flips idle
     // 'active' sessions to 'paused' so they stop counting against the
     // session caps. Now that pause is cheap (it no longer tears down
@@ -414,6 +521,9 @@ function load() {
     // How often the stale-PR / archived-GC sweeper runs. These actions
     // are day-scale, so it polls infrequently. Default 1h.
     staleSweepIntervalMs: parseInt(process.env.STALE_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
+    // The Workshop theme sweep (services/workshop-themes.js): re-checks every
+    // app opened in the last week, re-drafting themes at most daily.
+    workshopSweepIntervalMs: parseInt(process.env.WORKSHOP_THEMES_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
     // #1010: how often the FAST governance-apply ticker runs. The hourly
     // sweeper above also applies window-elapsed governance proposals, but an
     // hour of dead air after a close proposal's countdown reaches zero is
@@ -442,7 +552,7 @@ function load() {
     // it at the sidecar pattern (rather than a public host that may
     // come and go) keeps the failure mode obvious — "no node reachable
     // at <name>" is clearly a setup issue, not a transient outage.
-    nodeRpcUrl: process.env.NODE_RPC_URL || 'http://usernode-node:3000',
+    nodeRpcUrl: process.env.NODE_RPC_URL || (staging ? 'http://usernode-node:3000' : ''),
     // App file storage (#752): the MinIO object-store sidecar
     // (docker-compose service `usernode-minio`, internal
     // `usernode-storage` network — reachable only from the platform).
@@ -487,12 +597,10 @@ function load() {
     // and turning this off puts that panel back behind admin-only
     // visibility.
     selfAppPublicVoting: process.env.SELF_APP_PUBLIC_VOTING !== 'false',
-    // Topochain partner API (plan Task 3; architecture decision #5): the
-    // shared secret compared against the partner group's X-API-Key header
-    // (src/middleware/topochain-auth.js#partnerApiKey). Deliberately
-    // OPTIONAL and NOT in REQUIRED — an unset key doesn't block boot, it
-    // makes every partner-group request 500 with "API key authentication
-    // not configured." until an operator sets TOPOCHAIN_PARTNER_API_KEY.
+    // Topochain partner and managed-policy API shared secret, compared
+    // against X-API-Key (src/middleware/topochain-auth.js#partnerApiKey).
+    // Canonical production requires it above; self-app staging may omit it
+    // and receives the existing fail-closed 500 on authenticated routes.
     topochainPartnerApiKey: process.env.TOPOCHAIN_PARTNER_API_KEY || '',
     // Topochain ingest write gate: the shared secret compared against the
     // X-Ingest-Key header on POST /api/v4/slot-outcomes and /epoch-stats
@@ -509,8 +617,8 @@ function load() {
     // Topochain zkPassport bridge (plan Task 10; SPEC §4.5 POST
     // /mobile/zkpassport/complete, lines 2092-2141): the external service
     // that actually verifies a zkPassport proof. Deliberately OPTIONAL and
-    // NOT in REQUIRED, same shape as TOPOCHAIN_PARTNER_API_KEY above — an
-    // unset URL doesn't block boot, it makes every zkpassport/complete
+    // NOT required — an unset URL doesn't block boot, it makes every
+    // zkpassport/complete
     // call 500 "The zkPassport bridge is not configured." (SPEC's own
     // error table row for this exact condition) until an operator sets
     // TOPOCHAIN_ZK_BRIDGE_URL. See src/services/topochain/zk-bridge.js.
@@ -593,9 +701,16 @@ function load() {
   console.log(`  GITHUB_APP_ID=${config.githubAppId || '(not set)'}`);
   console.log(`  ANTHROPIC_API_KEY=${mask(config.anthropicApiKey)}`);
   console.log(`  ANTHROPIC_ADMIN_KEY=${mask(config.anthropicAdminKey)}`);
+  console.log(`  OPENROUTER_MANAGEMENT_API_KEY=${mask(config.openrouterManagementApiKey)}`);
+  console.log(`  OPENROUTER_MANAGED_DAILY_LIMIT_USD=${config.openrouterManagedDailyLimitUsd} OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
+  console.log(`  OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=${config.openrouterManagedRequireVerifiedIdentity}`);
+  console.log(`  OPENROUTER_DEFAULT_CODEX_MODEL=${config.openrouterDefaultCodexModel}`);
   console.log(`  IDENTITY_CREDIT_POLICY=${config.identityCreditPolicy}`);
   console.log(`  GITHUB_LINK=${config.githubLinkClientId && config.githubLinkClientSecret ? '(enabled)' : '(disabled)'}`);
   console.log(`  X_LINK=${(config.xLinkClientId && config.xLinkClientSecret) || (config.waitlistXClientId && config.waitlistXClientSecret) ? '(enabled)' : '(disabled)'}`);
+  console.log(`  WAITLIST_CONNECT=github:${config.waitlistGithubClientId && config.waitlistGithubClientSecret ? 'on' : 'off'} x:${config.waitlistXClientId && config.waitlistXClientSecret ? 'on' : 'off'} linkedin:${config.waitlistLinkedinClientId && config.waitlistLinkedinClientSecret ? 'on' : 'off'}`);
+  console.log(`  WAITLIST_FOLLOW=x:${config.waitlistFollowXUrl ? 'set' : 'unset'} linkedin:${config.waitlistFollowLinkedinUrl ? 'set' : 'unset'} instagram:${config.waitlistFollowInstagramUrl ? 'set' : 'unset'}`);
+  console.log(`  WAITLIST_INTEGRATION_KEYS=${(() => { const n = require('./services/waitlist-integrator').parseIntegrationKeys(config.waitlistIntegrationKeys).length; return n ? `(${n} configured)` : '(not set)'; })()}`);
   console.log(`  LOG_LEVEL=${config.logLevel}`);
   console.log(`  CLI_AUTH=${config.cliAuthEnabled ? config.cliAuthOrigin : '(disabled in staging)'}`);
   console.log(`  MAX_APPS=${config.maxApps}`);
@@ -634,6 +749,9 @@ function load() {
   console.log(`  TOPOCHAIN_PARTNER_API_KEY=${config.topochainPartnerApiKey ? mask(config.topochainPartnerApiKey) : '(not set — partner API returns 500)'}`);
   console.log(`  TOPOCHAIN_INGEST_API_KEY=${config.topochainIngestApiKey ? mask(config.topochainIngestApiKey) : '(not set — ingest writes return 500)'}`);
   console.log(`  TOPOCHAIN_ZK_BRIDGE_URL=${config.topochainZkBridgeUrl || '(not set — zkpassport/complete returns 500)'}`);
+  console.log(`  NATIVE_SESSION_PROTOCOL=${config.nativeSessionV2Network
+    ? `testnet/${config.nativeSessionV2Network.chainId}`
+    : 'unavailable in self-app staging'}`);
   console.log(`  MOBILE_PUSH=${config.mobilePushEnabled ? 'enabled' : 'disabled'} PUSH_ENV=${config.mobilePushEnvironment || '(not set)'}`);
   console.log(`  FIREBASE_PROJECT_ID=${config.firebaseProjectId || '(not set)'}`);
   console.log(`  FIREBASE_SERVICE_ACCOUNT=${config.firebaseServiceAccountJsonB64 ? '(set)' : '(not set)'}`);
@@ -658,10 +776,42 @@ function usesMockGithubForImports() {
   return process.env.USERNODE_ENV === 'staging';
 }
 
+// #1771: cluster maintenance is not a staging preview's job.
+//
+// server.becomeLeader() is where every fleet-wide duty lives — role
+// bootstraps, container cleanup, backfills, the pollers, and nine sweepers.
+// It is gated to ONE leader so the two blue-green colors never double-run
+// it. A preview is neither color: it is a throwaway clone with its own
+// database, so it wins its own advisory lock instantly and runs the whole
+// suite against a copy of production's rows.
+//
+// It cannot do any of that work. A preview has no docker socket (no worker
+// to evict, no container to reap), no GitHub credentials (services/
+// github-mock.js stands in), and no fleet. What it does have is a timer
+// pool that queries every few seconds forever, which is why previews last
+// touched a week ago were measured holding six warm Postgres connections
+// each — twenty of them, on a server whose max_connections is 100. The pool
+// never sheds them because idleTimeoutMillis only fires on a connection
+// nobody reuses, and the sweepers keep reusing them.
+//
+// So a preview does not stand for election at all. Everything a reviewer
+// or a declared check touches is request-driven and unaffected; the
+// leader-scoped extras (the prod-debug SQL role) already degrade to a clean
+// 503, which is the same thing a follower color does during a rollout.
+//
+// The escape hatch is for a preview that is deliberately reviewing a change
+// TO this machinery.
+function runsClusterMaintenance() {
+  if (process.env.USERNODE_ENV !== 'staging') return true;
+  return process.env.STAGING_CLUSTER_MAINTENANCE === '1';
+}
+
 module.exports = {
   load,
   usesMockGithubForImports,
+  runsClusterMaintenance,
   canonicalCliOrigin,
   canonicalOpenRouterApiBase,
+  canonicalNativeSessionV2Network,
   isLoopbackOrigin,
 };

@@ -35,6 +35,7 @@ const STORE_SRC = fs.readFileSync(
   'utf8'
 );
 const CHAT_SRC = fs.readFileSync(path.join(ROOT, 'public', 'js', 'group-chat.js'), 'utf8');
+const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const ICONS_SRC = fs.readFileSync(
   path.join(ROOT, 'frontend', '@', 'components', 'ui', 'icons.tsx'), 'utf8'
 );
@@ -189,31 +190,44 @@ test('saves are kept out of the notification feed proper', () => {
   assert.doesNotMatch(bellItems[1], /saved/, 'the grouping transform still runs on items alone');
 });
 
-test('the section renders above the invites and the list, and only when non-empty', () => {
+test('the section renders above the invites, and only when non-empty', () => {
+  // Streamlined Concept: the pinned pair renders on the Notifications
+  // SHEET now (notifications-sheet.tsx mounts <NotificationsPinnedSections/>
+  // under the tabs); Saved still leads Invites.
   const savedIdx = LIST_SRC.indexOf('id="notifications-saved"');
   const invitesIdx = LIST_SRC.indexOf('id="notifications-invites"');
-  const listIdx = LIST_SRC.indexOf('id="notifications-list"');
-  assert.ok(savedIdx > 0 && invitesIdx > savedIdx && listIdx > invitesIdx,
-    'the saved section is the TOP section of the drawer');
+  assert.ok(savedIdx > 0 && invitesIdx > savedIdx,
+    'the saved section is the TOP pinned section');
   assert.match(LIST_SRC, /saved\.length \? \([\s\S]{0,400}Saved\n/,
     'the "Saved" header only renders when something is saved');
   assert.match(STORE_SRC, /saved: null,/,
     'the prerendered state is empty, so the SSG pass and hydration agree');
 });
 
-test('the drawer renders the section on every path that opens it', () => {
-  // Three paths put content in the drawer: the desktop dropdown and the
-  // touch bottom sheet (both inside show(), which renders BEFORE presenting
-  // so the sheet measures the right height), and a refresh landing while it
-  // is already open.
+test('the section is rendered on every refresh, not on open', () => {
+  // This asserted the opposite until THE UI OVERHAUL. The bell's panel was
+  // presented on demand and FILLED at that moment — show() rendered all three
+  // sections before handing the node to the kit, precisely so the sheet
+  // measured the right height — so the paths that mattered were the two
+  // branches of show() plus a refresh landing while it was already open.
+  //
+  // The list lives in the Notifications SHEET now, which is always mounted
+  // (translated off-screen, not built on open) — as the hamburger was before
+  // it. There is no "before presenting" to render at, so the render is
+  // unconditional and the sheet opens onto CURRENT rows rather than
+  // last-open's.
   const show = SRC.match(/\n  show\(\) \{([\s\S]*?)\n  \},/);
   assert.ok(show, 'show() found');
-  assert.equal((show[1].match(/_renderSaved\(\)/g) || []).length, 2,
-    'both the sheet and the dropdown branch render the saved section');
+  assert.equal((show[1].match(/_renderSaved\(\)/g) || []).length, 0,
+    'show() forwards to the sheet and renders nothing itself');
+  assert.match(show[1], /NotificationsSheet\?\.open\?\.\(\)/,
+    'it forwards to the sheet that actually presents the list');
   const refresh = SRC.match(/\n  async refresh\(options\) \{([\s\S]*?)\n  \},/);
   assert.ok(refresh, 'refresh() found');
   assert.match(refresh[1], /Notifications\._renderSaved\(\);/,
-    'a refresh into an open drawer repaints the section too');
+    'every refresh repaints the section');
+  assert.ok(!/if \(Notifications\.open\)[\s\S]{0,80}_renderSaved/.test(refresh[1]),
+    'and does so unconditionally — an always-mounted list has nothing to gate on');
 });
 
 test('unsaving is possible from the section as well as from the message', () => {
@@ -245,51 +259,88 @@ test('the drawer can be opened by URL, so the section is screenshot-able', () =>
 
 // ── the message-side button ─────────────────────────────────────────────
 
+// The three kinds of row all carry a save button, and this used to be counted
+// as three `_renderBookmarkBtn(msg)` calls in the string renderer. That
+// renderer is gone (#1191): the transcript is React, and the button is
+// `<RowActions>` — one component, rendered by each of the three rows.
 test('every message kind carries the save button', () => {
-  const calls = CHAT_SRC.match(/GroupChat\._renderBookmarkBtn\(msg\)/g) || [];
-  assert.equal(calls.length, 3,
-    'ordinary messages, system/vote rows and spec-share cards all get one');
+  const tsx = read('frontend/src/features/group-chat/transcript.tsx');
+  const rows = ['MessageRow', 'SystemRow', 'SpecShareRow'];
+  for (const row of rows) {
+    const start = tsx.indexOf(`function ${row}(`);
+    assert.ok(start > 0, `located ${row}`);
+    const body = tsx.slice(start, tsx.indexOf('\n}', start));
+    assert.match(body, /<RowActions msg=\{msg\} \/>/,
+      `${row} renders the row's header controls`);
+  }
+  // …and the save button is inside it, gated on a signed-in viewer.
+  assert.match(tsx, /msg\.showBookmark \? \(/);
+  assert.match(tsx, /className=\{saved \? 'gc-msg-save gc-msg-saved' : 'gc-msg-save'\}/);
 });
 
 test('the message button draws the shell’s own bookmark, not a second one', () => {
-  // frontend/@/components/ui/icons.tsx is the shell's icon set and
-  // tests/shell-icon-set.test.js forbids an inline <svg> anywhere under
-  // frontend/src — but public/js/** is a classic script that cannot import
-  // the module, so this one glyph exists in two places. That is only safe
-  // while the path data is identical, which is what this asserts: the
-  // strings are read OUT of the module, so redrawing the glyph there
-  // without updating the script fails here.
+  // This used to assert that the COPY of the two Heroicons paths in
+  // public/js/group-chat.js still matched the module's — the one duplication
+  // in the icon set, kept honest by reading both ends. There is no copy any
+  // more: the button is `<RowActions>` in the React transcript, which imports
+  // the glyphs, so the rule is now simply that neither end draws its own.
   const outline = ICONS_SRC.match(/BookmarkIcon',\s*\n\s*'([^']+)'/);
   const solid = ICONS_SRC.match(/BookmarkSolidIcon',\s*\n\s*'([^']+)'/);
   assert.ok(outline && solid, 'the module exports the outline/solid bookmark pair');
-  assert.ok(CHAT_SRC.includes(outline[1]), 'the unsaved button draws the module’s outline');
-  assert.ok(CHAT_SRC.includes(solid[1]), 'the saved button draws the module’s solid');
+  assert.ok(!CHAT_SRC.includes(outline[1]) && !CHAT_SRC.includes(solid[1]),
+    'group-chat.js no longer carries a second copy of the path data');
+  const chatCode = CHAT_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  assert.doesNotMatch(chatCode, /_bookmarkSvg|_BOOKMARK_PATH/,
+    'nor the renderer that drew it');
+  const row = read('frontend/src/features/group-chat/transcript.tsx');
+  assert.match(row, /import \{ BookmarkIcon, BookmarkSolidIcon \} from '@\/components\/ui\/icons'/,
+    'the message button imports the glyph rather than inlining one');
   assert.match(LIST_SRC, /BookmarkSolidIcon/,
     'the drawer row imports the glyph rather than inlining one');
 });
 
 test('the mark is hollow when unsaved and solid when saved', () => {
-  const svg = CHAT_SRC.match(/_bookmarkSvg\(on\) \{([\s\S]*?)\n  \},/);
-  assert.ok(svg, '_bookmarkSvg() found');
-  assert.match(svg[1], /on\s*\?\s*\n?\s*' fill="currentColor">'/,
-    'the saved mark is a fill');
-  assert.match(svg[1], /fill="none" stroke="currentColor"/,
-    'and the unsaved one is an outline — the state is the shape, not the opacity');
-  // A class toggle alone would leave the previous state's mark on screen.
+  // The pair is drawn by the icon module now, so the "state is the SHAPE, not
+  // the opacity" rule is checked where the shapes are: a fill with no stroke
+  // for saved, a stroked outline with no fill for not.
+  assert.match(ICONS_SRC, /export const BookmarkSolidIcon = filled\(/, 'saved is a fill');
+  assert.match(ICONS_SRC, /export const BookmarkIcon = stroked\(/, 'unsaved is an outline');
+  assert.match(ICONS_SRC, /function filled\([\s\S]{0,200}?fill="currentColor"/);
+  assert.match(ICONS_SRC, /function stroked\([\s\S]{0,300}?fill="none"\s*\n\s*stroke="currentColor"/);
+  // A class toggle alone would leave the previous state's mark on screen, so
+  // the optimistic toggle has to change the SHAPE. It used to do that by
+  // rewriting the button's innerHTML; the transcript is React now
+  // (frontend/src/features/group-chat/transcript.tsx) and that button lives
+  // inside a host the component owns, so the toggle writes the MODEL and the
+  // component picks the glyph. Same contract, one writer.
   const paint = CHAT_SRC.match(/_paintBookmark\(messageId, on\) \{([\s\S]*?)\n  \},/);
   assert.ok(paint, '_paintBookmark() found');
-  assert.match(paint[1], /innerHTML = GroupChat\._bookmarkSvg\(!!on\)/,
-    'an optimistic toggle redraws the mark, not just the classes');
+  assert.match(paint[1], /patchTranscriptMessage\(messageId, \{ bookmarked: !!on \}\)/,
+    'an optimistic toggle patches the saved flag on the message');
+  assert.doesNotMatch(paint[1], /innerHTML|classList|setAttribute/,
+    'and does not write the button — the transcript is React-owned');
+  const row = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/group-chat/transcript.tsx'), 'utf8');
+  assert.match(row, /saved \? <BookmarkSolidIcon \/> : <BookmarkIcon/,
+    'the component draws solid when saved and outline when not');
 });
 
 test('the save button is available where react and edit are not', () => {
-  const render = CHAT_SRC.match(/_renderBookmarkBtn\(msg\) \{([\s\S]*?)\n  \},/);
-  assert.ok(render, '_renderBookmarkBtn() found');
-  assert.doesNotMatch(render[1], /_readOnly/,
+  // The gate moved from `_renderBookmarkBtn` to `_messageView`, which is where
+  // every other per-row decision is now decided. The rule is unchanged.
+  const view = CHAT_SRC.match(/\n {6}showEdit:([\s\S]*?)\n {6}quote:/);
+  assert.ok(view, 'the three control gates found in _messageView');
+  const gates = view[1];
+  assert.match(gates, /showBookmark: !!\(window\.App && App\.user\)/,
+    'there is no personal list to save into while signed out');
+  assert.doesNotMatch(gates.match(/showBookmark:.*/)[0], /_readOnly/,
     '#621 read-only viewers may save what they can read — it writes nothing to the app');
-  assert.match(render[1], /window\.App && App\.user/,
-    'but there is no personal list to save into while signed out');
-  assert.match(render[1], /aria-pressed=/, 'the toggle state is exposed, not just drawn');
+  assert.match(gates, /showReact: !GroupChat\._readOnly\(\)/, 'react IS gated');
+  assert.match(gates.slice(0, gates.indexOf('showReact:')), /!GroupChat\._readOnly\(\)/,
+    'and so is edit');
+
+  const row = read('frontend/src/features/group-chat/transcript.tsx');
+  assert.match(row, /aria-pressed=\{saved\}/, 'the toggle state is exposed, not just drawn');
 });
 
 test('the toggle is optimistic and reverts when the server refuses', () => {

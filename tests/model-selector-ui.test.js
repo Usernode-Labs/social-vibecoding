@@ -10,13 +10,14 @@
 //   1. No price text ($ / MTok) survives anywhere in the picker — that
 //      was the whole point of the issue. Nor any measured figure: the
 //      picker is entirely static editorial copy now.
-//   2. Each option reads "<label> — <what kind of work it is for>", and
+//   2. Each option reads "<label>: <what kind of work it is for>", and
 //      the copy positions Opus and Fable as peers (heavy coding vs.
 //      design/taste) rather than a size ladder.
-//   3. The caption under the dropdown describes the SELECTED model in a
-//      full sentence and follows the selection when it changes.
-//   4. Missing guidance degrades to bare labels with the caption hidden
-//      — never a crash.
+//   3. The composer paints NO caption under the dropdown (#1353 removed
+//      it — the option the user picked already carries the guidance), while
+//      the sentence itself survives for app-view's Generate-proposal popup,
+//      where the list is met once.
+//   4. Missing guidance degrades to bare labels — never a crash.
 //   5. The guidance copy in dev-chat.js's seed map has not drifted from
 //      src/services/models.js, which is authoritative.
 //
@@ -28,6 +29,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { makeComposerBridge } = require('./lib/dev-composer-html');
+const { loadTsx, renderComponent } = require('./lib/render-tsx');
+
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8'
@@ -36,8 +40,8 @@ const SRC = fs.readFileSync(
 // ── Minimal fake DOM ────────────────────────────────────────────────
 // Registry-backed like the streaming-reset harness (getElementById keeps
 // returning the same handle across innerHTML rewrites), plus real
-// listener capture and a real classList.toggle so the caption's
-// show/hide can be asserted.
+// listener capture and a real classList.toggle, so a class the composer
+// toggles at runtime can be asserted.
 function makeElement(id) {
   const classes = new Set();
   const listeners = new Map();
@@ -95,7 +99,18 @@ function makeElement(id) {
 }
 
 function makeHarness() {
+  // #1078: the whole composer is features/dev-chat/composer.tsx's, so
+  // `renderChatView` writes an empty `#dc-composer-bar` and publishes a view
+  // model into it. `html` below is the template's markup PLUS the rendered
+  // composer, which is what a reader actually sees.
+  const composer = makeComposerBridge();
   const registry = new Map();
+  // #1191: the runner strip's markup is
+  // features/dev-chat/composer-chrome.tsx's, so `_renderRunnerControls()`
+  // publishes a { kind, label } view. `runnerHtml()` below renders the
+  // component from it, so the assertions still read the strip as a reader
+  // sees it — and the select's change handler is a prop, invoked directly.
+  let runnerView = { kind: 'none', label: '' };
   const getEl = (id) => {
     if (!registry.has(id)) registry.set(id, makeElement(id));
     return registry.get(id);
@@ -138,6 +153,18 @@ function makeHarness() {
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
     App: { currentTab: 'dev', currentSubTab: 'sessions' },
     Notifications: {},
+    UsernodeReact: {
+      devChat: {
+        mountRunnerControls: () => {},
+        publishRunner: (v) => { runnerView = v; },
+        mountQuickReplies: () => {},
+        publishQuickReplies: () => {},
+        mountBudgetPill: () => {},
+        publishBudgetPill: () => {},
+        mountAttachStrip: () => {},
+        publishAttachStrip: () => {},
+      },
+    },
     PlatformUI: {
       isTouch: () => false, hasKit: () => false, toast: () => {},
       alert: async () => ({}), confirm: async () => true,
@@ -151,6 +178,13 @@ function makeHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  // The runner strip publishes through the composer bridge too, so its own
+  // capture below rides on the same object.
+  sandbox.UsernodeReact = Object.assign({}, sandbox.UsernodeReact, {
+    devChat: Object.assign({}, composer.bridge, {
+      publishRunner: (v) => { runnerView = v; composer.bridge.publishRunner(v); },
+    }),
+  });
 
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
@@ -162,18 +196,28 @@ function makeHarness() {
     'renderMessages', 'refreshBudget', 'initScrollTracking', 'restoreSessionScroll',
     '_setupTextareaResize', '_setupKeyboardShortcuts', '_restoreDraft',
     'renderSessionList', '_loadSpecViewer', '_startHeartbeat', '_setNotifyOnDone',
-    '_renderQuickReplies', '_wireQuickReplies', '_wireCreditsBanner',
+    '_renderQuickReplies', '_wireQuickReplies',
+    '_renderBanners', '_renderSessionHeader',
     '_setupAttachments', '_renderSavedDrafts', '_wireSavedDrafts', '_syncSaveDraftBtn',
   ]) DevChat[fn] = () => {};
-  for (const fn of [
-    '_renderSyncBannerHtml', '_renderNewChangeBannerHtml', '_renderCreditsBannerHtml',
-    '_renderHeaderStatusPill',
-  ]) DevChat[fn] = () => '';
-
   DevChat.currentSession = { id: 7, branch_name: 'dev/x', session_title: 'A change' };
   DevChat.messages = [];
 
-  return { DevChat, getEl };
+  return {
+    DevChat,
+    getEl,
+    composer,
+    // The kit stub the module reads as `window.PlatformUI`. Exposed so a
+    // test can swap in a menu recorder — dev-chat.js resolves it at call
+    // time, and inside the vm context `window` IS this sandbox.
+    kit: sandbox.PlatformUI,
+    sandbox,
+    runnerView: () => JSON.parse(JSON.stringify(runnerView)),
+    runnerHtml: () => renderComponent(
+      'frontend/src/features/dev-chat/composer-chrome.tsx', 'RunnerControlsView',
+      JSON.parse(JSON.stringify(runnerView)),
+    ),
+  };
 }
 
 // The three-model map GET /api/models sends: label + guidance copy, and
@@ -195,11 +239,11 @@ function guidanceMap() {
         long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
       },
     },
-    'claude-fable-5': {
-      label: 'Fable 5',
+    'claude-fable-5-1': {
+      label: 'Fable 5.1',
       changeSize: {
         short: 'design, taste, and difficult coding',
-        long: 'Design and taste — how a screen looks, reads, and feels — plus the most difficult coding work.',
+        long: 'Design and taste (how a screen looks, reads, and feels) plus the most difficult coding work.',
       },
     },
   };
@@ -216,7 +260,11 @@ function render(overrides) {
     ? 'usernode-openrouter'
     : 'usernode-claude';
   h.DevChat.renderChatView();
-  return { ...h, html: h.getEl('dc-view').innerHTML };
+  return {
+    ...h,
+    html: h.getEl('dc-view').innerHTML + h.composer.html(),
+    view: () => h.composer.state(),
+  };
 }
 
 // ── 1. no price text anywhere ───────────────────────────────────────
@@ -241,18 +289,124 @@ test('the seed MODELS map carries no price and no measured figures', () => {
 
 // ── 2. option text: what kind of work, not how big ──────────────────
 
-test('each option reads "<label> — <what it is for>"', () => {
+test('the composer\'s picker is a sheet button naming the model (#1589)', () => {
+  // #1589's finding was about a CLOSED <select>: it shows the selected
+  // option's own text, so the guidance set its width — 276px of a 344px
+  // strip on a phone, which put the label above the control and the credit
+  // meter below it. Names brought it to 89px and the row to one line.
+  //
+  // The control is a button opening the kit's menu now, so there are no
+  // options in the markup at all — but the closed control is still exactly
+  // the name, which is what that measurement was about.
   const { html } = render();
-  for (const expected of [
-    'Sonnet 5 — simple, small changes',
-    'Opus 5 — general coding work',
-    'Fable 5 — design, taste, and difficult coding',
-  ]) {
-    assert.ok(
-      html.includes(expected),
-      `missing option "${expected}"; got: ${html.match(/<option[^>]*>[^<]*<\/option>/g)}`
-    );
+  assert.ok(!/<option/.test(html), `no native dropdown survives; got: ${html}`);
+  assert.match(html, /<button[^>]*id="dc-model-select"[^>]*aria-haspopup="menu"/);
+  assert.match(html, /<span class="dc-model-name">Opus 5<\/span>/);
+  assert.ok(!html.includes('general coding work'),
+    'the guidance belongs to the OPEN sheet — in the closed control it is '
+    + 'the width problem #1589 measured.');
+  assert.ok(!html.includes('simple, small changes'),
+    'and the unselected models are not in the composer\'s markup at all.');
+});
+
+test('…and the sheet\'s rows carry the guidance the button cannot (2B)', () => {
+  // The blurb comes back where there is room for it: one row, one line. It
+  // is `changeSize.short` rather than `modelOptionText`, because the row
+  // already opens with the name and the helper would repeat it.
+  const { view } = render();
+  assert.deepEqual(view().models.options, [
+    { id: 'claude-sonnet-5', label: 'Sonnet 5', blurb: 'simple, small changes' },
+    { id: 'claude-opus-5', label: 'Opus 5', blurb: 'general coding work' },
+    {
+      id: 'claude-fable-5-1',
+      label: 'Fable 5.1',
+      blurb: 'design, taste, and difficult coding',
+    },
+  ]);
+  assert.equal(view().models.selectedLabel, 'Opus 5');
+});
+
+test('openModelSheet asks the kit, marks the current row, and picks (2B)', () => {
+  // The mirror of openVenueSheet: the kit sets row labels with textContent,
+  // so the blurb and the tick ride IN the label, and the tick trails the
+  // row exactly as build-venues.js puts it.
+  const h = makeHarness();
+  h.DevChat.MODELS = guidanceMap();
+  h.DevChat.selectedModel = 'claude-opus-5';
+  h.DevChat._currentVenueId = () => 'usernode-claude';
+  let opened = null;
+  h.sandbox.PlatformUI = {
+    hasKit: () => true,
+    menu: (opts) => { opened = opts; return Promise.resolve(null); },
+  };
+  h.DevChat.openModelSheet(null);
+  assert.ok(opened, 'the kit menu was never opened');
+  assert.match(opened.title, /model/i);
+  // `Array.from` rather than `.map`: `items` was built inside the vm
+  // context, so its Array prototype is that realm's and deepEqual compares
+  // prototypes.
+  assert.deepEqual(Array.from(opened.items, (i) => i.label), [
+    'Sonnet 5 \u2014 simple, small changes',
+    'Opus 5 \u2014 general coding work \u2713',
+    'Fable 5.1 \u2014 design, taste, and difficult coding',
+  ]);
+  opened.items[2].handler();
+  assert.equal(h.DevChat.selectedModel, 'claude-fable-5-1');
+});
+
+test('openModelSheet is a no-op without the kit, exactly as the venue sheet is', () => {
+  const h = makeHarness();
+  h.DevChat.MODELS = guidanceMap();
+  h.DevChat.selectedModel = 'claude-opus-5';
+  h.DevChat._currentVenueId = () => 'usernode-claude';
+  h.sandbox.PlatformUI = { hasKit: () => false, menu: () => {
+    throw new Error('menu must not be reached without a kit');
+  } };
+  h.DevChat.openModelSheet(null);
+  assert.equal(h.DevChat.selectedModel, 'claude-opus-5');
+});
+
+test('the declared checks follow the control they guard (#1589, 2B)', () => {
+  // These two used to select `#dc-model-select option[value=…]`, one per
+  // model. A sheet has no options in the document — only the SELECTED model
+  // is on screen — so the pair became what a browser can still see: the
+  // closed control is a menu button naming the model, and no native
+  // dropdown is left in the composer. The guidance positioning they once
+  // guarded is asserted on the shared helper below, and still rendered by
+  // the Generate-proposal picker.
+  const dapp = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '..', 'dapp.json'), 'utf8'));
+  const picker = dapp.tests.filter(
+    (t) => (t.expectSelector || '').includes('dc-model-select')
+      || (t.expectSelector || '').includes('#dc-composer-controls:not(:has(select))'));
+  assert.equal(picker.length, 2, 'both picker checks are still declared');
+  assert.ok(picker.some((t) => /aria-haspopup="menu"/.test(t.expectSelector)
+    && t.expectText === 'Opus 5'), 'the closed control is still guarded');
+  assert.ok(picker.some((t) => /:not\(:has\(select\)\)/.test(t.expectSelector)),
+    'and so is the absence of the <select> this replaced');
+  for (const t of picker) {
+    assert.ok(!/coding work|design, taste/.test(t.expectText || ''),
+      'a check asking for the guidance in the CLOSED control would fail on '
+      + 'every build — it lives in the open sheet now');
   }
+});
+
+test('the guidance copy survives on the helper, for the picker that has room', () => {
+  // `modelOptionText` is UNCHANGED and still the Generate-proposal picker's
+  // option text (public/js/app-view.js). The positioning it encodes —
+  // Sonnet = simple/small, Opus = general coding, Fable = design/taste plus
+  // the most difficult coding — is guarded here rather than through the
+  // composer's markup, which no longer carries it.
+  const { DevChat } = makeHarness();
+  const text = (id) => DevChat.modelOptionText(DevChat.MODELS[id]);
+  assert.equal(text('claude-sonnet-5'), 'Sonnet 5: simple, small changes');
+  assert.equal(text('claude-opus-5'), 'Opus 5: general coding work');
+  assert.equal(text('claude-fable-5-1'), 'Fable 5.1: design, taste, and difficult coding');
+  const APP_VIEW = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
+  );
+  assert.match(APP_VIEW, /DevChat\.modelOptionText\(m\)/,
+    'and that popup still calls it');
 });
 
 test('OpenRouter sessions show their pinned model and never show the Claude model picker', () => {
@@ -275,9 +429,9 @@ test('OpenRouter sessions show their pinned model and never show the Claude mode
 
   assert.doesNotMatch(html, /Chat model:/);
   assert.doesNotMatch(html, /id="dc-model-select"/);
-  assert.doesNotMatch(html, /Sonnet 5 — simple, small changes/);
-  assert.doesNotMatch(html, /Opus 5 — general coding work/);
-  assert.doesNotMatch(html, /Fable 5 — design, taste, and difficult coding/);
+  assert.doesNotMatch(html, /Sonnet 5: simple, small changes/);
+  assert.doesNotMatch(html, /Opus 5: general coding work/);
+  assert.doesNotMatch(html, /Fable 5.1: design, taste, and difficult coding/);
 });
 
 test('the OpenRouter model button opens the provider-locked catalog', () => {
@@ -293,7 +447,11 @@ test('the OpenRouter model button opens the provider-locked catalog', () => {
   h.DevChat._switchCurrentCodingAgent = (...args) => { calledWith = args; };
 
   h.DevChat.renderChatView();
-  h.getEl('dc-openrouter-model-change')._fire('click');
+  // #1078: the button is the composer component's, so its click dispatches
+  // into DevChat by NAME rather than through a listener bound per render.
+  assert.match(h.composer.html(), /id="dc-openrouter-model-change"/,
+    'the button renders');
+  h.DevChat._onOpenRouterModelChange();
 
   assert.ok(calledWith, 'the Change model button was not wired');
   assert.equal(calledWith[0], null);
@@ -301,16 +459,18 @@ test('the OpenRouter model button opens the provider-locked catalog', () => {
 });
 
 test('no option implies a size ladder between Opus and Fable', () => {
-  const { html } = render();
   // The superseded copy positioned Fable as the "bigger" model. Opus is
-  // now the general coding pick and Fable the taste pick, so this exact
-  // string must not come back.
-  assert.ok(!html.includes('Fable 5 — big or tricky work'));
-  assert.ok(!html.includes('a few files'));
+  // now the general coding pick and Fable the taste pick, so those strings
+  // must not come back. On the HELPER since #1589: the composer renders
+  // names, so its markup would pass this vacuously.
+  const { DevChat } = makeHarness();
+  const all = Object.values(DevChat.MODELS).map((m) => DevChat.modelOptionText(m)).join(' | ');
+  assert.ok(!all.includes('Fable 5.1: big or tricky work'));
+  assert.ok(!all.includes('a few files'));
   // #809: Opus is the general-purpose coding model, not one reserved for
   // big or tricky changes — the old restrictive wording must not return.
   assert.ok(
-    !html.includes('Opus 5 — big or tricky coding'),
+    !all.includes('Opus 5: big or tricky coding'),
     'Opus option reverted to the superseded "big or tricky" framing'
   );
 });
@@ -322,78 +482,101 @@ test('modelOptionText degrades to the bare label without guidance', () => {
   assert.equal(DevChat.modelOptionText(null), '');
 });
 
-// ── 3. the caption ──────────────────────────────────────────────────
+// ── 3. the caption the composer no longer paints ────────────────────
 
-test('the caption describes the selected model in a full sentence', () => {
-  const { getEl } = render({ selected: 'claude-opus-5' });
-  const note = getEl('dc-model-note');
-  // Locks modelNoteText's first-character lower-casing against the new
-  // strings: "Anything from …" has to read as "best for anything from …".
-  assert.equal(
-    note.textContent,
-    'Opus 5 — best for anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.'
-  );
-  assert.equal(note.classList.contains('hidden'), false);
+test('the composer paints no model caption at all (#1353)', () => {
+  // It said "Opus 5: best for anything from a quick fix to a multi-file
+  // feature, a refactor, or debugging that needs real digging." directly
+  // under an <option> reading "Opus 5: general coding work", on every
+  // render of every session. Two sentences of the same advice, and the
+  // longer one was between the picker and the text box.
+  const { html, getEl, DevChat } = render({ selected: 'claude-opus-5' });
+  assert.ok(!html.includes('dc-model-note'), 'no caption element is rendered');
+  assert.ok(!html.includes('best for'), 'and none of its copy either');
+  assert.equal(getEl('dc-model-note').textContent, '', 'nothing fills one after render');
+  assert.equal(typeof DevChat._renderModelNote, 'undefined',
+    'and the filler is gone rather than left pointing at an absent element');
 });
 
-test('the caption carries the guidance tooltip, not the old size-ladder wording', () => {
-  const { getEl } = render();
-  const note = getEl('dc-model-note');
-  assert.match(note.title, /general coding pick/);
-  assert.match(note.title, /genuinely difficult/);
-  assert.match(note.title, /A suggestion, not a rule/);
+test('the caption text itself survives, for the picker that is met once', () => {
+  // app-view.js's Generate-proposal popup renders it: there the model list
+  // is new to the reader, and a full sentence is worth its line. The
+  // lower-casing of the first character is what makes it read as one
+  // sentence after the label.
+  const { DevChat } = makeHarness();
+  assert.equal(
+    DevChat.modelNoteText(DevChat.MODELS['claude-opus-5']),
+    'Opus 5: best for anything from a quick fix to a multi-file feature, '
+      + 'a refactor, or debugging that needs real digging.'
+  );
+  assert.equal(
+    DevChat.modelNoteText(DevChat.MODELS['claude-sonnet-5']),
+    'Sonnet 5: best for one small thing at a time: a text tweak, a colour, a single file.'
+  );
+  assert.equal(DevChat.modelNoteText({ label: 'Opus 5' }), '', 'no guidance, no sentence');
+  assert.match(DevChat.MODEL_GUIDANCE_TOOLTIP, /general coding pick/);
+  assert.match(DevChat.MODEL_GUIDANCE_TOOLTIP, /genuinely difficult/);
   assert.ok(
-    !/Bigger models/i.test(note.title),
+    !/Bigger models/i.test(DevChat.MODEL_GUIDANCE_TOOLTIP),
     'tooltip reverted to the superseded "bigger models cost more" framing'
   );
+  const APP_VIEW = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
+  );
+  // The popup builds its caption PER OPTION now (#1367 retired the change
+  // handler that rewrote one <p>), so the call site takes the model rather
+  // than the currently-chosen one — but it is still this helper.
+  assert.match(APP_VIEW, /DevChat\.modelNoteText\(m\)/, 'and that popup still calls it');
 });
 
-test('the caption follows the selection when the dropdown changes', () => {
-  const { DevChat, getEl } = render({ selected: 'claude-opus-5' });
-  const note = getEl('dc-model-note');
-  assert.match(note.textContent, /^Opus 5 —/);
-
-  getEl('dc-model-select')._fire('change', { target: { value: 'claude-fable-5' } });
-
-  assert.equal(DevChat.selectedModel, 'claude-fable-5');
-  assert.equal(
-    note.textContent,
-    'Fable 5 — best for design and taste — how a screen looks, reads, and feels — '
-      + 'plus the most difficult coding work.'
-  );
+test('the picker still follows the selection without a caption to update', () => {
+  // The sheet's handler dispatches into `_onModelPicked` — which also
+  // republishes, so the model carries the new selection AND the closed
+  // control's label, rather than an element keeping either.
+  const { DevChat, view } = render({ selected: 'claude-opus-5' });
+  assert.equal(view().models.selected, 'claude-opus-5');
+  assert.equal(view().models.selectedLabel, 'Opus 5');
+  DevChat._onModelPicked('claude-fable-5-1');
+  assert.equal(DevChat.selectedModel, 'claude-fable-5-1');
+  assert.equal(view().models.selected, 'claude-fable-5-1');
+  assert.equal(view().models.selectedLabel, 'Fable 5.1');
 });
 
 test('the Fable option owns difficult coding without displacing Opus as the general pick', () => {
-  const { html } = render();
   // The trio's positioning: Sonnet = simple/small, Opus = general
   // coding, Fable = design/taste plus the MOST difficult coding. Fable
   // gaining "difficult coding" must not revert Opus to a
-  // big-or-tricky-only framing.
-  assert.ok(html.includes('Fable 5 — design, taste, and difficult coding'));
-  assert.ok(!html.includes('Opus 5 — big or tricky coding'));
-  assert.ok(html.includes('Opus 5 — general coding work'));
-});
-
-test('the Sonnet caption stays the small-change pick', () => {
-  const { getEl } = render({ selected: 'claude-sonnet-5' });
-  assert.equal(
-    getEl('dc-model-note').textContent,
-    'Sonnet 5 — best for one small thing at a time: a text tweak, a colour, a single file.'
-  );
+  // big-or-tricky-only framing. Asserted on the helper since #1589 moved
+  // this copy out of the composer's own markup.
+  const { DevChat } = makeHarness();
+  const text = (id) => DevChat.modelOptionText(DevChat.MODELS[id]);
+  assert.equal(text('claude-fable-5-1'), 'Fable 5.1: design, taste, and difficult coding');
+  assert.notEqual(text('claude-opus-5'), 'Opus 5: big or tricky coding');
+  assert.equal(text('claude-opus-5'), 'Opus 5: general coding work');
 });
 
 // ── 4. missing guidance degrades, never crashes ─────────────────────
 
-test('a model with no guidance renders a bare label with the caption hidden', () => {
+test('a model with no guidance renders a bare label', () => {
+  // Since #1589 every composer option is a bare label; what this still pins
+  // is that a meta with no `changeSize` reaches the picker at all rather
+  // than rendering an empty option, and that no caption comes back with it.
   const models = { 'claude-opus-5': { label: 'Opus 5' } };
-  const { html, getEl } = render({ models });
+  const { html, view } = render({ models });
 
-  assert.ok(html.includes('>Opus 5</option>'), 'expected a bare label option');
+  assert.ok(html.includes('<span class="dc-model-name">Opus 5</span>'),
+    'expected the bare label on the closed control');
+  assert.deepEqual(view().models.options, [
+    { id: 'claude-opus-5', label: 'Opus 5', blurb: '' }]);
   assert.ok(!html.includes('best for'));
+});
 
-  const note = getEl('dc-model-note');
-  assert.equal(note.textContent, '');
-  assert.equal(note.classList.contains('hidden'), true);
+test('an option with no label at all falls back to the model id', () => {
+  // The composer reads `meta.label` directly now instead of going through
+  // modelOptionText, so its own empty case has to be its own.
+  const { html } = render({ models: { 'claude-opus-5': {} } });
+  assert.ok(html.includes('<span class="dc-model-name">claude-opus-5</span>'),
+    'an id is a worse name than "Opus 5" and a much better one than nothing');
 });
 
 test('a garbage MODELS entry does not throw the whole chat view', () => {
@@ -441,23 +624,23 @@ test('the composer is byte-identical for a session with no machine attached', ()
   // The host span ships in the markup so nothing has to be inserted later,
   // and stays empty — .dc-runner:empty is display:none, so no gap appears.
   assert.ok(html.includes('id="dc-runner"'), 'the host span is in the composer');
-  const { DevChat } = makeHarness();
+  const { DevChat, runnerHtml } = makeHarness();
   DevChat._renderRunnerControls();
-  assert.equal(getEl('dc-runner').innerHTML, '');
+  assert.equal(runnerHtml(), '', 'the strip draws nothing at all');
   // Nobody who never runs the CLI sees the words.
   assert.ok(!html.includes('Run on:'));
   assert.ok(!html.includes('Running on your machine'));
 });
 
 test('an attached machine gets a selector and a live chip', () => {
-  const { DevChat, getEl } = makeHarness();
+  const { DevChat, runnerHtml } = makeHarness();
   DevChat._applyRunnerState({
     runner: 'local',
     localAgent: { leaseId: '7', label: "Evan's laptop", runtime: 'claude-code' },
   });
-  const html = getEl('dc-runner').innerHTML;
+  const html = runnerHtml();
   assert.match(html, /Run on:/);
-  assert.match(html, /<option value="local" selected>Evan&#39;s laptop|Evan's laptop/);
+  assert.match(html, /<option value="local"[^>]*>Evan&#x27;s laptop<\/option>/);
   assert.match(html, /<option value="platform">Usernode<\/option>/);
   assert.match(html, /Running on your machine/);
   // The chip explains the division of labour, because "running on your
@@ -466,25 +649,28 @@ test('an attached machine gets a selector and a live chip', () => {
 });
 
 test('a label the user typed on their own machine is escaped, not interpreted', () => {
-  const { DevChat, getEl } = makeHarness();
+  const { DevChat, runnerHtml } = makeHarness();
   DevChat._applyRunnerState({
     runner: 'local',
     localAgent: { leaseId: '7', label: '<img src=x onerror=alert(1)>' },
   });
-  const html = getEl('dc-runner').innerHTML;
-  assert.ok(!html.includes('<img'), 'the label reached innerHTML unescaped');
+  const html = runnerHtml();
+  assert.ok(!html.includes('<img'), 'the label reached the DOM unescaped');
   assert.match(html, /&lt;img/);
+  // It rides in a `title` too, which is the attribute context the string
+  // renderer needed a separate escape for.
+  assert.match(html, /title="The last turn ran on|title="Spec and coding turns in this session run on &lt;img/);
 });
 
 test('a machine that has gone leaves a past-tense chip, not a live one', () => {
-  const { DevChat, getEl } = makeHarness();
+  const { DevChat, runnerHtml } = makeHarness();
   DevChat._applyRunnerState({
     runner: 'local', runnerLabel: 'laptop', localAgent: { leaseId: '7', label: 'laptop' },
   });
   // The lease is gone but chat_sessions still remembers where the last turn
   // ran, which is what /status sends as runnerLabel.
   DevChat._applyRunnerState({ runner: 'local', runnerLabel: 'laptop', localAgent: null });
-  const html = getEl('dc-runner').innerHTML;
+  const html = runnerHtml();
   assert.match(html, /dc-runner-chip-past/);
   assert.match(html, /Last turn: laptop/);
   // No selector: there is nothing left to select between.
@@ -493,7 +679,7 @@ test('a machine that has gone leaves a past-tense chip, not a live one', () => {
 });
 
 test('choosing Usernode hands the session back and never leaves a half-set select', async () => {
-  const { DevChat, getEl } = makeHarness();
+  const { DevChat, runnerView } = makeHarness();
   const requests = [];
   let confirmed = true;
   DevChat._applyRunnerState({ runner: 'local', localAgent: { leaseId: '7', label: 'laptop' } });
@@ -505,21 +691,35 @@ test('choosing Usernode hands the session back and never leaves a half-set selec
     DevChat._localAgent = null;
     DevChat._renderRunnerControls();
   };
-  const select = getEl('dc-runner-select');
-  const event = { target: { value: 'platform' } };
-  select._fire('change', event);
-  await new Promise((resolve) => setImmediate(resolve));
-  // The select snaps back before the async work: a dropdown left reading
-  // "Usernode" while the lease is still held is a lie about where the next
-  // turn goes.
-  assert.equal(event.target.value, 'local');
-  assert.deepEqual(requests, ['DELETE /api/me/local-agents/7']);
+  // #1191: the handler is the select's onChange prop, so it is invoked
+  // directly rather than through a listener registry.
+  const { RunnerControlsView } = loadTsx('frontend/src/features/dev-chat/composer-chrome.tsx');
+  const onChange = () => {
+    const parts = RunnerControlsView(runnerView()).props.children;
+    const select = parts.find((child) => child && child.props && child.props.id === 'dc-runner-select');
+    assert.ok(select, 'the live strip renders a selector');
+    return select.props.onChange;
+  };
+  const previous = global.window;
+  global.window = { DevChat };
+  try {
+    const event = { target: { value: 'platform' } };
+    onChange()(event);
+    await new Promise((resolve) => setImmediate(resolve));
+    // The select snaps back before the async work: a dropdown left reading
+    // "Usernode" while the lease is still held is a lie about where the next
+    // turn goes.
+    assert.equal(event.target.value, 'local');
+    assert.deepEqual(requests, ['DELETE /api/me/local-agents/7']);
 
-  // Selecting the machine that is already running it is a no-op.
-  requests.length = 0;
-  DevChat._applyRunnerState({ runner: 'local', localAgent: { leaseId: '8', label: 'desktop' } });
-  getEl('dc-runner-select')._fire('change', { target: { value: 'local' } });
-  assert.deepEqual(requests, []);
+    // Selecting the machine that is already running it is a no-op.
+    requests.length = 0;
+    DevChat._applyRunnerState({ runner: 'local', localAgent: { leaseId: '8', label: 'desktop' } });
+    onChange()({ target: { value: 'local' } });
+    assert.deepEqual(requests, []);
+  } finally {
+    if (previous === undefined) delete global.window; else global.window = previous;
+  }
 });
 
 test('the hand-back is the browser-side escape hatch, and refuses demo rows', () => {

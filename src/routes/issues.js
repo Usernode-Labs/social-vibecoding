@@ -381,29 +381,96 @@ function stagingMockGovernance() {
 
 // #396: staging-only mock comment threads for the topic view's GitHub
 // comment section, served by GET /api/apps/:slug/github-issues/:number/
-// comments when the live fetch is empty/unavailable. Keyed by the mock
-// issue numbers above; obviously-fake "[Mock]" bodies, oldest-first (the
-// same order fetchIssueComments returns), and at least one BOT-authored
-// comment (`usernode-bot`) so the bot-labelling renders. Returns [] for
-// numbers without a mock thread. Strictly a no-op in production.
+// comments when the live fetch is empty/unavailable. Obviously-fake
+// "[Mock]" bodies, oldest-first (the same order fetchIssueComments
+// returns), and at least one BOT-authored comment (`usernode-bot`) so the
+// bot-labelling renders. Strictly a no-op in production.
+//
+// EVERY issue number gets a thread, not just the three mock ones. It used
+// to be a lookup table keyed by stagingMockIssues' own 900001-900003, and
+// `[]` for anything else — which meant the fallback both callers describe
+// as "so the section is reviewable" did nothing for a REAL issue. That is
+// the common case on a prod-cloned staging preview: the board's freshly
+// triaged requests carry no replies yet, their live thread comes back
+// empty, and the substitution had no row to make. Every feed slot rendered
+// blank, and the declared check that asserts a rendered relative age
+// (#1585) had nothing to find — it failed on every proposal, against code
+// none of them had touched.
+//
+// The generic thread is deterministic in the issue number, so a preview and
+// a declared check see the same two rows on every run; only the ages are
+// clock-relative, which is the thing those rows exist to exercise.
+// Is `number` one of stagingMockIssues' own rows? The repo URL only shapes
+// each row's htmlUrl, so any base answers the membership question.
+function isStagingMockIssueNumber(number) {
+  const n = Number(number);
+  return stagingMockIssues('https://github.com/example/app').some((i) => i.number === n);
+}
+
 function stagingMockIssueComments(number) {
   const n = Number(number);
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const daysAgo = (d) => hoursAgo(d * 24);
+  // #1808: every thread opens with three rows whose stamps land in the three
+  // branches the comment thread formats. An earlier year (fixed, so that
+  // branch is reachable for as long as this fixture lives), earlier this
+  // year, and inside the last few days. Before the fix all three read as a
+  // bare time of day, so the ladder is what makes the change reviewable:
+  // read down a thread and the stamps have to answer "when".
+  const stampLadder = () => ([
+    {
+      author: 'staging-tester',
+      body: '[Mock] Filing this from an earlier year, so the stamp on it has to carry one.',
+      createdAt: '2024-03-05T09:15:00Z',
+    },
+    {
+      author: 'usernode-bot',
+      body: '[Mock] Picked this up about six weeks ago, far enough back that the day matters more than the hour.',
+      createdAt: daysAgo(40),
+    },
+    {
+      author: 'another-tester',
+      body: '[Mock] And a reply from a few days ago, for the middle of the range.',
+      createdAt: daysAgo(3),
+    },
+  ]);
   const threads = {
     900001: [
+      ...stampLadder(),
       { author: 'staging-tester', body: '[Mock] I can reproduce this every time on Firefox — the toggle flips back to light as soon as I reload.', createdAt: hoursAgo(40) },
       { author: 'usernode-bot', body: '[Mock] Thanks for the report. Is the preference meant to persist per-device or per-account? Defaulting to per-device unless you say otherwise.', createdAt: hoursAgo(36) },
       { author: 'staging-tester', body: '[Mock] Per-device is fine — just make it survive a refresh.', createdAt: hoursAgo(30) },
     ],
     900002: [
+      ...stampLadder(),
       { author: 'another-tester', body: '[Mock] +1, Y/N shortcuts would be a huge time-saver during a voting spree.', createdAt: hoursAgo(20) },
       { author: 'usernode-bot', body: '[Mock] Should the shortcut act on the focused card only, or the top card in the list? Going with the focused card.', createdAt: hoursAgo(18) },
     ],
     900003: [
+      ...stampLadder(),
       { author: 'staging-tester', body: '[Mock] Happens on my iPhone SE in portrait — the Vote and Preview buttons spill off the right edge.', createdAt: hoursAgo(28) },
     ],
   };
-  return threads[n] || [];
+  if (threads[n]) return threads[n];
+  // A number that is not an issue at all (an unparseable :number reaches
+  // the first caller before Number.isFinite is consulted) gets nothing.
+  if (!Number.isFinite(n) || n <= 0) return [];
+  return [
+    ...stampLadder(),
+    {
+      author: 'staging-tester',
+      body: `[Mock] Staging stand-in for issue #${n}: the live thread came back `
+        + 'empty or unreachable from this preview container, so this is what the '
+        + 'comment section renders instead.',
+      createdAt: hoursAgo(26),
+    },
+    {
+      author: 'usernode-bot',
+      body: '[Mock] Replies you see here are fixtures, not the real thread. '
+        + 'Staging only, and never served in production.',
+      createdAt: hoursAgo(5),
+    },
+  ];
 }
 
 // Pick the "In progress" chip's link destination from an issue's live
@@ -685,6 +752,20 @@ function issueRoutes(config) {
         if (proposal.kind === 'close_issue' && proposal.status === 'closed'
             && proposal.payload && proposal.payload.appliedAt) {
           proposal.row_type = 'close_issue';
+          // /merged also attaches the closed issue's priority/assignee/
+          // category tally to these rows (a task moved to Done keeps its
+          // chips); mirror it here so the by-id recovery path stays
+          // shape-interchangeable with the stream.
+          const closedRef = parseInt(proposal.payload.issueNumber, 10);
+          if (Number.isInteger(closedRef) && closedRef > 0) {
+            const closedAttrs = await topicAttrs.summarizeForTargets(
+              pool, appId, 'issue', [closedRef], userId
+            );
+            const s = closedAttrs.get(closedRef) || topicAttrs.emptySummary();
+            proposal.priority = s.priority;
+            proposal.assignee = s.assignee;
+            proposal.category = s.category;
+          }
         }
       }
 
@@ -845,7 +926,7 @@ function issueRoutes(config) {
         const parsed = parseOwnerRepo(app.repo_url);
         if (!github.isEnabled() || !parsed) {
           return res.status(422).json({
-            error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+            error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
           });
         }
         const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -899,7 +980,7 @@ function issueRoutes(config) {
           return res.status(403).json({ error: 'Full admin access required' });
         }
         if (!github.isEnabled()) {
-          return res.status(422).json({ error: 'GitHub is not configured — campaigns cannot run' });
+          return res.status(422).json({ error: 'GitHub is not configured, so campaigns cannot run' });
         }
         const campaignTitle = typeof title === 'string' ? title.trim() : '';
         const instructions = typeof payload?.instructions === 'string' ? payload.instructions.trim() : '';
@@ -1266,7 +1347,8 @@ function issueRoutes(config) {
       const { rows: headlessRows } = await pool.query(
         `SELECT DISTINCT ON (cs.headless_issue_number)
                 cs.headless_issue_number AS n, cs.id, cs.headless_status,
-                cs.headless_outcome, cs.staging_url, cs.pr_number, u.username
+                cs.headless_outcome, cs.staging_url, cs.pr_number, u.username,
+                cs.user_id
            FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.app_id = $1 AND cs.is_headless = TRUE
             AND cs.headless_status IN ('generating', 'ready')
@@ -1302,6 +1384,12 @@ function issueRoutes(config) {
         status: r.headless_status,
         outcome: r.headless_outcome,
         username: r.username,
+        // #1372: whether the VIEWER started this run. `username` cannot
+        // stand in for it — comparing display names client-side is not an
+        // authorization answer, and the client needs a real one here: the
+        // question-outcome button navigates into the run's own session,
+        // which /api/sessions/:id serves only to its owner.
+        mine: r.user_id === req.user.id,
         mySessionId: myCloneByHeadlessId.get(r.id) || null,
         stagingUrl: r.staging_url || null,
         prNumber: r.pr_number || null,
@@ -1443,6 +1531,10 @@ function issueRoutes(config) {
               status: m.status,
               outcome: m.outcome,
               username: 'staging-tester',
+              // No chat_sessions row backs these numbers, so the run-session
+              // navigation has nothing to open — the mock exercises the
+              // not-my-run path on purpose.
+              mine: false,
               mySessionId: null,
               stagingUrl: null,
               prNumber: null,
@@ -1697,6 +1789,22 @@ function issueRoutes(config) {
         return res.json({ comments: clipped.comments, truncated: clipped.truncated });
       }
 
+      // Staging demo mode (?demo=1) on one of the MOCK rows: the page is on
+      // fixtures by choice — the list route appends these rows for it — so
+      // the thread is the fixture too, served without the live round trip.
+      // No real issue has these numbers, so the live fetch can only come
+      // back empty and fall through to the same mocks; what it costs is
+      // time. From a preview container whose outbound fetch hangs, that is
+      // the whole ISSUES_FETCH_TIMEOUT_MS, and the check runner polls a
+      // presence assertion for five seconds after the page settles
+      // (capture/capture.js ASSERT_MAX_MS) — which is exactly how the
+      // declared issue-page check found no comment bubbles on staging while
+      // passing locally, where GitHub is off and the mocks are immediate.
+      if (IS_STAGING && req.query.demo === '1' && isStagingMockIssueNumber(number)) {
+        const clipped = github.clipIssueComments(stagingMockIssueComments(number));
+        return res.json({ comments: clipped.comments, truncated: clipped.truncated });
+      }
+
       const raw = await github.fetchIssueComments(parsed.owner, parsed.repo, number);
       let { comments, truncated } = github.clipIssueComments(raw.comments, { wasTruncated: raw.truncated });
 
@@ -1765,7 +1873,7 @@ function issueRoutes(config) {
       const parsed = parseOwnerRepo(app.repo_url);
       if (!github.isEnabled() || !parsed) {
         return res.status(422).json({
-          error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
         });
       }
       const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -1883,7 +1991,7 @@ function issueRoutes(config) {
       const parsed = parseOwnerRepo(app.repo_url);
       if (!github.isEnabled() || !parsed) {
         return res.status(422).json({
-          error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
         });
       }
       const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -1942,9 +2050,11 @@ function issueRoutes(config) {
   // creates it, any later click renews it (fresh TTL clock), other
   // users' claims are untouched and irrelevant (no 409, ever). The
   // target must be a currently-open GitHub issue — same positive-
-  // confirmation policy as the bounty route above. Claims are platform-
-  // local: no GitHub write. Expiry is a read-time filter in the
-  // /github-issues enrichment (ISSUE_CLAIM_TTL_DAYS).
+  // confirmation policy as the bounty route above. A successful claim also
+  // moves the caller's assignee vote to their own username, so taking the
+  // work and assigning it are one gesture. Both writes are platform-local:
+  // no GitHub write. Expiry is a read-time filter in the /github-issues
+  // enrichment (ISSUE_CLAIM_TTL_DAYS).
   // ----------------------------------------------------------------
   router.post('/api/apps/:slug/github-issues/:number/claim', async (req, res) => {
     const issueNumber = parseInt(req.params.number, 10);
@@ -1964,7 +2074,7 @@ function issueRoutes(config) {
       const parsed = parseOwnerRepo(app.repo_url);
       if (!github.isEnabled() || !parsed) {
         return res.status(422).json({
-          error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
         });
       }
       const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
@@ -1992,6 +2102,15 @@ function issueRoutes(config) {
         [app.id, issueNumber, req.user.id]
       );
       const created = !!rows[0]?.created;
+
+      // #1648: claiming is an explicit statement that the caller is taking
+      // the issue, so mirror it into the existing community-voted assignee
+      // field. Do this on renewals too: re-claiming repairs a missing or
+      // independently changed self-assignment. Releasing remains separate —
+      // it must not erase metadata that the user may have edited afterward.
+      await topicAttrs.castVote(
+        pool, app.id, 'issue', issueNumber, 'assignee', req.user.username, req.user.id
+      );
 
       if (created) {
         // On-the-record note in the issue's own discussion thread (which
@@ -2731,8 +2850,8 @@ async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, 
 
       resolved.push(row.id);
       const msg = cause?.kind === 'pr-merge'
-        ? `Close proposal for issue #${n} resolved automatically — PR #${cause.prNumber} closed the issue`
-        : `Close proposal for issue #${n} resolved automatically — the issue was closed on GitHub`;
+        ? `Close proposal for issue #${n} resolved automatically: PR #${cause.prNumber} closed the issue`
+        : `Close proposal for issue #${n} resolved automatically: the issue was closed on GitHub`;
       await sendSystemMessage(pool, row.app_id, msg, 'system')
         .catch((err) => log.warn('issues', 'Superseded chat message failed', { err: err.message }));
       await sendSystemMessage(pool, row.app_id, msg, 'system',
@@ -3085,7 +3204,7 @@ async function maybeApplyMaintenanceCampaignProposal(config, pool, issue, option
     ? `by admin override (${options.forceBy?.username || 'admin'})`
     : `by group vote (${upCount}/${required})`;
   const startedMsg = `Maintenance campaign "${issue.payload?.title || issue.title}" approved ${appliedHow}. `
-    + 'The platform is now opening one PR per app — progress on the campaign dashboard.';
+    + 'The platform is now opening one PR per app. Progress is on the campaign dashboard.';
   await sendSystemMessage(pool, issue.app_id, startedMsg, 'system')
     .catch((err) => log.warn('issues', 'Campaign chat msg failed', { err: err.message }));
   await sendSystemMessage(pool, issue.app_id, startedMsg, 'system',

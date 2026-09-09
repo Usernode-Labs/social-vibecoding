@@ -1,7 +1,58 @@
 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>dApps</title>
+  <!-- THE PLATFORM'S NAME, not "dApps". This is the title the SERVICE WORKER
+       serves: public/index.html is precached, so a cached load shows it in the
+       tab, the task switcher and the native AppBar until the SPA routes and
+       calls App.setHeaderTitle('Social Vibecoding'). "dApps" is the name this
+       shell had before the platform had one, and every other surface —
+       manifest.webmanifest, the header on home, the landing page — says
+       Social Vibecoding. A cached document that names the product something
+       nothing else calls it is the discontinuity, not just the delay. -->
+  <title>Social Vibecoding</title>
+  <!-- The browser-chrome colour, and the ground the shell paints on before
+       any stylesheet has loaded. Both live UP HERE, ahead of the theme
+       module, because that module rewrites the meta from the resolved theme
+       and the critical style has to beat the compiled Tailwind sheet (the LAST
+       stylesheet in this head, by a contract documented on its own link). The
+       value is a starting point only — a dark-mode viewer's first paint is
+       corrected by Theme.apply() below, in the same head-blocking pass that
+       adds `.dark`, so nothing flashes either way. -->
+  <meta name="theme-color" content="#f4f2e4">
+  <style>
+    /* WHY THIS IS INLINE AND NOT IN app.css. The page ground is a Tailwind
+       utility on <body> (`bg-zinc-100 dark:bg-zinc-950`, see
+       frontend/scripts/build-shell.mjs), and the stylesheet that defines it
+       is the last resource in this head. Everything before it paints against
+       the browser's default canvas — WHITE — so every load flashed white
+       before settling on #eaeaea, and a dark-mode load flashed white before
+       going near-black. The service worker makes that MORE visible rather
+       than less: a shell served from cache paints immediately, so the gap
+       between "there is a document" and "there is a stylesheet" is where the
+       whole first impression happens.
+       Set on <html> so it also fills the rubber-band area and any strip the
+       body's own box does not cover. Duplicating the two values is the point:
+       this rule has to be true with no stylesheet at all.
+
+       `color-scheme` rides along because a background alone does not settle
+       what the USER AGENT paints. It is what tells the engine which of its
+       own two palettes to use, and it reaches three surfaces no declaration
+       of ours can: the canvas underneath the document (the strip a WebView
+       shows between navigation start and the first painted frame — the white
+       flash the Usernode Flutter shell shows on cold launch), the scrollbars,
+       and the default rendering of form controls, which without it stay
+       light-on-light inside a near-black shell.
+
+       CLASS-KEYED, NOT `light dark`. The bare two-value form delegates the
+       choice to the OS, and the shell's Light/Dark override is a class on
+       <html> that no OS preference can see — so a viewer who picks Light on
+       a dark phone would get dark scrollbars and dark <select> menus on a
+       #eaeaea page. Keyed off `.dark` it tracks the resolved theme instead,
+       and Theme.apply() below adds that class in the same head-blocking pass
+       that fixes the background. */
+    html { background-color: #f4f2e4; color-scheme: light; }
+    html.dark { background-color: #0b0d1b; color-scheme: dark; }
+  </style>
   <script>
     // Theme module — Light / Dark / System mode selector.
     // Storage contract:
@@ -29,7 +80,18 @@
       const KEY = 'theme';
       const _listeners = [];
 
+      // Screenshot-state deep link `?shot=dark` / `?shot=light`: pins the
+      // mode for THIS LOAD only, nothing stored. The capture runner and the
+      // dapp.json checks reach the page by URL with a fresh profile and no
+      // way to press the drawer's theme segment, so without this every
+      // screenshot of a dark-mode change shows the light shell. Read here
+      // rather than in apply() so the drawer's segments agree with the page.
+      let shot = null;
+      try { shot = new URLSearchParams(window.location.search).get('shot'); } catch {}
+      const PINNED = (shot === 'dark' || shot === 'light') ? shot : null;
+
       function get() {
+        if (PINNED) return PINNED;
         try {
           const val = window.localStorage.getItem(KEY);
           if (val === 'light' || val === 'dark') return val;
@@ -38,6 +100,17 @@
           return 'system';
         }
       }
+
+      // The two page grounds: THE WALLPAPER'S CREAM, and that cream
+      // inverted — the homescreen design's page and its dark derivation,
+      // which app.css paints (with its washes and star, re-tuned for dark)
+      // on the launcher, the app view and their peer screens; messages and
+      // the admin console keep the body's zinc-100 / zinc-950 on top of it.
+      // The critical <style> above and the theme-color meta both need these
+      // BEFORE any stylesheet has loaded, which is the whole point.
+      // public/manifest.webmanifest carries the light one too, for the
+      // standalone install's splash.
+      const GROUND = { light: '#f4f2e4', dark: '#0b0d1b' };
 
       function apply() {
         const mode = get();
@@ -48,6 +121,20 @@
         } else {
           document.documentElement.classList.remove('dark');
         }
+        // THE BROWSER CHROME IS PART OF THE PAGE'S BACKGROUND, and it was
+        // pinned to the dark ground for everybody. `theme-color` paints the
+        // address bar on Android, the status-bar strip and the rubber-band
+        // area on iOS, and the window ground a standalone install shows
+        // before the document paints — so a light-mode viewer got a black
+        // band above a #eaeaea page on every load and every overscroll.
+        // Written from the RESOLVED theme rather than left to a
+        // `media="(prefers-color-scheme: …)"` pair, because the shell's own
+        // Light/Dark override is a class on <html> that no media query can
+        // see: a viewer who picks Light on a dark OS has to get the light
+        // one. This runs before first paint on load and again on every
+        // set() / OS change, so the chrome tracks the page it frames.
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', wantDark ? GROUND.dark : GROUND.light);
       }
 
       function set(mode) {
@@ -88,14 +175,199 @@
       return { get, set, apply, onChange };
     }());
   </script>
+  <script>
+    // ── The boot record: what went wrong, for an inspector to read ───────
+    //
+    // When the boot fails, it fails INVISIBLY: every island is left as the
+    // empty markup the prerender shipped, and the screen the router reveals
+    // has nothing in it. This block captures every error from as early in
+    // the document as a script can run, so a reader with an inspector
+    // attached, or a tester with a console, can ask what happened. It is
+    // inline and classic, with no imports, no framework and no stylesheet,
+    // because the things it records are precisely the bundle, the framework
+    // and the stylesheet failing.
+    //
+    // It PAINTS NOTHING. An earlier version judged the page by its pixels
+    // and painted a "did not finish loading" panel over anything it took for
+    // blank. On real devices it accused pages that were fine, and a
+    // diagnostic that lies is worse than none, so the judgement and the
+    // panel are gone. Everything here is passive:
+    //
+    //   window.__unBoot.errors    thrown errors, rejected promises, scripts
+    //                             and stylesheets that failed to load, and
+    //                             boot steps that threw (frontend/src/lib/
+    //                             boot-guard.ts pushes into the same list)
+    //   window.__unBoot.steps     boot steps that completed, with when
+    //   window.__unBoot.snapshot()  the document's state as one string, for
+    //                             pasting out of a console
+    //
+    // Nothing in it prints a token: query values are never read, only their
+    // keys, and the fragment is cut at its first segment.
+    (function () {
+      'use strict';
+      var W = (window.__unBoot = window.__unBoot || { errors: [], steps: [] });
+      if (!Array.isArray(W.errors)) W.errors = [];
+      if (!Array.isArray(W.steps)) W.steps = [];
+      function push(step, message, stack) {
+        try {
+          W.errors.push({ step: step, message: String(message || ''), stack: stack || '' });
+        } catch (e) { /* a full or frozen array is not worth a throw */ }
+      }
+      window.addEventListener('error', function (e) {
+        push('error', (e && e.message) || 'script error', e && e.error && e.error.stack);
+      });
+      // A script or stylesheet that FAILED TO LOAD fires `error` on its own
+      // element and it does not bubble, so the listener above never hears
+      // it. Capture phase does. A thrown error has `window` as its target
+      // and is already recorded above.
+      window.addEventListener('error', function (e) {
+        var t = e && e.target;
+        if (!t || t === window || !t.tagName) return;
+        var url = '';
+        try { url = String(t.src || t.href || '').split('?')[0].split('#')[0]; } catch (x) { url = ''; }
+        push('resource', String(t.tagName).toLowerCase() + ' failed to load: ' + (url || '(no url)'));
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        var r = e && e.reason;
+        push('unhandledrejection', (r && r.message) || String(r), r && r.stack);
+      });
+
+      function nameOf(el) {
+        if (!el) return 'null';
+        var t = (el.tagName || '?').toLowerCase();
+        if (el.id) return t + '#' + el.id;
+        var c = el.classList && el.classList.length ? el.classList[0] : '';
+        return c ? t + '.' + c : t;
+      }
+      function safeRoute() {
+        var keys = [];
+        try {
+          new URLSearchParams(window.location.search).forEach(function (v, k) { keys.push(k); });
+        } catch (e) { /* no URL API */ }
+        var hash = window.location.hash || '';
+        var m = /^(#[^/]*)(\/.*)?$/.exec(hash);
+        if (m) hash = m[1] + (m[2] ? '/...' : '');
+        return window.location.pathname + (keys.length ? '?' + keys.join(',') : '') + hash;
+      }
+      function samplePoints() {
+        var w = window.innerWidth || 0;
+        var h = window.innerHeight || 0;
+        if (!(w > 0 && h > 0)) return [];
+        return [
+          [w * 0.5, h * 0.1], [w * 0.5, h * 0.3], [w * 0.5, h * 0.5],
+          [w * 0.5, h * 0.7], [w * 0.25, h * 0.4], [w * 0.75, h * 0.4],
+        ];
+      }
+      // Every line is its own try/catch and answers "?" on failure: a
+      // diagnostic that throws is the joke of the file.
+      W.snapshot = function () {
+        var lines = [];
+        function add(label, fn) {
+          var value = '?';
+          try { value = fn(); } catch (e) { value = '?'; }
+          lines.push(label + ': ' + value);
+        }
+        add('at', function () { return Math.round(window.performance.now()) + 'ms'; });
+        add('document', function () {
+          return document.readyState + ', ' + document.visibilityState + ', '
+            + (window.navigator.onLine ? 'online' : 'offline') + ', '
+            + window.innerWidth + 'x' + window.innerHeight;
+        });
+        add('route', safeRoute);
+        add('on top', function () {
+          var pts = samplePoints();
+          var out = [];
+          for (var i = 0; i < pts.length; i++) {
+            out.push(nameOf(document.elementFromPoint(pts[i][0], pts[i][1])));
+          }
+          return out.join(' ') || 'no viewport';
+        });
+        add('screens shown', function () {
+          var els = document.querySelectorAll('[id$="-screen"], #app-view');
+          var out = [];
+          for (var i = 0; i < els.length; i++) {
+            var el = els[i];
+            if (el.hidden || (el.classList && el.classList.contains('hidden'))) continue;
+            var text = '';
+            try { text = (el.innerText || '').trim(); } catch (e) { text = ''; }
+            out.push(el.id + '(text=' + text.length + ')');
+          }
+          return out.length ? out.join(' ') : 'none';
+        });
+        add('globals', function () {
+          var names = ['App', 'AuthScreens', 'Home', 'Offline', 'NativeChrome', 'UsernodeReact'];
+          var have = [];
+          var miss = [];
+          for (var i = 0; i < names.length; i++) (window[names[i]] ? have : miss).push(names[i]);
+          var mount = window.UsernodeReact && window.UsernodeReact.mount;
+          (mount && mount.ensure ? have : miss).push('UsernodeReact.mount');
+          return 'present ' + (have.join(',') || '-') + '; missing ' + (miss.join(',') || '-');
+        });
+        add('react', function () {
+          var keys = Object.keys(document.body || {});
+          for (var i = 0; i < keys.length; i++) {
+            if (keys[i].indexOf('__reactContainer') === 0) return 'adopted the document';
+          }
+          return 'has NOT adopted the document';
+        });
+        add('boot steps', function () {
+          var s = W.steps || [];
+          if (!s.length) return 'none completed';
+          var out = [];
+          for (var i = 0; i < s.length; i++) out.push(s[i].step + '@' + s[i].at + 'ms');
+          return out.join(' ');
+        });
+        add('errors', function () {
+          var errs = W.errors || [];
+          if (!errs.length) return 'none recorded';
+          var out = [];
+          for (var i = 0; i < errs.length && i < 8; i++) out.push('[' + errs[i].step + '] ' + errs[i].message);
+          return out.join(' | ');
+        });
+        add('session', function () {
+          var A = window.App;
+          if (!A) return 'no App';
+          return (A.user ? 'user held' : 'no user')
+            + (A.user && A.user.hasPlatformAccess === false ? ' (no platform access)' : '')
+            + ', fromSnapshot=' + !!A._sessionFromSnapshot
+            + ', authedBooted=' + !!A._authedBooted
+            + ', authScreen=' + ((window.AuthScreens && window.AuthScreens._current) || 'none');
+        });
+        add('interiors asked for', function () {
+          var m = window.__usernodeMounted && window.__usernodeMounted.mounted;
+          var ks = m ? Object.keys(m) : [];
+          return ks.length ? ks.join(',') : 'none';
+        });
+        add('visibility published', function () {
+          var v = window.__usernodeVisibility && window.__usernodeVisibility.visible;
+          var out = [];
+          if (v) for (var k in v) if (v[k]) out.push(k);
+          return out.length ? out.join(',') : 'none';
+        });
+        add('storage', function () {
+          try { void window.localStorage.length; return 'readable'; } catch (e) { return 'throws'; }
+        });
+        add('worker', function () {
+          var sw = window.navigator.serviceWorker;
+          return sw && sw.controller ? 'controlling this page' : 'not controlling this page';
+        });
+        add('html class', function () {
+          return (document.documentElement.className || '').slice(0, 100) || '-';
+        });
+        return lines.join('\n');
+      };
+    }());
+  </script>
   <script src="/usernode-bridge.js"></script>
   <script>
-    // Hide the header title when running as the top frame of the
-    // Usernode Flutter WebView. The native shell already shows the
-    // app/screen name in its own header chrome, so the in-page title
-    // would just be redundant noise. We toggle a `.in-native-webview`
-    // class on <html> rather than waiting until app.js runs so the
-    // title never flashes in before being hidden — the bridge sets
+    // Mark the document when running as the top frame of the Usernode
+    // Flutter WebView. This used to hide the header title as well — the
+    // shell shows the screen name in its own AppBar — but on a device
+    // that read as a screen with no title, so the in-page one is drawn
+    // there now too (see css/app.css). The class still gates the
+    // safe-area and native-performance rules, so it is applied the same
+    // way: on <html>, before app.js runs, so nothing flashes — the
+    // bridge sets
     // `window.usernode.isNative` synchronously at load time based on
     // the presence of the injected `Usernode` JS channel.
     // `?un-native-webview=1` forces the same class from a plain URL. The
@@ -197,8 +469,13 @@
   <!-- PWA (#487): installable shell + read-only offline mode. The service
        worker is registered by src/lib/service-worker.ts, from the React
        bundle loaded at the end of this head (#1078 retired the
-       /js/offline.js module that used to do it). -->
+       /js/offline.js module that used to do it).
+       The `theme-color` meta this block used to carry is at the TOP of this
+       head now, because the theme module rewrites it — see the note there.
+       The manifest's own `background_color` is the install splash's and is
+       necessarily static (a manifest is fetched with no theme to read), so it
+       states the light ground, which is what the majority of loads settle
+       on. -->
   <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="#08080f">
   <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
   <link rel="apple-touch-icon" href="/icons/icon-192.png">

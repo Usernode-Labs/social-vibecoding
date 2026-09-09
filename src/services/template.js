@@ -1,3 +1,6 @@
+const nodeAppPackage = require('../templates/node-app/package.json');
+const nodeAppLock = require('../templates/node-app/package-lock.json');
+
 // Forwarder snippet injected into every scaffolded app's public/index.html.
 // Captures console.log/info/warn/error/debug + uncaught errors +
 // unhandled promise rejections and posts them to `window.parent` via
@@ -114,12 +117,12 @@ function getConnectorScaffoldFiles() {
       // rules — so the platform ships them where every user of every app
       // picks them up with no setup: the repo it scaffolds.
       //
-      // Three entries, NOT `mcp__${CONNECTOR_SERVER_NAME}__*`. The
-      // `anthropic/requiresUserInteraction` marking that protects
-      // submit_work needs Claude Code >= 2.1.199, and an older client
-      // ignores it — so a whole-server allow would silently auto-approve a
-      // change reaching a group vote. Two globs plus one literal can only
-      // ever match reads, on every version.
+      // Three entries, NOT `mcp__${CONNECTOR_SERVER_NAME}__*`, and the
+      // reason is the scaffold rather than the tools: this file is committed
+      // into every app repo, and "every call this connector can make" is not
+      // something a repo should grant on a stranger's machine on their
+      // behalf. Reads are reviewable in the trust dialog; the rest is the
+      // user's own call, on their own account.
       //
       // JSON has no comments, so the reasoning lives in .claude/README.md
       // next to it.
@@ -146,12 +149,16 @@ a group vote — end up buried in that noise and approved by reflex.
 ${JSON.stringify({ permissions: { allow: CONNECTOR_ALLOW_RULES } }, null, 2)}
 \`\`\`
 
-Deliberately not \`mcp__${CONNECTOR_SERVER_NAME}__*\`. Usernode also marks its
-acting tools \`anthropic/requiresUserInteraction\`, which forces a prompt no
-allow rule can skip — but that needs Claude Code 2.1.199 or later, and older
-versions ignore it. A whole-server rule would therefore auto-approve
-\`submit_work\` on an older client. These three entries can only ever match
-reads, on every version.
+Deliberately not \`mcp__${CONNECTOR_SERVER_NAME}__*\`. This file is committed
+into the repo, so it grants on behalf of everyone who opens it — and "every
+call this connector can make" is not something one repo should decide for a
+stranger's machine. These three entries can only ever match reads.
+
+If you want the acting calls (\`submit_work\`, \`create_request\`,
+\`prepare_work\`, \`start_platform_build\`, \`submit_platform_build\`) allowed
+too, grant that on your own account rather than here — set the connector to
+allow-always in Claude's connector settings, or add the rules to your own
+\`~/.claude/settings.json\`, where the decision covers your machine only.
 
 ## You will still see one trust dialog
 
@@ -230,6 +237,26 @@ for the whole story, including what to do if you are still being prompted
 (usually: your connector is registered under a different name than the rules
 assume).
 
+## Starter template
+
+The screen this app currently ships — the hero, the "What's already
+working" card, and the Press! example (the demo markup in
+\`public/index.html\`, the \`/api/press\` and \`/api/leaderboard\` routes, and
+the \`presses\` table bootstrap in \`server.js\`) — is placeholder content
+from the Usernode starter template, not product intent.
+
+When the user asks for their first real feature, REPLACE the template
+screen rather than building alongside it:
+
+- remove the \`usernode-starter-notice@1\` block in \`public/index.html\`
+  (both sentinel comments and everything between them),
+- remove or repurpose the "Try the example" card, its demo endpoints and
+  the \`presses\` table as appropriate,
+- rewrite \`README.md\` to describe the actual app.
+
+Keep the \`usernode-dev-console@1\` forwarder \`<script>\` when rewriting the
+HTML — that block is platform infrastructure, not template content.
+
 If a rule below this line conflicts with the hosted conventions, the
 hosted conventions win. This file is **app-specific** — write down
 things about *this* app that belong in the repo: product intent,
@@ -251,18 +278,52 @@ dependencies"; etc.)_
 `,
     },
     {
+      path: 'README.md',
+      content: `# ${appName}
+
+> **Starter template** — this repo was scaffolded by Usernode Social
+> Vibecoding. Everything in it is placeholder example code until the
+> app's first real feature is built.
+
+The scaffold is a small working demo that proves the plumbing works:
+
+- **Sign-in** — the server verifies the platform-issued user token
+  (an RS256 JWT) on every request, so the app already knows who is
+  using it. No accounts to build.
+- **Database** — the app has its own private Postgres database; the
+  demo stores button presses in a \`presses\` table.
+- **Live API** — two example routes (\`/api/press\`,
+  \`/api/leaderboard\`) read and write through a real Express server.
+- **Styling** — Tailwind CSS, precompiled by the Dockerfile on every
+  deploy, so there is nothing to rebuild by hand.
+
+## Replacing the template
+
+Open the app on Usernode, tap **Improve** in the header, and describe
+the app you want in plain English — the template will be replaced with
+your real app. You can also run Claude Code against this repo directly;
+start with \`CLAUDE.md\`, which carries the app-specific notes and
+points at the platform rules.
+
+Once the real app exists, rewrite this README to describe it.
+`,
+    },
+    {
       path: 'package.json',
       content: JSON.stringify({
+        ...nodeAppPackage,
         name: slug,
-        version: '1.0.0',
-        private: true,
         description: appName,
-        main: 'server.js',
-        scripts: { start: 'node server.js' },
-        dependencies: {
-          express: '^4.21.0',
-          pg: '^8.13.0',
-          jsonwebtoken: '^9.0.2',
+      }, null, 2),
+    },
+    {
+      path: 'package-lock.json',
+      content: JSON.stringify({
+        ...nodeAppLock,
+        name: slug,
+        packages: {
+          ...nodeAppLock.packages,
+          '': { ...nodeAppLock.packages[''], name: slug },
         },
       }, null, 2),
     },
@@ -278,19 +339,18 @@ dependencies"; etc.)_
 # stays exactly as small as it was.
 FROM node:22-alpine AS css
 WORKDIR /build
+COPY package.json package-lock.json ./
+RUN npm ci --include=dev
 COPY tailwind.config.js ./
 COPY styles ./styles
 COPY public ./public
-RUN npm install tailwindcss@3.4.17 --no-audit --no-fund \\
- && ./node_modules/.bin/tailwindcss \\
-      -c tailwind.config.js -i styles/tailwind-input.css \\
-      -o public/tailwind.css --minify
+RUN npm run build
 
 # Stage 2 — the app itself (unchanged apart from the one COPY at the end).
 FROM node:22-alpine
 WORKDIR /app
-COPY package.json ./
-RUN npm install --production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev
 COPY . .
 # After COPY . . so the compiled stylesheet is not overwritten by the
 # source tree (which deliberately does not contain one).
@@ -305,14 +365,13 @@ CMD ["node", "server.js"]
       path: 'tailwind.config.js',
       content: `// Tailwind config for this app's precompiled stylesheet.
 //
-// The Dockerfile's builder stage runs the Tailwind CLI over the globs below
+// npm run build (Docker or Paketo) runs the Tailwind CLI over the globs below
 // and writes public/tailwind.css, which public/index.html links as
 // /tailwind.css. Nothing is committed — every image build regenerates it.
 //
 // To build it locally (optional; the image build does this for you):
-//   npm install --no-save tailwindcss@3.4.17
-//   npx tailwindcss -c tailwind.config.js -i styles/tailwind-input.css \\
-//     -o public/tailwind.css --minify
+//   npm ci --include=dev
+//   npm run build
 module.exports = {
   // Every file that can contain a class name. Tailwind's extractor is a
   // regex over source text, so it finds class names written as whole
@@ -344,8 +403,8 @@ module.exports = {
       content: `/* Input stylesheet for this app's Tailwind build.
  *
  * Deliberately OUTSIDE public/ so it is never served — the @tailwind lines
- * are build-time directives and mean nothing to a browser. The Dockerfile
- * compiles this to public/tailwind.css.
+ * are build-time directives and mean nothing to a browser. npm run build
+ * compiles this to public/tailwind.css with Docker or Paketo.
  *
  * "base" is the preflight layer (the cross-browser reset). Keep all three
  * layers, in this order; dropping base changes every heading, list and form
@@ -363,6 +422,31 @@ module.exports = {
 .git
 .claude
 node_modules
+public/tailwind.css
+`,
+    },
+    {
+      path: '.gitignore',
+      content: `.env
+.env.*
+node_modules/
+public/tailwind.css
+`,
+    },
+    {
+      path: 'project.toml',
+      content: `[_]
+schema-version = "0.2"
+
+[io.buildpacks]
+exclude = [
+  "node_modules",
+  "public/tailwind.css",
+]
+
+[[io.buildpacks.build.env]]
+name = "BP_NODE_RUN_SCRIPTS"
+value = "build"
 `,
     },
     {
@@ -513,22 +597,23 @@ app.get('*', (req, res) => {
   if (!req.user) {
     // Deep-link pass-through (platform #743): carry the visited
     // path+query into the chromeless view so share links land on the
-    // shared screen, not Home. \`path\` must stay the FINAL fragment
-    // param and its value goes verbatim (wire-encoded; the shell
-    // validates relative-only before use). The character test keeps the
+    // shared screen, not Home. The clean platform route stores \`path\`
+    // as one encoded query value so an inner ?, &, or = survives. The
+    // shell decodes and validates it as relative-only before use. The
+    // character test keeps the
     // value attribute-safe for the landing anchor below — anything
     // unusual falls back to the bare link.
     const deepPath = /^\\/[A-Za-z0-9\\-._~!$&()*+,;=:@\\/%?]*$/.test(req.originalUrl)
-      ? '?path=' + req.originalUrl : '';
+      ? '?path=' + encodeURIComponent(req.originalUrl) : '';
     if (req.get('sec-fetch-dest') === 'document') {
-      return res.redirect(302, '${PLATFORM_BASE_URL}/#app/${slug}/full' + deepPath);
+      return res.redirect(302, '${PLATFORM_BASE_URL}/app/${slug}/full' + deepPath);
     }
     return res.status(401).send(\`<!doctype html><meta charset=utf-8><title>Open in Usernode</title>
 <body style="font-family:system-ui;background:#09090b;color:#e4e4e7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
   <div style="max-width:24rem;padding:2rem;text-align:center">
     <h1 style="font-size:1.25rem;margin:0 0 0.5rem">Open this app inside Usernode</h1>
     <p style="color:#a1a1aa;font-size:0.9rem;margin:0 0 1.25rem">This page is served via the platform; direct visits aren't authenticated.</p>
-    <a href="${PLATFORM_BASE_URL}/#app/${slug}/full\${deepPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Usernode</a>
+    <a href="${PLATFORM_BASE_URL}/app/${slug}/full\${deepPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Usernode</a>
   </div>
 </body>\`);
   }
@@ -562,8 +647,8 @@ start().catch(err => { console.error(err); process.exit(1); });
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%237c3aed'/><circle cx='50' cy='50' r='18' fill='white'/></svg>">
   <!-- Tailwind, PRECOMPILED for this app (was cdn.tailwindcss.com's
        in-browser engine plus an inline tailwind.config here). The config
-       moved to tailwind.config.js in the repo root; the Dockerfile's builder
-       stage compiles it to public/tailwind.css on every image build, so the
+       moved to tailwind.config.js in the repo root; npm run build compiles
+       it to public/tailwind.css with Docker or Paketo on every image build, so the
        stylesheet is regenerated from THIS commit's markup every deploy and
        can never drift behind the code. ~7 KB of CSS instead of a ~400 KB
        engine, and no flash of unstyled content.
@@ -574,19 +659,67 @@ start().catch(err => { console.error(err); process.exit(1); });
        <script src="${PLATFORM_BASE_URL}/usernode-tailwind/v1/tailwind.js"></script> -->
   <link rel="stylesheet" href="/tailwind.css">
 </head>
-<body class="bg-zinc-950 text-zinc-100 min-h-screen flex flex-col items-center justify-center gap-8 p-4">
-  <h1 class="text-2xl font-bold">${escapeHtml(appName)}</h1>
+<body class="bg-zinc-950 text-zinc-100 min-h-screen">
+  <main class="max-w-md mx-auto px-4 py-10 flex flex-col gap-6">
 
-  <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
-    Press!
-  </button>
+    <!-- usernode-starter-notice@1 — starter-template messaging. When building
+         the user's real app, replace this whole screen and delete this block,
+         both sentinel comments included. -->
+    <section class="rounded-2xl border border-violet-500/30 bg-gradient-to-b from-violet-600/20 to-transparent p-6 text-center flex flex-col items-center gap-3">
+      <span class="inline-block rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold uppercase tracking-wide px-3 py-1">Starter template</span>
+      <h1 class="text-2xl font-bold">${escapeHtml(appName)}</h1>
+      <p class="text-sm text-zinc-300 leading-relaxed">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
+      <p class="text-sm text-zinc-300 leading-relaxed">Tap <strong class="text-violet-300 font-semibold">Improve</strong> in the header, describe what you'd like in plain English, and it will be turned into your real app.</p>
+    </section>
 
-  <div id="count" class="text-lg text-zinc-400">0 total presses</div>
+    <section>
+      <h2 class="text-sm font-medium text-zinc-500 mb-2 px-1">What's already working</h2>
+      <div class="rounded-xl border border-zinc-800 bg-zinc-900/60 divide-y divide-zinc-800">
+        <div class="flex items-start gap-3 p-4">
+          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+          <div>
+            <p class="text-sm font-semibold text-zinc-100">Sign-in</p>
+            <p class="text-sm text-zinc-400">You're signed in through Usernode automatically — no accounts to build.</p>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-4">
+          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+          <div>
+            <p class="text-sm font-semibold text-zinc-100">Database</p>
+            <p class="text-sm text-zinc-400">Your app has its own private database, ready to store things.</p>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 p-4">
+          <svg class="w-5 h-5 text-violet-400 shrink-0 mt-0.5" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fill-rule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-7 7a1 1 0 0 1-1.4 0l-3-3a1 1 0 1 1 1.4-1.4L9 11.6l6.3-6.3a1 1 0 0 1 1.4 0Z" clip-rule="evenodd"/></svg>
+          <div>
+            <p class="text-sm font-semibold text-zinc-100">Live API</p>
+            <p class="text-sm text-zinc-400">The example below talks to a real server — try it.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+    <!-- /usernode-starter-notice@1 -->
 
-  <div class="w-full max-w-sm">
-    <h2 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h2>
-    <div id="leaderboard" class="space-y-1"></div>
-  </div>
+    <section class="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 flex flex-col items-center gap-5">
+      <div class="w-full flex items-baseline justify-between gap-2">
+        <h2 class="text-sm font-medium text-zinc-500">Try the example</h2>
+        <span class="text-xs text-zinc-600">This example will be replaced</span>
+      </div>
+
+      <button id="press-btn" class="w-32 h-32 rounded-full bg-violet-600 hover:bg-violet-500 active:scale-95 transition-all text-white text-xl font-bold shadow-lg shadow-violet-600/30">
+        Press!
+      </button>
+
+      <div id="count" class="text-lg text-zinc-400">0 total presses</div>
+
+      <div class="w-full max-w-sm">
+        <h3 class="text-sm font-medium text-zinc-500 mb-2 text-center">Leaderboard</h3>
+        <div id="leaderboard" class="space-y-1"></div>
+      </div>
+    </section>
+
+    <p class="text-center text-xs text-zinc-600">Built on Usernode — this template screen disappears once you build your real app.</p>
+  </main>
 
   <script>
     const params = new URLSearchParams(window.location.search);

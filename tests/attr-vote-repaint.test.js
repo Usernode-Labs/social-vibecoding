@@ -1,11 +1,11 @@
 // #608: priority/assignee votes must repaint EVERY card surface, not just
-// the list feed. _refreshAttrCards used to touch only #dev-feed /
-// #gc-thread-head / #gc-merged, so in kanban and PM view modes (which mount
-// #dev-kanban-board / #dev-pm instead) a vote updated the cached item but
-// the visible chips stayed stale until a reload. It now delegates to the
-// mode-aware _repaintCards() and then re-anchors the open popover to its
-// chip's new position — closing it when the chip is no longer rendered
-// (e.g. the card dropped off a filtered kanban board).
+// the feed. _refreshAttrCards used to touch only #dev-feed /
+// #gc-thread-head / #gc-merged, so in the board view (which mounts
+// #dev-kanban-board instead) a vote updated the cached item but the visible
+// chips stayed stale until a reload. It now delegates to the mode-aware
+// _repaintCards() and then re-anchors the open popover to its chip's new
+// position — closing it when the chip is no longer rendered (e.g. the card
+// dropped off a filtered kanban board).
 //
 // Same vm-context harness as assignee-avatar-chip.test.js: load app-view.js
 // into a sandbox, stub the globals it reaches, spy on the repaint fns.
@@ -71,7 +71,7 @@ function makeSandbox() {
   return { AppView: sandbox.__AppView, sandbox };
 }
 
-test('_refreshAttrCards delegates to the mode-aware _repaintCards (kanban/PM gap regression)', () => {
+test('_refreshAttrCards delegates to the mode-aware _repaintCards (board gap regression)', () => {
   const { AppView } = makeSandbox();
   let devBodyRepaints = 0;
   let topicRepaints = 0;
@@ -81,7 +81,7 @@ test('_refreshAttrCards delegates to the mode-aware _repaintCards (kanban/PM gap
 
   AppView._refreshAttrCards();
   // The old implementation only touched #dev-feed / #gc-merged directly and
-  // never went through _repaintDevBody, so kanban/PM boards stayed stale.
+  // never went through _repaintDevBody, so the board stayed stale.
   assert.equal(devBodyRepaints, 1);
   assert.equal(topicRepaints, 0); // not on the topic sub-tab
 });
@@ -120,19 +120,26 @@ test('kanban mode: a vote repaint reaches _repaintKanbanBoard', () => {
   assert.equal(boardRepaints, 1);
 });
 
-test('pm mode: a vote repaint reaches _repaintPmView', () => {
+test('a stored PM preference resolves to the board, and repaints it', () => {
+  // THE UI OVERHAUL retired the PM view. A viewer who last left the board in
+  // that mode still has 'pm' in localStorage, and the migration table
+  // (AppView.RETIRED_VIEW_MODES) is what stops them landing on the width
+  // default instead of the nearest surviving surface. The repaint has to
+  // follow the MIGRATED mode, not the stored string.
   const { AppView, sandbox } = makeSandbox();
   sandbox.localStorage = { getItem: () => 'pm', setItem: () => {} };
   sandbox.document = fakeDoc({
     'dev-body': fakeEl(),
-    'dev-pm': fakeEl(),
+    'dev-kanban-filterbar': fakeEl(),
+    'dev-kanban-board': fakeEl(),
   });
-  let pmRepaints = 0;
-  AppView._repaintPmView = () => { pmRepaints += 1; };
+  let boardRepaints = 0;
+  AppView._repaintKanbanBoard = () => { boardRepaints += 1; };
   AppView._reanchorAttrPopover = () => {};
 
+  assert.equal(AppView._getViewMode(), 'kanban');
   AppView._refreshAttrCards();
-  assert.equal(pmRepaints, 1);
+  assert.equal(boardRepaints, 1);
 });
 
 test('re-anchor: the open popover snaps under its chip\'s new position', () => {
@@ -198,4 +205,39 @@ test('re-anchor: no-op when no popover is open', () => {
 
   AppView._refreshAttrCards();
   assert.equal(queried, false);
+});
+
+test('an unset imported Underway attribute anchors to its session card', () => {
+  const { AppView, sandbox } = makeSandbox();
+  const card = fakeEl({ getBoundingClientRect: () => ({ bottom: 80, left: 30 }) });
+  const selectors = [];
+  sandbox.document = fakeDoc({}, (selector) => {
+    selectors.push(selector);
+    return selector.includes('data-shared-session-row') ? card : null;
+  });
+
+  const anchor = AppView._attrAnchorFor('assignee', 'proposal', 88);
+  assert.equal(selectors.length, 2);
+  assert.match(selectors[1], /data-proposal-row="88"/);
+  assert.match(selectors[1], /data-shared-session-row="88"/);
+  assert.equal(anchor.dataset.attrTargetType, 'proposal');
+  assert.equal(anchor.dataset.attrTargetRef, '88');
+  assert.equal(anchor.getBoundingClientRect().left, 30);
+});
+
+test('an imported Underway attribute vote updates the session cache before repaint', () => {
+  const { AppView } = makeSandbox();
+  const mine = { id: 88, source: 'imported', assignee: null };
+  AppView._proposals = [];
+  AppView._merged = [];
+  AppView._mySessions = [mine];
+  AppView._sharedSessions = [];
+
+  AppView._applyAttrSummary('proposal', 88, 'assignee', {
+    options: [{ value: 'bruno', count: 2 }],
+    myValue: 'bruno',
+  });
+  assert.equal(mine.assignee.top, 'bruno');
+  assert.equal(mine.assignee.count, 2);
+  assert.equal(mine.assignee.myValue, 'bruno');
 });

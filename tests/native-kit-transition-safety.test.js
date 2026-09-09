@@ -38,12 +38,56 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = fs.readFileSync(
   path.join(ROOT, 'public', 'usernode-native', 'v1', 'native.js'),
   'utf8',
 );
+
+test('zoom destination measurement preserves document scroll when hiding the outgoing page clamps it', async () => {
+  const page = { scrollTop: 640, scrollLeft: 12 };
+  const outgoing = { style: { display: 'flex' } };
+  const timers = [];
+  let measured = false;
+  let settled = 0;
+  const incoming = {
+    style: { cssText: '' },
+    getBoundingClientRect() {
+      assert.equal(outgoing.style.display, 'none', 'measure the final app bounds');
+      // A browser lays out the shorter document during this synchronous read.
+      page.scrollTop = page.scrollLeft = 0;
+      measured = true;
+      return { top: 60, left: 0, width: 375, height: 700 };
+    },
+    addEventListener() {},
+    removeEventListener() {},
+  };
+  const { physics } = require('../public/usernode-native/v1/native.js');
+  const context = vm.createContext({
+    document: { scrollingElement: page }, window: { innerHeight: 800 },
+    prefersReducedMotion: false, vtActive: false, zoomCleanup: null,
+    ZOOM_EASE: 'ease', ZOOM_RADIUS: '16px',
+    zoomPose: physics.zoomPose, zoomRectUsable: physics.zoomRectUsable,
+    setTimeout: (fn) => timers.push(fn),
+  });
+  const start = SRC.indexOf('  function zoomPin(');
+  const end = SRC.indexOf('  // Has the document painted', start);
+  vm.runInContext(SRC.slice(start, end), context);
+  const finished = context.zoomTransition(() => {}, 'zoom-in', {
+    el: incoming, outEl: outgoing,
+    fromRect: { top: 420, left: 40, width: 60, height: 60 },
+    after: () => { settled++; },
+  });
+  assert.equal(measured, true);
+  assert.equal(outgoing.style.display, 'flex');
+  assert.equal(page.scrollTop, 640, 'the directory stays at the tile throughout the animation');
+  assert.equal(page.scrollLeft, 12);
+  timers[0]();
+  await finished;
+  assert.equal(settled, 1);
+});
 
 // The body of `function transition(fn, opts) { … }`, up to the next
 // top-level function in the file.
@@ -194,18 +238,20 @@ test('the shell still asks for real animations, so the guard is load-bearing', (
 });
 
 test('the first-paint guard cannot change what dapp.json asserts about entry type', () => {
-  // Two declared checks assert `[data-entered="none"]`. That attribute is
-  // stamped by App._entryTransition in app.js BEFORE the kit is called, so a
-  // kit-side decision to skip the animation cannot move it. Pin the ordering
-  // — if the stamp ever moved into the kit, those checks would start
-  // reporting the kit's decision instead of the shell's and this fix would
-  // silently change their meaning.
+  // `data-entered` is stamped by App._entryTransition in app.js BEFORE the
+  // kit is called, so a kit-side decision to skip the animation cannot move
+  // it. Pin the ordering — if the stamp ever moved into the kit, a check
+  // reading it would start reporting the kit's decision instead of the
+  // shell's.
+  //
+  // The two #977 checks that read it were the drawer's, and went with the
+  // drawer; the stamp did not, because it is how a mid-animation state is
+  // testable at all and the next check to need one will read it.
   const appJs = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
   const entry = appJs.slice(appJs.indexOf('_entryTransition(preferred, screenEl)'));
   assert.match(
-    entry.slice(0, 700), /setAttribute\('data-entered', type\)/,
-    'app.js must keep stamping data-entered itself — the dapp.json #977 checks read it, and the '
-    + 'kit never sees the drawer-suppression rule that decides its value.',
+    entry.slice(0, 700), /setAttribute\('data-entered', preferred\)/,
+    'app.js must keep stamping data-entered itself — it belongs to the shell.',
   );
   assert.doesNotMatch(
     SRC, /data-entered/,

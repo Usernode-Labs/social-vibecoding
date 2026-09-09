@@ -21,9 +21,11 @@
 // Run with: node --test tests/landing-directory.test.js
 
 const test = require('node:test');
+const { interiorHtmlFor } = require('./lib/lazy-interiors');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -36,7 +38,7 @@ const WAITLIST_TSX = 'frontend/src/features/auth/waitlist.tsx';
 // ─── index.html: persistent header ────────────────────────────────
 
 test('landing CTAs: Sign in + Join waitlist only — no Create account', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   const ctas = html.match(/id="landing-header-ctas"[\s\S]*?<\/div>/);
   assert.ok(ctas, 'landing-header-ctas block exists');
   assert.match(ctas[0], /href="#login"/);
@@ -46,7 +48,7 @@ test('landing CTAs: Sign in + Join waitlist only — no Create account', () => {
 });
 
 test('the landing header is a persistent, non-scrolling sibling of the scroller', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   const header = html.match(/id="landing-header"[^>]*class="([^"]*)"/);
   assert.ok(header, 'landing-header exists');
   // shrink-0 keeps the header out of the flex free-space split, so the
@@ -84,7 +86,7 @@ test('the header keeps Sign in / Join waitlist while an app is open', () => {
 // ─── the landing CTA area vs the #waitlist screen ─────────────────
 
 test('the landing CTA area is a compact CTA + link, and carries no form', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   const section = html.match(/id="landing-waitlist"[\s\S]*?<\/section>/);
   assert.ok(section, 'landing-waitlist section exists');
   const classes = html.match(/id="landing-waitlist"[^>]*class="([^"]*)"/);
@@ -101,7 +103,7 @@ test('the landing CTA area is a compact CTA + link, and carries no form', () => 
 });
 
 test('the header CTA is an anchor to #waitlist, not a scroll-to-form', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   const cta = html.match(/<a[^>]*id="landing-waitlist-cta"[^>]*>/);
   assert.ok(cta, 'landing-waitlist-cta is an anchor');
   assert.match(cta[0], /href="#waitlist"/);
@@ -117,29 +119,37 @@ test('the header CTA is an anchor to #waitlist, not a scroll-to-form', () => {
 });
 
 test('the stage-1 survey lives on its own #waitlist screen', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   // Not anchored on indentation: public/index.html is generated from
   // frontend/src/Shell.tsx now and ships without the hand-written line
   // breaks. <main> cannot nest, so the first close tag is this screen's.
-  const screen = html.match(/id="auth-waitlist-screen"[\s\S]*?<\/main>/);
-  assert.ok(screen, 'auth-waitlist-screen exists');
+  // The screen's interior mounts on first reveal, so the document carries
+  // only its root; the interior is what a reveal puts inside it.
+  const interior = interiorHtmlFor('auth-waitlist-screen');
   const classes = html.match(/id="auth-waitlist-screen"[^>]*class="([^"]*)"/);
   // Same overlay shape as the other anonymous screens (#more, #login).
   for (const cls of ['hidden', 'fixed', 'inset-0', 'z-40', 'overflow-y-auto']) {
     assert.match(classes[1], new RegExp(cls.replace('-', '\\-')), `screen is ${cls}`);
   }
   // The whole survey moved here, ids intact so the wiring is a pure move.
-  for (const id of ['waitlist-form', 'waitlist-email', 'waitlist-made-url',
+  //
+  // #waitlist-made-url is deliberately NOT in this list any more. It was a
+  // REQUIRED stage-1 field, which contradicted the email-only join the
+  // onboarding doc settled on, so the question moved to the stage-2
+  // "Want in sooner?" form as #more-made-url (recorded in RETIRED_IDS /
+  // ADDED_IDS in tests/shell-id-inventory.test.js). Joining asks for an
+  // address and nothing else; everything below is still on this screen.
+  for (const id of ['waitlist-form', 'waitlist-email',
     'waitlist-country', 'waitlist-discovery-chips', 'waitlist-submit',
     'waitlist-msg', 'waitlist-joined', 'waitlist-more-offer',
-    'waitlist-more-link', 'waitlist-queued']) {
-    assert.match(screen[0], new RegExp(`id="${id}"`), `${id} is on the screen`);
+    'waitlist-more-link', 'waitlist-queued', 'waitlist-confirmed-email']) {
+    assert.match(interior, new RegExp(`id="${id}"`), `${id} is on the screen`);
   }
   // Back goes to the landing page via the shared delegated handler.
-  assert.match(screen[0], /data-auth-back/);
+  assert.match(interior, /data-auth-back/);
   // NOT a <header>: the header-layout code used to measure document.querySelector
   // ('header') and must keep resolving to #platform-header.
-  assert.doesNotMatch(screen[0], /<header/);
+  assert.doesNotMatch(interior, /<header/);
 });
 
 test('#waitlist is a registered route ordered under landing, above #more', () => {
@@ -197,24 +207,76 @@ test('the anonymous screens are reachable to shots via ?shot=anon', () => {
   const meAt = init[0].indexOf('_fetchSession()');
   assert.ok(shotAt > -1 && meAt > -1, 'both the shot check and the /me fetch are in init');
   assert.ok(shotAt < meAt, 'the shot override runs before the /me fetch');
-  assert.match(js.match(/async _fetchSession\(\) \{[\s\S]*?\n  \},/)[0],
+  assert.match(js.match(/async _fetchWebSession\(\) \{[\s\S]*?\n  \},/)[0],
     /fetch\('\/api\/auth\/me'/);
   const fn = js.match(/_anonShot\(\) \{[\s\S]*?\n  \},/);
   assert.ok(fn, '_anonShot exists');
   assert.match(fn[0], /'anon'/);
   assert.match(fn[0], /'waitlist-joined'/);
+  // The confirmed state needs the same anonymous boot: it is the one that
+  // now carries the list place and the stage-2 offer.
+  assert.match(fn[0], /'waitlist-confirmed'/);
   // Pure UI state: no env gate, and no request of its own.
   assert.doesNotMatch(fn[0], /USERNODE_ENV|fetch\(/);
-  // The joined shot paints the success state client-side — it never POSTs.
+  // Both shots paint their state client-side — neither POSTs.
   const tsx1 = read(WAITLIST_TSX);
-  const shot = tsx1.match(/const shotJoined = shot === 'waitlist-joined';[\s\S]*?\n    \}/);
-  assert.ok(shot, 'the waitlist-joined shot branch exists');
+  const shot = tsx1.match(/const shotJoined = shot === 'waitlist-joined';[\s\S]*?\n    \}\n\n/);
+  assert.ok(shot, 'the waitlist shot branch exists');
   assert.doesNotMatch(shot[0], /fetch\(/);
-  // It shows the stage-2 offer with no token, so the link keeps the inert
-  // prerendered href.
-  assert.match(shot[0], /setOffer\(true\)/);
+  // The offer rides on `waitlist-confirmed`, with no token, so the link
+  // keeps the inert prerendered href. `waitlist-joined` must NOT raise it:
+  // nothing is offered until the address is confirmed.
+  assert.match(shot[0], /shotConfirmed\)\s*\{[\s\S]*?setOffer\(true\)/);
   assert.doesNotMatch(shot[0], /setMoreToken/);
+  // #1537: both settled states name the address the signup was made with, so
+  // the shot has to carry one — a stand-in literal, since a shot has no join
+  // behind it to read a real address from. Still no request of any kind.
+  assert.match(shot[0], /setSentTo\('you@example\.com'\)/);
   assert.match(tsx1, /id="waitlist-more-offer"[\s\S]{0,200}hiddenFirst\(\s*!offer/);
+});
+
+test('both "you\'re on the list" surfaces name the registered address (#1537)', () => {
+  // The join flow. The address is already client-side — the confirm step's
+  // hint echoes it — so the panel reads the same `sentTo`, and no request was
+  // added to say something the page already knew.
+  const tsx = read(WAITLIST_TSX);
+  const panel = tsx.match(/id="waitlist-confirmed-email"[\s\S]{0,400}?<\/p>/);
+  assert.ok(panel, '#waitlist-confirmed-email exists');
+  assert.match(panel[0], /\{sentTo\}/);
+  assert.match(panel[0], /Registered with/);
+  // Hidden rather than conditionally rendered: the id is part of the shell's
+  // inventory, and an empty "Registered with" reads as a bug.
+  assert.match(panel[0], /hiddenFirst\(\s*!sentTo/);
+  // Never a mailto: — the address is a fact being read back, not a control.
+  assert.doesNotMatch(panel[0], /mailto:/);
+  // Inside the settled panel, not floating beside it.
+  const confirmed = tsx.match(/id="waitlist-confirmed"[\s\S]*?id="waitlist-more-offer"/);
+  assert.ok(confirmed, 'the confirmed panel exists');
+  assert.match(confirmed[0], /id="waitlist-confirmed-email"/);
+  // Stored lower-cased, matching what the server normalizes, so this surface
+  // and the stage-2 one cannot disagree about the same address.
+  assert.match(tsx, /setSentTo\(emailVal\.toLowerCase\(\)\)/);
+
+  // The stage-2 screen, which is where the mailed confirm link lands and so
+  // is what a RETURNING visitor sees. It has no memory of the join, so the
+  // address comes off the payload — filled in the load applier, never during
+  // render, because contents before the fetch are a hydration mismatch.
+  const more = read('frontend/src/features/auth/more.tsx');
+  assert.match(more, /email\?: string;/);
+  assert.match(more, /setSignupEmail\(payload\.email \|\| ''\)/);
+  assert.match(more, /const \[signupEmail, setSignupEmail\] = useState\(''\)/);
+  const line = more.match(/id="more-signup-email"[\s\S]{0,400}?<\/p>/);
+  assert.ok(line, '#more-signup-email exists');
+  assert.match(line[0], /\{email\}/);
+  assert.match(line[0], /Registered with/);
+  assert.match(line[0], /email \? '' : ' hidden'/);
+  assert.doesNotMatch(line[0], /mailto:/);
+  // Beside the queue pill, inside the form both dapp.json checks select on.
+  const block = more.match(/<form\s+id="more-form"[\s\S]*?Question 1 of 4/);
+  assert.ok(block, 'the stage-2 form exists');
+  const pillAt = block[0].indexOf('<StatusPill');
+  const emailAt = block[0].indexOf('<SignupEmail');
+  assert.ok(pillAt > -1 && emailAt > pillAt, 'the address sits under the pill');
 });
 
 test('the stage-1 submit handler cannot be later than the first render', () => {
@@ -226,7 +288,7 @@ test('the stage-1 submit handler cannot be later than the first render', () => {
   // that cannot run before the render that attached it.
   const tsx = read(WAITLIST_TSX);
   assert.match(tsx, /id="waitlist-form"[\s\S]{0,200}onSubmit=\{onSubmit\}/);
-  const submit = tsx.match(/const onSubmit = useCallback\([\s\S]*?\n    \[discovery\],\s*\n  \);/);
+  const submit = tsx.match(/const onSubmit = useCallback\([\s\S]*?\n    \[discovery, startCooldown\],\s*\n  \);/);
   assert.ok(submit, 'onSubmit exists');
   assert.match(submit[0], /e\.preventDefault\(\)/);
   assert.match(submit[0], /'\/api\/public\/waitlist'/);
@@ -238,7 +300,7 @@ test('the stage-1 submit handler cannot be later than the first render', () => {
 // ─── index.html + landing.tsx: in-flow app viewer ─────────────────
 
 test('#app-viewer is an in-flow flex sibling, not a stacked overlay', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   const viewer = html.match(/id="app-viewer"[^>]*class="([^"]*)"/);
   assert.ok(viewer, 'app-viewer exists');
   // Demoted from `fixed inset-0 z-50`: it now shares the overlay's column
@@ -318,7 +380,7 @@ test('?shot=anon-back scripts two guest open/back cycles', () => {
   // `appsReady` settles when the fetch resolves, a tick before React commits
   // the tiles, so reading the grid straight after it found nothing to open
   // and the shot returned having stamped nothing at all.
-  assert.match(tsx, /if \(!\(await until\(\(\) => !!landingTileFor\(target\.slug\), \d+\)\)\) return;/);
+  assert.match(tsx, /if \(!\(await until\(\(\) => !!landingTileFor\(target\.slug\), \d+\)\)\) \{ bail\('no-tile'\); return; \}/);
   // The completion stamp the dapp.json test asserts on.
   assert.match(tsx, /setAttribute\('data-anon-back', 'done'\)/);
   const manifest = JSON.parse(read('dapp.json'));
@@ -335,6 +397,42 @@ test('?shot=anon-back scripts two guest open/back cycles', () => {
     'the console-clean landing test still exists');
   // Only the first 12 entries run (src/services/app-manifest readTests).
   assert.ok(manifest.tests.indexOf(t) < 12, 'inside the run window');
+});
+
+test('#1755: every bail stamps WHY, so a failure names its step instead of timing out', () => {
+  const tsx = read(LANDING_TSX);
+  const shot = tsx.slice(tsx.indexOf('const runAnonBackShot'));
+  const body = shot.slice(0, shot.indexOf("setAttribute('data-anon-back', 'done')"));
+
+  // The point of the change. A bare `return` leaves data-anon-back unset, so
+  // the assertion can never become true and the runner polls it to its 25s
+  // cap, reporting "Check did not finish within 25s" whichever step gave up.
+  // That verdict is the same for a broken back path and for a slow container,
+  // which is why #1755 cost six re-runs of one unchanged head.
+  const bares = body.match(/\)\)\) return;/g) || [];
+  assert.deepEqual(bares, [], 'no bail may return without stamping a reason');
+
+  // Each step is named, and both cycles are distinguishable: a cycle-2
+  // failure means the first open/back round trip worked, which is the single
+  // most useful fact about this check when it fails.
+  for (const reason of ['no-target', 'no-tile', 'no-tile-${c}', 'open-timeout-${c}', 'close-timeout-${c}']) {
+    assert.ok(body.includes(`bail(\`${reason}\`)`) || body.includes(`bail('${reason}')`),
+      `the ${reason} bail is stamped`);
+  }
+  assert.match(body, /const c = `c\$\{cycle \+ 1\}`/, 'the cycle is part of the reason');
+
+  // Slowness and breakage are different answers and must not look alike.
+  assert.match(body, /Date\.now\(\) >= deadline \? `\$\{reason\}-slow` : reason/);
+
+  // The stamp the assertion actually wants is still only reachable from the
+  // happy path, so nothing that should fail now passes.
+  assert.equal(body.includes("'done'"), false, 'no bail stamps done');
+  assert.match(tsx, /setAttribute\('data-anon-back', 'done'\)/);
+
+  // And the declared check is unchanged: it still demands exactly "done".
+  const manifest = JSON.parse(read('dapp.json'));
+  const t = manifest.tests.find((x) => /anon-back/.test(x.path || ''));
+  assert.match(t.expectSelector, /\[data-anon-back="done"\]/);
 });
 
 test('App._tileFor is scoped to the authed grid', () => {
@@ -367,7 +465,7 @@ test('landing scroller has kit pull-to-refresh with overscroll containment', () 
 });
 
 test('the landing overlay keeps its own scroll wrapper (pull-down backstop)', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   // The overlay itself must NOT be the scroller...
   const overlay = html.match(/id="auth-landing-screen"[^>]*class="([^"]*)"/);
   assert.ok(overlay, 'landing overlay exists');
@@ -385,7 +483,7 @@ test('the landing overlay keeps its own scroll wrapper (pull-down backstop)', ()
 // ─── index.html: directory grid ───────────────────────────────────
 
 test('landing directory uses the homescreen launcher-grid shape', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   const grid = html.match(/id="landing-apps"[^>]*class="([^"]*)"/);
   assert.ok(grid, 'landing-apps grid exists');
   // Same column progression as the authed #app-list grid.
@@ -402,7 +500,7 @@ test('landing tiles mirror home cards and gate on requires_login', () => {
   assert.match(tsx, /opacity-50 grayscale/);
   assert.match(tsx, /Account required/);
   // Gated tap: remember the app deep link, then the signup flow.
-  assert.match(tsx, /rememberDeepLink[\s\S]{0,160}'#app\/' \+ \(app\.slug \|\| ''\)/);
+  assert.match(tsx, /rememberDeepLink[\s\S]{0,180}'\/app\/' \+ encodeURIComponent\(app\.slug \|\| ''\)/);
   assert.match(tsx, /location\.hash = '#signup'/);
   // Icon priority mirrors home.js iconTileFor: image > emoji > letter.
   assert.match(tsx, /data-icon="image"/);

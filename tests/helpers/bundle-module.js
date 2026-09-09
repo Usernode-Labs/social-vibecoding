@@ -6,7 +6,7 @@ const vm = require('node:vm');
 // module inside a plain `vm` context.
 //
 // Several harnesses load the REAL shipped source of a relocated module
-// (work-drawer.js, merge-status.js, …) rather than a copy, so the assertions
+// (merge-status.js, …) rather than a copy, so the assertions
 // cannot drift from what runs. Those modules are "a classic script that
 // happens to live in the bundle": imperative bodies that still publish
 // `window.X`. But they are ES modules, and `vm.runInContext` compiles a
@@ -119,8 +119,8 @@ const DESKTOP_KIT_SURFACE = {
 /**
  * A stand-in for one of lib/plain-store.js's stores.
  *
- * #1191 slice 6 conversion 4: work-drawer.js's renderers stopped returning HTML
- * strings and now push descriptors into ./work-drawer-store.js. The real store
+ * #1191 slice 6 conversion 4 made a converted module's renderers stop returning
+ * HTML strings and push descriptors into a store instead. The real store
  * would work here — it is dependency-free plain JS — but it lives behind a
  * second import, and a harness that reached for it would be asserting through
  * React's subscription plumbing to read data the controller just computed. The
@@ -129,8 +129,9 @@ const DESKTOP_KIT_SURFACE = {
  * happened at all.
  *
  * Every sandbox needs its OWN store (the state is per-load), so this is a
- * factory and `workDrawerImports()` below is one too — sharing one table across
- * `loadAll()` calls would leak one test's rows into the next.
+ * factory, and any per-suite import table built on it should be one too —
+ * sharing one table across `loadAll()` calls would leak one test's rows into
+ * the next.
  */
 function makeStoreStub(initial = {}) {
   const store = {
@@ -147,15 +148,10 @@ function makeStoreStub(initial = {}) {
   return store;
 }
 
-/** The stub table for the four harnesses that load work-drawer.js's real source. */
-function workDrawerImports() {
-  return {
-    ...DESKTOP_KIT_SURFACE,
-    './work-drawer-store.js': {
-      workDrawerStore: makeStoreStub({ sections: null, empty: false, markAll: false }),
-    },
-  };
-}
+// `workDrawerImports()` — the stub table for the four harnesses that loaded
+// work-drawer.js's real source — lived here. THE UI OVERHAUL retired that
+// module, so the table went with it; `makeStoreStub` stays, because it is the
+// generic piece and the next converted module to grow a store will want it.
 
 module.exports = {
   toClassicScript,
@@ -163,5 +159,4 @@ module.exports = {
   runModules,
   DESKTOP_KIT_SURFACE,
   makeStoreStub,
-  workDrawerImports,
 };

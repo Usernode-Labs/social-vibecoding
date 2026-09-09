@@ -47,9 +47,27 @@ const KEYS = [
   'WAITLIST_GITHUB_CLIENT_SECRET',
   'WAITLIST_X_CLIENT_ID',
   'WAITLIST_X_CLIENT_SECRET',
+  'WAITLIST_LINKEDIN_CLIENT_ID',
+  'WAITLIST_LINKEDIN_CLIENT_SECRET',
   'WAITLIST_OAUTH_ORIGIN',
+  // Not credentials — public profile addresses for the stage-2 "Follow
+  // along" links. They are held to the same declaration contract because
+  // the reason for it is the same: an unset variable has to be findable in
+  // the admin panel, or nobody can discover why no link is rendering.
+  'WAITLIST_FOLLOW_X_URL',
+  'WAITLIST_FOLLOW_LINKEDIN_URL',
+  'WAITLIST_FOLLOW_INSTAGRAM_URL',
+  // Shared secrets that re-key the join endpoint's rate limit for a
+  // trusted integrator. Same contract again: unset is the normal state,
+  // so the only way anyone finds out the setting exists is the panel.
+  'WAITLIST_INTEGRATION_KEYS',
 ];
-const SECRETS = ['WAITLIST_GITHUB_CLIENT_SECRET', 'WAITLIST_X_CLIENT_SECRET'];
+const SECRETS = [
+  'WAITLIST_GITHUB_CLIENT_SECRET',
+  'WAITLIST_X_CLIENT_SECRET',
+  'WAITLIST_LINKEDIN_CLIENT_SECRET',
+  'WAITLIST_INTEGRATION_KEYS',
+];
 
 // ── the declaration side ───────────────────────────────────────────────
 
@@ -59,7 +77,7 @@ test('every waitlist OAuth variable is declared in platform_env', () => {
     assert.ok(BY_KEY.get(key).description.length > 40,
       `${key}'s description has to tell an admin what setting it does`);
     assert.equal(BY_KEY.get(key).group, 'Waitlist',
-      'all five belong to one panel heading so they are read together');
+      'they all belong to one panel heading so they are read together');
   }
 });
 
@@ -89,7 +107,7 @@ test('none of them can block a proposal from merging', () => {
   }
 });
 
-test('exactly the two client secrets are declared private', () => {
+test('exactly the client secrets are declared private', () => {
   // private:true means encrypted at rest and never returned by any API —
   // right for a value that can complete OAuth authorizations for this
   // deployment. A client id travels in the authorize URL's query string in
@@ -104,7 +122,7 @@ test('exactly the two client secrets are declared private', () => {
   for (const key of KEYS.filter((k) => k !== 'WAITLIST_OAUTH_ORIGIN')) {
     assert.equal(BY_KEY.get(key).default, null, `${key} must not carry a committed default`);
   }
-  // All five are settable from the panel — they are NOT deploy-owned
+  // All of them are settable from the panel — they are NOT deploy-owned
   // credentials, and an operator has no other way to turn connect on.
   for (const key of KEYS) {
     assert.equal(BY_KEY.get(key).unwritable, false, `${key} must be writable from the panel`);
@@ -112,7 +130,7 @@ test('exactly the two client secrets are declared private', () => {
 });
 
 test('no waitlist module reads an undeclared WAITLIST_* variable', () => {
-  // Drift guard. A sixth waitlist variable has to be declared in the same
+  // Drift guard. Another waitlist variable has to be declared in the same
   // commit that starts reading it, or this fails.
   const MODULES = ['src/config.js', 'src/routes/waitlist-connect.js'];
   const seen = new Set();
@@ -155,6 +173,8 @@ const UNSET = {
   waitlistGithubClientSecret: '',
   waitlistXClientId: '',
   waitlistXClientSecret: '',
+  waitlistLinkedinClientId: '',
+  waitlistLinkedinClientSecret: '',
   waitlistOauthOrigin: '',
 };
 // Both providers configured — used only to mint a real state nonce, and to
@@ -166,6 +186,8 @@ const CONFIGURED = {
   waitlistGithubClientSecret: 'gh-secret',
   waitlistXClientId: 'x-id',
   waitlistXClientSecret: 'x-secret',
+  waitlistLinkedinClientId: 'li-id',
+  waitlistLinkedinClientSecret: 'li-secret',
 };
 
 async function serve(router) {
@@ -192,7 +214,7 @@ test.after(() => {
 });
 
 test('an unconfigured provider bounces the start route back to the form', async () => {
-  for (const provider of ['github', 'x']) {
+  for (const provider of ['github', 'x', 'linkedin']) {
     const res = await get(unset.base, `/waitlist/connect/${provider}?token=${TOKEN}`);
     assert.equal(res.status, 302, `${provider} must redirect, not error`);
     assert.equal(res.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`,
@@ -235,6 +257,18 @@ test('the callback URLs are exactly the ones the runbooks tell operators to regi
   assert.equal(ghUrl.searchParams.get('redirect_uri'),
     `${PRODUCTION_ORIGIN}/waitlist/connect/github/callback`);
   assert.equal(ghUrl.searchParams.get('scope'), null, 'no scope is requested');
+
+  const li = await get(configured.base, `/waitlist/connect/linkedin?token=${TOKEN}`);
+  const liUrl = new URL(li.headers.get('location'));
+  assert.equal(liUrl.origin + liUrl.pathname, 'https://www.linkedin.com/oauth/v2/authorization');
+  assert.equal(liUrl.searchParams.get('redirect_uri'),
+    `${PRODUCTION_ORIGIN}/waitlist/connect/linkedin/callback`);
+  assert.equal(liUrl.searchParams.get('response_type'), 'code');
+  // `openid profile` is the SMALLEST scope that returns a name. No email —
+  // the waitlist row already has one — and there is no follow scope to ask
+  // for: LinkedIn exposes no API that reports whether a member follows a
+  // page, which is why the copy says "connect" and never "verified follow".
+  assert.equal(liUrl.searchParams.get('scope'), 'openid profile');
 });
 
 test('the stage-2 payload reports each provider unavailable on its own', async () => {
@@ -245,13 +279,13 @@ test('the stage-2 payload reports each provider unavailable on its own', async (
   try {
     const res = await fetch(`${none.base}/api/public/waitlist/more/${TOKEN}`);
     assert.equal(res.status, 200);
-    assert.deepEqual((await res.json()).oauth, { github: false, x: false });
+    assert.deepEqual((await res.json()).oauth, { github: false, x: false, linkedin: false });
   } finally {
     none.server.close();
   }
 
   // The asymmetric case this deployment is actually in: GitHub live, X
-  // still waiting on a human to create the app.
+  // and LinkedIn still waiting on a human to create the app.
   const half = await serve(publicApiRoutes({
     ...UNSET,
     waitlistGithubClientId: 'gh-id',
@@ -260,11 +294,165 @@ test('the stage-2 payload reports each provider unavailable on its own', async (
   try {
     const res = await fetch(`${half.base}/api/public/waitlist/more/${TOKEN}`);
     assert.equal(res.status, 200);
-    assert.deepEqual((await res.json()).oauth, { github: true, x: false },
+    assert.deepEqual((await res.json()).oauth, { github: true, x: false, linkedin: false },
       'each provider is judged on its own pair of credentials');
   } finally {
     half.server.close();
   }
+});
+
+// ── the origin the redirect_uri is built from ──────────────────────────
+//
+// All three providers validate redirect_uri against the app's registered
+// callback BEFORE any platform code runs, so a wrong value fails on the
+// provider's own page, after the person has already left the site. There is
+// no log line, no error handler and no way to recover the session.
+//
+// The three cases below exist because the fixtures above hard-code
+// `env: 'production'` — and that assumption is exactly what hid a live
+// production bug on 2026-08-27. `connectOrigin` returned the canonical
+// origin only when `config.env === 'production'` and fell through to
+// `http://localhost:${port}` for everything else. But `config.env` is
+// `process.env.NODE_ENV || 'development'` (src/config.js) and the platform
+// injects USERNODE_ENV, not NODE_ENV — so production took the localhost
+// branch and sent every real signup to
+// `http://localhost:3000/waitlist/connect/<provider>/callback`. GitHub
+// answered "The redirect_uri is not associated with this application"; X
+// answered "You weren't able to give access to the App".
+//
+// The rule now: an unset variable can never produce a redirect_uri that is
+// unusable on a deployed host. The canonical origin is the DEFAULT, and
+// localhost requires a positive local-dev signal.
+
+test('an unset NODE_ENV still builds the deployment origin, not localhost', async () => {
+  const prodShaped = { ...CONFIGURED, env: 'development' };
+  const s = await serve(waitlistConnectRoutes(prodShaped));
+  try {
+    for (const provider of ['github', 'x', 'linkedin']) {
+      const res = await get(s.base, `/waitlist/connect/${provider}?token=${TOKEN}`);
+      const url = new URL(res.headers.get('location'));
+      assert.equal(
+        url.searchParams.get('redirect_uri'),
+        `${PRODUCTION_ORIGIN}/waitlist/connect/${provider}/callback`,
+        `${provider}: an unset NODE_ENV must not produce a localhost redirect_uri`,
+      );
+    }
+  } finally {
+    s.server.close();
+  }
+});
+
+test('a positively identified local run still gets localhost', async () => {
+  // cliAuthLocalMode is `USERNODE_LOCAL_DEV === '1'` (src/config.js). It is
+  // the only thing that says "a developer is running this on their laptop",
+  // as opposed to "NODE_ENV happens to be unset", which a container can say
+  // by accident and production did.
+  const local = { ...CONFIGURED, env: 'development', cliAuthLocalMode: true, port: 4321 };
+  const s = await serve(waitlistConnectRoutes(local));
+  try {
+    const res = await get(s.base, `/waitlist/connect/github?token=${TOKEN}`);
+    const url = new URL(res.headers.get('location'));
+    assert.equal(
+      url.searchParams.get('redirect_uri'),
+      'http://localhost:4321/waitlist/connect/github/callback',
+    );
+  } finally {
+    s.server.close();
+  }
+});
+
+test('WAITLIST_OAUTH_ORIGIN overrides both', async () => {
+  const staged = {
+    ...CONFIGURED,
+    env: 'development',
+    cliAuthLocalMode: true,
+    waitlistOauthOrigin: 'https://staging.example.test',
+  };
+  const s = await serve(waitlistConnectRoutes(staged));
+  try {
+    const res = await get(s.base, `/waitlist/connect/x?token=${TOKEN}`);
+    const url = new URL(res.headers.get('location'));
+    assert.equal(
+      url.searchParams.get('redirect_uri'),
+      'https://staging.example.test/waitlist/connect/x/callback',
+      'an explicit override wins even over a local run',
+    );
+  } finally {
+    s.server.close();
+  }
+});
+
+// ── the callback is reachable more than once ───────────────────────────
+//
+// `takeState` DELETES the nonce, and the miss path redirects to `/#landing`
+// — the public landing page. So the second request to a callback URL used to
+// dump the person on the home screen with no message and no log line, after a
+// provider round trip that had already succeeded and stored their handle.
+//
+// A second request is not exotic. It is the back button, a reload, copying
+// the URL out of the address bar and reopening it, a link scanner, or a
+// browser retry. Reported from production on 2026-08-27 for GitHub and again
+// for X: both handles were verified and written (the server logged
+// "Social handle verified" for each), and both times the person landed on the
+// home screen instead of the form.
+//
+// So a completed state replays its OUTCOME instead of being forgotten.
+
+test('a second hit on the same callback URL replays the outcome, not /#landing', async () => {
+  const start = await get(configured.base, `/waitlist/connect/x?token=${TOKEN}`);
+  const state = new URL(start.headers.get('location')).searchParams.get('state');
+
+  // First hit against the unset router: credentials are missing, so it takes
+  // the `unavailable` exit — a terminal outcome that consumes the state
+  // without needing a provider round trip.
+  const first = await get(unset.base, `/waitlist/connect/x/callback?state=${state}&code=abc123`);
+  assert.equal(first.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`);
+
+  const second = await get(unset.base, `/waitlist/connect/x/callback?state=${state}&code=abc123`);
+  assert.equal(
+    second.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`,
+    'a reload of the callback must land back on the stage-2 form, not on the landing page',
+  );
+
+  // And it stays replayable — people reload more than once.
+  const third = await get(unset.base, `/waitlist/connect/x/callback?state=${state}&code=abc123`);
+  assert.equal(third.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`);
+});
+
+test('a replayed callback never re-runs the provider exchange', async () => {
+  // The replay must be a redirect and nothing else: the authorization code
+  // is single-use at the provider, so a second exchange would fail there and
+  // could only turn a success into an error. Proven by pointing the replay at
+  // a router whose fetch would throw if it were reached.
+  const start = await get(configured.base, `/waitlist/connect/github?token=${TOKEN}`);
+  const state = new URL(start.headers.get('location')).searchParams.get('state');
+  const first = await get(unset.base, `/waitlist/connect/github/callback?state=${state}&code=abc123`);
+  assert.equal(first.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`);
+
+  const replay = await get(configured.base, `/waitlist/connect/github/callback?state=${state}&code=abc123`);
+  assert.equal(
+    replay.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`,
+    'the replay repeats the recorded outcome; it does not attempt a fresh token exchange',
+  );
+});
+
+test('a genuinely unknown state still lands on the landing page', async () => {
+  // Nothing to recover: no state record means no token, so there is no form
+  // to return to. This one keeps its old behaviour on purpose.
+  const res = await get(unset.base, '/waitlist/connect/x/callback?state=neverminted&code=abc');
+  assert.equal(res.status, 302);
+  assert.equal(res.headers.get('location'), '/#landing');
+});
+
+test('a denied authorization is replayable too', async () => {
+  // The user pressed "Cancel" at the provider. Reloading that callback must
+  // return them to the form, not to the landing page.
+  const start = await get(configured.base, `/waitlist/connect/linkedin?token=${TOKEN}`);
+  const state = new URL(start.headers.get('location')).searchParams.get('state');
+  const first = await get(configured.base, `/waitlist/connect/linkedin/callback?state=${state}`);
+  assert.equal(first.headers.get('location'), `/#more/${TOKEN}?connect=denied`);
+  const second = await get(configured.base, `/waitlist/connect/linkedin/callback?state=${state}`);
+  assert.equal(second.headers.get('location'), `/#more/${TOKEN}?connect=denied`);
 });
 
 test('an id without a secret counts as unconfigured', async () => {

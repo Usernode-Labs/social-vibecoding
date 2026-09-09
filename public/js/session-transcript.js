@@ -60,12 +60,16 @@
     return (n / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
-  function relTimeSafe(ts) {
-    if (!ts) return '';
-    if (typeof relTime === 'function') {
-      try { return relTime(ts); } catch { /* fall through */ }
+  // #1808: the age AND the unelided stamp behind it. `relStamp` is a global
+  // function declaration in app-view.js, which is a sibling classic script —
+  // the `typeof` probe is because this file also renders on pages that load
+  // it without app-view.js, where a missing stamp beats a ReferenceError.
+  function relStampSafe(ts) {
+    if (!ts) return { text: '', title: '' };
+    if (typeof relStamp === 'function') {
+      try { return relStamp(ts); } catch { /* fall through */ }
     }
-    return '';
+    return { text: '', title: '' };
   }
 
   // Attachment chips: NAME ONLY, and deliberately a <span>, not an <a>.
@@ -81,7 +85,7 @@
       const size = humanSize(a && a.sizeBytes);
       const icon = a && a.kind === 'image' ? '🖼' : '📎';
       return '<span class="dc-msg-att-chip st-att-chip" title="' + name
-        + ' — attachments aren\'t shared, only their names"><span aria-hidden="true">' + icon + '</span>'
+        + ' (attachments aren\'t shared, only their names)"><span aria-hidden="true">' + icon + '</span>'
         + '<span class="dc-attach-name">' + name + '</span>'
         + (size ? '<span class="dc-attach-size">' + esc(size) + '</span>' : '')
         + '</span>';
@@ -153,11 +157,13 @@
     const isUser = msg.role === 'user';
     const who = isUser ? (ownerName || 'them') : 'AI';
     const cls = isUser ? 'dc-msg-user' : 'dc-msg-assistant';
-    const when = relTimeSafe(msg.created_at);
+    const when = relStampSafe(msg.created_at);
     return '<div class="dc-msg ' + cls + ' st-msg">'
       + '<div class="dc-msg-header">'
       + '<span class="st-msg-who">' + esc(who) + '</span>'
-      + (when ? '<span class="st-msg-when">' + esc(when) + '</span>' : '')
+      + (when.text
+        ? '<span class="st-msg-when" title="' + esc(when.title) + '">' + esc(when.text) + '</span>'
+        : '')
       + '</div>'
       + '<div class="dc-msg-content">' + md(msg.content || '') + '</div>'
       + attachmentsHtml(msg)
@@ -178,7 +184,7 @@
 
     let html = '';
     if (data.truncated) {
-      html += '<div class="st-truncated">Showing the most recent part of a long chat —'
+      html += '<div class="st-truncated">Showing the most recent part of a long chat.'
         + ' earlier messages aren\'t included.</div>';
     }
     html += '<div class="st-timeline">';
@@ -193,14 +199,20 @@
   // The collapsed header line the topic page shows before the reader opens
   // the transcript ("Read the dev chat (24 messages)"), plus the expanded
   // header. Kept here so the copy lives beside the renderer.
+  //
+  // The expanded line does NOT say "read-only". It used to, and the toggle it
+  // sits in renders a `.st-readonly-tag` chip saying exactly that right after
+  // it — so an opened transcript read "Dev chat by alice · 24 messages ·
+  // read-only read-only". The chip is the one that stays: it is the styled
+  // affordance, it is there in both states, and it is what the tag class was
+  // added for.
   function headerText(session, opts) {
     const s = session || {};
     const count = Number(s.message_count);
     const n = Number.isFinite(count) && count > 0 ? count : null;
     if (opts && opts.expanded) {
       return 'Dev chat by ' + (s.username || 'them')
-        + (n ? ' · ' + n + ' message' + (n === 1 ? '' : 's') : '')
-        + ' · read-only';
+        + (n ? ' · ' + n + ' message' + (n === 1 ? '' : 's') : '');
     }
     return n ? 'Read the dev chat (' + n + ' messages)' : 'Read the dev chat';
   }

@@ -140,6 +140,101 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
   return promise;
 }
 
+// Publish which build step a preview is on (and how long the finished
+// ones took) so "Preview building…" can say what it is doing. Rides the
+// checks progress row and event (services/visuals.js). Best-effort and
+// lazy-required: the build must never fail, or wait, on a status write,
+// and visuals requires this module at load.
+function reportBuildStep(config, session, step, timings, startedAt, image = null) {
+  try {
+    const visuals = require('./visuals');
+    const build = {
+      step,
+      startedAt: new Date(startedAt).toISOString(),
+      steps: visuals.buildProgressFromTimings(timings)?.steps || [],
+      ...(image ? { image } : {}),
+      ...(Number.isFinite(timings.totalMs) ? { totalMs: Math.round(timings.totalMs) } : {}),
+    };
+    visuals.setChecksBuildProgress(getPool(config), session.id, build).catch(() => {});
+    visuals.notifyChecksBuildProgress(session.id, build);
+  } catch { /* status only */ }
+}
+
+// The image build's own progress, inside the "build image" step: the
+// runtime reports each phase or step line as it happens, and this hands it
+// on at most once a second (a build prints many lines a second), with the
+// trailing one always delivered.
+const IMAGE_PROGRESS_MIN_GAP_MS = 1000;
+// How many of the image build's own steps the finished record keeps, and how
+// much of each instruction it keeps. A Dockerfile build reports ~36 steps;
+// listing all of them would bury the one that cost the time, which is the
+// whole reason for recording them.
+const IMAGE_SLOW_STEPS_KEPT = 4;
+const IMAGE_STEP_LABEL_MAX = 32;
+
+// One instruction, as a label: `RUN npm ci --no-audit --loglevel=error`
+// carries nothing after the verb and its first argument that helps identify
+// which step this was.
+function imageStepLabel(detail, index) {
+  const text = String(detail == null ? '' : detail).replace(/\s+/g, ' ').trim();
+  if (!text) return `step ${index}`;
+  return text.length > IMAGE_STEP_LABEL_MAX ? `${text.slice(0, IMAGE_STEP_LABEL_MAX - 1)}…` : text;
+}
+
+function makeImageProgressReporter(config, session, timings, startedAt, now = () => Date.now()) {
+  let last = null;
+  let lastAt = 0;
+  let timer = null;
+  // Per-step wall clock, for a runtime that reports a step COUNTER rather
+  // than named phases (docker). A step's cost is the gap between its line
+  // and the next one's, so each step is closed when the next begins and the
+  // final one when the build ends. This is what turns "image build: 3m 4s"
+  // into which instruction spent it.
+  const stepTimes = [];
+  let openStep = null;
+  const closeStep = (at) => {
+    if (!openStep) return;
+    stepTimes.push({ name: openStep.label, ms: Math.max(0, at - openStep.startedAt) });
+    openStep = null;
+  };
+  const flush = () => {
+    timer = null;
+    lastAt = now();
+    reportBuildStep(config, session, 'image_build', timings, startedAt, last);
+  };
+  return {
+    report(image) {
+      if (!image || typeof image !== 'object') return;
+      const at = now();
+      if (Number.isInteger(image.index) && (!openStep || openStep.index !== image.index)) {
+        closeStep(at);
+        openStep = { index: image.index, label: imageStepLabel(image.detail, image.index), startedAt: at };
+      }
+      last = { ...(last || {}), ...image };
+      const gap = at - lastAt;
+      if (gap >= IMAGE_PROGRESS_MIN_GAP_MS) {
+        if (timer) { clearTimeout(timer); timer = null; }
+        flush();
+      } else if (!timer) {
+        timer = setTimeout(flush, IMAGE_PROGRESS_MIN_GAP_MS - gap);
+        if (typeof timer.unref === 'function') timer.unref();
+      }
+    },
+    close() {
+      if (timer) { clearTimeout(timer); timer = null; }
+      closeStep(now());
+    },
+    last() { return last; },
+    // The steps worth naming: the slowest few, back in the order they ran.
+    slowestSteps() {
+      if (!stepTimes.length) return null;
+      const top = stepTimes.slice().sort((a, b) => b.ms - a.ms).slice(0, IMAGE_SLOW_STEPS_KEPT);
+      const keep = new Set(top);
+      return stepTimes.filter((s) => keep.has(s));
+    },
+  };
+}
+
 async function buildAndDeployStagingInner(config, session, app, commitHash) {
   const containerName = `usernode-staging-${app.slug}--${session.id}`;
   const imageName = `usernode-staging-${app.slug}-${session.id}:${commitHash.substring(0, 6)}`;
@@ -151,6 +246,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
   // proposal-checks slowdown meant reading a container log tail.
   const buildStartedAt = Date.now();
   const timings = {};
+  reportBuildStep(config, session, 'source_fetch', timings, buildStartedAt);
 
   try {
     // 1. Clone the PR branch
@@ -184,6 +280,19 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // historical branch clone untouched — same behaviour, same timings.
     const prNumber = Number(session.pr_number) || null;
     const viaPullRef = !!(pinnedSha && prNumber);
+
+    // #1350: a native session gets its branch on its first turn, so a
+    // session that has never run one has nothing to clone. Refuse with a
+    // reason rather than letting `git clone --branch null` fail: the
+    // sweeps that call this already filter `branch_name IS NOT NULL`, so
+    // reaching here means a direct caller (a manual redeploy, a recovery
+    // pass) asked for a preview of work that does not exist yet.
+    if (!viaPullRef && !session.branch_name) {
+      throw new Error(
+        'This session has no branch yet, so there is nothing to build a preview from. '
+        + 'Send a message in the session first.'
+      );
+    }
 
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
     // --recurse-submodules + --shallow-submodules so dapps that vendor
@@ -308,19 +417,36 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // phase of its own. It showed up in the trace only as the gap before the
     // first step, which is precisely where an unexplained regression hides.
     timings.sourceFetchMs = imageBuildStartedAt - buildStartedAt;
+    reportBuildStep(config, session, 'image_build', timings, imageBuildStartedAt);
     const { stdout: revisionOut } = await docker.execFileAsync('git', [
       '-C', cloneDir, 'rev-parse', 'HEAD',
     ], { timeout: 5000 });
     const resolvedRevision = (revisionOut || '').trim();
-    const build = await applicationRuntime.build(config, {
-      app,
-      revision: resolvedRevision,
-      environment: 'staging',
-      sessionId: session.id,
-      sourceDir: cloneDir,
-      dockerImage: imageName,
-    });
+    const imageProgress = makeImageProgressReporter(config, session, timings, imageBuildStartedAt);
+    let build;
+    try {
+      build = await applicationRuntime.build(config, {
+        app,
+        revision: resolvedRevision,
+        environment: 'staging',
+        sessionId: session.id,
+        sourceDir: cloneDir,
+        dockerImage: imageName,
+        onProgress: imageProgress.report,
+      });
+    } finally {
+      imageProgress.close();
+    }
     timings.imageBuildMs = Date.now() - imageBuildStartedAt;
+    // The phases with their times, for the finished build's record: the
+    // kpack pod's own stamps, or the last docker step counter.
+    // The runtime's own phases when it reports them (kpack); otherwise the
+    // slowest of the steps it counted (docker). Either way the finished
+    // build says where inside the image build the time went.
+    const reportedPhases = build && Array.isArray(build.phases) && build.phases.length ? build.phases : null;
+    const countedSteps = reportedPhases ? null : imageProgress.slowestSteps();
+    if (reportedPhases) timings.imagePhases = reportedPhases;
+    else if (countedSteps && countedSteps.length) timings.imagePhases = countedSteps;
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
 
     // 3. Clone the production database. cloneDatabase creates a fresh
@@ -332,8 +458,18 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     const prodDbName = dbManager.appDbName(app.slug);
     const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
     const cloneStartedAt = Date.now();
-    const { password: stagingDbPassword } = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr);
+    reportBuildStep(config, session, 'clone', timings, cloneStartedAt);
+    // Previews clone from the app's staging template (a redacted copy kept
+    // warm on the server) rather than dumping the live database each time;
+    // db-manager falls back to the direct copy on any template trouble.
+    // `cloneVia` rides the timings into the checks trace so the two can be
+    // told apart when the build half is being measured.
+    const cloned = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr, { viaTemplate: true });
+    const { password: stagingDbPassword } = cloned;
     timings.cloneMs = Date.now() - cloneStartedAt;
+    timings.cloneVia = cloned.via || 'direct';
+    if (cloned.templateRefreshed) timings.templateRefreshed = true;
+    if (cloned.templateStale) timings.templateRefreshQueued = true;
     const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, stagingDbPassword);
 
     // 4. Stop existing staging container if any. Short grace: a preview
@@ -386,6 +522,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     const platformEnv = stagingEnv.platformStagingEnv(app, config);
 
     const healthStartedAt = Date.now();
+    reportBuildStep(config, session, 'health', timings, healthStartedAt);
     const deployed = await applicationRuntime.deploy(config, {
       app,
       environment: 'staging',
@@ -411,8 +548,10 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     const { hostname, url: stagingUrl } = deployed;
     await getPool(config).query(
       `UPDATE chat_sessions SET staging_image_ref = $1, staging_build_ref = $2,
-         staging_runtime_kind = $3, staging_runtime_name = $4 WHERE id = $5`,
-      [build.imageRef, build.buildRef, deployed.runtimeKind, deployed.runtimeName, session.id]
+         staging_runtime_kind = $3, staging_runtime_name = $4,
+         staging_commit_sha = $6 WHERE id = $5`,
+      [build.imageRef, build.buildRef, deployed.runtimeKind, deployed.runtimeName, session.id,
+       resolvedRevision || null]
     );
 
     // NOTE: the edge verification intentionally does NOT happen here. The
@@ -422,6 +561,16 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // revealing the preview button.
 
     timings.totalMs = Date.now() - buildStartedAt;
+    // The container is up, but the checks are not yet running: the caller
+    // still verifies the edge, persists the URL and announces the preview,
+    // and captureForSession may then park this run behind an earlier one on
+    // the same proposal. That hand-off used to be invisible — the bar read
+    // 4/4 under a title still saying "Preparing…" — so it is the fifth step,
+    // 'prepare_checks', opened here and closed by captureForSession when the
+    // phase flips to testing (see visuals.finishPrepareChecks).
+    const deployedAt = Date.now();
+    timings.deployedAt = deployedAt;
+    reportBuildStep(config, session, 'prepare_checks', timings, deployedAt);
     log.info('staging', 'Staging deployed', {
       sessionId: session.id, url: stagingUrl, ...timings,
     });
@@ -436,6 +585,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       runtimeName: deployed.runtimeName,
       imageRef: build.imageRef,
       buildRef: build.buildRef,
+      // The commit this preview is of, as recorded on the row above; the
+      // recheck path compares it to the head before trusting the preview.
+      commitSha: resolvedRevision || null,
       stagingUrl,
       hostname,
       timings,
@@ -602,7 +754,8 @@ async function teardownStaging(session, app) {
   await getPool().query(
     `UPDATE chat_sessions SET staging_url = NULL, staging_container_id = NULL,
        staging_image_ref = NULL, staging_build_ref = NULL,
-       staging_runtime_kind = NULL, staging_runtime_name = NULL WHERE id = $1`,
+       staging_runtime_kind = NULL, staging_runtime_name = NULL,
+       staging_commit_sha = NULL WHERE id = $1`,
     [session.id]
   ).catch((err) => log.warn('staging', 'Failed to clear staging_url on teardown', { sessionId: session.id, err: err.message }));
 
@@ -872,6 +1025,8 @@ async function rebuildProductionInner(config, app) {
 }
 
 module.exports = {
+  _makeImageProgressReporterForTest: makeImageProgressReporter,
+  _imageStepLabelForTest: imageStepLabel,
   buildAndDeployStaging,
   hasInFlightBuild,
   previewDisplayState,

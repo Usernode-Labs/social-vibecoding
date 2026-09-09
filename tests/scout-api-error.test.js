@@ -403,7 +403,7 @@ test('scout: a dropped stream re-dispatches once and the retry\'s spec is stored
     assert.deepEqual(pool.state.specVersions, [REAL_SPEC]);
     assert.deepEqual(pool.state.terminal, { status: 'ready', outcome: 'spec' });
     assert.ok(pool.state.messages.some(
-      (m) => /lost its connection to the API — retrying once/.test(m.content || '')
+      (m) => /lost its connection to the API, retrying once/.test(m.content || '')
     ));
     // The notice never reaches the user as a spec.
     assert.ok(!pool.state.messages.some(

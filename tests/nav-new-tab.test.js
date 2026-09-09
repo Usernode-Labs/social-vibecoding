@@ -14,6 +14,7 @@
 // Run with: node --test tests/nav-new-tab.test.js
 
 const test = require('node:test');
+const { shellMarkup } = require('./lib/shell-markup');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -22,7 +23,7 @@ const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const navLinkJs = read('public/js/nav-link.js');
-const html = read('public/index.html');
+const html = shellMarkup();
 const swJs = read('public/js/../sw.js');
 const appJs = read('public/js/app.js');
 const appViewJs = read('public/js/app-view.js');
@@ -37,6 +38,8 @@ const browseListTsx = read('frontend/src/features/apps/browse-list.tsx');
 const browseDetailTsx = read('frontend/src/features/apps/browse-detail.tsx');
 const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const chatFrameTsx = read('frontend/src/features/dev-board/chat-frame.tsx');
+const topicFrameTsx = read('frontend/src/features/dev-board/topic-frame.tsx');
+const sessionHeaderTsx = read('frontend/src/features/dev-chat/session-header.tsx');
 const { HOME_SRC: homeJs } = require('./helpers/home-modules');
 const leaderboardJs = read('frontend/src/features/leaderboard/leaderboard.js');
 const kudosPaneTsx = read('frontend/src/features/leaderboard/kudos-pane.tsx');
@@ -97,9 +100,11 @@ test('absolute() resolves against the SHELL document, never an app iframe', () =
     + 'on a page that is not a usable top-level address — that IS the bug');
 });
 
-test('homeHref() drops the fragment and keeps the query', () => {
+test('homeHref() returns the canonical root and keeps non-route query params', () => {
   const fn = navLinkFn('homeHref() {');
-  assert.match(fn, /window\.location\.pathname \+ window\.location\.search/,
+  assert.match(fn, /window\.App\?\._rootUrl/,
+    'uses the same canonical root serializer as App.updateHash');
+  assert.match(fn, /'\/' \+ window\.location\.search/,
     'mirrors the home branch of App.updateHash — the staging ?token= and '
     + '?demo= must survive into the new tab');
 });
@@ -175,24 +180,44 @@ test('the header back/home control is a real anchor', () => {
   assert.match(tag, /\binline-flex\b/, 'the anchor keeps the icon block-level');
   assert.match(tag, /\bitems-center\b/, 'and centred in the 28px row');
   assert.match(tag, /\bhidden\b/, 'it still ships hidden — app.js toggles that class');
-  // Both icons still live inside it, and the wrapper is untouched.
+  // TWO icons live inside it, exactly one shown. #back-icon-home retired in
+  // #1443 and is back: that retirement left the app itself, Profile,
+  // Settings, Admin and Messages with nothing in this bar at all, and the
+  // rule is "every page has a back or a home button, except Home" now.
+  //
+  // Both ship in the COLD DOCUMENT rather than one being rendered at a time,
+  // because an id that comes and goes with the route is an id that dapp.json
+  // selectors and the shell inventory cannot rely on.
   const inner = html.slice(html.indexOf('<a id="back-btn"'), html.indexOf('</a>', html.indexOf('<a id="back-btn"')));
-  assert.match(inner, /id="back-icon-home"/, 'the house icon');
+  assert.match(inner, /id="back-icon-home"/, 'the house');
   assert.match(inner, /id="back-icon-arrow"/, 'the chevron');
-  assert.match(html, /<div class="w-5 h-7 shrink-0 flex items-center">/,
-    'the fixed 20x28 wrapper the header-layout hook measures must not change');
+  // …and the document ships showing exactly one of them. Which one does not
+  // matter here (the router publishes the real state on the first screen
+  // swap); that BOTH or NEITHER is visible is the broken state.
+  const shownHome = !/id="back-icon-home"[^>]*class="[^"]*\bhidden\b/.test(inner);
+  const shownArrow = !/id="back-icon-arrow"[^>]*class="[^"]*\bhidden\b/.test(inner);
+  assert.notEqual(shownHome, shownArrow,
+    'one glyph is hidden and the other is not — two glyphs in one 28px disc '
+    + 'is what a wrong `hidden` looks like');
+  // 28x28 now, not 20x28: the slot holds the app glyph as well as the arrow
+  // (features/header/header-app-icon.tsx), and they never draw together. What
+  // matters to the header-layout hook is that the width is FIXED, and it is.
+  assert.match(html, /<div class="w-7 h-7 shrink-0 flex items-center justify-center">/,
+    'the fixed 28x28 lead-icon wrapper the header-layout hook measures');
 });
 
 test('the header click handler guards before it preventDefaults', () => {
-  const body = handlerAfter(appJs, "document.getElementById('back-btn').addEventListener", 900);
+  const body = handlerAfter(appJs, "document.getElementById('back-btn').addEventListener", 1400);
   const guard = body.indexOf('NavLink.isNativeClick(e)');
   const prevent = body.indexOf('e.preventDefault()');
   assert.ok(guard !== -1, 'the modified-click guard went missing');
   assert.ok(guard < prevent, 'the guard must come FIRST, or cmd-click is swallowed');
-  // The existing screen-hook chain is unchanged and still ordered.
+  // The existing screen-hook chain is unchanged and still ordered — with the
+  // dev session's claim (Streamlined Concept) last before the home fallback.
   assert.ok(body.indexOf('AdminConsole?.handleBack') < body.indexOf('Settings?.handleBack'));
   assert.ok(body.indexOf('Settings?.handleBack') < body.indexOf('Browse?.handleBack'));
-  assert.ok(body.indexOf('Browse?.handleBack') < body.indexOf('App.navigateHome()'));
+  assert.ok(body.indexOf('Browse?.handleBack') < body.indexOf('DevChat?.handleBack'));
+  assert.ok(body.indexOf('DevChat?.handleBack') < body.indexOf('App.navigateHome()'));
 });
 
 test('setBackIcon owns the anchor href, defaulting to home', () => {
@@ -203,53 +228,68 @@ test('setBackIcon owns the anchor href, defaulting to home', () => {
   assert.match(fn, /href \|\| \(window\.NavLink \? NavLink\.homeHref\(\) : '\/'\)/,
     'omitting the argument means home — correct for every screen except the '
     + 'three that claim the chevron as "up one level"');
-  assert.match(fn, /aria-label', arrow \? 'Back' : 'Home'/,
-    'the accessible name still tracks the icon');
+  // The accessible name is a CONSTANT now: the control means one thing, so
+  // there is no second name for it to track. It is set on the element rather
+  // than here — see features/header/platform-header.tsx.
+  assert.ok(!/aria-label', arrow \?/.test(fn),
+    'setBackIcon no longer branches the accessible name — the control means '
+    + 'one thing, and React renders that name');
 });
 
 test('every screen entry refreshes the href through the one choke point', () => {
   const at = appJs.indexOf('  _showOnlyScreen(revealId, keepAlso) {');
   assert.ok(at !== -1, '_showOnlyScreen went missing');
   const fn = appJs.slice(at, appJs.indexOf('\n  },', at));
-  assert.match(fn, /App\.setBackIcon\('home'\)/,
+  assert.match(fn, /App\.setBackIcon\(revealId === 'home-screen' \|\| revealId === 'browse-screen' \? 'none' : 'home'\)/,
     'this is what keeps the href from ever going stale — every screen change '
     + 'passes through here');
 });
 
 test('the three up-one-level screens pass their own target', () => {
-  assert.match(browseJs, /App\.setBackIcon\(\s*onDetail \? 'arrow' : 'home',[\s\S]{0,160}?'#apps'/,
-    'browse detail goes up to the list…');
-  assert.match(browseJs, /Browse\._detailOrigin !== 'home'/,
-    '…except when it was opened from a home card, where handleBack goes home');
+  // Browse's detail view is a level INSIDE that screen and draws the arrow.
+  // Settings and Admin draw one at level 2 only — the mobile drill-in, which
+  // is likewise a level inside the screen and would strand a phone viewer
+  // without it.
+  //
+  // Settings and Admin roots draw the house. Browse's root shares Home's
+  // header without a back slot (#1569); Home remains in the navigation menu.
+  // A Browse detail opened from Home still draws the house, while a detail
+  // opened from the list (or directly) links back to that list.
+  assert.match(browseJs, /const upToList = onDetail && Browse\._detailOrigin !== 'home';/,
+    'browse names the one state with a list above it…');
+  assert.match(browseJs, /const backMode = onDetail \? \(upToList \? 'arrow' : 'home'\) : 'none';/,
+    '…and that state alone gets the chevron; Home-origin details get the house and the root hides the slot');
+  assert.match(browseJs, /setBackIcon\(backMode, upToList \? '#apps' : undefined\)/,
+    'the list-bound chevron keeps its explicit parent target');
   assert.match(adminConsoleJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#admin' : undefined\)/,
-    'the admin section chevron pops to the console menu');
-  assert.match(settingsJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? '#settings' : undefined\)/,
-    'the settings section chevron pops to the settings menu');
+    'the admin section chevron pops to the console menu; its root gets home');
+  // Settings resolves its section target through _upHref (#1565): the menu
+  // when the menu is what sits below the entry, and the address the viewer
+  // came from when they arrived from elsewhere in the app. Its root still
+  // gets the house.
+  assert.match(settingsJs, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? Settings\._upHref\(\) : undefined\)/,
+    'the settings section chevron points where its back press goes');
+  assert.match(settingsJs, /_upHref\(\) \{[\s\S]{0,400}return '#settings';/,
+    '…which is still the menu unless something else of ours is below');
 });
 
 // ── The converted back controls ────────────────────────────────────────
 
 const ANCHORS = [
-  {
-    label: 'back out of a dev session',
-    src: () => devChatJs, file: 'dev-chat.js',
-    markup: /<a id="dc-back"/,
-    oldTag: /<button id="dc-back"/,
-    href: /href="\$\{App\.currentApp \? `#app\/\$\{escapeHtml\(App\.currentApp\)\}\/dev` : ''\}"/,
-    handler: "document.getElementById('dc-back').addEventListener",
-  },
+  // 'back out of a dev session' is NOT in this list any more, and for the same
+  // reason as the three below: the session header strip converted, so the
+  // anchor is JSX in frontend/src/features/dev-chat/session-header.tsx and the
+  // plain-click path is DevChat.leaveSession(). It gets the same assertions by
+  // hand below.
   // 'back out of the app-wide dev chat' is NOT in this list: #1084 chunk G
   // converted that sub-view's frame to React, which splits the control across
   // two files, and every entry here has a single source. It gets the same two
   // assertions by hand below.
-  {
-    label: 'back out of an issue / proposal / governance topic',
-    src: () => appViewJs, file: 'app-view.js',
-    markup: /<a id="dev-topic-back"/,
-    oldTag: /<button id="dev-topic-back"/,
-    href: /href="\$\{AppView\._devPageHref\(\)\}"/,
-    handler: "document.getElementById('dev-topic-back').addEventListener",
-  },
+  // 'back out of an issue / proposal / governance topic' is NOT in this list
+  // any more, for the same reason as the dev general-chat link above: #1191
+  // converted the topic sub-view's frame to React
+  // (frontend/src/features/dev-board/topic-frame.tsx), which splits the
+  // control across two files. It gets the same two assertions by hand below.
   // 'back to the top-users leaderboard' is NOT in this list either, and for
   // the same reason as the dev general-chat link above: #1191 slice 6
   // conversion 6 made the Kudos pane a component, so the anchor is JSX in
@@ -277,30 +317,88 @@ for (const a of ANCHORS) {
   });
 }
 
-// The dev general-chat back link, split by #1084 chunk G: the anchor is JSX in
-// frontend/src/features/dev-board/chat-frame.tsx, and the plain-click handler is
-// the onBackClick prop AppView._renderChatSubView still passes in. Same two
-// properties as the loop above asserts for every other control — a real <a>
-// with a resolvable target, and a guard that runs before preventDefault.
-test('"back out of the app-wide dev chat" is a real anchor with a real target', () => {
-  assert.match(chatFrameTsx, /<a\s+id="dev-chat-back"/,
-    'chat-frame.tsx: the control must be an <a>');
-  assert.ok(!/<button[^>]*id="dev-chat-back"/.test(chatFrameTsx + appViewJs),
-    'the old <button> tag is gone from both the component and app-view.js');
-  assert.match(chatFrameTsx, /href=\{backHref\}/,
-    'chat-frame.tsx: the anchor must carry the href prop, not a bare "#"');
-  assert.match(appViewJs, /backHref: AppView\._devPageHref\(\),/,
-    'app-view.js must resolve that href through the same shared helper as before');
+// The dev general-chat back link (#1084 chunk G) is GONE, and staying gone is
+// the contract now:
+test('the app-wide dev chat carries no back control any more', () => {
+  // Streamlined Concept: the general chat is the ACTIVITY screen — a
+  // first-class destination with its own hash, named by the header's title
+  // tab and left through the eye button or the app-context sheet. A back
+  // bar over it would be a second navigation system.
+  assert.ok(!/dev-chat-back/.test(chatFrameTsx),
+    'chat-frame.tsx: the back anchor is retired');
 });
 
-test('"back out of the app-wide dev chat" leaves a modified click to the browser', () => {
-  const body = handlerAfter(appViewJs, 'onBackClick: (e) => {', 400);
-  const guard = body.indexOf('NavLink.isNativeClick(e)');
-  const prevent = body.indexOf('e.preventDefault()');
-  assert.ok(guard !== -1, 'app-view.js: the modified-click guard went missing');
-  assert.ok(prevent !== -1, 'app-view.js: a plain click must still be intercepted');
-  assert.ok(guard < prevent,
-    'app-view.js: preventDefault ahead of the guard swallows the new tab');
+// The dev session's back control is the PLATFORM HEADER's #back-btn now
+// (Streamlined Concept): renderDevView's session branch calls
+// App.setBackIcon('arrow', '/app/<slug>/board'), so the anchor and its
+// modified-click guard are app.js's — the same real-anchor contract the
+// loop above pins for every other control. The in-strip #dc-back retired.
+test('"back out of a dev session" rides the header back anchor, with a real target', () => {
+  assert.ok(!/dc-back/.test(sessionHeaderTsx),
+    'session-header.tsx: the in-strip back control stays retired');
+  assert.match(appViewJs,
+    /setBackIcon\?\.\('arrow', App\._appUrl\([\s\S]{0,140}boardView: 'kanban'/,
+    'app-view.js points the header anchor at the Board on the way into a session');
+  // The header listener's guard runs before preventDefault (pinned in
+  // app.js for every screen the anchor serves), and the plain click walks
+  // the handleBack chain into dev-chat.js's.
+  assert.match(appJs, /window\.DevChat\?\.handleBack\?\.\(\)/,
+    'app.js consults DevChat before the navigate-home fallback');
+  assert.match(devChatJs, /handleBack\(\) \{[\s\S]{0,300}?leaveSession\(\)/,
+    'a session claims the click');
+  // And the work the plain click does is still dev-chat.js's.
+  assert.match(devChatJs, /leaveSession\(\) \{[\s\S]{0,900}?App\.switchTab\('dev'\)/);
+});
+
+// The topic page's back bar is retired too, and it was the LAST one. It was a
+// full-width bar with a hairline whose entire content was `← Back`, sitting
+// directly under a platform header that — since the back/home rule — carries a
+// chevron to the same Board on this very route. Two back controls one row
+// apart, and the page opened with a strip of chrome instead of the proposal
+// you came to read.
+//
+// Nothing #1036 bought that anchor is lost: the header's chevron is a real
+// `<a href>` with the same NavLink guard, provided once instead of twice.
+test('"back out of an issue / proposal / governance topic" rides the header anchor', () => {
+  assert.ok(!/dev-topic-back/.test(topicFrameTsx),
+    'topic-frame.tsx: the back anchor is retired');
+  // Code only: the file's header explains what was removed and names both
+  // props while doing it, which is prose worth keeping.
+  const topicCode = topicFrameTsx.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/backHref|onBackClick/.test(topicCode),
+    'and the two props that existed only for it went with it — a prop left '
+    + 'behind is the bar growing back with nothing to stop it');
+  assert.match(appViewJs, /mountTopicSubView\(content\);/,
+    'app-view.js hands the host over and nothing else, exactly as the general '
+    + 'chat mount already did');
+
+  // The header IS the back control on this route, by route derivation rather
+  // than by an imperative call — pinned properly in tests/header-back-home.js;
+  // named here so this file's map of "who owns back" stays complete.
+  assert.match(read('frontend/src/features/header/platform-header.tsx'),
+    /subTab === 'chat' \|\| subTab === 'topic'\) return board;/,
+    'the header points a topic page at its board — `board` and not a literal '
+    + '`/board`, because Workshop and Board are one screen in two layouts and '
+    + 'the arrow has to name the one the reader came from');
+});
+
+test('no in-page back control is left anywhere in the Dev area', () => {
+  // The three retired one at a time and each left the others in place, so the
+  // count is the assertion: a fourth surface growing its own is the shape of
+  // this regression, not any single id coming back.
+  for (const [name, src] of [['chat-frame.tsx', chatFrameTsx],
+    ['topic-frame.tsx', topicFrameTsx], ['session-header.tsx', sessionHeaderTsx]]) {
+    assert.ok(!/id="d(c|ev)-[a-z-]*back"/.test(src),
+      `${name} must carry no in-page back control — the header has it`);
+  }
+});
+
+test('the app-wide dev chat mounts without back-bar props', () => {
+  // Activity has no in-frame back control (see the retirement test above),
+  // so the mount takes no backHref/onBackClick — a prop that came back here
+  // would be the second navigation system creeping in.
+  assert.match(appViewJs, /mountChatSubView\(content\);/,
+    'app-view.js hands the host over and nothing else');
 });
 
 test('the dev sub-views resolve their target through one helper', () => {
@@ -309,8 +407,8 @@ test('the dev sub-views resolve their target through one helper', () => {
   const fn = appViewJs.slice(at, appViewJs.indexOf('\n  },', at));
   assert.match(fn, /AppView\.appData && AppView\.appData\.slug\) \|\| App\.currentApp/,
     'either source of the open app\'s slug is acceptable');
-  assert.match(fn, /return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev` : ''/,
-    'no slug means an EMPTY href, never "#app/undefined/dev"');
+  assert.match(fn, /return slug \? App\._appUrl\(slug, 'dev', null, 'forum'\) : ''/,
+    'no slug means an EMPTY href, never "/app/undefined/board"');
 });
 
 // The Kudos pane's profile back link, JSX in kudos-pane.tsx since #1191 slice
@@ -384,25 +482,23 @@ test('#browse-detail-back keeps its own layout as an anchor', () => {
 
 // ── The rows that stay buttons / divs ──────────────────────────────────
 
-test('the App/Dev switch stays a radiogroup and intercepts by hand', () => {
-  // An <a> cannot carry role="radio" inside a role="radiogroup"; that is
-  // why this one control uses mechanism B.
-  assert.match(html, /<button[^>]*role="radio"[^>]*class="[^"]*app-mode-seg/,
-    'the segments must remain buttons with their ARIA role');
-  const at = appJs.indexOf(".querySelectorAll('.app-mode-seg')");
-  assert.ok(at !== -1, 'the switch wiring went missing');
-  const body = appJs.slice(at, at + 900);
-  assert.match(body, /NavLink\.wireModified\(btn, hrefFor, activate\)/,
-    'the switch routes through the interception helper');
-  assert.match(body, /#app\/\$\{App\.currentApp\}\/\$\{btn\.dataset\.tab === 'dev' \? 'dev' : 'app'\}/,
-    'the target is resolved at click time — App.currentApp is not stable at wiring time');
-  assert.match(body, /App\.currentApp\s*\?/,
-    'no open app means no target rather than "#app/null/app"');
-  // The "re-tapping the active App segment is a no-op" guard belongs to
-  // the plain path only: a cmd-click is not re-mounting this tab's iframe.
-  const activate = body.slice(body.indexOf('const activate'));
-  assert.match(activate.slice(0, 200), /btn\.dataset\.tab === 'app' && App\.currentTab === 'app'\) return/,
-    'the no-op guard survives on the plain-click path');
+// The App/Dev switch used to be tested here as the one control that had to
+// use NavLink mechanism B (hand interception) rather than a plain href: an
+// <a> cannot carry role="radio" inside a role="radiogroup". THE UI OVERHAUL
+// retired the switch, so the exception is gone with it — every navigating
+// control in the shell is an anchor or goes through App's router now.
+//
+// #improve-btn is deliberately NOT a new exception. It opens a panel rather
+// than navigating, so there is no destination for a cmd-click to open; the
+// panel's own rows are where navigation happens, and those ARE anchors
+// (see features/improve/improve-panel.tsx's SessionRow and ImproveRow).
+test('the retired App/Dev switch left no interception behind', () => {
+  assert.equal(appJs.indexOf(".querySelectorAll('.app-mode-seg')"), -1,
+    'the switch wiring is gone from app.js');
+  assert.equal(html.indexOf('id="app-mode-switch"'), -1,
+    'the switch markup is gone from the shell');
+  assert.doesNotMatch(html, /class="[^"]*app-mode-seg/,
+    'no orphan segment survived the retirement');
 });
 
 const ROWS = [
@@ -411,24 +507,34 @@ const ROWS = [
     src: () => homeJs, file: 'home.js',
     anchor: ".querySelectorAll('.app-card')",
     wire: /NavLink\.wireModified\(card, hrefFor, activate\)/,
-    href: /#app\/\$\{encodeURIComponent\(card\.dataset\.slug\)\}\/app/,
+    // #1562: a Discover tap opens the app's detail page, not the app. The
+    // modified-click contract is unchanged — it just names a different route.
+    href: /detailHref\(card\.dataset\.slug\)/,
     guards: ['card-add-btn', 'card-menu-btn', "card.dataset.demo === 'true'", 'awaiting_secrets'],
   },
-  {
-    label: 'dev-chat session rows',
-    src: () => devChatJs, file: 'dev-chat.js',
-    anchor: ".querySelectorAll('.dc-active-item')",
-    wire: /NavLink\.wireModified\(el, hrefFor, activate\)/,
-    href: /#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/sessions\/\$\{id\}/,
-    guards: ['Number.isFinite(id)'],
-  },
+  // The dev chat's cross-app "Active Sessions" rows were the second entry
+  // here. They are gone (#1367): `#dc-active-list` and `#dc-active-counter`
+  // exist in no markup, so `renderActiveSessions` resolved nothing and
+  // returned on its first line, and the 5s poll that drove it had no caller
+  // left. A modifier-click contract for rows nobody can see is not a
+  // contract — the assertion below replaces it, so the wiring cannot come
+  // back without the surface.
 ];
+
+test('the retired cross-app session rows leave no half of themselves behind', () => {
+  assert.ok(!/dc-active-item/.test(devChatJs), 'no rows');
+  assert.ok(!/dc-active-list|dc-active-counter/.test(devChatJs.replace(/\/\/[^\n]*/g, '')),
+    'and no lookups for the hosts they needed');
+});
 
 for (const r of ROWS) {
   test(`${r.label} open in a new tab under a modifier`, () => {
     const at = r.src().indexOf(r.anchor);
     assert.ok(at !== -1, `${r.file}: ${r.anchor} went missing`);
-    const body = r.src().slice(at, at + 1600);
+    // A window, not a parse: wide enough to hold the wiring block plus the
+    // comment above it. Raised from 1600 when #1562 gave the Discover card a
+    // named destination helper and two more lines of guard.
+    const body = r.src().slice(at, at + 2400);
     assert.match(body, r.wire, `${r.file}: must route through NavLink.wireModified`);
     assert.match(body, r.href, `${r.file}: the new tab must open the row's own route`);
     // hrefFor has to repeat the plain click's guards, or a modified click
@@ -474,30 +580,10 @@ test('browse list rows open in a new tab under a modifier', () => {
     'the plain click resolves through the same guard');
 });
 
-// ── The drawer's delegated handler ─────────────────────────────────────
 
-test('a modified click in the drawer neither arms the flag nor closes it', () => {
-  // #1079 chunk B moved App.HeaderMenu into the React bundle beside the
-  // markup it drives; the delegated handler went with it.
-  const headerMenuJs = read('frontend/src/features/header/header-menu-controller.js');
-  const at = headerMenuJs.indexOf("const drawerPanel = document.getElementById('header-menu-panel');");
-  assert.ok(at !== -1, 'the delegated drawer handler went missing');
-  const body = headerMenuJs.slice(at, at + 1400);
-  const guard = body.indexOf('NavLink.isNativeClick(e)');
-  const arm = body.indexOf('_navArmedAt = HeaderMenu._now()');
-  const close = body.indexOf('HeaderMenu.close()');
-  assert.ok(guard !== -1, 'the guard went missing');
-  assert.ok(arm !== -1 && close !== -1, 'the existing arm/close behaviour must survive');
-  assert.ok(guard < arm,
-    'nothing navigates in THIS document on a cmd-click, so the one-shot '
-    + 'animation-suppression flag must not be armed — it would leak onto the '
-    + 'next real navigation until its TTL');
-  assert.ok(guard < close,
-    'and the drawer must not be torn down under a user who opened another tab');
-  // The existing contract (tests/drawer-nav-motion.test.js) is intact.
-  assert.match(body, /closest\('a\[href\]'\)/);
-  assert.match(body, /getAttribute\('href'\)/);
-});
+// The drawer is retired. The rule it pinned — a modified click belongs to the
+// browser and is never intercepted — is asserted shell-wide by the tests
+// above, which cover every surviving anchor including Home's account row.
 
 // ── The declared checks ────────────────────────────────────────────────
 
@@ -507,17 +593,20 @@ test('dapp.json pins the anchors that a capture can actually see', () => {
   const checks = (dapp.tests || []).filter(
     (t) => typeof t.name === 'string' && t.name.includes('#1036')
   );
-  assert.ok(checks.length >= 3,
+  assert.ok(checks.length >= 2,
     'without checks a button-to-anchor regression ships silently');
 
   const bySelector = (frag) => checks.find(
     (t) => typeof t.expectSelector === 'string' && t.expectSelector.includes(frag)
   );
 
-  const session = bySelector('a#dc-back');
-  assert.ok(session, 'the control named in the issue needs its own check');
-  assert.match(session.expectSelector, /a#dc-back\[href="#app\/[^"]+\/dev"\]/,
-    'assert the TARGET, not just the tag — an anchor with no href is no fix');
+  // The session's back control is the header's own anchor now (Streamlined
+  // Concept — #dc-back retired), so its check pins a#back-btn at the Board.
+  const session = (dapp.tests || []).find(
+    (t) => typeof t.expectSelector === 'string'
+      && /a#back-btn[^"]*\[href="#app\/[^"]+\/board"\]/.test(t.expectSelector)
+  );
+  assert.ok(session, 'the session back anchor needs its own check');
   assert.match(session.path, /dev\/sessions\/\d+/, 'it must land on a session');
 
   const home = bySelector('a#back-btn');
@@ -548,6 +637,6 @@ test('the declared checks survive the manifest reader', () => {
     `dapp.json declares more than ${appManifest.MAX_DECLARED_TESTS} valid checks — `
     + 'checks past the ceiling never run');
   const kept = meta.tests.filter((t) => /#1036/.test(t.name || ''));
-  assert.ok(kept.length >= 3,
+  assert.ok(kept.length >= 2,
     'a malformed entry is silently dropped, which gates nothing');
 });

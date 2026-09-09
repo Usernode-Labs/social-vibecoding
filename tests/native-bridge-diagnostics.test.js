@@ -17,11 +17,24 @@ const root = path.join(__dirname, '..');
 const bridgeSource = fs.readFileSync(
   path.join(root, 'public', 'usernode-bridge.js'), 'utf8'
 );
+const ESTABLISH_ATTEMPT = `nsa_${'A'.repeat(43)}`;
+const SESSION_CAPABILITIES = [
+  'privilegedBridgeCapability',
+  'establishNativeSession',
+  'getSettingsState',
+];
+
+function establishRealm(loaded) {
+  return loaded.sandbox.usernode.establishNativeSession({
+    attemptId: ESTABLISH_ATTEMPT,
+    desiredRuntime: 'running',
+  });
+}
 
 function loadBridge({
   native = true,
   inIframe = false,
-  capabilities = ['privilegedBridgeCapability', 'beginSessionHandoff'],
+  capabilities = SESSION_CAPABILITIES,
   errorMethods = {},
   errorInfoMethods = {},
   silentMethods = [],
@@ -30,13 +43,27 @@ function loadBridge({
   const nativePosts = [];
   const responses = {
     getBridgeInfo: {
-      version: 4,
+      version: 5,
       capabilities,
+      ...(capabilities.includes('establishNativeSession')
+        ? { sessionLifecycleProtocol: 2 } : {}),
       appVersion: '0.4.0',
       buildNumber: '1223',
     },
     getPrivilegedBridgeCapability: 'realm-capability',
-    beginSessionHandoff: { blocked: true },
+    establishNativeSession: {
+      protocol: 2,
+      attemptId: ESTABLISH_ATTEMPT,
+      nativeRevision: '7',
+      identity: {
+        participantId: '41',
+        accountId: 'account-1',
+        address: 'ut1-wallet',
+      },
+      runtimeStatus: { state: 'running' },
+      receiptStatus: 'committedReady',
+      realmSessionClaim: 'realm-session-41',
+    },
     getSettingsState: { authStatus: 'authenticated' },
   };
   const sandbox = {
@@ -131,16 +158,16 @@ test('the installed build stays readable after the handshake is refused',
       },
     });
 
-    await loaded.sandbox.usernode.beginSessionHandoff().catch(() => {});
+    await loaded.sandbox.usernode.getHomeScreenShortcuts().catch(() => {});
     const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
 
     // getBridgeInfo is UNPRIVILEGED, which is the whole reason a refused
     // device can still be diagnosed rather than merely apologised to.
     assert.equal(diag.isNative, true);
-    assert.equal(diag.bridgeVersion, 4);
+    assert.equal(diag.bridgeVersion, 5);
     assert.equal(diag.appVersion, '0.4.0');
     assert.equal(diag.buildNumber, '1223');
-    assert.ok(diag.capabilities.includes('beginSessionHandoff'));
+    assert.ok(diag.capabilities.includes('getSettingsState'));
 
     assert.equal(diag.privileged.state, 'blocked-frame');
     assert.equal(diag.privileged.code, 'privileged_frame_unauthorized');
@@ -153,7 +180,8 @@ test('the installed build stays readable after the handshake is refused',
 test('a working handshake reports ready with no attempt debt', async () => {
   const loaded = loadBridge();
 
-  await loaded.sandbox.usernode.beginSessionHandoff();
+  await establishRealm(loaded);
+  await loaded.sandbox.usernode.getSettingsState();
   const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
 
   assert.equal(diag.privileged.state, 'ready');
@@ -167,7 +195,8 @@ test('a working handshake reports ready with no attempt debt', async () => {
 test('the snapshot never carries the capability token', async () => {
   const loaded = loadBridge();
 
-  await loaded.sandbox.usernode.beginSessionHandoff();
+  await establishRealm(loaded);
+  await loaded.sandbox.usernode.getSettingsState();
   const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
 
   assert.equal(
@@ -191,10 +220,10 @@ test('an embedded frame is told the truth about itself, not the top frame',
 
 test('failed reads are exposed as copies, not the live record', async () => {
   const loaded = loadBridge({
-    capabilities: ['getSettingsState'],
     errorMethods: { getSettingsState: 'no settings for you' },
   });
 
+  await establishRealm(loaded);
   assert.equal(await loaded.sandbox.usernode.getSettingsState(), null,
     'chrome reads still resolve a fallback rather than rejecting');
 
@@ -210,24 +239,25 @@ test('failed reads are exposed as copies, not the live record', async () => {
 test('a refused privileged ACTION now leaves a record too', async () => {
   const loaded = loadBridge({
     capabilities: [
-      'privilegedBridgeCapability', 'setSocialPushEnabled',
+      'privilegedBridgeCapability', 'setDebugMode',
     ],
-    errorMethods: { setSocialPushEnabled: 'refused' },
+    errorMethods: { setDebugMode: 'refused' },
   });
 
-  await loaded.sandbox.usernode.setSocialPushEnabled(true).catch(() => {});
+  await loaded.sandbox.usernode.setDebugMode(true).catch(() => {});
 
   const diag = loaded.sandbox.usernode.getBridgeDiagnostics();
-  assert.equal(diag.lastErrors.setSocialPushEnabled.kind, 'rejected');
-  assert.equal(diag.lastErrors.setSocialPushEnabled.message, 'refused');
+  assert.equal(diag.lastErrors.setDebugMode.kind, 'rejected');
+  assert.equal(diag.lastErrors.setDebugMode.message, 'refused');
 });
 
 test('a successful call clears its own stale failure record', async () => {
   const errorMethods = { getSettingsState: 'transient' };
   const loaded = loadBridge({
-    capabilities: ['getSettingsState'], errorMethods,
+    errorMethods,
   });
 
+  await establishRealm(loaded);
   await loaded.sandbox.usernode.getSettingsState();
   assert.ok(loaded.sandbox.usernode.getBridgeDiagnostics()
     .lastErrors.getSettingsState);

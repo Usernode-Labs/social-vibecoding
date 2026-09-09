@@ -49,6 +49,8 @@
 
 import { Fragment, type ReactNode } from 'react';
 
+import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+
 import { useStoreState } from '../../lib/use-store-state';
 import { kudosPaneStore } from './kudos-pane-store.js';
 
@@ -149,15 +151,15 @@ const BADGE = 'px-1.5 py-0.5 rounded text-[10px] font-semibold';
 
 const TONES: Record<Tone, string> = {
   emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
-  amber: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300',
+  amber: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
   zinc: 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400',
   violet: 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300',
   sky: 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300',
   red: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300',
 };
 
-const HINT = 'py-8 text-center text-sm text-zinc-500';
-const ERROR_HINT = 'py-8 text-center text-sm text-red-500';
+const HINT = 'py-8 text-center text-sm text-zinc-500 dark:text-zinc-400';
+const ERROR_HINT = 'py-8 text-center text-sm text-red-700 dark:text-red-400';
 
 /** The list row, shared by all four lists. The profile row adds the cursor. */
 const ROW = 'w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg '
@@ -165,7 +167,7 @@ const ROW = 'w-full text-left flex items-center gap-3 px-3 py-2.5 rounded-lg '
   + 'hover:bg-zinc-50 dark:hover:bg-zinc-900 transition-colors';
 
 const ROW_TITLE = 'text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate';
-const ROW_META = 'text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap';
+const ROW_META = 'text-xs text-zinc-500 mt-0.5 flex items-center gap-1.5 flex-wrap dark:text-zinc-400';
 
 const KUDOS_PILL = 'shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full '
   + 'bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 '
@@ -183,11 +185,45 @@ function StatusBadge({ badge }: { badge: Badge }): ReactNode {
 
 /** The `·` between meta bits. A separate node, so `gap-1.5` spaces it. */
 function Dot(): ReactNode {
-  return <span className="text-zinc-400">·</span>;
+  return <span className="text-zinc-500 dark:text-zinc-400">·</span>;
 }
 
+/**
+ * The list's loading state, at the ROW's own geometry.
+ *
+ * It was the word "Loading…" centred in eight rows of empty space — which
+ * says nothing about what is coming and, on a screen whose lists are its
+ * whole content, reads as a screen with nothing on it.
+ *
+ * The wrapper is `ROW` itself, the constant all four of this pane's lists
+ * draw with, so the placeholders carry the real border, radius and padding
+ * and cannot drift from the rows they stand in for. The three columns are
+ * the row's own: the fixed rank lane, the 36px avatar, and the title/meta
+ * pair — plus the kudos pill's shape at the right end, because a row whose
+ * right edge is empty and then suddenly is not is the jump this exists to
+ * avoid.
+ *
+ * Five rows: enough to fill the fold on a phone, few enough that a short
+ * board does not watch placeholders evaporate.
+ */
 function Loading(): ReactNode {
-  return <div className={HINT}>Loading…</div>;
+  return (
+    <SkeletonGroup label="Loading the leaderboard" className="space-y-2">
+      {Array.from({ length: 5 }, (_, i) => (
+        <div key={i} className={ROW}>
+          <div className="w-7 flex justify-center">
+            <Skeleton shape="muted" className="w-3" />
+          </div>
+          <Skeleton shape="circle" className="w-9 h-9" />
+          <div className="flex-1 min-w-0">
+            <Skeleton className={i % 2 ? 'w-24' : 'w-32'} />
+            <Skeleton shape="muted" className={`mt-1.5 ${i % 3 ? 'w-2/5' : 'w-1/3'}`} />
+          </div>
+          <Skeleton shape="block" className="w-12 h-6 rounded-full" />
+        </div>
+      ))}
+    </SkeletonGroup>
+  );
 }
 
 /**
@@ -229,7 +265,7 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
       <a
         data-lb-back=""
         href="#leaderboard/users"
-        className="inline-block text-sm font-medium text-violet-600 dark:text-violet-400 hover:underline mb-3"
+        className="inline-block text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline mb-3"
         onClick={(e) => {
           // `e` is React's SyntheticEvent, so the guard reads the native one
           // out of it — the same NavLink call, one hop further in, exactly as
@@ -324,7 +360,7 @@ function PrRows({ rows }: { rows: PrRow[] }): ReactNode {
           className={ROW}
           onClick={() => controller()?._routeToPr(row.slug, row.sessionId)}
         >
-          <div className="w-7 text-center text-sm font-mono text-zinc-500">{row.rank}</div>
+          <div className="w-7 text-center text-sm font-mono text-zinc-500 dark:text-zinc-400">{row.rank}</div>
           <div className="flex-1 min-w-0">
             <div className={ROW_TITLE}>{row.title}</div>
             <div className={ROW_META}>
@@ -354,7 +390,7 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
           className={ROW}
           onClick={() => controller()?._openUser(row.who)}
         >
-          <div className="w-7 text-center text-sm font-mono text-zinc-500">{row.rank}</div>
+          <div className="w-7 text-center text-sm font-mono text-zinc-500 dark:text-zinc-400">{row.rank}</div>
           <div className="w-9 h-9 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-sm">
             {row.initial}
           </div>
@@ -371,8 +407,8 @@ function UserRows({ rows }: { rows: UserRow[] }): ReactNode {
           </div>
           {row.unmergedNote ? (
             <span
-              className="shrink-0 text-[11px] text-amber-600 dark:text-amber-400"
-              title="Kudos on PRs that haven’t merged yet — not counted toward ranking"
+              className="shrink-0 text-[11px] text-amber-800 dark:text-amber-400"
+              title="Kudos on PRs that haven’t merged yet, not counted toward ranking"
             >
               {row.unmergedNote}
             </span>
@@ -428,7 +464,7 @@ function ProfileRows({ rows }: { rows: ProfileRow[] }): ReactNode {
               rel="noopener"
               data-lb-ext=""
               title="Open on GitHub"
-              className="shrink-0 px-1.5 py-0.5 rounded text-sm text-zinc-400 hover:text-violet-600 dark:hover:text-violet-400"
+              className="shrink-0 px-1.5 py-0.5 rounded text-sm text-zinc-500 hover:text-violet-600 dark:hover:text-violet-400 dark:text-zinc-400"
               onClick={(e) => e.stopPropagation()}
             >
               <span aria-hidden="true">↗</span>
@@ -451,7 +487,7 @@ function ProfileBody({ view }: { view: Extract<BodyView, { kind: 'profile' }> })
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <span
           className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/30 border border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300 text-xs font-semibold"
-          title="Kudos earned on merged PRs — the leaderboard ranking score"
+          title="Kudos earned on merged PRs: the leaderboard ranking score"
         >
           <span aria-hidden="true">{CLAP}</span>
           <span>{view.stats.kudosMerged}</span>
@@ -492,8 +528,8 @@ function Marker({ marker }: { marker: HistoryRow['marker'] }): ReactNode {
       : <StatusBadge badge={{ tone: 'red', label: 'no' }} />;
   }
   return marker.up
-    ? <span className="text-emerald-600 dark:text-emerald-400 font-bold" aria-hidden="true">▲</span>
-    : <span className="text-red-600 dark:text-red-400 font-bold" aria-hidden="true">▼</span>;
+    ? <span className="text-emerald-700 dark:text-emerald-400 font-bold" aria-hidden="true">▲</span>
+    : <span className="text-red-700 dark:text-red-400 font-bold" aria-hidden="true">▼</span>;
 }
 
 /**
@@ -506,7 +542,7 @@ function HistoryMeta({ bits }: { bits: MetaBit[] }): ReactNode {
     <>
       {bits.map((bit, i) => (
         <Fragment key={`${bit.kind}|${bit.text}`}>
-          {i > 0 ? <span className="text-zinc-400">{' · '}</span> : null}
+          {i > 0 ? <span className="text-zinc-500 dark:text-zinc-400">{' · '}</span> : null}
           {bit.kind === 'badge'
             ? <span className={`${BADGE} ${TONES[bit.tone]}`} title={bit.title}>{bit.text}</span>
             : bit.kind === 'italic'
@@ -535,7 +571,7 @@ function HistoryRows({ rows }: { rows: HistoryRow[] }): ReactNode {
             <div className={ROW_TITLE}>{row.title}</div>
             <div className={ROW_META}><HistoryMeta bits={row.meta} /></div>
           </div>
-          <div className="shrink-0 text-xs text-zinc-400 dark:text-zinc-500">{row.when}</div>
+          <div className="shrink-0 text-xs text-zinc-500 dark:text-zinc-500">{row.when}</div>
         </button>
       ))}
     </div>

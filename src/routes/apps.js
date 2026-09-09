@@ -1,8 +1,9 @@
+const appAllowance = require('../services/app-allowance');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { createApp } = require('../services/app-creator');
-const { forkApp } = require('../services/app-forker');
+const { forkApp, findForkSource } = require('../services/app-forker');
 const caddy = require('../services/caddy');
 const docker = require('../services/docker');
 const github = require('../services/github');
@@ -16,12 +17,13 @@ const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
-const { appCreateLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
+const discoveryCuration = require('../services/discovery-curation');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -38,6 +40,29 @@ function validateVisibilityCombo(collabVisibility, viewVisibility) {
   }
   if (collabVisibility === 'public' && viewVisibility === 'private') {
     return 'An app that everyone can build cannot be private to view';
+  }
+  return null;
+}
+
+// A source must have finished the durable parts of provisioning before a
+// fork can take a database/repository snapshot. `awaiting_secrets` is safe:
+// its DB and repo are complete and only private deploy input is missing.
+// Keeping this as a shared message builder lets both initial fork and Retry
+// reject the known race before creating another async failure row.
+function forkSourceReadinessError(sourceApp) {
+  if (!sourceApp) return 'The source app for this fork no longer exists.';
+  if (sourceApp.self_hosted) return 'The platform app cannot be forked.';
+  if (sourceApp.status === 'creating') {
+    return 'This app is still being set up. Try forking it again once it is ready.';
+  }
+  if (sourceApp.status === 'error') {
+    return 'This app cannot be forked until its setup error is fixed.';
+  }
+  if (!['running', 'awaiting_secrets'].includes(sourceApp.status)) {
+    return 'This app is not ready to fork yet.';
+  }
+  if (!sourceApp.repo_url) {
+    return 'This app is not ready to fork yet because its repository is still being prepared.';
   }
   return null;
 }
@@ -126,7 +151,13 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // no app_icons blob needs to exist in the clone (the client renders
 // whatever icon_url it's given).
 const DEMO_ICON_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAg0lEQVR42r3NuRGAMAwEQNdFbXRAIVRHAyQwDmB4/MjS3QUbb5qn7VBKymxddl2YM1l4ZZLwmdHDb0YNSxktrGWUsJXBw14GDS0ZLLRmkHAkC4ejWSj0ZO7Qm7nCSDYcRrOhEJGZQ1RmCpFZN0RnzZCRVUNWVgyZ2S9kZ69Qkd2hKstOLPva44BQr+EAAAAASUVORK5CYII=';
-function demoIconApps() {
+// Relative ISO timestamp for the demo rows below, so their ages read the
+// same however long the staging container has been up.
+function demoAgo(hours) {
+  return new Date(Date.now() - hours * 3600 * 1000).toISOString();
+}
+
+function demoIconApps(curation = false) {
   const base = {
     status: 'running',
     self_hosted: false,
@@ -135,6 +166,11 @@ function demoIconApps() {
     view_visibility: 'public',
     created_at: new Date().toISOString(),
     last_deploy_at: new Date().toISOString(),
+    // Synthetic preview reviews, never assigned to real apps.
+    main_sha: '0000000000000000000000000000000000000001',
+    directory_reviewed_sha: '0000000000000000000000000000000000000001',
+    directory_reviewed_at: new Date().toISOString(),
+    directory_review_status: 'working',
     url: null,
     version: null,
     deployProgress: null,
@@ -148,6 +184,9 @@ function demoIconApps() {
     is_collaborator: false,
     open_prs: 0,
     active_sessions: 0,
+    merged_prs: 0,
+    merged_prs_recent: 0,
+    last_merged_at: null,
     open_issues: 0,
     icon_emoji: null,
     icon_url: null,
@@ -158,7 +197,7 @@ function demoIconApps() {
     // home.js excludes [data-demo] cards from the kit drag.
     demo: true,
   };
-  return [
+  const apps = [
     { ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮' },
     {
       ...base,
@@ -226,23 +265,48 @@ function demoIconApps() {
     // their real counts, but a check runs against a fresh database.
     // Numbers here where production sends bigint STRINGS; the client
     // coerces either, and tests cover both shapes.
+    //
+    // The four also carry deliberately DIFFERENT merged-proposal and age
+    // profiles, so the #apps sort control (#1383) puts a different row on
+    // top under each of its five orders instead of looking broken against
+    // an otherwise uniform fixture set. Read them as: 1 = popular but
+    // dormant, 2 = the workhorse, 3 = brand new and busy, 4 = neither.
     {
       ...base, id: 900008, slug: 'staging-demo-popular-1',
       name: 'Staging demo popular 1', icon_emoji: '🔥', active_users: 12,
+      merged_prs: 3, merged_prs_recent: 0, last_merged_at: demoAgo(90 * 24),
+      created_at: demoAgo(200 * 24), last_deploy_at: demoAgo(60 * 24),
     },
     {
       ...base, id: 900009, slug: 'staging-demo-popular-2',
       name: 'Staging demo popular 2', icon_emoji: '📈', active_users: 9,
+      merged_prs: 41, merged_prs_recent: 11, last_merged_at: demoAgo(2),
+      created_at: demoAgo(120 * 24), last_deploy_at: demoAgo(2),
     },
     {
       ...base, id: 900010, slug: 'staging-demo-popular-3',
       name: 'Staging demo popular 3', icon_emoji: '🎧', active_users: 7,
+      merged_prs: 6, merged_prs_recent: 5, last_merged_at: demoAgo(24),
+      created_at: demoAgo(3 * 24), last_deploy_at: demoAgo(24),
     },
     {
       ...base, id: 900011, slug: 'staging-demo-popular-4',
       name: 'Staging demo popular 4', icon_emoji: '🗺️', active_users: 5,
+      created_at: demoAgo(400 * 24), last_deploy_at: demoAgo(300 * 24),
     },
   ];
+  if (curation) apps.push(
+    { ...base, id: 990031, slug: 'directory-sample-working', name: 'Directory sample working',
+      icon_emoji: '🧩', featured: true, featured_order: -1 },
+    { ...base, id: 990032, slug: 'directory-sample-unreviewed', name: 'Directory sample unreviewed',
+      icon_emoji: '🌱', directory_review_status: 'unreviewed', directory_reviewed_at: null },
+    { ...base, id: 990033, slug: 'directory-sample-demo', name: 'Directory sample demo',
+      icon_emoji: '🎭', directory_review_status: 'demo', active_users: 9999 },
+    { ...base, id: 990034, slug: 'directory-sample-broken', name: 'Directory sample needs fixes',
+      icon_emoji: '🔧', directory_review_status: 'broken', active_users: 9998 },
+    { ...base, id: 990035, slug: 'directory-sample-no-icon', name: 'Directory sample needs an icon' },
+  );
+  return apps.map((app) => ({ ...app, directory: discoveryCuration.describe(app) }));
 }
 
 // SELF-HOSTING.md sub-step 2k: helper for the import-flow guards.
@@ -542,6 +606,12 @@ function appRoutes(config) {
           (me.user_id IS NOT NULL) AS is_collaborator,
           COALESCE(dev.open_prs, 0) AS open_prs,
           COALESCE(dev.active_sessions, 0) AS active_sessions,
+          -- "How actively developed is this app?" (#1383). All three ride
+          -- the dev subquery's existing unfiltered scan of chat_sessions,
+          -- so the sort control costs no extra query and no new index.
+          COALESCE(dev.merged_prs, 0) AS merged_prs,
+          COALESCE(dev.merged_prs_recent, 0) AS merged_prs_recent,
+          dev.last_merged_at AS last_merged_at,
           COALESCE(iss.open_issues, 0) AS open_issues
         FROM apps a
         LEFT JOIN (
@@ -577,7 +647,19 @@ function appRoutes(config) {
         LEFT JOIN (
           SELECT app_id,
             COUNT(*) FILTER (WHERE status IN ('promoted', 'merging')) AS open_prs,
-            COUNT(*) FILTER (WHERE status = 'active') AS active_sessions
+            COUNT(*) FILTER (WHERE status = 'active') AS active_sessions,
+            -- A merged chat_session IS an accepted community proposal —
+            -- the same definition contributors.js and the gallery use.
+            -- merged_at was added by a later ALTER TABLE and is NULL on
+            -- every row merged before it existed, so COALESCE to
+            -- created_at rather than dropping that history on the floor.
+            COUNT(*) FILTER (WHERE status = 'merged') AS merged_prs,
+            COUNT(*) FILTER (
+              WHERE status = 'merged'
+                AND COALESCE(merged_at, created_at) > NOW() - INTERVAL '30 days'
+            ) AS merged_prs_recent,
+            MAX(COALESCE(merged_at, created_at)) FILTER (WHERE status = 'merged')
+              AS last_merged_at
           FROM chat_sessions
           GROUP BY app_id
         ) dev ON dev.app_id = a.id
@@ -596,6 +678,15 @@ function appRoutes(config) {
       // of, so accessFlags below can resolve can_manage per row without
       // a round-trip each.
       const adminAppIds = await appAdmins.getAdminAppIdsForUser(pool, req.user?.id);
+
+      // How many people BUILT each app, for the Discover cards on the
+      // launcher. One round trip for the whole page over the shared
+      // contributor definition (services/contributors.js), rather than the
+      // per-app fetch the directory's detail view makes: the cards show the
+      // number and never the names, so the ranked list would be all cost.
+      const contributorCounts = await contributors.loadContributorCounts(
+        pool, rows.map((a) => a.id)
+      );
 
       const apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. Cheap (one extra query
@@ -690,6 +781,7 @@ function appRoutes(config) {
           ? a.last_failure : null;
         return {
           ...appAccess.stripAppSecrets(a),
+          contributor_count: contributorCounts.get(a.id) || 0,
           last_failure: undefined,
           last_failure_reason: lf ? (lf.reason || null) : null,
           last_failure_at: lf ? (lf.at || null) : null,
@@ -700,6 +792,7 @@ function appRoutes(config) {
           // Server-built icon URL so the client never assembles ids into
           // paths (and staging demo rows can inject arbitrary sources).
           icon_url: a.icon_image_id ? `/app-icons/${a.icon_image_id}` : null,
+          directory: discoveryCuration.describe(a),
           is_favorited: !!a.is_favorited,
           your_apps_hidden: !!a.your_apps_hidden,
           favorite_order: a.favorite_order ?? null,
@@ -707,6 +800,9 @@ function appRoutes(config) {
           featured_order: a.featured_order ?? null,
           open_prs: parseInt(a.open_prs, 10) || 0,
           active_sessions: parseInt(a.active_sessions, 10) || 0,
+          merged_prs: parseInt(a.merged_prs, 10) || 0,
+          merged_prs_recent: parseInt(a.merged_prs_recent, 10) || 0,
+          last_merged_at: a.last_merged_at || null,
           open_issues: parseInt(a.open_issues, 10) || 0,
           ...accessFlags(a, req.user, a.is_collaborator, adminAppIds),
         };
@@ -716,7 +812,7 @@ function appRoutes(config) {
       await attachForkLineage(pool, apps);
       // Staging demo tiles for the icon feature (see demoIconApps above).
       if (IS_STAGING && req.query.demo === '1') {
-        apps.unshift(...demoIconApps());
+        apps.unshift(...demoIconApps(req.query.curation === '1'));
       }
       res.json({ apps });
     } catch (err) {
@@ -768,6 +864,29 @@ function appRoutes(config) {
     });
   });
 
+  router.get('/api/me/app-allowance', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      res.json(await appAllowance.read(pool, req.user));
+    } catch (err) {
+      log.error('apps', 'App allowance lookup failed', { message: err.message });
+      res.status(500).json({ error: 'Could not load your app allowance. Please try again.' });
+    }
+  });
+
+  router.post('/api/me/app-allowance/request', appAllowanceRequestLimiter, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    if (req.user.canAdminWrite) return res.status(400).json({ error: 'Your account already has unlimited app slots.' });
+    try {
+      res.json(await appAllowance.requestMore(pool, req.user));
+    } catch (err) {
+      log.error('apps', 'App allowance request failed', { message: err.message });
+      res.status(500).json({ error: 'Could not send your request. Please try again.' });
+    }
+  });
+
   router.post('/api/apps', drainGuard, appCreateLimiter, async (req, res) => {
     const { name, repoUrl } = req.body;
 
@@ -809,42 +928,18 @@ function appRoutes(config) {
     }
 
     const crypto = require('crypto');
-    const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    if (!base) {
+    const code = crypto.randomBytes(3).toString('hex');
+    // Length-capped so the derived container name and preview host stay
+    // inside a DNS label — see appManifest.MAX_APP_SLUG_LENGTH.
+    const slug = appManifest.buildAppSlug(name, code);
+    if (!slug) {
       return res.status(400).json({ error: 'Invalid app name' });
     }
-    const code = crypto.randomBytes(3).toString('hex');
-    const slug = `${base}-${code}`;
 
     try {
-      // Per-user app-creation quota (FULL admins bypass — parity with the
-      // global maxApps bypass below; see users.app_quota in schema.sql).
-      // View-only admins do NOT bypass (issue #311): creating unlimited
-      // apps is an elevated capability, so they create within their own
-      // app_quota like any normal user.
-      // Counts the user's LIVE (non-errored) apps so a deletion frees a
-      // slot. The home screen already hides the create affordance via the
-      // derived canCreateApps boolean (auth/me); this is the real gate.
-      // The count-then-insert race (two concurrent creates both passing)
-      // is acceptable — identical to the maxApps cap below, not worth a
-      // lock for a soft per-user limit.
       if (!req.user?.canAdminWrite) {
-        const quota = req.user?.appQuota ?? 0;
-        const { rows: ownCountRows } = await pool.query(
-          `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
-          [req.user.id]
-        );
-        const liveCount = ownCountRows[0].n;
-        if (quota <= 0 || liveCount >= quota) {
-          log.warn('apps', 'App creation blocked by per-user quota', {
-            userId: req.user.id, liveCount, quota,
-          });
-          return res.status(403).json({
-            error: quota <= 0
-              ? 'You don’t have permission to create apps. Ask an admin to enable app creation for your account.'
-              : `You’ve reached your app limit (${quota}). Ask an admin to raise your quota.`,
-          });
-        }
+        const allowance = await appAllowance.read(pool, req.user);
+        if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
       }
 
       // Enforce global app cap (full admins bypass; view-only admins
@@ -943,30 +1038,18 @@ function appRoutes(config) {
       if (!(await appAccess.checkAppAccess(pool, sourceApp, req.user, 'view'))) {
         return res.status(404).json({ error: 'App not found' });
       }
-      // The platform self-app has no per-app DB/container/repo to clone.
-      if (sourceApp.self_hosted) {
-        return res.status(400).json({ error: 'The platform app can’t be forked.' });
-      }
-      // Can't fork a half-built source (no repo / DB yet).
-      if (!sourceApp.repo_url) {
-        return res.status(409).json({ error: 'This app isn’t ready to fork yet — it has no repository.' });
+      // Reject a half-built source synchronously. Previously a source could
+      // be far enough along to have a repo but still lose the DB snapshot
+      // race; the async worker then left a bare "Error" tile behind.
+      const readinessError = forkSourceReadinessError(sourceApp);
+      if (readinessError) {
+        return res.status(sourceApp.self_hosted ? 400 : 409).json({ error: readinessError });
       }
 
-      // Per-user quota + global cap — identical gate to POST /api/apps.
+      // The same allowance read as create/import and the account UI.
       if (!req.user?.canAdminWrite) {
-        const quota = req.user?.appQuota ?? 0;
-        const { rows: ownCountRows } = await pool.query(
-          `SELECT COUNT(*)::int AS n FROM apps WHERE created_by = $1 AND status <> 'error'`,
-          [req.user.id]
-        );
-        const liveCount = ownCountRows[0].n;
-        if (quota <= 0 || liveCount >= quota) {
-          return res.status(403).json({
-            error: quota <= 0
-              ? 'You don’t have permission to create apps. Ask an admin to enable app creation for your account.'
-              : `You’ve reached your app limit (${quota}). Ask an admin to raise your quota.`,
-          });
-        }
+        const allowance = await appAllowance.read(pool, req.user);
+        if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
       }
       if (!req.user?.canAdminWrite && config.maxApps > 0) {
         const { rows: countRows } = await pool.query(
@@ -980,9 +1063,8 @@ function appRoutes(config) {
       }
 
       const crypto = require('crypto');
-      const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-      if (!base) return res.status(400).json({ error: 'Invalid app name' });
-      const slug = `${base}-${crypto.randomBytes(3).toString('hex')}`;
+      const slug = appManifest.buildAppSlug(name, crypto.randomBytes(3).toString('hex'));
+      if (!slug) return res.status(400).json({ error: 'Invalid app name' });
 
       // Reference-only lineage: appId + slug, NEVER the name (resolved
       // live at serialize time). Inherit the source's visibility.
@@ -1098,12 +1180,23 @@ function appRoutes(config) {
       const canSeeFailure = !!req.user?.isAdmin
         || !!isCollaborator
         || (req.user?.id != null && appRow.created_by === req.user.id);
+      // Which step of createApp is running right now, for a client that
+      // loaded (or reloaded) mid-creation and so missed the WS
+      // broadcasts. Null whenever there is nothing to report — a
+      // finished app, or one whose platform process restarted mid-run —
+      // which the dialog renders as "in progress, step unknown".
+      const appCreationPhase = require('../services/app-creation-phase');
+      const phaseEntry = appRow.status === 'creating'
+        ? appCreationPhase.read(appRow.slug) : null;
+
       const appPayload = {
         ...appAccess.stripAppSecrets(appRow),
+        directory: discoveryCuration.describe(appRow),
         last_failure: undefined,
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
           ? appRow.last_failure : null,
         url,
+        creationPhase: phaseEntry ? phaseEntry.phase : null,
         missingSecrets,
         ...accessFlags(appRow, req.user, isCollaborator,
           await appAdmins.getAdminAppIdsForUser(pool, req.user?.id)),
@@ -1659,7 +1752,7 @@ function appRoutes(config) {
       const documentedAsDeployOwned = scope === 'platform'
         && (manifest.secrets || []).some((s) => s.key === key);
       if (declaredHere || documentedAsDeployOwned) {
-        return res.status(409).json({ error: `${key} already exists — use its row in the panel.` });
+        return res.status(409).json({ error: `${key} already exists. Use its row in the panel.` });
       }
       const { rows: valueRows } = await pool.query(
         scope === 'platform'
@@ -1668,7 +1761,7 @@ function appRoutes(config) {
         [app.id, key]
       );
       if (valueRows.length) {
-        return res.status(409).json({ error: `${key} already has a stored value — use its row in the panel.` });
+        return res.status(409).json({ error: `${key} already has a stored value. Use its row in the panel.` });
       }
       const alreadyPending = await pendingSecrets.findLiveByKey(pool, app.id, key);
       if (alreadyPending) {
@@ -1992,8 +2085,8 @@ function appRoutes(config) {
       const { sendSystemMessage, pushAppUpdate } = require('../services/ws');
       await sendSystemMessage(pool, app.id,
         locked
-          ? `${req.user.username} locked this app — merges now also require an admin yes vote`
-          : `${req.user.username} unlocked this app — merges no longer require an admin yes vote`,
+          ? `${req.user.username} locked this app, so merges now also require an admin yes vote`
+          : `${req.user.username} unlocked this app, so merges no longer require an admin yes vote`,
         'system'
       ).catch((err) => log.warn('apps', 'Lock chat msg failed', { err: err.message }));
 
@@ -2586,13 +2679,44 @@ function appRoutes(config) {
         });
       }
 
+      // A failed fork with no repo must re-enter app-forker so it copies the
+      // source. Sending it through createApp used to seed the starter
+      // template, which made Retry "succeed" as the wrong app. If the fork
+      // repo was already copied, forkApp resumes from that independent repo.
+      let sourceApp = null;
+      if (appRow.forked_from) {
+        sourceApp = await findForkSource(pool, appRow);
+        if (!sourceApp && !appRow.repo_url) {
+          return res.status(409).json({
+            error: 'The source app for this fork no longer exists, so the fork cannot be retried.',
+          });
+        }
+        if (sourceApp && !appRow.repo_url) {
+          if (!(await appAccess.checkAppAccess(pool, sourceApp, req.user, 'view'))) {
+            return res.status(403).json({
+              error: 'You no longer have access to the source app for this fork.',
+            });
+          }
+          const readinessError = forkSourceReadinessError(sourceApp);
+          if (readinessError) return res.status(409).json({ error: readinessError });
+        }
+      }
+
       await pool.query(
-        "UPDATE apps SET status = 'creating', retry_count = retry_count + 1 WHERE id = $1",
+        `UPDATE apps
+            SET status = 'creating', retry_count = retry_count + 1,
+                last_failure = NULL
+          WHERE id = $1`,
         [appRow.id]
       );
 
-      createApp(config, appRow).catch(async (err) => {
-        log.error('apps', 'Retry app creation failed', { appId: appRow.id, err: err.message });
+      const provision = appRow.forked_from
+        ? forkApp(config, appRow, sourceApp)
+        : createApp(config, appRow);
+      provision.catch(async (err) => {
+        log.error('apps', appRow.forked_from ? 'Retry fork failed' : 'Retry app creation failed', {
+          appId: appRow.id, err: err.message,
+        });
         await pool.query(
           `UPDATE apps SET status = 'error',
                            last_failure = COALESCE(last_failure, $2::jsonb)

@@ -14,6 +14,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { detailsHtml } = require('./lib/dev-card-html');
 
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 const MERGE_STATUS_SRC = read('merge-status.js');
@@ -96,10 +97,10 @@ test('voteCountPill: a flagged row never renders a merge countdown', () => {
   const AppView = makeAppView();
   // Same row twice — the only difference is the flag.
   const plain = AppView.voteCountPill(lazyRow(), 3);
-  assert.match(plain, /Merging in/, 'precondition: unflagged, this row counts down');
+  assert.match(plain, /Goes live in/, 'precondition: unflagged, this row counts down');
 
   const flagged = AppView.voteCountPill(lazyRow({ requires_explicit_approval: true }), 3);
-  assert.doesNotMatch(flagged, /Merging in/);
+  assert.doesNotMatch(flagged, /Goes live in/);
   assert.doesNotMatch(flagged, /gc-merge-countdown/);
   assert.match(flagged, /1 \/ 3/, 'it falls back to the ordinary tally');
 });
@@ -121,7 +122,7 @@ test('voteCountPill: a flagged row STILL renders the rejection countdown', () =>
     rejection_armed: true, reject_window_ends_at: hoursAhead(9),
     requires_explicit_approval: true,
   }, 3);
-  assert.match(pill, /Rejecting in/);
+  assert.match(pill, /Set aside in/);
   assert.match(pill, /gc-reject-countdown/);
   assert.match(pill, /gc-vote-explicit/, 'the chip rides along');
 });
@@ -131,8 +132,8 @@ test('voteCountPill: a flagged row STILL renders the rejection countdown', () =>
 test('_votingHelpText: default regime, below threshold — no countdown, explains the rule', () => {
   const AppView = makeAppView();
   const s = AppView._votingHelpText(lazyRow({ requires_explicit_approval: true }));
-  assert.doesNotMatch(s, /merges in/i);
-  assert.doesNotMatch(s, /silence counts as agreement/);
+  assert.doesNotMatch(s, /goes live in/i);
+  assert.doesNotMatch(s, /quiet is taken as a nod/i);
   assert.match(s, /needs 3 actual Yes votes/);
   assert.match(s, /won’t merge on a timer/);
 });
@@ -144,7 +145,7 @@ test('_votingHelpText: default regime, at threshold — queued, no window to wai
     merge_window_ends_at: null, check_state: 'passing', requires_explicit_approval: true,
   });
   assert.match(s, /votes it needs \(3 of 3\)/);
-  assert.match(s, /queued to merge shortly/);
+  assert.match(s, /Queued to merge shortly/);
 });
 
 test('_votingHelpText: a blocker still folds into the threshold-met sentence', () => {
@@ -164,7 +165,7 @@ test('_votingHelpText: the rejection countdown sentence still renders when flagg
     rejection_armed: true, reject_window_ends_at: hoursAhead(9),
     check_state: 'passing', requires_explicit_approval: true,
   });
-  assert.match(s, /closes in/);
+  assert.match(s, /set aside in/);
 });
 
 test('_votingHelpText: at-least-N regime keeps its own wording plus the note', () => {
@@ -192,7 +193,7 @@ test('_votingHelpText: invited-approver regime keeps its footnote plus the note'
 test('_votingHelpText: an unflagged row is completely unchanged', () => {
   const AppView = makeAppView();
   const s = AppView._votingHelpText(lazyRow());
-  assert.match(s, /merges in/i, 'the ordinary lazy-consensus copy still appears');
+  assert.match(s, /goes live in/i, 'the ordinary lazy-consensus copy still appears');
   assert.doesNotMatch(s, /won’t merge on a timer/);
 });
 
@@ -251,20 +252,20 @@ test('voteButtonsHtml: an ordinary user never gets Admin merge', () => {
 
 test('_proposalDetailsHtml: a flagged row below threshold renders the amber note with M of N', () => {
   const AppView = makeAppView();
-  const html = AppView._proposalDetailsHtml({
+  const html = detailsHtml(AppView, {
     id: 1, status: 'promoted', yes_count: 1, no_count: 0, votes_required: 3,
     check_state: 'passing', requires_explicit_approval: true,
   });
-  assert.match(html, /edits the app&#39;s admins list|edits the app's admins list/);
-  assert.match(html, /won't merge on a timer/);
+  assert.match(html, /edits the app&#x27;s admins list/);
+  assert.match(html, /won&#x27;t merge on a timer/);
   assert.match(html, /needs 3 real Yes votes and has 1 so far/);
   assert.match(html, /can still be voted down/);
-  assert.match(html, /text-amber-600/, 'amber styling, matching the locked note family');
+  assert.match(html, /text-amber-800/, 'amber styling, matching the locked note family');
 });
 
 test('_proposalDetailsHtml: a flagged row at threshold says it will merge once gates clear', () => {
   const AppView = makeAppView();
-  const html = AppView._proposalDetailsHtml({
+  const html = detailsHtml(AppView, {
     id: 1, status: 'promoted', yes_count: 3, no_count: 0, votes_required: 3,
     check_state: 'passing', requires_explicit_approval: true,
   });
@@ -274,7 +275,7 @@ test('_proposalDetailsHtml: a flagged row at threshold says it will merge once g
 
 test('_proposalDetailsHtml: qualified tallies and the ctx majority fallback drive the numbers', () => {
   const AppView = makeAppView({ ctx: { majority: 4 } });
-  const html = AppView._proposalDetailsHtml({
+  const html = detailsHtml(AppView, {
     id: 1, status: 'promoted', yes_count: 5, qualified_yes_count: 2, no_count: 0,
     votes_required: null, check_state: 'passing', requires_explicit_approval: true,
   });
@@ -285,7 +286,7 @@ test('_proposalDetailsHtml: qualified tallies and the ctx majority fallback driv
 test('_proposalDetailsHtml: the note is absent on settled rows', () => {
   const AppView = makeAppView();
   for (const status of ['merged', 'merging']) {
-    const html = AppView._proposalDetailsHtml({
+    const html = detailsHtml(AppView, {
       id: 1, status, yes_count: 3, no_count: 0, votes_required: 3,
       requires_explicit_approval: true,
     });
@@ -295,7 +296,7 @@ test('_proposalDetailsHtml: the note is absent on settled rows', () => {
 
 test('_proposalDetailsHtml: the note is absent on unflagged rows', () => {
   const AppView = makeAppView();
-  const html = AppView._proposalDetailsHtml({
+  const html = detailsHtml(AppView, {
     id: 1, status: 'promoted', yes_count: 1, no_count: 0, votes_required: 3,
     check_state: 'passing',
   });

@@ -1,26 +1,16 @@
-// Topochain v4 — mobile surface (SPEC §4.5; token model + throttling at
-// SPEC 1588-1599; v2+v3 merged into one token-only surface).
+// Topochain v4 — authenticated mobile data surface (SPEC §4.5).
 //
-// Mounted in server.js BEFORE authMiddleware: mobile clients never hold a
-// platform session cookie. Two sub-shapes live in this one router:
-//   - Public, throttled auth endpoints (check-email, login, otp/request,
-//     otp/verify) — share the ONE `topochainMobileAuthLimiter` bucket
-//     (src/middleware/rate-limits.js), 10 req/min/IP (SPEC 1597).
-//   - Session-token auth endpoints (set-password, logout, and every data
-//     endpoint: me, me/ranking, me/breakdown, event/points, leaderboard,
-//     challenges, seasons, terms/*, logs, zkpassport/complete,
-//     delegation) — gated by `mobileTokenAuth(config, {ability})`
-//     (src/middleware/topochain-auth.js); the user is ALWAYS resolved from
-//     the token, never a client-supplied id (constraint #12).
+// Mounted in server.js BEFORE authMiddleware: protocol-2 native session
+// establishment privately mints the bearer consumed here. The raw bearer is
+// never exposed to Social JavaScript, and participant identity always comes
+// from that credential.
 //
-// Task 3 built the mount-order probe below. Task 8 composed in the auth
-// sub-surface (./mobile-auth.js). Task 9 added the five first-render data
+// Task 3 built the mount-order probe below. Task 9 added the five first-render data
 // endpoints: GET /me, /me/ranking, /me/breakdown, /event/points,
 // /leaderboard (SPEC 1748-1932; 883-895 for the §4.8 contract deltas;
 // 2936-2959 for the standings reuse + challenge-progress placeholder
 // ruling). Task 10 (this task) adds the rest: GET /challenges, GET
-// /seasons, POST /logs, GET /terms/current, POST /terms/consent, POST
-// /zkpassport/complete, GET+POST /delegation (SPEC 1934-2191; 2939 +
+// /seasons and POST /zkpassport/complete (SPEC 1934-2191; 2939 +
 // 2961-2973 for the zkpassport metadata/replay-index resolution). Its own
 // judgment calls and rename decisions are documented at each route below
 // rather than repeated here, EXCEPT one that spans the whole file: the
@@ -50,19 +40,28 @@
 //      `activity_kind` here, carrying the challenge's `kind` value.
 'use strict';
 
+const { nativeWebSessionIsLive } = require('../../services/web-session-auth');
+
+
+const { loadOnboarding, visibleChallenges, challengeCategory } =
+  require('../../services/topochain/challenge-onboarding');
+
 const { Router } = require('express');
+const bcrypt = require('bcrypt');
 const { clientIp } = require('../../services/client-ip');
 const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { mobileTokenAuth, optionalSessionAuth } = require('../../middleware/topochain-auth');
+const { mobileWalletClaimLimiter } = require('../../middleware/rate-limits');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
 const { computeStandings, assignSharedRanks } = require('../../services/topochain/standings');
-const { topochainMobileAuthRoutes, computeLevel } = require('./mobile-auth');
+const { nativeSessionRoutes } = require('./native-session');
+const { nativeEpochDelegationRoutes } = require('./epoch-delegation');
+const { mobileIdentityHash } = require('../../services/mobile-identity-hash');
 const { mobilePushRegistrationRoutes } = require('./mobile-push-registration');
 const { verifyCompletion, ZkBridgeError } = require('../../services/topochain/zk-bridge');
-const { readDelegationState, setDelegationState } = require('../../services/topochain/delegations');
 
 // ─── Small shared formatters (duplicated in miniature from public.js — ──
 // that file doesn't export its identifier/display-name helpers, and these
@@ -76,6 +75,15 @@ function toIntId(v) {
   if (v === undefined || v === null || v === '') return null;
   const n = parseInt(v, 10);
   return Number.isInteger(n) && n > 0 && String(n) === String(v).trim() ? n : null;
+}
+
+async function computeLevel(pool, userId, passwordSet) {
+  const { rows } = await pool.query(
+    'SELECT 1 FROM onchain_accounts WHERE user_id = $1 LIMIT 1',
+    [userId]
+  );
+  if (rows.length) return 'operator';
+  return passwordSet ? 'member' : 'guest';
 }
 
 // `include_activity` (breakdown) — bool query param, default TRUE (SPEC
@@ -99,15 +107,13 @@ function parseBoolDefaultFalse(raw) {
   return s === 'true' || s === '1' || s === 'yes' || s === 'on';
 }
 
-// Laravel-style `boolean` rule (mirrors partner.js's own toBool — POST
-// /delegation's `delegated` field uses the identical SPEC 1424 rule: true,
-// false, 1, 0, '1', '0'). Duplicated rather than imported: it's a
-// three-line pure function and partner.js doesn't export it (same call
-// this file already makes for its own toIntId above).
-function toBool(v) {
-  if (v === true || v === 1 || v === '1' || v === 'true') return true;
-  if (v === false || v === 0 || v === '0' || v === 'false') return false;
-  return undefined;
+const WALLET_CLAIM_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const WALLET_CLAIM_MAX_OTP_ATTEMPTS = 5;
+
+function walletClaimEmail(rawEmail) {
+  if (typeof rawEmail !== 'string') return null;
+  const email = rawEmail.trim().toLowerCase();
+  return email.length <= 255 && WALLET_CLAIM_EMAIL_RE.test(email) ? email : null;
 }
 
 // Same "real zero, never null" success-rate convention public.js documents
@@ -657,15 +663,12 @@ async function fetchOwnChallengeActivities(pool, userId, challengeIds) {
 // the endpoint's own three challenge-level filters instead of returning
 // every challenge unconditionally).
 async function fetchSeasonEventChallengeItems(pool, seasonEventId, opts) {
-  const { includeCompletedChallenges, onlyEnabledChallenges, challengeCategory } = opts;
+  const { includeCompletedChallenges, onlyEnabledChallenges, challengeCategory: categoryFilter,
+    onboarding } = opts;
   const conds = ['c.season_event_id = $1'];
   const params = [seasonEventId];
   if (onlyEnabledChallenges) conds.push('c.enabled = TRUE');
   if (!includeCompletedChallenges) conds.push('c.completed = FALSE');
-  if (challengeCategory) {
-    params.push(challengeCategory);
-    conds.push(`UPPER(ct.category) = UPPER($${params.length})`);
-  }
 
   const { rows } = await pool.query(
     `SELECT ${MOBILE_CHALLENGE_COLUMNS}
@@ -676,7 +679,13 @@ async function fetchSeasonEventChallengeItems(pool, seasonEventId, opts) {
       ORDER BY c.display_order ASC, c.id ASC`,
     params
   );
-  return rows.filter((r) => r.t_id != null).map(buildSeasonChallengeItem);
+  return visibleChallenges(rows.filter((r) => r.t_id != null), onboarding)
+    .map((r) => {
+      const item = buildSeasonChallengeItem(r);
+      item.category = challengeCategory(item.challenge_id, item.category, onboarding);
+      return item;
+    })
+    .filter((item) => !categoryFilter || item.category.toUpperCase() === categoryFilter.toUpperCase());
 }
 
 // One season's `events[]` (each carrying its own `challenges[]` when
@@ -686,6 +695,7 @@ async function fetchSeasonEventsWithChallenges(pool, seasonId, opts) {
   const {
     seasonEventIdParam, onlyActiveEvents, onlyCurrentEvents, includeInternalEvents,
     includeChallenges, includeCompletedChallenges, onlyEnabledChallenges, challengeCategory,
+    onboarding,
   } = opts;
 
   const conds = ['season_id = $1'];
@@ -719,7 +729,7 @@ async function fetchSeasonEventsWithChallenges(pool, seasonId, opts) {
       // sequential keeps the query count obvious (matches this file's own
       // /me/breakdown precedent for the same shape of nested loop).
       eventObj.challenges = await fetchSeasonEventChallengeItems(pool, ev.id, {
-        includeCompletedChallenges, onlyEnabledChallenges, challengeCategory,
+        includeCompletedChallenges, onlyEnabledChallenges, challengeCategory, onboarding,
       });
     }
     events.push(eventObj);
@@ -738,8 +748,8 @@ function topochainMobileRoutes(config) {
   // authMiddleware; the real per-route auth lives on each endpoint below.
   router.get('/api/v4/mobile/__ping', (_req, res) => ok(res, {}));
 
-  // Task 8: the six auth endpoints (their own throttle/token gating).
-  router.use(topochainMobileAuthRoutes(config));
+  router.use(nativeSessionRoutes(config));
+  router.use(nativeEpochDelegationRoutes(config));
   router.use(mobilePushRegistrationRoutes(config));
 
   // ── GET /me (SPEC 1748-1767) ─────────────────────────────────────────
@@ -776,6 +786,12 @@ function topochainMobileRoutes(config) {
           has_platform_access: !!user.has_platform_access || !!user.is_admin,
           bp_requested: !!user.bp_requested_at,
           bp_released: !!user.bp_released_at,
+          // The stable account namespace used by legacy mobile `/me`
+          // consumers. Protocol 2 derives the same fact inside its server
+          // exchange rather than through a split bridge login call. Stable
+          // for the life of the account — see
+          // src/services/mobile-identity-hash.js.
+          identity_hash: mobileIdentityHash(user),
         },
       });
     } catch (err) {
@@ -792,9 +808,7 @@ function topochainMobileRoutes(config) {
   // the SV settings UI only shows the button once the account has
   // platform access, but the server doesn't hard-require it — an admin
   // releasing the request implies approval either way. Hoisted function
-  // declarations (same dual-registration pattern as the terms handlers)
-  // so the /challenges-api web twins below can reuse them with session
-  // auth.
+  // declarations so the /challenges-api web routes below can share them.
   async function bpStateHandler(req, res) {
     try {
       const { rows } = await pool.query(
@@ -839,9 +853,6 @@ function topochainMobileRoutes(config) {
     }
   }
 
-  router.get('/api/v4/mobile/bp/state', mobileTokenAuth(config), bpStateHandler);
-  router.post('/api/v4/mobile/bp/request', mobileTokenAuth(config), bpRequestHandler);
-
   // ── GET /me/ranking (SPEC 1769-1820) ─────────────────────────────────
   // Scope resolution: season_event_id > season_id > neither (global) —
   // SPEC 1774's "takes precedence over season_id".
@@ -849,7 +860,7 @@ function topochainMobileRoutes(config) {
   // at the bottom of this factory can reuse it with session auth.
   const meRankingHandler = async (req, res) => {
     try {
-      // `req.user.id` comes off `mobile_auth_tokens.user_id` (BIGINT) —
+      // `req.user.id` comes from the credential-bound mobile identity (BIGINT) —
       // node-postgres returns BIGINT columns as STRINGS (no custom type
       // parser is configured in src/db/pool.js), while computeStandings()
       // below Number()-casts its own `user_id` column. Casting once here
@@ -1224,6 +1235,7 @@ function topochainMobileRoutes(config) {
       const onlyScheduled = parseBoolDefaultFalse(req.query.only_scheduled);
 
       let rows;
+      let resolvedSeasonId = null;
       if (seasonEventId) {
         const { rows: evRows } = await pool.query('SELECT id FROM season_events WHERE id = $1', [seasonEventId]);
         if (!evRows.length) {
@@ -1258,9 +1270,13 @@ function topochainMobileRoutes(config) {
           if (!currentRows.length) return ok(res, { data: [] });
           seasonId = Number(currentRows[0].id);
         }
+        resolvedSeasonId = seasonId;
         rows = await fetchChallengesForSeason(pool, seasonId);
       }
 
+      const onboarding = await loadOnboarding(pool, req.user.id,
+        { seasonId: resolvedSeasonId, eventId: seasonEventId });
+      rows = visibleChallenges(rows, onboarding);
       const ids = rows.map((r) => Number(r.id));
       const activityRows = ids.length ? await fetchOwnChallengeActivities(pool, req.user.id, ids) : [];
       const activitiesByChallenge = new Map();
@@ -1285,6 +1301,11 @@ function topochainMobileRoutes(config) {
         });
       });
 
+      for (const item of items) {
+        item.category = challengeCategory(item.id, item.category, onboarding);
+        if (onboarding?.progress.has(item.id)) item.progress = onboarding.progress.get(item.id);
+      }
+
       // active_only (SPEC: "keeps enabled and not-completed challenges").
       if (activeOnly) items = items.filter((it) => it.enabled && !it.completed);
       // only_scheduled (SPEC: "keeps challenges whose window contains
@@ -1301,7 +1322,7 @@ function topochainMobileRoutes(config) {
         });
       }
 
-      return ok(res, { data: items });
+      return ok(res, { data: items, ...(onboarding ? { onboarding: onboarding.summary } : {}) });
     } catch (err) {
       log.error('topochain-mobile', 'GET /challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
@@ -1365,11 +1386,14 @@ function topochainMobileRoutes(config) {
 
       const data = [];
       for (const season of seasonRows) {
+        const onboarding = includeChallenges
+          ? await loadOnboarding(pool, req.user.id, { seasonId: season.id }) : null;
         // eslint-disable-next-line no-await-in-loop -- fixture-scale lists
         // (same precedent as /me/breakdown's global scope above).
         const events = await fetchSeasonEventsWithChallenges(pool, season.id, {
           seasonEventIdParam, onlyActiveEvents, onlyCurrentEvents, includeInternalEvents,
           includeChallenges, includeCompletedChallenges, onlyEnabledChallenges, challengeCategory,
+          onboarding,
         });
         const seasonObj = {
           season_id: Number(season.id),
@@ -1379,6 +1403,7 @@ function topochainMobileRoutes(config) {
           ends_at: iso(season.ends_at),
           is_active: season.is_active,
           events,
+          ...(onboarding ? { onboarding: onboarding.summary } : {}),
         };
         if (includeChallenges) {
           // "season_challenges ... same shape, from the season-type
@@ -1424,13 +1449,13 @@ function topochainMobileRoutes(config) {
   router.get('/challenges-api/me/breakdown', webSessionAuth, requireSessionUser, meBreakdownHandler);
   // Terms review + consent (thin-shell migration): the native terms
   // screen is gone; SV settings renders the current terms and posts the
-  // consent with the platform session. Same dual-registration pattern —
-  // the handlers are hoisted function declarations defined further down.
+  // consent with the platform session. The handlers are hoisted function
+  // declarations defined further down.
   router.get('/challenges-api/terms/current', webSessionAuth, requireSessionUser, termsCurrentHandler);
   router.post('/challenges-api/terms/consent', webSessionAuth, requireSessionUser, termsConsentHandler);
   // Block-producer queue (onboarding flow alignment): the SV settings UI
   // shows "Ask to produce blocks" and its pending/released state with
-  // the platform session. Same handlers as /api/v4/mobile/bp/*.
+  // the platform session.
   router.get('/challenges-api/bp/state', webSessionAuth, requireSessionUser, bpStateHandler);
   router.post('/challenges-api/bp/request', webSessionAuth, requireSessionUser, bpRequestHandler);
   // Everything else under /challenges-api keeps the old proxy allowlist's
@@ -1438,43 +1463,11 @@ function topochainMobileRoutes(config) {
   // catch-all (which would 200 with index.html) or authMiddleware's 401.
   router.use('/challenges-api', (_req, res) => fail(res, 404, 'Not found.'));
 
-  // ── POST /logs (SPEC 2031-2044) ──────────────────────────────────────
-  router.post('/api/v4/mobile/logs', mobileTokenAuth(config), async (req, res) => {
-    try {
-      const { rows } = await pool.query('SELECT accept_logs FROM users WHERE id = $1', [req.user.id]);
-      // A dead-between-auth-and-here user (see GET /me's own comment on
-      // the same race) degrades to "accept" rather than a 500 — there is
-      // nothing unsafe about writing one more log row for a vanishing
-      // account, and `continue: false` would incorrectly tell a live
-      // client to stop logging over a database blip.
-      const acceptLogs = rows.length ? !!rows[0].accept_logs : true;
-      if (!acceptLogs) {
-        // SPEC: "the body is discarded and continue:false tells the
-        // client to stop" — no row is written at all.
-        return ok(res, { continue: false });
-      }
-
-      const body = req.body;
-      const isEmpty = body === undefined || body === null
-        || (typeof body === 'object' && !Array.isArray(body) && Object.keys(body).length === 0);
-      const payload = isEmpty ? null : body;
-
-      await pool.query(
-        'INSERT INTO mobile_logs (user_id, payload, created_at, updated_at) VALUES ($1, $2, NOW(), NOW())',
-        [req.user.id, payload === null ? null : JSON.stringify(payload)]
-      );
-      return ok(res, { continue: true });
-    } catch (err) {
-      log.error('topochain-mobile', 'POST /logs failed', { message: err.message });
-      return fail(res, 500, 'Internal server error.');
-    }
-  });
-
   // ── GET /terms/current (SPEC 2046-2065) ──────────────────────────────
   // Hoisted function declaration (not inline) so the /challenges-api web
   // registrations above — which sit BEFORE this point so they beat the
   // 404 catch-all — can reference it (thin-shell migration: terms review
-  // and consent moved into SV settings, session-cookie authed).
+  // and consent live in SV settings, session-cookie authed).
   async function termsCurrentHandler(req, res) {
     try {
       const { rows } = await pool.query(
@@ -1510,16 +1503,14 @@ function topochainMobileRoutes(config) {
       return fail(res, 500, 'Internal server error.');
     }
   }
-  router.get('/api/v4/mobile/terms/current', mobileTokenAuth(config), termsCurrentHandler);
-
   // ── POST /terms/consent (SPEC 2067-2090) ─────────────────────────────
   // One row per (user, terms_version) — `user_terms_consents`'s own
   // UNIQUE(user_id, terms_version_id) (schema.sql) backs the upsert below,
   // which is how re-posting a DIFFERENT status withdraws/changes consent
   // (SPEC's own words: "overwritten on re-post ... how a user withdraws
   // consent"). IP + app_version are recorded but never echoed back in the
-  // response (SPEC 2089). Hoisted for the same /challenges-api dual
-  // registration as termsCurrentHandler.
+  // response (SPEC 2089). Hoisted for the /challenges-api registration
+  // above, like termsCurrentHandler.
   async function termsConsentHandler(req, res) {
     try {
       const body = req.body || {};
@@ -1588,8 +1579,6 @@ function topochainMobileRoutes(config) {
       return fail(res, 500, 'Internal server error.');
     }
   }
-  router.post('/api/v4/mobile/terms/consent', mobileTokenAuth(config), termsConsentHandler);
-
   // ── POST /zkpassport/complete (SPEC 2092-2141; 2939, 2961-2973 for the
   // replay-index/metadata resolution) ──────────────────────────────────
   //
@@ -1789,6 +1778,24 @@ function topochainMobileRoutes(config) {
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        // Verification can outlive the middleware lookup. Revalidate and hold
+        // the exact protocol-2 credential at the final write boundary so
+        // logout either waits for this completion or makes it fail closed.
+        const { rows: credentialRows } = await client.query(
+          `SELECT c.credential_reference
+             FROM native_session_credentials c
+             JOIN mobile_auth_tokens t
+               ON t.id = c.mobile_auth_token_id AND t.user_id = c.user_id
+            WHERE c.mobile_auth_token_id = $1 AND c.user_id = $2
+              AND c.state = 'valid' AND c.expires_at > NOW()
+              AND t.ability = 'session' AND t.expires_at > NOW()
+            FOR SHARE OF c`,
+          [req.mobileAuth.tokenId, req.user.id]
+        );
+        if (!credentialRows.length) {
+          await client.query('ROLLBACK');
+          return fail(res, 401, 'Unauthenticated.');
+        }
         const { rows: insertRows } = await client.query(
           `INSERT INTO user_activities
              (user_id, season_event_id, activity_type, points, description, metadata,
@@ -1837,120 +1844,190 @@ function topochainMobileRoutes(config) {
     }
   });
 
-  // ── POST /wallet/provision ────────────────────────────────────────────
-  // Replaces the retired v2 /register flow's account allocation for
-  // platform-auth (OTP/password) users. The mobile app calls this after
-  // sign-in to obtain the user's on-chain account for the current active
-  // public season (same fallback rule as GET /challenges):
+  // ── POST /wallet/claim ────────────────────────────────────────────────
+  // A platform account can predate the mobile/social identity merge. In
+  // that case its current-season wallet remains attached to the legacy
+  // email-backed user while the native handoff authenticates a newer
+  // social user. When the seeded wallet pool is exhausted, provisioning
+  // cannot repair that split by allocating another pre-funded key.
   //
-  //   - Idempotent: a user who already holds an `onchain_accounts` row for
-  //     the season (migrated from topochain, or a reinstall on a new
-  //     device) gets the SAME account back — address, public_key AND
-  //     secret_key, exactly what v2 /register returned. Client-generated
-  //     random keys can't work here: /zkpassport/complete (and every
-  //     wallet-scoped read) requires a matching pre-provisioned row, and
-  //     slot-outcome ingest resolves users by these allocated addresses.
-  //   - Fresh users are allocated an unused season-scoped account from the
-  //     admin-seeded pool (`user_id IS NULL AND is_used = FALSE`, claimed
-  //     with FOR UPDATE SKIP LOCKED so concurrent first-logins never race
-  //     onto the same row) and enrolled season-wide when no enrollment for
-  //     the season exists yet — mirroring admin/users.js's import
-  //     semantics (user_id + is_used + used_at on the account; a
-  //     season-scoped user_enrollments row).
-  //   - 409 when the pool is exhausted: a real operational condition (the
-  //     accounts are pre-funded on-chain and can't be minted here); the
-  //     app surfaces "try again later" and ops re-seeds the pool.
-  //
-  // Returning `secret_key` over the token-authenticated channel is the
-  // same exposure the v2 registration response had — it IS the account
-  // credential the device must import to run its node.
-  router.post('/api/v4/mobile/wallet/provision', mobileTokenAuth(config), async (req, res) => {
-    try {
-      const { rows: seasonRows } = await pool.query(
-        `SELECT id FROM seasons
-          WHERE internal = FALSE AND is_active = TRUE
-            AND starts_at <= NOW() AND ends_at >= NOW()
-          ORDER BY starts_at DESC, id DESC LIMIT 1`
-      );
-      if (!seasonRows.length) return fail(res, 422, 'No active season is available.');
-      const seasonId = Number(seasonRows[0].id);
+  // The claim happens before native exchange: the authenticated Social web
+  // session identifies the target, the legacy email OTP proves the source,
+  // and the normal protocol-2 exchange subsequently delivers the claimed key
+  // in its encrypted envelope. There is no second secret-bearing wallet API.
+  router.post(
+    '/api/v4/mobile/wallet/claim',
+    // After optionalSessionAuth, not before: the limiter keys per user and
+    // the route already requires a live web session, so req.user has to be
+    // populated before its key is computed.
+    optionalSessionAuth(config),
+    mobileWalletClaimLimiter,
+    async (req, res) => {
+      const sessionToken = req.cookies?.session;
+      if (!req.user || !sessionToken) return fail(res, 401, 'Unauthenticated.');
 
-      const client = await pool.connect();
+      const email = walletClaimEmail(req.body?.email);
+      const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+      const details = {};
+      if (!email) details.email = ['The email must be a valid email address.'];
+      if (!/^\d{6}$/.test(code)) details.code = ['The code must be 6 digits.'];
+      if (Object.keys(details).length) {
+        return fail(res, 422, 'The given data was invalid.', { details, code: 'wallet_claim_invalid' });
+      }
+
+      let client;
       try {
+        client = await pool.connect();
         await client.query('BEGIN');
 
-        // Existing allocation wins. Prefer a season-wide account (matches
-        // every event's wallet check) over an event-scoped one.
-        const { rows: existingRows } = await client.query(
-          `SELECT id, address, public_key, secret_key, season_event_id
+        // Hold the exact web credential through the transfer. Logout takes an
+        // UPDATE lock on this row, so it either waits for a completed claim or
+        // removes admission before this operation can start.
+        const { rows: sessionRows } = await client.query(
+          `SELECT user_id FROM sessions
+            WHERE token = $1 AND user_id = $2 AND expires_at > NOW()
+              AND ${nativeWebSessionIsLive('sessions')}
+            FOR SHARE`,
+          [sessionToken, req.user.id]
+        );
+        if (!sessionRows.length) {
+          await client.query('ROLLBACK');
+          return fail(res, 401, 'Unauthenticated.');
+        }
+
+        const { rows: otpRows } = await client.query(
+          `SELECT id, code_hash, attempts, expires_at
+             FROM mobile_otp_codes
+            WHERE email = $1 AND consumed_at IS NULL
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            FOR UPDATE`,
+          [email]
+        );
+        const otp = otpRows[0];
+        const otpInvalid = !otp
+          || new Date(otp.expires_at) < new Date()
+          || Number(otp.attempts) >= WALLET_CLAIM_MAX_OTP_ATTEMPTS;
+        if (otpInvalid) {
+          await client.query('ROLLBACK');
+          return fail(res, 422, 'Invalid or expired code.', { code: 'wallet_claim_invalid' });
+        }
+
+        if (!(await bcrypt.compare(code, otp.code_hash))) {
+          await client.query(
+            'UPDATE mobile_otp_codes SET attempts = attempts + 1, updated_at = NOW() WHERE id = $1',
+            [otp.id]
+          );
+          await client.query('COMMIT');
+          return fail(res, 422, 'Invalid or expired code.', { code: 'wallet_claim_invalid' });
+        }
+
+        // Resolve the legacy identity, then lock both users in id order.
+        // Re-check the source email after locking so a concurrent profile
+        // update cannot make a code authorize a now-different address.
+        const { rows: sourceLookupRows } = await client.query(
+          'SELECT id FROM users WHERE LOWER(email) = $1 LIMIT 1',
+          [email]
+        );
+        const sourceId = sourceLookupRows[0] ? Number(sourceLookupRows[0].id) : null;
+        if (!sourceId || sourceId === Number(req.user.id)) {
+          await client.query('ROLLBACK');
+          return fail(res, 409, 'No different programme wallet is linked to that email.', {
+            code: 'wallet_claim_not_found',
+          });
+        }
+
+        const { rows: lockedUsers } = await client.query(
+          `SELECT id, email FROM users
+            WHERE id = ANY($1::bigint[])
+            ORDER BY id
+            FOR UPDATE`,
+          [[Number(req.user.id), sourceId]]
+        );
+        const lockedSource = lockedUsers.find((user) => Number(user.id) === sourceId);
+        const lockedTarget = lockedUsers.find((user) => Number(user.id) === Number(req.user.id));
+        if (!lockedSource || !lockedTarget || String(lockedSource.email || '').trim().toLowerCase() !== email) {
+          await client.query('ROLLBACK');
+          return fail(res, 409, 'No programme wallet is linked to that email.', {
+            code: 'wallet_claim_not_found',
+          });
+        }
+
+        const { rows: seasonRows } = await client.query(
+          `SELECT id FROM seasons
+            WHERE internal = FALSE AND is_active = TRUE
+              AND starts_at <= NOW() AND ends_at >= NOW()
+            ORDER BY starts_at DESC, id DESC LIMIT 1`
+        );
+        if (!seasonRows.length) {
+          await client.query('ROLLBACK');
+          return fail(res, 422, 'No active season is available.', { code: 'wallet_claim_no_season' });
+        }
+        const seasonId = Number(seasonRows[0].id);
+
+        const { rows: targetAccounts } = await client.query(
+          `SELECT id FROM onchain_accounts
+            WHERE user_id = $1 AND season_id = $2
+            LIMIT 1
+            FOR UPDATE`,
+          [req.user.id, seasonId]
+        );
+        if (targetAccounts.length) {
+          await client.query('ROLLBACK');
+          return fail(res, 409, 'This account already has a wallet for the current season.', {
+            code: 'wallet_claim_conflict',
+          });
+        }
+
+        const { rows: sourceAccounts } = await client.query(
+          `SELECT id, address, public_key, season_event_id
              FROM onchain_accounts
             WHERE user_id = $1 AND season_id = $2
             ORDER BY (season_event_id IS NULL) DESC, id ASC
-            LIMIT 1`,
-          [req.user.id, seasonId]
+            FOR UPDATE`,
+          [sourceId, seasonId]
         );
-
-        let account = existingRows[0] || null;
-        let newlyAllocated = false;
-        if (!account) {
-          const { rows: poolRows } = await client.query(
-            `SELECT id, address, public_key, secret_key, season_event_id
-               FROM onchain_accounts
-              WHERE user_id IS NULL AND is_used = FALSE
-                AND season_id = $1 AND season_event_id IS NULL
-              ORDER BY id ASC
-              LIMIT 1
-              FOR UPDATE SKIP LOCKED`,
-            [seasonId]
-          );
-          if (!poolRows.length) {
-            await client.query('ROLLBACK');
-            return fail(res, 409, 'No on-chain accounts are available for the current season.');
-          }
-          account = poolRows[0];
-          try {
-            await client.query(
-              `UPDATE onchain_accounts
-                  SET user_id = $1, is_used = TRUE, used_at = NOW(), updated_at = NOW()
-                WHERE id = $2`,
-              [req.user.id, account.id]
-            );
-            newlyAllocated = true;
-          } catch (err) {
-            // Two concurrent first-provisions can each pass the existing-
-            // allocation check and claim DIFFERENT pool rows (SKIP LOCKED
-            // only stops them racing onto the SAME row); the loser then
-            // trips `onchain_accounts_user_season_unique` here once the
-            // winner commits. That is the guard working — restart the
-            // transaction, adopt the winner's now-visible row, and fall
-            // through to the shared enrollment logic below, keeping the
-            // endpoint idempotent instead of 500ing.
-            if (err.code !== '23505') throw err;
-            await client.query('ROLLBACK');
-            await client.query('BEGIN');
-            const { rows: retryRows } = await client.query(
-              `SELECT id, address, public_key, secret_key, season_event_id
-                 FROM onchain_accounts
-                WHERE user_id = $1 AND season_id = $2
-                ORDER BY (season_event_id IS NULL) DESC, id ASC
-                LIMIT 1`,
-              [req.user.id, seasonId]
-            );
-            if (!retryRows.length) throw err;
-            account = retryRows[0];
-          }
+        if (!sourceAccounts.length) {
+          await client.query('ROLLBACK');
+          return fail(res, 409, 'No current-season programme wallet is linked to that email.', {
+            code: 'wallet_claim_not_found',
+          });
         }
 
-        // Any enrollment for the season (event-scoped or season-wide)
-        // satisfies the completion check; only insert a season-wide row
-        // when none exists, so migrated users never get a duplicate scope.
-        const { rows: enrollRows } = await client.query(
+        // TODO(wallet-claim-key-rotation): a protocol-2 credential means an
+        // installation has already received this private key. Token deletion
+        // cannot revoke that cryptographic authority, so refuse that rare case
+        // until the chain exposes an actual key-rotation/authority-transfer
+        // primitive. Pre-cutover legacy wallets have no such binding and can
+        // be claimed normally.
+        const { rows: credentialRows } = await client.query(
+          `SELECT credential_reference FROM native_session_credentials
+            WHERE account_id = ANY($1::bigint[])
+            LIMIT 1
+            FOR UPDATE`,
+          [sourceAccounts.map((account) => String(account.id))]
+        );
+        if (credentialRows.length) {
+          await client.query('ROLLBACK');
+          return fail(res, 409, 'This wallet requires key rotation before it can be connected.', {
+            code: 'wallet_claim_requires_key_rotation',
+          });
+        }
+
+        await client.query(
+          `UPDATE onchain_accounts
+              SET user_id = $1, updated_at = NOW()
+            WHERE user_id = $2 AND season_id = $3`,
+          [req.user.id, sourceId, seasonId]
+        );
+
+        const { rows: enrollmentRows } = await client.query(
           `SELECT id FROM user_enrollments
             WHERE user_id = $1 AND season_id = $2
             LIMIT 1`,
           [req.user.id, seasonId]
         );
-        if (!enrollRows.length) {
+        if (!enrollmentRows.length) {
           await client.query(
             `INSERT INTO user_enrollments (season_event_id, user_id, season_id, registered_at, created_at, updated_at)
              VALUES (NULL, $1, $2, NOW(), NOW(), NOW())`,
@@ -1958,139 +2035,35 @@ function topochainMobileRoutes(config) {
           );
         }
 
-        await client.query('COMMIT');
-
-        // Block-production release state rides along so the app can
-        // persist it off the same response it stores the wallet from
-        // (NodeAccountReconciler) — the wallet always works for dapp
-        // transactions; bp_released additionally gates whether the
-        // node runs as a block producer.
-        const { rows: bpRows } = await pool.query(
-          'SELECT bp_released_at FROM users WHERE id = $1',
-          [req.user.id]
+        await client.query(
+          'UPDATE mobile_otp_codes SET consumed_at = NOW(), updated_at = NOW() WHERE id = $1',
+          [otp.id]
         );
-
-        return ok(res, {
-          data: {
-            address: account.address,
-            public_key: account.public_key,
-            secret_key: account.secret_key,
-            season_id: seasonId,
-            season_event_id: account.season_event_id != null ? Number(account.season_event_id) : null,
-            newly_allocated: newlyAllocated,
-            bp_released: !!(bpRows[0] && bpRows[0].bp_released_at),
-          },
-        });
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-      } finally {
-        client.release();
-      }
-    } catch (err) {
-      log.error('topochain-mobile', 'POST /wallet/provision failed', { message: err.message });
-      return fail(res, 500, 'Internal server error.');
-    }
-  });
-
-  // ── GET /delegation (SPEC 2142-2166) ─────────────────────────────────
-  // v4 requires a session token (SPEC flags "no auth in source"); the
-  // user may only read their own wallets — the account lookup below is
-  // scoped to `user_id = req.user.id`, so a genuinely-unknown address and
-  // a real address owned by someone else both produce the identical 404
-  // (never leaking which case it was).
-  router.get('/api/v4/mobile/delegation', mobileTokenAuth(config), async (req, res) => {
-    try {
-      const walletAddress = typeof req.query.wallet_address === 'string' ? req.query.wallet_address.trim() : '';
-      if (!walletAddress || walletAddress.length > 255) {
-        return fail(res, 422, 'The given data was invalid.', {
-          details: { wallet_address: ['The wallet_address field is required and must be at most 255 characters.'] },
-        });
-      }
-
-      const { rows } = await pool.query(
-        'SELECT address FROM onchain_accounts WHERE address = $1 AND user_id = $2 LIMIT 1',
-        [walletAddress, req.user.id]
-      );
-      if (!rows.length) return fail(res, 404, 'Unknown account address.');
-
-      const state = await readDelegationState(pool, walletAddress);
-      return ok(res, {
-        data: { account: walletAddress, delegated: state.delegated, delegated_since: iso(state.delegatedSince) },
-      });
-    } catch (err) {
-      log.error('topochain-mobile', 'GET /delegation failed', { message: err.message });
-      return fail(res, 500, 'Internal server error.');
-    }
-  });
-
-  // ── POST /delegation (SPEC 2168-2191) ────────────────────────────────
-  // `participant_id` (source, client-claimed, no `exists` rule at all) is
-  // removed in v4 — the user comes from the token, per §4.8 rule 1's
-  // rename map (participant_* -> user_*) extended, per the task brief, to
-  // the machine `code` too: source's `participant_wallet_mismatch` code
-  // becomes `user_wallet_mismatch` here (same rename direction, applied to
-  // a code value rather than a payload key).
-  router.post('/api/v4/mobile/delegation', mobileTokenAuth(config), async (req, res) => {
-    const body = req.body || {};
-    const walletAddress = typeof body.wallet_address === 'string' ? body.wallet_address.trim() : '';
-    const delegated = toBool(body.delegated);
-    const details = {};
-    if (!walletAddress || walletAddress.length > 255) {
-      details.wallet_address = ['The wallet_address field is required and must be at most 255 characters.'];
-    }
-    if (body.delegated === undefined || delegated === undefined) {
-      details.delegated = ['The delegated field is required and must be a boolean.'];
-    }
-    if (Object.keys(details).length) return fail(res, 422, 'The given data was invalid.', { details });
-
-    const client = await pool.connect();
-    try {
-      // Validation runs BEFORE the account lookup (same ordering as
-      // partner.js's PUT /delegations/:account) — a bad body on an
-      // unknown account still 422s, not 404s.
-      //
-      // THE FIX (found live on production): the same ut1… address exists
-      // once PER SEASON EVENT in onchain_accounts (up to 9 rows for one
-      // address, claimed by different parties across events), so the old
-      // unordered `LIMIT 1` lookup resolved "the" row nondeterministically
-      // — whichever row the planner returned decided whether the real
-      // owner got a 409 `user_wallet_mismatch`. Ownership is a property
-      // of the ADDRESS, not of one grant row: the caller owns the wallet
-      // when ANY of its rows carries their user_id.
-      const { rows: ownRows } = await client.query(
-        `SELECT EXISTS(SELECT 1 FROM onchain_accounts WHERE address = $1) AS known,
-                EXISTS(SELECT 1 FROM onchain_accounts WHERE address = $1 AND user_id = $2) AS owned`,
-        [walletAddress, req.user.id]
-      );
-      if (!ownRows[0].known) return fail(res, 404, 'Unknown account address.');
-      if (!ownRows[0].owned) {
-        return fail(res, 409, 'Wallet does not belong to your account.', { code: 'user_wallet_mismatch' });
-      }
-
-      await client.query('BEGIN');
-      try {
-        const result = await setDelegationState(client, walletAddress, delegated);
+        await client.query('DELETE FROM mobile_auth_tokens WHERE user_id = $1', [sourceId]);
         await client.query('COMMIT');
+
+        const account = sourceAccounts[0];
         return ok(res, {
-          data: {
-            account: walletAddress,
-            delegated: result.delegated,
-            changed: result.changed,
-            delegated_since: iso(result.delegatedSince),
-          },
+          claimed: true,
+          address: account.address,
+          public_key: account.public_key,
+          season_id: seasonId,
+          season_event_id: account.season_event_id != null ? Number(account.season_event_id) : null,
         });
       } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
+        if (client) await client.query('ROLLBACK').catch(() => {});
+        if (err.code === '23505') {
+          return fail(res, 409, 'The wallet could not be connected because this account already has one.', {
+            code: 'wallet_claim_conflict',
+          });
+        }
+        log.error('topochain-mobile', 'POST /wallet/claim failed', { message: err.message });
+        return fail(res, 500, 'Internal server error.');
+      } finally {
+        if (client) client.release();
       }
-    } catch (err) {
-      log.error('topochain-mobile', 'POST /delegation failed', { message: err.message });
-      return fail(res, 500, 'Internal server error.');
-    } finally {
-      client.release();
     }
-  });
+  );
 
   return router;
 }

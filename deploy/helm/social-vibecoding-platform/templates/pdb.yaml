@@ -1,4 +1,4 @@
-{{- if and .Values.enabled .Values.podDisruptionBudget.enabled }}
+{{- if and .Values.enabled .Values.podDisruptionBudget.enabled .Values.platform.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -11,7 +11,11 @@ spec:
     matchLabels:
       {{- include "social-vibecoding-platform.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: platform
+{{- end }}
+{{- if and .Values.enabled .Values.podDisruptionBudget.enabled .Values.postgresql.enabled }}
+{{- if .Values.platform.enabled }}
 ---
+{{- end }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

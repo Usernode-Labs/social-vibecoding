@@ -9,7 +9,16 @@
 #   container *name* deterministically:
 #
 #     myapp.<domain>              -> usernode-app-myapp        (prod app)
-#     myapp--s42.<domain>         -> usernode-staging-myapp--42 (PR preview)
+#     myapp--s42.<domain>         -> usernode-staging-s42       (PR preview)
+#
+#   Note the asymmetry: a production app is reached by its container NAME,
+#   a staging preview by a short network ALIAS. Preview containers are named
+#   `usernode-staging-<slug>--<sessionId>`, which exceeds the 63-byte DNS
+#   label limit once the slug passes 43 characters — and Go's resolver, like
+#   every other, refuses to send a query for an over-long label, so the
+#   upstream would simply not resolve. The alias carries no slug, so it fits
+#   for every app; the slug capture group below survives only to keep this
+#   row distinguishable from the production one.
 #
 #   Those are exactly the container names the platform already gives its
 #   containers (services/staging.js + app-creator.js), and Caddy reaches
@@ -53,6 +62,26 @@
 # from the public internet where 144.76.85.53:53 IS reachable. (We use the
 # site-level `tls { dns ... }` form rather than the global `acme_dns` option
 # specifically so we can set propagation_timeout per the challenge.)
+
+# ── Global options ───────────────────────────────────────────────
+# Must be the first block in the file.
+#
+# grace_period bounds how long a `caddy reload` waits for the OLD server
+# instance's in-flight requests before force-closing them. Caddy's default
+# is *unbounded* ("servers shutting down with eternal grace period" in the
+# log), and this platform always has long-lived SSE streams open (dev chat,
+# turn progress, dapp caches), so an unbounded wait can hold a blue-green
+# flip open indefinitely — the rollout script sits in `caddy reload`, the
+# old color is never stopped (so it keeps the leader lock and runs the
+# sweepers on stale code), and the deployer's flock blocks every later
+# merge. New connections already reach the new color the moment the
+# reload hands the listeners over, so cutting the stragglers after 30s
+# costs them one EventSource auto-reconnect and nothing else. Pairs with
+# `stream_close_delay` on each reverse_proxy below, which handles the
+# hijacked (WebSocket) connections Shutdown doesn't track.
+{
+	grace_period 30s
+}
 
 # Reusable DNS-01 challenge config (acme-dns). Snippet so the apex and the
 # wildcard site stay identical.
@@ -178,7 +207,7 @@ import /etc/caddy/active/platform-upstream.caddy
 	# Only production hosts get one; staging previews and the default row
 	# map to the empty string, which the @chromeless matcher excludes.
 	map {host} {upstream} {applink} {
-		~^([a-z0-9-]+?)--s(\d+)(?:--[a-z0-9]+)?\. usernode-staging-${1}--${2} ""
+		~^([a-z0-9-]+?)--s(\d+)(?:--[a-z0-9]+)?\. usernode-staging-s${2} ""
 		~^([a-z0-9-]+)\. usernode-app-${1} "https://{$USERNODE_DOMAIN}/#app/${1}/full"
 		default usernode ""
 	}
@@ -238,6 +267,15 @@ import /etc/caddy/active/platform-upstream.caddy
 		transport http {
 			dial_timeout 2s
 		}
+		# Close hijacked WebSocket streams on a TIMER after a config
+		# reload instead of inline. Inline, Caddy writes a Close frame to
+		# every old WebSocket client while holding the handler's
+		# connection lock, with no write deadline — one client that ACKs
+		# but never reads (a suspended mobile tab) wedges that write on
+		# the TLS mutex and the reload never returns. Apps like falling
+		# sands keep many such sockets open. Same rationale as the
+		# platform proxies in caddy/active/platform-upstream.caddy.
+		stream_close_delay 5s
 		@unauth status 401
 		handle_response @unauth {
 			@chromeless {

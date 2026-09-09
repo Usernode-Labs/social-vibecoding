@@ -165,7 +165,13 @@ async function listOpenRouterModels({ pool, userId, credentialRevision, apiKey, 
   // Preserve a known-good first-run choice while leaving the visible list
   // sorted strictly by price. The UI uses this only when the user has not
   // already selected a model.
-  const recommended = models.find((m) => m.compatibility === 'verified')
+  // Prefer the operator-configured default when the user's key can actually
+  // access it. This does not filter or lock the catalog: every OpenRouter
+  // model remains visible/selectable, and a missing GLM release safely falls
+  // back to the existing compatibility/cost ordering.
+  const configuredDefault = String(config.openrouterDefaultCodexModel || '');
+  const recommended = models.find((m) => m.id === configuredDefault)
+    || models.find((m) => m.compatibility === 'verified')
     || models.find((m) => m.meetsCodexMinimums)
     || models[0]
     || null;

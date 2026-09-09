@@ -28,6 +28,8 @@
 // public.js), which is optionally-authenticated but never 401s.
 'use strict';
 
+import { eventBarStore } from './event-bar-store.js';
+
 const TopochainEventContext = {
   _mounted: false,
 
@@ -83,14 +85,10 @@ const TopochainEventContext = {
       && TopochainEvents.isSeasonAggregate(TopochainEventContext.selectedEvent()));
   },
 
-  // Same escaping contract as the sibling Topochain modules: safe in BOTH a
-  // text node and a double-quoted attribute value, because this file
-  // interpolates admin-authored copy into both.
-  esc(s) {
-    return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-  },
+  // `esc()` lived here — safe in BOTH a text node and a double-quoted attribute
+  // value, because this file interpolated admin-authored copy (event names,
+  // descriptions) into both. The bar is ./event-bar.tsx's markup now and React
+  // escapes both contexts by construction, so it has no caller.
 
   // Safe fetch+parse: never throws, returns { status, ok, data } with
   // data === null on anything that isn't a clean JSON 2xx.
@@ -153,25 +151,20 @@ const TopochainEventContext = {
     TopochainEventContext._subs = [];
   },
 
+  // Reveal the bar. Was an `innerHTML` assignment plus a `change` listener
+  // attached to the `<select>` it had just created; both are ./event-bar.tsx's
+  // now, and what is left is the flag that says "an event section is open".
+  //
+  // The picker starts on its `Loading…` placeholder and the hero starts EMPTY,
+  // which is exactly what the string version's markup said — loadEvents() and
+  // _loadDetail() fill each in turn.
   _renderShell() {
-    const root = document.getElementById('leaderboard-event-bar');
-    if (!root) return;
-    root.innerHTML = `
-      <div class="flex flex-wrap items-center justify-end gap-3 mb-3">
-        <label class="flex items-center gap-2 text-sm">
-          <span class="text-zinc-500 dark:text-zinc-400">Event</span>
-          <select id="tc-ev-select"
-            class="rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1.5 text-sm max-w-[16rem]">
-            <option value="">Loading…</option>
-          </select>
-        </label>
-      </div>
-      <div id="tc-ev-hero"></div>`;
-
-    document.getElementById('tc-ev-select').addEventListener('change', (e) => {
-      const id = parseInt(e.target.value, 10);
-      if (!Number.isInteger(id)) return;
-      TopochainEventContext.select(id);
+    eventBarStore.set({
+      mounted: true,
+      options: [],
+      placeholder: 'Loading…',
+      selectedId: null,
+      hero: null,
     });
   },
 
@@ -257,86 +250,85 @@ const TopochainEventContext = {
 
   // ── Rendering ────────────────────────────────────────────────────────
 
+  // The picker's entries. `selected` and the `sel.value = …` that followed it
+  // are one field now — a controlled `<select>` cannot disagree with itself.
   _renderOptions() {
-    const sel = document.getElementById('tc-ev-select');
-    if (!sel) return;
-    const esc = TopochainEventContext.esc;
-    const current = TopochainEventContext.eventId;
-    if (!TopochainEventContext._events.length) {
-      sel.innerHTML = '<option value="">No events</option>';
+    const events = TopochainEventContext._events;
+    if (!events.length) {
+      eventBarStore.set({ options: [], placeholder: 'No events', selectedId: null });
       return;
     }
-    sel.innerHTML = TopochainEventContext._events.map((ev) => {
-      const selected = current === ev.id ? ' selected' : '';
-      // A season-type event is labelled by WHAT IT IS, not by its window:
-      // its standings are the whole season's, so "(past)" is both wrong and
-      // (since it is now the default selection) the first thing a reader
-      // sees. Its own window has usually closed while the season is still
-      // the dataset everyone means.
-      const isSeason = !!(window.TopochainEvents
-        && TopochainEvents.isSeasonAggregate(ev));
-      const tag = isSeason ? ' (season)'
-        : (ev.is_current ? ' (current)' : (ev.is_active ? '' : ' (past)'));
-      return `<option value="${esc(ev.id)}"${selected}>${esc(ev.name)}${esc(tag)}</option>`;
-    }).join('');
-    if (current != null) sel.value = String(current);
+    eventBarStore.set({
+      options: events.map((ev) => ({
+        id: ev.id,
+        label: `${ev.name}${TopochainEventContext._tagFor(ev)}`,
+      })),
+      placeholder: null,
+      selectedId: TopochainEventContext.eventId,
+    });
   },
 
-  _renderHero() {
-    const host = document.getElementById('tc-ev-hero');
-    if (!host) return;
-    const esc = TopochainEventContext.esc;
+  // A season-type event is labelled by WHAT IT IS, not by its window: its
+  // standings are the whole season's, so "(past)" is both wrong and — since it
+  // is the default selection — the first thing a reader sees. Its own window
+  // has usually closed while the season is still the dataset everyone means.
+  _tagFor(ev) {
+    const isSeason = !!(window.TopochainEvents
+      && TopochainEvents.isSeasonAggregate(ev));
+    if (isSeason) return ' (season)';
+    if (ev.is_current) return ' (current)';
+    return ev.is_active ? '' : ' (past)';
+  },
 
+  // The hero, as one of four tagged shapes. Every branch of the string version
+  // is a tag, so ./event-bar.tsx has no condition of its own to get wrong.
+  _renderHero() {
     if (TopochainEventContext._detailLoading && !TopochainEventContext._detail) {
-      host.innerHTML = '<p class="text-sm text-zinc-500">Loading…</p>';
+      eventBarStore.set({ hero: { kind: 'loading' } });
       return;
     }
     if (TopochainEventContext._detailError && !TopochainEventContext._detail) {
-      host.innerHTML = `
-        <div class="rounded-lg bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-red-700 dark:text-red-300 px-4 py-3 text-sm">
-          ${esc(TopochainEventContext._detailError)}
-        </div>`;
+      eventBarStore.set({
+        hero: { kind: 'error', message: TopochainEventContext._detailError },
+      });
       return;
     }
     const ev = TopochainEventContext._detail;
     if (!ev) {
-      host.innerHTML = '<p class="text-sm text-zinc-500">No event selected.</p>';
+      eventBarStore.set({ hero: { kind: 'empty' } });
       return;
     }
-    // Same reasoning as the picker's `(season)` suffix: a season-type event
-    // is badged for what it is rather than for its own window, which has
-    // usually closed while the season is still the dataset on screen.
+    // Same reasoning as the picker's `(season)` suffix: a season-type event is
+    // badged for what it is rather than for its own window, which has usually
+    // closed while the season is still the dataset on screen.
     const isSeason = TopochainEventContext.isSeasonSelected();
-    const statusBadge = isSeason
-      ? 'bg-violet-500/20 text-violet-600 dark:text-violet-300'
+    const statusClass = isSeason
+      ? 'bg-violet-500/20 text-violet-700 dark:text-violet-300'
       : (ev.is_current
-        ? 'bg-green-500/20 text-green-600 dark:text-green-300'
-        : (ev.is_active ? 'bg-amber-500/20 text-amber-600 dark:text-amber-300' : 'bg-zinc-500/20 text-zinc-500'));
+        ? 'bg-green-500/20 text-green-800 dark:text-green-300'
+        : (ev.is_active
+          ? 'bg-amber-500/20 text-amber-800 dark:text-amber-300'
+          : 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400'));
     const statusLabel = isSeason ? 'season'
       : (ev.is_current ? 'active now' : (ev.is_active ? 'active' : 'past'));
-    const fmt = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—');
-
-    host.innerHTML = `
-      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
-        <div class="flex flex-wrap items-center gap-2">
-          <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-100">${esc(ev.name)}</h2>
-          <span class="text-xs px-2 py-0.5 rounded-full font-medium ${statusBadge}">${esc(statusLabel)}</span>
-        </div>
-        ${ev.description ? `<p class="text-sm text-zinc-600 dark:text-zinc-300 mt-2">${esc(ev.description)}</p>` : ''}
-        <p class="text-xs text-zinc-500 mt-2">
-          ${esc(fmt(ev.starts_at))} &ndash; ${esc(fmt(ev.ends_at))}
-          ${ev.users_count != null ? ` · ${esc(ev.users_count)} taking part` : ''}
-        </p>
-        ${isSeason ? `
-        <p id="tc-ev-season-note" class="text-xs text-zinc-500 mt-2">
-          Whole-season standings &mdash; every public event in this season, combined.
-          Pick a single event above to see just its results.
-        </p>` : ''}
-        ${TopochainEventContext._endedFallback ? `
-        <p id="tc-ev-fallback-note" class="text-xs text-zinc-500 mt-2">
-          Nothing is running right now — showing the most recent event.
-        </p>` : ''}
-      </div>`;
+    const fmt = (iso) => (iso
+      ? new Date(iso).toLocaleDateString(undefined,
+        { year: 'numeric', month: 'short', day: 'numeric' })
+      : '—');
+    eventBarStore.set({
+      hero: {
+        kind: 'event',
+        name: String(ev.name || ''),
+        statusLabel,
+        statusClass,
+        description: ev.description ? String(ev.description) : null,
+        // An en dash between the two dates, as the `&ndash;` entity drew.
+        dates: `${fmt(ev.starts_at)} – ${fmt(ev.ends_at)}`,
+        participants: ev.users_count != null ? ` · ${ev.users_count} taking part` : null,
+        seasonNote: isSeason,
+        fallbackNote: !!TopochainEventContext._endedFallback,
+      },
+    });
   },
 };
 

@@ -1,4 +1,4 @@
-{{- if .Values.enabled }}
+{{- if and .Values.enabled .Values.platform.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -84,6 +84,7 @@ spec:
             - {name: PLATFORM_LEADER_LOCK, value: "1"}
             - {name: GIT_SHA, value: {{ .Values.release.sourceRevision | quote }}}
             - {name: USERNODE_DOMAIN, value: {{ .Values.config.domain | quote }}}
+            - {name: USERNODE_APPS_DOMAIN, value: {{ default .Values.config.domain .Values.config.appsDomain | quote }}}
             - {name: CLI_CANONICAL_ORIGIN, value: {{ printf "https://%s" .Values.config.domain | quote }}}
             - {name: PLATFORM_INTERNAL_URL, value: {{ .Values.config.internalUrl | quote }}}
             - {name: USERNODE_PLATFORM_REPO, value: {{ .Values.config.platformRepository | quote }}}
@@ -91,6 +92,7 @@ spec:
             - {name: EXPLORER_UPSTREAM, value: {{ .Values.config.explorerUpstream | quote }}}
             - {name: EXPLORER_UPSTREAM_BASE, value: {{ .Values.config.explorerUpstreamBase | quote }}}
             - {name: EXPLORER_USE_HTTP, value: {{ .Values.config.explorerUseHttp | quote }}}
+            - {name: NATIVE_SESSION_V2_TESTNET_CHAIN_ID, value: {{ .Values.config.nativeSessionV2TestnetChainId | quote }}}
             - {name: LOG_LEVEL, value: {{ .Values.config.logLevel | quote }}}
             - {name: WORKER_MEMORY, value: {{ .Values.config.workerMemory | quote }}}
             - {name: WORKER_CPUS, value: {{ .Values.config.workerCpus | quote }}}

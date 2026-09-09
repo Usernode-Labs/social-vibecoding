@@ -35,11 +35,11 @@ import { createStore } from '../../lib/plain-store.js';
  * each cover field is.
  *
  * @typedef {{
- *   iconKind: string, iconHtml: string, name: string, note: string,
- *   spinner: boolean, out: boolean,
+ *   iconKind: string, iconHtml: string, name: string,
+ *   note: string, spinner: boolean, out: boolean,
  * }} LaunchCoverState
  * @typedef {{
- *   slug: string, active: boolean, faded: boolean, cover: LaunchCoverState | null,
+ *   slug: string, active: boolean, faded: boolean, background: string, cover: LaunchCoverState | null,
  * }} AppFrameState
  */
 
@@ -57,6 +57,8 @@ export const appFrameStore = createStore(/** @type {AppFrameState} */ ({
   active: false,
   /** #931 launch cross-fade: the frame starts at opacity 0 behind the cover. */
   faded: true,
+  /** #1581: the embedded document's opaque page color, reported by its bridge. */
+  background: '',
   /** The launch cover, or null once revealed. See COVER_DEFAULTS. */
   cover: null,
 }));

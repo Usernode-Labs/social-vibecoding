@@ -125,6 +125,28 @@ test('recheck refuses to queue behind an existing capture pipeline', async () =>
   }
 });
 
+test('recheck never revives checks on an archived proposal', async () => {
+  const calls = [];
+  poolQueryHandler = async (sql) => {
+    if (/FROM chat_sessions cs JOIN apps a/.test(String(sql))) {
+      return { rows: [sessionRow({ status: 'archived', check_state: 'pending' })] };
+    }
+    return { rows: [] };
+  };
+  const origSet = visuals.setChecksPending;
+  visuals.setChecksPending = async (...args) => { calls.push(args); };
+  const server = await startServer();
+  try {
+    const { res, body } = await postRecheck(server);
+    assert.equal(res.status, 409);
+    assert.equal(body.error, 'proposal_closed');
+    assert.equal(calls.length, 0);
+  } finally {
+    server.close();
+    visuals.setChecksPending = origSet;
+  }
+});
+
 // Regression for the campaign-dashboard 403: req.user carries camelCase
 // isAdmin/canAdminWrite (middleware/auth.js) — the route once checked the
 // nonexistent `is_admin`, so admins were rejected on every proposal they

@@ -94,6 +94,10 @@ function loadAppCreator({ dockerStubs = {}, ws = {}, githubStubs = {} } = {}) {
   stub(ids.pool, { getPool: () => pool });
   stub(ids.ws, {
     pushAppStatusUpdate: (payload) => statusPushes.push(payload),
+    // Creation-phase broadcasts are not what this file asserts on, but
+    // app-creator calls them, so the stub has to carry the whole seam.
+    // tests/app-creation-progress.test.js is where they are checked.
+    pushAppCreationPhase: () => {},
     ...ws,
   });
 
@@ -177,6 +181,27 @@ test('successful deploy clears last_failure and broadcasts running with no error
   const push = statusPushes.find((p) => p.status === 'running');
   assert.ok(push, 'expected a running broadcast');
   assert.ok(!statusPushes.some((p) => p.status === 'error'));
+});
+
+test('a repo-less fork is refused at the starter-template boundary', async () => {
+  const { appCreator, pool, statusPushes } = loadAppCreator();
+
+  await appCreator.createApp({ jwtSecret: 's' }, {
+    id: 42,
+    name: 'Forked App',
+    slug: 'forked-app',
+    self_hosted: false,
+    repo_url: null,
+    forked_from: { appId: 7, slug: 'source-app' },
+  });
+
+  assert.ok(!pool.queries.some((q) => /SET db_password/.test(q.sql)),
+    'the guard fires before a fresh DB/template create can begin');
+  const failureWrite = pool.queries.find((q) => /SET last_failure = \$1/.test(q.sql));
+  assert.ok(failureWrite);
+  const failure = JSON.parse(failureWrite.params[0]);
+  assert.match(failure.reason, /copied.*source repository|source repository.*copy/i);
+  assert.ok(statusPushes.some((p) => p.status === 'error' && p.errorReason === failure.reason));
 });
 
 // Session-2585 fix: with GitHub enabled, a repo-creation failure is FATAL

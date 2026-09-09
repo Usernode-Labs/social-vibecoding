@@ -1,4 +1,5 @@
 const { execFile, spawn } = require('child_process');
+const crypto = require('crypto');
 const { promisify } = require('util');
 const log = require('./logger');
 
@@ -56,8 +57,16 @@ const APP_CPUS = '0.5';
 // itself became the bottleneck the ceiling was protecting against. Still a
 // ceiling — an idle preview is unaffected, and the cost only appears during
 // the same capture window the 1.0 bump was already for.
+//
+// Raised 2 → 4: eight concurrent pages on two cores left every request
+// queueing behind the others during the capture window, which is where the
+// "did not finish within the assert window" flakes came from — a check that
+// passes alone and fails under its seven neighbours. Still a ceiling. The
+// same figure is handed to the kubernetes deploy (services/kubernetes.js
+// deployApplication), whose preview limit used to be a hard-coded 1 CPU that
+// this setting never reached.
 const STAGING_MEMORY = process.env.STAGING_MEMORY || '256m';
-const STAGING_CPUS = process.env.STAGING_CPUS || '2';
+const STAGING_CPUS = process.env.STAGING_CPUS || '4';
 
 const SHARED_NETWORK = process.env.DOCKER_NETWORK || 'shared-web';
 
@@ -82,20 +91,127 @@ const STAGING_STOP_GRACE_SEC = 2;
 // grace — i.e. Docker had to SIGKILL. Slack absorbs docker CLI overhead.
 const FORCE_KILL_SLACK_MS = 400;
 
-async function buildImage(contextPath, tag, buildArgs = {}) {
+// One line of `docker build` output, as progress: the classic builder's
+// `Step 4/31 : RUN npm ci` and BuildKit's `#7 [shell 4/9] RUN npm ci` both
+// carry a step counter and the instruction. Null for any other line.
+function parseDockerBuildLine(line) {
+  const l = String(line || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
+  let m = /^Step (\d+)\/(\d+) : (.*)$/.exec(l);
+  if (m) return { index: parseInt(m[1], 10), total: parseInt(m[2], 10), phase: null, detail: m[3].trim() };
+  m = /^#\d+ \[([^\]]*?)(?:\s+(\d+)\/(\d+))?\] (.*)$/.exec(l);
+  if (m) {
+    const stage = (m[1] || '').trim() || null;
+    return {
+      index: m[2] ? parseInt(m[2], 10) : null,
+      total: m[3] ? parseInt(m[3], 10) : null,
+      phase: stage,
+      detail: m[4].trim(),
+    };
+  }
+  return null;
+}
+
+// `onProgress(image)`: `{ phase, index, total, detail }` per step line the
+// builder prints (see parseDockerBuildLine), read off the child's stdout and
+// stderr as they stream. The run is still judged from the exit code.
+// BuildKit, with a way back.
+//
+// The preview image is built by the CLASSIC builder today — `Step 6/36` in
+// the output is its format — which runs every stage in file order. This
+// repo's Dockerfile has two INDEPENDENT stages, `shell` and `css`, each
+// with its own `npm ci`, and the classic builder runs the second only after
+// the first has finished. BuildKit builds them concurrently, skips stages
+// nothing depends on, and commits layers through a faster snapshotter,
+// which is what a build whose small COPY steps cost as much as its large
+// ones is actually waiting on.
+//
+// `--progress=plain` is not cosmetic: BuildKit's default renderer redraws
+// with ANSI control sequences, which is not a stream of lines and would
+// leave the build-step progress (services/staging.js) blind. Plain mode
+// emits `#7 [shell 4/9] RUN npm ci` per step, which parseDockerBuildLine
+// already reads, on stderr — observed here alongside stdout.
+//
+// STAGING_BUILDKIT=0 turns it off without a code change. And a daemon that
+// cannot do BuildKit at all is not a broken fleet: the narrow matcher below
+// recognises that refusal specifically — not a failing Dockerfile — and the
+// build is retried once on the classic builder. Anything else throws as it
+// always did.
+function buildKitEnabled() {
+  const v = String(process.env.STAGING_BUILDKIT ?? '1').trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'off');
+}
+
+// Set once the CLI has refused BuildKit, so a host whose docker has no
+// buildx pays the refused attempt once per process rather than once per
+// image. The refusal is instant — the CLI answers before it reaches the
+// daemon — but it is on the path of all four callers (preview, capture,
+// worker and session images), and one warning per boot reads better than
+// one per build. A deploy restarts the process, so installing buildx takes
+// effect without a code change.
+let buildKitRefused = false;
+
+// Deliberately narrow: only the daemon/CLI saying it cannot do BuildKit.
+// A Dockerfile that fails to build must NOT be retried under another
+// builder — it would fail twice, take double the time, and report the
+// second failure.
+//
+// `buildkit is enabled but` is the durable half of that refusal. The
+// component it names next is not: the CLI says `the buildx component is
+// missing or broken`, and matching a guessed full sentence instead is how
+// the real message went unrecognised, so every image build on a host
+// without docker-buildx failed outright rather than falling back.
+function buildKitUnavailable(err) {
+  const text = `${(err && err.stderr) || ''}\n${(err && err.message) || ''}`.toLowerCase();
+  return /buildkit is enabled but/.test(text)
+    || /install the buildx component/.test(text)
+    || /'buildx' is not a docker command/.test(text)
+    || /buildkit not supported by daemon/.test(text)
+    || /failed to solve.*buildkit.*not supported/.test(text)
+    || /unknown flag: --progress/.test(text);
+}
+
+async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null } = {}) {
   const buildArgFlags = Object.entries(buildArgs).flatMap(
     ([k, v]) => ['--build-arg', `${k}=${v}`]
   );
-  log.info('docker', 'Building image', { context: contextPath, tag, buildArgs });
+  const wantBuildKit = buildKitEnabled() && !buildKitRefused;
+  log.info('docker', 'Building image', { context: contextPath, tag, buildArgs, buildKit: wantBuildKit });
   const startedAt = Date.now();
-  try {
-    await execFileAsync(
+  const runBuild = (useBuildKit) => {
+    const promise = execFileAsync(
       'docker',
-      ['build', ...buildArgFlags, '-t', tag, contextPath],
+      ['build', ...buildArgFlags, ...(useBuildKit ? ['--progress=plain'] : []), '-t', tag, contextPath],
       // Generous maxBuffer so a chatty build still yields a usable log
       // tail instead of a bare "maxBuffer exceeded" error (#416).
-      { timeout: 5 * 60 * 1000, maxBuffer: 8 * 1024 * 1024 }
+      {
+        timeout: 5 * 60 * 1000,
+        maxBuffer: 8 * 1024 * 1024,
+        env: { ...process.env, DOCKER_BUILDKIT: useBuildKit ? '1' : '0' },
+      }
     );
+    if (typeof onProgress === 'function' && promise.child) {
+      const observe = (line) => {
+        const step = parseDockerBuildLine(line);
+        if (step) onProgress(step);
+      };
+      if (promise.child.stdout) attachLineObserver(promise.child.stdout, observe);
+      if (promise.child.stderr) attachLineObserver(promise.child.stderr, observe);
+    }
+    return promise;
+  };
+  let usedBuildKit = wantBuildKit;
+  try {
+    try {
+      await runBuild(wantBuildKit);
+    } catch (err) {
+      if (!wantBuildKit || !buildKitUnavailable(err)) throw err;
+      log.warn('docker', 'BuildKit unavailable on this daemon: rebuilding with the classic builder, and not trying it again this process', {
+        tag, err: err.message,
+      });
+      buildKitRefused = true;
+      usedBuildKit = false;
+      await runBuild(false);
+    }
   } catch (err) {
     // Attach the build output tail so deploy callers can persist a
     // diagnosable apps.last_failure record (see services/deploy-failure).
@@ -107,12 +223,55 @@ async function buildImage(contextPath, tag, buildArgs = {}) {
     throw err;
   }
   const durationMs = Date.now() - startedAt;
-  log.info('docker', 'Image built', { tag, durationMs });
-  return { durationMs };
+  log.info('docker', 'Image built', { tag, durationMs, buildKit: usedBuildKit });
+  return { durationMs, buildKit: usedBuildKit };
+}
+
+// Linux caps a hostname at HOST_NAME_MAX (64 bytes) and runc's
+// sethostname() rejects anything longer with EINVAL, so the container dies
+// during init with nothing but "error during container init: sethostname:
+// invalid argument" to show for it. Staging previews are named
+// `usernode-staging-<slug>--<sessionId>`, which is 66 characters for a
+// 43-character slug and a 4-digit session id — a real app hit that wall and
+// its preview could never boot, no matter how many times the heal sweep
+// retried, because the name is deterministic.
+//
+// Clamp only what we pass to --hostname. The container's --name must stay
+// byte-identical to what callers asked for: Caddy's map block derives the
+// upstream container name from the request host, staging-reap parses session
+// ids back out of it, and both staging_container_id and staging_runtime_name
+// persist it.
+//
+// #1379 stopped there, on the reasoning that "nothing on the platform
+// resolves a container by its hostname, so shortening it is invisible." The
+// first half of that is still true. The second half was not: Docker's
+// embedded DNS resolves container NAMES, and a name longer than 63 bytes is
+// not a legal DNS label, so nothing can look it up either. The same 66-byte
+// staging name that used to kill the container at init now boots fine and is
+// simply unreachable — Chrome answers ERR_NAME_NOT_RESOLVED before a byte of
+// app code runs, and Caddy's Go resolver rejects the label just as flatly.
+// The health gate never noticed because probeHealthOnce goes through
+// `docker exec` + 127.0.0.1, which resolves nothing.
+//
+// So the resolvable identity is a separate, short NETWORK ALIAS registered
+// alongside the long name (see `aliases` below and application-runtime's
+// deploy). The name stays the name; the alias is what anything speaking DNS
+// is handed.
+const MAX_HOSTNAME = 63; // RFC-1123 label limit; same convention as kubernetes.dnsName()
+
+function containerHostname(name) {
+  const value = String(name || '');
+  if (value.length <= MAX_HOSTNAME) return value;
+  // Hash the FULL name, not the truncated prefix: two sessions on the same
+  // long slug (…--3530 and …--3539) differ only in the tail that gets cut.
+  const digest = crypto.createHash('sha256').update(value).digest('hex').slice(0, 8);
+  const prefix = value.slice(0, MAX_HOSTNAME - digest.length - 1).replace(/-+$/, '');
+  return `${prefix}-${digest}`;
 }
 
 async function runContainer(name, {
   image, env = {}, port, memory = APP_MEMORY, cpus = APP_CPUS, labels = {},
+  aliases = [],
 }) {
   const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   // Labels are metadata the platform can read back off a LIVE container
@@ -125,10 +284,21 @@ async function runContainer(name, {
   // anything that can run `docker inspect`.
   const labelArgs = Object.entries(labels).flatMap(([k, v]) => ['--label', `${k}=${v}`]);
 
+  // Extra DNS names this container answers to on SHARED_NETWORK. Every peer
+  // that reaches the container over the network — the capture browser, Caddy
+  // — resolves one of these rather than --name, which is allowed to exceed a
+  // DNS label's 63 bytes (see containerHostname above). Deduped and filtered
+  // so a caller passing the name itself, or nothing at all, is a no-op.
+  const aliasArgs = [...new Set(
+    (Array.isArray(aliases) ? aliases : [aliases])
+      .map((a) => String(a == null ? '' : a).trim())
+      .filter((a) => a && a !== name)
+  )].flatMap((a) => ['--network-alias', a]);
+
   const args = [
     'run', '-d',
     '--name', name,
-    '--hostname', name,
+    '--hostname', containerHostname(name),
     // #767: run Docker's bundled init (tini) as PID 1 instead of the app.
     //
     // Linux does NOT apply default signal dispositions to PID 1 — a signal
@@ -146,6 +316,7 @@ async function runContainer(name, {
     // clean drain. tini also reaps zombies for apps that spawn children.
     '--init',
     '--network', SHARED_NETWORK,
+    ...aliasArgs,
     '--memory', memory,
     '--cpus', cpus,
     '--security-opt', 'no-new-privileges:true',
@@ -211,10 +382,18 @@ async function runContainer(name, {
 // container exists. Stdin has no such cap. The write is fire-and-forget
 // with an error swallow: if the container dies before draining stdin the
 // EPIPE must not mask the real (exit-code) failure.
+// `onStdoutLine(line)`: called with each complete stdout line AS IT ARRIVES,
+// on top of the buffered result. The run is still judged from the buffered
+// stdout when the process exits — this is an observer, not a second parser
+// — so a listener that throws or is slow cannot change a verdict. Chunk
+// boundaries fall anywhere, so lines are re-assembled here and the trailing
+// partial is flushed at exit. Used to surface per-check progress while a
+// capture container is running, which the buffered result cannot do.
 async function runOneShot(name, {
   image, env = {}, memory = '1g', cpus = '1',
   timeoutMs = 240000, maxBuffer = 128 * 1024 * 1024,
   salvagePartial = false, stdinPayload = null, cmd = null,
+  onStdoutLine = null,
 }) {
   const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   const args = [
@@ -239,6 +418,9 @@ async function runOneShot(name, {
       promise.child.stdin.on('error', () => {});
       promise.child.stdin.end(stdinPayload);
     }
+    if (typeof onStdoutLine === 'function' && promise.child && promise.child.stdout) {
+      attachLineObserver(promise.child.stdout, onStdoutLine);
+    }
     return promise;
   };
   try {
@@ -262,6 +444,27 @@ async function runOneShot(name, {
     if (salvaged) return salvaged;
     throw err;
   }
+}
+
+// Feed a readable's bytes to `onLine` one complete line at a time. Node's
+// execFile keeps its own copy for the buffered result; this only listens.
+// Exported for the tests, which drive it with a PassThrough.
+function attachLineObserver(readable, onLine) {
+  let carry = '';
+  const emit = (line) => {
+    try { onLine(line); } catch { /* an observer must never break the run */ }
+  };
+  readable.on('data', (chunk) => {
+    carry += chunk.toString('utf8');
+    let nl;
+    while ((nl = carry.indexOf('\n')) !== -1) {
+      emit(carry.slice(0, nl));
+      carry = carry.slice(nl + 1);
+    }
+  });
+  readable.on('end', () => {
+    if (carry.length) { emit(carry); carry = ''; }
+  });
 }
 
 // Recover the partial stdout from a timed-out / buffer-exceeded execFile
@@ -467,6 +670,92 @@ async function inspectContainer(nameOrId) {
   }
 }
 
+// Read the network aliases a LIVE container answers to on SHARED_NETWORK.
+//
+// Deliberately a sibling of inspectContainer rather than a widening of it:
+// that function's three-way return (record / 'not_found' / null) is consumed
+// by the staleness sweep, where "cannot see" must never be confused with
+// "gone", and adding a field to it would put a second reason to return null
+// into the same channel. Here the tri-state is simpler — an array of aliases,
+// or null for "could not look", which callers treat as "leave it alone".
+async function containerNetworkAliases(nameOrId, network = SHARED_NETWORK) {
+  try {
+    const { stdout } = await execFileAsync('docker', [
+      'inspect', '--format', '{{json .NetworkSettings.Networks}}', nameOrId,
+    ], { timeout: 5000 });
+    const raw = String(stdout).trim();
+    if (!raw || raw === 'null') return [];
+    const networks = JSON.parse(raw);
+    if (!networks || typeof networks !== 'object') return [];
+    const entry = networks[network];
+    if (!entry) return [];
+    return (Array.isArray(entry.Aliases) ? entry.Aliases : [])
+      .map((a) => String(a == null ? '' : a));
+  } catch {
+    return null;
+  }
+}
+
+// Attach `alias` to a live container as a SHARED_NETWORK alias, if it is not
+// already there.
+//
+// This is the retroactive half of the long-name fix. A preview whose checks
+// failed with ERR_NAME_NOT_RESOLVED cannot be repaired by a rebuild: a
+// re-check reuses the live container, and the only thing that WOULD rebuild
+// it — a new commit — clears the proposal's votes. So the alias has to be
+// added in place, to a running container, with no image build and no database
+// clone. `docker network disconnect` + `connect --alias` does exactly that;
+// the container keeps running throughout and only its IP on the shared
+// network may change, which nothing caches.
+//
+// Idempotent and non-fatal by construction: already-aliased is a no-op, an
+// unreachable daemon or a container that has gone away is swallowed with a
+// warning. Every caller invokes it on a path that has something else to do
+// afterwards, and none of them should fail because a repair could not be
+// applied.
+//
+// Returns whether the container is now KNOWN to answer to `alias` — true both
+// when it already did and when this call attached it, false whenever that
+// could not be established. Callers use the false case to fall back to the
+// container's own name rather than aim a browser at a name nothing has
+// confirmed exists.
+async function ensureNetworkAlias(name, alias, network = SHARED_NETWORK) {
+  const target = String(alias == null ? '' : alias).trim();
+  const container = String(name == null ? '' : name).trim();
+  if (!container || !target || target === container) return false;
+
+  const existing = await containerNetworkAliases(container, network);
+  // null = could not inspect. Do NOT blindly reconnect on a blind guess:
+  // disconnecting a container we cannot see the state of is the one way this
+  // helper could make things worse.
+  if (existing === null) return false;
+  if (existing.includes(target)) return true;
+
+  // Preserve whatever aliases the container already had. Docker reports the
+  // container's own name (and, on some engine versions, its short id) in this
+  // list; both are re-registered automatically on connect, and the name may be
+  // longer than a DNS label allows — which is the whole reason we are here —
+  // so re-asserting either as an explicit --alias is at best noise and at
+  // worst a rejected argument.
+  const keep = existing.filter((a) => a && a !== container && a.length <= MAX_HOSTNAME
+    && !container.startsWith(a));
+
+  try {
+    await execFileAsync('docker', ['network', 'disconnect', network, container], { timeout: 15000 });
+    await execFileAsync('docker', [
+      'network', 'connect', '--alias', target, ...keep.flatMap((a) => ['--alias', a]),
+      network, container,
+    ], { timeout: 15000 });
+    log.info('docker', 'Network alias attached to live container', { name: container, alias: target });
+    return true;
+  } catch (err) {
+    log.warn('docker', 'Could not attach network alias (non-fatal)', {
+      name: container, alias: target, err: err.message,
+    });
+    return false;
+  }
+}
+
 async function containerExists(nameOrId) {
   const status = await getContainerStatus(nameOrId);
   return status !== 'not_found';
@@ -626,8 +915,13 @@ async function removeVolume(name) {
 
 module.exports = {
   execFileAsync,
+  containerHostname,
   execShellStdin,
   buildImage,
+  parseDockerBuildLine,
+  buildKitEnabled,
+  buildKitUnavailable,
+  attachLineObserver,
   runContainer,
   runOneShot,
   startContainer,
@@ -636,6 +930,8 @@ module.exports = {
   getContainerStatus,
   getContainerLabels,
   inspectContainer,
+  containerNetworkAliases,
+  ensureNetworkAlias,
   containerExists,
   imageExists,
   waitForHealthy,

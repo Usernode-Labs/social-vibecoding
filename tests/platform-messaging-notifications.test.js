@@ -141,12 +141,23 @@ test('live hydration uses the stored recipient and suppresses removed members', 
   }
 });
 
-test('bell copy, grouping, mark-read, and clicks are conversation-native', () => {
+test('bell copy and clicks are conversation-native', () => {
+  // Was "bell copy, GROUPING, MARK-READ, and clicks". #1385 flattened the
+  // drawer, and both of those halves went with the group chrome they lived in:
+  //
+  //   - the `conversation:${n.conversationId}` group key came from groupKeyFor,
+  //     which existed only to bucket rows by app or conversation;
+  //   - the `{ conversation_id }` POST came from _markGroupRead, the per-group
+  //     "Mark read" button on a group header.
+  //
+  // The SERVER still accepts that scope on /api/notifications/read — this
+  // change removed the drawer's caller, not the route — so nothing here asserts
+  // it is gone, only that the drawer no longer needs it. What has to stay
+  // conversation-native is the part a flat list does not touch: per-kind copy,
+  // and a click that lands in Messages rather than an app tab.
   for (const kind of KINDS) {
     assert.match(FE, new RegExp(`case '${kind}'|${kind}:`), `${kind} has explicit copy`);
   }
-  assert.match(FE, /`conversation:\$\{n\.conversationId\}`/);
-  assert.match(FE, /\{ conversation_id: numericConversationId \}/);
   assert.match(FE, /window\.UsernodeReact\?\.messages/);
   assert.match(FE, /`#messages\/\$\{conversationId\}`/);
   assert.doesNotMatch(

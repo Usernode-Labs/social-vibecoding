@@ -11,7 +11,7 @@ export const E2E_RUN = Object.freeze({
   ran: '2026-08-18/19',
   environment: 'production',
   total: 130,
-  counts: Object.freeze({"pass":119,"blocked":2,"skipped":2,"fail":3,"pending":4}),
+  counts: Object.freeze({"pass":118,"blocked":2,"skipped":2,"fail":3,"pending":5}),
 });
 
 export const E2E_AREAS = Object.freeze([
@@ -149,7 +149,7 @@ export const E2E_CASES = Object.freeze([
     "flow": "#signup with released email → request code → code visible in Gmail list preview → verify → shell boots",
     "gate": "guest",
     "method": "browser",
-    "notes": "Full pass 2026-08-18: code → verify → set password → auto web login → waiting room. Finding: an expired set-password token (10min TTL, mobile-auth.js:46) surfaces raw “Unauthenticated.” instead of offering a new code",
+    "notes": "Full pass 2026-08-18: code → verify → set password → auto web login → waiting room. Finding: an expired set-password token (10min TTL) surfaces raw “Unauthenticated.” instead of offering a new code",
     "status": "pass",
     "area": "A"
   },
@@ -1236,20 +1236,20 @@ export const E2E_CASES = Object.freeze([
   {
     "id": "J4",
     "name": "Wallet provision & delegation",
-    "flow": "Provision onchain account (needs linked account), set delegation from phone",
+    "flow": "Protocol 2 login provisions the credential-bound onchain account → read delegation → set delegation → verify the server-generated E/E+1/E+2 policy and E+2 effect",
     "gate": "device",
     "method": "phone",
-    "notes": "Provision 409 bug known from season-2 work",
+    "notes": "The new Social → Rust → Flutter path is implemented but has not been exercised end-to-end on a real phone; the retired provision-409 result is not evidence for this flow",
     "status": "pending",
     "area": "J"
   },
   {
     "id": "J5",
     "name": "Node & metrics",
-    "flow": "Node feature screens, perf/metrics reporting, mobile logs POST",
+    "flow": "Node feature screens and perf/metrics reporting",
     "gate": "device",
     "method": "phone",
-    "notes": "Node screen confirmed on device - node synced. NOTE: there is no user-facing metrics screen - MetricsCollectorService is a background mobile-context snapshot collector, not a screen. FINDING: /api/v4/mobile/logs looks effectively unused (only 2 rows in the whole table, both June, other users) despite accept_logs=true - either a niche diagnostic path or a dead endpoint",
+    "notes": "Node screen confirmed on device - node synced. NOTE: there is no user-facing metrics screen; metrics reporting is a background mobile-context snapshot, not a screen.",
     "status": "pass",
     "area": "J"
   },
@@ -1285,12 +1285,12 @@ export const E2E_CASES = Object.freeze([
   },
   {
     "id": "J9",
-    "name": "Platform webview handoff",
-    "flow": "App opens platform in native chrome: session handoff (mobile-auth-from-session), node pill, wallet sheet, native version drawer, safe areas, native logout order",
+    "name": "Protocol 2 platform handoff",
+    "flow": "Log in through Social in the Flutter webview → ticket/exchange establishes Rust → verify native node/wallet chrome → sign out A → drain and retire A → sign in and publish B",
     "gate": "device",
     "method": "phone",
-    "notes": "Platform webview handoff confirmed on device - session carried over, native chrome surfaces present",
-    "status": "pass",
+    "notes": "The previous phone pass covered the retired mobile-auth-from-session handoff and cannot certify Protocol 2; this replacement flow needs a fresh real-device pass",
+    "status": "pending",
     "area": "J"
   },
   {

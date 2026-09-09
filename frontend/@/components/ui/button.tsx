@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils';
  * in the order those strings were written in. Every primary button in the
  * shell is written in exactly this order:
  *
- *   [layout] [radius + surface] [disabled] [padding + weight] [ink]
+ *   [lead] [layout] [radius + surface] [disabled] [padding + weight] [ink]
  *   shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm
  *   font-medium text-white transition-colors
  *
@@ -67,6 +67,18 @@ import { cn } from '@/lib/utils';
 const buttonVariants = cva('', {
   variants: {
     /**
+     * A styling class from app.css that LEADS the string, ahead of everything
+     * else this table draws — the same group, for the same reason, that
+     * input.tsx's `lead` carries. It is a variant rather than a `className`
+     * because className lands LAST and this does not.
+     *
+     * `devSend` is `.dc-send-btn`, whose whole rule is a 64px min-width, a
+     * 38px height and a centring flex — the send button has to keep its box
+     * while its label swaps between a word, a square and a spinner. Call
+     * site: features/dev-chat/composer.tsx.
+     */
+    lead: { devSend: 'dc-send-btn', none: '' },
+    /**
      * Utilities the shell writes BEFORE the box. Every value here leads a
      * real class string; there is no combinatorial expansion, only the pairs
      * that actually ship.
@@ -101,6 +113,11 @@ const buttonVariants = cva('', {
       tap: 'px-3 min-h-[44px]',
       // #browse-detail-open, whose label is an arrow glyph beside a word.
       iconRow: 'inline-flex items-center gap-2',
+      // #improve-row-feedback — the Improve panel's "Give feedback" (#1367).
+      // The same glyph-beside-a-word row as iconRow, spanning the panel's
+      // width and centred in it, which is what makes it read as the panel's
+      // one primary action rather than as another list row.
+      fullIconRow: 'w-full inline-flex items-center justify-center gap-2',
     },
     /** Radius + surface. Radius leads the box in every shell button. */
     variant: {
@@ -122,7 +139,29 @@ const buttonVariants = cva('', {
       // in `ink` instead — see `fillLate` / `unavailableLate` below.
       roundedFull: 'rounded-full',
       // #agent-files-cancel — the neutral bordered sibling of `compact`.
+      //
+      // THIS VARIANT CARRIES NO INK, and the default ink is `solid` (white).
+      // `variant="outline"` on its own therefore renders white text on a
+      // white card — an invisible label, which is exactly how the three
+      // messages dialogs shipped their Cancel/Done buttons until a contrast
+      // sweep measured them at 1.00:1. Every call site must pass an ink;
+      // `muted` is what the two that got it right pass.
       outline: 'rounded border border-zinc-300 dark:border-zinc-700',
+      // The widget language's SECONDARY action: a filled neutral pill, not an
+      // outline. The language separates by figure/ground rather than by rule,
+      // and an outlined control on a floating white card is the one shape it
+      // never draws — the same reason the cards themselves lost their borders.
+      // Call sites: the profile screen's Edit profile, Preview, Open public
+      // page, Copy public link, Reveal and Browse challenges, all of which
+      // were `border border-zinc-300` or `border border-violet-500` boxes.
+      neutral: 'rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700',
+      // The widget language's filled pills (settings, sign-in, the bell):
+      // the accent one for the primary act, the neutral one beside it, and
+      // the danger tint for the one destructive control on a page — a tint,
+      // not an outline, because the language fills its controls.
+      pillAccent: 'rounded-full bg-violet-600 hover:bg-violet-500',
+      pillNeutral: 'rounded-full bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700',
+      pillDanger: 'rounded-full bg-red-500/10 hover:bg-red-500/15',
       // #settings-remove — the bordered destructive button.
       destructive: 'rounded-lg border border-red-400 dark:border-red-700',
       // Buttons that carry no box of their own (header icon buttons, text
@@ -142,6 +181,11 @@ const buttonVariants = cva('', {
       dim: 'disabled:opacity-50',
       // #create-app-import-check.
       block: 'disabled:opacity-50 disabled:cursor-not-allowed',
+      // #dc-new-change-btn — the dev chat's "Start a new change" banner
+      // button, which writes the same pair one step less dim. Transcribed,
+      // not normalised: folding it into `block` would be a visual change on
+      // the one strip this value exists for.
+      dim60: 'disabled:opacity-60 disabled:cursor-not-allowed',
     },
     /** Padding, optional text size, and weight — written as one run. */
     size: {
@@ -152,6 +196,16 @@ const buttonVariants = cva('', {
       plain: 'px-4 py-2 font-medium',
       // #settings-remove, beside a `px-4 py-2` primary.
       narrow: 'px-3 py-2 text-sm font-medium',
+      // The native wallet sheet's actions (features/header/wallet-sheet-body.tsx).
+      // Same box as `narrow`, one weight up: a bottom sheet's controls carry
+      // more weight than a settings row's because the sheet IS the screen
+      // while it is up. Transcribed from the buttons that module built
+      // imperatively before it was a component, not invented for it.
+      narrowBold: 'px-3 py-2 text-sm font-semibold',
+      // The same weight with NO horizontal padding, for a button that fills a
+      // flex cell and takes its width from the row rather than its own box —
+      // the wallet sheet's Send / Receive pair.
+      flushBold: 'py-2 text-sm font-semibold',
       // The members dialog's row actions.
       sm: 'px-3 py-1.5 text-sm font-medium',
       // #agent-files-save / #agent-files-cancel.
@@ -161,6 +215,10 @@ const buttonVariants = cva('', {
       xsText: 'px-3 py-1 text-xs font-medium',
       // The landing page and waitlist call to action.
       lg: 'px-5 py-2 text-sm font-medium',
+      // The pills' two heights: 40px beside a field, 48px as a screen's
+      // primary button.
+      pill: 'px-5 py-2.5 text-[15px] font-semibold',
+      pillLg: 'px-5 py-3 text-[17px] font-semibold',
       // #more-submit.
       xl: 'px-6 py-2 text-sm font-medium',
       // Icon buttons carry their own sizing from the surrounding layout.
@@ -192,16 +250,23 @@ const buttonVariants = cva('', {
       // the rendered class attribute.
       fillLate: 'transition-colors bg-violet-600 hover:bg-violet-500 text-white',
       unavailableLate:
-        'transition-colors bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed',
+        'transition-colors bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed dark:text-zinc-400',
       // #agent-files-cancel.
       muted:
         'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors',
+      // The ink that goes with `variant: 'neutral'` — near-black, which is
+      // what the language puts on a control you are meant to be able to hit.
+      // The fill is already in `variant`, so this group only carries colour.
+      neutral: 'text-zinc-900 dark:text-zinc-100 transition-colors',
       // #settings-remove.
       danger:
-        'text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors',
+        'text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors',
+      // Danger ink on the danger-tint pill, whose hover is the pill's own.
+      dangerTint: 'text-red-700 dark:text-red-400 transition-colors',
     },
   },
   defaultVariants: {
+    lead: 'none',
     layout: 'none',
     variant: 'default',
     disabledStyle: 'off',
@@ -228,13 +293,13 @@ export interface ButtonProps
 // call site, which a like-for-like conversion does not do — `type` simply
 // rides along in `props`.
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, layout, variant, disabledStyle, size, ink, disabled, ...props }, ref) => (
+  ({ className, lead, layout, variant, disabledStyle, size, ink, disabled, ...props }, ref) => (
     <button
       ref={ref}
       {...props}
       disabled={disabled}
       className={cn(
-        buttonVariants({ layout, variant, disabledStyle, size, ink }),
+        buttonVariants({ lead, layout, variant, disabledStyle, size, ink }),
         className,
       )}
     />

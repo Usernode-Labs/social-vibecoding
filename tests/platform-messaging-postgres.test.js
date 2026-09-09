@@ -83,6 +83,13 @@ const DDL = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (message_id, user_id, emoji)
   );
+  CREATE TABLE conversation_message_bookmarks (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    message_id INTEGER NOT NULL REFERENCES conversation_messages(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, message_id)
+  );
   CREATE TABLE conversation_message_attachments (
     id VARCHAR(32) PRIMARY KEY,
     conversation_id INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,

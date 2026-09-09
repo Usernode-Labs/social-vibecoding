@@ -11,6 +11,26 @@ test('Kubernetes platform image contains PostgreSQL tools but no Docker CLI', ()
   assert.match(dockerfile, /USER node/);
 });
 
+test('Kubernetes platform image builds and contains the generated shell assets', () => {
+  const dockerfile = read('Dockerfile.kubernetes');
+  assert.match(dockerfile, /FROM node:22-alpine AS shell/);
+  assert.match(dockerfile, /RUN node frontend\/scripts\/build-shell\.mjs/);
+  assert.match(dockerfile, /FROM node:22-alpine AS css/);
+  assert.match(dockerfile, /RUN npm run build:css/);
+
+  const sourceCopy = dockerfile.lastIndexOf('COPY --chown=node:node . .');
+  for (const asset of [
+    '/build/public/index.html ./public/index.html',
+    // The directory: every lazy chunk the React build emits, not the entry alone.
+    '/build/public/shell/assets/ ./public/shell/assets/',
+    '/build/public/css/tailwind.css ./public/css/tailwind.css',
+  ]) {
+    const assetCopy = dockerfile.lastIndexOf(asset);
+    assert.ok(assetCopy > sourceCopy,
+      `${asset} must be copied into the runtime after the source tree`);
+  }
+});
+
 test('Docker keeps boot migrations while Kubernetes can delegate them to a Job', () => {
   const source = read('server.js');
   assert.match(source, /RUN_MIGRATIONS_ON_STARTUP !== 'false'/);
@@ -54,12 +74,19 @@ test('Kubernetes workloads receive the canonical repository and release revision
   assert.match(migrationJob, /name: CLI_CANONICAL_ORIGIN, value: \{\{ printf "https:\/\/%s" \.Values\.config\.domain \| quote \}\}/);
   assert.match(migrationJob, /name: USERNODE_PLATFORM_REPO, value: \{\{ \.Values\.config\.platformRepository \| quote \}\}/);
   assert.match(migrationJob, /name: GIT_SHA, value: \{\{ \.Values\.release\.sourceRevision \| quote \}\}/);
+  assert.match(migrationJob, /name: NODE_RPC_URL, value: \{\{ \.Values\.config\.nodeRpcUrl \| quote \}\}/);
+  assert.match(migrationJob, /name: NATIVE_SESSION_V2_TESTNET_CHAIN_ID, value: \{\{ \.Values\.config\.nativeSessionV2TestnetChainId \| quote \}\}/);
   assert.match(platform, /name: USERNODE_PLATFORM_REPO, value: \{\{ \.Values\.config\.platformRepository \| quote \}\}/);
   assert.match(platform, /name: GIT_SHA, value: \{\{ \.Values\.release\.sourceRevision \| quote \}\}/);
   assert.match(platform, /name: NODE_RPC_URL, value: \{\{ \.Values\.config\.nodeRpcUrl \| quote \}\}/);
   assert.match(platform, /name: EXPLORER_UPSTREAM, value: \{\{ \.Values\.config\.explorerUpstream \| quote \}\}/);
   assert.match(platform, /name: EXPLORER_UPSTREAM_BASE, value: \{\{ \.Values\.config\.explorerUpstreamBase \| quote \}\}/);
   assert.match(platform, /name: EXPLORER_USE_HTTP, value: \{\{ \.Values\.config\.explorerUseHttp \| quote \}\}/);
+});
+
+test('Kubernetes chart supplies the canonical native testnet ChainId', () => {
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  assert.match(values, /nativeSessionV2TestnetChainId: "utc1rq8tql3wr5w8u6nvkwepu7dazq89kv2838xwf02xmg2w5vzgly3s6xf63v"/);
 });
 
 test('platform node RPC egress is restricted to the configured namespace and Pod labels', () => {
@@ -99,11 +126,32 @@ test('PostgreSQL claim template uses only release-stable labels', () => {
   assert.doesNotMatch(claimTemplate, /social-vibecoding-platform\.labels/);
 });
 
-test('generated app database URLs use cross-namespace PostgreSQL DNS', () => {
+test('database URLs use the configured embedded or external PostgreSQL endpoint', () => {
   const secret = read('deploy/helm/social-vibecoding-platform/templates/secret.yaml');
-  assert.match(secret, /-postgresql\.%s\.svc\.%s:5432/);
-  assert.match(secret, /\.Release\.Namespace/);
-  assert.match(secret, /\.Values\.clusterDomain/);
+  const helpers = read('deploy/helm/social-vibecoding-platform/templates/_helpers.tpl');
+  assert.match(secret, /social-vibecoding-platform\.postgresqlHost/);
+  assert.match(secret, /\.Values\.postgresql\.port/);
+  assert.match(helpers, /postgresql\.host is required when postgresql\.enabled=false/);
+  assert.match(helpers, /-postgresql\.%s\.svc\.%s/);
+});
+
+test('platform, migration, and embedded PostgreSQL have independent activation gates', () => {
+  const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
+  const migration = read('deploy/helm/social-vibecoding-platform/templates/migration-job.yaml');
+  const postgresql = read('deploy/helm/social-vibecoding-platform/templates/postgresql.yaml');
+  const ingress = read('deploy/helm/social-vibecoding-platform/templates/ingress.yaml');
+  assert.match(platform, /and \.Values\.enabled \.Values\.platform\.enabled/);
+  assert.match(migration, /and \.Values\.enabled \.Values\.migration\.enabled/);
+  assert.match(postgresql, /and \.Values\.enabled \.Values\.postgresql\.enabled/);
+  assert.match(ingress, /\.Values\.platform\.enabled \.Values\.ingress\.enabled/);
+});
+
+test('chart default deny selects only chart-owned workloads', () => {
+  const policy = read('deploy/helm/social-vibecoding-platform/templates/networkpolicy.yaml');
+  const defaultDeny = policy.split('kind: NetworkPolicy')[1].split('---')[0];
+  assert.match(defaultDeny, /social-vibecoding-platform\.selectorLabels/);
+  assert.doesNotMatch(defaultDeny, /podSelector: \{\}/);
+  assert.match(policy, /social-vibecoding-platform\.postgresqlPodSelector/);
 });
 
 test('PostgreSQL ingress permits only runtime-managed generated app pods', () => {
@@ -112,7 +160,7 @@ test('PostgreSQL ingress permits only runtime-managed generated app pods', () =>
   assert.match(postgresqlPolicy, /databaseCallerNamespaces/);
   assert.match(postgresqlPolicy, /app\.kubernetes\.io\/managed-by: social-vibecoding-runtime/);
   assert.match(postgresqlPolicy, /app\.kubernetes\.io\/part-of: social-vibecoding/);
-  assert.match(postgresqlPolicy, /port: 5432/);
+  assert.match(postgresqlPolicy, /port: \{\{ \.Values\.postgresql\.port \}\}/);
 });
 
 test('public platform ingress is restricted to the Cilium ingress identity', () => {

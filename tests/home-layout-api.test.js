@@ -3,20 +3,23 @@
 //
 // The contracts guarded here:
 //
-//   1. GEOMETRY IS STRICT, MEMBERSHIP IS LAX. Bad coordinates, unknown
-//      widget keys and overlapping footprints are 400s (a client that can
-//      produce them is broken); an app slug the viewer can no longer see is
-//      silently DROPPED, because losing access to one app must not wedge
-//      the whole home screen.
-//   2. Overlap is checked against the SERVER's own footprints, so a patched
-//      client cannot persist a self-overlapping layout.
-//   3. `create` is accepted from ANY authenticated viewer. The widget is on
-//      every home screen regardless of app quota, so a no-quota account's
-//      drag must not 400 — this is the regression guard for the retired
-//      "absent for non-creators" behaviour.
+//   1. GEOMETRY IS STRICT, MEMBERSHIP IS LAX. Bad coordinates and
+//      overlapping tiles are 400s (a client that can produce them is
+//      broken); an app slug the viewer can no longer see is silently
+//      DROPPED, because losing access to one app must not wedge the whole
+//      home screen.
+//   2. Overlap is checked SERVER-SIDE, so a patched client cannot persist a
+//      self-overlapping layout.
+//   3. WIDGET ITEMS ARE GONE, on both sides. THE UI OVERHAUL made Discover,
+//      Challenges and Create app fixed sections below the grid rather than
+//      draggable items on it, so the canvas holds app tiles alone: stored
+//      widget rows are skipped on the way out, and a `type: 'widget'` entry
+//      in a PUT — a tab left open across the deploy — is dropped rather than
+//      failing that viewer's whole write.
 //   4. A PUT is a full replace of ONE width, in a transaction, leaving the
 //      other width untouched (that separation is the whole reason `cols` is
-//      part of the key).
+//      part of the key). Five columns is a LEGACY width the client only ever
+//      reads now, as the seed for a first four-column visit.
 //
 // HTTP tests against a throwaway express app over a substring-dispatching
 // mock pool — the idiom of tests/home-panels-api.test.js.
@@ -141,20 +144,18 @@ const W = (key, col, row) => ({ type: 'widget', key, col, row });
 
 // ── GET ───────────────────────────────────────────────────────────────
 
-test('GET describes the canvas, the widget registry and both widths', async () => {
+test('GET describes the canvas and both widths', async () => {
   const { app } = makeApp({}, { user: USER });
   const { status, body } = await get(app, '/api/home-layout');
   assert.equal(status, 200);
   assert.equal(body.maxCols, 5);
   assert.equal(body.maxRows, 8);
   assert.deepEqual(body.breakpoints, [4, 5]);
-  // Footprints ride along so the client lays out against the same numbers
-  // the overlap check below validates with.
-  assert.deepEqual(body.widgets.map((w) => w.key), ['challenges', 'discover', 'create']);
-  // Create app is a full-width strip on a phone and a single tile on
-  // desktop — the server's numbers, so a client that laid out otherwise
-  // would fail the PUT's own overlap check.
-  assert.deepEqual(body.widgets.find((w) => w.key === 'create').sizes, { 4: [4, 1], 5: [1, 1] });
+  // The widget REGISTRY used to ride along, footprints and all, so the client
+  // laid out against the same numbers the overlap check validated with. App
+  // tiles are the only thing placed now and their footprint is 1x1 by
+  // definition, so there is nothing to agree on.
+  assert.equal(body.widgets, undefined);
   // A width with nothing stored is an EMPTY array, not an error: it means
   // "never dragged here", and the client derives that view itself.
   assert.deepEqual(body.layouts['4'], []);
@@ -168,13 +169,30 @@ test('GET is 401 unauthenticated', async () => {
 
 test('GET returns stored cells, per width, with slugs resolved', async () => {
   const { app } = makeApp({}, { user: USER });
-  await put(app, '/api/home-layout', { cols: 5, items: [A('alpha', 2, 3), W('create', 4, 4)] });
+  await put(app, '/api/home-layout', { cols: 5, items: [A('alpha', 2, 3), A('beta', 4, 4)] });
   const { body } = await get(app, '/api/home-layout');
   assert.deepEqual(body.layouts['5'], [
     { type: 'app', slug: 'alpha', col: 2, row: 3 },
-    { type: 'widget', key: 'create', col: 4, row: 4 },
+    { type: 'app', slug: 'beta', col: 4, row: 4 },
   ]);
   assert.deepEqual(body.layouts['4'], [], 'the other width is untouched');
+});
+
+// A pre-overhaul arrangement carries cells for the three widgets. They are
+// dropped on the way OUT rather than migrated away: the rows cost nothing
+// where they are, and the client's HomeLayout.repair() has to reclaim their
+// cells anyway, so an app dragged onto one after this ships lands cleanly.
+test('GET skips the widget rows a pre-overhaul arrangement still carries', async () => {
+  const { app, state } = makeApp({}, { user: USER });
+  state.rows = [
+    { user_id: USER.id, cols: 5, item_type: 'app', app_id: 101, widget_key: null, grid_col: 0, grid_row: 0 },
+    { user_id: USER.id, cols: 5, item_type: 'widget', app_id: null, widget_key: 'challenges', grid_col: 3, grid_row: 1 },
+    { user_id: USER.id, cols: 5, item_type: 'widget', app_id: null, widget_key: 'create', grid_col: 4, grid_row: 4 },
+  ];
+  const { body } = await get(app, '/api/home-layout');
+  assert.deepEqual(body.layouts['5'], [
+    { type: 'app', slug: 'alpha', col: 0, row: 0 },
+  ], 'the app tile survives; the widget cells simply are not there');
 });
 
 // ── PUT: the happy path ───────────────────────────────────────────────
@@ -182,14 +200,14 @@ test('GET returns stored cells, per width, with slugs resolved', async () => {
 test('PUT stores exactly the cells it was given — holes and all', async () => {
   const { app, state } = makeApp({}, { user: USER });
   // A deliberately hole-bearing arrangement: nothing at (1,0), (2,0), (3,0).
-  const items = [A('alpha', 0, 0), A('beta', 4, 0), W('discover', 0, 1)];
+  const items = [A('alpha', 0, 0), A('beta', 4, 0), A('gamma', 0, 1)];
   const { status, body } = await put(app, '/api/home-layout', { cols: 5, items });
   assert.equal(status, 200);
   assert.equal(state.rows.length, 3);
   assert.deepEqual(body.layouts['5'], [
     { type: 'app', slug: 'alpha', col: 0, row: 0 },
     { type: 'app', slug: 'beta', col: 4, row: 0 },
-    { type: 'widget', key: 'discover', col: 0, row: 1 },
+    { type: 'app', slug: 'gamma', col: 0, row: 1 },
   ]);
 });
 
@@ -244,16 +262,26 @@ test('PUT serializes concurrent replaces of the same (user, cols)', async () => 
 // The regression guard for the retired "absent for non-creators" rule. The
 // widget is on every home screen, so an account with no app quota must be
 // able to place it exactly like anyone else.
-test('PUT accepts the create widget from any authenticated viewer', async () => {
-  for (const user of [USER, { id: 9, username: 'noquota', isAdmin: false }]) {
-    const { app } = makeApp({}, { user });
-    const { status, body } = await put(app, '/api/home-layout',
-      { cols: 5, items: [W('create', 4, 4)] });
-    assert.equal(status, 200, user.username);
-    assert.deepEqual(body.layouts['5'], [{ type: 'widget', key: 'create', col: 4, row: 4 }]);
-  }
-  // Nothing anywhere in the route may consult quota — not on the read, not
-  // on the write, not in validation.
+// A `type: 'widget'` entry means a browser tab that was open across the
+// deploy. Failing that viewer's whole layout write is a worse answer than
+// ignoring three cells they can no longer see — so it is dropped, exactly as
+// an app slug they cannot see is, and the rest of the arrangement lands.
+test('PUT drops a stale widget item instead of failing the write', async () => {
+  const { app, state } = makeApp({}, { user: USER });
+  const { status, body } = await put(app, '/api/home-layout', {
+    cols: 5,
+    items: [A('alpha', 0, 0), W('create', 4, 4), W('challenges', 0, 1)],
+  });
+  assert.equal(status, 200);
+  assert.equal(state.rows.length, 1, 'only the app tile is stored');
+  assert.deepEqual(body.layouts['5'], [{ type: 'app', slug: 'alpha', col: 0, row: 0 }]);
+  // An unknown key is dropped the same way — it used to be a 400, because
+  // then it meant the client and the server disagreed about the registry.
+  assert.equal((await put(app, '/api/home-layout',
+    { cols: 5, items: [W('not-a-widget', 0, 0)] })).status, 200);
+  // Nothing anywhere in the route may consult app quota — not on the read,
+  // not on the write, not in validation. The create block is on every home
+  // screen regardless of quota, and always was.
   assert.doesNotMatch(ROUTE.replace(/^\s*\/\/.*$/gm, ''), /canCreateApps|app_quota/);
 });
 
@@ -282,52 +310,41 @@ test('PUT rejects out-of-range coordinates', async () => {
   assert.equal((await put(app, '/api/home-layout', { cols: 4, items: [A('alpha', 4, 0)] })).status, 400);
 });
 
-test('PUT rejects a footprint that runs off the canvas', async () => {
+// An app tile is 1x1, so the last column and the last row are both legal
+// starts for one. This used to be the multi-cell WIDGET footprints' test —
+// challenges at 2x2 could not start in column 4 of 5, or on row 7 of 8 — and
+// the overhang check it exercises is the same one, now with the only
+// footprint left.
+test('PUT rejects a tile that runs off the canvas', async () => {
   const { app } = makeApp({}, { user: USER });
-  // Challenges is 2x2 at five columns: column 4 leaves it one short.
   assert.equal((await put(app, '/api/home-layout',
-    { cols: 5, items: [W('challenges', 4, 0)] })).status, 400);
+    { cols: 5, items: [A('alpha', 4, 7)] })).status, 200, 'the last cell is a cell');
   assert.equal((await put(app, '/api/home-layout',
-    { cols: 5, items: [W('challenges', 3, 0)] })).status, 200);
-  // ...and the HEIGHT overhang is checked the same way: 2x2 on row 7 needs a
-  // ninth row the canvas does not have.
+    { cols: 5, items: [A('alpha', 5, 0)] })).status, 400);
   assert.equal((await put(app, '/api/home-layout',
-    { cols: 5, items: [W('challenges', 3, 7)] })).status, 400);
-  // At four columns challenges is 4x1 (#968), so column 0 is the only column
-  // it can start in — and the LAST row is now a legal home for it, which the
-  // two-row footprint's own last row never was.
+    { cols: 5, items: [A('alpha', 0, 8)] })).status, 400);
+  // And column 4 is off the canvas at four columns, which is the width the
+  // client writes now.
   assert.equal((await put(app, '/api/home-layout',
-    { cols: 4, items: [W('challenges', 1, 0)] })).status, 400);
+    { cols: 4, items: [A('alpha', 3, 7)] })).status, 200);
   assert.equal((await put(app, '/api/home-layout',
-    { cols: 4, items: [W('challenges', 0, 7)] })).status, 200);
+    { cols: 4, items: [A('alpha', 4, 0)] })).status, 400);
 });
 
-// The server checks overlap against ITS OWN footprints, so a patched client
-// claiming a widget is 1x1 still cannot persist a layout that overlaps.
-test('PUT rejects overlapping footprints', async () => {
+// Overlap is checked SERVER-side, so a patched client cannot persist a
+// layout that overlaps.
+test('PUT rejects overlapping tiles', async () => {
   const { app, state } = makeApp({}, { user: USER });
-  // Two tiles in the same cell.
   assert.equal((await put(app, '/api/home-layout',
     { cols: 5, items: [A('alpha', 0, 0), A('beta', 0, 0)] })).status, 400);
-  // A tile inside a 2x2 widget's footprint — invisible unless the server
-  // knows how big the widget is.
-  assert.equal((await put(app, '/api/home-layout',
-    { cols: 5, items: [W('challenges', 0, 0), A('alpha', 1, 1)] })).status, 400);
-  // Two widgets sharing one cell of their footprints.
-  assert.equal((await put(app, '/api/home-layout',
-    { cols: 5, items: [W('challenges', 0, 0), W('discover', 1, 1)] })).status, 400);
   assert.equal(state.rows, undefined, 'a rejected write stores nothing');
   // Adjacent, not overlapping, is fine.
   assert.equal((await put(app, '/api/home-layout',
-    { cols: 5, items: [W('challenges', 0, 0), W('discover', 2, 0)] })).status, 200);
+    { cols: 5, items: [A('alpha', 0, 0), A('beta', 1, 0)] })).status, 200);
 });
 
-test('PUT rejects unknown widgets and duplicate items', async () => {
+test('PUT rejects duplicate items and unknown item types', async () => {
   const { app } = makeApp({}, { user: USER });
-  assert.equal((await put(app, '/api/home-layout',
-    { cols: 5, items: [W('not-a-widget', 0, 0)] })).status, 400);
-  assert.equal((await put(app, '/api/home-layout',
-    { cols: 5, items: [W('create', 0, 0), W('create', 1, 0)] })).status, 400);
   assert.equal((await put(app, '/api/home-layout',
     { cols: 5, items: [A('alpha', 0, 0), A('alpha', 1, 0)] })).status, 400);
   assert.equal((await put(app, '/api/home-layout',
@@ -364,17 +381,21 @@ test('PUT is 401 unauthenticated', async () => {
 // user_home_layout is created by this change, so a staging clone starts
 // empty and every preview would show the DERIVED default — i.e. exactly
 // today's arrangement, with the feature invisible.
-test('the staging demo layout is hole-bearing and includes the create widget', () => {
+test('the staging demo layout is hole-bearing, app-only and two rows deep', () => {
   const { demoLayouts } = require('../src/routes/home-layout');
   const demo = demoLayouts();
   for (const cols of ['4', '5']) {
     const items = demo[cols];
     assert.ok(items.length >= 6, `${cols}-column demo has content`);
-    assert.ok(items.some((i) => i.key === 'create'),
-      'the create widget is present unconditionally, matching the always-on rule');
+    // APP TILES ONLY. The three widgets it used to place are fixed sections
+    // below the grid now.
+    assert.ok(items.every((i) => i.type === 'app'), `${cols}: no widget items`);
+    // …and inside the two rows shown by default (HomeLayout.DEFAULT_ROWS), or
+    // the demo would sit behind "Show all" — the opposite of a preview.
+    assert.ok(items.every((i) => i.row < 2), `${cols}: within the default rows`);
     // The gaps ARE the feature: an arrangement no ordering can express.
     const row0 = items.filter((i) => i.row === 0);
-    assert.ok(row0.length >= 2 && row0.length < Number(cols),
+    assert.ok(row0.length >= 2 && row0.length < 4,
       `${cols}: row 0 has visible holes`);
   }
   // It is read-only and strictly staging-gated.

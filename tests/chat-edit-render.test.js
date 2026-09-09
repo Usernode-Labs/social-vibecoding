@@ -3,7 +3,8 @@
 //
 // public/js/group-chat.js is a browser script (no module.exports). We load
 // it into a vm sandbox with just enough globals stubbed to evaluate it, then
-// exercise the pure render helpers (renderMessageHtml, renderWithMentions).
+// exercise the pure helpers (_messageView, renderWithMentions) and render the
+// transcript row those feed.
 //
 // Run with: node --test tests/chat-edit-render.test.js
 
@@ -12,6 +13,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { renderComponent } = require('./lib/render-tsx');
 
 function loadGroupChat() {
   const src = fs.readFileSync(
@@ -75,26 +77,37 @@ const baseMsg = (over) => Object.assign({
   createdAt: '2026-06-16T18:00:00.000Z',
 }, over);
 
-test('renderMessageHtml emits the "edited" marker when edited_at is set', () => {
-  const html = GroupChat.renderMessageHtml(baseMsg({ edited_at: '2026-06-16T18:41:00.000Z' }));
+// `renderMessageHtml` — one HTML string per row — is gone (#1191): the
+// transcript is React, and the module's half is `_messageView`. These four
+// assertions follow the two halves they are about. The marker's TOOLTIP is a
+// module decision (it formats the full timestamp, whose locale rules are its
+// own), and whether the Edit affordance renders at all is a gate the module
+// applies; the markup either produces is the component's.
+const row = (msg) => renderComponent(
+  'frontend/src/features/group-chat/transcript.tsx', 'MessageRow',
+  { msg: GroupChat._messageView(msg) },
+);
+
+test('the "edited" marker renders when edited_at is set', () => {
+  const html = row(baseMsg({ edited_at: '2026-06-16T18:41:00.000Z' }));
   assert.match(html, /gc-msg-edited/, 'marker span present');
   assert.match(html, /title="[^"]*edited[^"]*"/, 'marker carries a full-timestamp tooltip');
 });
 
-test('renderMessageHtml accepts the camelCase editedAt too', () => {
-  const html = GroupChat.renderMessageHtml(baseMsg({ editedAt: '2026-06-16T18:41:00.000Z' }));
-  assert.match(html, /gc-msg-edited/);
+test('the marker accepts the camelCase editedAt too', () => {
+  assert.match(row(baseMsg({ editedAt: '2026-06-16T18:41:00.000Z' })), /gc-msg-edited/);
 });
 
-test('renderMessageHtml omits the marker for an unedited message', () => {
-  const html = GroupChat.renderMessageHtml(baseMsg({}));
-  assert.doesNotMatch(html, /gc-msg-edited/);
+test('an unedited message has no marker', () => {
+  assert.doesNotMatch(row(baseMsg({})), /gc-msg-edited/);
+  assert.equal(GroupChat._messageView(baseMsg({})).editedTitle, null,
+    'and the module says so, rather than the component hiding an empty one');
 });
 
 test('own ordinary message gets an Edit affordance; others do not', () => {
-  const own = GroupChat.renderMessageHtml(baseMsg({ userId: 1 })); // App.user.id
+  const own = row(baseMsg({ userId: 1 })); // App.user.id
   assert.match(own, /gc-msg-edit/, 'edit button on own message');
-  const other = GroupChat.renderMessageHtml(baseMsg({ userId: 2 }));
+  const other = row(baseMsg({ userId: 2 }));
   assert.doesNotMatch(other, /gc-msg-edit/, 'no edit button on someone else’s message');
 });
 

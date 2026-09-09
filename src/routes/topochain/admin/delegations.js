@@ -1,14 +1,13 @@
-// Topochain v4 admin API — read-only delegations surface. The partner API
-// (../partner.js) owns the delegation state machine; these routes only
-// make `account_delegation_periods` legible to admins without the SQL
-// console. Deliberately read-only: the mobile app is the delegation
-// actor and reconciles its local state against the backend flag, so an
-// admin mutation surface would desync phones.
+// Topochain v4 admin API — read-only legacy delegation history. These routes
+// make `account_delegation_periods` legible without the SQL console; the
+// native epoch ledger is the sole current authority from cutover C onward.
 //
 // HISTORY MODEL (see the table's schema.sql comment): every period is
 // kept; the partial unique index allows one OPEN period per account. The
-// index route therefore lists ONE row per account — its latest period,
-// with a period_count — and /:account/history serves the full trail.
+// index route therefore lists ONE row per account — its latest historical
+// period, with a period_count — and /:account/history serves the full trail.
+// After C every row is closed, so `delegated` is false by construction and
+// must not be interpreted as the current epoch policy.
 'use strict';
 
 const { Router } = require('express');

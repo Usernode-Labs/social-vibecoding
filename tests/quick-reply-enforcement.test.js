@@ -104,9 +104,9 @@ test("the Mayor's own tailored set is used as-is, with no extra call", async () 
   });
 });
 
-// ── rung 2: the forced pills-only continuation ───────────────────────
+// ── rung 2: the pills-only continuation ──────────────────────────────
 
-test('a missing set triggers exactly ONE forced continuation', async () => {
+test('a missing set triggers exactly ONE continuation', async () => {
   await withStub({ forced: ['Preview the Season 1 default', 'Also fix the sub-event tabs'] },
     async (calls) => {
       const out = await ladder({ modelPills: null });
@@ -114,9 +114,14 @@ test('a missing set triggers exactly ONE forced continuation', async () => {
       assert.deepEqual(out.replies, ['Preview the Season 1 default', 'Also fix the sub-event tabs']);
       assert.equal(calls.length, 1, 'one attempt, never a loop');
       assert.equal(calls[0].kind, 'forced');
-      assert.deepEqual(calls[0].params.tool_choice, { type: 'tool', name: 'suggest_replies' });
+      // NOT `{ type: 'tool', name: … }` any more: forced tool use is a 400
+      // on Fable 5.1 and this call runs on the turn's own model. See
+      // requireQuickReplies in src/services/llm.js.
+      assert.deepEqual(calls[0].params.tool_choice, { type: 'auto' });
       assert.equal(calls[0].params.tools.length, 1,
         'only suggest_replies is exposed — the retry cannot dispatch');
+      assert.equal(calls[0].params.tools[0].strict, true,
+        'and `strict` on the tool is what still guarantees the arguments');
       assert.equal(calls[0].params.model, 'claude-opus-5',
         "the turn's own model, so the pills are the Mayor's own voice");
     });

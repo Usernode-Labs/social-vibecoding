@@ -97,7 +97,7 @@ test('webm tile prefers the video branch with the PNG poster', () => {
     }],
   });
   assert.match(html, new RegExp(`<video src="/visuals/${ID('c')}" poster="/visuals/${ID('a')}"`));
-  assert.match(html, /Before \/ after — <code>\/board<\/code>/, 'non-root group is path-labelled');
+  assert.match(html, /Before \/ after: <code>\/board<\/code>/, 'non-root group is path-labelled');
 });
 
 test('empty / missing visuals render nothing', () => {
@@ -118,7 +118,7 @@ test('a mobile group is labelled "(mobile)" and stamps data-viewport on its tile
       after: { png: ID('b') },
     }],
   });
-  assert.match(html, /Before \/ after — <code>\/board<\/code> \(mobile\)/, 'row label carries the frame');
+  assert.match(html, /Before \/ after: <code>\/board<\/code> \(mobile\)/, 'row label carries the frame');
   assert.match(html, /data-viewport="mobile"/, 'tiles carry the viewport for the overlay');
 });
 
@@ -127,7 +127,7 @@ test('a lone mobile ROOT group is still labelled (desktop root stays unlabelled)
   const mobileHtml = AppView.visualsTilesHtml({
     captures: [{ index: 0, path: '/', viewport: 'mobile', after: { png: ID('b') } }],
   });
-  assert.match(mobileHtml, /Before \/ after — <code>\/<\/code> \(mobile\)/);
+  assert.match(mobileHtml, /Before \/ after: <code>\/<\/code> \(mobile\)/);
   const desktopHtml = AppView.visualsTilesHtml({
     captures: [{ index: 0, path: '/', after: { png: ID('b') } }],
   });
@@ -142,7 +142,7 @@ test('an after-only group renders the "new page" caption', () => {
   const html = AppView.visualsTilesHtml({
     captures: [{ index: 0, path: '/settings', after: { png: ID('b') } }],
   });
-  assert.match(html, /New page — no production version to compare/);
+  assert.match(html, /New page \(no production version to compare\)/);
 });
 
 test('a fell-back before renders the home-page caption', () => {
@@ -153,7 +153,7 @@ test('a fell-back before renders the home-page caption', () => {
       before: { png: ID('a') }, after: { png: ID('b') },
     }],
   });
-  assert.match(html, /shows the home page — this page didn’t exist in production yet/);
+  assert.match(html, /shows the home page. This page didn’t exist in production yet/);
 });
 
 test('a complete pair renders no caption', () => {
@@ -164,7 +164,7 @@ test('a complete pair renders no caption', () => {
       before: { png: ID('a') }, after: { png: ID('b') },
     }],
   });
-  assert.doesNotMatch(html, /New page —/);
+  assert.doesNotMatch(html, /New page \(/);
   assert.doesNotMatch(html, /shows the home page/);
 });
 

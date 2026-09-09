@@ -46,6 +46,14 @@ const FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
 const CHAT_FRAME = read('frontend/src/features/dev-board/chat-frame.tsx');
 const SESSION_FRAME = read('frontend/src/features/dev-board/session-frame.tsx');
 const STORE = read('frontend/src/features/dev-board/view-mode-store.ts');
+// The Kanban|Feed control lives here now, not in the board frame.
+const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
+// The App | Board | Activity strip, rendered by BOTH the Improve panel and the
+// header chip's menu — and the store's only reader now that Kanban|Feed is
+// retired. See the note in that file: the two layouts WERE Board and Activity.
+const VIEW_TABS = read('frontend/src/features/improve/view-tabs.tsx');
+// Streamlined Concept: the Board draws its own Kanban|Feed control now,
+// inside the frame itself — there is no separate toggle module to read.
 const MAIN = read('frontend/src/main.tsx');
 const APP_VIEW = read('public/js/app-view.js');
 const APP = read('public/js/app.js');
@@ -101,8 +109,11 @@ test('#1085 chunk H: there is exactly ONE React root in the bundle', () => {
   const portalCode = PORTALS.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.ok(!portalCode.includes('createRoot'), 'the portal helper creates no root');
   assert.ok(!MOUNT.includes('createRoot'), 'mount.ts creates no root of its own');
-  assert.match(PORTALS, /createPortal\(entry\.node, entry\.host,/,
-    'the subtree is portalled into the host instead');
+  // `entry.node` reaches the host wrapped in an error boundary — see
+  // lib/island-boundary.tsx: without one, a throw in ANY portalled region
+  // unmounts the root, and the root is `document.body`.
+  assert.match(PORTALS, /createPortal\(\s*\/\/[\s\S]*?createElement\(Island, \{ name: `portal:[\s\S]*?\}, entry\.node\),\s*\n\s*entry\.host,/,
+    'the subtree is portalled into the host instead, inside its own boundary');
   assert.equal(MAIN.split('hydrateRoot(').length - 1, 1, 'main.tsx has the only root');
   // The retired helper is gone, not merely unused.
   assert.ok(!fs.existsSync(path.join(root, 'frontend/src/lib/interim-root.ts')),
@@ -139,11 +150,22 @@ test('the mount is synchronous, because the legacy caller reads the DOM next', (
 
 test('no portal outlives its surface', () => {
   // Every hand-written replacement of #app-content retires the root first.
+  // Three of them left after the topic sub-view stopped being one (below).
   const teardowns = APP_VIEW.split('AppView._teardownDevRoots();').length - 1;
-  assert.ok(teardowns >= 4,
+  assert.ok(teardowns >= 3,
     `every #app-content writer retires the portal (found ${teardowns} call sites)`);
-  assert.match(APP_VIEW, /_teardownDevRoots\(\) \{\s*\n\s*AppView\._reactDevBoard\(\)\?\.unmountAll\(\);/,
+  assert.match(APP_VIEW, /_teardownDevRoots\(\) \{[\s\S]{0,600}?AppView\._reactDevBoard\(\)\?\.unmountAll\(\);/,
     'the teardown helper sweeps every live portal');
+  // Two things the sweep alone cannot do, both added with the surfaces that
+  // needed them: a body-mounted dialog's SCRIM is not a portal, so emptying
+  // its card would leave an opaque overlay with no way out; and the App
+  // tab's placeholder store would still hold the view its swept portal was
+  // rendering.
+  const teardown = APP_VIEW.slice(APP_VIEW.indexOf('_teardownDevRoots() {'));
+  assert.match(teardown.slice(0, 700), /AppView\._dismissDevModals\(\);/,
+    'an open dialog is dismissed, not left as an empty scrim');
+  assert.match(teardown.slice(0, 700), /AppView\._reactAppStatus\(\)\?\.clear\(\);/,
+    'and the placeholder view is forgotten with its portal');
   // Including closing the app screen entirely, which blanks #app-content.
   const close = APP.indexOf('AppView._teardownDevRoots();');
   assert.ok(close !== -1, 'closeApp retires the root before blanking #app-content');
@@ -151,13 +173,27 @@ test('no portal outlives its surface', () => {
     close < APP.indexOf("content.innerHTML = ''", close),
     'the teardown runs BEFORE the node is blanked'
   );
-  // The topic sub-view is still a template, so it is the one Dev branch that
-  // must retire the root rather than re-render it.
-  assert.match(
-    APP_VIEW,
-    /if \(subTab === 'topic' && ref && ref\.kind && ref\.id\) AppView\._teardownDevRoots\(\);/,
-    'the still-templated topic branch retires the root'
-  );
+  // The topic sub-view USED to be the one Dev branch that had to retire the
+  // root rather than re-render it, because it was still an innerHTML template.
+  // It is features/dev-board/topic-frame.tsx now, so that branch is gone —
+  // and with it the one Dev navigation that threw the board frame's state
+  // away.
+  assert.doesNotMatch(APP_VIEW, /subTab === 'topic' && ref && ref\.kind && ref\.id\) AppView\._teardownDevRoots/);
+  // `mountTopicSubView(content)` — no options object any more: the back bar
+  // the two props fed retired in favour of the platform header's chevron.
+  assert.match(APP_VIEW, /mountTopicSubView\(content\);/, 'the topic sub-view is mounted');
+
+  // What replaces it for every host a caller is NOT in a position to know
+  // about: a sub-view swap re-renders `#app-content`'s portal, and React
+  // discards `#dev-chat-body` / `#dev-topic-thread` and everything under them
+  // without telling their owners. Before this sweep, walking board → topic →
+  // board → chat left two dead entries per hop and the count climbed without
+  // bound.
+  assert.match(PORTALS, /export function pruneDetachedLegacyPortals\(keep\?: Element \| null\): boolean \{/);
+  assert.match(PORTALS, /if \(host === keep \|\| host\.isConnected\) continue;/,
+    'an entry is dropped only when its host has genuinely left the document');
+  assert.match(PORTALS, /pruneDetachedLegacyPortals\(host\);\n\s*const existing = entries\.get\(host\);/,
+    'every mount sweeps first — a mount IS a surface swap');
   // …and a leak assertion is reachable from the bridge. The name kept its
   // chunk-G spelling because app-view.js calls it; it counts live portals now.
   assert.match(MOUNT, /rootCount\(\): number/, 'the bridge exposes a live-portal count');
@@ -183,7 +219,7 @@ test('the bridge is published before hydration, and guarded for the SSG pass', (
   // app-view.js with no bundle) do not throw.
   assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountBoard\(content, \{/,
     'renderDevView mounts the board through the bridge');
-  assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountChatSubView\(content, \{/,
+  assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountChatSubView\(content\)/,
     'the general-chat sub-view mounts through the bridge');
   assert.match(APP_VIEW, /AppView\._reactDevBoard\(\)\?\.mountSessionShell\(content\);/,
     'the session shell mounts through the bridge');
@@ -192,9 +228,9 @@ test('the bridge is published before hydration, and guarded for the SSG pass', (
 // ── the conversion: React owns the frame, modules keep their hosts ───────
 
 test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () => {
-  // AppView._repaintDevBody() replaces its innerHTML on every mode switch, so
-  // rendering #dev-feed / #gc-merged as JSX children would make each
-  // view-mode re-render reconcile against nodes the module has replaced.
+  // AppView._repaintDevBody() replaces its innerHTML on every tab switch, so
+  // rendering #dev-feed as a JSX child would make each view-mode re-render
+  // reconcile against nodes the module has replaced.
   //
   // The WRAPPER OBJECT must be a module-level constant too, not an inline
   // `{{ __html: … }}` literal. React 19 diffs host props by REFERENCE and its
@@ -202,38 +238,74 @@ test('#dev-body stays a legacy host — a constant dangerouslySetInnerHTML', () 
   // __html string comparison React 18 did in diffProperties is gone), so an
   // inline literal — a fresh object every render — makes EVERY re-render of
   // the frame rewrite #dev-body back to the placeholder. The view-mode store
-  // re-renders the frame on every toggle click, which turned each PM /
-  // Reporting switch into "Loading…" forever: _repaintDevBody() painted, then
-  // React's commit clobbered the paint.
+  // re-renders the frame on every tab click, which turned each switch into
+  // "Loading…" forever: _repaintDevBody() painted, then React's commit
+  // clobbered the paint.
+  //
+  // There are TWO of those constants now — one per view mode — and the object
+  // handed to React is still one of them, picked ONCE per mount by
+  // `useBodyInitial`. The reference rule is unchanged and is the reason the
+  // choice is frozen in a ref rather than followed live: re-reading the mode
+  // would hand React a different object on a view toggle, and React would
+  // assign `innerHTML` straight over the board the module had just painted.
   assert.match(
     FRAME,
-    /id="dev-body"[\s\S]{0,200}dangerouslySetInnerHTML=\{DEV_BODY_INITIAL\}/,
-    '#dev-body is filled from a module-constant {__html} object, not an inline literal'
+    /id="dev-body"[\s\S]{0,200}dangerouslySetInnerHTML=\{bodyInitial\}/,
+    '#dev-body is filled from a per-mount constant {__html} object'
   );
-  assert.match(
-    FRAME,
-    /^const DEV_BODY_INITIAL = \{ __html: DEV_BODY_INITIAL_HTML \};$/m,
-    'the wrapper object is module-level, so its identity is stable across renders'
-  );
-  // Constant means constant: the string is a module-level const with no
-  // interpolation, so React writes it once and never looks inside again.
-  const decl = /^const DEV_BODY_INITIAL_HTML =\n([\s\S]*?);$/m.exec(FRAME);
-  assert.ok(decl, 'DEV_BODY_INITIAL_HTML is a module-level constant');
-  assert.ok(!decl[1].includes('${'), 'no interpolation — the string never changes');
-  // Byte-for-byte what the template put there.
-  assert.ok(decl[1].includes('<div id="dev-feed">'), 'still ships #dev-feed');
-  assert.ok(decl[1].includes('Loading…'), 'still ships the loading placeholder');
-  assert.ok(decl[1].includes('<div id="gc-merged" class="mt-4"></div>'), 'still ships #gc-merged');
+  assert.match(FRAME, /const DEV_BODY_WORKSHOP_INITIAL = \{ __html:/,
+    'the Workshop form is a module constant');
+  assert.match(FRAME, /const DEV_BODY_KANBAN_INITIAL = \{ __html: skeletonKanbanHtml\(\) \}/,
+    'and so is the kanban form — evaluated once, never per render');
+  assert.match(FRAME, /const chosen = useRef<\{ __html: string \} \| null>\(null\);/,
+    'the CHOICE is frozen at mount: a ref, not the live store value');
+
+  // Constant means constant: both are module-level consts with no
+  // interpolation, so React writes each once and never looks inside again.
+  const feed = /^const DEV_BODY_WORKSHOP_INITIAL = (.*);$/m.exec(FRAME);
+  const kanban = /^const DEV_BODY_KANBAN_INITIAL = (.*);$/m.exec(FRAME);
+  assert.ok(feed && kanban, 'both forms are module-level constants');
+  for (const [name, decl] of [['workshop', feed[1]], ['kanban', kanban[1]]]) {
+    assert.ok(!decl.includes('${'), `${name}: no interpolation — the string never changes`);
+  }
+  // The list form ships the Workshop's host, as the feed form shipped #dev-feed.
+  assert.ok(feed[1].includes('<div id="dev-workshop">'), 'the Workshop form ships #dev-workshop');
+  // The placeholder is a SKELETON, not the word "Loading…". Eleven characters
+  // of grey in the corner of an empty screen is not a state a reader notices,
+  // and the blank beside it reads as an empty board rather than a pending one.
+  // Both forms are built by card/skeleton.tsx so the strings here and the
+  // components the board paints a moment later cannot drift apart.
+  assert.ok(feed[1].includes('skeletonListHtml('),
+    'the Workshop rows come from the shared builder');
+  assert.ok(kanban[1].includes('skeletonKanbanHtml('),
+    'and the columns from the same file');
+  // On the DECLARATIONS, not the file: two comments here name the string
+  // while explaining what replaced it, and prose about a placeholder is not
+  // one.
+  assert.ok(!feed[1].includes('Loading…') && !kanban[1].includes('Loading…'),
+    'the bare "Loading…" text is not what stands in for either view');
+  const SKELETON = read('frontend/src/features/dev-board/card/skeleton.tsx');
+  assert.match(SKELETON, /role="status"/,
+    'the skeleton carries one live-region label for the decorative rows');
+  assert.match(SKELETON, /aria-hidden="true"/,
+    'the bars themselves are hidden from assistive tech');
+  // #gc-merged is NOT here any more: THE UI OVERHAUL folded completed work
+  // into the Feed's own stream (AppView._feedItems), so the second node the
+  // template used to ship — the "Completed" block parked below the feed — is
+  // gone. The kanban Done column renders its own.
+  assert.ok(!feed[1].includes('gc-merged') && !kanban[1].includes('gc-merged'),
+    'the retired Completed block must not come back as a second host');
   // The module still owns it.
   assert.match(APP_VIEW, /_repaintDevBody\(\)/, '_repaintDevBody is still the swap owner');
 });
 
 test('the other legacy-owned leaves render empty or constant, never live', () => {
-  // #dev-locked-notice — the module writes its innerHTML and toggles `hidden`.
-  // React may render its className ONCE (a constant prop is never rewritten),
-  // but must not render children into it.
-  assert.match(FRAME, /<div id="dev-locked-notice" className="px-3 pt-2 hidden"><\/div>/,
-    'the locked notice is an empty leaf with a constant className');
+  // #dev-locked-notice is NOT on this list any more. It was the fragile member
+  // of it — the module wrote its innerHTML and toggled `hidden`, and that only
+  // worked because React rendered the className as a constant it never
+  // rewrote. #1191 made it a one-boolean store instead, so the node has one
+  // writer; the banner's own coverage is below.
+  assert.doesNotMatch(FRAME, /<div id="dev-locked-notice" className="px-3 pt-2 hidden"><\/div>/);
   // #dc-secrets-state — refreshDevChatSecretsState writes its textContent.
   assert.match(FRAME, /id="dc-secrets-state"[\s\S]{0,140}?><\/span>/,
     'the secrets-state slot is an empty leaf');
@@ -244,6 +316,20 @@ test('the other legacy-owned leaves render empty or constant, never live', () =>
   assert.match(SESSION_FRAME, /id="dev-section"/, '#dev-section is rendered');
   assert.ok(!/dangerouslySetInnerHTML=/.test(SESSION_FRAME),
     '#dev-section ships empty, so it needs no constant string to keep React out');
+});
+
+test('the locked-app banner has one writer', () => {
+  // The module publishes server truth (`_proposalsCtx.locked`, loaded with the
+  // feed) and the frame draws the banner or does not — including its `hidden`,
+  // which used to be the module's `classList.toggle` over React's constant.
+  assert.match(FRAME, /const \{ locked \} = useStoreState<LockedNoticeState>\(lockedNoticeStore\);/);
+  assert.match(FRAME, /id="dev-locked-notice" className=\{locked \? 'px-3 pt-2' : 'px-3 pt-2 hidden'\}/);
+  assert.match(FRAME, /App is locked. An admin must approve any proposal before it applies\./);
+  const code = APP_VIEW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const fn = code.match(/_renderLockedNotice\(\) \{([\s\S]*?)\n {2}\},/);
+  assert.ok(fn, '_renderLockedNotice() found');
+  assert.doesNotMatch(fn[1], /innerHTML|classList/, 'the module writes neither the markup nor the class');
+  assert.match(fn[1], /publishLockedNotice\(\s*!!\(AppView\._proposalsCtx && AppView\._proposalsCtx\.locked\)\)/);
 });
 
 test('the view toggle is real React state, and the className writer is gone', () => {
@@ -266,16 +352,79 @@ test('the view toggle is real React state, and the className writer is gone', ()
     '_setViewMode publishes the new mode');
   assert.match(STORE, /useSyncExternalStore\(subscribe, getSnapshot/,
     'the frame subscribes through useSyncExternalStore');
-  assert.match(FRAME, /const mode = useDevViewMode\(\);/, 'the frame reads the store');
+  // The control moved out of the frame, so the frame draws no view control at
+  // all and the store's reader is ../improve/view-tabs.tsx — the App | Board |
+  // Activity strip. The store itself is unchanged, which is the point of
+  // asserting both halves here.
+  //
+  // It reached the strip via the Improve panel's own Kanban|Feed sub-strip,
+  // which is gone: those two layouts ARE Board and Activity (same cards, one
+  // by column and one newest-first), so a destination row with a layout pair
+  // indented under it was one choice drawn on two levels. The layout is the
+  // ROUTE now — #app/<slug>/board and #app/<slug>/activity, see the alias
+  // block in public/js/app.js — and this store is what tells the strip which
+  // of the two segments to mark.
+  assert.match(VIEW_TABS, /useDevViewMode\(\)/, 'the view strip reads the store');
+  assert.ok(!/useDevViewMode\(\)/.test(PANEL),
+    'and the panel reads it only through the strip');
+  // The FRAME reads the mode too, and for something that is not a control:
+  // the General-discussion card draws on the kanban only, because the Feed
+  // draws the same fact as an activity row (see ./discussion-store.ts). What
+  // must stay true of the frame is that it renders no view SWITCH — asserted
+  // by the retired ids and the absent data-view-segment below — not that it
+  // never asks which view is on screen.
+  assert.match(FRAME, /const mode = useDevViewMode\(\);[\s\S]{0,220}mode !== 'kanban'/,
+    'the frame reads the mode only to decide whether the discussion card draws');
+  // TWO readers now, and the second is not a control either: `useBodyInitial`
+  // asks which view is coming so `#dev-body` can open with a skeleton of the
+  // right SHAPE — four columns on a board route, a list on the feed. It used
+  // to open with the list on both, so a cold board load painted one column and
+  // then became four. What must stay true is that the frame renders no view
+  // SWITCH, which the retired ids and the absent data-view-segment below
+  // assert; not that it never asks which view is on screen.
+  // Counted on comment-stripped source: `useBodyInitial`'s own note names the
+  // call while explaining why it does NOT follow it live, and prose about a
+  // hook is not a call to it.
+  const frameCode = FRAME.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.equal((frameCode.match(/useDevViewMode\(\)/g) || []).length, 2,
+    'the discussion card and the body skeleton, and nothing else');
+  assert.ok(!PANEL.includes('id="improve-board-layouts"'),
+    'the Kanban|Feed sub-strip under the Board row is retired');
+  assert.ok(!FRAME.includes('id="dev-view-toggle"'),
+    'the Board draws no view tab strip above its cards');
   // The click still runs the module's behaviour, unchanged.
   assert.match(APP_VIEW, /_selectViewMode\(v\) \{/, 'the click handler lives in the module');
   assert.match(APP_VIEW, /AppView\._setViewMode\(mode\);\s*\n\s*\/\/[^\n]*\n\s*AppView\._repaintDevBody\(\);/,
     'a mode change still persists and repaints, in that order');
-  // All four buttons, with their ids and aria-pressed, survive.
-  for (const id of ['dev-view-list', 'dev-view-kanban', 'dev-view-pm', 'dev-view-report']) {
-    assert.ok(FRAME.includes(`id: '${id}'`), `${id} still rendered`);
+  // THE UI OVERHAUL cut four icon buttons down to two labelled tabs; the
+  // follow-up to #1367 removed the strip entirely, because the header's
+  // App/Feed/Kanban toggle offers the same two destinations plus the app
+  // itself. Every id it drew must be really gone rather than merely unstyled.
+  for (const id of ['dev-view-feed', 'dev-view-kanban', 'dev-view-tabs',
+    'dev-view-list', 'dev-view-pm', 'dev-view-report']) {
+    assert.ok(!FRAME.includes(`id: '${id}'`) && !FRAME.includes(`id="${id}"`),
+      `${id} was retired with the dev-screen tab strip`);
   }
-  assert.match(FRAME, /aria-pressed=\{active === mode\}/, 'aria-pressed still reflects the mode');
+  // The control still reports the live mode to the a11y tree, and it says
+  // `aria-current="page"` rather than `aria-pressed` now: these are three
+  // DESTINATIONS with three addresses, not a pair of toggles restating one
+  // panel in another layout. `data-view-segment` went with the sub-strip; the
+  // segments name themselves with `data-context-row`, the key the Board and
+  // Activity rows already carried and the one dapp.json's checks select on.
+  assert.match(VIEW_TABS, /aria-current=\{active === 'board' \? 'page' : 'false'\}/,
+    'the Board segment reports whether it is the one you are on');
+  assert.match(VIEW_TABS, /data-context-row="workshop"/,
+    'each view still names itself with data-context-row');
+  assert.ok(!PANEL.includes('data-view-segment') && !FRAME.includes('data-view-segment'),
+    'the retired sub-strip left no data-view-segment behind');
+  // Board and Activity are hash routes, so they have to be anchors —
+  // cmd/ctrl-click and "open in new tab" work on them, the rule
+  // tests/nav-new-tab.test.js pins across the shell. The App segment is a
+  // button because it is not a hash (on the self-hosted row it goes home).
+  assert.match(VIEW_TABS, /href=\{slug \? `#app\/\$\{slug\}\/board` : '#'\}/,
+    'the Board segment is an anchor at the board route');
+  assert.match(VIEW_TABS, /href=\{slug \? `#app\/\$\{slug\}\/workshop` : '#'\}/,
+    'and the Workshop at the workshop route');
   // Seeded from the module before the first paint, so ?view=kanban does not
   // flash list first.
   assert.match(MOUNT, /publishViewMode\(options\.viewMode\);/, 'the store is seeded at mount');
@@ -290,7 +439,9 @@ test('the wiring the module still owns is untouched', () => {
     'PlatformUI.pullToRefresh(devScroll, () => AppView._loadDevFeed());',
     'AppView._attrInit();',
     'AppView._cardMenuInit();',
-    'AppView._loadChatCardPreview();',
+    // _loadChatCardPreview left this list with the General-chat card
+    // (Streamlined Concept): Activity is an app-context sheet row and a
+    // first-class hash, so the board offers no second door to it.
   ]) {
     assert.ok(APP_VIEW.includes(call), `${call} still runs after the mount`);
   }
@@ -314,7 +465,7 @@ test('no Dev-board id leaked into the prerendered shell', () => {
   // need an ADDED_IDS entry — and the region would render before its data,
   // which is a hydration mismatch.
   for (const id of [
-    'dev-forum-scroll', 'dev-body', 'dev-feed', 'gc-merged', 'dev-plus-menu',
+    'dev-forum-scroll', 'dev-body', 'dev-workshop', 'dev-feed', 'gc-merged', 'dev-plus-menu',
     'dev-plus-btn', 'dev-chat-card', 'dev-locked-notice', 'dev-section',
     'dev-chat-body', 'dev-chat-back', 'dc-secrets-state',
   ]) {

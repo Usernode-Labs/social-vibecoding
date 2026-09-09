@@ -14,8 +14,17 @@ function loadWalletSheet() {
   const sandbox = { console: { warn() {} } };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  // The module is an ordinary bundle module and pulls its store and portal
+  // helpers in by name. This test stubs `_renderChip` / `_renderSheetBody`
+  // outright, so it needs the bindings to exist rather than to work — drop the
+  // import lines and bind inert stand-ins, same technique as
+  // tests/challenge-template-prefill.test.js.
+  sandbox.walletSheetStore = { set() {}, get: () => ({}), subscribe: () => () => {} };
+  sandbox.WALLET_EMPTY = {};
+  sandbox.mountWalletSheet = () => {};
+  sandbox.unmountWalletSheet = () => {};
   vm.createContext(sandbox);
-  vm.runInContext(walletSheetSource, sandbox);
+  vm.runInContext(walletSheetSource.replace(/^import[^\n]*\n/gm, ''), sandbox);
   return sandbox.WalletSheet;
 }
 

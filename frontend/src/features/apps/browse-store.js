@@ -27,6 +27,8 @@ export const browseStore = createStore({
   level: 'list',
   /** null until the first _renderList; else an array of row descriptors. */
   rows: null,
+  curated: true,
+  moreExpanded: false,
   /**
    * The #browse-empty line: null hides it, a string shows it. A separate field
    * from `rows` because the load-failure state has neither rows nor an empty
@@ -37,4 +39,13 @@ export const browseStore = createStore({
   error: false,
   /** null until the detail level is entered; else a detail descriptor. */
   detail: null,
+  /**
+   * Which of Browse.SORTS orders the list (#1383). 'recommended' is the
+   * PRERENDER value: the persisted choice and the ?sort= override are read on
+   * screen entry (Browse._applyInitialSort), never during render — neither
+   * localStorage nor location.search exists in the SSG pass, and a first
+   * client render that disagreed with the prerendered markup is a hydration
+   * console.error, which fails proposal checks.
+   */
+  sort: 'recommended',
 });

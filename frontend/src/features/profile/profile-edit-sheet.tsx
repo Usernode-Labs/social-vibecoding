@@ -90,7 +90,7 @@ import { Profile } from './profile.js';
  * The no-kit card chrome, on the node the kit flags rather than the node it
  * lifts. Constant: `platform-modal-adopted` is written here through classList.
  */
-const ROOT_CLASS = 'rounded-xl border border-zinc-200 dark:border-zinc-800 mb-5';
+const ROOT_CLASS = 'rounded-2xl bg-white dark:bg-zinc-900 mb-5';
 
 /**
  * The lifted card. Constant for the same reason (`platform-modal-card` lands
@@ -110,7 +110,7 @@ const ROW_ACTION_CLASS = 'un-group-row flex items-center w-full px-4 min-h-[44px
 
 const ROW_LABEL_CLASS = 'text-sm font-normal text-zinc-900 dark:text-zinc-100';
 const FOOTNOTE_CLASS = 'px-4 mt-1.5 text-xs text-zinc-500 dark:text-zinc-400';
-const COUNTER_CLASS = 'text-xs text-zinc-400 tabular-nums';
+const COUNTER_CLASS = 'text-xs text-zinc-500 tabular-nums dark:text-zinc-400';
 
 function Avatar({ url, initial }: { url: string | null; initial: string }): ReactNode {
   if (url) {
@@ -152,7 +152,7 @@ function Group({ title, children }: { title: string; children?: ReactNode }): Re
  */
 function FieldError({ message }: { message?: string | null }): ReactNode {
   return (
-    <p className={message ? 'px-4 mt-1.5 text-xs text-red-500' : 'px-4 mt-1.5 text-xs text-red-500 hidden'}>
+    <p className={message ? 'px-4 mt-1.5 text-xs text-red-700 dark:text-red-400' : 'px-4 mt-1.5 text-xs text-red-700 hidden dark:text-red-400'}>
       {message || ''}
     </p>
   );
@@ -225,7 +225,7 @@ export function ProfileEditSheet({
       setShowRemove(true);
     } catch (err) {
       setPhotoError((err && (err as Error).message)
-        || 'That image could not be used — try a PNG, JPEG or WebP.');
+        || 'That image could not be used. Try a PNG, JPEG or WebP.');
     }
   };
 
@@ -276,7 +276,7 @@ export function ProfileEditSheet({
             </div>
             <button
               id="profile-edit-choose"
-              className={`${ROW_ACTION_CLASS} text-violet-600 dark:text-violet-400`}
+              className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
               onClick={() => fileRef.current?.click()}
             >
               Change photo
@@ -285,8 +285,8 @@ export function ProfileEditSheet({
               id="profile-edit-remove"
               className={
                 showRemove
-                  ? `${ROW_ACTION_CLASS} text-red-600 dark:text-red-400`
-                  : `${ROW_ACTION_CLASS} text-red-600 dark:text-red-400 hidden`
+                  ? `${ROW_ACTION_CLASS} text-red-700 dark:text-red-400`
+                  : `${ROW_ACTION_CLASS} text-red-700 dark:text-red-400 hidden`
               }
               onClick={() => { Profile.stageAvatarRemoval(); setShowRemove(false); }}
             >
@@ -296,8 +296,8 @@ export function ProfileEditSheet({
           <p
             id="profile-edit-photo-error"
             className={photoError
-              ? 'px-4 mt-1.5 text-xs text-red-500'
-              : 'px-4 mt-1.5 text-xs text-red-500 hidden'}
+              ? 'px-4 mt-1.5 text-xs text-red-700 dark:text-red-400'
+              : 'px-4 mt-1.5 text-xs text-red-700 hidden dark:text-red-400'}
           >
             {photoError || ''}
           </p>
@@ -399,10 +399,15 @@ export function ProfileEditSheet({
         </section>
 
         {/*
-            The username is deliberately not editable — here or anywhere. It is
-            the sign-in identifier and the address of the public builder page, so
-            it is shown read-only WITH the reason: a greyed-out field with no
-            explanation reads as a bug.
+            The username is not editable HERE. It is the sign-in identifier, so
+            changing it needs the current password — a credential prompt
+            has no business in a sheet that also edits a bio, and the rename has
+            its own cooldown and confirmation copy. It lives in
+            Settings -> Username (features/settings/sections/username.tsx).
+
+            Still shown read-only, and still WITH the reason: a greyed-out field
+            with no explanation reads as a bug. The footnote is now a route, not
+            a refusal.
         */}
         <section className="mb-4">
           <Group title="Username">
@@ -424,15 +429,15 @@ export function ProfileEditSheet({
             </div>
           </Group>
           <p className={FOOTNOTE_CLASS}>
-            Your @handle is your sign-in name and your public page address, so it
-            can’t be changed. Set a display name above to change how your name
-            appears.
+            {'Your @handle is your sign-in name and your public page address. To change it, go to '}
+            <a href="#settings/username" className="text-violet-700 hover:text-violet-400 dark:text-violet-400">Settings → Username</a>
+            {'. To change only how your name appears, set a display name above.'}
           </p>
         </section>
 
         <p
           id="profile-edit-error"
-          className={formError ? 'text-sm text-red-500 mb-2' : 'text-sm text-red-500 mb-2 hidden'}
+          className={formError ? 'text-sm text-red-700 mb-2 dark:text-red-400' : 'text-sm text-red-700 mb-2 hidden dark:text-red-400'}
         >
           {formError || ''}
         </p>

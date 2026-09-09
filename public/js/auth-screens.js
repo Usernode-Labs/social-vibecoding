@@ -7,7 +7,7 @@
 //     no full page loads while navigating the anonymous side;
 //   - a RELOAD-FREE login: on success we refetch /api/auth/me and call
 //     App.enterAuthed(user) in place (see app.js staged boot), which also
-//     runs the native login handoff (completeLogin → startNode) without
+//     establishes the native realm in one protocol-2 transaction without
 //     the old navigate-to-'/' round trip;
 //   - one document for the service worker's offline fallback.
 //
@@ -25,7 +25,9 @@
   const SCREEN_IDS = {
     landing: 'auth-landing-screen',
     login: 'auth-login-screen',
-    signup: 'auth-login-screen', // sub-view of the login screen
+    // Sub-view of the login screen. #signup/<address> carries a url-encoded
+    // email address from the waitlist-release email.
+    signup: 'auth-login-screen',
     register: 'auth-register-screen',
     waiting: 'auth-waiting-screen',
     // Stage-1 waitlist survey, #waitlist — its own screen rather than a
@@ -51,6 +53,20 @@
   };
 
   const ROUTES = Object.keys(SCREEN_IDS);
+
+  // The pages a `?return_to=` may send somebody to once they have signed in.
+  //
+  // Matched on the PATHNAME, never on the whole string. The MCP consent
+  // request IS its query string — client id, redirect uri, PKCE challenge,
+  // state — so an exact-string allowlist could not carry it, which is how
+  // that flow ended up smuggling its return target in a fragment nothing
+  // reads. The pathname is still the thing that decides the destination, so
+  // the open-redirect property is unchanged.
+  const RETURN_TO_PATHS = [
+    '/cli/authorize', '/connect/authorize',
+    '/api/me/social-identities/github/connect',
+    '/api/me/social-identities/x/connect',
+  ];
 
   // Screen transitions come from the platform's native kit via the
   // PlatformUI seam; when the kit failed to load the mutation just runs
@@ -110,7 +126,7 @@
     try { offline = !!(window.Offline && Offline.isOffline()); } catch (_) { offline = false; }
     if (!offline) return false;
     if (errorEl) {
-      showError(errorEl, "You're offline — signing in needs a connection.");
+      showError(errorEl, "You're offline. Signing in needs a connection.");
     }
     try { window.Offline.nudge(); } catch (_) { /* ignore */ }
     return true;
@@ -118,9 +134,10 @@
 
   const AuthScreens = {
     _current: null,       // route name currently shown, or null
-    // Deep-link fragment (e.g. '#app/<slug>/full' from a shared link) an
-    // anonymous visitor arrived with; restored via history.replaceState
-    // right before the authed boot so restoreFromHash lands on it.
+    // Deep-link target an anonymous visitor arrived with. Legacy links store
+    // a fragment (`#app/...`); clean app links store their pathname
+    // (`/app/...`). Restored right before the authed boot so the router lands
+    // on the exact app instead of the platform home.
     _pendingHash: '',
     _wired: {},           // per-screen one-shot wiring markers
     _waitingTimer: null,
@@ -140,15 +157,79 @@
       AuthScreens._pendingHash = fullHash;
     },
 
+    // A `return_to` value this platform will actually navigate to, or ''.
+    //
+    // Resolved against this origin and then matched by pathname, so an
+    // allowed page keeps the query string it was asked for while an absolute
+    // URL, a scheme like javascript:, and a traversal that climbs out are all
+    // refused rather than becoming an open redirect. What refuses an OFF-SITE
+    // target is the ORIGIN comparison plus a pathname match taken from the
+    // parsed `url` — never from the raw string.
+    //
+    // The two shape tests do something narrower and are still load-bearing:
+    // dropping `raw.startsWith('//')` changes outcomes, because a
+    // protocol-relative value naming THIS host ('//usernode.example/…')
+    // resolves same-origin onto an allowed path and would then be accepted.
+    // That would not escape anywhere — it lands on the same page the plain
+    // path does — but the accepted spelling is deliberately just one shape,
+    // a plain absolute path, so a reader is never left comparing two.
+    //
+    // The fragment is dropped, and NOT because it is a security boundary —
+    // saying so would be false and would invite somebody to defend the wrong
+    // line. Neither allowed page needs one forwarded: connect-authorize.js
+    // never reads location.hash at all, and cli-authorize.js carries its
+    // launch code across a sign-in in sessionStorage rather than in the URL
+    // it returns to. (That card is reachable anyway from the
+    // `verification_uri_complete` link the server itself mints, so nothing
+    // here stands between anyone and it.) Forwarding a fragment would add a
+    // value nothing reads, so this returns one shape and only one.
+    returnToUrl(value) {
+      const raw = String(value || '');
+      if (!raw.startsWith('/') || raw.startsWith('//')) return '';
+      let url;
+      try {
+        url = new URL(raw, window.location.origin);
+      } catch (_) { return ''; }
+      if (url.origin !== window.location.origin) return '';
+      if (!RETURN_TO_PATHS.includes(url.pathname)) return '';
+      return url.pathname + url.search;
+    },
+
+    deepLinkUrl(target) {
+      const value = String(target || '');
+      if (value.startsWith('/app/')) return value;
+      if (value.startsWith('#')) return '/' + value;
+      return '/';
+    },
+
     // Anonymous boot entry (App.enterAnonymous). Routing lives in
     // restoreFromHash — its anonymous branch calls back into show().
     enter() {
-      // A pre-SPA link form: /?signup=1 (old landing CTA target). Honor
-      // it once, then let the hash own everything.
+      // Pre-SPA link forms: /?signup=1 (the old landing CTA target) and
+      // /?login=1. Honor one once, then let the hash own everything.
+      //
+      // #1545: these are the shapes EMAIL links use now. A fragment is
+      // client-side only, so a desktop mail client's link rewriter can drop
+      // `#signup` while rebuilding the URL and deliver a bare `/` — which is
+      // the home page, and exactly what the access-ready mail was reported
+      // doing on desktop while working from a phone. A query survives that.
+      //
+      // First match wins, and the address is rewritten to the hash route, so
+      // whichever spelling arrives the address bar ends up identical.
+      //
+      // `?status=1` is the check-my-status mail's one button (#1538). It
+      // resolves to the code-entry step of the waitlist screen, which is a
+      // hash ROUTE plus a hash QUERY — so it cannot use the bare `/#route`
+      // template the other two share. The state stays in the fragment for
+      // the same reason it always has: a query would put it in server logs.
       try {
-        if (!location.hash &&
-            new URLSearchParams(location.search).has('signup')) {
-          history.replaceState(null, '', '/#signup');
+        if (!location.hash) {
+          const params = new URLSearchParams(location.search);
+          const route = params.has('signup') ? 'signup'
+            : params.has('login') ? 'login'
+              : params.has('status') ? 'waitlist?confirm=1'
+                : null;
+          if (route) history.replaceState(null, '', `/#${route}`);
         }
       } catch (_) {}
       if (window.App) App.restoreFromHash();
@@ -157,7 +238,8 @@
     // Waiting-room entry (App.enterAuthed with hasPlatformAccess=false).
     showWaiting() {
       if (AuthScreens.routeFromHash(location.hash.replace('#', '')) !== 'waiting') {
-        history.replaceState(null, '', '#waiting');
+        const target = window.App?._rootUrl?.('#waiting') || '#waiting';
+        history.replaceState(null, '', target);
       }
       AuthScreens.show('waiting');
     },
@@ -167,6 +249,13 @@
     show(route, seg) {
       const id = SCREEN_IDS[route];
       if (!id) return;
+      // The screen's interior is not in the prerendered document: the
+      // island mounts it on first reveal (lib/mount-on-reveal.ts). Everything
+      // below — _wireScreen, the on-show hook, setScreenVisible — was written
+      // against markup that was always there, so ask for it first. The bridge
+      // mounts it inside flushSync and returns with the nodes in place and
+      // the screen's React half already patched onto this object.
+      AuthScreens._ensureMounted(id);
       AuthScreens._wireScreen(route);
 
       const prev = AuthScreens._current;
@@ -176,7 +265,9 @@
       // already up (e.g. login ↔ signup share one screen).
       if (route === 'landing') AuthScreens._landingOnShow();
       if (route === 'login') AuthScreens._loginOnShow(false);
-      if (route === 'signup') AuthScreens._loginOnShow(true);
+      // seg is the url-encoded email address from a waitlist-release link
+      // (#signup/<address>); the login island prefills it and asks for a code.
+      if (route === 'signup') AuthScreens._loginOnShow(true, seg);
       if (route === 'reset-password') AuthScreens._resetOnShow(seg);
       if (route === 'register') AuthScreens._registerOnShow(seg);
       if (route === 'waiting') AuthScreens._waitingOnShow();
@@ -198,11 +289,21 @@
           : DEPTH[route] < DEPTH[prev] ? 'pop' : 'none');
 
       fx(() => {
+        window.UsernodeBrowserScroll?.capture();
         for (const r of Object.keys(SCREEN_IDS)) {
           setScreenVisible(SCREEN_IDS[r], SCREEN_IDS[r] === id);
         }
       }, type);
       AuthScreens._current = route;
+    },
+
+    // See show(). Reached by name — this file is a classic script, and
+    // tests load it as one — and a no-op wherever the bridge is absent (a
+    // document without the React entry, a `vm` harness).
+    _ensureMounted(id) {
+      try {
+        window.UsernodeReact?.mount?.ensure?.(id);
+      } catch (err) { /* ignore */ }
     },
 
     hideAll() {
@@ -230,17 +331,18 @@
     // OTP set-password, wallet verify, activation-code register). The
     // session cookie is set; boot the authed shell in place.
     async finishLogin() {
-      // The only login-return target accepted by the platform. Keeping
-      // this exact and relative prevents open redirects. CLI authorize is
-      // a separate document by design — real navigation stays.
+      // The login-return targets accepted by the platform. Both are separate
+      // documents by design — real navigation stays.
       try {
         const params = new URLSearchParams(location.search);
         const values = params.getAll('return_to');
         if (values.length === 1 &&
-            [...params.keys()].every((k) => k === 'return_to') &&
-            values[0] === '/cli/authorize') {
-          window.location.href = '/cli/authorize';
-          return;
+            [...params.keys()].every((k) => k === 'return_to')) {
+          const target = AuthScreens.returnToUrl(values[0]);
+          if (target) {
+            window.location.href = target;
+            return;
+          }
         }
       } catch (_) {}
 
@@ -266,7 +368,7 @@
 
         const target = AuthScreens._pendingHash || '';
         AuthScreens._pendingHash = '';
-        history.replaceState(null, '', '/' + target);
+        history.replaceState(null, '', AuthScreens.deepLinkUrl(target));
         fx(() => {
           AuthScreens.hideAll();
           App.enterAuthed(user);
@@ -275,7 +377,7 @@
         // Cookie is set but the in-place boot failed (transient /me
         // hiccup) — a plain reload recovers via the normal boot path.
         console.warn('[auth-screens] in-place boot failed, reloading:', e);
-        window.location.href = '/' + (AuthScreens._pendingHash || '');
+        window.location.href = AuthScreens.deepLinkUrl(AuthScreens._pendingHash || '');
       }
     },
 

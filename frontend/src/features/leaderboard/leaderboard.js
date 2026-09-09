@@ -386,6 +386,19 @@ const Leaderboard = {
         Leaderboard._cache.set(key, { error: true, notFound: res.status === 404 });
       } else {
         const data = await res.json();
+        // The handle was retired and resolved through the ledger —
+        // a link shared before its owner renamed. Correct the address so
+        // the pane, the back stack and anything the reader copies out of
+        // the URL bar all carry the name they actually hold now. Cached
+        // under the key that is loading, so the repaint below finds it.
+        if (data.moved && Leaderboard.profileUser === data.moved.from) {
+          Leaderboard.profileUser = data.moved.to;
+          if (typeof location !== 'undefined') {
+            location.replace(
+              `#leaderboard/users/${encodeURIComponent(data.moved.to)}`
+            );
+          }
+        }
         Leaderboard._cache.set(key, data);
       }
     } catch (err) {
@@ -461,7 +474,7 @@ const Leaderboard = {
     }));
 
     const subtitle = isHistory
-      ? 'Everything you’ve given — kudos, bounty pledges, and votes — newest first. Only you can see this.'
+      ? 'Everything you’ve given: kudos, bounty pledges, and votes, newest first. Only you can see this.'
       // #964: read the cap from the budget the badge already fetched rather
       // than hardcoding it here, so raising WEEKLY_KUDOS_LIMIT server-side
       // can never leave this subtitle quoting a stale number again. The

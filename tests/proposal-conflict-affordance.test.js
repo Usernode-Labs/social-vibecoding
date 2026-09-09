@@ -19,20 +19,15 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { runModules, workDrawerImports } = require('./helpers/bundle-module');
+const { mergeConflictHtml, mergeabilityHtml, proposalCardHtml } = require('./lib/dev-card-html');
 
 const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
   'utf8'
 );
-const WORK_DRAWER_SRC = fs.readFileSync(
-  // #1079 chunk B: same module, now inside the React bundle.
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'work-drawer', 'work-drawer.js'),
-  'utf8'
-);
-// #405: the proposal card / cog-drawer section now derive their merge-state
-// badge from window.MergeStatus, so load it into the sandbox first (mirrors
-// the real page load order in index.html).
+// #405: the proposal card derives its merge-state badge from
+// window.MergeStatus, so load it into the sandbox first (mirrors the real page
+// load order in index.html).
 const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'),
   'utf8'
@@ -84,7 +79,7 @@ const baseProposal = (over) => ({
 
 test("card: a 'conflict' snapshot (merge attempt failed) shows the red 'Merge failed' badge", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     merge_conflict_state: 'conflict',
     conflict_files: ['src/app.js', 'public/index.html'],
     behind_main: 2,
@@ -98,7 +93,7 @@ test("card: a 'conflict' snapshot (merge attempt failed) shows the red 'Merge fa
 
 test("card: a 'conflict' snapshot with the resolver in flight shows 'Resolving conflicts…' instead", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     merge_conflict_state: 'conflict',
     behind_main: 2,
     resolving: true,
@@ -109,7 +104,7 @@ test("card: a 'conflict' snapshot with the resolver in flight shows 'Resolving c
 
 test("card: a 'failed' snapshot shows the red 'Conflict resolution failed' affordance", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     merge_conflict_state: 'failed',
     conflict_files: ['src/server.js'],
     behind_main: 1,
@@ -121,7 +116,7 @@ test("card: a 'failed' snapshot shows the red 'Conflict resolution failed' affor
 
 test("card: a plain 'behind' snapshot still shows the amber Behind badge", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._renderProposalCard(baseProposal({
+  const html = proposalCardHtml(AppView, baseProposal({
     merge_conflict_state: 'behind',
     behind_main: 3,
   }));
@@ -133,7 +128,7 @@ test("card: a plain 'behind' snapshot still shows the amber Behind badge", () =>
 
 test("detail: a 'conflict' snapshot renders the merge-failed detail box naming the creator", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._mergeConflictDetailHtml(baseProposal({
+  const html = mergeConflictHtml(AppView, baseProposal({
     merge_conflict_state: 'conflict',
     conflict_files: ['src/app.js'],
     conflict_checked_at: '2026-06-01T00:00:00Z',
@@ -144,9 +139,87 @@ test("detail: a 'conflict' snapshot renders the merge-failed detail box naming t
   assert.match(html, /Sync with main/, 'points at the dev-chat sync action');
 });
 
+// Task 153: the way out depends on WHERE THE HEAD LIVES, not on the state
+// that asked. A connector submission is mirrored into the app repository, so
+// its author has no dev-chat and no "Sync with main" — the branch is revised
+// where it was written and submitted again. A hand-opened pull request from a
+// fork is the one case the platform cannot sync at all, and the copy says so.
+const mirrorProposal = (over) => baseProposal({
+  source: 'imported',
+  branch_name: 'usernode/from-me-t31-cafe',
+  imported_pr_head_repo: 'acme/demo',
+  repo_url: 'https://github.com/acme/demo',
+  ...over,
+});
+const forkProposal = (over) => mirrorProposal({
+  branch_name: 'feature/dark-mode',
+  imported_pr_head_repo: 'me/demo',
+  ...over,
+});
+
+test('head home: a mirrored connector head is app_repo, a fork head is user_fork, a native row is app_repo', () => {
+  const AppView = makeAppView(ME);
+  assert.equal(AppView._headHome(baseProposal({})), 'app_repo');
+  assert.equal(AppView._headHome(mirrorProposal({})), 'app_repo');
+  assert.equal(AppView._headHome(forkProposal({})), 'user_fork');
+  // Without a head repo on the row (imported before the column existed), the
+  // platform's own branch namespace decides — same fallback as the server.
+  assert.equal(AppView._headHome(mirrorProposal({ imported_pr_head_repo: null, repo_url: null })), 'app_repo');
+  assert.equal(AppView._headHome(forkProposal({ imported_pr_head_repo: null, repo_url: null })), 'user_fork');
+  // The app's own repo URL is the fallback comparison when the row has none.
+  AppView.appData = { repo_url: 'https://github.com/acme/demo.git' };
+  assert.equal(AppView._headHome(mirrorProposal({ repo_url: null, branch_name: 'odd/name' })), 'app_repo');
+  assert.equal(AppView._headHome(forkProposal({ repo_url: null, branch_name: 'usernode/from-x' })), 'user_fork',
+    'the recorded head repo outranks the branch name');
+});
+
+test("detail: a mirrored proposal's conflict box never sends its author to a dev-chat", () => {
+  const AppView = makeAppView(ME);
+  for (const state of ['conflict', 'failed']) {
+    const html = mergeConflictHtml(AppView, mirrorProposal({
+      merge_conflict_state: state,
+      conflict_files: ['src/app.js'],
+    }));
+    assert.doesNotMatch(html, /Sync with main/, `${state}: no dev-chat action for a mirrored head`);
+    assert.doesNotMatch(html, /dev-chat/, `${state}: no dev-chat at all`);
+    assert.match(html, /submit it again as an update to this proposal/, `${state}: the way out is a resubmission`);
+    assert.match(html, /me<\/span>/, `${state}: names the creator`);
+  }
+  const conflict = mergeConflictHtml(AppView, mirrorProposal({ merge_conflict_state: 'conflict' }));
+  assert.match(conflict, /Usernode keeps this branch itself/, 'says the platform can sync it');
+  const failed = mergeConflictHtml(AppView, mirrorProposal({ merge_conflict_state: 'failed' }));
+  assert.match(failed, /me<\/span> needs to bring the branch up to date/, 'after a failed resolve the author acts');
+});
+
+test("detail: a fork-homed proposal's conflict box says the platform cannot sync it", () => {
+  const AppView = makeAppView(ME);
+  const html = mergeConflictHtml(AppView, forkProposal({
+    merge_conflict_state: 'failed',
+    conflict_files: ['src/app.js'],
+  }));
+  assert.match(html, /own fork, which Usernode cannot write to/);
+  assert.match(html, /me<\/span> needs to merge main into the branch and push it/);
+  assert.match(html, /the proposal follows the push/);
+  assert.doesNotMatch(html, /Sync with main/);
+});
+
+test('pill: the block reason for an imported proposal carries the same remedy', () => {
+  const AppView = makeAppView(ME);
+  const mirror = AppView.blockReasons(mirrorProposal({ merge_conflict_state: 'conflict' }));
+  assert.equal(mirror[0].key, 'merge_conflict');
+  assert.match(mirror[0].detail, /Usernode keeps this branch itself/);
+  assert.doesNotMatch(mirror[0].detail, /dev session/);
+  const fork = AppView.blockReasons(forkProposal({ merge_conflict_state: 'failed' }));
+  assert.equal(fork[0].key, 'conflict_failed');
+  assert.match(fork[0].detail, /cannot write to/);
+  // A native row keeps the sentence the pill has always carried.
+  const native = AppView.blockReasons(baseProposal({ merge_conflict_state: 'conflict' }));
+  assert.match(native[0].detail, /Its creator needs to finish the merge from their dev session/);
+});
+
 test("detail: a 'conflict' snapshot with the resolver in flight renders nothing (progress badge covers it)", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._mergeConflictDetailHtml(baseProposal({
+  const html = mergeConflictHtml(AppView, baseProposal({
     merge_conflict_state: 'conflict',
     conflict_files: ['src/app.js'],
     resolving: true,
@@ -156,7 +229,7 @@ test("detail: a 'conflict' snapshot with the resolver in flight renders nothing 
 
 test("detail: a 'failed' snapshot renders the red 'resolution failed' detail box", () => {
   const AppView = makeAppView(ME);
-  const html = AppView._mergeConflictDetailHtml(baseProposal({
+  const html = mergeConflictHtml(AppView, baseProposal({
     merge_conflict_state: 'failed',
     conflict_files: ['src/server.js'],
     conflict_checked_at: '2026-06-01T00:00:00Z',
@@ -166,60 +239,128 @@ test("detail: a 'failed' snapshot renders the red 'resolution failed' detail box
   assert.match(html, /Sync with main/, 'keeps the manual-resolve guidance');
 });
 
-// ── Cog-drawer compact badge (WorkDrawer.proposalsSection) ─────────────
-// (The section lived on the home screen as "Your proposals" until it
-// moved into the header cog's drawer — public/js/work-drawer.js.)
+// A "Cog-drawer compact badge" block used to sit here, asserting that the SAME
+// MergeStatus.badgeHtml string reached the header cog drawer's proposal rows —
+// the section that had itself moved there from the home screen's "Your
+// proposals" strip.
+//
+// THE UI OVERHAUL retired that drawer: its session list is the Improve panel's,
+// scoped to the app on screen, and its pinned "Needs attention" rows are
+// ordinary notifications in the merged hamburger. The card and detail
+// assertions above are the whole surface now, and MergeStatus is still the one
+// owner of the badge across every one of them.
 
-function makeWorkDrawer() {
-  const sandbox = {
-    console,
-    App: { user: { id: ME } },
-    document: { getElementById: () => null, addEventListener: () => {} },
-    setTimeout, clearTimeout, setInterval, clearInterval,
-  };
-  sandbox.window = sandbox;
-  sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
-  // work-drawer.js is a bundle module and imports the kit-surface seam and
-  // (since #1191 slice 6 conversion 4) its own store, neither of which a
-  // classic-script `runInContext` can compile — runModules rewrites the
-  // imports into reads of the stub table and leaves the rest of the source
-  // alone. See tests/helpers/bundle-module.js.
-  return runModules(
-    sandbox,
-    [['merge-status.js', MERGE_STATUS_SRC], ['work-drawer.js', WORK_DRAWER_SRC]],
-    { imports: workDrawerImports(), tail: 'return WorkDrawer;' },
-  );
-}
+// ── #1442: the conflict nobody has attempted yet ───────────────────────
+//
+// Everything above is about merge_conflict_state, which is written only when
+// a real merge attempt failed. Proposal 3590 never got that far: the gate
+// only attempts a merge once a proposal already looks mergeable, so for the
+// entire time it was unmergeable it showed green checks and no conflict at
+// all. `mergeability` is GitHub's PREDICTION, measured while the votes are
+// still coming in, and these lock the two apart.
 
-// The row is a descriptor now, but the lifecycle chip is deliberately still
-// MergeStatus.badgeHtml's string — one owner of that badge across the four
-// surfaces that draw it — so these assertions read exactly what they did.
-const chipsOf = (section) =>
-  Array.from(section.rows, (r) => r.lifeChipHtml || '').join(' ');
-
-const drawerProposal = (over) => ({
-  id: 7, app_slug: 'demo', app_name: 'Demo', pr_number: 700,
-  pr_title: 'Tidy the header', yes_count: 1, majority: 2, status: 'promoted',
-  check_state: 'passing', test_results: [],
+const FRESH = (over) => ({
+  checkedAt: '2026-06-02T00:00:00Z',
+  mainSha: 'a'.repeat(40),
+  mergeBaseSha: 'b'.repeat(40),
+  behindBy: 8, aheadBy: 3,
+  mergeability: 'conflict',
+  mergeabilityFiles: ['dapp.json', 'src/routes/votes.js'],
+  mergeabilityFilesComplete: true,
+  checksRanOnBase: null, checksBaseVerdict: 'current', checksBaseBehindBy: 0,
+  error: null,
   ...over,
 });
 
-test("cog drawer: a 'conflict' proposal shows the red 'Merge failed' chip", () => {
-  const WorkDrawer = makeWorkDrawer();
-  WorkDrawer.proposals = [drawerProposal({ merge_conflict_state: 'conflict', behind_main: 2 })];
-  WorkDrawer.governance = [];
-  const chips = chipsOf(WorkDrawer.proposalsSection());
-  assert.match(chips, /Merge failed — conflict/, 'red merge-failed chip after a real attempt');
-  assert.doesNotMatch(chips, /Behind main/, 'merge-failed outranks the neutral behind chip');
-  assert.doesNotMatch(chips, /Conflict resolution failed/, "the 'failed' affordance stays distinct");
+test('detail: a predicted conflict renders its own box, distinct from the attempted one', () => {
+  const AppView = makeAppView(ME);
+  const html = mergeabilityHtml(AppView, baseProposal({ freshness: FRESH() }));
+  assert.match(html, /no longer merges into main on its own/, 'names the prediction, not an attempt');
+  assert.match(html, /Changed on both sides:/);
+  assert.match(html, /dapp\.json/);
+  assert.match(html, /src\/routes\/votes\.js/);
+  assert.match(html, /Some of those may still merge cleanly/,
+    'the file list is an upper bound and says so');
+  assert.match(html, /me<\/span> needs to bring it up to date/, 'names the creator');
+  assert.match(html, /Sync with main/, 'points at the way out');
+  assert.doesNotMatch(html, /A merge was attempted/, 'no attempt has been made');
 });
 
-test("cog drawer: a 'failed' proposal shows the red Failed chip", () => {
-  const WorkDrawer = makeWorkDrawer();
-  WorkDrawer.proposals = [drawerProposal({ merge_conflict_state: 'failed', behind_main: 1 })];
-  WorkDrawer.governance = [];
-  // #405: canonical red "Conflict resolution failed" label (was "⚠ Failed").
-  assert.match(chipsOf(WorkDrawer.proposalsSection()), /Conflict resolution failed/,
-    'red failed chip present after a failed attempt');
+test('detail: a capped file list is described as a sample', () => {
+  const AppView = makeAppView(ME);
+  const html = mergeabilityHtml(AppView, baseProposal({
+    freshness: FRESH({ mergeabilityFilesComplete: false }),
+  }));
+  assert.match(html, /That is a sample of the files/);
+});
+
+test('detail: a predicted conflict with no located files still explains itself', () => {
+  const AppView = makeAppView(ME);
+  const html = mergeabilityHtml(AppView, baseProposal({
+    freshness: FRESH({ mergeabilityFiles: [], mergeabilityFilesComplete: null }),
+  }));
+  assert.match(html, /no longer merges into main on its own/);
+  assert.doesNotMatch(html, /Changed on both sides/, 'no empty list header');
+});
+
+test('detail: an ATTEMPTED merge failure outranks the prediction', () => {
+  const AppView = makeAppView(ME);
+  const pr = baseProposal({
+    merge_conflict_state: 'conflict',
+    conflict_files: ['src/app.js'],
+    freshness: FRESH(),
+  });
+  assert.equal(mergeabilityHtml(AppView, pr), '', 'the prediction stands down');
+  assert.match(mergeConflictHtml(AppView, pr), /A merge was attempted/,
+    'and the record of the real attempt is what renders');
+});
+
+test('detail: a resolve in flight silences the prediction too', () => {
+  const AppView = makeAppView(ME);
+  assert.equal(
+    mergeabilityHtml(AppView, baseProposal({ resolving: true, freshness: FRESH() })),
+    '',
+    'no stale conflict box while a resolve is actively running'
+  );
+});
+
+test("detail: 'clean' and 'unknown' render nothing", () => {
+  const AppView = makeAppView(ME);
+  for (const m of ['clean', 'unknown', null]) {
+    assert.equal(
+      mergeabilityHtml(AppView, baseProposal({ freshness: FRESH({ mergeability: m }) })),
+      '',
+      `${m} is not a conflict`
+    );
+  }
+});
+
+test('detail: flat columns are read when the nested block is absent', () => {
+  // The votes routes serialize both — the nested `freshness` block and the
+  // raw columns — and older cached rows in the client only have the columns.
+  const AppView = makeAppView(ME);
+  const html = mergeabilityHtml(AppView, baseProposal({
+    mergeability: 'conflict',
+    mergeability_files: ['src/db/schema.sql'],
+    mergeability_files_complete: true,
+  }));
+  assert.match(html, /no longer merges into main on its own/);
+  assert.match(html, /src\/db\/schema\.sql/);
+});
+
+test('card: a predicted conflict is a blocked pill, not a green tally', () => {
+  const AppView = makeAppView(ME);
+  const html = proposalCardHtml(AppView, baseProposal({ freshness: FRESH() }));
+  assert.match(html, /Conflicts with main · 2/, 'the pill names it and counts the files');
+  assert.match(html, /gc-vote-count-blocked/, 'blocked tone, because it cannot merge');
+  assert.doesNotMatch(html, /Behind main/, 'the conflict outranks the behind badge');
+});
+
+test('card: the attempted-merge pill still wins over the predicted one', () => {
+  const AppView = makeAppView(ME);
+  const html = proposalCardHtml(AppView, baseProposal({
+    merge_conflict_state: 'conflict', freshness: FRESH(),
+  }));
+  assert.match(html, /Merge conflict/);
+  assert.doesNotMatch(html, /Conflicts with main/, 'one conflict pill, and it is the real one');
 });

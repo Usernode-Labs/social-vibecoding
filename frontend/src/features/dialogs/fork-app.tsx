@@ -23,14 +23,28 @@
  * why `_forkSource` no longer needs to exist as shared state.
  */
 
-import { useRef, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { DialogCard, DialogRoot } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 
 import { useHiddenClass } from '../../lib/legacy-dom';
+import { useStoreState } from '../../lib/use-store-state';
+import { AppAllowance, useAppAllowance } from './app-allowance';
+import { invalidateAppAllowance } from './app-allowance-store.js';
+import { CreateProgress } from './create-progress';
+import {
+  creationProgressStore,
+  fetchCreationProgress,
+  outcomeOf,
+  publishAppStatus,
+  stopWatchingCreation,
+  watchCreation,
+} from './creation-progress-store.js';
 import { useDialog } from './use-dialog';
+
+const POLL_INTERVAL_MS = 4000;
 
 export interface ForkSource {
   slug: string;
@@ -44,13 +58,19 @@ export function ForkAppDialog() {
   const [sourceName, setSourceName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [forked, setForked] = useState<{ slug: string; name: string } | null>(null);
+  const progress = useStoreState(creationProgressStore);
+  const { blocked: quotaBlocksCreation } = useAppAllowance();
 
   const dialog = useDialog<ForkSource>('fork', {
     onOpen: (payload) => {
+      void invalidateAppAllowance();
       const src = payload || null;
       sourceRef.current = src;
       setSourceName(src?.name || '');
       setError('');
+      setForked(null);
+      stopWatchingCreation();
       if (inputRef.current) inputRef.current.value = `${src?.name || 'App'} (fork)`;
       setTimeout(() => {
         inputRef.current?.focus();
@@ -59,11 +79,33 @@ export function ForkAppDialog() {
     },
     onClose: () => {
       setError('');
+      setBusy(false);
+      setForked(null);
+      stopWatchingCreation();
       if (inputRef.current) inputRef.current.value = '';
     },
   });
 
   useHiddenClass(errorRef, !error);
+
+  // Forking is asynchronous just like creating/importing. Follow the shared
+  // phase stream, with a poll as the recovery path if the terminal websocket
+  // event is missed while the source app remains open behind this dialog.
+  const creatingSlug = forked && outcomeOf(progress.status) === 'pending' ? forked.slug : null;
+  useEffect(() => {
+    if (!creatingSlug) return undefined;
+    let stopped = false;
+    const poll = () => {
+      if (stopped) return;
+      void fetchCreationProgress(creatingSlug, (url: string) => fetch(url));
+    };
+    poll();
+    const timer = setInterval(poll, POLL_INTERVAL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [creatingSlug]);
 
   // Verbatim from AppView.submitFork.
   async function submit(event: FormEvent) {
@@ -81,16 +123,30 @@ export function ForkAppDialog() {
         body: JSON.stringify({ name }),
       });
       const data = await res.json().catch(() => ({}));
+      void invalidateAppAllowance();
       if (!res.ok) {
         setError(data.error || 'Fork failed.');
         return;
       }
-      dialog.close();
-      // Land the user on the home feed where the new fork tile shows its
-      // "Spinning up…" state (identical to creating a new app).
-      (window.App?.navigateHome as (() => void) | undefined)?.();
+      const slug = data.app?.slug;
+      if (!slug) {
+        // A malformed success cannot be followed. Preserve the old fallback
+        // rather than rendering a progress card with no app to poll.
+        dialog.close();
+        window.PlatformUI?.toast?.(
+          'Your fork is being created. It will appear in your apps when it is ready.',
+        );
+        (window.App?.navigateHome as (() => void) | undefined)?.();
+        return;
+      }
+      watchCreation(slug);
+      setForked({ slug, name: data.app?.name || name });
+      // Put the new tile behind the still-open report immediately. The dialog
+      // owns the detailed status; the tile remains a useful destination after
+      // the user closes it.
+      (window.Home?.load as (() => void) | undefined)?.();
     } catch {
-      setError('Network error — please try again.');
+      setError('Network error. Please try again.');
     } finally {
       setBusy(false);
     }
@@ -103,16 +159,60 @@ export function ForkAppDialog() {
       {...dialog.backdropProps}
     >
       <DialogCard size="sm">
+        {forked ? (
+          <CreateProgress
+            appName={forked.name}
+            mode="fork"
+            progress={progress}
+            onOpenApp={() => {
+              const slug = forked.slug;
+              dialog.close();
+              (window.App?.openAppTab as ((s: string, t: string) => void) | undefined)?.(slug, 'app');
+            }}
+            onSetSecrets={() => {
+              const slug = forked.slug;
+              dialog.close();
+              (window.Secrets?.open as ((s: string) => void) | undefined)?.(slug);
+            }}
+            onRetry={() => {
+              const slug = forked.slug;
+              watchCreation(slug);
+              void fetch(`/api/apps/${encodeURIComponent(slug)}/retry`, { method: 'POST' })
+                .then(async (res) => {
+                  if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    publishAppStatus({
+                      slug,
+                      status: 'error',
+                      errorReason: data.error || `Retry failed (HTTP ${res.status}).`,
+                    });
+                    return;
+                  }
+                  (window.Home?.load as (() => void) | undefined)?.();
+                })
+                .catch(() => {
+                  publishAppStatus({
+                    slug,
+                    status: 'error',
+                    errorReason: 'Could not reach the server to retry. Try again from the app tile.',
+                  });
+                });
+            }}
+            onClose={() => dialog.close()}
+          />
+        ) : (
+          <>
         <h2 className="text-lg font-bold mb-1">
           Fork this app
         </h2>
-        <p className="text-xs text-zinc-500 mb-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
           Forking
           <span id="fork-source-name" className="font-mono text-zinc-300">
             {sourceName}
           </span>
-          stands up your own independent copy — its own repo, database, and web address.
+          stands up your own independent copy: its own repo, database, and web address.
         </p>
+        <AppAllowance />
         <form id="fork-form" className="space-y-4" onSubmit={submit}>
           <div>
             <label
@@ -137,7 +237,7 @@ export function ForkAppDialog() {
           </div>
           <div className="text-xs text-zinc-500 dark:text-zinc-400 space-y-1.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 p-3">
             <p>
-              <span className="text-emerald-500">
+              <span className="text-emerald-700 dark:text-emerald-400">
                 ✅ Carries over:
               </span>
               the app's code, its icon, and its current
@@ -147,13 +247,13 @@ export function ForkAppDialog() {
               data (e.g. leaderboards, public posts).
             </p>
             <p>
-              <span className="text-violet-400">
+              <span className="text-violet-700 dark:text-violet-400">
                 🔁 Resets to you:
               </span>
-              you become the sole owner — collaborators, group chat, issues, proposals and votes all start empty.
+              you become the sole owner, and collaborators, group chat, issues, proposals and votes all start empty.
             </p>
             <p>
-              <span className="text-amber-500">
+              <span className="text-amber-800 dark:text-amber-400">
                 ❌ Not copied:
               </span>
               <strong>
@@ -173,7 +273,7 @@ export function ForkAppDialog() {
             <button
               type="button"
               id="fork-cancel"
-              className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={() => dialog.close()}
             >
               Cancel
@@ -182,12 +282,15 @@ export function ForkAppDialog() {
               type="submit"
               id="fork-submit"
               layout="flex"
-              disabled={busy}
+              disabled={busy || quotaBlocksCreation}
+              disabledStyle="block"
             >
               {busy ? 'Forking…' : 'Fork'}
             </Button>
           </div>
         </form>
+          </>
+        )}
       </DialogCard>
     </DialogRoot>
   );

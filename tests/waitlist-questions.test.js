@@ -4,14 +4,17 @@
 //
 // Contracts guarded here:
 //
-//   1. Stage 1 mirrors topochain's required set: made_url (a real link)
-//      and discovery_source (a known key) are required; location and the
-//      free-text extras are optional. Unknown enum values are rejected,
-//      never stored.
+//   1. Stage 1 is email-only: NOTHING in the survey is required, so a
+//      bare join with just an address is valid and yields an empty
+//      answers object. The doc's "Simpler waitlist flow proposal"
+//      settled this, and Andrea and Evan agreed it in its comments.
+//      Unknown enum values are still rejected, never stored, and
+//      made_url has moved to stage 2.
 //   2. Stage 2 is all-optional but still validates enum keys (group
-//      size/role/tools, loss answers/kinds) and caps invites at
-//      MAX_INVITES. The cleaned payload contains only known keys — a
-//      hostile body can't smuggle arbitrary JSON into answers.
+//      size/role/tools, loss answers/kinds). The cleaned payload contains
+//      only known keys — a hostile body can't smuggle arbitrary JSON into
+//      answers, and the retired `invites` key is dropped rather than
+//      rejected so a stale client still saves.
 //   3. publicOptions() (what the SPA renders from) exposes exactly the
 //      option sets the validators accept, so client and server can't
 //      drift.
@@ -26,49 +29,115 @@ const q = require('../src/services/waitlist-questions');
 
 // ─── 1. Stage 1 ───────────────────────────────────────────────────────
 
-test('stage 1 requires a plausible made_url', () => {
-  assert.equal(q.validateStage1({ discovery_source: 'x' }).ok, false);
-  assert.equal(q.validateStage1({ made_url: 'not a link', discovery_source: 'x' }).ok, false);
-  assert.equal(
-    q.validateStage1({ made_url: 'https://example.com/repo', discovery_source: 'x' }).ok,
-    true
-  );
+test('stage 1 accepts an email-only join — every survey field is optional', () => {
+  const bare = q.validateStage1({});
+  assert.equal(bare.ok, true);
+  assert.deepEqual(bare.value, {});
 });
 
-test('stage 1 requires a KNOWN discovery source', () => {
-  const base = { made_url: 'https://example.com' };
-  assert.equal(q.validateStage1({ ...base }).ok, false);
-  assert.equal(q.validateStage1({ ...base, discovery_source: 'carrier-pigeon' }).ok, false);
+test('stage 1 still rejects unknown enum values it is given', () => {
+  assert.equal(q.validateStage1({ discovery_source: 'carrier-pigeon' }).ok, false);
+  assert.equal(q.validateStage1({ country: 'ZZ' }).ok, false);
   for (const key of Object.keys(q.DISCOVERY_SOURCES)) {
-    assert.equal(q.validateStage1({ ...base, discovery_source: key }).ok, true);
+    assert.equal(q.validateStage1({ discovery_source: key }).ok, true);
   }
 });
 
+test('stage 1 no longer accepts made_url — it belongs to stage 2 now', () => {
+  const r = q.validateStage1({ made_url: 'https://example.com', made_note: 'a bot' });
+  assert.equal(r.ok, true);
+  assert.equal(r.value.made_url, undefined);
+  assert.equal(r.value.made_note, undefined);
+});
+
 test('stage 1 cleans optional fields and rejects unknown countries', () => {
-  const base = { made_url: 'https://example.com', discovery_source: 'friend' };
+  const base = { discovery_source: 'friend' };
 
   const full = q.validateStage1({
     ...base,
-    made_note: '  A Discord bot  ',
     country: 'de',
-    city: 'Berlin',
-    discovery_detail: 'alice',
-    referrer_handle: '@bob',
     evil_extra: 'nope',
   });
   assert.equal(full.ok, true);
-  assert.equal(full.value.made_note, 'A Discord bot');
   assert.equal(full.value.country, 'DE'); // normalized upper-case
-  assert.equal(full.value.discovery.detail, 'alice');
-  assert.equal(full.value.referrer_handle, '@bob');
+  assert.equal(full.value.discovery.source, 'friend');
   assert.equal('evil_extra' in full.value, false);
 
   assert.equal(q.validateStage1({ ...base, country: 'ZZ' }).ok, false);
-  // Region pseudo-codes are valid countries.
-  assert.equal(q.validateStage1({ ...base, country: 'EU' }).ok, true);
+  // The five region pseudo-codes are RETIRED — the picker is the complete
+  // ISO 3166-1 list now, so there is a real entry for every place they stood
+  // in for. Two of them (EU, AP) are not ISO codes at all and are simply
+  // rejected; the other three ARE — LA is Laos, AF is Afghanistan, ME is
+  // Montenegro — and are accepted as those countries, which is exactly why
+  // the stored legacy answers were namespaced to `X-LA` and friends.
+  assert.equal(q.validateStage1({ ...base, country: 'EU' }).ok, false);
+  assert.equal(q.validateStage1({ ...base, country: 'AP' }).ok, false);
+  for (const code of ['LA', 'AF', 'ME']) {
+    const r = q.validateStage1({ ...base, country: code });
+    assert.equal(r.ok, true, `${code} is a real ISO country now`);
+    assert.equal(r.value.country, code);
+  }
+  // And the namespaced legacy form can never be submitted: the field is
+  // capped at two characters, so `X-LA` is structurally unreachable.
+  assert.equal(q.validateStage1({ ...base, country: 'X-LA' }).value.country, undefined);
+});
+
+// Andrea's 27 Aug 2026 review cut three stage-1 fields. A stale client
+// still sending them must SAVE normally with the keys dropped — the same
+// contract the retired `invites` array got — because a cached SPA is not a
+// reason to refuse somebody's signup.
+test('stage 1 drops the three retired fields instead of refusing them', () => {
+  const r = q.validateStage1({
+    discovery_source: 'friend',
+    city: 'Berlin',
+    discovery_detail: 'alice',
+    referrer_handle: '@bob',
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.value.city, undefined);
+  assert.equal(r.value.discovery.detail, undefined);
+  assert.deepEqual(r.value.discovery, { source: 'friend' });
+  assert.equal(r.value.referrer_handle, undefined);
+});
+
+// The eight options Andrea settled on, and the five keys that went with
+// the old ten. Retired keys must be REJECTED on new submissions (they are
+// not offered any more) while rows that already stored one keep it — the
+// admin screen renders the stored key directly and nothing rewrites it.
+test('stage 1 offers exactly the eight agreed discovery sources', () => {
+  assert.deepEqual(Object.keys(q.DISCOVERY_SOURCES), [
+    'x', 'linkedin', 'instagram', 'reddit', 'friend', 'podcast', 'event', 'other',
+  ]);
+  for (const retired of ['farcaster', 'chat', 'video', 'reading', 'search']) {
+    assert.equal(q.validateStage1({ discovery_source: retired }).ok, false,
+      `${retired} is no longer offered, so it cannot be submitted`);
+  }
 });
 
 // ─── 2. Stage 2 ───────────────────────────────────────────────────────
+
+test('stage 2 prepends https:// to a scheme-less made_url', () => {
+  assert.equal(q.validateStage2({ made_url: 'not a link' }).ok, false);
+  const r = q.validateStage2({ made_url: '  example.com/repo  ', made_note: '  A Discord bot  ' });
+  assert.equal(r.ok, true);
+  assert.equal(r.value.made_url, 'https://example.com/repo');
+  assert.equal(r.value.made_note, 'A Discord bot');
+});
+
+test('stage 2 preserves explicit web schemes and rejects unsupported ones', () => {
+  for (const url of ['https://example.com/repo', 'http://example.com/repo']) {
+    const r = q.validateStage2({ made_url: url });
+    assert.equal(r.ok, true);
+    assert.equal(r.value.made_url, url);
+  }
+  for (const url of [
+    'ftp://example.com/file',
+    'mailto:hello@example.com',
+    'javascript:alert.example.com',
+  ]) {
+    assert.equal(q.validateStage2({ made_url: url }).ok, false, `${url} is not a web URL`);
+  }
+});
 
 test('stage 2 accepts an empty body (everything optional)', () => {
   const r = q.validateStage2({});
@@ -99,7 +168,7 @@ test('stage 2 validates enum keys in every section', () => {
   assert.equal(ok.value.loss.had, 'yes');
 });
 
-test('stage 2 shapes handles/invites and caps invites at MAX_INVITES', () => {
+test('stage 2 shapes handles and drops the three retired keys', () => {
   const r = q.validateStage2({
     farcaster: '@fc',
     discord: 'disc',
@@ -113,9 +182,35 @@ test('stage 2 shapes handles/invites and caps invites at MAX_INVITES', () => {
   assert.deepEqual(r.value.handles, {
     farcaster: '@fc', discord: 'disc', telegram: '@tg', other: 'twitch.tv/me',
   });
-  assert.equal(r.value.invites.length, q.MAX_INVITES);
-  assert.equal(r.value.admit_together, true);
-  assert.equal(r.value.referrer_handle, '@ref');
+  // The share link replaced the typed rows, so a stale client still
+  // sending `invites` gets a NORMAL save with the key dropped — not a
+  // validation error somebody would have to debug.
+  assert.equal(r.value.invites, undefined);
+  // `admit_together` (#1534) is retired the same way. No admission path
+  // ever read it, so it went out with the checkbox, and a stale client
+  // still sending it gets the same normal save with the key dropped.
+  assert.equal(r.value.admit_together, undefined);
+  // `referrer_handle` went the same way on 27 Aug 2026, and for the same
+  // reason the stage-1 copy did: the invite link records the relationship
+  // as a row reference, so a typed handle was a claim nobody could resolve.
+  assert.equal(r.value.referrer_handle, undefined);
+});
+
+// "Follow along" is a SELF-REPORT. It is stored under its own key and must
+// never reach `answers.verified`, which OAuth actually proves: no network
+// exposes an API that confirms a follow (LinkedIn returns aggregate
+// statistics, Instagram a bare count, and X retired its boolean endpoint).
+test('stage 2 stores the follow claim as a claim, not as a verification', () => {
+  const on = q.validateStage2({ followed_claim: 1 });
+  assert.equal(on.ok, true);
+  assert.equal(on.value.followed_claim, true);
+  assert.equal(on.value.verified, undefined);
+
+  const off = q.validateStage2({ followed_claim: 0 });
+  assert.equal(off.value.followed_claim, false);
+
+  // Absent stays absent: a save that never mentions it must not invent one.
+  assert.equal('followed_claim' in q.validateStage2({}).value, false);
 });
 
 test('stage 2 output contains only known keys', () => {
@@ -135,9 +230,10 @@ test('publicOptions exposes exactly the option sets the validators accept', () =
   assert.deepEqual(opts.loss_answers, q.LOSS_ANSWERS);
   assert.deepEqual(opts.loss_kinds, q.LOSS_KINDS);
   assert.deepEqual(opts.countries, q.COUNTRIES);
-  assert.equal(opts.max_invites, q.MAX_INVITES);
-  // Every detail label points at a real source.
-  for (const key of Object.keys(q.DISCOVERY_DETAIL_LABELS)) {
-    assert.ok(key in q.DISCOVERY_SOURCES, `label for unknown source: ${key}`);
-  }
+  // max_invites went with the typed invite rows.
+  assert.equal('max_invites' in opts, false);
+  // The per-source "Which one?" labels went with the detail field they
+  // labelled, so the module must not still be publishing them.
+  assert.equal('discovery_detail_labels' in opts, false);
+  assert.equal(q.DISCOVERY_DETAIL_LABELS, undefined);
 });

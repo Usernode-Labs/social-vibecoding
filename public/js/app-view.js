@@ -21,9 +21,9 @@ const AppView = {
   iframeToken: null,
   // Slug the held iframeToken was minted for (app-scoped RS256 audience).
   iframeTokenSlug: null,
-  // #743: validated inner app path (path+query, wire-encoded) from a
-  // chromeless deep link (#app/<slug>/full?path=/t/123). Written by
-  // App.restoreFromHash on every pass (null when the hash carries none),
+  // #743: validated inner app path (path+query) from a chromeless deep link
+  // (/app/<slug>/full?path=%2Ft%2F123). Written by App.restoreFromHash on
+  // every pass (null when the route carries none),
   // consumed by buildAppIframeSrc, cleared by close().
   pendingInnerPath: null,
 
@@ -52,33 +52,6 @@ const AppView = {
   _ghIssues: [],
   _ghIssuesMeta: { truncatedList: false, note: null, repoUrl: null, myRemaining: null },
   _bountyInFlight: new Set(),
-
-  // #1100: Reporting-view caches. Deliberately SEPARATE from `_merged` /
-  // `_mergedHasMore` / `_mergedCursor`: the report pages the whole merged
-  // history, and writing that into `_merged` would silently extend the
-  // kanban Done column and retire its "Load more" footer as a side effect
-  // of visiting the report. null means "not paged yet" — _repaintReportView
-  // paints a placeholder and kicks _ensureReportData(). Invalidated on every
-  // successful _loadDevData and on app switch, so Refresh re-pages.
-  _reportMerged: null,
-  _reportLoading: false,
-  // True when the 500-row cap stopped the pager short of the full history.
-  _reportTruncated: false,
-  // The server's own `total` from page 1 — authoritative for "showing N of M"
-  // (see the staging first-page-only demo injection note in _ensureReportData).
-  _reportTotal: 0,
-  // True when paging FAILED and the report fell back to the board's first
-  // page, so the document can say it is showing partial history.
-  _reportPartial: false,
-  // Report period start (reporting-period): undefined = no explicit choice
-  // yet (resolves to the newest locked snapshot once _reportSnapshots
-  // loads, i.e. "Since last report"), null = "All history", string = ISO
-  // period start. Deliberately NOT cleared by _resetReportCaches — a data
-  // refresh must not discard the user's period choice; reset only on app
-  // switch (open()). _reportPeriodCustom keeps the dropdown on "Specific
-  // date…" while the date input is showing.
-  _reportSince: undefined,
-  _reportPeriodCustom: false,
 
   // #396: per-issue-number cache of the GitHub comment thread fetched
   // lazily when an issue topic opens, so _renderTopicHead's live-refreshes
@@ -137,11 +110,19 @@ const AppView = {
   // The two-line label cards with nothing under the title (General chat, an
   // archived session) do still pass the icon as a sibling: there the icon and
   // the whole content column are the same height, so centred IS title-aligned.
-  DEV_CARD_CLS: 'w-full flex items-center gap-3 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 px-3.5 py-3 text-left transition-colors',
+  // The widget language (#1191): a card is a white surface on the grey page
+  // ground, with no hairline and a rounder corner — the same figure/ground
+  // separation @/components/ui/grouped-list.tsx draws. One constant restyles
+  // every card the Dev board renders (issues, proposals, sessions, gov rows,
+  // recently-merged), which is exactly why they were pulled onto a shared
+  // class in the first place.
+  DEV_CARD_CLS: 'w-full flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-3.5 py-3 text-left transition-colors',
   // Trailing chevron marking a card as tappable (same affordance as the
   // General chat card).
-  DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>',
-  DEV_CARD_HOVER_CLS: 'hover:border-violet-300 dark:hover:border-violet-700 cursor-pointer',
+  DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>',
+  // Tappable cards have no border left to tint, so the affordance moves to the
+  // surface itself — the same `active:` fill ListRow uses.
+  DEV_CARD_HOVER_CLS: 'hover:bg-zinc-50 dark:hover:bg-zinc-800 cursor-pointer',
   // A PRIVATE dev session — nobody else can see it. Muted/draft treatment
   // (dashed border, slightly dimmed) so that fact reads off the card itself
   // instead of needing the grey caption that used to sit above the group.
@@ -157,22 +138,22 @@ const AppView = {
   // Per-type tinted icon chips — the Dev list's identity system, a mini
   // version of the home tiles' avatar square. [tint classes, SVG path].
   DEV_CARD_ICONS: {
-    chat: ['bg-violet-600/15 text-violet-500', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
+    chat: ['bg-violet-600/15 text-violet-700 dark:text-violet-400', 'M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z'],
     // Pencil (Heroicons outline) — sessions are edits-in-progress, not
     // terminals (#219). Distinct from the issue icon's pencil-in-bubble.
-    session: ['bg-emerald-500/15 text-emerald-500', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z'],
+    session: ['bg-emerald-500/15 text-emerald-700 dark:text-emerald-400', 'M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z'],
     // Comment-bubble-with-pencil: the chat bubble outline (dots removed)
     // plus the Heroicons pencil-alt tip scaled to sit inside it — issues
     // are written feedback, not warnings (hence no more exclamation).
-    issue: ['bg-amber-500/15 text-amber-500', 'M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5zM15.35 6.95a1.2 1.2 0 111.7 1.7l-5.15 5.15H10.2v-1.7l5.15-5.15z'],
-    proposal: ['bg-sky-500/15 text-sky-500', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
+    issue: ['bg-amber-500/15 text-amber-800 dark:text-amber-300', 'M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5zM15.35 6.95a1.2 1.2 0 111.7 1.7l-5.15 5.15H10.2v-1.7l5.15-5.15z'],
+    proposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
     gov: ['bg-slate-500/15 text-slate-400', 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'],
-    done: ['bg-emerald-500/10 text-emerald-500', 'M5 13l4 4L19 7'],
+    done: ['bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', 'M5 13l4 4L19 7'],
     // Document-text (Heroicons outline) — an issue with an auto-generated
     // proposal attached (#250). Sky keeps "blue = proposal" consistent with
     // the proposal cards, while the page shape stays distinct from their
     // thumbs-up: this is a drafted spec on an issue, not a PR up for a vote.
-    issueProposal: ['bg-sky-500/15 text-sky-500', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
+    issueProposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
     // "Mine" variants — distinguished from their base by GLYPH ONLY: they keep
     // the same sky tint as the base issue/PR chips but swap in a self-contained
     // pencil/edit mark = "your work-in-progress, jump back in." They mark the
@@ -181,28 +162,30 @@ const AppView = {
     // session). No manual coordinate compositing: issueProposalMine is a true
     // document-with-pencil (page + folded corner + pencil) so it still reads
     // as a document; proposalMine is a plain pencil "edit" mark.
-    issueProposalMine: ['bg-sky-500/15 text-sky-500', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
-    proposalMine: ['bg-sky-500/15 text-sky-500', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3'],
+    issueProposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
+    proposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3'],
   },
 
+  // Returns the icon's SPEC — tint classes + SVG path — which
+  // card/dev-card.tsx renders. `pulse` animates the whole chip for
+  // in-progress states (#250); `title` is the tooltip naming the state the
+  // tint encodes. The class literals stay in DEV_CARD_ICONS above, which is
+  // where Tailwind's extractor already scanned them.
   _devCardIcon(type, opts) {
     const [tint, d] = AppView.DEV_CARD_ICONS[type] || AppView.DEV_CARD_ICONS.issue;
-    const small = !!(opts && opts.small);
-    // pulse: animate the whole chip for in-progress states (#250).
-    // title: hover tooltip naming the state the tint encodes.
-    const pulse = opts && opts.pulse ? ' animate-pulse' : '';
-    const title = opts && opts.title ? ` title="${escapeAttr(opts.title)}"` : '';
-    return `<span class="${small ? 'w-7 h-7' : 'w-9 h-9'} rounded-lg ${tint} flex items-center justify-center shrink-0${pulse}"${title}>`
-      + `<svg class="${small ? 'w-4 h-4' : 'w-5 h-5'}" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="${d}"/></svg></span>`;
+    return {
+      tint,
+      path: d,
+      small: (opts && opts.small) ? true : undefined,
+      pulse: (opts && opts.pulse) ? true : undefined,
+      title: (opts && opts.title) || undefined,
+    };
   },
 
   // ── Dev view state (#194, card-list revision) ─────────────────────
   // The Dev mode is one card list plus full-screen sub-views (general
   // chat, topics, sessions, settings). _devTopic (declared with the
   // topic sub-view below) tracks the open topic for hash deep links.
-  // How many feed items are visible (the rest sit behind "Show more").
-  _feedShown: 20,
-
   // ── Dev view mode (list ↔ kanban) ─────────────────────────────────
   // A personal display preference, persisted to localStorage and shared
   // across every app's Dev view (same pattern as DevConsole's MODE_KEY
@@ -212,65 +195,73 @@ const AppView = {
   // from 1024px (lg) because the board is worth having on a narrow
   // window even though the four columns only fit at their readable
   // width by scrolling sideways there (see the 640-1023px block in
-  // app.css) — and 'list' (the historical default) below it.
+  // app.css) — and the Workshop (the default) below it.
   // Read/written only through the two helpers below so the
   // localStorage access stays guarded in one place.
   VIEW_MODE_KEY: 'devViewMode',
   // The single whitelist of dev view modes, in switcher order. Every place
   // that resolves a mode — the ?view= override, the stored preference, the
-  // setter and the toggle's click handler — validates against THIS array
-  // instead of repeating an inline `(v === 'kanban' || v === 'pm')` chain,
-  // so adding a mode (#1100 added 'report') is one edit rather than four.
-  // 'list' is the terminal fallback for anything not in here.
-  VIEW_MODES: ['list', 'kanban', 'pm', 'report'],
+  // setter and the tab strip's click handler — validates against THIS array
+  // instead of repeating an inline chain, so changing the set is one edit
+  // rather than four. 'workshop' is the terminal fallback for anything not here.
+  //
+  // THE UI OVERHAUL cut this from four modes to two. 'list' became 'feed'
+  // (the same surface, re-sorted into one recency-ordered activity stream
+  // that folds the Completed block in rather than parking it below), and
+  // 'pm' and 'report' were retired outright — a display preference toggle
+  // was carrying four genuinely different products, three of which almost
+  // nobody switched to. What was left was two answers — what just happened
+  // (the Activity feed) and what is in flight (the Board) — and the Workshop
+  // then replaced the feed: the same cards grouped by what they are ABOUT,
+  // with "what just happened" and "what needs your vote" as strips above the
+  // themes. It is the lander; the Board is the detailed read-it-all view.
+  VIEW_MODES: ['workshop', 'kanban'],
   _isViewMode(v) { return AppView.VIEW_MODES.indexOf(v) !== -1; },
+  // Stored preferences from before the cut. A viewer who last left the board
+  // in PM or Reporting has a localStorage value naming a mode that no longer
+  // exists; without this they would silently land on the width default
+  // instead of the nearest surviving surface, which reads as "my setting was
+  // forgotten". 'list' and 'feed' are what the Workshop replaced; the two
+  // retired overviews were board-shaped, so they resolve to the board.
+  RETIRED_VIEW_MODES: { list: 'workshop', feed: 'workshop', pm: 'kanban', report: 'kanban' },
+  _migrateViewMode(v) {
+    if (AppView._isViewMode(v)) return v;
+    return AppView.RETIRED_VIEW_MODES[v] || null;
+  },
   // The single source of truth in JS for where the board goes
   // side-by-side. Must stay in step with the two kanban media queries in
   // app.css (`max-width: 639px` for the tab strip, `min-width: 640px`
   // for the multi-column band) and with `sm:hidden` on #dev-kanban-tabs.
   KANBAN_MULTICOL_MEDIA: '(min-width: 640px)',
-  // Width-based default, resolved lazily ONCE per page load and never
-  // written to localStorage — so an undecided user keeps getting the
-  // responsive default on future visits, and the mode can't flip
-  // mid-flight between the paired _getViewMode() reads inside async
-  // flows like loadMoreMerged if the window is resized across 640px.
+  // The unset default is the Workshop on EVERY width. It used to be the
+  // kanban above 640px and the feed below, which made the lander depend on
+  // the device; the Workshop is the lander because it answers the first
+  // question on any device, and the Board is one tap away on both.
   _viewModeAutoDefault: null,
-  // #814: `?view=list|kanban|pm` — a one-shot URL override that wins over
-  // BOTH the stored preference and the width default, resolved once per
-  // page load (undefined = not parsed yet, null = nothing usable in the
-  // URL). It exists so a fresh browser can be pointed straight at a given
-  // view: the capture container boots with empty localStorage at the
-  // 390x844 phone frame, where the width default below resolves to 'list',
-  // so without this no mobile screenshot could ever show the board.
-  // Cleared by _setViewMode so an explicit toggle click always wins.
+  // `?view=` on the page URL wins for one paint — a deep link to a layout —
+  // and is retired the moment the viewer chooses (see _setViewMode).
   _viewModeUrlOverride: undefined,
   _readViewModeOverride() {
     if (AppView._viewModeUrlOverride !== undefined) return AppView._viewModeUrlOverride;
-    let v = null;
     try {
-      const raw = new URLSearchParams(window.location.search).get('view');
-      if (AppView._isViewMode(raw)) v = raw;
-    } catch { v = null; }
-    AppView._viewModeUrlOverride = v;
-    return v;
+      const v = new URLSearchParams(location.search).get('view');
+      AppView._viewModeUrlOverride = AppView._migrateViewMode(v) || null;
+    } catch { AppView._viewModeUrlOverride = null; }
+    return AppView._viewModeUrlOverride;
   },
   _getViewMode() {
     try {
       const override = AppView._readViewModeOverride();
       if (override) return override;
-      const stored = window.localStorage.getItem(AppView.VIEW_MODE_KEY);
-      if (AppView._isViewMode(stored)) return stored;
-      if (AppView._viewModeAutoDefault === null) {
-        AppView._viewModeAutoDefault =
-          (typeof window.matchMedia === 'function'
-            && window.matchMedia(AppView.KANBAN_MULTICOL_MEDIA).matches)
-            ? 'kanban' : 'list';
-      }
+      const stored = AppView._migrateViewMode(
+        window.localStorage.getItem(AppView.VIEW_MODE_KEY));
+      if (stored) return stored;
+      if (AppView._viewModeAutoDefault === null) AppView._viewModeAutoDefault = 'workshop';
       return AppView._viewModeAutoDefault;
-    } catch { return 'list'; }
+    } catch { return 'workshop'; }
   },
   _setViewMode(mode) {
-    const next = AppView._isViewMode(mode) ? mode : 'list';
+    const next = AppView._migrateViewMode(mode) || 'workshop';
     // An explicit choice retires the URL override (#814) — otherwise
     // ?view= would keep winning over every later toggle click.
     AppView._viewModeUrlOverride = null;
@@ -296,10 +287,17 @@ const AppView = {
   // stored assignee values are trimmed server-side (topic-attributes
   // normalizeValue), so no assignee.top can ever begin with whitespace.
   KANBAN_ASSIGNEE_UNASSIGNED: ' __unassigned__',
-  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false },
-  // Single source of truth for the empty/default filter set.
+  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null },
+  // Which app's filters `_kanbanFilters` currently holds. The persisted set
+  // is per slug, so this is what tells a repaint whether it is looking at a
+  // stale app's narrowing (restore) or at the viewer's own unsaved edit
+  // (leave it alone) — see the Workshop branch of _repaintDevBody (#1787).
+  _kanbanFiltersSlug: null,
+  // Single source of truth for the empty/default filter set. `theme` is the
+  // Workshop's: "Open on Board" from a theme narrows the board to that
+  // theme's items, and the chip that says so is dismissable like the rest.
   _defaultKanbanFilters() {
-    return { q: '', priority: null, assignee: null, category: null, needsVote: false };
+    return { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null };
   },
   // Load the saved filters for an app slug, merged over the defaults so a
   // stored object missing a (future) field degrades gracefully. Returns
@@ -382,6 +380,40 @@ const AppView = {
       }
     } catch {}
   },
+  // Was this click (or key) inside a fold wrapper — a Workshop row, a Board
+  // row, or the open card either folds to (card/fold.tsx)? The fold owns
+  // those; the delegated handlers above stand aside for them.
+  //
+  // Read off `composedPath()`, NOT `e.target.closest()`, and the difference
+  // is the whole bug this replaced. The fold's React listener sits on the
+  // portal host inside #dev-body, so it runs BEFORE the handler here, and
+  // React flushes the state update it makes in a microtask. On a real
+  // click the browser runs microtasks between listeners, so by the time
+  // the event reaches #dev-body the row that was clicked has already been
+  // replaced by the card (or the card by the row): `e.target` is a detached
+  // node, `closest()` from it finds no wrapper, the guard missed, and the
+  // row's own data-issue-row hook opened the item full-screen. The composed
+  // path is captured when dispatch begins and still holds the ancestors the
+  // target had. A scripted `el.click()` runs no microtask mid-dispatch, so
+  // the target is still attached and the old check passed — which is why
+  // the ?shot=board-unfold capture could not catch this.
+  _inFoldWrapper(e) {
+    const path = e && typeof e.composedPath === 'function' ? e.composedPath() : null;
+    if (path && path.length) {
+      return path.some((n) => !!(n && n.classList && n.classList.contains('dev-ws-rowwrap')));
+    }
+    const t = e && e.target;
+    return !!(t && typeof t.closest === 'function' && t.closest('.dev-ws-rowwrap'));
+  },
+  // `?cards=open` — every board card drawn unfolded: the board as it was
+  // before its columns folded their cards to rows (#1787), and the state the
+  // declared checks that read a card's inner anatomy run in. Read on every
+  // view build like ?col=, never stored: it describes this page load.
+  _cardsOpen() {
+    try {
+      return new URLSearchParams(window.location.search).get('cards') === 'open';
+    } catch { return false; }
+  },
   // Active tab as used by the render — never trusts the field blindly, so a
   // bad assignment can't produce a board with every column hidden.
   _activeKanbanTab() {
@@ -402,11 +434,18 @@ const AppView = {
   // { issues: [{type,ref}], review: [{type,ref}] }; empty arrays mean the
   // default derived sort (today's board).
   _boardOrder: { issues: [], review: [] },
-  // Manual drag-and-drop order overlay for the PM view, keyed by the
-  // case-folded assignee (a person), loaded by _loadDevData from GET
-  // /pm-order. Shape { "<assignee_key>": [{type,ref}], … }; an absent key
-  // means that person's section uses the default derived (recency) sort.
-  _pmOrder: {},
+  // False until this app's FIRST board load lands (set at the end of
+  // _loadDevData, cleared by open() on an app change and by close()).
+  //
+  // It exists because _repaintDevBody paints from the caches, and several
+  // things call it before those caches hold anything — a session-state flush
+  // does, ~550ms into a cold open, via _repaintCards. With empty caches the
+  // board drew four columns of "Nothing here yet · 0", which is not a slow
+  // screen but a wrong one: it looks finished. Both view models carry this
+  // through as `loading` so the components draw placeholders instead of
+  // asserting a count or an emptiness they don't know yet. See
+  // frontend/src/features/dev-board/card/skeleton.tsx.
+  _devDataReady: false,
   // One-shot flag set by the "Create proposal" button so the freshly
   // opened dev session renders a "promoting this PR creates the
   // proposal" hint.
@@ -416,7 +455,16 @@ const AppView = {
   // sees an expired JWT during a long reading/editing session.
   TOKEN_REFRESH_MS: 45 * 60 * 1000,
 
-  async open(slug) {
+  /**
+   * Load an app's record and stand its view up.
+   *
+   * `needsToken` is the iframe-token wait below. It defaults to TRUE, so
+   * every caller that does not pass it behaves exactly as before; only
+   * App.navigateToApp sets it false, and only when the route it was handed
+   * NAMES a dev surface. See the await for why that distinction is the
+   * whole of the option.
+   */
+  async open(slug, { needsToken = true } = {}) {
     // #931: the token mint runs ALONGSIDE the detail fetch, not after it.
     // These used to be strictly sequential, which cost a full extra round
     // trip before the app iframe could even be built — the thing that made
@@ -447,14 +495,10 @@ const AppView = {
       Object.keys(AppView._govApplyTimers).forEach(AppView._clearGovApplyTimers);
       AppView._govApplying = Object.create(null);
       AppView._govDueSince = Object.create(null);
-      // #1100: the report's paged merged history is per-app — never carry
-      // one app's completed work into another app's report.
-      AppView._resetReportCaches();
-      AppView._reportTotal = 0;
-      // The report period is per-app too, and lives OUTSIDE
-      // _resetReportCaches so a data refresh keeps the user's choice.
-      AppView._reportSince = undefined;
-      AppView._reportPeriodCustom = false;
+      // A different app's board is a different board: until its own load
+      // lands, the caches still hold the PREVIOUS app's cards, and painting
+      // those under this app's name is worse than painting placeholders.
+      AppView._devDataReady = false;
     }
     AppView.appData = appData;
 
@@ -464,17 +508,56 @@ const AppView = {
     // non-collaborators via AppView.readOnly) used to be two per-button
     // `hidden` toggles on the bottom tab bar's cells. The bar is now the
     // header's #app-mode-switch, whose whole-control visibility is owned
-    // by App.DrawerStatus.setAppOpen() — called from navigateToApp right
+    // by App.ImproveStatus.setAppOpen() — called from navigateToApp right
     // after this fetch resolves, on the same lifecycle as the drawer's
     // app-scoped rows. Nothing to toggle here any more.
 
-    await tokenReady;
+    // WARM THE DEV CACHES WHILE THE APP TAB IS WHAT THE VIEWER IS LOOKING AT.
+    // Everything the Dev area draws — the Activity feed, the board's four
+    // columns, the topic pages, the session lists, the category vocabulary —
+    // comes out of the one parallel fetch in _loadDevData, and until now that
+    // fetch did not START until the viewer asked for a Dev surface. Every
+    // first hop into Dev therefore paid for it in full, behind a skeleton, and
+    // so did the first hop BACK from a topic or a session.
+    //
+    // Being in the app is the signal: an app's Dev area is a handful of
+    // requests against the app you already opened, so issuing them now buys
+    // an instant board later at the cost of a load the session was very
+    // likely to make anyway. Fire-and-forget on purpose — nothing awaits it
+    // and nothing renders from it; _loadDevFeed's own call either joins this
+    // one in flight or finds the caches already filled.
+    AppView.prefetchDevData(slug);
+
+    // The app iframe cannot be built without this token, so an open heading
+    // for the App tab waits for it here — that is what this await has always
+    // been for, and skipping it there would mount a token-less frame and
+    // rebuild it a moment later.
+    //
+    // An open heading for a DEV surface waits for nothing: the board, the
+    // activity feed and the topic pages never touch the token, and the four
+    // calls below don't read it either (startTokenRefresh only arms a
+    // 45-minute interval). It used to cost nothing to wait anyway, because
+    // the mint and the GET /api/apps/:slug above ran concurrently and the
+    // fetch was the slower of the two. Putting that fetch in the service
+    // worker's boot fast lane (public/sw.js) reversed that: the app record
+    // now answers from cache in single-digit ms and this await became the
+    // longest thing between a cached board and the screen — a full round
+    // trip, unremovable, because /api/iframe-token is a short-lived
+    // credential and is hard-bypassed by the worker on purpose.
+    //
+    // The mint still STARTS here and is single-flight, so the App tab a
+    // viewer reaches later joins it already resolved.
+    //
+    // Why the caller's flag rather than `appData.self_hosted`, which is in
+    // hand by now: navigateToApp only clears it for a route that explicitly
+    // named a dev tab. Inferring the destination from the launcher's cached
+    // record instead would be wrong on the one case that matters — a record
+    // that says self-hosted for an app that no longer is lands on the App
+    // tab, and would land there token-less.
+    if (needsToken) await tokenReady;
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
     if (window.DevConsole) DevConsole.setCurrentApp(slug);
-    // Amber "⑂ Forked from <name>" lineage label in the shared header
-    // (cleared by close()). No-op for non-forks.
-    AppView.renderForkBadge();
     // Missing-secrets badge lives inside the dev-chat tab now and is
     // re-applied by renderDevChatTab() on every mount, so the call here
     // is just a primer for the case where the tab is already rendered.
@@ -528,7 +611,7 @@ const AppView = {
       // a check sees. Pure UI state, no writes, not env-gated.
       if (shot === 'plus-menu') {
         setTimeout(() => {
-          if (!String(location.hash || '').includes(`app/${slug}`)) return;
+          if (App.currentApp !== slug) return;
           document.getElementById('dev-plus-btn')?.click();
         }, 300);
       }
@@ -604,7 +687,7 @@ const AppView = {
           // Stop on route change too, and cap the window so a link left open
           // in a real tab can't keep polling.
           const arrived = wantRow ? !!document.getElementById('attr-popover') : !!AppView._openCardMenu;
-          if (!String(location.hash || '').includes(`app/${slug}`) || (tries += 1) > 40) {
+          if (App.currentApp !== slug || (tries += 1) > 40) {
             done();
             return;
           }
@@ -655,13 +738,97 @@ const AppView = {
           (scope || document.getElementById('gc-thread-head'))?.querySelector(want)?.click();
         }, 300);
       }
+      // #1585's check asserts that a feed issue row previews its recent
+      // comments, and it had no route that could show one.
+      //
+      // The rows are real and so are the comments. What is not reachable
+      // from a plain URL is the STATE: the comment slots fill from an
+      // IntersectionObserver (see _wireFeedComments — thirty issues must not
+      // fire thirty requests on paint), and the feed is a chronological merge
+      // of issues, proposals, governance rows, shared sessions, the
+      // discussion and merged work. On a busy app the first ISSUE row sits
+      // well below the fold, so nothing scrolls to it, so nothing fills it,
+      // and the check read a screen on which its own claim was simply not
+      // being made. It passed or failed on how busy the app had been that
+      // hour, which is not a test.
+      //
+      // So this link goes to the first slot and fills it. Directly, not by
+      // scrolling and hoping the observer fires: the observer is an
+      // OPTIMISATION and racing it is what made the check flaky in the first
+      // place. `_fillFeedComments` is the same function the observer calls,
+      // through the same cache and the same endpoint, so this exercises the
+      // product's path rather than a second one written for a test.
+      //
+      // It scrolls too, because a before/after capture has to SHOW the row.
+      // Pure UI state: one GET the observer would have made anyway, no
+      // writes, not env-gated — so the "before" side of a capture works.
+      // Every theme starts shut, so a THEME's contents — the stage lanes and
+      // the folded rows in them — are now only reachable by tapping one. This
+      // is the URL that reaches them: it opens the first theme and stops
+      // there, leaving every row folded, which is what the declared check for
+      // the lanes selects. `feed-comments` below opens a theme AND unfolds a
+      // row inside it, so it cannot stand in for this one.
+      if (shot === 'themes') {
+        AppView._workshopShot = 'themes';
+      }
+      // `?shot=board-unfold` clicks the FIRST folded row on the board, so a
+      // check can watch a card unfold the way a tap does — through the fold's
+      // own handler, with the delegated open handler above standing aside.
+      // A synthetic click is not `isTrusted`, so it does not end the window
+      // the way a real gesture does; same guard as the ⋯ menu link.
+      if (shot === 'board-unfold') {
+        let tries = 0;
+        const done = () => {
+          clearInterval(tick);
+          document.removeEventListener('pointerdown', onUserInput, true);
+          document.removeEventListener('keydown', onUserInput, true);
+        };
+        const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
+        document.addEventListener('pointerdown', onUserInput, true);
+        document.addEventListener('keydown', onUserInput, true);
+        const tick = setInterval(() => {
+          if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
+          if (document.querySelector('#dev-kanban .dev-ws-rowwrap-open')) { done(); return; }
+          const row = document.querySelector('#dev-kanban .dev-ws-row');
+          if (row) row.click();
+        }, 300);
+      }
+      if (shot === 'feed-comments') {
+        // The Workshop keeps its rows folded; the slot only exists inside an
+        // unfolded one, so the view model unfolds the first issue row for
+        // this capture (see _workshopView's autoExpand).
+        AppView._workshopShot = 'feed-comments';
+        let tries = 0;
+        const done = () => {
+          clearInterval(tick);
+          document.removeEventListener('pointerdown', onUserInput, true);
+          document.removeEventListener('keydown', onUserInput, true);
+        };
+        // A human who opens this link must not be scrolled around after
+        // their first real gesture. Same guard the ⋯ menu link uses.
+        const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
+        document.addEventListener('pointerdown', onUserInput, true);
+        document.addEventListener('keydown', onUserInput, true);
+        const tick = setInterval(() => {
+          // Give up on a route change, and cap the window so a link left
+          // open in a real tab cannot keep polling.
+          if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
+          const slot = document.querySelector('#dev-workshop .dev-feed-comments[data-comments-for]');
+          if (!slot) return; // the workshop's fetches have not landed yet
+          // Arrived: the slot has rendered a comment. Stop, but leave the
+          // page where it is.
+          if (slot.querySelector('.dev-feed-comment-time')) { done(); return; }
+          slot.scrollIntoView({ block: 'center' });
+          AppView._fillFeedComments(slot);
+        }, 300);
+      }
       if (shot === 'preview-loading' || shot === 'preview-rebuilding') {
         setTimeout(() => {
           // Gate on the ROUTE, not on appData: the dev tab clears appData
           // as it mounts, so an appData check here would race the render.
           // A fast navigate-away must not pop the overlay onto whatever
           // screen the user actually landed on.
-          if (String(location.hash || '').includes(`app/${slug}`)) {
+          if (App.currentApp === slug) {
             AppView.showPreviewLoaderShot(shot);
           }
         }, 300);
@@ -688,7 +855,7 @@ const AppView = {
       AppView._setStagingLoader(true, {
         title: 'Spinning the preview back up…',
         sub: 'The preview was paused after a while of inactivity. Rebuilding it '
-          + 'from the session’s latest changes — this usually takes 20–60 seconds.',
+          + 'from the session’s latest changes. This usually takes 20–60 seconds.',
       });
       return;
     }
@@ -718,17 +885,17 @@ const AppView = {
     AppView.appData = null;
     AppView.iframeToken = null;
     AppView.iframeTokenSlug = null;
+    // Leaving the app retires its board data as far as the surfaces are
+    // concerned: the next open re-loads, and until it does the caches on this
+    // object are stale by definition.
+    AppView._devDataReady = false;
     if (window.DevConsole) {
       DevConsole.hide();
       DevConsole.setCurrentApp(null);
     }
     if (window.Secrets) Secrets.hide();
     AppView.pendingInnerPath = null;
-    // Fork lineage lives in the drawer's bottom-anchored footer. Blank it and
-    // hide its row, or the previous app's lineage lingers on the home feed.
-    const forkSlot = document.getElementById('app-fork-badge-slot');
-    if (forkSlot) forkSlot.innerHTML = '';
-    if (window.App?.DrawerStatus) App.DrawerStatus.setAppOpen(false);
+    if (window.App?.ImproveStatus) App.ImproveStatus.setAppOpen(false);
   },
 
   // Iframe tokens are APP-SCOPED since the RSA cutover: each one carries
@@ -820,6 +987,143 @@ const AppView = {
   tokenForSlug(slug) {
     if (!slug || !AppView.iframeToken) return null;
     return AppView.iframeTokenSlug === slug ? AppView.iframeToken : null;
+  },
+
+  // ── Offline-capable apps (#487 follow-up) ────────────────────────────
+  //
+  // renderAppTab used to refuse to mount ANY app frame while offline, on
+  // the reasoning that the app lives on a subdomain THIS origin's service
+  // worker cannot cache. That is true, and beside the point for an app
+  // that registers its OWN worker on that subdomain and precaches its own
+  // shell: the document we would be mounting is one the app's worker can
+  // serve from cache with no network at all. The blanket refusal meant an
+  // app's offline support could never be exercised, because the document
+  // that would have used it was never requested.
+  //
+  // The bridge announces `__usernode_offline_ready` from inside the app
+  // frame whenever a service worker is controlling the app document (see
+  // the __USERNODE_OFFLINE_READY block in usernode-bridge.js). That can
+  // only be heard while ONLINE — it comes from a frame we had to mount —
+  // so it is remembered here, on the platform origin, and read back on the
+  // next offline load.
+  //
+  // Conservative in both directions. An app we have never heard announce
+  // keeps today's placeholder, and a "not-ready" announcement (worker
+  // gone, or a registration the WebView refused) drops the flag rather
+  // than leaving the user in front of a frame that cannot paint.
+  OFFLINE_READY_KEY: 'usernode:offline-ready',
+  // Entries are dropped after this long unseen, so the map cannot grow
+  // without bound on a browser that visits many apps and a stale flag for
+  // an app that has since dropped its worker expires on its own.
+  OFFLINE_READY_TTL_MS: 60 * 24 * 60 * 60 * 1000,
+  OFFLINE_READY_MAX: 50,
+
+  _readOfflineReady() {
+    try {
+      const map = JSON.parse(localStorage.getItem(AppView.OFFLINE_READY_KEY));
+      return (map && typeof map === 'object' && !Array.isArray(map)) ? map : {};
+    } catch {
+      // Absent, unparseable, or storage denied. This is an optimisation
+      // over a placeholder, never state anything else depends on.
+      return {};
+    }
+  },
+
+  _writeOfflineReady(map) {
+    try {
+      localStorage.setItem(AppView.OFFLINE_READY_KEY, JSON.stringify(map));
+    } catch { /* quota or private mode — we simply forget */ }
+  },
+
+  // Expired entries out, then the oldest ones past the cap.
+  _pruneOfflineReady(map) {
+    const now = Date.now();
+    const out = {};
+    Object.keys(map)
+      .filter((s) => typeof map[s] === 'number'
+        && (now - map[s]) < AppView.OFFLINE_READY_TTL_MS)
+      .sort((a, b) => map[b] - map[a])
+      .slice(0, AppView.OFFLINE_READY_MAX)
+      .forEach((s) => { out[s] = map[s]; });
+    return out;
+  },
+
+  // Record — or withdraw — "this app's own service worker is serving it".
+  markOfflineReady(slug, ready) {
+    if (!slug) return;
+    const map = AppView._readOfflineReady();
+    const had = Object.prototype.hasOwnProperty.call(map, slug);
+    if (!ready) {
+      if (!had) return;
+      delete map[slug];
+    } else {
+      // This fires on every app open and the value only feeds a TTL, so
+      // re-stamp at most daily rather than writing storage every launch.
+      if (had && (Date.now() - map[slug]) < 24 * 60 * 60 * 1000) return;
+      map[slug] = Date.now();
+    }
+    AppView._writeOfflineReady(AppView._pruneOfflineReady(map));
+  },
+
+  // True when this app announced, on some previous online visit, that its
+  // own worker was serving it — i.e. mounting its frame with no network
+  // loads a document rather than an error page.
+  offlineReadyFor(slug) {
+    if (!slug) return false;
+    const at = AppView._readOfflineReady()[slug];
+    return typeof at === 'number'
+      && (Date.now() - at) < AppView.OFFLINE_READY_TTL_MS;
+  },
+
+  // Which apps this browser has opened is session data like any other —
+  // dropped with the cached feed when a session ends (App._dropCachedSession).
+  clearOfflineReady() {
+    try { localStorage.removeItem(AppView.OFFLINE_READY_KEY); } catch { /* ignore */ }
+  },
+
+  // Bridge -> shell. Mirrors handleIssueStateMessage: only the mounted
+  // PRODUCTION frame is believed, so a staging preview — its own iframe,
+  // running unmerged code — can never mark the production app as
+  // offline-capable.
+  handleOfflineReadyMessage(e) {
+    const data = e.data;
+    if (!data) return;
+    const type = data.__usernode_offline_ready;
+    if (type !== 'ready' && type !== 'not-ready') return;
+    const appIframe = document.getElementById('app-iframe');
+    if (!appIframe || e.source !== appIframe.contentWindow) return;
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    AppView.markOfflineReady(slug, type === 'ready');
+  },
+
+  // A frame mounted with no token in its src (an offline mount, or any
+  // load whose mint didn't land) boots the app from its own cache, but
+  // every API call it makes will 401. So watch for the connection coming
+  // back, mint a token, and re-render: buildAppIframeSrc then composes a
+  // DIFFERENT src, frame.keeps() answers false, and the app reloads
+  // authenticated. An offline-capable app persists its unsent work —
+  // that is what makes it offline-capable — so the reload costs nothing.
+  //
+  // At most one armed at a time: renderAppTab can run repeatedly before
+  // the connection returns, and each run would otherwise add a listener.
+  _tokenlessReconnect: null,
+
+  _armTokenlessReconnect(appData) {
+    if (AppView._tokenlessReconnect) return;
+    const onChange = async (ev) => {
+      if (ev && ev.detail && ev.detail.offline) return;
+      window.removeEventListener('usernode:offline-change', onChange);
+      AppView._tokenlessReconnect = null;
+      // The viewer may have moved on while we were away.
+      if (AppView.appData !== appData) return;
+      await AppView.refreshToken(appData.slug);
+      if (AppView.appData !== appData) return;
+      if (!AppView.tokenForSlug(appData.slug)) return;
+      AppView.renderAppTab();
+    };
+    AppView._tokenlessReconnect = onChange;
+    window.addEventListener('usernode:offline-change', onChange);
   },
 
   // Compose the production iframe src from the app origin, the pending
@@ -1013,12 +1317,11 @@ const AppView = {
   // non-app tab; offline) falls back to the old path untouched.
   canEagerLaunch(slug, tab) {
     if (tab && tab !== 'app') return false;
-    if (window.Offline && Offline.isOffline()) return false;
+    // Offline, only an app whose own service worker can serve the document
+    // (#487 follow-up). Anything else falls through to renderAppTab's
+    // placeholder rather than animating open onto a frame that can't paint.
+    if (window.Offline && Offline.isOffline() && !AppView.offlineReadyFor(slug)) return false;
     const rec = AppView.launchRecordFor(slug);
-
-    // #1084 chunk G: this path replaces #app-content by hand, so retire any
-    // interim React root that owns it first — see _teardownDevRoots.
-    AppView._teardownDevRoots();
     if (!rec) return false;
     if (rec.demo) return false;
     if (rec.self_hosted) return false;
@@ -1038,7 +1341,7 @@ const AppView = {
         id="app-iframe"${srcAttr}${styleAttr}
         class="w-full h-full border-0"
         sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"
-        allow="clipboard-write; pointer-lock"
+        allow="clipboard-write; pointer-lock; geolocation"
       ></iframe>`;
   },
 
@@ -1126,6 +1429,10 @@ const AppView = {
     isActive() { return !!AppView._appFrameDom._el('app-iframe'); },
     frame() { return AppView._appFrameDom._el('app-iframe'); },
     hasFrame() { return !!AppView._appFrameDom._el('app-iframe'); },
+    setBackground(background) {
+      const el = AppView._appFrameDom._el('app-iframe');
+      if (el) el.style.backgroundColor = background || '';
+    },
     setSrc(src) {
       const el = AppView._appFrameDom._el('app-iframe');
       if (!el || !src) return false;
@@ -1187,6 +1494,24 @@ const AppView = {
     const content = document.getElementById('app-content');
     if (!content) return false;
     const rec = AppView.launchRecordFor(slug);
+
+    // #1084 chunk G: this path replaces #app-content, so retire any interim
+    // React root that owns it first — see _teardownDevRoots.
+    //
+    // It lives HERE and not in `canEagerLaunch`, where it started, because
+    // that is a PREDICATE: it answers "would an eager launch be the same
+    // frame renderAppTab builds?" and returns false four times out of five.
+    // Tearing down from inside it destroyed a surface this call was never
+    // going to replace — and once the App tab's placeholders became a portal
+    // (#1085 chunk H), that surface was `renderAppTab`'s own placeholder,
+    // painted milliseconds earlier on exactly the apps `canEagerLaunch`
+    // refuses: an errored app, one still spinning up, one awaiting secrets.
+    // The result was a blank App tab and a declared check reporting the
+    // build-log button missing from a page that had rendered it.
+    //
+    // Nothing above this line writes to the document, so a `false` from the
+    // predicate now leaves the screen exactly as it found it.
+    AppView._teardownDevRoots();
 
     AppView._launchId += 1;
     const launchId = AppView._launchId;
@@ -1429,12 +1754,128 @@ const AppView = {
     // away on the next render.
     App._setScreenVisible('home-screen', false);
     App._setScreenVisible('app-view', true);
-    document.getElementById('back-btn')?.classList.remove('hidden');
+    // The back slot is setBackIcon's alone now (see App.setBackIcon and
+    // features/header/back-button-store.js): it shows the ARROW or nothing,
+    // and the app glyph takes the slot the rest of the time. A raw unhide
+    // here used to leave a home icon on these fixtures; React reconciles it
+    // away on its next render anyway, so it was a write with no reader.
+  },
+
+  // Screenshot-state deep links `?shot=offline-app` / `?shot=offline-app-blocked`
+  // (#487 follow-up): the two outcomes of the offline App tab — an app whose
+  // own service worker can serve its document gets its frame mounted, one
+  // without keeps the reconnect placeholder.
+  //
+  // SYNTHESISED, like showLaunchCoverShot above and for the same reason. This
+  // screen needs a RUNNING app with a live origin behind the preview, and a
+  // checks database has no guarantee of one. Pointing these links at a real
+  // slug is exactly what made them fail on every proposal after #1356:
+  // renderAppTab never reached either branch, so the new state AND the
+  // unchanged one were both reported missing. Nothing here touches the real
+  // decision — offlineReadyFor and renderAppTab are the code under test.
+  //
+  // The record is fake and its frame points at the shell's own /health: same
+  // origin, trivially small, and on the service worker's bypass list. What
+  // these states are ABOUT is whether the shell mounts a frame at all, so a
+  // fabricated cross-origin URL would add nothing but a failed load.
+  showOfflineAppShot(ready) {
+    const slug = 'staging-demo-offline';
+    AppView.markOfflineReady(slug, !!ready);
+    AppView.appData = {
+      slug,
+      name: 'Staging demo app',
+      icon_emoji: '📴',
+      status: 'running',
+      url: location.origin,
+      self_hosted: false,
+    };
+    // buildAppIframeSrc resolves the inner path against the app origin, so
+    // this is what keeps the frame off the shell's own SPA root — which would
+    // otherwise load the whole platform inside itself.
+    AppView.pendingInnerPath = '/health';
+    AppView.renderAppTab();
+    App._setScreenVisible('home-screen', false);
+    App._setScreenVisible('app-view', true);
+    // The back slot is setBackIcon's alone now (see App.setBackIcon and
+    // features/header/back-button-store.js): it shows the ARROW or nothing,
+    // and the app glyph takes the slot the rest of the time. A raw unhide
+    // here used to leave a home icon on these fixtures; React reconciles it
+    // away on its next render anyway, so it was a write with no reader.
+  },
+
+  // ── The App tab's placeholder states ────────────────────────────────
+  //
+  // Five of them, and what distinguishes them is data, not markup: a dot or
+  // no dot, a line of prose, sometimes a mono red detail line, sometimes one
+  // button. `renderAppTab` used to build five `innerHTML` strings and then
+  // bind two buttons by id; it builds the ANSWER here and
+  // `features/app-frame/app-status.tsx` draws it.
+  //
+  // Unlike `_appFrameDom` above there is NO string twin. That adapter exists
+  // because the frame's element identity has to be assertable in Node; a
+  // placeholder is pure markup from data, so a second renderer would only be
+  // a copy to drift. `tests/app-frame-identity.test.js` holds the real store
+  // and asserts on the view instead.
+  _appStatusView(appData) {
+    if (appData?.status === 'creating') {
+      return { dot: 'creating', message: 'App is spinning up...', detail: null, action: null };
+    }
+    if (appData?.status === 'awaiting_secrets') {
+      const missing = Array.isArray(appData.missingSecrets) ? appData.missingSecrets : [];
+      return {
+        dot: 'creating',
+        message: 'Awaiting required secrets. Deploy is blocked.',
+        detail: missing.length ? missing.join(', ') : null,
+        action: appData.slug
+          ? { key: 'secrets', label: 'Configure secrets', slug: appData.slug }
+          : null,
+      };
+    }
+    if (appData?.status === 'error') {
+      // #416: show the one-line failure reason (server-gated `lastFailure`
+      // from the detail fetch, or the live WS errorReason) plus a "View build
+      // log" button for involved users. Outsiders keep the bare state.
+      const failReason = (appData.lastFailure && appData.lastFailure.reason)
+        || appData.errorReason || null;
+      const involved = !!(appData.lastFailure || appData.is_collaborator || appData.can_manage);
+      return {
+        dot: 'error',
+        message: 'App failed to start',
+        detail: failReason ? String(failReason).slice(0, 280) : null,
+        action: (involved && appData.slug)
+          ? { key: 'buildLog', label: 'View build log', slug: appData.slug }
+          : null,
+      };
+    }
+    return { dot: null, message: 'App not available', detail: null, action: null };
+  },
+
+  _reactAppStatus() {
+    return (typeof window !== 'undefined' && window.UsernodeReact
+      && window.UsernodeReact.appStatus) || null;
+  },
+
+  _paintAppStatus(host, view) {
+    AppView._reactAppStatus()?.mount(host, view);
+  },
+
+  /** The two placeholder buttons' openers, dispatched by name from the card. */
+  openAwaitingSecrets(slug) {
+    if (window.Secrets && slug) Secrets.open(slug);
+  },
+  openAppBuildLog(slug) {
+    if (window.BuildLog && slug) BuildLog.open(slug);
   },
 
   renderAppTab() {
     const content = document.getElementById('app-content');
     const appData = AppView.appData;
+
+    // Streamlined Concept: coming back from Activity / Board (which title
+    // themselves) the header returns to the app's name — the use state the
+    // Figma board draws. (Optional-called: the app-frame vm harnesses stub
+    // App without it.)
+    if (appData?.name) App.setHeaderTitle?.(appData.name);
 
     // #685: an issue-state announcement is invalidated by the frame that made
     // it going away, and a WindowProxy keeps its identity across same-iframe
@@ -1458,85 +1899,41 @@ const AppView = {
       // app is no longer running (creating / awaiting_secrets / error / gone),
       // so there is nothing worth keeping alive behind the placeholder.
       AppView._unmountAppFrame();
-      let inner;
-      if (appData?.status === 'creating') {
-        inner = '<div class="status-dot creating"></div><p class="text-sm">App is spinning up...</p>';
-      } else if (appData?.status === 'awaiting_secrets') {
-        const missing = Array.isArray(appData.missingSecrets) && appData.missingSecrets.length
-          ? appData.missingSecrets : (appData.missingSecrets || []);
-        const missingList = missing.length
-          ? `<p class="text-xs font-mono text-red-500">${missing.map(escapeHtml).join(', ')}</p>` : '';
-        inner = `
-          <div class="status-dot creating"></div>
-          <p class="text-sm">Awaiting required secrets — deploy is blocked.</p>
-          ${missingList}
-          <button id="awaiting-open-secrets"
-            class="mt-3 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white">
-            Configure secrets
-          </button>
-        `;
-      } else if (appData?.status === 'error') {
-        // #416: show the one-line failure reason (server-gated
-        // `lastFailure` from the detail fetch, or the live WS
-        // errorReason) plus a "View build log" button for involved
-        // users. Outsiders keep the bare failed-to-start state.
-        const failReason = (appData.lastFailure && appData.lastFailure.reason)
-          || appData.errorReason || null;
-        const reasonHtml = failReason
-          ? `<p class="text-xs font-mono text-red-500 max-w-md break-words">${escapeHtml(String(failReason).slice(0, 280))}</p>`
-          : '';
-        const involved = !!(appData.lastFailure || appData.is_collaborator || appData.can_manage);
-        const logBtnHtml = involved
-          ? `<button id="app-error-build-log"
-              class="mt-3 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white">
-              View build log
-            </button>`
-          : '';
-        inner = `
-          <div class="status-dot error"></div>
-          <p class="text-sm">App failed to start</p>
-          ${reasonHtml}
-          ${logBtnHtml}
-        `;
-      } else {
-        inner = '<p class="text-sm">App not available</p>';
-      }
-      content.innerHTML = `
-        <div class="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
-          ${inner}
-        </div>`;
+      AppView._paintAppStatus(content, AppView._appStatusView(appData));
       // #970: platform-rendered status text, not an app — keep the
       // home-indicator clearance.
       AppView._setSurface('platform');
-      // The "Configure secrets" button is wired here rather than via a
-      // delegated handler because this branch re-renders on every
-      // status change and the listener would otherwise re-attach.
-      const openBtn = document.getElementById('awaiting-open-secrets');
-      if (openBtn && window.Secrets && appData?.slug) {
-        openBtn.addEventListener('click', () => Secrets.open(appData.slug));
-      }
-      // Same wiring rationale for the build-log button (#416).
-      const buildLogBtn = document.getElementById('app-error-build-log');
-      if (buildLogBtn && window.BuildLog && appData?.slug) {
-        buildLogBtn.addEventListener('click', () => BuildLog.open(appData.slug));
-      }
+      // The two buttons used to be bound here, by id, right after the write:
+      // this branch re-renders on every status change, so a delegated
+      // listener would have re-attached. They are onClicks now
+      // (features/app-frame/app-status.tsx), dispatched by name into the two
+      // openers below.
       // Status updates pushed via WebSocket — no polling needed
       return;
     }
 
-    // Offline mode (#487): the running app lives on its own subdomain —
-    // a different origin the platform's service worker can't cache — so
+    // Offline mode (#487): the running app lives on its own subdomain — a
+    // different origin the platform's service worker can't cache — so
     // offline the iframe would render a broken frame. Show a placeholder
     // instead and re-render automatically once connectivity returns.
-    if (window.Offline && Offline.isOffline()) {
+    //
+    // UNLESS the app brought its own worker (#487 follow-up). An app that
+    // has announced `__usernode_offline_ready` from this frame precaches
+    // its own shell on its own origin, so the document we are about to
+    // mount comes out of ITS cache and needs no network — and refusing to
+    // mount it was the one thing standing between the user and the offline
+    // support the app had already built. See offlineReadyFor().
+    if (window.Offline && Offline.isOffline() && !AppView.offlineReadyFor(appData.slug)) {
       AppView._teardownLaunch();
       // Same as the status branch above: offline, the frame would render a
       // broken cross-origin document, so it goes rather than parks.
       AppView._unmountAppFrame();
-      content.innerHTML = `
-        <div class="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
-          <p class="text-sm">This app needs a connection — reconnect to open it.</p>
-        </div>`;
+      AppView._paintAppStatus(content, {
+        dot: null,
+        message: 'This app needs a connection. Reconnect to open it.',
+        detail: null,
+        action: null,
+      });
       // #970: our placeholder, not the app — keep the clearance.
       AppView._setSurface('platform');
       const retry = (ev) => {
@@ -1551,6 +1948,12 @@ const AppView = {
 
     const iframeSrc = AppView.buildAppIframeSrc();
     const frame = AppView._appFrame();
+
+    // Offline (or a mint that failed) leaves the src token-less — see
+    // _armTokenlessReconnect. Armed BEFORE the keeps() early return below,
+    // because a frame that is being kept is exactly the one still carrying
+    // the token-less document.
+    if (!AppView.tokenForSlug(appData.slug)) AppView._armTokenlessReconnect(appData);
 
     // #931: one-shot adoption. beginLaunch may already have mounted this
     // exact frame during the open animation; read the offer and null it in
@@ -1743,6 +2146,15 @@ const AppView = {
       ? window.UsernodeReact.devBoard
       : null;
   },
+  // The group chat's half of the bridge — the transcript, the two composers
+  // and the floating menus all publish through it. Same shape and same
+  // `typeof window` reason as `_reactDevBoard` above.
+  _reactGroupChat() {
+    return (typeof window !== 'undefined' && window.UsernodeReact)
+      ? window.UsernodeReact.groupChat
+      : null;
+  },
+
   // Retire whatever interim root owns #app-content.
   //
   // Call this BEFORE replacing #app-content.innerHTML by hand. React keeps
@@ -1751,7 +2163,25 @@ const AppView = {
   // longer in the document. It also stops the frame's store subscription and
   // effects outliving the surface they belong to.
   _teardownDevRoots() {
+    // A body-mounted dialog is a portal too (features/dev-board/modals/), and
+    // `unmountAll` would empty its card while leaving the scrim standing —
+    // an opaque black overlay with nothing in it and no way out. Settle each
+    // one first: leaving the Dev screen IS a dismissal, and each settler
+    // removes its own scrim. Cheap no-ops when nothing is open.
+    AppView._dismissDevModals();
     AppView._reactDevBoard()?.unmountAll();
+    // The sweep above drops the App tab's placeholder portal too; this
+    // forgets the value it was rendering (see appStatusBridge.clear).
+    AppView._reactAppStatus()?.clear();
+  },
+
+  /** Close whatever Dev dialog is open, resolving it the way Escape does. */
+  _creditsModalClose: null,
+  _dismissDevModals() {
+    if (AppView._sessionChecksClose) AppView._sessionChecksClose();
+    AppView._autoSessionCancel();
+    AppView._llmConsentDecline();
+    if (AppView._creditsModalClose) AppView._creditsModalClose();
   },
 
   // ── Dev mode (#194, forum revision): one page ──────────────────────
@@ -1771,7 +2201,7 @@ const AppView = {
     // #1324: both installers are DOCUMENT-level and one-shot, so they belong
     // HERE — above the sub-view branches — not in the card-list branch alone.
     // Every branch below returns early, so installing them down there meant a
-    // direct deep link to a topic page (#app/<slug>/dev/proposals/<id> pasted,
+    // direct deep link to a topic page (/app/<slug>/dev/proposals/<id> pasted,
     // shared, reloaded, or followed from a notification) never ran them: the
     // proposal's ⋯ "More actions" menu, its priority / category / assignee
     // chips and its "How voting works" affordances were all dead on click.
@@ -1800,7 +2230,8 @@ const AppView = {
     // topic/session/chat sub-views. Every back-navigation re-enters
     // renderDevView, so this single point covers the Back buttons,
     // browser back/forward, and programmatic navigation alike.
-    const outgoingScroll = document.getElementById('dev-forum-scroll');
+    const outgoingFeed = document.getElementById('dev-forum-scroll');
+    const outgoingScroll = window.PlatformUI?.scrollElement?.(outgoingFeed) || outgoingFeed;
     if (outgoingScroll) AppView._saveFeedScroll(App.currentApp, outgoingScroll.scrollTop);
 
     // Leaving whatever thread surface was open: drop the live render
@@ -1808,17 +2239,30 @@ const AppView = {
     if (typeof GroupChat !== 'undefined' && GroupChat.unmountThread) GroupChat.unmountThread();
     if (subTab !== 'topic') AppView._devTopic = null;
 
-    // #1084 chunk G: the topic sub-view is still an innerHTML template, so it
-    // has to retire whatever interim root the previous surface left on
-    // #app-content. The other three branches re-render that root instead of
-    // replacing it, which is why this is scoped rather than unconditional —
-    // unmount-then-remount on every Dev navigation would throw away the
-    // frame's state (the view mode) that the board is meant to keep.
-    if (subTab === 'topic' && ref && ref.kind && ref.id) AppView._teardownDevRoots();
+    // The topic sub-view used to be an `innerHTML` template, so it had to
+    // retire whatever interim root the previous surface had left on
+    // #app-content before overwriting it by hand. It is
+    // features/dev-board/topic-frame.tsx now and re-renders that root like the
+    // other three branches, so the teardown — and the one Dev navigation that
+    // threw the board frame's state away — is gone with the template.
+
+    // The Dev sub-views own the header's back slot: a SESSION leads with a
+    // real ← to the Board (the Figma session bar's left zone), every other
+    // sub-view hides it. Down here rather than per-branch because sub-view
+    // hops never pass App._showOnlyScreen, the usual single owner of that
+    // reset — without this, the session's arrow would linger on the Board.
+    App.setBackIcon?.('home');
 
     // Session view — a single DevChat session, full-screen, reached
     // from the Your-sessions strip, proposal cards, or the "+" flow.
     if (subTab === 'sessions' && ref) {
+      // Streamlined Concept: a cold deep link must not inherit the previous
+      // screen's title — the center tab names the app here, same as the app's
+      // other screens (the session's own name lives in #dc-session-header).
+      if (AppView.appData?.name) App.setHeaderTitle?.(AppView.appData.name);
+      App.setBackIcon?.('arrow', App._appUrl(
+        App.currentApp, 'dev', null, 'forum', { boardView: 'kanban' }
+      ));
       // <DevSessionShell/> — #dev-section stays the host renderDevChatTab
       // writes into, exactly as when this was a template.
       AppView._reactDevBoard()?.mountSessionShell(content);
@@ -1826,9 +2270,25 @@ const AppView = {
       return;
     }
 
-    // Full-screen general chat (card-list revision: chat is a card you
-    // tap into, not a pinned pane).
+    // Full-screen general chat, at /app/<slug>/dev/chat.
+    //
+    // It was the ACTIVITY destination for one round. Activity is the board's
+    // recency stream now (see the alias block in app.js's restoreFromHash), so
+    // this screen has NO ENTRY IN THE APP'S VIEW TABS — the request that made
+    // the change asked for the old Activity feed to be removed and replaced by
+    // the board's stream, and the three views are exactly three.
+    //
+    // The screen, its route and every link into it are untouched: a mention,
+    // a reply, a reaction and a shared spec all still land here, and
+    // /app/<slug>/dev/chat (and the legacy #app/<slug>/group-chat) still
+    // resolve. Its browse-to-it door is the chip menu's "Discussion" row
+    // (features/app-context/app-context-sheet.tsx) — a destination with its
+    // own page, which is what that menu lists, rather than a fourth segment
+    // in a strip whose three entries are three readings of the same work.
     if (subTab === 'chat') {
+      // The app's name stays the chip's label and the subtitle qualifies it —
+      // replacing the name here was the chip forgetting which app it was in.
+      App.setHeaderTitle?.(AppView.appData?.name || 'App', 'Discussion');
       AppView._renderChatSubView(content);
       return;
     }
@@ -1840,7 +2300,6 @@ const AppView = {
     }
 
     // The card list.
-    AppView._feedShown = 20;
     // #482: kanban filters are NOT reset here — they persist per app across
     // in-app navigation and are (re)loaded per slug from sessionStorage when
     // the board mounts in _repaintDevBody. Resetting on every card-list mount
@@ -1864,9 +2323,19 @@ const AppView = {
       cardCls: AppView.DEV_CARD_CLS,
       cardHoverCls: AppView.DEV_CARD_HOVER_CLS,
       viewMode: AppView._getViewMode(),
-      onSelectViewMode: (mode) => AppView._selectViewMode(mode),
     });
 
+    // The card area under whichever of its two names the active layout gives
+    // it — the kanban of work in flight is the Board, the themed lander is
+    // the Workshop — carried AS A SUBTITLE beside the app's own name, so the
+    // chip never stops saying which app you are in.
+    App.setHeaderTitle?.(AppView.appData?.name || 'App',
+      AppView._getViewMode() === 'kanban' ? 'Board' : 'Workshop');
+    // The discussion card's href follows the open app immediately; its preview
+    // line arrives with the request below. Both are the same publish, so the
+    // card never renders pointing at the previous app.
+    AppView._reactDevBoard()?.publishDiscussion(AppView._discussionView());
+    AppView._loadDiscussionSummary();
     AppView._wirePlusMenu(content);
     // Pull down on the dev feed to re-pull it (touch only; the scroller
     // is re-created on every render so this re-attaches each time).
@@ -1874,12 +2343,10 @@ const AppView = {
     if (devScroll) {
       PlatformUI.pullToRefresh(devScroll, () => AppView._loadDevFeed());
     }
-    // _wireViewToggle is gone: <DevBoardFrame/> binds the toggle's onClick and
-    // routes it to _selectViewMode below (#1084 chunk G).
-    document.getElementById('dev-chat-card').addEventListener('click', () => {
-      App.switchTab('dev', null, 'chat');
-    });
-    AppView._loadChatCardPreview();
+    // The General-chat CARD is retired (Streamlined Concept): Activity is an
+    // app-context sheet row and a first-class hash now, so the board no
+    // longer offers a second door to it. <DevBoardFrame/> binds its own
+    // Kanban|Feed control to _selectViewMode.
 
     // Delegated card-open handler: tapping a topic card anywhere except
     // its links/pills opens that topic full-screen. Bound on the stable
@@ -1889,6 +2356,15 @@ const AppView = {
     // the list feed, merged rows in the Completed block, and every card
     // in the kanban columns — they all carry the same
     // data-issue-row / data-proposal-row / data-gov-row hooks.
+    // Same re-entrancy problem, same remedy as _wirePlusMenu: #dev-body's
+    // "the node itself survives until the next renderDevView" is now a reason
+    // to abort rather than a reason not to guard — Board and Activity are two
+    // view modes of one screen, so renderDevView runs again against the
+    // surviving node and every delegated handler here would be bound twice.
+    AppView._devBodyAbort?.abort();
+    const devBodyAc = new AbortController();
+    AppView._devBodyAbort = devBodyAc;
+    const devBodySignal = devBodyAc.signal;
     const bodyEl = document.getElementById('dev-body');
     bodyEl.addEventListener('click', (e) => {
       // #313/#827: the card-level "Explore in dev chat" button is a
@@ -1907,9 +2383,20 @@ const AppView = {
       // appear in card markup remain below.
       const unarchiveBtn = e.target.closest('[data-unarchive-chip]');
       if (unarchiveBtn) { AppView._unarchiveSession(parseInt(unarchiveBtn.dataset.unarchiveChip, 10), unarchiveBtn); return; }
-      const archToggle = e.target.closest('[data-archived-toggle]');
-      if (archToggle) { AppView._toggleArchivedList(archToggle); return; }
+      // `[data-archived-toggle]` used to be delegated here too, into
+      // `_toggleArchivedList`, which flipped `hidden` and rotated the caret
+      // in place — and every repaint collapsed the list again. Open/closed
+      // is component state now (card/list-rows.tsx) and survives repaints,
+      // so both the branch and that helper are gone.
       if (e.target.closest('a, button, input, form')) return;
+      // A card inside a fold wrapper — the Workshop's rows, and the Board's
+      // columns since they fold too (card/fold.tsx) — is the fold's: its own
+      // handler opens and closes it, and "Open on its own page" is the route
+      // out. Both sizes keep their data-*-row hooks so the checks and the
+      // lookups below still find the item; this is what stops a click on
+      // them opening it full-screen. See _inFoldWrapper for why it reads the
+      // event's path rather than the target's ancestors.
+      if (AppView._inFoldWrapper(e)) return;
       const sessionChip = e.target.closest('[data-session-chip]');
       if (sessionChip) {
         // Own session → the owner's dev chat, exactly as the old strip.
@@ -1921,6 +2408,13 @@ const AppView = {
         // Someone else's shared session → its public discussion topic
         // (never their dev chat — that stays owner-scoped server-side).
         AppView.openTopic('session', parseInt(sharedRow.dataset.sharedSessionRow, 10));
+        return;
+      }
+      // The general discussion's feed row. It is not a topic — the chat is a
+      // full-screen sub-view with its own sub-tab — so it switches rather
+      // than calling openTopic.
+      if (e.target.closest('[data-discussion-row]')) {
+        App.switchTab('dev', null, 'chat');
         return;
       }
       const issueRow = e.target.closest('[data-issue-row]');
@@ -1935,11 +2429,13 @@ const AppView = {
       }
       const govRow = e.target.closest('[data-gov-row]');
       if (govRow) AppView.openTopic('gov', parseInt(govRow.dataset.govRow, 10));
-    });
+    }, { signal: devBodySignal });
     // Keyboard access for the session rows (role="button" divs): Enter /
     // Space activate, mirroring the old strip's per-row keydown wiring.
     bodyEl.addEventListener('keydown', (ev) => {
       if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      // The folded row handles its own Enter and Space (it is the toggle).
+      if (AppView._inFoldWrapper(ev)) return;
       const el = ev.target.closest
         && ev.target.closest('[data-session-chip], [data-shared-session-row]');
       if (!el) return;
@@ -1949,7 +2445,7 @@ const AppView = {
       } else {
         AppView.openTopic('session', parseInt(el.dataset.sharedSessionRow, 10));
       }
-    });
+    }, { signal: devBodySignal });
 
     await AppView._loadDevFeed();
 
@@ -1964,7 +2460,8 @@ const AppView = {
     const savedScroll = AppView._getFeedScroll(App.currentApp);
     if (savedScroll > 0) {
       requestAnimationFrame(() => {
-        const container = document.getElementById('dev-forum-scroll');
+        const feed = document.getElementById('dev-forum-scroll');
+        const container = window.PlatformUI?.scrollElement?.(feed) || feed;
         if (!container) return;
         const top = AppView._clampScrollTop(savedScroll, container.scrollHeight, container.clientHeight);
         container.scrollTo({ top, behavior: 'instant' });
@@ -1984,15 +2481,20 @@ const AppView = {
   // dev sub-view (topic, general chat) points at as a real anchor, so a
   // cmd-click opens the dev page in a new tab instead of leaving this
   // one. Returns '' when there is no open app to name rather than
-  // minting "#app/undefined/dev": NavLink.bind and the markup both treat
+  // minting "/app/undefined/board": NavLink.bind and the markup both treat
   // an empty href as "inert", which is the honest state.
   _devPageHref() {
     const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
-    return slug ? `#app/${encodeURIComponent(slug)}/dev` : '';
+    return slug ? App._appUrl(slug, 'dev', null, 'forum') : '';
   },
 
   async _renderTopicSubView(content, ref) {
     AppView._devTopic = { kind: ref.kind, id: ref.id };
+    // The roster is cached per proposal (see `_loadVoteRoster`, and why it
+    // has to be). Arriving here is a fresh read, so mark the entry stale and
+    // let the paint below re-read it once — returning to a topic shows the
+    // roster it had while the new one loads, rather than a loading line.
+    AppView._invalidateVoteRoster(ref.id);
     // Arriving at a SESSION topic opens its shared transcript. The
     // "Read chat" pill on the shared-session card used to set
     // _transcriptOpen on its way here; that pill is gone (the card is
@@ -2003,28 +2505,21 @@ const AppView = {
     // than per paint, so a reader who collapses the section (which nulls
     // the flag) doesn't have it spring back open on the next WS repaint.
     // A no-op when the owner hasn't published the chat:
-    // _transcriptSectionHtml renders nothing at all in that case.
+    // `_transcriptSectionView` returns null in that case.
     if (ref.kind === 'session') AppView._transcriptOpen = ref.id;
-    // #363: only the back bar is pinned here. The topic card/body no longer
-    // sits in its own capped, separately scrolling box — it's painted into the
-    // mounted thread's in-scroll header slot (#gc-thread-head) so the header
-    // and the discussion scroll as ONE area (matching the general chat, where
-    // only the composer is pinned). The topic's icon, title and number live on
-    // that header card, so repeating them up here would be pure duplication.
-    content.innerHTML = `
-      <div class="flex flex-col h-full min-h-0">
-        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <a id="dev-topic-back" class="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm shrink-0" title="Back to the dev page" href="${AppView._devPageHref()}">&larr; Back</a>
-        </div>
-        <div id="dev-topic-thread" class="flex-1 min-h-0"></div>
-      </div>`;
-
-    document.getElementById('dev-topic-back').addEventListener('click', (e) => {
-      // #1036: real anchor — leave a modified click to the browser.
-      if (window.NavLink && NavLink.isNativeClick(e)) return;
-      e.preventDefault();
-      App.switchTab('dev');
-    });
+    // #363: NOTHING is pinned here now. The topic card/body does not sit in
+    // its own capped, separately scrolling box — it's painted into the mounted
+    // thread's in-scroll header slot (#gc-thread-head) so the header and the
+    // discussion scroll as ONE area (matching the general chat, where only the
+    // composer is pinned). The topic's icon, title and number live on that
+    // header card, so repeating them up here would be pure duplication.
+    //
+    // The back bar that used to be pinned is gone with its props: the platform
+    // header carries a chevron to this page's Board on this route, so the bar
+    // was a second back control one row under the first. Its `_devPageHref()`
+    // and the NavLink-guarded click both live on that chevron instead — see
+    // features/dev-board/topic-frame.tsx.
+    AppView._reactDevBoard()?.mountTopicSubView(content);
 
     const ok = await AppView._loadDevData();
     // The view may have been replaced (or retargeted) while the fetch
@@ -2075,7 +2570,19 @@ const AppView = {
 
   _findTopicItem() {
     const t = AppView._devTopic;
-    if (!t) return null;
+    return t ? AppView._findItem(t.kind, t.id) : null;
+  },
+
+  /**
+   * One item, by kind and id — the lookup `_findTopicItem` has always done,
+   * with the current topic no longer baked into it.
+   *
+   * The Workshop needs the same resolution for a row it is expanding IN
+   * PLACE, where there is no `_devTopic` and must not be one: opening a
+   * card inline is not navigation.
+   */
+  _findItem(kind, id) {
+    const t = { kind, id };
     if (t.kind === 'issue') {
       return (AppView._ghIssues || []).find((i) => i.number === t.id) || null;
     }
@@ -2112,6 +2619,49 @@ const AppView = {
       || (AppView._topicGov && AppView._topicGov.id === t.id
           ? AppView._topicGov : null)
       || null;
+  },
+
+  // ── The one-shot caches go STALE, and nothing else refreshes them ────
+  //
+  // _topicProposal / _topicGov are written once by their fetch-on-demand
+  // path when a topic opens, and cleared only by openTopic. _loadDevData
+  // refreshes the LISTS — _proposals, _merged, _govProposals — so a topic
+  // resolving from one of those repaints with live data on every WS event.
+  // A topic resolving from the on-demand cache repaints from a frozen
+  // snapshot: refreshDevData runs, _loadDevData runs, _renderTopicHead
+  // runs, and nothing on screen changes. The checks badge, the vote tally
+  // and the merge state all sit at whatever they were when the page was
+  // opened, until it is reloaded and the fetch happens again.
+  //
+  // Reachable for any proposal opened from beyond the cached page, and
+  // RELIABLY so for a settled one: _loadDevData resets _merged to page 1 on
+  // every call, so a merged proposal deeper than that drops onto the cache
+  // the moment the first refresh lands — the fallback exists precisely
+  // because of that reset (see _topicProposal's own note below).
+  //
+  // So re-fetch on the same trigger that refreshes the lists. The guards
+  // mirror _findTopicItem's resolution order exactly, so a topic the lists
+  // already cover costs nothing; and both fetchers are best-effort, leaving
+  // the cache untouched on a miss, so the worst case is today's behaviour.
+  async _refreshTopicOnDemandRow() {
+    const t = AppView._devTopic;
+    if (!t) return;
+    // Issues and sessions have no on-demand cache — they resolve from
+    // _ghIssues / _sharedSessions / _mySessions, which _loadDevData owns.
+    if (t.kind === 'issue' || t.kind === 'session') return;
+    if (t.kind === 'proposal') {
+      if ((AppView._proposals || []).some((p) => p.id === t.id)) return;
+      if ((AppView._merged || []).some((p) => p.id === t.id)) return;
+      if (!AppView._topicProposal || AppView._topicProposal.id !== t.id) return;
+      await AppView._fetchProposalById(t.id);
+      return;
+    }
+    // Governance, matching _findTopicItem's trailing branch.
+    if ((AppView._govProposals || []).some((i) => i.id === t.id)) return;
+    if ((AppView._merged || []).some(
+      (r) => r.row_type === 'close_issue' && r.id === t.id)) return;
+    if (!AppView._topicGov || AppView._topicGov.id !== t.id) return;
+    await AppView._fetchGovProposalById(t.id);
   },
 
   // Single-item cache for a proposal opened from beyond the cached
@@ -2215,135 +2765,139 @@ const AppView = {
     // Closed / merged away mid-view: keep the last render readable.
     if (!item) return;
 
-    // #665: while the inline title editor is open, skip the repaint —
-    // head.innerHTML below would destroy the editor and any typed text.
-    // Every refresh trigger (checks poll, WS events, _repaintCards, the
-    // post-withdraw/close repaints) converges here, so this one guard
-    // covers them all. Data still refreshes in the background (_loadDevData
-    // runs regardless); save/cancel clear the flag and repaint from the
-    // fresh cache.
+    // #665: while the inline title editor is open, skip the repaint — the
+    // publish below remounts the head, which discards the editor and any
+    // typed text with it. Every refresh trigger (checks poll, WS events,
+    // _repaintCards, the post-withdraw/close repaints) converges here, so
+    // this one guard covers them all. Data still refreshes in the background
+    // (_loadDevData runs regardless); save/cancel clear the flag and repaint
+    // from the fresh cache.
     const editorInDom = !!document.getElementById('dev-issue-title-input');
     if (AppView._titleEditBlocksRepaint(t, AppView._editingIssueTitle, editorInDom)) return;
-    // Proceeding wipes any editor markup, so a still-set flag is stale by
-    // definition — drop it (self-healing: a torn-down editor can never
-    // freeze future repaints).
-    AppView._editingIssueTitle = null;
+    // The flag is NOT cleared here any more. It used to be, because the
+    // paint wiped the editor's markup and a still-set flag would have frozen
+    // every future repaint; the editor is rendered FROM the flag now
+    // (card/dev-card.tsx's title band), so it survives and the guard above
+    // is purely about not discarding typed text. Only save/cancel clear it.
 
-    let cardHtml;
-    let bodyHtml;
+    // The head is `features/dev-board/topic/topic-head.tsx` — the card and
+    // everything under it. `_topicViewFor` builds the two halves of its view
+    // model; nothing here writes markup.
+    const built = AppView._topicViewFor(t.kind, item);
+    if (!built) return;
+    const { card, body } = built;
+
+    const react = AppView._reactDevBoard();
+    if (react) {
+      // Mounted per paint, into the host the thread panel owns. The store
+      // flushes synchronously, so the head is in the DOM for the loads below
+      // — exactly as it was after the innerHTML assignment this replaced.
+      react.mountTopicHead(head);
+      react.publishTopicHead({ card, body });
+    }
+    // The Explore pills read `aiEnabledStore` now, so the DOM pass that used
+    // to dim them per paint is gone; this refreshes the one fact they read.
+    AppView._refreshAiAvailability();
+    AppView._fillKudosHosts(head);
+    if (t.kind === 'issue') AppView._loadIssueComments(item);
+    if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
+    // An auto-expanded transcript (arrived via "Read chat") loads straight
+    // away; every other one loads when it is opened.
+    if (body.transcript && body.transcript.expanded) {
+      AppView._loadSessionTranscript(body.transcript.id);
+    }
+  },
+
+  /**
+   * The topic screen's two halves — the full-width card, and everything
+   * under it — for one item.
+   *
+   * Lifted out of `_renderTopicHead` so the Workshop can draw the same thing
+   * INSIDE a folded row it has unfolded (#1787 round four): "Open card" used
+   * to leave the lander for a screen the reader then had to come back from,
+   * and every part of that screen except the comment threads — which the
+   * Workshop's sheet already carries — fits under the card in place.
+   *
+   * Pure apart from the caches it reads. It publishes nothing and loads
+   * nothing: the side effects stayed with the caller, because a card opened
+   * inline wants a different set of them.
+   */
+  _topicViewFor(kind, item) {
+    if (!item) return null;
+    const t = { kind };
+    let card;
+    let body;
     if (t.kind === 'issue') {
-      cardHtml = AppView._renderIssueRow(item, { noNav: true });
-      // #396: the issue body, then a placeholder for the GitHub comment
-      // thread. The thread is fetched lazily (after paint) and rendered
-      // into the placeholder, so a cached (or empty) result reuses what's
-      // already there across WS-driven _renderTopicHead refreshes.
-      bodyHtml = AppView._detailActionsHtml('issue', item)
-        + AppView._issueBodyHtml(item)
-        + '<div id="dev-issue-comments" class="mt-2"></div>';
+      card = AppView._issueCardModel(item, { noNav: true });
+      // #396: the issue body, then the GitHub comment thread. The thread is
+      // fetched lazily (after paint) into `#dev-issue-comments`, which the
+      // head renders as an empty host, so a cached (or empty) result reuses
+      // what is already there across WS-driven refreshes.
+      body = {
+        actions: AppView._detailActionsView('issue', item),
+        issueBodyHtml: AppView._issueBodyHtml(item),
+        comments: true,
+      };
     } else if (t.kind === 'proposal') {
-      cardHtml = AppView._renderProposalCard(item, { noNav: true });
+      card = AppView._proposalCardModel(item, { noNav: true });
       // Plain-language summary (when one was generated) sits at the very top
       // of the proposal body region, above proposer / linked issues / roster
-      // and the discussion thread — mirroring _issueBodyHtml for issues.
-      bodyHtml = AppView._detailActionsHtml('proposal', item)
-        + AppView._proposalSummaryHtml(item) + AppView._proposalDetailsHtml(item)
-        // shared_at (and so transcript_shared) survives promotion and
-        // merge, so a proposal whose owner published the dev chat keeps
-        // offering it here — the "how did this change come about?" read,
-        // available while voting and after it merged.
-        + AppView._transcriptSectionHtml(item);
+      // and the discussion thread — mirroring the issue body for issues.
+      body = {
+        actions: AppView._detailActionsView('proposal', item),
+        summaryHtml: AppView._proposalSummaryHtml(item),
+        // #1370's "Full proposal details" disclosure, between the generated
+        // summary and the detail block, exactly where it was inserted.
+        proposalBody: AppView._proposalBodyView(item),
+        details: AppView._proposalDetailsView(item),
+        // shared_at (and so transcript_shared) survives promotion and merge,
+        // so a proposal whose owner published the dev chat keeps offering it
+        // here — the "how did this change come about?" read, available while
+        // voting and after it merged.
+        transcript: AppView._transcriptSectionView(item),
+      };
     } else if (t.kind === 'session') {
       // A shared session's public page: the static card (no nav — we're
-      // already here) plus a one-line explainer. The discussion mounts
-      // beneath exactly like a proposal's. No "Explore in dev chat" (there's
-      // no PR to explore yet) and no vote panel — there's nothing to vote
-      // on yet either.
+      // already here) plus its public details. Imported PRs already have the
+      // same description, testing guidance, checks and attributes they will
+      // carry after promotion, so render the proposal-shaped detail blocks
+      // now; lifecycle status controls voting, not metadata visibility.
+      // Ordinary dev sessions keep the one-line explainer they had before.
       // Shared rows carry username; the viewer's own rows (from
       // /api/me/active-sessions) don't — the owner is the viewer then.
       const ownerName = item.username || (App.user ? App.user.username : '') || 'someone';
-      const owner = escapeHtml(ownerName);
-      cardHtml = AppView._renderSharedSessionCard({ ...item, username: ownerName }, { noNav: true });
+      card = AppView._sharedSessionCardModel({ ...item, username: ownerName }, { noNav: true });
       const imported = item.source === 'imported';
-      bodyHtml = AppView._detailActionsHtml('session', item)
-        + (imported
-          ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">Imported pull request — the code stays on GitHub. The discussion below is visible to everyone and carries over when the importer puts it up for vote.</div>`
-          : `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">Live dev session by ${owner} — the discussion below is visible to everyone and carries over if this becomes a proposal.</div>`)
-        + (imported ? '' : AppView._transcriptSectionHtml(item));
+      body = imported
+        ? {
+          actions: AppView._detailActionsView('session', item),
+          summaryHtml: AppView._proposalSummaryHtml(item),
+          proposalBody: AppView._proposalBodyView(item),
+          details: AppView._proposalDetailsView(item),
+          transcript: null,
+        }
+        : {
+          actions: AppView._detailActionsView('session', item),
+          note: `Live dev session by ${ownerName}. The discussion below is visible to everyone and carries over if this becomes a proposal.`,
+          transcript: AppView._transcriptSectionView(item),
+        };
     } else {
-      cardHtml = AppView._renderGovCard(item, { noNav: true });
+      card = AppView._govCardModel(item, { noNav: true });
       // Close-issue proposals store the proposer's reason in the payload;
       // fall back to it when the description is empty so a completed
       // close-issue topic still shows why the close was proposed.
-      const govBody = item.description
-        || (item.payload && item.payload.reason) || '';
-      bodyHtml = govBody
-        ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">${escapeHtml(govBody)}</div>`
-        : '';
+      body = {
+        actions: null,
+        note: item.description || (item.payload && item.payload.reason) || null,
+      };
     }
 
-    // #827: the only AI affordance on a proposal is the card pill —
-    // "✨ Explore in dev chat" (_exploreChatBtnHtml, gated by
-    // _showExplorePill).
-    // It replaced the old private read-only "Ask AI" advisor panel: instead
-    // of a bespoke side-chat, the pill opens the user's real dev chat with a
-    // message about this PR pre-filled (never sent) in the composer.
-    //
-    // Who gets it: see _showExplorePill — the one predicate every render
-    // site shares. Here it additionally decides whether to bind the pill's
-    // click and run the availability pass below (the head has no delegated
-    // handler), so it must agree with what _renderProposalCard painted.
-    const cardHasExplorePill = (t.kind === 'proposal' && AppView._showExplorePill(item));
-
-    head.innerHTML = cardHtml + bodyHtml;
-    AppView._wireDetailActions(head, t.kind, item);
-    if (window.Kudos) Kudos.attach(head);
-    if (t.kind === 'issue') AppView._loadIssueComments(item);
-    if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
-
-    // Transcript section: same reason as the Explore pill below — the topic
-    // head has no delegated handler, so bind per paint. Rebinding on every
-    // repaint is leak-free because the old nodes go with the innerHTML.
-    // Auto-expanded (arrived via "Read chat") sections load immediately.
-    const transcriptToggle = head.querySelector('[data-transcript-toggle]');
-    if (transcriptToggle) {
-      transcriptToggle.addEventListener('click', () => AppView._toggleTranscript(transcriptToggle));
-      if (transcriptToggle.getAttribute('aria-expanded') === 'true') {
-        AppView._loadSessionTranscript(parseInt(transcriptToggle.dataset.transcriptToggle, 10));
-      }
-    }
-    // "Fork this chat" is painted INSIDE the transcript body (after its
-    // fetch), so it can't be bound here — delegate from the section.
-    const transcriptSection = head.querySelector('[data-transcript-section]');
-    if (transcriptSection) {
-      transcriptSection.addEventListener('click', (ev) => {
-        const forkBtn = ev.target.closest('[data-fork-chat]');
-        if (!forkBtn || forkBtn.disabled) return;
-        ev.preventDefault();
-        AppView.forkSharedChat(parseInt(forkBtn.dataset.forkChat, 10), forkBtn);
-      });
-    }
-
-    // #321: wire the card pill in the topic head. Unlike the feed and
-    // Completed list, #gc-thread-head has no delegated
-    // .gc-explore-chat-btn handler, so without this the pill would be inert
-    // (no click, no availability dimming). Bind the click to the same opener
-    // the delegated handler uses and run the shared availability pass over
-    // this container.
-    if (cardHasExplorePill) {
-      const pill = head.querySelector('.gc-explore-chat-btn');
-      if (pill) {
-        pill.addEventListener('click', () => {
-          if (pill.disabled) return;
-          AppView.exploreProposalInDevChat(t.id, pill);
-        });
-      }
-      AppView._applyExploreChatAvailability(head);
-    }
-
-    // Keep the generating-state poller in sync with what we just painted, the
-    // same way _renderFeedInner does for the feed. An issue opened while its
-    // headless run is 'generating' begins polling so the card advances to its
-    // outcome label without a manual refresh.
+    // The topic page's card is the board card at full width: the GitHub link
+    // rides at the end of its meta line, its state is the bar (not the
+    // capsule), and the detail actions join its one action line.
+    AppView._topicCard(card, t.kind, item, body);
+    body.aboutTitle = { issue: 'About this issue', proposal: 'About this change', session: 'About this session', gov: 'About this proposal' }[t.kind] || 'About';
+    return { card, body };
   },
 
   // #1045: the ONE rule for whether a proposal row offers the "Explore in
@@ -2377,6 +2931,34 @@ const AppView = {
   //
   // Read-only viewers are NOT filtered here: that gate lives in
   // _exploreChatBtnHtml (#621), so it stays in exactly one place.
+  // Shape a card model for the topic head (round three): the GitHub link as
+  // the meta line's last word, the state as a bar rather than the capsule,
+  // and the detail actions merged onto the card's own band — the labelled
+  // Preview, Explore, kudos, and the issue's claim toggle. Anything the ⋯
+  // already carries (Open session, Withdraw, Generate proposal, Pledge
+  // kudos, Propose to close) is not repeated as a pill.
+  _topicCard(card, kind, item, body) {
+    if (!card || !item) return card;
+    const gh = kind === 'issue' ? item.htmlUrl : item.pr_url;
+    if (gh) {
+      card.meta = [...(card.meta || []), {
+        t: 'link', href: gh, s: 'GitHub ↗', cls: 'dev-topic-gh',
+        title: kind === 'issue' ? 'Open this issue on GitHub' : 'Open this pull request on GitHub',
+      }];
+    }
+    if (card.pill) card.pill = { ...card.pill, inline: false };
+    const pills = (body && body.actions && Array.isArray(body.actions.pills)) ? body.actions.pills : [];
+    const keep = pills.filter((p) => p.preview || p.explore != null || p.kudos != null
+      || p.key === 'claim' || p.key === 'promote');
+    const have = new Set((card.actions || []).map((a) => (a.act && a.act.fn) || (a.kudos != null ? 'kudos' : null)));
+    card.actionPreview = null;
+    card.actions = [
+      ...(card.actions || []),
+      ...keep.filter((p) => !(p.act && have.has(p.act.fn)) && !(p.kudos != null && have.has('kudos'))),
+    ];
+    return card;
+  },
+
   _showExplorePill(pr) {
     if (!pr) return false;
     if (pr.kind || pr.row_type === 'close_issue') return false;
@@ -2396,9 +2978,12 @@ const AppView = {
   // Sits between the topic head's card and its body. `kind` ∈
   // 'issue' | 'proposal' | 'session'; governance proposals keep their card's
   // own Yes/No + ⋯ and need no extra block.
-  _detailActionsHtml(kind, item) {
-    if (!item) return '';
-    const rows = [];
+  //
+  // Returns the block's MODEL (topic/model.ts); topic/topic-head.tsx draws
+  // it. Returns null when there is nothing at all to show.
+  _detailActionsView(kind, item) {
+    if (!item) return null;
+    const pills = [];
 
     // Preview: the full-width, LABELLED affordance. The board's version is
     // icon-only to fit the card budget; here there is room to say what it
@@ -2406,115 +2991,138 @@ const AppView = {
     const previewKind = kind === 'session'
       ? (item.username && App.user && item.user_id !== App.user.id ? 'shared-session' : 'own-session')
       : 'proposal';
-    const preview = AppView.cardPreviewHtml(item, {
+    const preview = AppView._cardPreviewSpec(item, {
       kind: previewKind, sessionId: item.id, iconOnly: false,
     });
-    if (preview) rows.push(preview);
 
     if (kind === 'proposal') {
       const mine = !!(App.user && item.user_id === App.user.id);
       const isMerged = item.status === 'merged';
       if (mine && item.source !== 'imported') {
-        rows.push(`<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${item.id})">Open the dev session behind this</button>`);
+        pills.push({
+          key: 'session', cls: 'gc-vote-btn', label: 'Open the dev session behind this',
+          title: 'Open the dev session behind this proposal',
+          act: { fn: 'openProposalSession', args: [item.id] },
+        });
       }
       // _showExplorePill, not `!mine`: the viewer's own IMPORTED proposal has
       // no session behind the row above (#687), so Explore is its only AI
       // affordance (#1045). The shared predicate owns that rule.
-      if (AppView._showExplorePill(item) && !AppView.readOnly) rows.push(AppView._exploreChatBtnHtml(item));
-      if (!AppView.readOnly && !isMerged && mine && item.status === 'promoted') {
-        rows.push(`<button class="gc-vote-btn" title="Withdraw this proposal (closes the PR, removes it from the vote panel)" onclick="AppView.withdrawProposal(${item.id})">Withdraw</button>`);
+      if (AppView._showExplorePill(item) && !AppView.readOnly) {
+        pills.push({ key: 'explore', label: 'Explore in dev chat', title: AppView.EXPLORE_CHAT_TITLE, explore: item.id });
       }
-      if (window.Kudos) rows.push(Kudos.renderButton(item, { compact: true }));
+      if (!AppView.readOnly && !isMerged && mine && item.status === 'promoted') {
+        pills.push({
+          key: 'withdraw', cls: 'gc-vote-btn', label: 'Withdraw',
+          title: 'Withdraw this proposal (closes the PR, removes it from the vote panel)',
+          act: { fn: 'withdrawProposal', args: [item.id] },
+        });
+      }
+      if (window.Kudos) pills.push({ key: 'kudos', label: '', kudos: item.id });
     } else if (kind === 'session' && item.source === 'imported') {
       const mine = item.user_id == null || !!(App.user && item.user_id === App.user.id);
       if (!AppView.readOnly && mine && item.status === 'active') {
-        rows.push(`<button class="gc-vote-btn" title="Put this imported pull request up for vote" onclick="AppView.promoteImportedSession(${item.id}, this)">Put up for vote</button>`);
+        pills.push({
+          key: 'promote', cls: 'gc-vote-btn', label: 'Put up for vote',
+          title: 'Put this imported pull request up for vote',
+          act: { fn: 'promoteImportedSession', args: [item.id] }, passNode: true,
+        });
       }
-    } else if (kind === 'issue') {
+    } else if (kind === 'issue' && !AppView.readOnly) {
       // The issue card's demoted actions, spelled out where there is room.
-      if (!AppView.readOnly) {
-        const h = item.headless;
-        const generating = !!(h && h.status === 'generating');
-        const clonedReady = !!(h && h.status === 'ready' && h.mySessionId);
-        if (!generating && !clonedReady) {
-          rows.push(`<button class="gc-vote-btn" title="Spin up a headless AI session that starts solving this issue on its own — uses your credits" onclick="AppView.confirmAutoSession(${item.number})">Generate proposal</button>`);
-        }
-        const ipClaims = (item.in_progress && Array.isArray(item.in_progress.claims))
-          ? item.in_progress.claims : [];
-        const myClaim = ipClaims.some((c) => c.mine);
-        rows.push(myClaim
-          ? `<button class="gc-vote-btn" title="Give up your claim on this issue so somebody else can take it" onclick="AppView.clearIssueClaim(${item.number})">Release my claim</button>`
-          : `<button class="gc-vote-btn" title="Tell everyone you're taking this issue — a claim, not a promise of progress" onclick="AppView.markIssueInProgress(${item.number})">Claim this issue</button>`);
-        const meta = AppView._ghIssuesMeta || {};
-        const kudosDisabled = item.my_bounty || meta.myRemaining === 0;
-        rows.push(`<button class="gc-vote-btn"${kudosDisabled ? ' disabled' : ''} title="Pledge a kudos bounty — paid to whoever's merged PR closes this issue" onclick="AppView.giveIssueBounty(${item.number})">${item.my_bounty ? '&#9733; Bountied' : 'Pledge kudos'}</button>`);
-        const hasCloseProposal = (AppView._govProposals || []).some((g) =>
-          g.kind === 'close_issue' && g.status === 'open'
-          && Number(g.payload && g.payload.issueNumber) === item.number);
-        rows.push(hasCloseProposal
-          ? '<button class="gc-vote-btn" disabled title="A close proposal for this issue is up for vote">Close proposed</button>'
-          : `<button class="gc-vote-btn" title="Propose closing this issue — the group votes; if it passes, the issue is closed here and on GitHub" onclick="AppView.promptCloseIssue(${item.number})">Propose to close</button>`);
+      const h = item.headless;
+      const generating = !!(h && h.status === 'generating');
+      const clonedReady = !!(h && h.status === 'ready' && h.mySessionId);
+      if (!generating && !clonedReady) {
+        pills.push({
+          key: 'generate', cls: 'gc-vote-btn', label: 'Generate proposal',
+          title: 'Spin up a headless AI session that starts solving this issue on its own. Uses your credits',
+          act: { fn: 'confirmAutoSession', args: [item.number] },
+        });
       }
+      const ipClaims = (item.in_progress && Array.isArray(item.in_progress.claims))
+        ? item.in_progress.claims : [];
+      pills.push(ipClaims.some((c) => c.mine)
+        ? {
+          key: 'claim', cls: 'gc-vote-btn', label: 'Release my claim',
+          title: 'Give up your claim on this issue so somebody else can take it',
+          act: { fn: 'clearIssueClaim', args: [item.number] },
+        }
+        : {
+          key: 'claim', cls: 'gc-vote-btn', label: 'Claim this issue',
+          title: "Tell everyone you're taking this issue. A claim, not a promise of progress",
+          act: { fn: 'markIssueInProgress', args: [item.number] },
+        });
+      const meta = AppView._ghIssuesMeta || {};
+      pills.push({
+        key: 'bounty', cls: 'gc-vote-btn',
+        label: item.my_bounty ? '★ Bountied' : 'Pledge kudos',
+        title: "Pledge a kudos bounty, paid to whoever's merged PR closes this issue",
+        disabled: !!(item.my_bounty || meta.myRemaining === 0),
+        act: { fn: 'giveIssueBounty', args: [item.number] },
+      });
+      const hasCloseProposal = (AppView._govProposals || []).some((g) =>
+        g.kind === 'close_issue' && g.status === 'open'
+        && Number(g.payload && g.payload.issueNumber) === item.number);
+      pills.push(hasCloseProposal
+        ? {
+          key: 'close', cls: 'gc-vote-btn', label: 'Close proposed', disabled: true,
+          title: 'A close proposal for this issue is up for vote',
+        }
+        : {
+          key: 'close', cls: 'gc-vote-btn', label: 'Propose to close',
+          title: 'Propose closing this issue. The group votes; if it passes, the issue is closed here and on GitHub',
+          act: { fn: 'promptCloseIssue', args: [item.number] },
+        });
     }
 
-    const actionRow = rows.filter(Boolean).length
-      ? `<div class="gc-card-actions">${rows.filter(Boolean).join('')}</div>`
-      : '';
+    // The preview leads the row, exactly as it did when this was a string,
+    // and it is the SAME component the card's eye is — with `iconOnly:
+    // false`, which is also what renders its two badge states.
+    if (preview) pills.unshift({ key: 'preview', label: '', preview });
 
     // The blocked-reason enumeration. The pill on the card names the single
     // most severe reason; here every one of them is spelled out, so a
     // reader never has to infer "behind main AND checks failing AND console
     // errors" from three badges sitting side by side.
-    let reasonsBlock = '';
-    if (kind === 'proposal' && item.status !== 'merged') {
-      const reasons = AppView.blockReasons(item);
-      if (reasons.length) {
-        const blocking = reasons.some((r) => !r.soft);
-        reasonsBlock = `<div class="dev-detail-reasons">
-            <div class="dev-detail-reasons-head">${blocking ? 'Why this can’t merge yet' : 'Worth knowing before you vote'}</div>
-            <ul class="dev-detail-reasons-list">${reasons.map((r) =>
-              `<li class="${r.soft ? 'dev-detail-reason-soft' : 'dev-detail-reason-hard'}"><span class="dev-detail-reason-label">${escapeHtml(r.label)}</span> ${escapeHtml(r.detail)}</li>`
-            ).join('')}</ul>
-          </div>`;
+    let reasons = null;
+    if ((kind === 'proposal' || (kind === 'session' && item.source === 'imported'))
+        && item.status !== 'merged') {
+      const list = AppView.blockReasons(item);
+      if (list.length) {
+        const underwayImported = kind === 'session' && item.source === 'imported';
+        reasons = {
+          heading: underwayImported
+            ? 'What needs attention before voting'
+            : (list.some((r) => !r.soft) ? 'Why this can’t merge yet' : 'Worth knowing before you vote'),
+          items: list.map((r) => ({ key: r.key, label: r.label, detail: r.detail, soft: !!r.soft })),
+        };
       }
     }
 
-    // The before/after captures moved off the card and live here. They wait
-    // in an inert <template> (no bandwidth, no autoplay loops) until
-    // expanded; _visualsOpen keeps the open/closed state across the topic
-    // head's frequent repaints, and the card's ⋯ row pre-sets it so
-    // "Before/after screenshots" lands with the block already open.
-    let visualsBlock = '';
-    if (kind === 'proposal') {
-      const tiles = AppView.visualsTilesHtml(item.visuals);
-      if (tiles) {
-        const open = AppView._visualsOpen.has(item.id);
-        visualsBlock = `<div class="mt-2" data-visuals-scope="1">
-            <button type="button" class="gc-vote-btn" aria-expanded="${open ? 'true' : 'false'}" onclick="AppView.toggleVisuals(${item.id}, this)">${open ? 'Hide before/after' : 'Show before/after'}</button>
-            <template class="usn-visuals-tpl">${tiles}</template>
-            <div class="usn-visuals-body">${open ? tiles : ''}</div>
-          </div>`;
+    // The before/after captures. `_visualsOpen` keeps the open/closed state
+    // across the topic head's frequent repaints, and the card's ⋯ row
+    // pre-sets it so "Before/after screenshots" lands already open. The
+    // inert <template> the old toggle copied from is gone: closed simply
+    // renders no tiles, which is what stopped the looping <video>s anyway.
+    let visuals = null;
+    if (kind === 'proposal' || (kind === 'session' && item.source === 'imported')) {
+      const tilesHtml = AppView.visualsTilesHtml(item.visuals);
+      // Open: the tiles are the About sheet's before/after row now, not a
+      // toggle behind a button.
+      if (tilesHtml) {
+        visuals = { sessionId: item.id, open: true, tilesHtml };
       }
     }
 
-    const inner = actionRow + reasonsBlock + visualsBlock;
-    return inner ? `<div class="dev-detail-actions">${inner}</div>` : '';
+    return (pills.length || reasons || visuals) ? { pills, reasons, visuals } : null;
   },
 
-  // The detail block's Explore pill needs the same per-paint binding the
-  // card pill gets in the topic head (that container has no delegated
-  // handler of its own). Rebinding per paint is leak-free: the old nodes go
-  // with the innerHTML.
-  _wireDetailActions(head, kind, item) {
-    if (!head) return;
-    head.querySelectorAll('.dev-detail-actions .gc-explore-chat-btn').forEach((pill) => {
-      pill.addEventListener('click', () => {
-        if (pill.disabled) return;
-        AppView.exploreProposalInDevChat(item && item.id, pill);
-      });
-    });
-    AppView._applyExploreChatAvailability(head);
-  },
+  // `_wireDetailActions` bound the detail block's Explore pill per paint,
+  // because `#gc-thread-head` had no delegated handler of its own and the
+  // pill arrived as innerHTML. The pill is an `ActionSpec` now
+  // (card/dev-card.tsx's ActionButton), so it carries its own click and
+  // reads `aiEnabledStore` for the availability the DOM pass used to apply.
 
   // #313/#827: a compact "Explore in dev chat" action for the proposal CARD
   // action row (the Dev feed, the kanban board, the Completed list). Cards
@@ -2530,218 +3138,39 @@ const AppView = {
       title="${escapeAttr(AppView.EXPLORE_CHAT_TITLE)}"><span aria-hidden="true">✨</span> Explore in dev chat</button>`;
   },
 
-  // ── A card's action row: primary + preview + overflow ────────────────
-  //
-  // #404 put EVERY action inline in one flat row, deliberately rejecting an
-  // overflow menu. The card-as-pointer revision REVERSES that: a card is a
-  // pointer, not a control panel, so the row is now capped at
-  //
-  //   • at most ACTION_PRIMARY_MAX text pills (the actions you'd actually
-  //     take from a list),
-  //   • one icon-only Preview affordance on the detail head (kept as an icon
-  //     precisely so a read-only viewer — who gets no vote buttons — still has
-  //     a visible "go look at this" affordance; on a dense card it moved to
-  //     the rail),
-  //   • one ⋯ trigger holding everything else.
-  //
-  // `spec` is an object, not an array:
-  //   primary — ordered array of button-HTML strings (falsy dropped, sliced
-  //             to the cap; anything past it is a bug, not a silent trim, so
-  //             the overflow is where extra actions belong)
-  //   preview — the icon affordance HTML ('' when there's nothing to preview),
-  //             emitted LAST, after every primary. DENSE cards no longer pass
-  //             it here at all: the eye is pinned to the bottom of the card's
-  //             rail (see _cardRailHtml), under the ⋯ it shares a column with.
-  //             It stays a band affordance on the UNCAPPED detail-head variant
-  //             (noNav), which has no chevron to sit under and whose action
-  //             list is a wrapping left-to-right row.
-  //   menu    — DESCRIPTORS (see _cardMenuTriggerHtml), not HTML, so the same
-  //             list renders as an anchored dropdown on pointer devices and as
-  //             a PlatformUI action sheet on touch
-  //   menuKey — stable identity for the menu ('proposal:45'), used as the
-  //             registry key the delegated handler looks the descriptors up by
-  //
-  // An array is still accepted (legacy shape) and treated as `{ primary }`
-  // with no cap, so the transcript/roster call sites and any external caller
-  // keep working. Returns '' when there is nothing at all to show.
-  // Three, not two: the four-band card reserves an action row on EVERY
-  // card, so a card type with one lone action would show a mostly-empty
-  // band. One action per thin card type was promoted out of ⋯ to fill it
-  // (issue: in-progress; own session: visibility; proposal: Explore;
-  // merged: kudos), which needs the third slot next to Yes/No.
-  ACTION_PRIMARY_MAX: 3,
-  _cardActionsHtml(spec) {
-    if (Array.isArray(spec) || spec == null) {
-      const legacy = (spec || []).filter(Boolean).join('');
-      return legacy ? `<div class="gc-card-actions">${legacy}</div>` : '';
-    }
-    const primary = (spec.primary || []).filter(Boolean)
-      .slice(0, AppView.ACTION_PRIMARY_MAX);
-    const inner = primary.join('') + (spec.preview || '');
-    return inner ? `<div class="gc-card-actions">${inner}</div>` : '';
-  },
 
-  // ── The shared card body ─────────────────────────────────────────────
+  // ── The shared card body moved to React ──────────────────────────────
   //
-  // Every card type assembles the same four bands inside the shell, so they
-  // are built here once rather than copy-pasted into six renderers:
+  // `_cardContentHtml`, `_cardBadgesHtml`, `_cardRailHtml` and
+  // `_cardActionsHtml` built the card's four bands as strings. The bands
+  // are `frontend/src/features/dev-board/card/dev-card.tsx` now, and each
+  // card renderer below builds a MODEL (card/model.ts) instead. Everything
+  // those four encoded is still enforced, just where the markup is:
   //
-  //   head    — the type icon and the TITLE. Nothing else: the head is the
-  //             only band that is indented (it is the one the icon leads),
-  //             so anything that doesn't have to sit beside the icon is a
-  //             band of its own below it. The icon is centred against the
-  //             title rather than pinned to its first line, so a chip
-  //             taller than one line of text reads as belonging to the
-  //             whole title instead of hanging off its top.
-  //   meta    — the "PR#123 · author · 2h ago" line, FULL WIDTH under the
-  //             head. It is the title's subtitle, not something that has to
-  //             sit beside the icon, so it gets the card's own width — which
-  //             is also what stops it ellipsising after three words in a
-  //             kanban column, where the indent cost it a fifth of the row.
-  //   status  — ONE band carrying the composite status pill, the 💬 count,
-  //             the linked-issue pills and the metadata chips (priority,
-  //             assignee, category). Full width, one line, clipped.
+  //   head    — the type icon and the TITLE, the only indented band.
+  //   meta    — "PR#123 · author · 2h ago", full width under the head.
+  //   status  — ONE band: the composite pill, the linked-issue pills, the
+  //             metadata chips, the 💬 count. Full width, one line, clipped.
   //   actions — the ≤3 text pills plus the icon Preview.
   //
-  // ── Dense mode: every band is RESERVED ───────────────────────────────
+  // Dense mode (the board) emits all four whether or not they carry
+  // anything, so a card's bands land at the same y offsets as its
+  // neighbour's and a column scans as a grid; the bands CLIP rather than
+  // shrink. `dense: false` is the detail head, which collapses empty bands,
+  // uncaps the chip list and takes the `inline` pill capsule.
   //
-  // On the board (list, kanban, pm) all four bands are emitted whether or
-  // not they have content, and each is height-capped in app.css: the title
-  // clamps to two lines and reserves both, the meta line reserves one, and
-  // the status and action bands reserve one row each. That is the whole
-  // point of the contract — a card's bands land at the same y offsets as
-  // its neighbour's regardless of how much any one card has to say, so a
-  // column of them scans as a grid instead of as ragged blocks. Cards used
-  // to be 3–6 bands tall depending on what happened to be set, and the eye
-  // had to re-find the status line on every row.
+  // #1139 narrows the reserve by one case: a status band with no VISIBLE
+  // pill is still emitted (app.css caps the action band through
+  // `.dev-card-status + .gc-card-actions`, and three dapp.json checks walk
+  // that chain) but carries `data-empty="1"` and is hidden by CSS. The
+  // component computes that from the model's INPUTS, never from rendered
+  // markup: the 💬 badge is emitted at count 0 wearing `hidden` so live
+  // bumps have a target, which would make any string test non-empty.
   //
-  // The bands CLIP rather than shrink: `overflow: hidden` on a band whose
-  // height is exactly one row, with the pills allowed to wrap, means a
-  // second row of pills is cut off whole. Nothing is ever half-visible and
-  // nothing has to be measured in JS to decide what fits.
-  //
-  // `dense: false` is the detail head (`noNav`), which is a page header
-  // rather than a row in a list: there is nothing to align it against, it
-  // has the full page width, and hiding a chip behind a clip on the one
-  // screen that is supposed to show everything would be wrong. It keeps the
-  // old collapse-when-empty behaviour, the uncapped chip list, the
-  // `inlinePill` capsule and an unclamped title.
-  //
-  // opts: { icon, titleHtml, titleAttrs, metaHtml, badges, chatCount,
-  //         uncapped, pill, inlinePill, linkedHtml, actions, extraHtml,
-  //         dense }
-  //
-  // `icon` — the type chip. It is passed IN here (rather than emitted as the
-  // card's own first flex child, which is where it used to live) so that it
-  // sits on the HEAD row, beside the title. As a sibling of the whole
-  // content column it was centred against the card's full height — i.e.
-  // floating halfway down next to the status pill on a busy card — and it
-  // pushed EVERY row into an indented column.
-  //
-  // Only the title is indented now. The meta line, the badge row, the pill
-  // row, the action row and `extraHtml` are siblings of the head, not of the
-  // icon, so they all start at the card's own padding edge and use its full
-  // width. That is the whole layout rule, and it is why `icon` is an opt
-  // rather than something a caller concatenates: a card cannot get the
-  // indent wrong by accident, because there is only one place that draws it.
-  //
-  // The title and the meta line arrive as separate opts for the same reason.
-  // They used to be one `headlineHtml` cell built by a helper, which is
-  // exactly what made them move together — a caller cannot put the subtitle
-  // back inside the indent because it no longer passes a subtree that could
-  // hold it.
-  //
-  // The ⋯ trigger is NOT here — it lives in the card's right rail
-  // (_cardRailHtml) so it shares a column with the chevron instead of
-  // eating a third of the badge row's width.
-  //
-  // `inlinePill` is the detail head's variant: that page already has the
-  // full page width, so a bar of its own under the header would read as a
-  // rule rather than a status. There the pill rides at the FRONT of the badge
-  // row as a capsule instead — same full-width row as everywhere else, it
-  // just shares it with the chips — which is also why it is exempt from the
-  // badge cap.
-  //
-  // In dense mode the pill leads the SAME band as the chips for the same
-  // reason, just as a flexible bar rather than a capsule: two separate rows
-  // for "state" and "metadata" is one band more than the layout can reserve,
-  // and the pill has never needed the entire width — only more of it than a
-  // chip. `linkedHtml` (the Closes-#N pills) joins that band too, ahead of
-  // the chips and OUTSIDE the chip cap: it used to ride at the end of the
-  // meta line, where it was the first thing that line's ellipsis ate.
-  //
-  // #1139 narrows the reserve by exactly one case: a status band with NO
-  // VISIBLE pill in it is still emitted (the node has to stay — app.css caps
-  // the action band through `.dev-card-status + .gc-card-actions`, and three
-  // dapp.json checks walk that chain) but is stamped `data-empty="1"` and
-  // hidden by CSS. Bands 1, 2 and 4 stay unconditionally reserved, so a
-  // column can differ by at most this one row. The common case is an issue
-  // card nobody has voted on, claimed or commented on — on most apps, that
-  // is every issue card, and 22px + 5px of blank band on each was the most
-  // visible thing on the board.
-  //
-  // Emptiness is computed from the INPUTS, never from `badges`: the 💬 badge
-  // is emitted at count 0 carrying Tailwind's `hidden` (so live bumps have a
-  // target — see _devChatBadge), which makes the band's HTML string non-empty
-  // on every issue card. A string test, or `:empty` in CSS, would therefore
-  // never fire. Everything else in the band returns '' when it has nothing to
-  // say, so a truthy check on the chips is enough for them.
-  _cardContentHtml(opts) {
-    const o = opts || {};
-    const dense = o.dense !== false;
-    const chips = dense
-      ? (o.badges || [])
-      : [
-        ...(o.inlinePill ? [o.inlinePill] : []),
-        ...(o.linkedHtml ? [o.linkedHtml] : []),
-        ...(o.badges || []),
-      ];
-    const badges = AppView._cardBadgesHtml(chips, o.chatCount, {
-      uncapped: o.uncapped || !!o.inlinePill,
-      dense,
-      pill: dense ? o.pill : '',
-      lead: dense ? o.linkedHtml : '',
-    });
-    // #1139: does the band have anything a reader can actually see? `chips`
-    // already folds in `inlinePill` / `linkedHtml` for the non-dense head;
-    // the dense branch passes those two through separate opts, so they are
-    // checked here. A 0 chat count is NOT content (the badge is hidden).
-    const statusHasContent = chips.some(Boolean)
-      || (dense && !!o.pill)
-      || (dense && !!o.linkedHtml)
-      || (o.chatCount !== null && o.chatCount !== undefined
-          && (parseInt(o.chatCount) || 0) > 0);
-    const titleCls = dense ? 'dev-card-title dev-card-title-clamp' : 'dev-card-title';
-    // Dense: reserved bands, emitted whether or not they carry anything, so
-    // every card in a column has its rows at the same height. Non-dense (the
-    // detail head): collapse when empty, exactly as before.
-    const metaRow = dense
-      ? `<div class="dev-card-meta">${o.metaHtml || ''}</div>`
-      : (o.metaHtml ? `<div class="dev-card-meta">${o.metaHtml}</div>` : '');
-    // The class attribute is deliberately left byte-identical in both cases —
-    // the flag rides as a data attribute so existing selectors (unit tests,
-    // dapp.json, bumpThreadBadge) keep matching, and
-    // `.dev-card-badges.dev-card-status[data-empty="1"]` outranks
-    // `.dev-card-badges` regardless of where it lands in app.css.
-    const statusRow = dense
-      ? `<div class="dev-card-badges dev-card-status"${statusHasContent ? '' : ' data-empty="1"'}>${badges}</div>`
-      : (statusHasContent ? `<div class="dev-card-badges">${badges}</div>` : '');
-    const actionRow = dense
-      ? (o.actions || '<div class="gc-card-actions"></div>')
-      : (o.actions || '');
-    return `<div class="flex-1 min-w-0">
-          <div class="dev-card-head">
-            ${o.icon || ''}
-            <div class="dev-card-head-main">
-              <div class="${titleCls}"${o.titleAttrs || ''}>${o.titleHtml || ''}</div>
-            </div>
-          </div>
-          ${metaRow}
-          ${statusRow}
-          ${actionRow}
-          ${o.extraHtml || ''}
-        </div>`;
-  },
+  // The two budgets moved with them — BADGE_MAX (four metadata chips; the
+  // pill, the linkage and the 💬 count ride outside the cap) and
+  // ACTION_PRIMARY_MAX (three text pills) are card/dev-card.tsx's, and
+  // tests/dev-card-badge-cap.test.js reads them there.
 
   // ── Card overflow (⋯) menu ───────────────────────────────────────────
   //
@@ -2763,6 +3192,47 @@ const AppView = {
   //   act      — the click handler; omitted on a purely informational row
   _cardMenus: Object.create(null),
   _cardMenuSeq: 0,
+  // The action pills a card's one-line band could not fit, per menu key
+  // (card/dev-card.tsx's `useFoldedActions` publishes them after layout).
+  // Read by _cardMenuItems, which lists them ABOVE the card's own ⋯ rows:
+  // a folded pill is still the card's most immediate action, only moved.
+  _foldedCardActions: Object.create(null),
+  _setFoldedCardActions(key, specs) {
+    if (!key) return;
+    const list = Array.isArray(specs) ? specs.filter((a) => a && a.act && a.act.fn) : [];
+    if (list.length) AppView._foldedCardActions[key] = list;
+    else delete AppView._foldedCardActions[key];
+  },
+  // A folded ActionSpec as a ⋯ descriptor: same label, same tooltip, same
+  // call (`AppView[fn](...args)`), with a glyph picked by what the call does.
+  _foldedMenuItem(a) {
+    const fn = a.act.fn;
+    const icon = fn === 'markIssueInProgress' ? 'progress'
+      : fn === 'clearIssueClaim' ? 'clear'
+        : fn === 'exploreProposalInDevChat' ? 'explore'
+          : fn === '_setSessionShared' ? (a.act.args && a.act.args[1] ? 'visible' : 'hide')
+            : fn === 'promoteImportedSession' ? 'merge'
+              : fn === 'createPrForIssue' || fn === 'startFromAutoSession' || fn === 'goToAutoSessionClone' ? 'generate'
+                : 'default';
+    return {
+      label: a.label,
+      icon,
+      title: a.title || null,
+      disabled: !!a.disabled,
+      act: () => {
+        const f = AppView[fn];
+        if (typeof f === 'function') f.apply(AppView, a.act.args || []);
+      },
+    };
+  },
+  // Everything the ⋯ under `key` lists right now: the folded pills first,
+  // then the registered descriptors.
+  _cardMenuItems(key) {
+    const list = AppView._cardMenus[key] || [];
+    const folded = AppView._foldedCardActions[key] || [];
+    if (!folded.length) return list;
+    return folded.map((a) => AppView._foldedMenuItem(a)).concat(list);
+  },
   // The presented menu's dismissal hooks, or null. Body-mounted like
   // .attr-popover so a kanban column's overflow-x:auto can't clip it.
   _openCardMenu: null,
@@ -2812,6 +3282,7 @@ const AppView = {
     explore: '✨',          // ✨ was inline in the label; now the icon
     generate: '✧',         // ✧ sibling sparkle: the headless AI run
     retry: '↻',            // ↻
+    checks: '✓',          // check results
     visuals: '🖼',    // 🖼 before/after captures
     github: '↗',           // ↗ leaves the platform
     priority: '⚑',         // ⚑ the same flag the priority chip uses
@@ -2848,7 +3319,13 @@ const AppView = {
   // Register `items` under `key` and return the ⋯ trigger, or '' when there
   // is nothing to demote (a card with an empty menu must not grow a dead
   // button). Falsy entries are dropped so callers can inline conditionals.
-  _cardMenuTriggerHtml(key, items) {
+  // Register `items` under `key` and return the key the ⋯ trigger carries
+  // as `data-card-menu`, or '' when there is nothing to demote (a card with
+  // an empty menu must not grow a dead button). Falsy entries are dropped
+  // so callers can inline conditionals. The trigger's MARKUP is the React
+  // card's (card/dev-card.tsx `Rail`); the registry is still here, because
+  // a descriptor's `act` is a closure that cannot cross the store.
+  _registerCardMenu(key, items) {
     const list = (items || []).filter(Boolean);
     if (!list.length) return '';
     // Keys are per-card and stable across repaints; the counter is only a
@@ -2861,10 +3338,7 @@ const AppView = {
     }
     const mkey = key || `anon:${(AppView._cardMenuSeq += 1)}`;
     AppView._cardMenus[mkey] = list;
-    const dots = '<svg viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">'
-      + '<circle cx="4" cy="10" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="16" cy="10" r="1.6"/></svg>';
-    return `<button type="button" class="gc-vote-btn gc-vote-btn-icon dev-card-menu-btn" data-card-menu="${escapeAttr(mkey)}"`
-      + ` aria-haspopup="true" aria-label="More actions" title="More actions">${dots}</button>`;
+    return mkey;
   },
 
   // Install the one-time document-level handlers that open / close the card
@@ -2918,7 +3392,7 @@ const AppView = {
 
   _toggleCardMenu(trigger) {
     const key = trigger.dataset.cardMenu;
-    const items = AppView._cardMenus[key];
+    const items = AppView._cardMenuItems(key);
     // Re-clicking the open trigger closes it (the popover idiom).
     const wasOpen = AppView._openCardMenu && AppView._openCardMenu.key === key;
     AppView._closeCardMenu();
@@ -2938,8 +3412,15 @@ const AppView = {
     const menu = document.createElement('div');
     menu.className = 'dev-card-menu';
     menu.setAttribute('role', 'menu');
-    AppView._fillCardMenu(menu, items);
     document.body.appendChild(menu);
+    // The HOST stays ours — created here, placed below, dismissed and
+    // re-anchored by this module — and its ROWS are
+    // features/dev-board/card-menu.tsx's, mounted once per open. A new element
+    // each time means a new portal entry; the previous open's is swept by
+    // `pruneDetachedLegacyPortals` (lib/legacy-portals.tsx), because
+    // `_closeCardMenu` removes the node.
+    AppView._reactDevBoard()?.mountCardMenu(menu);
+    AppView._fillCardMenu(menu, items);
     AppView._positionCardMenu(menu, trigger);
     menu.addEventListener('click', (ev) => {
       const btn = ev.target.closest('[data-menu-idx]');
@@ -2948,8 +3429,8 @@ const AppView = {
       // the menu opened: a repaint re-registers under the same key, and the
       // menu now survives repaints (see _reanchorCardMenu), so a captured
       // closure could act on a row the board has already replaced.
-      const live = AppView._cardMenus[key] || items;
-      const it = live[parseInt(btn.dataset.menuIdx, 10)];
+      const live = AppView._cardMenuItems(key);
+      const it = (live.length ? live : items)[parseInt(btn.dataset.menuIdx, 10)];
       AppView._closeCardMenu();
       if (it && it.act) {
         // Mark the dispatch so a popover this row opens isn't dismissed by
@@ -2964,26 +3445,23 @@ const AppView = {
     if (first && first.focus) first.focus();
   },
 
-  // Render `items` into an existing menu element. Split out of
-  // _toggleCardMenu so a repaint can refresh the rows in place without
-  // tearing the menu down (the click handler is bound on the menu element,
-  // so replacing its innerHTML keeps the wiring).
+  // Publish `items` as the open menu's rows. Split out of _toggleCardMenu so a
+  // repaint can refresh them in place without tearing the menu down — the
+  // click handler is bound on the menu ELEMENT, which survives, so the rows
+  // can be replaced under it. `menu` is unused now that the rows go through a
+  // store rather than into a node, and is kept in the signature because both
+  // call sites read as "fill THIS menu".
   _fillCardMenu(menu, items) {
-    menu.innerHTML = (items || []).map((it, i) => {
-      const cls = 'dev-card-menu-item' + (it.danger ? ' dev-card-menu-item-danger' : '');
-      const t = it.title ? ` title="${escapeAttr(it.title)}"` : '';
-      const dis = (it.disabled || !it.act) ? ' disabled' : '';
-      // The glyph is aria-hidden and the label keeps its own element, so the
-      // button's accessible name stays exactly the label text.
-      const icon = `<span class="dev-card-menu-icon" aria-hidden="true">${escapeHtml(AppView._menuIconGlyph(it))}</span>`;
-      // The descriptor's icon key doubles as a stable hook for the row's
-      // MEANING — what `?shot=card-menu&row=assignee` aims at and what a
-      // dapp.json test asserts on, neither of which should have to match the
-      // row's wording (which changes with the card's state).
-      const row = it.icon ? ` data-menu-row="${escapeAttr(it.icon)}"` : '';
-      return `<button type="button" role="menuitem" class="${cls}" data-menu-idx="${i}"${row}${t}${dis}>`
-        + `${icon}<span class="dev-card-menu-label">${escapeHtml(it.label)}</span></button>`;
-    }).join('');
+    AppView._reactDevBoard()?.publishCardMenu((items || []).map((it) => ({
+      label: it.label,
+      title: it.title || null,
+      glyph: AppView._menuIconGlyph(it),
+      row: it.icon || null,
+      // A purely informational row ("Close proposed") has no `act` and is
+      // rendered inert rather than hidden, so it can still explain itself.
+      disabled: !!(it.disabled || !it.act),
+      danger: !!it.danger,
+    })));
   },
 
   // Flip / clamp into the viewport, same arithmetic as _positionAttrPopover.
@@ -3033,54 +3511,16 @@ const AppView = {
     if (!trigger) { AppView._closeCardMenu(); return; }
     open.trigger = trigger;
     trigger.setAttribute('aria-expanded', 'true');
-    AppView._fillCardMenu(open.el, AppView._cardMenus[open.key] || []);
+    AppView._fillCardMenu(open.el, AppView._cardMenuItems(open.key));
     AppView._positionCardMenu(open.el, trigger);
   },
 
-  // The card's right-edge rail: the ⋯ trigger pinned to the TOP-RIGHT
-  // corner, the icon Preview to the BOTTOM-RIGHT one, and the tap-through
-  // chevron centred in what is left between them.
-  //
-  // All three are right-edge controls, so they share ONE column rather than
-  // each taking its own. That matters more than it sounds: a kanban column gives
-  // a card about 175px of text width, and giving the ⋯ its own flex slot
-  // beside the head cost 30px of it — enough to push a single assignee chip
-  // onto its own line. Sharing the rail costs 8px instead.
-  //
-  // `chevron` is false on the topic head's static variants (you are already
-  // on the page it would navigate to).
-  //
-  // `preview` is the icon Preview affordance (see cardPreviewHtml), and the
-  // rail is where it lives on a dense card: the two ends of this column are
-  // both meaningful — ⋯ at the top is "more about this card", the eye at the
-  // bottom is "go look at the thing itself" — and both then sit in one
-  // vertical line down a whole column of cards, found by position rather than
-  // by reading past two or three variable-width vote pills in the action
-  // band. It is emitted LAST so `.dev-card-rail > svg`'s auto margins (which
-  // match the chevron and nothing else — the trigger and the preview are a
-  // <button>/<span>) centre the chevron in the gap BETWEEN them. With no
-  // preview the rail is byte-for-byte what it was before, so a card with
-  // nothing to preview keeps today's appearance and reserves no empty slot.
-  _cardRailHtml(menuKey, menu, opts) {
-    const o = opts || {};
-    const trigger = AppView._cardMenuTriggerHtml(menuKey, menu);
-    const chevron = o.chevron === false ? '' : AppView.DEV_CARD_CHEVRON;
-    const preview = o.preview || '';
-    if (!trigger && !chevron && !preview) return '';
-    // A lone chevron needs no column to be centred in — it is already the
-    // card's only right-edge child. Anything stacked on top of it does.
-    if (!trigger && !preview) return chevron;
-    return `<div class="dev-card-rail">${trigger}${chevron}${preview}</div>`;
-  },
 
-  // A lightweight section divider for a column that groups its cards
-  // (today: the In progress column's private / visible / others bands).
-  // Replaces the two full grey sentences that used to introduce those
-  // groups — the long copy becomes the label's tooltip.
-  _columnDividerHtml(label, title) {
-    return `<div class="dev-col-divider"><span class="dev-col-divider-label"`
-      + `${title ? ` title="${escapeAttr(title)}"` : ''}>${escapeHtml(label)}</span></div>`;
-  },
+  // The In-progress column's group dividers are card/list-rows.tsx's now
+  // (the `divider` row); `_columnDividerHtml` built the string. They
+  // replaced the two full grey sentences that used to introduce those
+  // groups — the long copy became the label's tooltip, and the row
+  // builders in _mySessionsRows / _inProgressRows supply both.
 
   EXPLORE_CHAT_TITLE: 'Open a dev chat with a message about this PR ready to edit and send',
 
@@ -3090,7 +3530,7 @@ const AppView = {
   // byte-for-byte by tests/explore-pr-in-dev-chat.test.js.
   EXPLORE_SEED_TAIL:
     'Please read it and explain in plain terms what it changes, how it works, '
-    + "and anything risky or worth checking. Just explain it for now — don't "
+    + "and anything risky or worth checking. Just explain it for now, don't "
     + 'change any code or open a PR.',
 
   // #827: the editable kickoff message for "Explore in dev chat", built
@@ -3104,7 +3544,7 @@ const AppView = {
     const by = author ? ` by ${author}` : '';
     const lines = [];
     lines.push(row.pr_number
-      ? `Let's explore PR #${row.pr_number} in this app — "${title || `PR #${row.pr_number}`}"${by}.`
+      ? `Let's explore PR #${row.pr_number} in this app: "${title || `PR #${row.pr_number}`}"${by}.`
       : `Let's explore the proposal "${title || 'this proposal'}" in this app${by}.`);
     if (row.pr_url) lines.push(`PR link: ${row.pr_url}`);
     const issues = Array.isArray(row.linked_issues)
@@ -3235,21 +3675,48 @@ const AppView = {
   // configured — a dev chat with no model behind it can't answer. Must be
   // re-run after each feed/merged re-render, since innerHTML replacement
   // paints fresh, enabled buttons every time.
-  _applyExploreChatAvailability(root) {
-    const scope = root || document;
-    if (!scope.querySelector('.gc-explore-chat-btn')) return;
+  // Every Explore pill reads this from the store (card/dev-card.tsx's
+  // `ActionButton`), so a repaint publishes the one fact and nothing walks
+  // the DOM.
+  _refreshAiAvailability() {
     AppView._ensureAiAvailability().then((enabled) => {
-      scope.querySelectorAll('.gc-explore-chat-btn').forEach((b) => {
-        b.disabled = !enabled;
-        if (!enabled) {
-          b.title = "AI chat isn't configured on this deployment.";
-          b.classList.add('opacity-50', 'cursor-not-allowed');
-        } else {
-          b.title = AppView.EXPLORE_CHAT_TITLE;
-          b.classList.remove('opacity-50', 'cursor-not-allowed');
-        }
-      });
+      AppView._reactDevBoard()?.publishAiEnabled(enabled !== false);
     });
+  },
+
+  // `_applyExploreChatAvailability` walked a container after every paint,
+  // setting `disabled`, the tooltip and two classes on each
+  // `.gc-explore-chat-btn`. Every one of those pills is React's now — the
+  // board's, the feed's and the topic head's detail block alike — and each
+  // reads `aiEnabledStore` (card/cards-store.ts) for the same answer, so
+  // the pass has no caller left and the pills can never be missed by one.
+
+  // ── The kudos controller host ────────────────────────────────────────
+  //
+  // `Kudos.renderButton` builds the markup, `Kudos.attach` binds it,
+  // `Kudos._refreshButton` writes the count into it on every WS
+  // kudos_update and `Kudos._renderPopover` fills the hover card — four
+  // writers in another module, so the card renders `[data-kudos-host]`
+  // ONCE, empty, with a constant className and this fills it. That is the
+  // controller-host seam AGENTS.md documents, and it is why the card model
+  // carries only the session id.
+  //
+  // Idempotent: a host that already holds a wrapper is left alone, so a
+  // republish that reconciled the host rather than replacing it does not
+  // discard a button `Kudos` has bound (and re-binding is a no-op anyway,
+  // via its own `data-kudos-bound` marker).
+  _fillKudosHosts(root) {
+    const scope = root || document;
+    if (!window.Kudos) return;
+    scope.querySelectorAll('[data-kudos-host]').forEach((host) => {
+      if (host.firstElementChild) return;
+      const id = parseInt(host.getAttribute('data-kudos-host'), 10);
+      const pr = (AppView._merged || []).find((m) => m.id === id)
+        || (AppView._proposals || []).find((p) => p.id === id)
+        || { id };
+      host.innerHTML = Kudos.renderButton(pr, { compact: true });
+    });
+    Kudos.attach(scope);
   },
 
   // Cached check of whether any LLM path is usable (platform key or the
@@ -3258,9 +3725,9 @@ const AppView = {
   // ?demo=1 is forwarded like every other demo-aware fetch on this view:
   // staging previews run without the platform LLM key (it's on the
   // platform-secrets denylist), so the real branch reports aiEnabled:false
-  // and _applyExploreChatAvailability rewrites the Explore buttons' titles
-  // moments after the board paints — which made the card-menu check a race
-  // against that rewrite. The demo branch of GET /api/budget answers
+  // and the Explore pills dim moments after the board paints — which made
+  // the card-menu check a race against that answer. The demo branch of
+  // GET /api/budget answers
   // aiEnabled:true, keeping demo-preview chrome in its configured state.
   // A no-op in production, where _demoQS() is ''.
   _ensureAiAvailability() {
@@ -3303,7 +3770,7 @@ const AppView = {
       // #621: non-collaborators read the thread but can't post to it.
       readOnly: AppView.readOnly,
       ...(AppView.readOnly
-        ? { notice: "You're viewing this app's dev space read-only — only collaborators can post." }
+        ? { notice: "You're viewing this app's dev space read-only. Only collaborators can post." }
         : {}),
     });
   },
@@ -3328,24 +3795,14 @@ const AppView = {
   },
 
   // ── Full-screen general chat sub-view ───────────────────────────────
-  // A slim back-button header above the existing chat pane.
-  // renderGroupChatTab mounts into #dev-chat-body exactly as it used to
-  // mount into the pinned pane — spec side-panel, autocomplete, drafts,
-  // and scroll restore all unchanged.
+  // The ACTIVITY screen (Streamlined Concept): renderGroupChatTab mounts
+  // into #dev-chat-body exactly as it used to mount into the pinned pane —
+  // spec side-panel, autocomplete, drafts, and scroll restore all unchanged.
+  // No in-frame back bar: the ways out are the header's eye and title tab.
   _renderChatSubView(content) {
     // <DevChatSubView/> — #dev-chat-body stays the host renderGroupChatTab
-    // writes into. The back link's click handler moved into the component's
-    // onClick prop (below) rather than being bound after the fact, because
-    // React owns the anchor now; the guard and the target are unchanged.
-    AppView._reactDevBoard()?.mountChatSubView(content, {
-      backHref: AppView._devPageHref(),
-      onBackClick: (e) => {
-        // #1036: real anchor — leave a modified click to the browser.
-        if (window.NavLink && NavLink.isNativeClick(e)) return;
-        e.preventDefault();
-        App.switchTab('dev');
-      },
-    });
+    // writes into.
+    AppView._reactDevBoard()?.mountChatSubView(content);
 
     AppView.renderGroupChatTab();
     // Vote snapshot for the inline buttons on activity rows — needed
@@ -3358,9 +3815,9 @@ const AppView = {
   // menu entry) was dissolved in #645 — Rename and App secrets now sit
   // directly in the "+" menu, alongside Members & visibility.
 
-  // ── View-mode toggle (list / kanban / pm / report) ───────────────────
+  // ── View-mode tabs (Feed / Kanban) ──────────────────────────────────
   //
-  // #1084 chunk G: the segmented control itself is React now — see
+  // #1084 chunk G: the control itself is React — see
   // frontend/src/features/dev-board/board-frame.tsx for the markup and
   // ./view-mode-store.ts for how the active mode gets there. Four helpers
   // retired with the template:
@@ -3372,14 +3829,34 @@ const AppView = {
   //                                           two-owners-of-one-attribute
   //                                           conflict the migration forbids.
   //
-  // What is left is the BEHAVIOUR the old click listener had, unchanged.
+  // THE UI OVERHAUL turned the four-icon segmented toggle into a two-tab
+  // strip. What is left here is the BEHAVIOUR the old click listener had,
+  // unchanged.
   _selectViewMode(v) {
-    const mode = AppView._isViewMode(v) ? v : 'list';
+    const mode = AppView._migrateViewMode(v) || 'workshop';
     if (mode === AppView._getViewMode()) return;
     // _setViewMode publishes the new mode to the store, which is what
-    // repaints the four buttons.
+    // repaints the tab strip.
     AppView._setViewMode(mode);
     // Re-flow the already-cached data into the new layout. No refetch.
+    AppView._repaintDevBody();
+  },
+
+  // Open the Dev screen on a given tab.
+  //
+  // The Improve panel's entry point (features/improve/improve-controller.js's
+  // openDev), and the reason it is a method rather than that module reaching
+  // into _setViewMode itself: the panel navigates FIRST and then asks for a
+  // tab, so by the time this runs the board may not be mounted yet. Setting
+  // the mode before the repaint means the requested tab paints on the board's
+  // first frame instead of flashing the stored one.
+  //
+  // Safe to call when the board is already showing that tab (a no-op) and
+  // when #dev-body is not mounted at all (_repaintDevBody guards).
+  openDevView(mode) {
+    const next = AppView._migrateViewMode(mode);
+    if (!next) return;
+    AppView._setViewMode(next);
     AppView._repaintDevBody();
   },
 
@@ -3410,10 +3887,34 @@ const AppView = {
   // row that does nothing. Nothing called this after the conversion, so it went
   // with the template rather than staying behind as dead code.
 
+  // Every listener this binds carries `_plusMenuAbort.signal`, and the
+  // controller is replaced on entry. That is what makes the function safe to
+  // call more than once against the SAME nodes.
+  //
+  // It used to bind unguarded, on the reasoning stated below at the
+  // outside-click listener: "the listener dies with the content innerHTML on
+  // the next render". That was true when the dev frame was an innerHTML
+  // template and stopped being true when it became a React island —
+  // mountLegacyPortal reuses the existing entry, so React RECONCILES and
+  // #dev-plus-btn survives. Board and Activity are the same screen in two view
+  // modes, so switching between them re-runs renderDevView against the
+  // surviving button: a second click listener, whose `classList.toggle` undid
+  // the first one's, and the menu stopped opening. Every further hop added
+  // another listener, which is why it alternated dead and alive.
+  //
+  // An init-once guard would fix the duplicate and introduce a worse bug: the
+  // menu's rows are conditional (members on _plusMenuShowsMembers, import-pr
+  // and fork on collaborator state), so a row that mounts later would never be
+  // wired. Aborting and re-binding gets both — exactly one handler per node,
+  // and newly arrived rows always have one.
   _wirePlusMenu(content) {
     const btn = document.getElementById('dev-plus-btn');
     const menu = document.getElementById('dev-plus-menu');
     if (!btn || !menu) return;
+    AppView._plusMenuAbort?.abort();
+    const ac = new AbortController();
+    AppView._plusMenuAbort = ac;
+    const { signal } = ac;
     const close = () => {
       menu.classList.add('hidden');
       btn.setAttribute('aria-expanded', 'false');
@@ -3427,22 +3928,32 @@ const AppView = {
       if (PlatformUI.isTouch()) {
         AppView.refreshDevChatSecretsState();
         // In DOM order, so the two group headings arrive between the rows
-        // they head rather than being dropped on the touch path — the
-        // sheet has no heading primitive, so a heading is a row whose
-        // handler does nothing. Gated by omission everywhere else in this
-        // codebase; `disabled: true` is not used because the kit drops
-        // disabled rows entirely.
+        // they head rather than being dropped on the touch path.
+        //
+        // The sheet HAS a heading primitive now (`{ heading: true }`, see
+        // usernode-native/v1/native.js), so a group label is a real header
+        // with a rule above it. It used to be a row whose handler did
+        // nothing, labelled `— Build a change —`: same weight and ink as the
+        // actions around it, and tappable, so the dashes were the only thing
+        // saying it was not a choice.
         const nodes = Array.from(menu.querySelectorAll('button[data-plus], [data-plus-group]'));
         PlatformUI.actionSheet({
           actions: nodes.map((node) => {
             if (!node.hasAttribute('data-plus')) {
               return {
-                label: `— ${node.textContent.replace(/\s+/g, ' ').trim()} —`,
-                handler: () => {},
+                heading: true,
+                label: node.textContent.replace(/\s+/g, ' ').trim(),
               };
             }
+            // #1615: the TITLE, by name. This read `querySelector('span')`,
+            // which was the title only by accident of source order — the row
+            // now has a glyph and a text-column wrapper, and either one
+            // arriving first would have labelled the sheet row wrongly or
+            // emptied it. `[data-plus-title]` is what board-frame.tsx marks.
+            const titleEl = node.querySelector('[data-plus-title]')
+              || node.querySelector('span');
             return {
-              label: (node.querySelector('span')?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
+              label: (titleEl?.textContent || node.textContent).replace(/\s+/g, ' ').trim(),
               handler: () => node.click(),
             };
           }),
@@ -3454,96 +3965,52 @@ const AppView = {
       // Refresh the App secrets item's "N required missing" state only
       // when the menu actually opens — no fetch on every card-list mount.
       if (open) AppView.refreshDevChatSecretsState();
-    });
-    // Outside-click dismiss, scoped to the dev view's lifetime (the
-    // listener dies with the content innerHTML on the next render).
+    }, { signal });
+    // Outside-click dismiss. Scoped to the signal above, NOT to the content
+    // node's lifetime — see the note on this method.
     content.addEventListener('click', (e) => {
       if (!e.target.closest('#dev-plus-menu, #dev-plus-btn')) close();
-    });
-    // proposal/issue/rename/secrets render together in the non-read-only
-    // block; members is conditional within it (see _plusMenuShowsMembers),
-    // so its handler needs an existence check like fork's.
-    const proposalBtn = menu.querySelector('[data-plus="proposal"]');
-    if (proposalBtn) {
-      proposalBtn.addEventListener('click', () => {
-        close();
-        AppView.createProposal();
-      });
-    }
-    // "Propose with Claude Code or Codex" USED to be a second row here
-    // (#1049), opening the same session straight onto the flow picker. It
-    // is gone: two rows in one menu that both mean "propose a change" made
-    // the venue a fork in the road before the work existed, and it could
-    // only name two of the six venues. One row starts the session; the
-    // venue line above the composer says where it will be built and opens
-    // the full list on demand.
-    //
-    // import-pr renders only when can_collaborate, so (like members/fork)
-    // its handler needs an existence check.
+    }, { signal });
+    // New change and Give feedback live in Improve (#1490). This menu keeps
+    // PR import and app management; each row is conditional on viewer/app
+    // permissions, so wire only the rows the frame rendered.
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
     if (importPrBtn) {
       importPrBtn.addEventListener('click', () => {
         close();
         AppView.openImportPrModal();
-      });
-    }
-    const issueBtn = menu.querySelector('[data-plus="issue"]');
-    if (issueBtn) {
-      issueBtn.addEventListener('click', () => {
-        close();
-        // Open the shared Send Feedback modal with the dev-context mode:
-        // the open app is preselected as the target (Platform for the
-        // self-hosted app or while the repo doesn't exist yet) — #226.
-        App.openFeedbackModal({ fromDev: true });
-      });
+      }, { signal });
     }
     const membersBtn = menu.querySelector('[data-plus="members"]');
     if (membersBtn) {
       membersBtn.addEventListener('click', () => {
         close();
         AppView.openMembersModal();
-      });
+      }, { signal });
     }
     const renameBtn = menu.querySelector('[data-plus="rename"]');
     if (renameBtn) {
       renameBtn.addEventListener('click', () => {
         close();
         AppView.promptRename();
-      });
+      }, { signal });
     }
     const secretsBtn = menu.querySelector('[data-plus="secrets"]');
     if (secretsBtn) {
       secretsBtn.addEventListener('click', () => {
         close();
         if (window.Secrets) Secrets.openForCurrentApp();
-      });
+      }, { signal });
     }
     const forkBtn = menu.querySelector('[data-plus="fork"]');
     if (forkBtn) {
       forkBtn.addEventListener('click', () => {
         close();
         AppView.promptFork();
-      });
+      }, { signal });
     }
   },
 
-  // Best-effort one-line preview of the latest general-chat message for
-  // the chat card. A failed fetch leaves the static fallback line.
-  async _loadChatCardPreview() {
-    const el = document.getElementById('dev-chat-card-preview');
-    if (!el || !AppView.appData) return;
-    try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/messages?limit=1`);
-      if (!res.ok) return;
-      const { messages } = await res.json();
-      const m = messages && messages[messages.length - 1];
-      if (!m || !m.content) return;
-      const live = document.getElementById('dev-chat-card-preview');
-      if (!live) return;
-      const who = m.username || 'System';
-      live.textContent = `${who}: ${String(m.content).slice(0, 140)}`;
-    } catch { /* keep the fallback line */ }
-  },
 
   // Re-pull live data for the dev card list. Called from the WS event
   // handlers in app.js (vote_update / issue_update / session_update /
@@ -3556,6 +4023,96 @@ const AppView = {
   // covers missed pushes (disconnect, laptop waking from sleep). Called
   // after every dev-data load, so the interval self-clears on the load
   // that finds nothing in progress.
+  // ── Live patches from WS events (no refetch) ─────────────────────────
+  //
+  // The checks_ready / behind_main / freshness / sync_status events already
+  // carry the fields the ledger reads; until now the topic page threw the
+  // payload away and refetched five endpoints to learn what it had just been
+  // told. Each helper finds the proposal's row in the cached lists, writes
+  // the same keys the row would carry after a refetch, and repaints the head
+  // from the cache. A row the lists do not hold (a topic opened from beyond
+  // the cached pages) falls back to the refetch path.
+  _topicRowFor(sessionId) {
+    const id = Number(sessionId);
+    if (!Number.isFinite(id)) return null;
+    return (AppView._proposals || []).find((p) => p && Number(p.id) === id)
+      || (AppView._merged || []).find((p) => p && Number(p.id) === id)
+      || (AppView._topicProposal && Number(AppView._topicProposal.id) === id ? AppView._topicProposal : null)
+      || null;
+  },
+  _repaintTopicIfShowing(sessionId) {
+    const t = AppView._devTopic;
+    if (!t || t.kind !== 'proposal' || Number(t.id) !== Number(sessionId)) return;
+    if (typeof App === 'undefined' || App.currentTab !== 'dev' || App.currentSubTab !== 'topic') return;
+    AppView._renderTopicHead();
+  },
+  patchTopicProposal(sessionId, patch) {
+    const row = AppView._topicRowFor(sessionId);
+    if (!row || !patch) return false;
+    for (const [k, v] of Object.entries(patch)) {
+      if (v !== undefined) row[k] = v;
+    }
+    AppView._repaintTopicIfShowing(sessionId);
+    return true;
+  },
+  // checks_ready with checkState 'pending' carries phase/trigger/progress —
+  // patch and repaint. A final verdict carries no test_results, so that one
+  // still refetches, but through the 'checks' kind, which keeps the roster.
+  applyChecksEvent(data) {
+    if (!data || data.sessionId == null) return;
+    const state = data.checkState || null;
+    if (state === 'pending') {
+      const patched = AppView.patchTopicProposal(data.sessionId, {
+        check_state: 'pending',
+        check_phase: data.checkPhase === undefined ? undefined : (data.checkPhase || null),
+        check_trigger: data.checkTrigger === undefined ? undefined : (data.checkTrigger || null),
+        checks_commit_sha: data.commitSha === undefined ? undefined : (data.commitSha || null),
+        checks_progress: data.progress === undefined ? undefined : (data.progress || null),
+        // A run that just started: the row's checked_at is when it started.
+        ...(data.progress ? {} : { checks_checked_at: new Date().toISOString() }),
+      });
+      if (patched) return;
+      // A progress tick for a row this page does not hold (another app's
+      // run, a topic beyond the cached pages) is nothing to refetch for:
+      // the numbers belong to a row that is not on screen, and a refetch a
+      // second for the length of someone else's run was the churn this
+      // replaces. The run's start and verdict events still fall through.
+      if (data.progress && typeof data.progress === 'object') return;
+    }
+    AppView.refreshDevData('checks');
+  },
+  // Mirrors DevChat.applyBehindMainUpdate for the topic page's own row.
+  applyBehindMainEvent(sessionId, behindMain) {
+    if (typeof behindMain !== 'number') return;
+    AppView.patchTopicProposal(sessionId, { behind_main: behindMain });
+  },
+  // Mirrors DevChat.applyFreshnessUpdate: the `freshness` block AND the flat
+  // columns, because _freshnessOf accepts either shape.
+  applyFreshnessEvent(data) {
+    if (!data || data.sessionId == null) return;
+    const f = (data.freshness && typeof data.freshness === 'object') ? data.freshness : {};
+    const patch = { freshness: f };
+    if (typeof data.behindMain === 'number') patch.behind_main = data.behindMain;
+    if (f.behindBy !== undefined) patch.freshness_behind_by = f.behindBy;
+    if (f.aheadBy !== undefined) patch.freshness_ahead_by = f.aheadBy;
+    if (f.checkedAt !== undefined) patch.freshness_checked_at = f.checkedAt;
+    if (f.error !== undefined) patch.freshness_error = f.error;
+    if (f.mainSha !== undefined) patch.freshness_main_sha = f.mainSha;
+    if (f.mergeBaseSha !== undefined) patch.freshness_merge_base_sha = f.mergeBaseSha;
+    if (f.mergeability !== undefined) patch.mergeability = f.mergeability;
+    if (f.mergeabilityFiles !== undefined) patch.mergeability_files = f.mergeabilityFiles;
+    if (f.mergeabilityFilesComplete !== undefined) patch.mergeability_files_complete = f.mergeabilityFilesComplete;
+    AppView.patchTopicProposal(data.sessionId, patch);
+  },
+  // sync_status: 'running' marks the row as resolving (the conflict note
+  // stands down while an attempt is live); 'done'/'failed' clears it and the
+  // persisted state lands on the next refetch, which DevChat already triggers.
+  applySyncStatusEvent(data) {
+    if (!data || data.sessionId == null) return;
+    const running = data.state === 'running' || data.state === 'started';
+    AppView.patchTopicProposal(data.sessionId, { resolving: running });
+  },
+
   _checksPollHandle: null,
   _syncChecksPoll(proposals) {
     const inProgress = Array.isArray(proposals) && proposals.some((pr) =>
@@ -3578,6 +4135,7 @@ const AppView = {
         return;
       }
       if (document.hidden) return;
+      // 'checks-poll' is not 'vote': the roster survives the tick.
       AppView.refreshDevData('checks-poll');
     }, 20000);
   },
@@ -3590,8 +4148,25 @@ const AppView = {
     }
     if (App.currentSubTab === 'topic') {
       // Refresh the header card / roster in place; the mounted thread
-      // is left alone (it receives live messages directly).
-      AppView._loadDevData().then(() => AppView._renderTopicHead());
+      // is left alone (it receives live messages directly). The roster's
+      // cache entry is dropped HERE rather than in `_renderTopicHead`,
+      // which repaints far more often than the data changes — a vote
+      // arriving over the WS is a refresh, a repaint is not.
+      // Only a VOTE invalidates the roster. Every other refresh (a checks
+      // phase event, the 20s checks poll, a sync-status change) used to
+      // delete it too, so the head republished with `roster: {phase:
+      // 'loading'}` — "Loading votes…" — and then again when the roster
+      // refetch landed: two paints per event, the first one blank. Voters
+      // watched the tally flicker on a timer while nothing about it changed.
+      // The roster now stays on screen until a vote actually moves it.
+      if (kind === 'vote' && AppView._devTopic) AppView._invalidateVoteRoster(AppView._devTopic.id);
+      // _refreshTopicOnDemandRow between the two: _loadDevData refreshes the
+      // lists, and a topic the lists do not hold would otherwise repaint
+      // from a snapshot frozen when the page opened. It no-ops for every
+      // topic the lists do cover.
+      AppView._loadDevData()
+        .then(() => AppView._refreshTopicOnDemandRow())
+        .then(() => AppView._renderTopicHead());
       return;
     }
     if (App.currentSubTab !== 'forum') return;
@@ -3645,84 +4220,38 @@ const AppView = {
 
     // (#3) First-arrival framing: name what Group Chat is for. Group chat
     // is rarely empty (system messages), so a permanent banner would be
-    // clutter — show it once per browser, then it disappears.
-    const gcAppName = (AppView.appData && AppView.appData.name) ? AppView.appData.name : 'this app';
-    let gcIntroHtml = '';
+    // clutter — show it once per browser, then it disappears. The read AND
+    // the write stay here: whether it has been seen is a browser fact, and a
+    // component that stamped it would fire again on every re-render.
+    let introAppName = null;
     try {
       if (!localStorage.getItem('usernode_seen_gc_intro')) {
-        gcIntroHtml = `<div class="mx-3 mt-2 px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20 text-xs text-zinc-600 dark:text-zinc-300">This is where everyone using <span class="font-medium">${escapeHtml(gcAppName)}</span> talks and votes on proposed changes to it.</div>`;
+        introAppName = (AppView.appData && AppView.appData.name) ? AppView.appData.name : 'this app';
         localStorage.setItem('usernode_seen_gc_intro', '1');
       }
     } catch { /* private-mode / disabled storage: just skip the intro */ }
-    // Layout mirrors dev-chat's session view: a flex-row body that
-    // holds the chat pane on the left and a slot for the spec
-    // side-panel on the right. The slot is empty + display:none until
-    // "View full spec" is clicked, so the chat occupies 100% width by
-    // default. CSS toggles the side-panel layout vs. fullscreen-modal
-    // layout based on viewport width. (#194: the old vote/issue panel
-    // that sat above the chat is decomposed into the Issues and
-    // Proposals sub-tabs — this tab is the message stream only.)
-    content.innerHTML = `
-      <div class="flex flex-col h-full">
-        <div class="gc-tab-body flex-1 flex min-h-0">
-          <div class="gc-chat-pane flex-1 flex flex-col min-h-0">
-            ${gcIntroHtml}
-            <!-- Messages -->
-            <div id="gc-messages" class="flex-1 overflow-y-auto py-2 space-y-0.5"></div>
 
-            <!-- Typing indicator -->
-            <div id="gc-typing" class="px-3 text-xs text-zinc-500 h-5 shrink-0"></div>
-
-            <!-- Input (#621: read-only viewers get a notice instead).
-                 platform-safe-bar (app.css) adds the home-indicator
-                 inset to this bar's own p-2 — it wraps both the composer
-                 and the read-only notice, so both clear the indicator.
-                 (No backticks in this comment: it lives inside a template
-                 literal, and one would close it.) -->
-            <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2 platform-safe-bar">
-              ${AppView.readOnly ? `
-              <div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400 text-center">You're viewing this app's dev space read-only — only collaborators can post.</div>
-              ` : `
-              <!-- #15: "Replying to …" preview chip; populated by
-                   GroupChat._renderQuotePreview when a quote is staged. -->
-              <div id="gc-reply-preview" class="hidden"></div>
-              <!-- #694: file attachments — error line + pending strip above
-                   the composer (reuses the dev-chat dc-attach-* styles). -->
-              <div id="gc-attach-error" class="dc-attach-error hidden"></div>
-              <div id="gc-attachments" class="dc-attach-strip"></div>
-              <form id="gc-form" class="flex gap-2 items-end">
-                <button type="button" id="gc-attach-btn" title="Attach files" aria-label="Attach files" class="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-500 hover:border-violet-500 transition-colors">&#128206;</button>
-                <input type="file" id="gc-file-input" class="hidden" multiple>
-                <textarea
-                  id="gc-input"
-                  maxlength="${typeof GC_MAX_MESSAGE_LEN !== 'undefined' ? GC_MAX_MESSAGE_LEN : 8000}"
-                  rows="1"
-                  placeholder="Type a message..."
-                  autocomplete="off"
-                  class="gc-composer-input flex-1 min-w-0 resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-                ></textarea>
-                <button type="submit" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">Send</button>
-              </form>`}
-            </div>
-          </div>
-
-          <!-- Draggable divider between chat pane and spec panel.
-               CSS keeps it display:none until both
-                 (a) .gc-spec-resizer-open is added (panel is open), and
-                 (b) viewport >= 1024px (side-panel layout, not modal).
-               GroupChat._initSpecPanelResizer wires a pointer-event
-               drag handler that updates the panel inline width and
-               persists the final value to localStorage. -->
-          <div id="gc-spec-resizer" class="gc-spec-resizer" role="separator" aria-orientation="vertical" aria-label="Resize spec panel"></div>
-
-          <!-- Spec side-panel slot. Lives empty in the DOM so a
-               re-render of this tab doesn't tear down a panel the
-               user has open. _showSpecPanel populates + toggles
-               .gc-spec-side-panel-open; CSS handles the responsive
-               side-panel-vs-fullscreen-modal switch at 1024px. -->
-          <div id="gc-spec-side-panel" class="gc-spec-side-panel"></div>
-        </div>
-      </div>`;
+    // The PANE is features/group-chat/general-chat.tsx's — the message
+    // stream, the status line, the composer and the spec panel's slot —
+    // mounted as a portal where this used to be one `content.innerHTML`
+    // string. Its shape is fixed for the life of a mount, so it travels as
+    // props rather than through a store; the parts that move while it is open
+    // (the staged reply, the uploads, the error line, the typing text) go
+    // through the composer store, which the THREAD composer shares.
+    //
+    // The transcript's own portal points INTO `#gc-messages`, so drop it
+    // before re-rendering the pane: React usually preserves that element, but
+    // the read-only branch does not render it at all, and a portal left
+    // pointing at a detached node keeps its subtree and its store
+    // subscription alive. (Rule 1 in lib/legacy-portals.tsx — the same one
+    // `mountThread` observes.)
+    const previousList = content.querySelector('#gc-messages');
+    if (previousList) AppView._reactGroupChat()?.unmountTranscript(previousList);
+    AppView._reactGroupChat()?.mountGeneralChat(content, {
+      introAppName,
+      readOnly: !!AppView.readOnly,
+      maxLength: typeof GC_MAX_MESSAGE_LEN !== 'undefined' ? GC_MAX_MESSAGE_LEN : 8000,
+    });
 
     // Kit polish: fixed-shell keyboard avoidance on the general-chat
     // scroller (the screen's top bar is the shared platform header, so
@@ -3759,7 +4288,7 @@ const AppView = {
       // #694: an attachments-only send is allowed; a send while an upload
       // is still in flight waits (input keeps its text).
       if (GroupChat.attachmentsUploading(null)) {
-        GroupChat._setAttachError('Still uploading — one moment…', null);
+        GroupChat._setAttachError('Still uploading, one moment…', null);
         return;
       }
       if (!content && !GroupChat.hasPendingAttachments(null)) return;
@@ -3926,17 +4455,94 @@ const AppView = {
     return changed;
   },
 
+  // ── The dev-data preload ───────────────────────────────────────────
+  //
+  // `_devDataInflight` is the run currently in flight and `_devDataInflightFor`
+  // the slug it belongs to. Together they turn the several callers that can
+  // ask for this data within a few hundred milliseconds of each other — the
+  // preload below, renderDevView's own _loadDevFeed, a WS event that lands
+  // during the open — into ONE round of requests whose answer they all share.
+  //
+  // Deliberately not a TTL cache: every existing caller means "give me the
+  // current state" (a pull-to-refresh, a merge broadcast, a vote), and
+  // serving those from a stale snapshot would be a behaviour change nobody
+  // asked for. Sharing a run that has not finished yet changes nothing about
+  // freshness — the answer is the same answer.
+  _devDataInflight: null,
+  _devDataInflightFor: null,
+
+  /**
+   * Start (or join) a dev-data load for `slug` without rendering anything.
+   *
+   * Called when an app opens, so the Dev surfaces have their caches by the
+   * time the viewer asks for one. Silent about failure: nothing is on screen
+   * to report it to, and the real load repeats the request.
+   */
+  prefetchDevData(slug) {
+    if (!slug || AppView.appData?.slug !== slug) return;
+    // Already loaded for this app — the caches are warm and re-fetching here
+    // would be a request nobody is waiting for.
+    if (AppView._devDataReady) return;
+    try {
+      Promise.resolve(AppView._loadDevData()).catch(() => {});
+    } catch (err) { /* never let a preload break an app open */ }
+  },
+
   // Fetch + cache everything the dev surfaces render from (the same
   // four endpoints the old tabs used): GitHub issues, governance
   // proposals, open PR proposals, merged PRs, plus voteState for the
   // chat's inline vote rows — plus the session caches above (the In
   // progress area renders them now). Shared by the card list and the
   // topic sub-view. Returns false on a failed load.
-  async _loadDevData() {
-    if (!AppView.appData) return false;
+  // Returns TRUE on a completed load, FALSE when the fetches genuinely
+  // failed, and NULL when there was nothing to load yet.
+  //
+  // That third value is the fix for a visible defect: "the app data has not
+  // arrived" and "the network failed" both returned false, and _loadDevFeed
+  // renders "Couldn't load the feed right now." for a false. Opening the dev
+  // board calls it once before appData is set, so the board painted a FAILURE
+  // MESSAGE in 0ms — no request made — and replaced it with content when the
+  // real load landed a moment later. On a fast connection that is a flicker;
+  // on a slow one you sit looking at an error for a load that is merely slow.
+  //
+  // `!ok` is still true for null, so the one other caller that reads this
+  // (the topic sub-view's fall-back-to-the-board branch) is unchanged.
+  _loadDevData() {
+    if (!AppView.appData) return Promise.resolve(null);
     const slug = AppView.appData.slug;
+    // Join the run already going for this app rather than opening a second
+    // set of the same six requests beside it.
+    if (AppView._devDataInflight && AppView._devDataInflightFor === slug) {
+      return AppView._devDataInflight;
+    }
+    const run = AppView._fetchDevData(slug).then(
+      (ok) => {
+        if (AppView._devDataInflight === run) {
+          AppView._devDataInflight = null;
+          AppView._devDataInflightFor = null;
+        }
+        return ok;
+      },
+      (err) => {
+        if (AppView._devDataInflight === run) {
+          AppView._devDataInflight = null;
+          AppView._devDataInflightFor = null;
+        }
+        throw err;
+      }
+    );
+    AppView._devDataInflight = run;
+    AppView._devDataInflightFor = slug;
+    return run;
+  },
+
+  // The body of the load, unshared. Everything above is the de-duplication;
+  // this is verbatim what `_loadDevData` was, with the slug passed in rather
+  // than re-read — the caller resolved it once and a shared run has to answer
+  // for the app it was started for.
+  async _fetchDevData(slug) {
     try {
-      const [ghRes, issuesRes, promotedRes, mergedRes, orderRes, pmOrderRes] = await Promise.all([
+      const [ghRes, issuesRes, promotedRes, mergedRes, orderRes] = await Promise.all([
         fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
         // Forward ?demo=1 here too so the staging mock GOVERNANCE rows
         // (stagingMockGovernance — rename / secret / close-issue cards)
@@ -3955,10 +4561,6 @@ const AppView = {
         // failed order fetch from sinking the whole board load — an absent
         // order just means the default (derived) sort, i.e. today's board.
         fetch(`/api/apps/${slug}/board-order${AppView._demoQS()}`).catch(() => null),
-        // The PM view's per-person manual order overlay. Same tolerance +
-        // ?demo=1 forwarding as board-order; an absent map means every
-        // section uses the default recency sort (today's PM view).
-        fetch(`/api/apps/${slug}/pm-order${AppView._demoQS()}`).catch(() => null),
         // Session caches (own + shared + archived) ride along in the same
         // parallel load; the helper stores them on AppView directly, so
         // there's no destructured slot for it.
@@ -3982,13 +4584,6 @@ const AppView = {
         issues: (orderData && Array.isArray(orderData.issues)) ? orderData.issues : [],
         review: (orderData && Array.isArray(orderData.review)) ? orderData.review : [],
       };
-      // PM per-person order overlay. Shape { <assignee_key>: [{type,ref}] }.
-      // Tolerates a missing/failed fetch by defaulting to an empty map (every
-      // section falls back to the derived recency sort).
-      const pmOrderData = (pmOrderRes && pmOrderRes.ok) ? await pmOrderRes.json().catch(() => null) : null;
-      AppView._pmOrder = (pmOrderData && typeof pmOrderData === 'object' && !Array.isArray(pmOrderData))
-        ? pmOrderData : {};
-
       AppView._ghIssues = Array.isArray(ghData.issues) ? ghData.issues : [];
       AppView._ghIssuesMeta = {
         truncatedList: !!ghData.truncatedList,
@@ -4049,7 +4644,7 @@ const AppView = {
         // purely an affordance.
         isAppAdmin: !!promotedData.isAppAdmin,
         lockedHint: locked
-          ? ' <span class="text-amber-500 font-normal">· locked: also needs an admin yes</span>'
+          ? ' <span class="text-amber-800 font-normal dark:text-amber-300">· locked: also needs an admin yes</span>'
           : '',
       };
       AppView._merged = merged;
@@ -4074,13 +4669,15 @@ const AppView = {
       AppView._mergedTotal = (typeof mergedData.total === 'number')
         ? mergedData.total
         : merged.length;
-      // #1100: a fresh dev-data load invalidates the report's own paged
-      // history, so the next Reporting paint (or Refresh) re-pages it.
-      AppView._resetReportCaches();
-      AppView._reportTotal = AppView._mergedTotal;
       // #607: keep the checks-in-progress polling fallback in sync with
       // what this load actually saw.
       AppView._syncChecksPoll(promoted);
+      // Every cache this function fills is now populated, so the surfaces may
+      // state counts and emptiness as fact. Set on the success path ONLY: a
+      // failed load leaves the placeholders up and _loadDevFeed paints its
+      // own error, and a not-ready-yet call (the `null` return above) never
+      // reaches here.
+      AppView._devDataReady = true;
       return true;
     } catch {
       return false;
@@ -4091,12 +4688,20 @@ const AppView = {
     const ok = await AppView._loadDevData();
     const body = document.getElementById('dev-body');
     if (!body) return;
+    // Nothing was loaded because there was nothing to load YET. Leave the
+    // skeleton up: a later call does the real work, and claiming failure here
+    // is how the board came to show an error message during a slow open.
+    if (ok === null) return;
     if (!ok) {
       body.innerHTML = '<div class="text-xs text-zinc-500 dark:text-zinc-400">Couldn&#39;t load the feed right now.</div>';
       return;
     }
     AppView._renderLockedNotice();
     AppView._repaintDevBody();
+    // The themes ride in behind the board's own data: the Workshop paints
+    // first from what it has (every item under "Everything on the board")
+    // and regroups when they land.
+    AppView._loadWorkshopThemes(App.currentApp);
   },
 
   // Paint #dev-body for the current view mode from cached data only (no
@@ -4118,194 +4723,1202 @@ const AppView = {
       // typed text survive WS-driven refreshes); only the board region
       // re-renders. Switching list → kanban rebuilds the bar from the
       // surviving _kanbanFilters, so filter state outlives the toggle.
-      if (!document.getElementById('dev-kanban-filterbar')
-          || !document.getElementById('dev-kanban-board')) {
+      // Keyed on the BOARD alone. #dev-kanban-filterbar used to be built into
+      // #dev-body beside it, so its absence was a fair "not mounted yet"
+      // signal; it is a permanent host in the React frame's action row now
+      // (#1367 follow-up) and is always present, so testing for it here would
+      // never rebuild the bar. The board is still the node this branch owns.
+      if (!document.getElementById('dev-kanban-board')) {
         // Restore this app's persisted filters before building the bar, so
         // the controls (and the board) come back exactly as the user left
         // them across navigation / reload. Keyed per slug, so switching apps
         // shows that app's own filters (or a clean board).
         AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
+        AppView._kanbanFiltersSlug = App.currentApp || null;
         // #814: restore this app's active mobile tab alongside its filters,
         // so switching apps shows that app's own column (or Issues).
         AppView._kanbanTab = AppView._loadKanbanTab(App.currentApp);
-        body.innerHTML = '<div id="dev-kanban-filterbar" class="mb-2"></div><div id="dev-kanban-board"></div>';
+        body.innerHTML = '<div id="dev-kanban-board"></div>';
         AppView._renderKanbanFilterBar();
       }
       AppView._repaintKanbanBoard();
       return;
     }
-    if (AppView._getViewMode() === 'pm') {
-      // PM view: a single scrolling container of per-assignee sections plus
-      // an Unassigned section. No #gc-merged block (merged + gov are
-      // excluded from this overview). #625: the kanban filter bar mounts
-      // here too — same two-node shell as the kanban branch, sharing
-      // _kanbanFilters and its per-app persistence, so filters survive the
-      // kanban↔PM toggle and the bar node stays stable across repaints.
-      if (!document.getElementById('dev-kanban-filterbar')
-          || !document.getElementById('dev-pm')) {
-        AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
-        body.innerHTML = '<div id="dev-kanban-filterbar" class="mb-2"></div><div id="dev-pm"></div>';
-        AppView._renderKanbanFilterBar();
-      }
-      AppView._repaintPmView();
-      return;
+    // Workshop mode: ONE container. The retired List mode built a two-node
+    // shell — #dev-feed plus a #gc-merged "Completed" block underneath it —
+    // and the Activity feed that replaced it had one; the Workshop that
+    // replaced the feed keeps the one node and one renderer, and the Kudos /
+    // Explore wiring is applied once by _rerenderWorkshop.
+    if (!document.getElementById('dev-workshop')) {
+      body.innerHTML = '<div id="dev-workshop"></div>';
     }
-    if (AppView._getViewMode() === 'report') {
-      // #1100: Reporting. A single stable node, mounted once and refilled by
-      // _repaintReportView on every repaint. Deliberately NO filter bar —
-      // a progress report is the whole picture by definition, and a filtered
-      // one would be a misleading document. _kanbanFilters is left untouched
-      // so switching back to kanban/PM restores the user's filters intact.
-      if (!document.getElementById('dev-report')) {
-        body.innerHTML = '<div id="dev-report"></div>';
-      }
-      AppView._repaintReportView();
-      return;
+    // The Workshop carries the SAME filter bar as the board, over the same
+    // `_kanbanFilters` model — one set of controls and one set of chips, so
+    // switching view modes keeps whatever you had narrowed the board down to
+    // rather than silently widening it back out.
+    //
+    // Restored per slug on entry for the same reason the kanban branch above
+    // does it: the controls and the themes have to come back as the viewer
+    // left them, and the two branches share the persisted model.
+    //
+    // #1787: GUARDED, where it used to run on every repaint. Unguarded it
+    // reloaded the persisted set over whatever the viewer had just done on
+    // this surface, so a filter set here survived only until the next WS
+    // push — and with search, which is an uncontrolled field React does not
+    // re-key, the typed text stayed in the box while the themes below it
+    // silently widened back out. The guard is the SLUG, not the node: the
+    // host above is created before this line so it always exists by now,
+    // and the persisted set is per app — so the slug covers both the first
+    // paint (null → a slug) and an app switch, which are the only two times
+    // the stored set legitimately changes underneath the viewer.
+    if (AppView._kanbanFiltersSlug !== App.currentApp) {
+      AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
+      AppView._kanbanFiltersSlug = App.currentApp || null;
     }
-    // List mode: rebuild the two-container shell, then fill it exactly as
-    // before. _rerenderFeed targets #dev-feed and re-attaches kudos/ask-AI
-    // there; the Completed block is filled + wired here.
-    body.innerHTML = '<div id="dev-feed"></div><div id="gc-merged" class="mt-4"></div>';
-    AppView._rerenderFeed();
-    const mergedEl = document.getElementById('gc-merged');
-    if (mergedEl) {
-      mergedEl.innerHTML = (AppView._merged || []).length ? AppView._renderMergedInner() : '';
-      if (window.Kudos) Kudos.attach(mergedEl);
-      AppView._applyExploreChatAvailability(mergedEl);
-    }
+    AppView._renderKanbanFilterBar();
+    AppView._rerenderWorkshop();
     AppView._reanchorCardMenu();
   },
 
   // Locked-app banner at the very top of the card list (above the
   // General chat card), per the card-list polish revision.
+  // The banner and its `hidden` are features/dev-board/board-frame.tsx's now;
+  // this publishes the one fact it draws from. `_proposalsCtx.locked` is
+  // server truth, loaded with the feed.
   _renderLockedNotice() {
-    const el = document.getElementById('dev-locked-notice');
-    if (!el) return;
-    const locked = !!(AppView._proposalsCtx && AppView._proposalsCtx.locked);
-    el.classList.toggle('hidden', !locked);
-    el.innerHTML = locked
-      ? '<div class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-600 dark:text-amber-400">App is locked — an admin must approve any proposal before it applies.</div>'
-      : '';
+    AppView._reactDevBoard()?.publishLockedNotice(
+      !!(AppView._proposalsCtx && AppView._proposalsCtx.locked));
   },
 
-  // The feed's display order: fixed groups — proposals being voted on
-  // (PR promotions and governance proposals alike) above open issues —
-  // then auto-solve rank within the issues group (#227: 'generating'
-  // runs first, finished 'ready' runs awaiting review next, plain
-  // issues last — see _headlessRank), then most-recent-activity-first.
-  // Every item carries a lastActivity sort key = max(its own timestamp,
-  // the latest message in its thread); equal keys keep the per-source
-  // order (GitHub updated-desc for issues) via stable sort. The
-  // general-chat card and the viewer's session rows sit above this feed
-  // in the card list, so the full order the user sees is:
-  // chat → sessions → proposals → issues.
+  // ── The app's general discussion, as a board citizen ────────────────
+  //
+  // The general chat is a first-class thing that happens in an app, and for
+  // one round it was reachable only from a notification: it had been the
+  // Activity destination, and Activity became the board's recency stream.
+  // Rather than give it a menu row, it appears in both of the board's views —
+  // as a card ABOVE the kanban columns (features/dev-board/board-frame.tsx,
+  // which is where a "here is the other place to go" affordance belongs on a
+  // prioritised worklist) and, in the Feed, as an ordinary ACTIVITY ROW sorted
+  // by its latest message like every other card. That is the honest answer in
+  // a stream of what just happened: a conversation is one of the things that
+  // just happened.
+  //
+  // `_discussionSummary` is the latest general-chat message, keyed by slug so
+  // an app-to-app hop never shows the previous app's line — a summary whose
+  // slug is not the open app's reads as absent, which is what makes both
+  // surfaces fall back to their standing description mid-navigation.
+  _discussionSummary: null,
+  _discussionInFlight: false,
+
+  // GET the newest general-chat message (thread_type IS NULL — the endpoint's
+  // default), which is view-gated, so a read-only viewer gets the row too.
+  //
+  // Re-renders the Workshop when it lands rather than blocking the paint: the
+  // board is useful without this line and the request is one row. It cannot
+  // loop — _rerenderWorkshop does not call back into here.
+  //
+  // Called from renderDevView's card-list branch — i.e. on entering the board
+  // and on each Workshop <-> Board switch — and NOT from _repaintDevBody, so a
+  // WS-driven repaint does not spend a request. A warm cache for the same app
+  // still paints instantly; this only refreshes what it says.
+  async _loadDiscussionSummary() {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug || AppView._discussionInFlight) return;
+    AppView._discussionInFlight = true;
+    try {
+      const res = await fetch(`/api/apps/${slug}/messages?limit=1`);
+      if (!res.ok) return;
+      const { messages } = await res.json();
+      const m = messages && messages[messages.length - 1];
+      // Still the same app? An app-to-app hop mid-flight must not paint this
+      // one's line onto the next one's board.
+      if (!AppView.appData || AppView.appData.slug !== slug) return;
+      AppView._discussionSummary = {
+        slug,
+        content: m && m.content ? String(m.content) : '',
+        username: (m && m.username) || '',
+        createdAt: (m && m.created_at) || null,
+      };
+      AppView._reactDevBoard()?.publishDiscussion(AppView._discussionView());
+      AppView._rerenderWorkshop();
+    } catch {
+      // Offline is a state, not a failure: the row falls back to its
+      // standing description and the card still opens the chat.
+    } finally {
+      AppView._discussionInFlight = false;
+    }
+  },
+
+  // What both surfaces draw from: the one line under "General discussion".
+  // Null slug or a summary for another app → the standing description, which
+  // is also what the card ships with before the fetch lands.
+  _discussionView() {
+    const s = AppView._discussionSummary;
+    const slug = AppView.appData && AppView.appData.slug;
+    const fresh = !!(s && slug && s.slug === slug);
+    return {
+      href: slug ? App._appUrl(slug, 'dev', null, 'chat') : null,
+      preview: (fresh && s.content)
+        ? `${s.username || 'System'}: ${s.content.slice(0, 140)}`
+        : 'Talk with everyone building this app',
+    };
+  },
+
+  // The discussion as a FEED CARD — the same four-band model every other row
+  // is built from, so it sorts, renders and de-cards exactly like the rest of
+  // the stream rather than being a special tile bolted on top of it.
+  _discussionCardModel() {
+    const s = AppView._discussionSummary;
+    const fresh = !!(s && AppView.appData && s.slug === AppView.appData.slug);
+    // #1787: the two lines used to be the other way round — the message was
+    // the TITLE and "General discussion" sat under it in the meta line, so the
+    // one row on the lander whose heading never changes read as a different
+    // thing every time somebody spoke. The Board's card has always had it the
+    // right way round (`DiscussionCard` in board-frame.tsx: the name in bold,
+    // the last thing said muted underneath); this is that shape, in the
+    // Workshop's row.
+    const said = (fresh && s.content) ? s.content.slice(0, 200) : null;
+    const preview = said
+      ? (s.username ? `${s.username}: ${said}` : said)
+      : 'Talk with everyone building this app';
+    const meta = [{ t: 'text', s: preview }];
+    // #1808: a `span` rather than a `text` part purely so the age can carry
+    // the exact instant in `title`. Same everywhere a card's meta line ends
+    // with a "3d ago".
+    const age = fresh && s.createdAt ? AppView._agePart(s.createdAt) : null;
+    if (age) meta.push(age);
+    return {
+      key: 'discussion',
+      cls: `${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}`,
+      // The delegated #dev-body handler opens it; see the branch beside
+      // data-issue-row. A `1` rather than an id because there is exactly one.
+      attrs: { 'data-discussion-row': '1', title: "Open the app's general chat" },
+      icon: AppView._devCardIcon('chat'),
+      title: { text: 'General discussion', title: "Open the app's general chat" },
+      meta,
+      pill: null,
+      linked: [],
+      badges: [],
+      chatCount: 0,
+      actions: [],
+      actionPreview: null,
+      rail: { menuKey: null, chevron: true },
+      extra: [],
+      dense: true,
+      uncapped: false,
+    };
+  },
+
+  // The Feed's display order: STRICTLY most-recent-activity-first, across
+  // every kind of card at once.
+  //
+  // THE UI OVERHAUL is what changed this. The retired List view sorted by
+  // fixed GROUPS first — proposals being voted on above open issues — then by
+  // auto-solve rank inside the issues group, and only then by recency. That
+  // made it a prioritised worklist, which is a job the Kanban board does
+  // better and now does alone. What the second tab is for is the other
+  // question: what has been happening here lately. A grouped answer to that
+  // is the wrong answer — an issue commented on a minute ago sat below every
+  // open proposal, however stale.
+  //
+  // So: one stream, one sort key, and the COMPLETED rows folded in. Merged
+  // proposals and closed issues used to be parked in a separate `#gc-merged`
+  // block underneath everything, which is precisely where you would not look
+  // for "what just finished". They are activity like any other now.
+  //
+  // Every item carries a lastActivity key = max(its own timestamp, the latest
+  // message in its thread), so a card with a new comment rises exactly as a
+  // new card would. Array.prototype.sort is stable, so equal keys keep their
+  // per-source order (GitHub updated-desc for issues).
   _feedItems() {
     const ts = (v) => {
       const t = Date.parse(v || '');
       return Number.isFinite(t) ? t : 0;
     };
-    // Lower group renders first. Proposals (both kinds) share a group;
-    // other users' shared sessions live inside the issues group (their
-    // in-tier rank places them below the in-progress issues).
-    const GROUP = { proposal: 0, gov: 0, issue: 1, 'shared-session': 1 };
     const items = [];
     for (const issue of AppView._visibleGhIssues()) {
       items.push({
         kind: 'issue', id: issue.number, item: issue,
-        r: AppView._headlessRank(issue),
         t: Math.max(ts(issue.updatedAt), ts(issue.lastMessageAt)),
       });
     }
     for (const pr of AppView._proposals || []) {
       items.push({
-        // #388: pin PRs in the merge pipeline to the top of the proposal
-        // group — _proposalPinRank mirrors the badge precedence (merging >
-        // resolving > conflict-failed > normal), reusing the per-group `r`
-        // slot just like _headlessRank does for issues.
-        kind: 'proposal', id: pr.id, item: pr, r: AppView._proposalPinRank(pr),
+        // #388 used to pin merge-pipeline PRs to the top of the proposal
+        // group here, via _proposalPinRank. There is no proposal group any
+        // more, and pinning inside a chronological stream would be a lie
+        // about when something happened. The pipeline states it pinned for
+        // ("Merging…", "Resolving conflicts…", a failed check) all still
+        // render as the card's own state badge, and the Kanban board — which
+        // IS the prioritised view — still orders by them.
+        kind: 'proposal', id: pr.id, item: pr,
         t: Math.max(ts(pr.promoted_at || pr.created_at), ts(pr.last_message_at)),
       });
     }
     for (const g of AppView._govProposals || []) {
       items.push({
-        // Governance proposals have no merge/conflict state, so they sort
-        // in the normal (unpinned) tier alongside non-pipeline PRs (#388).
-        kind: 'gov', id: g.id, item: g, r: 3,
+        kind: 'gov', id: g.id, item: g,
         t: Math.max(ts(g.created_at), ts(g.last_message_at)),
       });
     }
     for (const s of AppView._sharedSessions || []) {
-      // Other users' shared sessions sit at the BOTTOM of the list's
-      // in-progress cluster: inside the issues group, ranked between
-      // 'ready' headless issues (1) and plain issues (2). Within the
-      // tier they order oldest-shared first (matching the kanban
-      // column), so t is the negated shared_at — the feed sorts t
-      // descending, and negation flips that into shared_at ascending.
+      // NOT negated any more. Under the retired grouping this key was
+      // -shared_at, a trick to flip the descending sort into oldest-first
+      // WITHIN the issues tier (matching the kanban column). With no tiers
+      // left, a negative key sorts below every real timestamp — i.e. every
+      // shared session would sink to the bottom of the stream forever. In an
+      // activity feed "shared" is the activity, so it sorts on when it
+      // happened, like everything else.
       items.push({
-        kind: 'shared-session', id: s.id, item: s, r: 1.5,
-        t: -(ts(s.shared_at)),
+        kind: 'shared-session', id: s.id, item: s,
+        t: Math.max(ts(s.shared_at), ts(s.last_message_at)),
       });
     }
-    // Array.prototype.sort is stable, so equal keys keep source order.
-    // Rank competes only within a group: the headless rank (0-2, with
-    // shared sessions at 1.5) inside the issues group, the merge-pipeline
-    // pin rank (0-3) inside the proposal group — the two never interleave
-    // because GROUP dominates.
-    return items.sort((a, b) =>
-      (GROUP[a.kind] - GROUP[b.kind]) || (a.r - b.r) || (b.t - a.t));
+    // The app's general discussion, sorted on its latest message like
+    // everything else — see _discussionCardModel.
+    //
+    // ONLY when something has been said in it. A conversation nobody has had
+    // is not activity, and a row for it would be the one entry in this stream
+    // that is not about something that happened. Reachability does not depend
+    // on it either way: the kanban's card is the door, and it draws whether or
+    // not the chat has a word in it.
+    {
+      const d = AppView._discussionSummary;
+      const fresh = !!(d && AppView.appData && d.slug === AppView.appData.slug);
+      const t = fresh ? ts(d.createdAt) : 0;
+      if (t) items.push({ kind: 'discussion', id: 0, item: null, t });
+    }
+    // Completed work — merged proposals and closed issues — from the stream
+    // that used to render as a separate "Completed" block below the feed.
+    // `row_type` is what tells the two apart; the renderer already switches
+    // on it, so this only has to preserve it.
+    for (const m of AppView._merged || []) {
+      items.push({
+        kind: 'merged', id: m.id, item: m,
+        t: Math.max(ts(m.merged_at || m.closed_at || m.created_at),
+          ts(m.last_message_at)),
+      });
+    }
+    return items.sort((a, b) => b.t - a.t);
   },
 
-  _renderFeedInner() {
-    const ctx = AppView._proposalsCtx || {};
+  // The list feed's VIEW MODEL (card/model.ts DevFeedView).
+  //
+  // Each entry is wrapped by the component in `.dev-feed-entry` rather than
+  // inside the card builders, because those builders are shared with the
+  // kanban columns and the kanban board must keep its cards. The wrapper is
+  // what carries the inline-comment slot and what the de-carding CSS is
+  // scoped through, so the same model draws a bordered tile on the board and
+  // a full-bleed row in the feed with no branch here.
+  // The feed's kinds, mapped onto the vocabulary _devCardMatches speaks.
+  //
+  // Only one of the six differs by name (`shared-session` is a `session`
+  // there). `discussion` has no counterpart on purpose: it is the app's one
+  // general chat, and it carries no title, author or number to match on — so
+  // rather than inventing an attribute for it, it is dropped whenever a filter
+  // is active. A filtered stream is "the activity matching this", and the
+  // general chat is not one of the things being matched.
+  _FEED_FILTER_KIND: {
+    issue: 'issue',
+    proposal: 'proposal',
+    'shared-session': 'session',
+    merged: 'merged',
+    gov: 'gov',
+  },
+
+  // A feed row's own discussion thread, addressed exactly as _renderTopicThread
+  // addresses it — same namespaces, same ids, so a reply typed in the feed and
+  // the thread under the opened topic are one conversation.
+  //
+  // `merged` and `discussion` get none. A merged row is a completed thing
+  // whose conversation lives on the proposal it came from, and the discussion
+  // row IS the app's general chat — a reply box under a row that opens a chat
+  // would be a second way to post into the same stream, two lines apart.
+  _feedThreadRef(it) {
+    const item = it && it.item;
+    if (!item) return null;
+    if (it.kind === 'issue') {
+      return item.number != null ? { type: 'issue', ref: item.number } : null;
+    }
+    if (it.kind === 'proposal' || it.kind === 'shared-session') {
+      return item.id != null ? { type: 'session', ref: item.id } : null;
+    }
+    if (it.kind === 'gov') {
+      return item.id != null ? { type: 'governance', ref: item.id } : null;
+    }
+    return null;
+  },
+
+  // ── The Workshop ───────────────────────────────────────────────────
+  //
+  // The Dev screen's lander (features/dev-board/workshop/workshop.tsx). The
+  // SAME cards the Board draws, bucketed by the SAME _bucketDevItems and
+  // narrowed by the SAME filter bar — grouped by THEME rather than by
+  // lifecycle column, with the two questions the Activity feed used to
+  // answer kept as strips above the themes: what needs this viewer's vote,
+  // and what changed since they were last here.
+  //
+  // Themes come from the server (GET /api/apps/:slug/workshop-themes —
+  // services/workshop-themes.js): a list of { id, name, saying, items }
+  // where `items` are keys in the vocabulary _workshopItemKey speaks, plus
+  // `unplaced` (the cards the server's placer could not fit) and `coverage`.
+  // The grouping is DATA about the board, never the board itself: a card
+  // the themes do not name still renders — under "Being placed" while the
+  // server is on its way to it, under "Not yet grouped" once it declined —
+  // and a card the themes name but the board no longer has is simply not
+  // drawn. The viewer's own private sessions never reach the server, so
+  // they are placed here, by the issue they link.
+
+  WORKSHOP_SEEN_KEY: 'workshopSeen',
+  // Rows per lane per theme before "+N more · Open on Board".
+  WORKSHOP_LANE_MAX: 8,
+  // Cards in the "Needs your vote" strip; the rest are a count.
+  WORKSHOP_VOTES_MAX: 3,
+  // The viewer's own work in flight. Same cap and the same reveal-in-place
+  // as the vote strip: this is a reminder, not an inbox.
+  WORKSHOP_MINE_MAX: 3,
+  // Rows in the "since your last visit" list.
+  WORKSHOP_SINCE_MAX: 30,
+  // Per page session: slug → the baseline (epoch ms, 0 on a first visit)
+  // the since-strip is computed against. See _workshopBaseline.
+  _workshopSince: {},
+  // The last themes answer: { slug, themes, source, generatedAt, stale,
+  // pending, at }. Slug-keyed so an app-to-app hop never draws the previous
+  // app's grouping over this one's cards.
+  _workshopThemes: null,
+  // The one pending re-fetch of the themes, or null. One chain per page: a
+  // draft in progress leaves `pending` true, and every WS-driven
+  // _loadDevFeed lands here at attempt 0 — without this each of those
+  // started a chain of its own, and a busy board could be polling the
+  // endpoint (which rebuilds the server's input) several times per interval.
+  _workshopPollTimer: null,
+  // 'feed-comments' while that capture deep link is active — see the ?shot=
+  // block in _applyShotDeepLink.
+  _workshopShot: null,
+
+  // "Since your last visit" needs a fixed point. It is read ONCE per app per
+  // page session from localStorage and then held in memory, and the stamp is
+  // advanced to now on that first read: every later repaint in this session
+  // compares against the same baseline, so a WS-driven refresh cannot make
+  // "new" things stop being new mid-visit. A first visit has no baseline and
+  // gets the dashboard alone instead.
+  _workshopBaseline(slug) {
+    if (!slug) return 0;
+    if (Object.prototype.hasOwnProperty.call(AppView._workshopSince, slug)) {
+      return AppView._workshopSince[slug];
+    }
+    let prev = 0;
+    try {
+      prev = parseInt(window.localStorage.getItem(`${AppView.WORKSHOP_SEEN_KEY}:${slug}`), 10) || 0;
+    } catch { prev = 0; }
+    AppView._workshopSince[slug] = prev;
+    try {
+      window.localStorage.setItem(`${AppView.WORKSHOP_SEEN_KEY}:${slug}`, String(Date.now()));
+    } catch { /* private mode — the strip just never appears */ }
+    return prev;
+  },
+
+  // The key a card has in the themes' `items` lists. Mirrors the server's
+  // buildThemeInput: a GitHub issue by number, anything that is a
+  // chat_sessions row (a proposal, a shared or own session, a merged
+  // change) by that row's id, a governance proposal by its id. A settled
+  // close-issue row keys on the issue it closed.
+  _workshopItemKey(kind, item) {
+    const it = item || {};
+    if (kind === 'issue') return it.number != null ? `issue:${it.number}` : null;
+    if (kind === 'proposal' || kind === 'shared-session' || kind === 'my-session') {
+      return it.id != null ? `session:${it.id}` : null;
+    }
+    if (kind === 'gov') return it.id != null ? `gov:${it.id}` : null;
+    if (kind === 'merged') {
+      if (it.row_type === 'close_issue') {
+        const n = (it.payload && it.payload.issueNumber) || it.github_issue_number || null;
+        return n != null ? `issue:${n}` : null;
+      }
+      return it.id != null ? `session:${it.id}` : null;
+    }
+    return null;
+  },
+
+  // The current app's themes, or null while none have arrived — a fetch
+  // that failed counts as none, not as themes that name nothing.
+  _workshopThemeData() {
+    const t = AppView._workshopThemes;
+    const slug = (typeof App !== 'undefined' && App.currentApp) || '';
+    return t && t.slug === slug && !t.failed ? t : null;
+  },
+
+  // Whether a card is in a theme — the `theme` filter's predicate. With no
+  // themes loaded the filter cannot be applied, and an unappliable filter
+  // must widen rather than hide: it returns true. A card the themes do not
+  // name is in the theme its linked issue is in — the rule that places the
+  // viewer's own private sessions on the Workshop, so "Open on Board" from
+  // a theme shows the same rows the theme did.
+  _workshopThemeHas(themeId, itemKey, item) {
+    const t = AppView._workshopThemeData();
+    if (!t || !themeId) return true;
+    const theme = (t.themes || []).find((x) => x.id === themeId);
+    if (!theme) return true;
+    const items = theme.items || [];
+    if (itemKey && items.indexOf(itemKey) !== -1) return true;
+    const linked = Array.isArray(item && item.linked_issues) ? item.linked_issues : [];
+    return linked.some((n) => items.indexOf(`issue:${parseInt(n, 10)}`) !== -1);
+  },
+
+  _workshopThemeName(themeId) {
+    const t = AppView._workshopThemeData();
+    const theme = t && (t.themes || []).find((x) => x.id === themeId);
+    return theme ? theme.name : 'Category';
+  },
+
+  // While a regeneration is pending server-side, the re-fetch schedule in
+  // ms: a model drafting a full board takes tens of seconds, and the first
+  // version of this gave up after four polls six seconds apart — which left
+  // the lander on the category grouping with a "no model" footnote until the
+  // next navigation, on exactly the first visit after a deploy. Widens to
+  // about three minutes in total, then stops; the next _loadDevFeed picks
+  // the finished grouping up.
+  WORKSHOP_POLL_MS: [6000, 10000, 15000, 20000, 30000, 30000, 30000, 30000],
+
+  // Fetch the themes, and re-fetch on the schedule above while a
+  // regeneration is pending server-side so a freshly grouped board arrives
+  // without a reload. Throttled per slug: the board's WS-driven reloads call
+  // _loadDevFeed freely, and the themes endpoint rebuilds the server's input
+  // each time. `opts.force` is the `workshop_update` broadcast's: the server
+  // just wrote a grouping, so the throttle and any running chain yield.
+  async _loadWorkshopThemes(slug, attempt, opts) {
+    if (!slug) return;
+    const n = attempt || 0;
+    const force = !!(opts && opts.force);
+    const cur = AppView._workshopThemes;
+    if (!n && !force && cur && cur.slug === slug && !cur.pending && (Date.now() - (cur.at || 0)) < 60000) return;
+    // A chain is already polling this slug: let it finish rather than
+    // starting a second one beside it.
+    if (!n && !force && cur && cur.slug === slug && cur.pending && AppView._workshopPollTimer != null) return;
+    if (AppView._workshopPollTimer != null) {
+      clearTimeout(AppView._workshopPollTimer);
+      AppView._workshopPollTimer = null;
+    }
+    let next;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/workshop-themes${AppView._demoQS()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const cov = data.coverage && typeof data.coverage === 'object' ? data.coverage : null;
+      next = {
+        slug,
+        themes: Array.isArray(data.themes) ? data.themes : [],
+        source: data.source || null,
+        generatedAt: data.generatedAt || null,
+        discoveredAt: data.discoveredAt || null,
+        stale: !!data.stale,
+        pending: !!data.pending,
+        pendingStage: data.pendingStage === 'discovery' || data.pendingStage === 'placement' ? data.pendingStage : null,
+        lastError: typeof data.lastError === 'string' && data.lastError ? data.lastError : null,
+        // Why the model's paragraph is missing, when it is: the footnote says
+        // so instead of leaving the derived sentence up there unexplained.
+        digestError: typeof data.digestError === 'string' && data.digestError ? data.digestError : null,
+        coverage: cov ? {
+          total: Number(cov.total) || 0, placed: Number(cov.placed) || 0,
+          unplaced: Number(cov.unplaced) || 0, pending: Number(cov.pending) || 0,
+        } : null,
+        unplaced: Array.isArray(data.unplaced) ? data.unplaced.map(String) : [],
+        at: Date.now(),
+      };
+    } catch {
+      // A failed fetch names no themes: `failed` keeps _workshopThemeData
+      // from reading an empty list as "the themes cover nothing".
+      next = {
+        slug, themes: [], source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false,
+        pendingStage: null, lastError: null, coverage: null, unplaced: [], failed: true, at: Date.now(),
+      };
+    }
+    if (typeof App !== 'undefined' && App.currentApp !== slug) return;
+    AppView._workshopThemes = next;
+    if (AppView._getViewMode() === 'workshop') AppView._repaintBoardSurface();
+    if (next.pending && n < AppView.WORKSHOP_POLL_MS.length) {
+      AppView._workshopPollTimer = setTimeout(() => {
+        AppView._workshopPollTimer = null;
+        AppView._loadWorkshopThemes(slug, n + 1);
+      }, AppView.WORKSHOP_POLL_MS[n]);
+    }
+  },
+
+  // A `workshop_update` over the WS (App.handleWorkshopUpdate): the server
+  // placed cards into themes or re-drafted them for this app. Re-fetch
+  // now, past the per-slug throttle — the board's own data did not move,
+  // only its grouping.
+  applyWorkshopUpdate(data) {
+    const slug = (typeof App !== 'undefined' && App.currentApp) || '';
+    if (!slug || (data && data.appSlug && data.appSlug !== slug)) return;
+    AppView._loadWorkshopThemes(slug, 0, { force: true });
+  },
+
+  // "Open on Board" from a theme: narrow the board to that theme and go
+  // there. The hash is the navigation — the same route the strip's Board
+  // segment is an anchor to — so Back returns to the Workshop.
+  openBoardForTheme(themeId) {
+    const slug = App.currentApp;
+    if (!slug) return;
+    AppView._kanbanFilters = AppView._loadKanbanFilters(slug);
+    AppView._kanbanFilters.theme = themeId || null;
+    AppView._saveKanbanFilters(slug);
+    location.hash = `#app/${slug}/board`;
+  },
+
+  // Nobody is on this issue: no live claim, no session working it, nobody
+  // assigned. `in_progress` is the server's own composition of the first two
+  // (routes/issues.js composeInProgress), already expiry-filtered, so this
+  // asks the same question the card's "N building" chip answers.
+  /**
+   * "most of the movement in X" — the theme that is actually MOVING.
+   *
+   * This used to be `sort((a, b) => b.lastActive - a.lastActive)[0]`: the
+   * most recently TOUCHED theme, which is a different claim and usually a
+   * false one. A single comment on one issue ten minutes ago put a ten-item
+   * theme ahead of a hundred-item one, and the sentence then told the group
+   * that most of their work was somewhere it was not.
+   *
+   * Movement is work that changed state or is changing now: underway, in
+   * review, shipped this week, and cards that are new. Open items are NOT
+   * movement — a backlog nobody has touched is the opposite of it, and
+   * counting it would just name the biggest pile.
+   *
+   * And the clause is DROPPED unless there is a real leader. "Most of the
+   * movement" is a strong claim; two themes within half of each other do not
+   * support it, and neither does a board where almost nothing is in flight.
+   * Saying nothing is the honest answer far more often than it looks.
+   */
+  WORKSHOP_BUSIEST_MIN: 3,
+  WORKSHOP_BUSIEST_RATIO: 1.5,
+
+  _themeMovement(t) {
+    const c = (t && t.counts) || {};
+    return (c.underway || 0) + (c.review || 0) + (c.shipped || 0) + (c.fresh || 0);
+  },
+
+  _busiestTheme(themes) {
+    const ranked = (themes || [])
+      .map((t) => ({ name: t.name, n: AppView._themeMovement(t) }))
+      .filter((x) => x.n > 0)
+      .sort((a, b) => b.n - a.n);
+    if (!ranked.length) return null;
+    const top = ranked[0];
+    if (top.n < AppView.WORKSHOP_BUSIEST_MIN) return null;
+    const second = ranked[1] ? ranked[1].n : 0;
+    if (second && top.n < second * AppView.WORKSHOP_BUSIEST_RATIO) return null;
+    return top.name;
+  },
+
+  /**
+   * The topic body for one card, for the Workshop to draw UNDER that card
+   * without leaving the lander (#1787 round four).
+   *
+   * `key` is the card's own model key (`proposal:34`, `issue:1575`), which
+   * is what the row already carries. Returns only the half that goes below
+   * the card — the Workshop is already drawing the card itself, and drawing
+   * it twice is the hybrid this whole line of work exists to stop being.
+   *
+   * `comments` is forced OFF. The topic screen's GitHub thread mounts into
+   * `#dev-issue-comments`, a singleton id, and the Workshop's sheet already
+   * carries both that thread and the app thread above this point. Asking
+   * for a second host would give the page two nodes with one id and the
+   * loader would fill whichever it found first.
+   */
+  _workshopCardBody(key) {
+    const at = String(key || '').indexOf(':');
+    if (at < 0) return null;
+    const kind = key.slice(0, at);
+    const rest = key.slice(at + 1);
+    const id = kind === 'issue' ? Number(rest) : Number(rest);
+    if (!Number.isFinite(id)) return null;
+    const item = AppView._findItem(kind, id);
+    if (!item) return null;
+    const built = AppView._topicViewFor(kind, item);
+    if (!built) return null;
+    return { ...built.body, comments: false };
+  },
+
+  _issueUnclaimed(it) {
+    const ip = it && it.in_progress;
+    if (ip && Array.isArray(ip.claims) && ip.claims.length) return false;
+    if (ip && Number(ip.sessions) > 0) return false;
+    return !(it && it.assignee && it.assignee.top);
+  },
+
+  _workshopView() {
     const meta = AppView._ghIssuesMeta || {};
-    const items = AppView._feedItems();
+    // Published on every branch, placeholders included: `set` merges a patch,
+    // so a model that omitted these would inherit the last app's slug and
+    // offer a reply box that posts somewhere else.
+    const slug = App.currentApp || '';
+    const ctx = { slug, canPost: !!AppView.appData?.can_collaborate, viewerId: (App.user && App.user.id) || null };
+    const empty = {
+      votes: { count: 0, total: 0, shown: 0, rows: [] }, mine: { count: 0, shown: 0, rows: [] },
+      since: null, dashboard: null, nextUp: null, discussion: null, themes: [],
+      meta: {
+        source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
+        lastError: null, digestError: null, coverage: null, placing: 0, filtered: false,
+      },
+      autoExpand: null,
+    };
+    if (!AppView._devDataReady) return { loading: true, emptyNote: null, ...empty, ...ctx };
 
-    // The viewer's own sessions are pinned above the feed proper (top of
-    // the list), outside the "Show more" pager, with the visibility
-    // caption + the archived toggle. Renders '' when there's nothing.
-    let html = AppView._mySessionsBlockHtml();
-    if (!items.length) {
-      const note = meta.note
-        ? 'Couldn&#39;t load open issues right now. '
+    const ts = (v) => {
+      const t = Date.parse(v || '');
+      return Number.isFinite(t) ? t : 0;
+    };
+    const buckets = AppView._bucketDevItems({
+      issues: AppView._visibleGhIssues(),
+      proposals: AppView._proposals || [],
+      gov: AppView._govProposals || [],
+      merged: AppView._merged || [],
+      mySessions: AppView._mySessions || [],
+      sharedSessions: AppView._sharedSessions || [],
+    });
+    const f = AppView._kanbanFilters || {};
+    const filtering = AppView._kanbanFiltersActive();
+    const matchKind = (kind) => (kind === 'my-session' || kind === 'shared-session' ? 'session' : kind);
+    const match = (kind, item) => !filtering || AppView._devCardMatches(matchKind(kind), item, f);
+
+    const tData = AppView._workshopThemeData();
+    const themeDefs = tData ? (tData.themes || []) : [];
+    const themeOf = new Map();
+    for (const t of themeDefs) {
+      for (const k of (t.items || [])) if (!themeOf.has(k)) themeOf.set(k, t.id);
+    }
+    // The cards the server's placer declined; every other card the server
+    // can see and has not named is on its way into a theme.
+    const unplacedSet = new Set(tData ? (tData.unplaced || []) : []);
+    const placingPossible = !!(tData && tData.source === 'ai');
+    // The viewer's own private sessions never reach the server (the row is
+    // app-wide), so they are placed here: by the issue they link, in the
+    // theme that issue sits in.
+    const linkedTheme = (item) => {
+      const arr = Array.isArray(item && item.linked_issues) ? item.linked_issues : [];
+      for (const raw of arr) {
+        const id = themeOf.get(`issue:${parseInt(raw, 10)}`);
+        if (id) return id;
+      }
+      return null;
+    };
+    const baseline = AppView._workshopBaseline(slug);
+    const weekAgo = Date.now() - 7 * 86400000;
+
+    // Every card, once, with what the grouping needs to know about it.
+    const activityOf = (kind, it) => {
+      if (kind === 'issue') return Math.max(ts(it.updatedAt), ts(it.lastMessageAt));
+      if (kind === 'proposal') return Math.max(ts(it.promoted_at || it.created_at), ts(it.last_message_at));
+      if (kind === 'gov') return Math.max(ts(it.created_at), ts(it.last_message_at));
+      if (kind === 'merged') return Math.max(ts(it.merged_at || it.closed_at || it.created_at), ts(it.last_message_at));
+      return Math.max(ts(it.last_activity_at), ts(it.shared_at), ts(it.created_at));
+    };
+    const createdOf = (kind, it) => {
+      if (kind === 'issue') return ts(it.createdAt || it.created_at);
+      if (kind === 'proposal') return ts(it.promoted_at || it.created_at);
+      if (kind === 'merged') return ts(it.merged_at || it.closed_at || it.created_at);
+      return ts(it.shared_at || it.created_at);
+    };
+    const entries = [];
+    const add = (kind, item, lane, build) => {
+      if (!match(kind, item)) return;
+      const card = build();
+      if (!card) return;
+      const row = { t: 'card', key: card.key, card };
+      const th = AppView._feedThreadRef({ kind: kind === 'my-session' ? 'shared-session' : kind, item });
+      if (th) row.thread = th;
+      if (kind === 'issue' && item.number != null) row.commentsFor = item.number;
+      const created = createdOf(kind, item);
+      if (baseline && created > baseline) row.fresh = true;
+      const people = [];
+      const who = AppView._devCardAuthor(kind === 'my-session' || kind === 'shared-session' ? 'session' : kind, item);
+      if (who) people.push(who);
+      if (item && item.assignee && item.assignee.top) people.push(item.assignee.top);
+      entries.push({
+        itemKey: AppView._workshopItemKey(kind, item),
+        kind, item, lane, row, people, created,
+        t: activityOf(kind, item),
+      });
+    };
+    for (const x of buckets.inReview) {
+      add(x.kind, x.item, 'review', () => (x.kind === 'proposal'
+        ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)));
+    }
+    for (const e of buckets.inProgress) {
+      add(e.kind, e.item, 'underway', () => {
+        if (e.kind === 'issue') return AppView._issueCardModel(e.item);
+        if (e.kind === 'my-session') return AppView._mySessionCardModel(e.item);
+        return AppView._sharedSessionCardModel(e.item);
+      });
+    }
+    for (const i of buckets.issues) add('issue', i, 'open', () => AppView._issueCardModel(i));
+    // Shipped THIS WEEK sits in a theme; older completed work is the Board's
+    // Done column's — but the since-strip below reads every merged row, so
+    // a fortnight away still shows everything that landed meanwhile.
+    for (const m of buckets.done) {
+      add('merged', m, activityOf('merged', m) >= weekAgo ? 'shipped' : 'done', () => AppView._mergedRowModel(m));
+    }
+
+    // ── What you are working on ──
+    //
+    // Above "Needs your vote", because the first question a returning member
+    // has is about their OWN work, and the lander answered every other one
+    // first: what the app is doing, what the group needs, what nobody has
+    // picked up. Their half-finished session was somewhere down inside a
+    // theme, under a heading about the theme.
+    //
+    // Built from the buckets rather than from `entries`, for the same reason
+    // the vote strip is: your own work is yours whatever the board is
+    // narrowed to, and a filter that hid it would be hiding the one thing
+    // on this screen you cannot find another way.
+    const meId = App.user && App.user.id;
+    const mineOf = (bucket, pick) => bucket.filter(pick);
+    const mineItems = [
+      ...mineOf(buckets.inProgress, (e) => e.kind === 'my-session')
+        .map((e) => ({ kind: 'my-session', item: e.item })),
+      ...mineOf(buckets.inReview, (x) => x.kind === 'proposal' && meId != null
+        && String(x.item.user_id) === String(meId))
+        .map((x) => ({ kind: 'proposal', item: x.item })),
+    ].sort((a, b) => activityOf(b.kind, b.item) - activityOf(a.kind, a.item));
+    const mine = {
+      count: mineItems.length,
+      shown: AppView.WORKSHOP_MINE_MAX,
+      rows: mineItems.map(({ kind, item }) => {
+        const card = kind === 'my-session'
+          ? AppView._mySessionCardModel(item)
+          : AppView._proposalCardModel(item);
+        if (!card) return null;
+        const row = { t: 'card', key: `mine:${card.key}`, card };
+        const th = AppView._feedThreadRef({
+          kind: kind === 'my-session' ? 'shared-session' : kind, item,
+        });
+        if (th) row.thread = th;
+        return row;
+      }).filter(Boolean),
+    };
+
+    // ── Needs your vote ──
+    // Unfiltered on purpose: a vote owed is owed whatever the board is
+    // narrowed to. Same predicate as the filter bar's "Waiting on you".
+    //
+    // Minus whatever the strip above is already showing. Your own promoted
+    // proposal satisfies "waiting on you" — the predicate asks whether you
+    // have voted, not whose it is — so it appeared in BOTH panes, one under
+    // the other, the same card twice on one screen. "What you are working
+    // on" wins: this pane is about somebody else's work, which is what its
+    // own heading has always said.
+    const mineKeys = new Set(mineItems.map(({ kind, item }) => AppView._workshopItemKey(kind, item)));
+    const notMine = (x) => !mineKeys.has(AppView._workshopItemKey(x.kind, x.item));
+    const owed = [];
+    for (const x of buckets.inReview) {
+      if (notMine(x) && AppView._devCardMatches(x.kind, x.item, { needsVote: true })) owed.push(x);
+    }
+    const voteRow = (card) => ({ t: 'card', key: `vote:${card.key}`, card });
+    // EVERY owed row, not the first few. "N more waiting on you" used to send
+    // the viewer to the Board with a filter set — it left the lander, it
+    // changed the view mode, and Back was the only way home, all to read a
+    // list the lander was already showing the top of. It expands in place
+    // now (#1787 round four), so the component needs the rest to reveal;
+    // `shown` is the cap it draws until somebody asks for them.
+    // Everything the viewer COULD vote on, whether they have or not — the
+    // denominator behind the ring. `needsVote` above is the same population
+    // minus the ones they have already answered, so `total - count` is what
+    // they have done and the ring can state progress instead of a debt.
+    const votable = buckets.inReview.filter((x) => notMine(x) && (x.kind === 'proposal'
+      ? x.item.status === 'promoted'
+      : true));
+    const votes = {
+      count: owed.length,
+      total: votable.length,
+      shown: AppView.WORKSHOP_VOTES_MAX,
+      rows: owed.map((x) => voteRow(
+        x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)
+      )),
+    };
+
+    // ── Themes ──
+    const laneOrder = [
+      { key: 'review', title: 'In review' },
+      { key: 'underway', title: 'Underway' },
+      { key: 'open', title: 'Open' },
+      { key: 'shipped', title: 'Shipped this week' },
+    ];
+    const mkTheme = (def, ungrouped) => ({
+      id: def.id, name: def.name, description: def.description || '',
+      saying: def.saying || null, icon: def.icon || '', people: [], lastActive: 0,
+      counts: { open: 0, underway: 0, review: 0, shipped: 0, fresh: 0 },
+      lanes: laneOrder.map((l) => ({ key: l.key, title: l.title, rows: [], more: 0 })),
+      ...(ungrouped ? { ungrouped: true } : {}),
+      _people: new Map(),
+    });
+    const themes = themeDefs.map((d) => mkTheme(d, false));
+    const byId = new Map(themes.map((t) => [t.id, t]));
+    // While no themes have arrived the one group is everything; once they
+    // have, the remainder is what they did not name — titled below, once
+    // it is known whether those cards are on their way or were declined.
+    const rest = mkTheme(tData
+      ? { id: 'ungrouped', name: 'Not yet grouped', description: 'Items the categories do not name yet.' }
+      : { id: 'ungrouped', name: 'Everything on the board', description: '' }, true);
+    let placingCount = 0;
+    for (const e of entries) {
+      if (e.lane === 'done') continue;
+      let id = e.itemKey ? themeOf.get(e.itemKey) : null;
+      if (!id && e.kind === 'my-session') id = linkedTheme(e.item);
+      const theme = (id && byId.get(id)) || rest;
+      if (theme === rest && placingPossible && e.kind !== 'my-session' && e.itemKey && !unplacedSet.has(e.itemKey)) {
+        e.row.placing = true;
+        placingCount += 1;
+      }
+      const lane = theme.lanes.find((l) => l.key === e.lane);
+      theme.counts[e.lane] += 1;
+      if (e.row.fresh) theme.counts.fresh += 1;
+      if (e.t > theme.lastActive) theme.lastActive = e.t;
+      for (const p of e.people) theme._people.set(p, (theme._people.get(p) || 0) + 1);
+      if (lane.rows.length < AppView.WORKSHOP_LANE_MAX) lane.rows.push(e.row);
+      else lane.more += 1;
+    }
+    const finish = (t) => {
+      t.people = [...t._people.entries()].sort((a, b) => b[1] - a[1]).map(([name]) => name);
+      delete t._people;
+      return t;
+    };
+    const drawn = themes.filter((t) => t.lanes.some((l) => l.rows.length)).map(finish);
+    if (rest.lanes.some((l) => l.rows.length)) {
+      if (tData) {
+        const restCount = rest.lanes.reduce((n, l) => n + l.rows.length + l.more, 0);
+        rest.placing = placingCount;
+        if (placingCount && placingCount === restCount) {
+          rest.name = 'Being placed';
+          rest.description = 'New cards are placed into a category within a minute or two of arriving.';
+        } else if (placingCount) {
+          rest.description = `Cards the categories do not cover yet; ${placingCount} of them ${placingCount === 1 ? 'is' : 'are'} being placed now. They count towards the next re-draft.`;
+        } else {
+          rest.description = 'Cards the categories do not cover yet. They count towards the next re-draft of the categories.';
+        }
+      }
+      drawn.push(finish(rest));
+    }
+
+    // ── Since your last visit ──
+    let since = null;
+    if (baseline) {
+      const moved = entries.filter((e) => e.t > baseline).sort((a, b) => b.t - a.t);
+      since = {
+        baseline,
+        shipped: entries.filter((e) => e.kind === 'merged' && e.created > baseline).length,
+        opened: entries.filter((e) => e.kind === 'issue' && e.created > baseline).length,
+        proposed: entries.filter((e) => e.kind === 'proposal' && e.created > baseline).length,
+        rows: moved.slice(0, AppView.WORKSHOP_SINCE_MAX).map((e) => ({ ...e.row, key: `since:${e.row.key}` })),
+      };
+    }
+
+    // ── The dashboard, and the one thing to pick up ──
+    //
+    // This was `welcome`: the same four numbers, shown ONLY on a first visit,
+    // because "what is this project" is a newcomer's question. It is also the
+    // returning member's question every time they have been away a week, and
+    // there was nowhere to ask it — so it is drawn every visit now, folded,
+    // and it carries the rest of the app's state with it (#1787).
+    //
+    // Everything here is DERIVED from data the board already loaded. No new
+    // request, and nothing written by a model: a generated paragraph would
+    // need its own staleness and its own footnote saying when it was written,
+    // and these numbers are the answer anyway.
+    const nowMs = Date.now();
+    const WEEK = 7 * 86400000;
+    const mergedAtOf = (m) => ts(m.merged_at || m.closed_at || m.created_at);
+    const allMerged = Array.isArray(AppView._merged) ? AppView._merged : [];
+    const openEntries = entries.filter((e) => e.lane !== 'done' && e.lane !== 'shipped');
+    // Open issues nobody has taken. The OPEN lane specifically, not every
+    // unfinished entry: `_bucketDevItems` already moves an issue with a
+    // session or a promoted proposal against it into `underway`, so counting
+    // those would offer somebody a card that is visibly being worked on two
+    // strips further down. `_issueUnclaimed` then rules out the quieter
+    // signals — a live claim, an assignee — that do not move the lane.
+    const idle = openEntries
+      .filter((e) => e.lane === 'open' && e.kind === 'issue' && AppView._issueUnclaimed(e.item))
+      .sort((a, b) => b.t - a.t);
+    const named = drawn.filter((t) => !t.ungrouped);
+    const dashboard = {
+      open: openEntries.length,
+      themes: named.length,
+      votesWaiting: buckets.inReview.length,
+      shippedWeek: allMerged.filter((m) => mergedAtOf(m) > nowMs - WEEK).length,
+      // The week before, for a rate rather than a count. Same source as the
+      // week above so the two are comparable.
+      shippedPrevWeek: allMerged.filter((m) => {
+        const t = mergedAtOf(m);
+        return t <= nowMs - WEEK && t > nowMs - 2 * WEEK;
+      }).length,
+      people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
+      unclaimed: idle.length,
+      busiest: AppView._busiestTheme(named),
+      // The model's two sentences, when there are any. The derived sentence
+      // the client can always build stays the fallback — same relationship
+      // the category grouping has to the drafted themes.
+      summary: (tData && tData.digest) || null,
+      // The merged history is paged. With more behind it the two week counts
+      // are floors, not totals, and the view has to say so rather than
+      // reporting a page as if it were the whole record.
+      partial: !!AppView._mergedHasMore,
+    };
+
+    // "Try taking this one next" — the most recently active open issue with
+    // nobody on it. Recency rather than age on purpose: an issue the group is
+    // still talking about has context to start from, where the oldest one on
+    // the board is usually oldest for a reason.
+    const nextUp = (!filtering && idle.length)
+      ? { ...idle[0].row, key: `next:${idle[0].row.key}` }
+      : null;
+
+    // ── The discussion row ──
+    // Drawn whether or not anything has been said: on a lander it is the
+    // door to the general chat, as the kanban's card is above its columns.
+    // Dropped while a filter is active, as the feed dropped it — it carries
+    // nothing to match on.
+    const discCard = filtering ? null : AppView._discussionCardModel();
+    const discussion = discCard ? { t: 'card', key: discCard.key, card: discCard } : null;
+
+    // ── The capture deep link ──
+    let autoExpand = null;
+    if (AppView._workshopShot === 'feed-comments') {
+      for (const t of drawn) {
+        for (const l of t.lanes) {
+          const r = l.rows.find((row) => row.commentsFor != null);
+          if (r) { autoExpand = { theme: t.id, key: r.key }; break; }
+        }
+        if (autoExpand) break;
+      }
+    } else if (AppView._workshopShot === 'themes') {
+      // The theme only. An empty `key` names no row, so every row in it stays
+      // folded — which is the state the lanes check is about.
+      const first = drawn.find((t) => t.lanes.some((l) => l.rows.length));
+      if (first) autoExpand = { theme: first.id, key: '' };
+    }
+
+    const emptyNote = entries.length
+      ? null
+      : { loadFailed: !!meta.note, filtered: filtering };
+    // `loading` is on EVERY return path, never omitted. The store MERGES a
+    // patch (lib/plain-store.js), so a view model that simply left the key out
+    // would inherit the previous publish's `true` and leave the lander on its
+    // placeholders for good.
+    return {
+      loading: false,
+      emptyNote,
+      votes,
+      mine,
+      since,
+      dashboard,
+      nextUp,
+      discussion,
+      themes: drawn,
+      meta: {
+        source: tData ? tData.source : null,
+        generatedAt: tData ? tData.generatedAt : null,
+        discoveredAt: (tData && tData.discoveredAt) || null,
+        stale: !!(tData && tData.stale),
+        pending: !!(tData && tData.pending),
+        pendingStage: tData && tData.pending ? (tData.pendingStage || null) : null,
+        lastError: (tData && tData.lastError) || null,
+        digestError: (tData && tData.digestError) || null,
+        coverage: (tData && tData.coverage) || null,
+        placing: placingCount,
+        filtered: filtering,
+      },
+      autoExpand,
+      ...ctx,
+    };
+  },
+
+  // The two completed row types share one dispatcher: the Feed folds
+  // completed work into the same stream as everything else (see _feedItems)
+  // and so meets the rows one at a time rather than as a block it can
+  // switch on itself.
+  _mergedRowModel(row) {
+    if (!row) return null;
+    const majority = (AppView._mergedCtx && AppView._mergedCtx.majority) || 1;
+    return (row.row_type === 'close_issue')
+      ? AppView._completedCloseIssueCardModel(row)
+      : AppView._mergedCardModel(row, majority);
+  },
+
+
+  // A comment thread as the FEED shows it: the last few, flat, no card chrome.
+  //
+  // Deliberately not _issueCommentsHtml. That one is the opened-topic view —
+  // every comment, each in its own bordered box, under a "Discussion" heading.
+  // Inline in a stream the point is the opposite: enough to see what people
+  // said without leaving, and no chrome competing with the row above it. So
+  // this shows the LAST few (a thread's tail is the live part), as plain
+  // indented lines, with a count when there is more behind them.
+  FEED_COMMENT_PREVIEW: 2,
+
+  // How many issue slots fill on paint, before the observer takes over.
+  //
+  // The lazy fill below bounds its cost by REQUEST COUNT -- "a feed of thirty
+  // issues must not fire thirty requests on paint" -- but it was implemented
+  // as a bound on VIEWPORT POSITION, which is not the same thing in a stream
+  // that mixes issues with proposals, sessions and merged work. On an app with
+  // live proposal activity the first issue row can sit well below the fold, so
+  // every inline preview stayed empty until the reader scrolled to it one row
+  // at a time, and a preview nobody sees on the screen it belongs to is not
+  // doing its job.
+  //
+  // Counting from the SLOT list rather than from the stream makes this
+  // independent of where the issues land: the first few issue rows fill
+  // whether they are rows 1-3 or rows 12, 15 and 20. Three keeps the paint
+  // cost an order of magnitude under the thirty the comment above is about.
+  FEED_COMMENT_EAGER: 3,
+
+  _feedCommentsHtml(comments) {
+    const list = Array.isArray(comments) ? comments : [];
+    if (!list.length) return '';
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? (s) => DevChat.renderMarkdown(s)
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+    const tail = list.slice(-AppView.FEED_COMMENT_PREVIEW);
+    const hidden = list.length - tail.length;
+    const more = hidden > 0
+      ? `<div class="dev-feed-comment-more">${hidden} earlier ${hidden === 1 ? 'reply' : 'replies'}</div>`
+      : '';
+    const rows = tail.map((c) => {
+      const isBot = AppView._isBotCommentAuthor(c.author);
+      const author = c.author ? escapeHtml(c.author) : 'unknown';
+      const botTag = isBot
+        ? ' <span class="text-[0.9375rem] text-sky-700 dark:text-sky-400">bot</span>'
         : '';
-      html += `<div class="text-xs text-zinc-500 dark:text-zinc-400 mb-2">${note}Nothing is open right now. Press <span class="font-medium text-violet-500">+</span> to propose a change or file an issue.</div>`;
-      return html;
-    }
+      // #1808: the age, with the unelided instant one hover away.
+      const age = relStamp(c.createdAt);
+      const ageHtml = age.text
+        ? `<span class="dev-feed-comment-time" title="${escapeAttr(age.title)}">${escapeHtml(age.text)}</span>`
+        : '';
+      return `<div class="dev-feed-comment">
+          <span class="dev-feed-comment-main">
+            <span class="dev-feed-comment-author">${author}</span>${botTag}
+            <span class="dev-feed-comment-body">${renderMd(c.body || '')}</span>
+          </span>
+          ${ageHtml}
+        </div>`;
+    }).join('');
+    return `${more}${rows}`;
+  },
 
-    const shown = Math.min(AppView._feedShown || 20, items.length);
-    html += '<div class="space-y-2">';
-    for (let i = 0; i < shown; i++) {
-      const it = items[i];
-      if (it.kind === 'issue') html += AppView._renderIssueRow(it.item);
-      else if (it.kind === 'proposal') html += AppView._renderProposalCard(it.item);
-      else if (it.kind === 'shared-session') html += AppView._renderSharedSessionCard(it.item);
-      else html += AppView._renderGovCard(it.item);
-    }
-    html += '</div>';
+  // ── Inline comments, loaded lazily ────────────────────────────────
+  //
+  // A feed of thirty issues must not fire thirty requests on paint, and most
+  // of them are below the fold anyway. So each slot is filled when its row is
+  // actually scrolled to, through one IntersectionObserver over the feed.
+  //
+  // The existing per-issue cache (`_ghComments`) and the existing endpoint do
+  // the work — this is the same data the opened-topic view already fetches, so
+  // opening a row you have scrolled past costs nothing, and a row whose thread
+  // you have already read paints from cache with no request at all.
+  //
+  // The observer is rebuilt on every render because _rerenderWorkshop replaces
+  // the container's innerHTML, which detaches every node it was watching.
+  _feedCommentObserver: null,
 
-    // Keep the generating-state poller in sync with what we just
-    // rendered (idempotent set/clear of one timer).
-
-    // Paging footer: more local items, or a GitHub link when the repo
-    // has more open issues than the fetch ceiling.
-    if (shown < items.length) {
-      html += `<div class="mt-1"><button class="gc-vote-btn" onclick="AppView.showMoreFeed()">Show ${Math.min(10, items.length - shown)} more</button></div>`;
-    } else if (meta.truncatedList && meta.repoUrl) {
-      const issuesUrl = `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues`;
-      html += `<div class="mt-1"><a href="${issuesUrl}" target="_blank" rel="noopener" class="text-xs text-violet-400 hover:underline">More open issues on GitHub &rarr;</a></div>`;
+  _wireFeedComments(root) {
+    if (AppView._feedCommentObserver) {
+      AppView._feedCommentObserver.disconnect();
+      AppView._feedCommentObserver = null;
     }
-    return html;
+    if (!root) return;
+    const slots = [...root.querySelectorAll('.dev-feed-comments[data-comments-for]')];
+    if (!slots.length) return;
+    // The first few outright, wherever they sit in the stream. Also the whole
+    // behaviour where IntersectionObserver is unavailable, which used to fill
+    // nothing at all.
+    const lazy = slots.slice(AppView.FEED_COMMENT_EAGER);
+    for (const slot of slots.slice(0, AppView.FEED_COMMENT_EAGER)) {
+      AppView._fillFeedComments(slot);
+    }
+    if (!lazy.length || typeof IntersectionObserver !== 'function') return;
+    const observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        // Once per row: unobserve BEFORE the await, or a fast scroll can
+        // queue the same fetch several times over.
+        observer.unobserve(entry.target);
+        AppView._fillFeedComments(
+          entry.target.querySelector('.dev-feed-comments[data-comments-for]')
+        );
+      }
+    }, { rootMargin: '200px 0px' });
+    // WATCH THE ROW, NOT THE SLOT. The slot ships EMPTY -- that is the whole
+    // point of filling it lazily -- and `#dev-workshop .dev-feed-comments:empty`
+    // in public/css/app.css is `display: none`, so that it leaves no gap
+    // under a row with nothing to show. A `display: none` element has no box,
+    // an IntersectionObserver never reports one as intersecting, and so the
+    // callback below never ran: the slot was never filled, so it stayed
+    // `:empty`, so it stayed `display: none`. A deadlock, and it took out
+    // every inline comment preview in the feed rather than merely delaying
+    // one.
+    //
+    // The row is the right target anyway, and is what the comment above
+    // already describes -- "each slot is filled when its ROW is actually
+    // scrolled to". It always has a box, so the presentation rule and the
+    // lazy fill stop being coupled at all. Falling back to the slot keeps
+    // the old behaviour for any markup that is not inside an entry.
+    for (const slot of lazy) observer.observe(slot.closest('.dev-feed-entry') || slot);
+    AppView._feedCommentObserver = observer;
+  },
+
+  async _fillFeedComments(slot) {
+    if (!slot) return;
+    const number = parseInt(slot.getAttribute('data-comments-for'), 10);
+    if (!Number.isFinite(number)) return;
+
+    // Re-resolve by number rather than holding the node: a WS repaint between
+    // the request and its answer detaches this one, and writing into an
+    // orphan would silently drop the comments.
+    const paint = (entry) => {
+      const feed = document.getElementById('dev-workshop');
+      if (!feed) return;
+      const live = feed.querySelector(`.dev-feed-comments[data-comments-for="${number}"]`);
+      if (!live) return;
+      live.innerHTML = AppView._feedCommentsHtml(entry.comments);
+    };
+
+    const cached = AppView._ghComments[number];
+    if (cached) { paint(cached); return; }
+
+    try {
+      const slug = AppView.appData && AppView.appData.slug;
+      if (!slug) return;
+      const res = await fetch(
+        `/api/apps/${slug}/github-issues/${number}/comments${AppView._demoQS()}`
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+      const entry = {
+        comments: Array.isArray(data.comments) ? data.comments : [],
+        truncated: !!data.truncated,
+      };
+      AppView._ghComments[number] = entry;
+      paint(entry);
+    } catch (_) { /* best-effort: the row simply shows no replies */ }
   },
 
   // Re-render the feed in place from the cached data, then re-mount the
   // expanded card's thread + roster (innerHTML replacement wipes any
   // previous mount).
-  _rerenderFeed() {
-    const el = document.getElementById('dev-feed');
+  _rerenderWorkshop() {
+    const el = document.getElementById('dev-workshop');
     if (!el) return;
-    el.innerHTML = AppView._renderFeedInner();
-    if (window.Kudos) Kudos.attach(el);
-    AppView._applyExploreChatAvailability(el);
+    const react = AppView._reactDevBoard();
+    if (react) {
+      react.mountWorkshop(el);
+      react.publishWorkshop(AppView._workshopView());
+    }
+    // Rebuilt every time: the publish above replaced every node the previous
+    // observer was watching. The store flushes synchronously (see
+    // features/dev-board/mount.ts), so the fresh slots are already in the
+    // DOM on this line — exactly as they were after an innerHTML assignment.
+    AppView._wireFeedComments(el);
+    AppView._fillKudosHosts(el);
+    AppView._refreshAiAvailability();
     AppView._startMergeCountdownTimer();
   },
 
@@ -4328,7 +5941,7 @@ const AppView = {
     return `~${m}m`;
   },
 
-  // Ticks the "Merging in ~X" / "Rejecting in ~X" countdown pills purely from
+  // Ticks the "Goes live in ~X" / "Set aside in ~X" countdown pills purely from
   // the passage of time (vote changes already refetch via the WS vote-update
   // path). Updates each pill's label in place; when a window crosses zero it
   // refetches the feed so the row reflects server truth — the actual merge /
@@ -4336,8 +5949,14 @@ const AppView = {
   // window-elapsed / rejection pass). Self-clears when no countdown pills
   // remain so it never runs idle.
   _COUNTDOWN_SEL: '.gc-merge-countdown[data-window-ends], .gc-reject-countdown[data-window-ends]',
+  // The tick used to rewrite each pill's `.gc-vote-count-label` text in
+  // place. The pills are React's now (card/dev-card.tsx), so it publishes
+  // `Date.now()` instead and every pill with a countdown re-derives its own
+  // label from it — one store write per tick, whatever the pill count.
+  // Still keyed off a DOM query for the pills, because that is also how it
+  // knows when to stop: no countdown on screen, no timer.
   _startMergeCountdownTimer() {
-    const feed = document.getElementById('dev-feed');
+    const feed = document.getElementById('dev-body');
     if (!feed || !feed.querySelector(AppView._COUNTDOWN_SEL)) {
       if (AppView._mergeCountdownTimer) {
         clearInterval(AppView._mergeCountdownTimer);
@@ -4347,36 +5966,32 @@ const AppView = {
     }
     if (AppView._mergeCountdownTimer) return;
     AppView._mergeCountdownTimer = setInterval(() => {
-      const el = document.getElementById('dev-feed');
+      const el = document.getElementById('dev-body');
       const pills = el ? el.querySelectorAll(AppView._COUNTDOWN_SEL) : [];
       if (!pills.length) {
         clearInterval(AppView._mergeCountdownTimer);
         AppView._mergeCountdownTimer = null;
         return;
       }
+      const now = Date.now();
       let anyExpired = false;
       pills.forEach((pill) => {
         const ends = parseInt(pill.getAttribute('data-window-ends'), 10);
-        const remaining = ends - Date.now();
-        if (remaining <= 0) {
-          anyExpired = true;
-          return;
-        }
-        const verb = pill.classList.contains('gc-reject-countdown') ? 'Rejecting' : 'Merging';
-        const label = pill.querySelector('.gc-vote-count-label');
-        // Lazy-consensus pills carry the live tally after the countdown
-        // (data-label-suffix, e.g. " · 1/2") — keep it across ticks.
-        const suffix = pill.getAttribute('data-label-suffix') || '';
-        if (label) label.textContent = `${verb} in ${AppView._fmtCountdown(remaining)}${suffix}`;
+        if (ends - now <= 0) anyExpired = true;
       });
+      AppView._reactDevBoard()?.publishCardNow(now);
+      // A window that crossed zero refetches: the actual merge / takedown is
+      // server-driven (next vote, or the stale-PR sweeper's window-elapsed
+      // pass), so the row has to come back from the server to settle.
       if (anyExpired) AppView._loadDevFeed();
     }, 30000);
   },
 
   // Sub-tab-aware repaint for card-action handlers that perform an optimistic
   // local mutation. The Dev area paints cards on two surfaces from the same
-  // cached data: the feed list (#dev-feed) and the opened-topic full-screen
-  // card (#gc-thread-head). _rerenderFeed alone no-ops in the topic view, so
+  // cached data: the card list (#dev-workshop or the kanban) and the
+  // opened-topic full-screen card (#gc-thread-head). _repaintDevBody alone
+  // no-ops in the topic view, so
   // an in-card action looked dead there (#368-class bug). This repaints
   // whichever surface is mounted, purely from cache — no _loadDevData — so the
   // just-set optimistic state isn't clobbered by a slower/racing refetch.
@@ -4388,11 +6003,6 @@ const AppView = {
         && document.getElementById('gc-thread-head')) {
       AppView._renderTopicHead();
     }
-  },
-
-  showMoreFeed() {
-    AppView._feedShown = (AppView._feedShown || 20) + 10;
-    AppView._rerenderFeed();
   },
 
   // ── Kanban view ──────────────────────────────────────────────────────
@@ -4437,14 +6047,36 @@ const AppView = {
     const prT = (p) => Math.max(ts(p.promoted_at || p.created_at), ts(p.last_message_at));
     const govT = (g) => Math.max(ts(g.created_at), ts(g.last_message_at));
     const mergedT = (m) => Math.max(ts(m.created_at), ts(m.last_message_at));
-    // Mirror of _proposalPinRank, inlined to keep this helper self-contained
+    // Merge-pipeline pin rank (#388), and since THE UI OVERHAUL the board is
+    // the ONLY place it applies. It used to have a twin, AppView
+    // ._proposalPinRank, which ordered the retired List view's proposal
+    // group; the Feed that replaced it is pure recency, so pinning a
+    // pipeline state there would have been a lie about when something
+    // happened. The states this ranks all still render as the card's own
+    // state badge in both views — what is board-only is the ORDERING.
     // (merging > resolving > conflict-failed/merge-conflict > normal).
+    // The tiers deliberately match the card's own state-badge precedence
+    // (#361/#386: merging > resolving > failed), so a card's position in the
+    // column always agrees with the badge the viewer can see on it:
+    //   0 — 'merging'   ("Merging…")              being merged right now
+    //   1 — resolving   ("Resolving conflicts…")  auto-resolver sync in flight
+    //   2 — merge_conflict_state 'failed' / 'conflict': a real merge attempt
+    //       failed and the auto-resolver may never pick it up (it only touches
+    //       vote-eligible proposals), so the card must stay visible until the
+    //       creator finishes the merge
+    //   3 — #47: checks failing or errored. Blocks merge and needs the owner,
+    //       so it sits just below the conflict affordance rather than sinking
+    //       under ordinary chatter
+    //   4 — everything else (normal, by recency)
+    // A bare 'behind' snapshot is NOT pinned: it renders as the neutral
+    // "Behind main · N" badge, and many PRs can be behind main.
     const pinRank = (pr) => {
-      if (!pr) return 3;
+      if (!pr) return 4;
       if (pr.status === 'merging') return 0;
       if (pr.resolving) return 1;
       if (pr.merge_conflict_state === 'failed' || pr.merge_conflict_state === 'conflict') return 2;
-      return 3;
+      if (pr.check_state === 'failing' || pr.check_state === 'error') return 3;
+      return 4;
     };
 
     // Issue numbers an open promoted proposal card (Column 3) addresses.
@@ -4486,7 +6118,9 @@ const AppView = {
 
     const review = [];
     for (const p of proposals) review.push({ kind: 'proposal', item: p, _r: pinRank(p), _t: prT(p) });
-    for (const g of gov) review.push({ kind: 'gov', item: g, _r: 3, _t: govT(g) });
+    // Governance proposals have no merge or check state, so they sort in the
+    // normal (unpinned) tier alongside non-pipeline PRs.
+    for (const g of gov) review.push({ kind: 'gov', item: g, _r: 4, _t: govT(g) });
     review.sort((a, b) => (a._r - b._r) || (b._t - a._t));
 
     const done = merged.slice().sort((a, b) => mergedT(b) - mergedT(a));
@@ -4550,8 +6184,8 @@ const AppView = {
   },
 
   // Identity string for a bucketed card, matching the (card_type, card_ref)
-  // pairs the server stores and the data-*-row attributes the drag handler
-  // reads. `column` picks how to read the ref: Issues holds bare issue rows,
+  // pairs the server stores, so a saved order can be laid over the derived
+  // one. `column` picks how to read the ref: Issues holds bare issue rows,
   // In review holds { kind, item } entries (proposal | gov).
   _cardOrderKey(column, entry) {
     if (entry == null) return null;
@@ -4565,66 +6199,61 @@ const AppView = {
     return null;
   },
 
-  // Identity string for a PM-view card entry ({ kind, item }), matching the
-  // (card_type, card_ref) pairs the /pm-order server stores and the
-  // data-order-key attribute the drag handler reads. PM sections mix issues
-  // (ref = issue NUMBER) and proposals (ref = chat_sessions.id); no gov cards.
-  // A standalone fn (not `_cardOrderKey('issues', …)`) because both PM kinds
-  // arrive as { kind, item } entries, unlike the kanban Issues column's bare
-  // rows.
-  _pmCardOrderKey(entry) {
-    if (entry == null) return null;
-    const it = entry.item || {};
-    if (entry.kind === 'issue') return (it.number != null) ? `issue:${it.number}` : null;
-    if (entry.kind === 'proposal') return (it.id != null) ? `proposal:${it.id}` : null;
-    return null;
-  },
 
   // ── Kanban filters (#482) ───────────────────────────────────────────
   //
   // Pure card-level filter predicate for the kanban filter bar. kind ∈
-  // 'issue' | 'proposal' | 'gov' | 'merged' | 'session'. A 'session' card
-  // matches on its displayed label and its linked issue numbers, and is
-  // exempt from priority/category/assignee (which it cannot carry). No DOM, no AppView state
-  // reads — the filters come in explicitly — so it is unit-testable in
-  // isolation (see tests/dev-kanban-filters.test.js). Empty/default
-  // filters match everything, keeping the unfiltered board identical to
-  // the pre-filter output.
+  // 'issue' | 'proposal' | 'gov' | 'merged' | 'session'. An ordinary session
+  // matches on its displayed label, linked issue numbers, and author, and is
+  // exempt from priority/category (which it cannot carry). An imported PR is
+  // still lifecycle-kind 'session' while Underway, but uses proposal
+  // attribute semantics because those values already exist. No DOM or
+  // mutable AppView state reads — the filters come in explicitly — so it is
+  // unit-testable in isolation (see tests/dev-kanban-filters.test.js).
+  // Empty/default filters match everything, keeping the unfiltered board
+  // identical to the pre-filter output.
+  _devCardAuthor(kind, item) {
+    const it = item || {};
+    if (kind === 'issue') return it.created_by_username || it.user || '';
+    if (kind === 'gov') return it.created_by_username || '';
+    if (kind === 'merged' && it.row_type === 'close_issue') {
+      return it.created_by_username || '';
+    }
+    // proposal | merged PR | session
+    return it.username || '';
+  },
+
   _devCardMatches(kind, item, filters) {
     const f = filters || {};
     const it = item || {};
     const q = (f.q || '').trim().toLowerCase();
     if (q) {
-      let title; let author; let num;
+      let title; let num;
       if (kind === 'issue') {
         title = it.title || '';
-        author = it.created_by_username || it.user || '';
         num = it.number;
       } else if (kind === 'gov') {
         // Mirror _renderGovCard's title choice for renames.
         title = (it.kind === 'rename' && it.payload && it.payload.newName)
           ? it.payload.newName : (it.title || '');
-        author = it.created_by_username || '';
         num = it.github_issue_number;
       } else if (kind === 'merged' && it.row_type === 'close_issue') {
         // Applied close-issue rows in the Done column — mirror
         // _renderCompletedCloseIssueCard's title/meta sources.
         title = (it.payload && it.payload.issueTitle) || it.title || '';
-        author = it.created_by_username || '';
         num = it.payload && it.payload.issueNumber;
       } else if (kind === 'session') {
         // Dev sessions: match the label the card actually shows, and their
         // linked issue numbers (so "#900002" finds the session working on
         // that issue, matching the reverse #N chips on the card).
         title = it.session_title || it.pr_title || it.branch_name || '';
-        author = it.username || '';
         num = it.pr_number != null ? it.pr_number : null;
       } else {
         // proposal | merged — mirror the card renderers' title fallback.
         title = it.pr_title || `Change by ${it.username || ''}`;
-        author = it.username || '';
         num = it.pr_number != null ? it.pr_number : it.id;
       }
+      const author = AppView._devCardAuthor(kind, it);
       // A leading '#' targets the issue/PR number ("#482" and "482" both
       // match); the number check is substring-based like the text checks.
       const qNum = q.replace(/^#/, '');
@@ -4638,16 +6267,34 @@ const AppView = {
       }
       if (!hit) return false;
     }
-    if (kind === 'session') {
-      // "Needs my vote" genuinely excludes a session — there is nothing to
+    // The Workshop's theme, matched on the same key the themes name cards by.
+    // The one filter that reads module state (the loaded themes) — and, with
+    // none loaded, the one that must widen rather than hide.
+    //
+    // A closure because BOTH exits need it. #1787: the session branch below
+    // returns early, and it did so AHEAD of this check, so with a theme
+    // selected every session matched every theme and a theme's Underway lane
+    // showed other themes' work. Priority and category are a fair no-op there
+    // — a session carries neither attribute — but a session does sit in a
+    // theme, by the issue it links (see `linkedTheme` in _workshopView).
+    const themeOk = () => {
+      if (!f.theme) return true;
+      const themeKind = kind === 'session'
+        ? (it && it.row_type === undefined && it.pr_number != null && it.status === 'merged' ? 'merged' : 'shared-session')
+        : kind;
+      return AppView._workshopThemeHas(f.theme, AppView._workshopItemKey(themeKind, it), it);
+    };
+    if (kind === 'session' && it.source !== 'imported') {
+      // "Waiting on you" genuinely excludes a session — there is nothing to
       // vote on until it becomes a proposal.
       if (f.needsVote) return false;
-      // Priority / category / assignee, though, are an explicit NO-OP rather
-      // than a rule a session can never satisfy: it carries no such
-      // metadata, so hiding every session whenever someone picks a priority
-      // would be silently wrong. _sessionFilterNoteHtml says so out loud in
-      // the In-progress column instead.
-      return true;
+      // Priority / category remain an explicit NO-OP because sessions carry
+      // neither attribute. A named person does apply through the session's
+      // author; Unassigned keeps its previous no-op behavior because a
+      // session is not an assignable board item.
+      if (f.assignee && f.assignee !== AppView.KANBAN_ASSIGNEE_UNASSIGNED
+        && AppView._devCardAuthor(kind, it) !== f.assignee) return false;
+      return themeOk();
     }
     // priority / assignee filter on the community-voted top value. Cards
     // without the attribute set — and gov cards, which never carry them —
@@ -4663,8 +6310,10 @@ const AppView = {
       // board whenever Unassigned is picked.
       if (kind === 'gov') return false;
       if (it.assignee && it.assignee.top) return false;
-    } else if (f.assignee && !(it.assignee && it.assignee.top === f.assignee)) {
-      return false;
+    } else if (f.assignee) {
+      const assignedToUser = !!(it.assignee && it.assignee.top === f.assignee);
+      const authoredByUser = AppView._devCardAuthor(kind, it) === f.assignee;
+      if (!assignedToUser && !authoredByUser) return false;
     }
     if (f.needsVote) {
       if (kind === 'proposal') {
@@ -4676,493 +6325,296 @@ const AppView = {
         return false;
       }
     }
-    return true;
+    return themeOk();
   },
 
   _kanbanFiltersActive() {
     const f = AppView._kanbanFilters || {};
-    return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote);
+    return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote || f.theme);
   },
 
-  // Assignee dropdown options: the union of top-voted assignees across all
-  // cached board data, sorted alphabetically. The current selection is
-  // always kept in the list even if it disappears from the data on a
-  // refresh, so an active filter never silently self-clears.
+  // Person dropdown options: the union of top-voted assignees and authors
+  // across all cached board data, sorted alphabetically. The current
+  // selection is always kept in the list even if it disappears from the
+  // data on a refresh, so an active filter never silently self-clears.
   _kanbanAssigneeOptions() {
     const set = new Set();
-    const add = (it) => { if (it && it.assignee && it.assignee.top) set.add(it.assignee.top); };
-    AppView._visibleGhIssues().forEach(add);
-    (AppView._proposals || []).forEach(add);
-    (AppView._merged || []).forEach(add);
+    const add = (kind, it) => {
+      if (it && it.assignee && it.assignee.top) set.add(it.assignee.top);
+      const author = AppView._devCardAuthor(kind, it);
+      if (author) set.add(author);
+    };
+    AppView._visibleGhIssues().forEach((it) => add('issue', it));
+    (AppView._proposals || []).forEach((it) => add('proposal', it));
+    (AppView._govProposals || []).forEach((it) => add('gov', it));
+    (AppView._merged || []).forEach((it) => add('merged', it));
+    (AppView._mySessions || []).forEach((it) => add('session', it));
+    (AppView._sharedSessions || []).forEach((it) => add('session', it));
     const cur = AppView._kanbanFilters && AppView._kanbanFilters.assignee;
     // The Unassigned sentinel is a fixed option, never a name in this list.
     if (cur && cur !== AppView.KANBAN_ASSIGNEE_UNASSIGNED) set.add(cur);
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   },
 
-  // #780: the category filter's options — built-ins then this app's custom
-  // categories, mirroring the dropdown's order. Like the assignee select, the
-  // current selection is always kept in the list even if it vanishes from the
-  // vocabulary, so an active filter never silently self-clears.
-  _kanbanCategoryOptionsHtml() {
-    const f = AppView._kanbanFilters || {};
-    const opt = (v, label) =>
-      `<option value="${escapeAttr(v)}"${f.category === v ? ' selected' : ''}>${escapeHtml(label)}</option>`;
-    const seen = new Set();
-    let html = '<option value="">Any category</option>';
-    for (const v of AppView.ATTR_CATEGORY_VALUES) {
-      seen.add(v);
-      html += opt(v, AppView._categoryMeta(v).label);
-    }
-    for (const c of AppView._customCategories()) {
-      if (seen.has(c.value)) continue;
-      seen.add(c.value);
-      html += opt(c.value, AppView._categoryMeta(c.value).label);
-    }
-    if (f.category && !seen.has(f.category)) {
-      html += opt(f.category, AppView._categoryMeta(f.category).label);
-    }
-    return html;
-  },
+  // ── The filter bar's chips moved to React ────────────────────────
+  //
+  // `KANBAN_CHIP_BASE`/`_IDLE`/`_ON` and the two builders that read them
+  // (`_kanbanNeedsVoteChipCls`, `_kanbanChipSelectCls`) are retired: the bar
+  // is `frontend/src/features/dev-board/kanban-filters.tsx` now, and it is the
+  // only writer below `#dev-kanban-filterbar`. The class runs live there, as
+  // `CHIP_BASE`/`CHIP_IDLE`/`CHIP_ON`. Streamlined Concept: the bar's selects
+  // and the needs-vote toggle moved on into the Filters DIALOG
+  // (frontend/src/features/dialogs/board-filters.tsx), so the bar is just
+  // search + a `Filters (n)` chip + one dismissable chip per active filter,
+  // and the option vocabularies feed the dialog's open() payload instead of
+  // a select's list (`_kanbanCategoryChoices` below replaced
+  // `_kanbanCategoryOptionList`).
+  //
+  // They are transcribed there rather than imported from here, and that is not
+  // an oversight worth undoing: this file is a classic script the bundle
+  // cannot import, and Tailwind's extractor is a regex over source text
+  // (AGENTS.md), so a class name whose only occurrence is in this file would
+  // compile to nothing for the component that actually renders it.
 
-  _kanbanNeedsVoteChipCls(active) {
-    return 'text-xs px-2.5 py-1.5 rounded-lg border transition-colors shrink-0 '
-      + (active
-        ? 'bg-violet-600 border-violet-600 text-white'
-        : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
-  },
-
-  _kanbanAssigneeOptionsHtml() {
-    const f = AppView._kanbanFilters || {};
-    const un = AppView.KANBAN_ASSIGNEE_UNASSIGNED;
-    return '<option value="">Anyone</option>'
-      + `<option value="${escapeAttr(un)}"${f.assignee === un ? ' selected' : ''}>Unassigned</option>`
-      + AppView._kanbanAssigneeOptions().map((name) =>
-        `<option value="${escapeAttr(name)}"${f.assignee === name ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('');
-  },
-
-  // #625: the filter bar is shared between the kanban and PM views, but
-  // each mode repaints a different surface. Every bar control routes its
-  // change through this dispatcher instead of calling _repaintKanbanBoard
-  // directly (which no-ops when #dev-kanban-board isn't mounted).
+  // #625 made the filter bar shared between the kanban and PM views, so every
+  // bar control routed its change through this dispatcher rather than calling
+  // _repaintKanbanBoard directly. The PM view is retired and the Feed carries
+  // no filter bar, so there is exactly one surface left — but the indirection
+  // stays: it is the single point every control already calls, and inlining it
+  // would be twelve edits to say the same thing.
+  // Repaint whichever surface the board is currently showing.
+  //
+  // The filter controls call this, and they used to be a kanban-only concern,
+  // so it was a one-line forward to the kanban repaint. Activity has the same
+  // bar now (see the feed branch of _repaintDevBody), and a search typed there
+  // has to repaint the feed or the box would take input and change nothing.
+  //
+  // #1787: the two things a filter change needs — PERSIST it, and tell the
+  // bar what it now says — used to live inside _repaintKanbanBoard, which
+  // this function only reaches on the Board. So on the WORKSHOP every filter
+  // set or cleared was a scratch value: `_saveKanbanFilters` never ran, so
+  // the next `_repaintDevBody` reloaded the old set over it; and
+  // `_updateKanbanFilterBarUI` never ran, so the chips and the `Filters (n)`
+  // count never moved — a chip's × widened the themes and stayed on screen,
+  // reading as broken. Both belong HERE, at the one point every control
+  // already funnels through, rather than on one of the two surfaces.
   _repaintBoardSurface() {
-    if (AppView._getViewMode() === 'pm') AppView._repaintPmView();
-    else AppView._repaintKanbanBoard();
+    AppView._saveKanbanFilters(App.currentApp);
+    if (AppView._getViewMode() === 'workshop') {
+      AppView._rerenderWorkshop();
+      AppView._updateKanbanFilterBarUI();
+      return;
+    }
+    AppView._repaintKanbanBoard();
   },
 
-  // Build the filter bar into #dev-kanban-filterbar and wire its controls.
-  // Called once per kanban / PM mount (and by Clear, to reset control
-  // values); ordinary board repaints leave this node untouched so the
-  // search input keeps its focus and text.
+  // The filter bar is features/dev-board/kanban-filters.tsx's. Mounted on entry
+  // to EITHER surface — the board and the feed share one model and one set of
+  // controls — and every control below publishes and repaints through
+  // _repaintBoardSurface, which picks the surface.
+  //
+  // `_clearKanbanFilterBar()` lived here and emptied the host on the way into
+  // the feed, back when the feed had no filters. It has them now, so the bar
+  // is never torn down between the two modes and the last caller went with the
+  // reason for it.
+  //
+  // `_renderKanbanFilterBar` used to build the markup and re-bind six
+  // listeners, and Clear worked by rebuilding the whole thing so the controls
+  // snapped back to their defaults. That last part is the only piece that
+  // needed care in the conversion: the search box must NOT be re-rendered from
+  // the model on an ordinary repaint, or it would take the caret with it — so
+  // it is uncontrolled, and Clear bumps `seq`, which is the field's React key.
+
+  _publishKanbanFilters(patch) {
+    AppView._reactDevBoard()?.publishKanbanFilters(patch);
+  },
+
+  // The whole bar's state. The selects' option lists are no longer part of
+  // it — the vocabularies feed the Filters dialog's open() payload instead —
+  // so the view is just the search text, the `Filters (n)` count and one
+  // entry per active filter for the dismissable chip row.
+  _kanbanFilterView() {
+    const f = AppView._kanbanFilters || {};
+    return {
+      mounted: true,
+      q: f.q || '',
+      seq: AppView._kanbanFilterSeq,
+      count: AppView._kanbanFilterCount(),
+      chips: AppView._kanbanActiveChips(),
+    };
+  },
+
   _renderKanbanFilterBar() {
     const el = document.getElementById('dev-kanban-filterbar');
     if (!el) return;
-    const f = AppView._kanbanFilters || {};
-    const ctlCls = 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100';
-    const priOpt = (v, label) =>
-      `<option value="${v}"${f.priority === v ? ' selected' : ''}>${label}</option>`;
-    el.innerHTML = `
-      <div class="flex flex-wrap items-center gap-2">
-        <input id="dev-kanban-search" type="search" placeholder="Filter by title, author or #number"
-          value="${escapeAttr(f.q || '')}" aria-label="Filter cards"
-          class="${ctlCls} flex-1 min-w-[10rem]" />
-        <select id="dev-kanban-priority" class="${ctlCls}" aria-label="Filter by priority">
-          <option value="">Any priority</option>
-          ${priOpt('high', 'High')}${priOpt('medium', 'Medium')}${priOpt('low', 'Low')}
-        </select>
-        <select id="dev-kanban-category" class="${ctlCls}" aria-label="Filter by category">
-          ${AppView._kanbanCategoryOptionsHtml()}
-        </select>
-        <select id="dev-kanban-assignee" class="${ctlCls}" aria-label="Filter by assignee">
-          ${AppView._kanbanAssigneeOptionsHtml()}
-        </select>
-        <button id="dev-kanban-needsvote" type="button" aria-pressed="${f.needsVote ? 'true' : 'false'}"
-          class="${AppView._kanbanNeedsVoteChipCls(!!f.needsVote)}"
-          title="Show only proposals you haven't voted on">Needs my vote</button>
-        <button id="dev-kanban-clear" type="button"
-          class="text-xs text-violet-500 hover:underline shrink-0${AppView._kanbanFiltersActive() ? '' : ' hidden'}">Clear</button>
-      </div>`;
-
-    const input = el.querySelector('#dev-kanban-search');
-    let debounce = null;
-    input.addEventListener('input', () => {
-      clearTimeout(debounce);
-      debounce = setTimeout(() => {
-        AppView._kanbanFilters.q = input.value;
-        AppView._repaintBoardSurface();
-      }, 150);
-    });
-    el.querySelector('#dev-kanban-priority').addEventListener('change', (ev) => {
-      AppView._kanbanFilters.priority = ev.target.value || null;
-      AppView._repaintBoardSurface();
-    });
-    el.querySelector('#dev-kanban-category').addEventListener('change', (ev) => {
-      AppView._kanbanFilters.category = ev.target.value || null;
-      AppView._repaintBoardSurface();
-    });
-    el.querySelector('#dev-kanban-assignee').addEventListener('change', (ev) => {
-      AppView._kanbanFilters.assignee = ev.target.value || null;
-      AppView._repaintBoardSurface();
-    });
-    const chip = el.querySelector('#dev-kanban-needsvote');
-    chip.addEventListener('click', () => {
-      AppView._kanbanFilters.needsVote = !AppView._kanbanFilters.needsVote;
-      chip.className = AppView._kanbanNeedsVoteChipCls(AppView._kanbanFilters.needsVote);
-      chip.setAttribute('aria-pressed', AppView._kanbanFilters.needsVote ? 'true' : 'false');
-      AppView._repaintBoardSurface();
-    });
-    el.querySelector('#dev-kanban-clear').addEventListener('click', () => {
-      AppView._kanbanFilters = AppView._defaultKanbanFilters();
-      // Rebuild the bar so every control snaps back to its default value.
-      AppView._renderKanbanFilterBar();
-      AppView._repaintBoardSurface();
-    });
+    // No re-parenting here, deliberately. #dev-kanban-filterbar is a host the
+    // React frame renders INSIDE #dev-actions, one flex sibling to the left of
+    // the "+" — so filling it is all it takes to put the chips beside the
+    // button. See the comment on that row in features/dev-board/board-frame.tsx
+    // for why the button can never move into #dev-body instead.
+    AppView._reactDevBoard()?.mountKanbanFilters(el);
+    AppView._publishKanbanFilters(AppView._kanbanFilterView());
   },
 
-  // Keep the stable filter bar in sync after each board repaint: Clear-link
-  // visibility, and the assignee option list (which follows the data).
+  // Typing filters the cached cards, so it commits on a 150ms debounce rather
+  // than on blur — there is no server round trip to pace.
+  _onKanbanSearchInput() {
+    const input = document.getElementById('dev-kanban-search');
+    if (!input) return;
+    clearTimeout(AppView._kanbanSearchDebounce);
+    AppView._kanbanSearchDebounce = setTimeout(() => {
+      AppView._kanbanFilters.q = input.value;
+      AppView._repaintBoardSurface();
+    }, 150);
+  },
+
+  _kanbanFilterSeq: 0,
+
+  // A chip's × — remove exactly one filter. The dialog-owned keys just null
+  // out; dismissing the Search chip also has to empty the uncontrolled box,
+  // and a new `seq` is a new key on the field, which is what does that.
+  _dismissKanbanFilter(key) {
+    if (key === 'q') {
+      AppView._kanbanFilters.q = '';
+      AppView._kanbanFilterSeq += 1;
+    } else if (key === 'needsVote') {
+      AppView._kanbanFilters.needsVote = false;
+    } else {
+      AppView._kanbanFilters[key] = null;
+    }
+    AppView._repaintBoardSurface();
+  },
+
+  // How many of the dialog-owned filters are active — the count on the
+  // `Filters (n)` chip. Search is excluded: it has its own field and chip.
+  _kanbanFilterCount() {
+    const f = AppView._kanbanFilters || {};
+    return (f.priority ? 1 : 0) + (f.category ? 1 : 0)
+      + (f.assignee ? 1 : 0) + (f.needsVote ? 1 : 0) + (f.theme ? 1 : 0);
+  },
+  // One entry per active filter, in a fixed order — the dismissable chip
+  // row's data. The chips themselves (Material selected filter-chip with a
+  // trailing ×) render in kanban-filters.tsx; clicking one calls
+  // `_dismissKanbanFilter` with its key.
+  _kanbanActiveChips() {
+    const f = AppView._kanbanFilters || {};
+    const chips = [];
+    if (f.q && f.q.trim()) chips.push({ key: 'q', label: `Search: ${f.q.trim()}` });
+    if (f.priority) {
+      const label = f.priority.charAt(0).toUpperCase() + f.priority.slice(1);
+      chips.push({ key: 'priority', label: `${label} priority` });
+    }
+    if (f.category) {
+      chips.push({ key: 'category', label: AppView._categoryMeta(f.category).label });
+    }
+    if (f.assignee) {
+      chips.push({
+        key: 'assignee',
+        label: f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED ? 'Unassigned' : f.assignee,
+      });
+    }
+    if (f.needsVote) chips.push({ key: 'needsVote', label: 'Waiting on you' });
+    if (f.theme) chips.push({ key: 'theme', label: `Theme: ${AppView._workshopThemeName(f.theme)}` });
+    return chips;
+  },
+  // The category vocabulary as DATA — built-ins then this app's customs,
+  // mirroring the retired select's order (#780), with the active selection
+  // kept in the list even if it vanishes from the vocabulary so an active
+  // filter never silently self-clears. Feeds the Filters dialog's payload.
+  _kanbanCategoryChoices() {
+    const f = AppView._kanbanFilters || {};
+    const seen = new Set();
+    const out = [];
+    const add = (v) => {
+      if (!v || seen.has(v)) return;
+      seen.add(v);
+      out.push({ value: v, label: AppView._categoryMeta(v).label });
+    };
+    AppView.ATTR_CATEGORY_VALUES.forEach(add);
+    AppView._customCategories().forEach((c) => add(c.value));
+    add(f.category);
+    return out;
+  },
+  // Open the Filters dialog with a snapshot of the current filters and the
+  // option vocabularies. The dialog is a staging area: nothing changes until
+  // its Done calls applyKanbanFilters below.
+  _openKanbanFiltersDialog() {
+    const f = AppView._kanbanFilters || AppView._defaultKanbanFilters();
+    window.UsernodeReact?.dialogs?.boardFilters?.open({
+      filters: {
+        priority: f.priority || null,
+        category: f.category || null,
+        assignee: f.assignee || null,
+        needsVote: !!f.needsVote,
+      },
+      categories: AppView._kanbanCategoryChoices(),
+      assignees: AppView._kanbanAssigneeOptions(),
+      unassigned: AppView.KANBAN_ASSIGNEE_UNASSIGNED,
+    });
+  },
+  // The Filters dialog's write-back. Merges the dialog-owned keys over the
+  // current set (search stays the bar's own) and repaints; persistence rides
+  // the repaint like every other filter change (_repaintKanbanBoard saves).
+  applyKanbanFilters(next) {
+    const n = next || {};
+    AppView._kanbanFilters = {
+      ...AppView._kanbanFilters,
+      priority: n.priority || null,
+      category: n.category || null,
+      assignee: n.assignee || null,
+      needsVote: !!n.needsVote,
+    };
+    AppView._repaintBoardSurface();
+  },
+
+  // Keep the stable filter bar in sync after each board repaint: the
+  // `Filters (n)` chip's count + fill, and the active-chip row (which
+  // follows the filter state the repaint just applied).
   _updateKanbanFilterBarUI() {
     const bar = document.getElementById('dev-kanban-filterbar');
     if (!bar) return;
-    const clear = bar.querySelector('#dev-kanban-clear');
-    if (clear) clear.classList.toggle('hidden', !AppView._kanbanFiltersActive());
-    const sel = bar.querySelector('#dev-kanban-assignee');
-    // Rebuilding options closes an open dropdown — skip while the select is
-    // being interacted with; the next repaint catches it up.
-    if (sel && document.activeElement !== sel) {
-      sel.innerHTML = AppView._kanbanAssigneeOptionsHtml();
-    }
-    // #780: same treatment for the category select, so a category created
-    // during this session (or a vocabulary that finished loading after the
-    // bar was built) shows up without a reload.
-    const catSel = bar.querySelector('#dev-kanban-category');
-    if (catSel && document.activeElement !== catSel) {
-      catSel.innerHTML = AppView._kanbanCategoryOptionsHtml();
-    }
+    // The dropdown-preserving `except` dance died with the bar's selects —
+    // everything left in the strip (Filters chip count, active chips, the
+    // uncontrolled search box React never re-keys) republishes safely.
+    AppView._publishKanbanFilters(AppView._kanbanFilterView());
   },
 
   // Repaint only the board region (#dev-kanban-board) from cached data,
   // leaving the filter bar node untouched. Every filter-control event and
   // WS-driven kanban refresh routes through here.
+  //
+  // This used to take a `remount` flag, because the retired drag recognizer
+  // physically rearranged a column's nodes and React reconciling keyed
+  // children over DOM that already moved left cards where the gesture put
+  // them. Nothing moves nodes behind React any more, so every repaint is a
+  // plain publish. See card/dev-kanban.tsx.
   _repaintKanbanBoard() {
-    // #613: never rebuild the board out from under an in-progress drag — a
-    // mid-drag innerHTML swap (e.g. a WS board_order_update from another
-    // user) would drop the pointer capture and strand the card. The commit
-    // that ends the drag repaints once it lands.
-    if (AppView._dragState) return;
     const board = document.getElementById('dev-kanban-board');
     if (!board) return;
-    // Every filter-control change (and Clear) funnels through here, so this
-    // is the single write point that keeps the persisted per-app filters in
-    // sync. WS-driven repaints re-save the same values — idempotent.
+    // _repaintBoardSurface saves before it forks (it is the point BOTH
+    // surfaces' controls funnel through); this covers the callers that come
+    // straight here — the WS-driven kanban refreshes — and re-saves the same
+    // values, which is idempotent.
     AppView._saveKanbanFilters(App.currentApp);
-    board.innerHTML = AppView._renderKanbanInner();
+    const react = AppView._reactDevBoard();
+    AppView._lastKanbanView = AppView._kanbanView();
+    if (react) {
+      react.mountKanban(board);
+      react.publishKanban(AppView._lastKanbanView);
+    }
     // The headless-state poller is keyed off the cached issue data, same
     // as the list feed — filtering a generating row off-screen doesn't
     // stop it.
-    if (window.Kudos) Kudos.attach(board);
-    AppView._applyExploreChatAvailability(board);
+    AppView._fillKudosHosts(board);
+    AppView._refreshAiAvailability();
     AppView._updateKanbanFilterBarUI();
-    AppView._initKanbanDrag(board);
-    AppView._initKanbanTabs(board);
     AppView._reanchorCardMenu();
   },
 
-  // ── Drag-to-reorder within a column (#613) ───────────────────────────
-  //
-  // Pointer-events based (not native HTML5 DnD) so it works with touch and
-  // doesn't hijack the card's own click/vote/kudos handlers: a drag only
-  // starts from the grip handle in the card's left gutter. On drop the new
-  // order is optimistically applied to _boardOrder + repainted, then POSTed;
-  // a failed save reverts to server truth. _dragState is non-null for the
-  // life of one drag and blocks board repaints (see _repaintKanbanBoard).
-  _dragState: null,
-
-  _initKanbanDrag(board) {
-    if (!board || board._dragBound) return;
-    if (AppView.readOnly) return; // #621: no reordering for read-only viewers
-    board._dragBound = true;
-    board.addEventListener('pointerdown', AppView._onDragPointerDown);
-  },
-
-  _onDragPointerDown(e) {
-    // Left mouse button only (touch/pen report button 0 / -1); ignore others.
-    if (typeof e.button === 'number' && e.button > 0) return;
-    const handle = e.target.closest && e.target.closest('.dev-drag-handle');
-    if (!handle) return;
-    const item = handle.closest('.dev-drag-item');
-    const list = item && item.closest('.dev-drag-list');
-    if (!item || !list || !item.dataset.orderKey) return;
-    e.preventDefault();
-    // PM view drags span multiple per-person lists (reorder within, reassign
-    // across); kanban drags stay inside one column. `scope` is the container
-    // the move handler hit-tests its sibling lists within.
-    const pmScope = item.closest && item.closest('#dev-pm');
-    if (pmScope) {
-      AppView._dragState = {
-        item, list, handle, pm: true,
-        scope: pmScope,
-        sourceList: list,
-        sourceAssignee: list.dataset.pmAssignee || null,
-        sourceName: list.dataset.pmName || null,
-        pointerId: e.pointerId,
-        moved: false,
-      };
-    } else {
-      AppView._dragState = {
-        item, list, handle,
-        column: list.dataset.orderCol,
-        pointerId: e.pointerId,
-        moved: false,
-      };
-    }
-    try { handle.setPointerCapture(e.pointerId); } catch {}
-    item.classList.add('opacity-50');
-    handle.classList.add('cursor-grabbing');
-    document.addEventListener('pointermove', AppView._onDragPointerMove);
-    document.addEventListener('pointerup', AppView._onDragPointerUp);
-    document.addEventListener('pointercancel', AppView._onDragPointerUp);
-  },
-
-  _onDragPointerMove(e) {
-    const st = AppView._dragState;
-    if (!st) return;
-    st.moved = true;
-    // PM drags can cross into another person's list; re-target st.list to the
-    // drop list under the pointer first, so the card can move between sections
-    // (reassign) as well as within one (reorder). Kanban stays single-list.
-    if (st.pm) {
-      const target = AppView._pmListUnderPoint(st.scope, e.clientX, e.clientY);
-      if (target && target !== st.list) st.list = target;
-    }
-    // Insert the dragged item before the first sibling whose vertical
-    // midpoint is below the pointer; append when the pointer is past them
-    // all. Direct children only, so nested cards never confuse the scan.
-    const items = Array.from(st.list.children).filter((el) => el.classList.contains('dev-drag-item'));
-    const y = e.clientY;
-    let before = null;
-    for (const other of items) {
-      if (other === st.item) continue;
-      const rect = other.getBoundingClientRect();
-      if (y < rect.top + rect.height / 2) { before = other; break; }
-    }
-    if (before) {
-      if (st.item.nextElementSibling !== before) st.list.insertBefore(st.item, before);
-    } else if (st.list.lastElementChild !== st.item) {
-      st.list.appendChild(st.item);
-    }
-  },
-
-  // Find the PM drop list (.dev-drag-list) under a pointer within `scope`.
-  // Prefers a list whose bounding box contains the point; falls back to the
-  // list with the nearest vertical edge so a drop in the gap between sections
-  // still lands somewhere sensible. Returns null when there are no lists.
-  _pmListUnderPoint(scope, x, y) {
-    if (!scope) return null;
-    const lists = Array.from(scope.querySelectorAll('.dev-drag-list'));
-    if (!lists.length) return null;
-    let nearest = null;
-    let nearestDist = Infinity;
-    for (const list of lists) {
-      const r = list.getBoundingClientRect();
-      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return list;
-      const dist = (y < r.top) ? (r.top - y) : (y > r.bottom ? y - r.bottom : 0);
-      if (dist < nearestDist) { nearestDist = dist; nearest = list; }
-    }
-    return nearest;
-  },
-
-  _onDragPointerUp() {
-    const st = AppView._dragState;
-    if (!st) return;
-    document.removeEventListener('pointermove', AppView._onDragPointerMove);
-    document.removeEventListener('pointerup', AppView._onDragPointerUp);
-    document.removeEventListener('pointercancel', AppView._onDragPointerUp);
-    try { st.handle.releasePointerCapture(st.pointerId); } catch {}
-    st.item.classList.remove('opacity-50');
-    st.handle.classList.remove('cursor-grabbing');
-    const { list, column, moved, pm } = st;
-    AppView._dragState = null;
-    if (!moved) return;
-    if (pm) { AppView._onPmDrop(st); return; }
-    const keys = Array.from(list.children)
-      .filter((el) => el.classList.contains('dev-drag-item'))
-      .map((el) => el.dataset.orderKey)
-      .filter(Boolean);
-    AppView._commitBoardOrder(column, keys);
-  },
-
-  // Parse an identity string ('issue:123' / 'proposal:45') back into the
-  // { type, ref } the server stores. Returns null on a malformed key.
-  _orderKeyToRef(key) {
-    const idx = String(key || '').indexOf(':');
-    if (idx < 0) return null;
-    const type = key.slice(0, idx);
-    const ref = parseInt(key.slice(idx + 1), 10);
-    if (!Number.isFinite(ref)) return null;
-    return { type, ref };
-  },
-
-  // Persist a column's new order. Optimistically updates _boardOrder +
-  // repaints (so the order sticks and the handles re-bind), then POSTs. On
-  // failure, reverts to the pre-drag order and repaints.
-  async _commitBoardOrder(column, keys) {
-    if (column !== 'issues' && column !== 'review') return;
-    const order = (keys || []).map(AppView._orderKeyToRef).filter(Boolean);
-    const prev = AppView._boardOrder || { issues: [], review: [] };
-    AppView._boardOrder = { ...prev, [column]: order };
-    AppView._repaintKanbanBoard();
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    try {
-      const res = await fetch(`/api/apps/${slug}/board-order${AppView._demoQS()}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ column, order }),
-      });
-      if (!res.ok) throw new Error('save failed');
-      const data = await res.json().catch(() => null);
-      if (data && Array.isArray(data.issues) && Array.isArray(data.review)) {
-        AppView._boardOrder = { issues: data.issues, review: data.review };
-        AppView._repaintKanbanBoard();
-      }
-    } catch {
-      AppView._boardOrder = prev;
-      AppView._repaintKanbanBoard();
-      PlatformUI.toast('Couldn’t save the new order — reverted.');
-    }
-  },
-
-  // ── PM view drag: reorder within / reassign across / unassign ─────────
-  //
-  // Reuses the shared pointer machinery above (_onDragPointerDown/Move/Up).
-  // A PM drag can end in three ways, decided purely from the source + drop
-  // list identities by _classifyPmDrop; _onPmDrop then performs the matching
-  // side effect (reassign = an assignee vote; unassign = withdraw that vote)
-  // plus a per-person order write for each affected section.
-
-  _initPmDrag(container) {
-    if (!container || container._dragBound) return;
-    if (AppView.readOnly) return; // no reordering for read-only viewers
-    container._dragBound = true;
-    container.addEventListener('pointerdown', AppView._onDragPointerDown);
-  },
-
-  // Pure classification of a completed PM drag. Given the source section key
-  // and the drop list's dataset ({ pmAssignee, pmName, pmUnassigned }),
-  // returns { action, ... }: 'reorder' (same person), 'reassign' (new person,
-  // carries destName), or 'unassign' (dropped on the Unassigned list). No DOM,
-  // no state — unit-tested directly.
-  _classifyPmDrop(sourceKey, destData) {
-    const d = destData || {};
-    if (d.pmUnassigned === '1' || d.pmUnassigned === true) return { action: 'unassign' };
-    const destKey = d.pmAssignee || null;
-    if (destKey == null) return { action: 'none' };
-    if (destKey === sourceKey) return { action: 'reorder' };
-    return { action: 'reassign', destName: d.pmName || destKey };
-  },
-
-  // Card identity keys ('issue:123' / 'proposal:45') currently in a list's DOM.
-  _pmListKeys(listEl) {
-    if (!listEl) return [];
-    return Array.from(listEl.children)
-      .filter((el) => el.classList && el.classList.contains('dev-drag-item'))
-      .map((el) => el.dataset && el.dataset.orderKey)
-      .filter(Boolean);
-  },
-
-  // Orchestrate a dropped PM card: classify, apply the reassign/unassign vote
-  // side effect, then persist the affected per-person orders. Optimistic —
-  // any failure reconciles by re-pulling the board (refreshDevData).
-  async _onPmDrop(st) {
-    const destList = st.list;
-    const cls = AppView._classifyPmDrop(st.sourceAssignee, destList && destList.dataset);
-    const ref = AppView._orderKeyToRef(st.item.dataset.orderKey);
-    // DOM already reflects the move: dest list holds the card, source doesn't.
-    const destKeys = AppView._pmListKeys(destList);
-    const sourceKeys = AppView._pmListKeys(st.sourceList);
-    const prev = AppView._pmOrder || {};
-    try {
-      if (cls.action === 'reorder') {
-        await AppView._commitPmOrder(st.sourceName, destKeys);
-      } else if (cls.action === 'reassign') {
-        if (ref) await AppView._castAssigneeForCard(ref.type, ref.ref, cls.destName);
-        await AppView._commitPmOrder(cls.destName, destKeys);
-        if (st.sourceName) await AppView._commitPmOrder(st.sourceName, sourceKeys);
-      } else if (cls.action === 'unassign') {
-        if (ref) await AppView._clearAssigneeForCard(ref.type, ref.ref);
-        if (st.sourceName) await AppView._commitPmOrder(st.sourceName, sourceKeys);
-        else AppView._repaintPmView();
-      } else {
-        AppView._repaintPmView();
-      }
-    } catch (err) {
-      AppView._pmOrder = prev;
-      // Reconcile against server truth (assignee summary + saved order) and
-      // repaint from the reloaded cache.
-      if (AppView.refreshDevData) AppView.refreshDevData('pm-order');
-      else AppView._repaintPmView();
-      PlatformUI.toast('Couldn’t save that change — reverted.');
-    }
-  },
-
-  // Persist one person's new card order. Optimistically updates _pmOrder +
-  // repaints (so the order sticks and grips re-bind), then POSTs. On failure,
-  // throws so _onPmDrop reverts + reconciles. `assigneeName` is the display
-  // name; the server case-folds it to the storage key.
-  async _commitPmOrder(assigneeName, keys) {
-    const key = String(assigneeName == null ? '' : assigneeName).trim().toLowerCase();
-    if (!key) return;
-    const order = (keys || []).map(AppView._orderKeyToRef).filter(Boolean);
-    AppView._pmOrder = { ...(AppView._pmOrder || {}), [key]: order };
-    AppView._repaintPmView();
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    const res = await fetch(`/api/apps/${slug}/pm-order${AppView._demoQS()}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assignee: assigneeName, order }),
-    });
-    if (!res.ok) throw new Error('pm-order save failed');
-    const data = await res.json().catch(() => null);
-    if (data && typeof data === 'object' && !Array.isArray(data)) {
-      AppView._pmOrder = data;
-      AppView._repaintPmView();
-    }
-  },
-
-  // Cast the viewer's assignee vote for a card (reassign-by-drag). Mirrors the
-  // chip popover's _castAttrVote POST, then writes the refreshed summary onto
-  // the cached item so the regroup places the card under the new person.
-  async _castAssigneeForCard(targetType, targetRef, name) {
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) throw new Error('no app');
-    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ field: 'assignee', value: name }),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'reassign failed');
-    AppView._applyAttrSummary(targetType, targetRef, 'assignee', data);
-  },
-
-  // Withdraw the viewer's assignee vote for a card (drag-to-Unassigned).
-  async _clearAssigneeForCard(targetType, targetRef) {
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) throw new Error('no app');
-    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes?field=assignee`, {
-      method: 'DELETE',
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || 'unassign failed');
-    AppView._applyAttrSummary(targetType, targetRef, 'assignee', data);
-  },
-
-  // Render the kanban board (inner HTML for #dev-kanban-board) from cached
-  // data. Reuses the exact per-card renderers the list mode uses, so every
-  // card keeps its buttons, badges, and data-*-row open hooks.
-  _renderKanbanInner() {
+  // The kanban board's VIEW MODEL (card/model.ts DevKanbanView). Reuses the
+  // exact per-card builders the feed uses, so every card keeps its buttons,
+  // badges and data-*-row open hooks.
+  _kanbanView() {
     const buckets = AppView._bucketDevItems({
       issues: AppView._visibleGhIssues(),
       proposals: AppView._proposals || [],
@@ -5175,8 +6627,7 @@ const AppView = {
 
     // #613: apply the manual drag order overlay to the Issues + In review
     // columns BEFORE filtering, so hiding cards via the filter bar never
-    // disturbs the saved order. Empty order → no change (identical to the
-    // pre-#613 board).
+    // disturbs the saved order. Empty order → no change.
     const order = AppView._boardOrder || { issues: [], review: [] };
     buckets.issues = AppView._applyManualOrder(
       buckets.issues, order.issues, (c) => AppView._cardOrderKey('issues', c));
@@ -5196,7 +6647,7 @@ const AppView = {
     // a search term and they just sat there unexplained. They now go
     // through _devCardMatches with kind 'session' (title + linked-issue
     // number), which returns true unconditionally for the three filters a
-    // session cannot carry; _inProgressCardsHtml says so visibly.
+    // session cannot carry; _sessionFilterNoteRow says so visibly.
     const kInProgress = filtering
       ? buckets.inProgress.filter((e) => (e.kind === 'issue'
         ? AppView._devCardMatches('issue', e.item, f)
@@ -5205,2234 +6656,200 @@ const AppView = {
     const kInReview = filtering
       ? buckets.inReview.filter((x) => AppView._devCardMatches(x.kind, x.item, f))
       : buckets.inReview;
-    const kDone = filtering
+    // Done AGES OUT: unfiltered, the column shows what landed in the last
+    // seven days (never fewer than the newest three, so a quiet fortnight
+    // does not empty it) and a "Show all N" footer for the rest. A settled
+    // change is a record, not something to do, and a column of forty of
+    // them was the busiest thing on the board. Filtering and "Show all"
+    // both lift the cut; the header count keeps the true total either way.
+    const doneAll = filtering
       ? buckets.done.filter((m) => AppView._devCardMatches('merged', m, f))
       : buckets.done;
+    const doneCut = !filtering && !AppView._doneShowAll
+      ? AppView._recentDone(doneAll)
+      : doneAll;
+    const kDone = doneCut;
+    const doneHidden = doneAll.length - doneCut.length;
 
-    // "More open issues on GitHub" link — the Issues column inherits the
-    // list footer's GitHub link when the repo has more open issues than
-    // the fetch ceiling, so the cap is never silent.
-    let issuesFooter = '';
-    if (meta.truncatedList && meta.repoUrl) {
-      const issuesUrl = `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues`;
-      issuesFooter = `<a href="${issuesUrl}" target="_blank" rel="noopener" class="text-xs text-violet-400 hover:underline">More open issues on GitHub &rarr;</a>`;
-    }
+    // "More open issues on GitHub" — the Issues column inherits the list
+    // footer's link when the repo has more open issues than the fetch
+    // ceiling, so the cap is never silent.
+    const issuesFooter = (meta.truncatedList && meta.repoUrl)
+      ? { kind: 'github', href: `${meta.repoUrl.replace(/\.git$/, '').replace(/\/$/, '')}/issues` }
+      : null;
 
     // #433: the Done column header shows the true merged total (set in
     // _loadDevData), not the loaded-page length. When the board has loaded
-    // fewer cards than the total, surface a static "+N more completed" hint
-    // — mirroring the Issues column's truncation footer — so the count and
+    // fewer cards than the total, surface a "+N more completed" hint —
+    // mirroring the Issues column's truncation footer — so the count and
     // the visible cards stay reconciled and the page cap is never silent.
     const doneTotal = (typeof AppView._mergedTotal === 'number')
       ? AppView._mergedTotal
       : buckets.done.length;
     // When the server has more merged pages, the footer is a real "Load
-    // more" button wired to the same pager the list view uses — clicking
-    // it fetches the next keyset page and re-paints the board in place
+    // more" wired to the same pager the list view uses — clicking it
+    // fetches the next keyset page and re-paints the board in place
     // (loadMoreMerged is view-mode aware). Falls back to the static hint
     // only in the degenerate case where the total exceeds the loaded rows
-    // yet the server reports no more pages (shouldn't normally happen,
-    // since total + hasMore derive from the same merged set).
-    let doneFooter = '';
-    if (filtering) {
+    // yet the server reports no more pages.
+    let doneFooter = null;
+    if (doneHidden > 0) {
+      doneFooter = { kind: 'showAll', n: doneAll.length };
+    } else if (filtering) {
       // #482: while filtered, the server total and the "+N more" hint would
       // both misstate what's visible — the header shows the matching loaded
       // count instead, and "Load more" stays reachable (uncounted) so older
       // matches can still be pulled in; the repaint re-applies the filter.
       if (AppView._mergedHasMore) {
-        const loading = AppView._mergedLoadingMore;
-        doneFooter = `<button class="gc-vote-btn" ${loading ? 'disabled' : ''} onclick="AppView.loadMoreMerged()">${loading ? 'Loading…' : 'Load more'}</button>`;
+        doneFooter = { kind: 'loadMerged', loading: !!AppView._mergedLoadingMore, n: null };
       }
     } else if (doneTotal > buckets.done.length) {
       const moreCount = doneTotal - buckets.done.length;
-      if (AppView._mergedHasMore) {
-        const loading = AppView._mergedLoadingMore;
-        doneFooter = `<button class="gc-vote-btn" ${loading ? 'disabled' : ''} onclick="AppView.loadMoreMerged()">${loading ? 'Loading…' : `Load more (${moreCount})`}</button>`;
-      } else {
-        doneFooter = `<span class="text-xs text-zinc-400 dark:text-zinc-500 italic">+${moreCount} more completed</span>`;
-      }
+      doneFooter = AppView._mergedHasMore
+        ? { kind: 'loadMerged', loading: !!AppView._mergedLoadingMore, n: moreCount }
+        : { kind: 'moreCompleted', n: moreCount };
     }
 
+    const cardRows = (items, build) => items.map((it) => {
+      const card = build(it);
+      return { t: 'card', key: card.key, card };
+    });
+    const emptyNote = filtering ? 'No matching cards' : 'Nothing here yet';
+
     const cols = [
-      // #613: `orderCol` marks a column as drag-reorderable and names the
-      // stored column_key; `orderKey(item)` yields the card identity the
-      // overlay + drag handler share. Filtering disables dragging (the saved
-      // order applies to the full column, not a filtered subset).
-      { key: 'issues', title: 'Issues', items: kIssues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter,
-        orderCol: 'issues', orderKey: (i) => AppView._cardOrderKey('issues', i) },
+      {
+        key: 'issues', title: 'Issues', count: kIssues.length,
+        rows: cardRows(kIssues, (i) => AppView._issueCardModel(i)),
+        empty: kIssues.length ? null : emptyNote,
+        footer: issuesFooter,
+      },
       // In progress renders through a dedicated builder: pinned own
-      // sessions (+ the visibility caption and the archived toggle),
-      // then issue cards, then other users' shared sessions.
+      // sessions (+ the dividers and the archived toggle), then issue
+      // cards, then other users' shared sessions.
       // #1112: titled "Underway", but the key stays `inprogress` — it is the
       // stored kanban column_key, the `#dev-kanban-col-inprogress` id and the
       // `?col=` deep-link value. Retitling is copy; rekeying would break
       // saved drag orders and every existing link.
-      { key: 'inprogress', title: 'Underway', items: kInProgress, cardsHtml: AppView._inProgressCardsHtml(kInProgress, filtering),
-        hint: 'Somebody or something is on these — being worked on, auto-solving, paused, waiting on an answer, or just claimed. The chip on each card says which.' },
-      { key: 'inreview', title: 'In review', items: kInReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)),
-        orderCol: 'review', orderKey: (x) => AppView._cardOrderKey('review', x) },
-      { key: 'done', title: 'Done', items: kDone, render: (m) => (m.row_type === 'close_issue' ? AppView._renderCompletedCloseIssueCard(m) : AppView._renderMergedCard(m)), count: filtering ? kDone.length : doneTotal, footer: doneFooter },
+      {
+        key: 'inprogress', title: 'Underway', count: kInProgress.length,
+        rows: AppView._inProgressRows(kInProgress),
+        empty: null,
+        footer: null,
+        hint: 'Somebody or something is on these: being worked on, auto-solving, paused, waiting on an answer, or just claimed. The chip on each card says which.',
+      },
+      {
+        key: 'inreview', title: 'In review', count: kInReview.length,
+        rows: cardRows(kInReview, (x) => (x.kind === 'proposal'
+          ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item))),
+        empty: kInReview.length ? null : emptyNote,
+        footer: null,
+      },
+      {
+        key: 'done', title: 'Done', count: filtering ? kDone.length : doneTotal,
+        rows: cardRows(kDone, (m) => AppView._mergedRowModel(m)),
+        empty: kDone.length ? null : emptyNote,
+        footer: doneFooter,
+      },
     ];
-
-    // #814: the counts are computed ONCE per column and consumed by both the
-    // column header and its tab, so the two can never drift (Done's is the
-    // server total unfiltered, the matching-card count while filtering).
-    const counts = cols.map((col) => (typeof col.count === 'number') ? col.count : col.items.length);
-    const activeTab = AppView._activeKanbanTab();
-
-    let html = AppView._renderKanbanTabs(cols, counts, activeTab);
-    html += `<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2" data-kanban-active="${escapeAttr(activeTab)}">`;
-    for (let ci = 0; ci < cols.length; ci++) {
-      const col = cols[ci];
-      // Cards render from the in-memory (paged) items; the header count can
-      // be overridden (Done uses the server total) and falls back to the
-      // loaded length for every other column.
-      const count = counts[ci];
-      // Reorder is offered only on a reorderable column that isn't being
-      // filtered (a filtered view hides cards the saved order still covers).
-      const reorder = !!col.orderCol && !filtering;
-      let cards;
-      if (typeof col.cardsHtml === 'string') {
-        cards = col.cardsHtml;
-      } else if (!col.items.length) {
-        cards = `<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">${filtering ? 'No matching cards' : 'Nothing here yet'}</div>`;
-      } else if (reorder) {
-        cards = `<div class="space-y-2 dev-drag-list" data-order-col="${col.orderCol}">`
-          + col.items.map((it) => AppView._wrapDraggable(col.orderKey(it), col.render(it))).join('')
-          + '</div>';
-      } else {
-        cards = `<div class="space-y-2">${col.items.map(col.render).join('')}</div>`;
-      }
-      const footer = col.footer ? `<div class="mt-2">${col.footer}</div>` : '';
-      // #814: every column is always in the DOM; `dev-kanban-col-active`
-      // marks the one the tab strip is showing and CSS acts on it only
-      // below 640px, so the desktop board is unchanged. The column's flex
-      // sizing is `.dev-kanban-col` in app.css rather than Tailwind
-      // utilities here — utilities would outrank the media queries.
-      const activeCls = col.key === activeTab ? ' dev-kanban-col-active' : '';
-      html += `
-        <div id="dev-kanban-col-${escapeAttr(col.key)}" data-kanban-col="${escapeAttr(col.key)}"
-          class="dev-kanban-col${activeCls}">
-          <div class="dev-kanban-col-head text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5"${col.hint ? ` title="${escapeAttr(col.hint)}"` : ''}>
-            ${escapeHtml(col.title)} <span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${count}</span>
-          </div>
-          ${cards}
-          ${footer}
-        </div>`;
-    }
-    html += '</div>';
-    return html;
+    // The In progress column's own empty note has to come after its rows are
+    // built: the archived toggle counts as content even with no cards.
+    if (!cols[1].rows.length) cols[1].empty = emptyNote;
+    // `slug` is what the open card's "Open on its own page" link is built
+    // from; `unfolded` is the ?cards=open state (every card at full size).
+    const slug = (AppView.appData && AppView.appData.slug) || App.currentApp || '';
+    return {
+      activeTab: AppView._activeKanbanTab(), cols, loading: !AppView._devDataReady,
+      slug, canPost: !!(AppView.appData && AppView.appData.can_collaborate),
+      unfolded: AppView._cardsOpen(),
+    };
   },
 
-  // #814: the mobile tab strip — one tab per kanban column, hidden at
-  // ≥640px (`sm:hidden`) where all four columns show side by side. Each
-  // tab carries the column name plus the same count its header shows, on
-  // two lines so all four fit a 390px phone without the strip itself
-  // needing to scroll (the whole point of the change). An empty column
-  // keeps its tab, dimmed and showing 0, so the strip never reflows.
-  _renderKanbanTabs(cols, counts, activeTab) {
-    const tabs = cols.map((col, i) => {
-      const active = col.key === activeTab;
-      const count = counts[i];
-      const cls = 'dev-kanban-tab flex-1 basis-0 min-w-0 min-h-[44px] px-1 py-1.5 flex flex-col items-center justify-center '
-        + 'border-b-2 transition-colors '
-        + (active
-          ? 'border-violet-500 text-violet-500 font-semibold'
-          : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200');
-      const countCls = 'font-mono text-[11px] leading-tight '
-        + (active ? 'text-violet-400' : (count ? 'text-zinc-400 dark:text-zinc-500' : 'text-zinc-300 dark:text-zinc-600'));
-      return `<button type="button" role="tab" id="dev-kanban-tab-${escapeAttr(col.key)}"
-          data-kanban-tab="${escapeAttr(col.key)}" aria-selected="${active ? 'true' : 'false'}"
-          aria-controls="dev-kanban-col-${escapeAttr(col.key)}" class="${cls}">
-          <span class="text-xs leading-tight truncate max-w-full">${escapeHtml(col.title)}</span>
-          <span class="${countCls}">${count}</span>
-        </button>`;
-    }).join('');
-    return `<div id="dev-kanban-tabs" role="tablist" aria-label="Board columns"
-      class="sm:hidden flex items-stretch gap-1 mb-2 border-b border-zinc-200 dark:border-zinc-800">${tabs}</div>`;
-  },
-
-  // #814: one delegated click listener on the STABLE #dev-kanban-board node
-  // (same `_dragBound` guard style as _initKanbanDrag) so it survives every
-  // innerHTML rewrite. Switching tabs deliberately does NOT repaint the
-  // board: all four columns are already rendered, so moving the active
-  // marker is enough — no scroll jump, no re-binding, and no interaction
-  // with the mid-drag repaint guard.
-  _initKanbanTabs(board) {
-    if (!board || board._tabsBound) return;
-    board._tabsBound = true;
-    board.addEventListener('click', (e) => {
-      const btn = e.target.closest && e.target.closest('[data-kanban-tab]');
-      if (!btn || !board.contains(btn)) return;
-      const key = btn.dataset.kanbanTab;
-      if (!AppView.KANBAN_TABS.includes(key)) return;
-      // An explicit tap retires the ?col= override, mirroring _setViewMode.
-      AppView._kanbanTabUrlOverride = null;
-      if (key === AppView._activeKanbanTab()) return;
-      AppView._kanbanTab = key;
-      AppView._saveKanbanTab(App.currentApp);
-      AppView._applyKanbanTab(board);
-    });
-  },
-
-  // Move the active-column marker + tab styling to AppView._kanbanTab
-  // in place. Keeps the classes in sync with what _renderKanbanTabs would
-  // have produced, so a later repaint is a no-op visually.
-  _applyKanbanTab(board) {
-    const scope = board || document.getElementById('dev-kanban-board');
-    if (!scope) return;
-    const active = AppView._activeKanbanTab();
-    const kanban = scope.querySelector('#dev-kanban');
-    if (kanban) kanban.setAttribute('data-kanban-active', active);
-    scope.querySelectorAll('[data-kanban-col]').forEach((col) => {
-      col.classList.toggle('dev-kanban-col-active', col.dataset.kanbanCol === active);
-    });
-    scope.querySelectorAll('[data-kanban-tab]').forEach((btn) => {
-      const on = btn.dataset.kanbanTab === active;
-      btn.setAttribute('aria-selected', on ? 'true' : 'false');
-      btn.classList.toggle('border-violet-500', on);
-      btn.classList.toggle('text-violet-500', on);
-      btn.classList.toggle('font-semibold', on);
-      btn.classList.toggle('border-transparent', !on);
-      btn.classList.toggle('text-zinc-500', !on);
-      btn.classList.toggle('dark:text-zinc-400', !on);
-    });
-  },
-
-  // #613: wrap one rendered card in a drag shell — a grip handle in a left
-  // gutter (44px tall for touch) plus the card. `key` is the card identity
-  // ('issue:123' / 'proposal:45'); a card with no identity (shouldn't happen
-  // for the reorderable columns) renders un-draggable so it can't be moved
-  // into an unsaveable state.
-  _wrapDraggable(key, cardHtml) {
-    // #621: read-only viewers can't reorder the board — no grip handle
-    // (and _initKanbanDrag never binds for them).
-    if (!key || AppView.readOnly) return `<div class="dev-drag-item">${cardHtml}</div>`;
-    const grip = '<svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4" aria-hidden="true">'
-      + '<circle cx="7" cy="5" r="1.4"/><circle cx="13" cy="5" r="1.4"/>'
-      + '<circle cx="7" cy="10" r="1.4"/><circle cx="13" cy="10" r="1.4"/>'
-      + '<circle cx="7" cy="15" r="1.4"/><circle cx="13" cy="15" r="1.4"/></svg>';
-    return `<div class="dev-drag-item relative pl-6" data-order-key="${escapeAttr(key)}">
-        <button type="button" class="dev-drag-handle absolute left-0 top-0 bottom-0 w-6 flex items-center justify-center text-zinc-300 dark:text-zinc-600 hover:text-zinc-500 dark:hover:text-zinc-400 cursor-grab touch-none"
-          aria-label="Drag to reorder" title="Drag to reorder">${grip}</button>
-        ${cardHtml}
-      </div>`;
-  },
-
-  // ── PM view (tasks by assignee) ──────────────────────────────────────
-  //
-  // Pure grouping of the cached dev data into a project-manager's
-  // assignment overview. No DOM, no AppView state reads — everything comes
-  // in via `data` — so it is unit-testable in isolation (see
-  // tests/dev-pm-groups.test.js), mirroring _bucketDevItems.
-  //
-  //   data = { issues, proposals }
-  //     issues    — visible GitHub issues (env-twin-filtered; both the
-  //                 Issues and In-progress kanban buckets — i.e. every
-  //                 open issue), each carrying an { assignee: { top } }
-  //     proposals — open promoted/merging PR proposals
-  //   (merged + governance are deliberately NOT passed: completed work
-  //    isn't an open assignment, and gov cards never carry an assignee.)
-  //
-  // Returns { groups, unassigned, unassignedTotal }:
-  //   groups          — [{ name, count, items: [{kind, item}] }] for every
-  //                     person with ≥1 assigned task, ordered by count desc
-  //                     then name asc; items within a group newest-first
-  //   unassigned      — [{kind, item}] with no assignee, newest-first,
-  //                     capped to PM_UNASSIGNED_MAX (override with
-  //                     opts.cap — #633 passes Infinity while the
-  //                     Unassigned filter is active)
-  //   unassignedTotal — the pre-cap count, for the "+N more" note
-  //
-  //   opts.pmOrder — optional per-person manual order overlay, shape
-  //                  { "<assignee_key>": [{type,ref}], … } (AppView._pmOrder).
-  //                  When present, each group's items are re-sorted by
-  //                  _applyManualOrder AFTER the recency sort: cards absent
-  //                  from a person's saved order lead (newest-first), ranked
-  //                  cards follow in stored order (#617). The Unassigned
-  //                  bucket is NEVER reordered. Passed in explicitly (not read
-  //                  off AppView) so this helper stays pure + unit-testable.
-  PM_UNASSIGNED_MAX: 10,
-  _groupByAssignee(data, opts) {
-    const d = data || {};
-    const issues = Array.isArray(d.issues) ? d.issues : [];
-    const proposals = Array.isArray(d.proposals) ? d.proposals : [];
-    const pmOrder = (opts && opts.pmOrder && typeof opts.pmOrder === 'object') ? opts.pmOrder : null;
-
+  // The Done column's age cut (see _kanbanView). Session state: a board that
+  // was asked to show everything keeps showing everything across repaints,
+  // and forgets on the next page load.
+  _doneShowAll: false,
+  DONE_RECENT_DAYS: 7,
+  DONE_RECENT_MIN: 3,
+  _recentDone(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    const cutoff = Date.now() - AppView.DONE_RECENT_DAYS * 86400000;
     const ts = (v) => {
       const t = Date.parse(v || '');
       return Number.isFinite(t) ? t : 0;
     };
-    // Recency key per kind — mirrors _bucketDevItems' issueT / prT so the
-    // ordering matches the rest of the dev view.
-    const recency = (kind, it) => (kind === 'issue'
-      ? Math.max(ts(it.updatedAt), ts(it.lastMessageAt))
-      : Math.max(ts(it.promoted_at || it.created_at), ts(it.last_message_at)));
+    const fresh = list.filter((m) => Math.max(ts(m.created_at), ts(m.last_message_at)) >= cutoff);
+    return fresh.length >= AppView.DONE_RECENT_MIN ? fresh : list.slice(0, AppView.DONE_RECENT_MIN);
+  },
+  showAllDone() {
+    AppView._doneShowAll = true;
+    AppView._repaintCards();
+  },
 
-    const assigneeTop = (it) => (it && it.assignee && it.assignee.top) || null;
-
-    // Flatten both kinds into one list carrying kind, item and its sort key.
-    const cards = [];
-    for (const i of issues) cards.push({ kind: 'issue', item: i, _t: recency('issue', i) });
-    for (const p of proposals) cards.push({ kind: 'proposal', item: p, _t: recency('proposal', p) });
-
-    // Bucket by case-folded assignee; first-seen casing is the display name.
-    const byKey = new Map(); // lower(top) -> { name, entries: [{kind,item,_t}] }
-    const unassigned = [];
-    for (const c of cards) {
-      const top = assigneeTop(c.item);
-      if (top == null || String(top).trim() === '') { unassigned.push(c); continue; }
-      const key = String(top).toLowerCase();
-      if (!byKey.has(key)) byKey.set(key, { name: String(top), entries: [] });
-      byKey.get(key).entries.push(c);
-    }
-
-    const groups = Array.from(byKey.values()).map((g) => {
-      const entries = g.entries.slice().sort((a, b) => b._t - a._t);
-      let items = entries.map((e) => ({ kind: e.kind, item: e.item }));
-      // Apply this person's manual order overlay on top of the recency sort.
-      if (pmOrder) {
-        const savedOrder = pmOrder[g.name.toLowerCase()];
-        if (Array.isArray(savedOrder) && savedOrder.length) {
-          items = AppView._applyManualOrder(items, savedOrder, AppView._pmCardOrderKey);
-        }
-      }
-      return { name: g.name, count: items.length, items };
+  // #814: the mobile tab strip is card/dev-kanban.tsx's markup now — one
+  // tab per column, hidden at ≥640px where all four columns show side by
+  // side. `_renderKanbanTabs` built it as a string and `_applyKanbanTab`
+  // moved the active marker by toggling six classes per tab in place;
+  // publishing `activeTab` does both.
+  //
+  // Switching tabs deliberately does NOT rebuild the columns: all four are
+  // already rendered, so moving the marker is enough — no scroll jump and
+  // no re-binding.
+  _onKanbanTabSelect(key) {
+    if (!AppView.KANBAN_TABS.includes(key)) return;
+    // An explicit tap retires the ?col= override, mirroring _setViewMode.
+    AppView._kanbanTabUrlOverride = null;
+    if (key === AppView._activeKanbanTab()) return;
+    AppView._kanbanTab = key;
+    AppView._saveKanbanTab(App.currentApp);
+    AppView._reactDevBoard()?.publishKanban({
+      ...AppView._lastKanbanView, activeTab: key,
     });
-    groups.sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name));
-
-    const unassignedSorted = unassigned.slice().sort((a, b) => b._t - a._t);
-    const cap = (opts && opts.cap != null) ? opts.cap : AppView.PM_UNASSIGNED_MAX;
-    return {
-      groups,
-      unassigned: unassignedSorted.slice(0, cap).map((e) => ({ kind: e.kind, item: e.item })),
-      unassignedTotal: unassignedSorted.length,
-    };
   },
 
-  // Render the PM view (inner HTML for #dev-pm) from cached data. Reuses the
-  // exact per-kind card renderers the list/kanban modes use, so every card
-  // keeps its buttons, badges, and data-*-row open hooks.
-  _renderPmInner() {
-    // #625: apply the shared filter bar BEFORE grouping — unlike kanban's
-    // post-bucket rule, PM grouping has no cross-item dedup, so a
-    // filtered-out card simply vanishes and each person's header count
-    // reflects exactly the cards rendered under it. _groupByAssignee stays
-    // pure and filter-unaware.
-    const f = AppView._kanbanFilters || {};
-    const filtering = AppView._kanbanFiltersActive();
-    let issues = AppView._visibleGhIssues();
-    let proposals = AppView._proposals || [];
-    if (filtering) {
-      issues = issues.filter((i) => AppView._devCardMatches('issue', i, f));
-      proposals = proposals.filter((p) => AppView._devCardMatches('proposal', p, f));
-    }
-    // #633: with the Unassigned filter active the section IS the view —
-    // lift the cap so the full unassigned backlog renders, no "+N more".
-    const unassignedOnly = f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED;
-    const { groups, unassigned, unassignedTotal } = AppView._groupByAssignee(
-      { issues, proposals },
-      { cap: unassignedOnly ? Infinity : undefined, pmOrder: AppView._pmOrder }
-    );
-    // Reorder/reassign by drag is offered unless the filter bar is active (a
-    // saved order applies to the full section, not a filtered subset —
-    // mirroring the kanban rule at _renderKanbanInner). Read-only viewers get
-    // no grips either: _wrapDraggable omits them and _initPmDrag never binds.
-    const reorder = !filtering && !AppView.readOnly;
-
-    // With a named-user filter active, the Unassigned section can never
-    // match — hide it rather than rendering a permanently-empty stub.
-    const showUnassigned = !f.assignee || unassignedOnly;
-    if (filtering && !groups.length && (!showUnassigned || unassignedTotal === 0)) {
-      return '<div class="space-y-5"><div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">No cards match the current filters.</div></div>';
-    }
-
-    const renderCard = (c) => (c.kind === 'proposal'
-      ? AppView._renderProposalCard(c.item)
-      : AppView._renderIssueRow(c.item));
-    const sectionHead = (inner) => `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5 flex items-center gap-1.5">${inner}</div>`;
-
-    let html = '<div class="space-y-5">';
-
-    // Tasks-by-assignee area.
-    if (groups.length) {
-      for (const g of groups) {
-        const head = sectionHead(
-          `${AppView._assigneeAvatarHtml(g.name)}<span class="normal-case text-zinc-700 dark:text-zinc-200">@${escapeHtml(g.name)}</span>`
-          + `<span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${g.count}</span>`
-        );
-        let body;
-        if (reorder) {
-          // Each person's section is a drop-target list keyed by their
-          // case-folded assignee (data-pm-assignee) + display name
-          // (data-pm-name, used to cast the assignee vote on a cross-section
-          // drop). Cards carry a grip + data-order-key via _wrapDraggable.
-          const key = g.name.toLowerCase();
-          body = `<div class="space-y-2 dev-drag-list" data-pm-assignee="${escapeAttr(key)}" data-pm-name="${escapeAttr(g.name)}">`
-            + g.items.map((c) => AppView._wrapDraggable(AppView._pmCardOrderKey(c), renderCard(c))).join('')
-            + '</div>';
-        } else {
-          body = `<div class="space-y-2">${g.items.map(renderCard).join('')}</div>`;
-        }
-        html += `<div>${head}${body}</div>`;
-      }
-    } else if (!filtering) {
-      // While filtering, an empty assigned area with matches below needs no
-      // placeholder — the Unassigned section speaks for itself.
-      html += '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">No tasks are assigned to anyone yet.</div>';
-    }
-
-    // Unassigned section — shown unless a user filter is active; lists the
-    // most recent open work with no assignee, capped, with a "+N more" note
-    // when truncated. The cap and count apply AFTER filtering.
-    if (showUnassigned) {
-      const unHead = sectionHead(
-        `${AppView._assigneeAvatarPlaceholderHtml()}<span class="normal-case">Unassigned</span>`
-        + `<span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${unassignedTotal}</span>`
-      );
-      let unBody;
-      if (unassigned.length) {
-        if (reorder) {
-          // The Unassigned section is a DROP TARGET (drop a card here to
-          // withdraw your assignee vote) but its own cards carry no grip —
-          // _wrapDraggable(null, …) yields a .dev-drag-item with no handle /
-          // order-key, so its internal order stays recency-only (not
-          // user-sortable), per the spec.
-          unBody = '<div class="space-y-2 dev-drag-list" data-pm-unassigned="1">'
-            + unassigned.map((c) => AppView._wrapDraggable(null, renderCard(c))).join('')
-            + '</div>';
-        } else {
-          unBody = `<div class="space-y-2">${unassigned.map(renderCard).join('')}</div>`;
-        }
-        if (unassignedTotal > unassigned.length) {
-          // #633: clicking the note switches the assignee filter to
-          // Unassigned, revealing the full uncapped list (wired in
-          // _repaintPmView after the paint).
-          const moreCount = unassignedTotal - unassigned.length;
-          unBody += `<div class="mt-2"><button type="button" id="dev-pm-more-unassigned"
-            class="text-xs text-zinc-400 dark:text-zinc-500 italic hover:text-violet-500 hover:underline"
-            title="Show all unassigned cards">+${moreCount} more unassigned</button></div>`;
-        }
-      } else {
-        unBody = '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing unassigned.</div>';
-      }
-      html += `<div>${unHead}${unBody}</div>`;
-    }
-
-    html += '</div>';
-    return html;
-  },
-
-  // Repaint the PM container (#dev-pm) from cached data. Mirrors
-  // _repaintKanbanBoard: fill innerHTML, then re-attach kudos / ask-AI
-  // availability and keep the headless-state poller in sync.
-  _repaintPmView() {
-    // Never rebuild the PM view out from under an in-progress drag — a
-    // mid-drag innerHTML swap (e.g. a WS board_order_update from another user)
-    // would drop the pointer capture and strand the card. The commit that
-    // ends the drag repaints once it lands. Mirrors _repaintKanbanBoard.
-    if (AppView._dragState) return;
-    const el = document.getElementById('dev-pm');
-    if (!el) return;
-    // #625: every PM-mode filter-control change funnels through here (via
-    // _repaintBoardSurface), so — mirroring _repaintKanbanBoard — persist
-    // the shared per-app filters and keep the bar's Clear link / assignee
-    // options in sync after the paint.
-    AppView._saveKanbanFilters(App.currentApp);
-    el.innerHTML = AppView._renderPmInner();
-    // #633: "+N more unassigned" jumps to the Unassigned filter; rebuild the
-    // bar so the assignee select snaps to the new value, then repaint.
-    const more = el.querySelector('#dev-pm-more-unassigned');
-    if (more && more.addEventListener) {
-      more.addEventListener('click', () => {
-        AppView._kanbanFilters.assignee = AppView.KANBAN_ASSIGNEE_UNASSIGNED;
-        AppView._renderKanbanFilterBar();
-        AppView._repaintBoardSurface();
-      });
-    }
-    if (window.Kudos) Kudos.attach(el);
-    AppView._applyExploreChatAvailability(el);
-    AppView._updateKanbanFilterBarUI();
-    AppView._initPmDrag(el);
-    AppView._reanchorCardMenu();
-  },
-
-  // ══ Reporting view (#1100) ═══════════════════════════════════════════
-  //
-  // A fourth view mode that replaces the board with a generated, READ-ONLY
-  // progress report — Done / In progress / Backlog — plus a Download HTML
-  // export. Three deliberate properties:
-  //
-  //   * It reuses NONE of the card renderers. `#dev-body` has a delegated
-  //     click handler (renderDevView) that opens topics and fires card
-  //     actions off `data-issue-row` / `data-proposal-row` / `data-gov-row`
-  //     / `data-session-chip`. Emitting any of those here would turn every
-  //     report line into a live control, so the report's own markup uses
-  //     `ur-rpt-*` classes exclusively and its only interactive elements
-  //     are the two toolbar buttons and external GitHub links.
-  //   * The classification is DELEGATED to _bucketDevItems, so the report
-  //     can never disagree with the board about what is done / in review /
-  //     in progress / backlog — and the three sections are mutually
-  //     exclusive by construction.
-  //   * _buildReportModel and _renderReportHtml are pure (data in, plain
-  //     object / string out; no DOM, no AppView state reads), so they are
-  //     unit-tested in a vm sandbox (tests/dev-report.test.js) and port
-  //     unchanged when the dev board moves into the React bundle (#1084).
-
-  // Month labels for the Done section's group headings. An explicit table
-  // rather than toLocaleDateString(month:'long') so the heading is stable
-  // across runtimes with a trimmed ICU and assertable in tests.
-  REPORT_MONTHS: ['January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'],
-
-  // Backlog priority groups, in report order. The first three mirror
-  // ATTR_PRIORITY_VALUES (highest first); the fourth catches issues the
-  // group has not voted a priority on.
-  REPORT_PRIORITY_GROUPS: [
-    { key: 'high', label: 'High' },
-    { key: 'medium', label: 'Medium' },
-    { key: 'low', label: 'Low' },
-    { key: 'none', label: 'No priority set' },
-  ],
-
-  // #1112: the seven work states as a printed report says them — lower-case
-  // fragments for a comma-joined meta line, where the chip's title-case
-  // "Needs an answer" would read as a heading. Same keys as
-  // _issueWorkState, so a state added there and not here prints nothing
-  // rather than a stale phrase.
-  REPORT_WORK_STATE_LABELS: {
-    in_review: 'in review',
-    working: 'being worked on',
-    auto_solving: 'auto-solving',
-    paused: 'paused',
-    answer_needed: 'needs an answer',
-    draft_ready: 'draft ready to review',
-    claimed: 'claimed',
-  },
-
-  // Hard cap on the merged-history pager: 10 sequential pages of 50 rows.
-  // Keeps one Reporting click from becoming a 40-request storm on a
-  // long-lived app; the overflow is DISCLOSED in the document rather than
-  // silently dropped.
-  REPORT_MERGED_PAGE: 50,
-  REPORT_MERGED_MAX_PAGES: 10,
-  REPORT_MERGED_MAX_ROWS: 500,
-
-  // Drop the report's paged history so the next paint (or an explicit
-  // Refresh) re-pages it. Called on every successful _loadDevData and on
-  // app switch — never mid-paint.
-  _resetReportCaches() {
-    AppView._reportMerged = null;
-    AppView._reportTruncated = false;
-    AppView._reportPartial = false;
-    // AI layer (report-ai): undefined = never fetched for this app/data
-    // cycle; null = fetched, none generated yet; object = cached summary.
-    AppView._reportAi = undefined;
-    AppView._reportAiGenerating = false;
-    // Locked snapshots (report-lock-share): undefined = never fetched.
-    AppView._reportSnapshots = undefined;
-    AppView._reportLocking = false;
-    // Discord copy panel (reporting-period): the composed text is built
-    // from the caches above, so a data refresh invalidates it. Note
-    // _reportSince deliberately survives — see its declaration.
-    AppView._reportDiscordMsg = null;
-    AppView._reportDiscordBusy = false;
-    AppView._reportDiscordFallback = false;
-  },
-
-  // ── Report period (reporting-period) ─────────────────────────────────
-  // The effective period start as an ISO string, or null for "All
-  // history". With no explicit choice, the default is "since the newest
-  // locked snapshot" — which upgrades from "All history" automatically
-  // when _reportSnapshots arrives, because the snapshot fetch already
-  // triggers a repaint.
-  _reportEffectiveSince() {
-    if (AppView._reportSince !== undefined) return AppView._reportSince;
-    const snaps = AppView._reportSnapshots;
-    if (Array.isArray(snaps) && snaps.length && snaps[0].lockedAt) {
-      return snaps[0].lockedAt;
-    }
-    return null;
-  },
-
-  // The same period as _buildReportModel opts: {} or { since: <ms> }.
-  _reportModelOpts() {
-    const iso = AppView._reportEffectiveSince();
-    const t = iso ? Date.parse(iso) : NaN;
-    return Number.isFinite(t) ? { since: t } : {};
-  },
-
-  _onReportPeriodChange(value) {
-    if (value === 'custom') {
-      // Reveal the date input; the effective period only changes once a
-      // date is actually picked.
-      AppView._reportPeriodCustom = true;
-    } else {
-      AppView._reportPeriodCustom = false;
-      AppView._reportSince = (value && value.indexOf('snap:') === 0)
-        ? value.slice(5)
-        : null; // 'all'
-      // Re-check the AI summary's staleness against the new period.
-      AppView._reportAi = undefined;
-    }
-    AppView._repaintReportView();
-  },
-
-  _onReportPeriodDate(value) {
-    // The date input yields 'YYYY-MM-DD'; interpret it at the viewer's
-    // LOCAL midnight (no timezone suffix → local time), then store ISO.
-    const t = Date.parse(value ? `${value}T00:00:00` : '');
-    if (!Number.isFinite(t) || t > Date.now()) return;
-    AppView._reportSince = new Date(t).toISOString();
-    AppView._reportAi = undefined;
-    AppView._repaintReportView();
-  },
-
-  // Page the full merged history into `_reportMerged` — the one fetch the
-  // report adds. `_merged` holds only the board's first page (20 rows) and
-  // `_mergedTotal` the true count, so the history has to be paged; it lands
-  // in a SEPARATE cache because writing it into `_merged` would silently
-  // extend the kanban Done column and retire its "Load more" footer as a
-  // side effect of visiting the report.
-  //
-  // Uses the same keyset cursor shape as loadMoreMerged (before /
-  // before_id / before_type) and forwards _demoQS() on every page. On
-  // failure it falls back to the board's first page and sets
-  // `_reportPartial`, so the document says it is showing partial history
-  // instead of quietly under-reporting.
-  async _ensureReportData() {
-    if (AppView._reportLoading) return;
-    if (AppView._reportMerged) return;
-    if (!AppView.appData) return;
-    const slug = AppView.appData.slug;
-    AppView._reportLoading = true;
-    const rowKey = (r) => `${r.row_type || 'pr'}:${r.id}`;
-    const rows = [];
-    const have = new Set();
-    let truncated = false;
-    let partial = false;
-    // Authoritative "of N": the FIRST page's own `total`. In staging the
-    // ?demo=1 injection is first-page-only (votes.js, gated on isFirstPage)
-    // and bumps `total` by the injected count, so recomputing a total from
-    // the rows we hold would contradict the server. Page 2+ of a demo
-    // report returns real rows only and the page-1 cursor may sit on a
-    // synthetic row — the (row_type, id) dedupe below covers the overlap.
-    let total = 0;
-    try {
-      let cursor = null;
-      for (let page = 0; page < AppView.REPORT_MERGED_MAX_PAGES; page++) {
-        const qs = AppView._demoQS();
-        const sep = qs ? '&' : '?';
-        let url = `/api/apps/${slug}/merged${qs}${sep}limit=${AppView.REPORT_MERGED_PAGE}`;
-        if (cursor) {
-          url += `&before=${encodeURIComponent(cursor.created_at)}`
-            + `&before_id=${encodeURIComponent(cursor.id)}`
-            + `&before_type=${encodeURIComponent(cursor.row_type || 'pr')}`;
-        }
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`merged page ${page} failed`);
-        const data = await res.json();
-        const batch = Array.isArray(data.merged) ? data.merged : [];
-        if (page === 0 && typeof data.total === 'number') total = data.total;
-        for (const r of batch) {
-          const k = rowKey(r);
-          if (have.has(k)) continue;
-          have.add(k);
-          rows.push(r);
-        }
-        if (rows.length >= AppView.REPORT_MERGED_MAX_ROWS) {
-          rows.length = AppView.REPORT_MERGED_MAX_ROWS;
-          truncated = !!data.hasMore || rows.length < total;
-          break;
-        }
-        if (!data.hasMore || !batch.length) break;
-        const last = batch[batch.length - 1];
-        cursor = { created_at: last.created_at, id: last.id, row_type: last.row_type || 'pr' };
-        // Ran out of pages before running out of history.
-        if (page === AppView.REPORT_MERGED_MAX_PAGES - 1) truncated = true;
-      }
-    } catch {
-      // Fall back to the board's first page and say so in the document.
-      rows.length = 0;
-      have.clear();
-      for (const r of (AppView._merged || [])) {
-        const k = rowKey(r);
-        if (have.has(k)) continue;
-        have.add(k);
-        rows.push(r);
-      }
-      partial = true;
-      total = AppView._mergedTotal || rows.length;
-    } finally {
-      AppView._reportLoading = false;
-    }
-    AppView._reportMerged = rows;
-    AppView._reportTruncated = truncated;
-    AppView._reportPartial = partial;
-    AppView._reportTotal = total || rows.length;
-    // Only repaint if the user is still looking at the report.
-    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-  },
-
-  // Fill `#dev-report` for the current caches. Paints a placeholder and
-  // kicks the pager while `_reportMerged` is null; every later
-  // (WS-driven) _repaintDevBody re-renders from cache with no re-paging.
-  _repaintReportView() {
-    const el = document.getElementById('dev-report');
-    if (!el) return;
-    if (!AppView._reportMerged) {
-      el.innerHTML = `<style id="dev-report-style">${AppView.REPORT_CSS}</style>`
-        + `<div class="${AppView._reportRootCls()}"><p class="ur-rpt-empty">Building report…</p></div>`;
-      AppView._ensureReportData();
-      return;
-    }
-    const model = AppView._buildReportModel(AppView._reportInputs(), AppView._reportModelOpts());
-    el.innerHTML = `<style id="dev-report-style">${AppView.REPORT_CSS}</style>`
-      + AppView._renderReportToolbar()
-      + `<div class="${AppView._reportRootCls()}">`
-      + AppView._renderReportDiscordPanelHtml()
-      + AppView._renderReportSnapshotsHtml(
-        AppView._reportSnapshots, !!(AppView.appData && AppView.appData.can_manage)
-      )
-      + `${AppView._renderReportHtml(model, { standalone: false, ai: AppView._reportAi === undefined ? null : AppView._reportAi })}</div>`;
-    // Wired after each paint alongside the body, the same way
-    // _repaintPmView wires #dev-pm-more-unassigned.
-    const dl = el.querySelector('#dev-report-download');
-    if (dl && dl.addEventListener) dl.addEventListener('click', () => AppView.downloadReport());
-    const rf = el.querySelector('#dev-report-refresh');
-    if (rf && rf.addEventListener) rf.addEventListener('click', () => AppView.refreshReport());
-    const ab = el.querySelector('#dev-report-ai');
-    if (ab && ab.addEventListener) ab.addEventListener('click', () => AppView.generateReportAi());
-    const lk = el.querySelector('#dev-report-lock');
-    if (lk && lk.addEventListener) lk.addEventListener('click', () => AppView.lockReport());
-    // Period selector (reporting-period).
-    const per = el.querySelector('#dev-report-period');
-    if (per && per.addEventListener) per.addEventListener('change', () => AppView._onReportPeriodChange(per.value));
-    const pd = el.querySelector('#dev-report-period-date');
-    if (pd && pd.addEventListener) pd.addEventListener('change', () => AppView._onReportPeriodDate(pd.value));
-    // Discord copy panel (reporting-period).
-    const dg = el.querySelector('#dev-report-discord');
-    if (dg && dg.addEventListener) dg.addEventListener('click', () => AppView.generateDiscordMessage());
-    const dc = el.querySelector('#dev-report-discord-copy');
-    if (dc && dc.addEventListener) dc.addEventListener('click', () => AppView.copyDiscordMessage());
-    const dx = el.querySelector('#dev-report-discord-close');
-    if (dx && dx.addEventListener) {
-      dx.addEventListener('click', () => { AppView._reportDiscordMsg = null; AppView._repaintReportView(); });
-    }
-    // Keep the user's in-place edits across WS-driven repaints: the panel
-    // re-renders from _reportDiscordMsg, so write every keystroke back.
-    const dt = el.querySelector('#dev-report-discord-text');
-    if (dt && dt.addEventListener) dt.addEventListener('input', () => { AppView._reportDiscordMsg = dt.value; });
-    const wire = (sel, fn) => {
-      const nodes = el.querySelectorAll(sel);
-      if (nodes && nodes.forEach) {
-        nodes.forEach((b) => b.addEventListener('click', () => fn(b)));
-      }
-    };
-    wire('[data-snap-share]', (b) => AppView.shareReportSnapshot(b.getAttribute('data-snap-share')));
-    wire('[data-snap-unshare]', (b) => AppView.unshareReportSnapshot(b.getAttribute('data-snap-unshare')));
-    wire('[data-snap-copy]', (b) => AppView.copyReportShareLink(b.getAttribute('data-snap-copy')));
-    AppView._ensureReportAi();
-    AppView._ensureReportSnapshots();
-  },
-
-  // `.ur-rpt--dark` follows the shell's `dark` class (darkMode: 'class').
-  // The EXPORT never sets it — a downloaded file is always light so it
-  // prints and reads well on paper and in other apps.
-  _reportRootCls() {
-    let dark = false;
-    try {
-      dark = !!(document.documentElement
-        && document.documentElement.classList
-        && document.documentElement.classList.contains('dark'));
-    } catch { dark = false; }
-    return dark ? 'ur-rpt ur-rpt--dark' : 'ur-rpt';
-  },
-
-  // The period dropdown: "Since last report" (the newest locked snapshot)
-  // is the default whenever one exists; every other snapshot gets its own
-  // entry (15 most recent — older start dates stay reachable via
-  // "Specific date…"); "All history" is today's behaviour and the default
-  // with no snapshots.
-  REPORT_PERIOD_MAX_SNAPS: 15,
-
-  _renderReportPeriodHtml() {
-    const snaps = (Array.isArray(AppView._reportSnapshots) ? AppView._reportSnapshots : [])
-      .filter((s) => s && s.lockedAt)
-      .slice(0, AppView.REPORT_PERIOD_MAX_SNAPS);
-    const chosen = AppView._reportSince;
-    let selVal = 'all';
-    if (AppView._reportPeriodCustom) {
-      selVal = 'custom';
-    } else if (chosen === undefined) {
-      selVal = snaps.length ? `snap:${snaps[0].lockedAt}` : 'all';
-    } else if (chosen !== null) {
-      selVal = snaps.some((s) => s.lockedAt === chosen) ? `snap:${chosen}` : 'custom';
-    }
-    // Disambiguate two snapshots locked on the same calendar day with the
-    // time-of-day; a lone snapshot on a day shows the date only.
-    const dayOf = (iso) => {
-      const ms = Date.parse(iso || '');
-      return Number.isFinite(ms) ? new Date(ms).toLocaleDateString() : 'undated';
-    };
-    const dayCounts = {};
-    snaps.forEach((s) => { const d = dayOf(s.lockedAt); dayCounts[d] = (dayCounts[d] || 0) + 1; });
-    const sel = (v) => (selVal === v ? ' selected' : '');
-    let options = '';
-    snaps.forEach((s, i) => {
-      const day = dayOf(s.lockedAt);
-      const ms = Date.parse(s.lockedAt);
-      const label = (dayCounts[day] > 1 && Number.isFinite(ms))
-        ? `${day} ${new Date(ms).toLocaleTimeString()}`
-        : day;
-      const text = i === 0 ? `Since last report — ${label}` : `Since report — ${label}`;
-      options += `<option value="snap:${escapeAttr(s.lockedAt)}"${sel(`snap:${s.lockedAt}`)}>${escapeHtml(text)}</option>`;
-    });
-    options += `<option value="custom"${sel('custom')}>Specific date…</option>`;
-    options += `<option value="all"${sel('all')}>All history</option>`;
-    // The date input pre-fills from a previously chosen custom start.
-    let dateVal = '';
-    if (selVal === 'custom' && typeof chosen === 'string') {
-      const t = Date.parse(chosen);
-      if (Number.isFinite(t)) {
-        const dt = new Date(t);
-        dateVal = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
-      }
-    }
-    return `<label class="text-xs opacity-70" for="dev-report-period">Period</label>`
-      + `<select id="dev-report-period" class="gc-vote-btn" title="What counts as completed: everything since this start date">${options}</select>`
-      + (selVal === 'custom'
-        ? `<input type="date" id="dev-report-period-date" class="gc-vote-btn" value="${escapeAttr(dateVal)}" max="${escapeAttr(new Date().toISOString().slice(0, 10))}" title="Report period start date">`
-        : '');
-  },
-
-  _renderReportToolbar() {
-    const busy = AppView._reportLoading;
-    const gen = AppView._reportAiGenerating;
-    const ai = AppView._reportAi;
-    const aiLabel = gen ? 'Generating…' : (ai ? 'Regenerate AI summary' : 'Generate AI summary');
-    const stale = !!(ai && ai.stale && !gen);
-    const canManage = !!(AppView.appData && AppView.appData.can_manage);
-    const locking = AppView._reportLocking;
-    const discordBusy = AppView._reportDiscordBusy;
-    return `
-      <div class="flex items-center gap-2 mb-3 flex-wrap">
-        <button id="dev-report-download" class="gc-vote-btn" title="Save this report as a self-contained HTML file">Download HTML</button>
-        <button id="dev-report-refresh" class="gc-vote-btn"${busy ? ' disabled' : ''} title="Re-pull the data and regenerate the report">${busy ? 'Refreshing…' : 'Refresh'}</button>
-        <button id="dev-report-ai" class="gc-vote-btn"${gen ? ' disabled' : ''} title="Ask the AI for a plain-language summary, risks and per-person highlights (uses your budget or API key)">${aiLabel}</button>
-        <button id="dev-report-discord" class="gc-vote-btn"${discordBusy || busy ? ' disabled' : ''} title="Compose a short, friendly progress update ready to paste into Discord">${discordBusy ? 'Generating…' : 'Generate Discord message'}</button>
-        ${canManage ? `<button id="dev-report-lock" class="gc-vote-btn"${locking || busy ? ' disabled' : ''} title="Freeze this report as a permanent dated snapshot in Previous reports">${locking ? 'Locking…' : 'Lock report'}</button>` : ''}
-        ${AppView._renderReportPeriodHtml()}
-        ${stale ? '<span class="text-xs opacity-60">Data has changed since the AI summary was generated.</span>' : ''}
-      </div>`;
-  },
-
-  // Everything _buildReportModel needs, read from the caches the board
-  // already holds. Kept separate from the pure builder so the builder
-  // never reads AppView state.
-  _reportInputs() {
-    const app = AppView.appData || {};
-    const meta = AppView._ghIssuesMeta || {};
-    const ctx = AppView._proposalsCtx || {};
-    return {
-      issues: AppView._visibleGhIssues(),
-      proposals: AppView._proposals || [],
-      gov: AppView._govProposals || [],
-      merged: AppView._reportMerged || AppView._merged || [],
-      mySessions: AppView._mySessions || [],
-      sharedSessions: AppView._sharedSessions || [],
-      app: {
-        name: app.name || 'This app',
-        slug: app.slug || '',
-        url: app.url || '',
-        repoUrl: app.repo_url || meta.repoUrl || '',
-      },
-      mergedTotal: AppView._reportTotal || 0,
-      mergedTruncated: !!AppView._reportTruncated,
-      mergedPartial: !!AppView._reportPartial,
-      issuesTruncated: !!meta.truncatedList,
-      majority: ctx.majority || 1,
-    };
-  },
-
-  // ── The report model: pure, DOM-free, unit-tested ───────────────────
-  //
-  // data in → plain object out, the same shape of helper as
-  // _bucketDevItems and _groupByAssignee. `opts.now` lets tests pin the
-  // clock for the month grouping and the 30-day counter.
-  _buildReportModel(data, opts) {
-    const d = data || {};
-    const o = opts || {};
-    const now = Number.isFinite(o.now) ? o.now : Date.now();
-    // Report period start in ms (reporting-period). null = all history.
-    // Only "Done" and the completed counts are period-scoped — Backlog,
-    // Awaiting review and Underway describe the present, not a period.
-    const since = Number.isFinite(o.since) && o.since > 0 ? o.since : null;
-    const num = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : 0; };
-    const ts = (v) => { const t = Date.parse(v || ''); return Number.isFinite(t) ? t : 0; };
-
-    const buckets = AppView._bucketDevItems({
-      issues: d.issues,
-      proposals: d.proposals,
-      gov: d.gov,
-      merged: d.merged,
-      mySessions: d.mySessions,
-      sharedSessions: d.sharedSessions,
-    });
-
-    // ── Done ─────────────────────────────────────────────────────────
-    // #1264: proposal rows are dated by `merged_at` — the exact merge
-    // time checkAndMerge() records — and labelled "Merged". Rows merged
-    // before that column existed carry no merge time and keep the old
-    // `created_at` date, labelled "Started", forever (the history cannot
-    // be backfilled; see schema.sql). Applied close-issue rows carry
-    // payload.appliedAt and use it, labelled "Closed".
-    const allDoneEntries = buckets.done.map((m) => {
-      const closeIssue = (m.row_type || 'pr') === 'close_issue';
-      const payload = m.payload || {};
-      if (closeIssue) {
-        const at = payload.appliedAt || m.created_at;
-        return {
-          kind: 'close-issue',
-          title: payload.issueTitle || m.title || `Issue #${payload.issueNumber || m.id}`,
-          issueNumber: payload.issueNumber != null ? payload.issueNumber : null,
-          author: m.created_by_username || '',
-          yes: num(m.yes_count), no: num(m.no_count),
-          votesRequired: num(m.votes_required),
-          at, atMs: ts(at), dateLabel: 'Closed',
-          hasMergeDate: true,
-          kudos: 0,
-          chatCount: num(m.chat_count),
-          linkedIssues: [],
-          imported: false, importedAuthor: '', externalAgent: '',
-        };
-      }
-      const mergedMs = ts(m.merged_at);
-      const linked = Array.isArray(m.linked_issues)
-        ? m.linked_issues.map((n) => parseInt(n, 10)).filter((n) => Number.isFinite(n))
-        : [];
-      return {
-        kind: 'proposal',
-        title: m.pr_title || `Change by ${m.username || 'someone'}`,
-        prNumber: m.pr_number != null ? m.pr_number : null,
-        author: m.username || '',
-        yes: num(m.yes_count), no: num(m.no_count),
-        votesRequired: num(m.votes_required),
-        at: mergedMs ? m.merged_at : m.created_at,
-        atMs: mergedMs || ts(m.created_at),
-        dateLabel: mergedMs ? 'Merged' : 'Started',
-        hasMergeDate: !!mergedMs,
-        kudos: num(m.kudos_count),
-        chatCount: num(m.chat_count),
-        linkedIssues: linked,
-        imported: m.source === 'imported',
-        importedAuthor: m.imported_pr_author || '',
-        externalAgent: m.external_agent || '',
-      };
-    });
-    // Period filter: drop entries dated BEFORE the start. Undated entries
-    // (atMs 0 — an unparseable date) are KEPT: dropping them would
-    // silently hide real completed work.
-    const doneEntries = since
-      ? allDoneEntries.filter((e) => !e.atMs || e.atMs >= since)
-      : allDoneEntries;
-    // Month buckets over that same field, newest month first.
-    const monthOrder = [];
-    const monthMap = new Map();
-    for (const e of doneEntries) {
-      const dt = e.atMs ? new Date(e.atMs) : null;
-      const key = dt ? `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}` : 'unknown';
-      const label = dt
-        ? `${AppView.REPORT_MONTHS[dt.getMonth()]} ${dt.getFullYear()}`
-        : 'Undated';
-      if (!monthMap.has(key)) {
-        const g = { key, label, entries: [] };
-        monthMap.set(key, g);
-        monthOrder.push(g);
-      }
-      monthMap.get(key).entries.push(e);
-    }
-    // #1264: entries are dated by merge time now, so the server's
-    // created_at arrival order no longer implies month order — sort
-    // groups newest month first (Undated last) and each group's entries
-    // by their effective date, newest first.
-    monthOrder.sort((a, b) => {
-      if (a.key === b.key) return 0;
-      if (a.key === 'unknown') return 1;
-      if (b.key === 'unknown') return -1;
-      return a.key < b.key ? 1 : -1;
-    });
-    for (const g of monthOrder) {
-      g.entries.sort((a, b) => (b.atMs || 0) - (a.atMs || 0));
-    }
-    const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000;
-    const completedLast30 = allDoneEntries
-      .filter((e) => e.atMs && (now - e.atMs) <= THIRTY_DAYS).length;
-    // #1264: the 30 days BEFORE those, so the momentum line can say
-    // whether the pace is rising or falling instead of one bare number.
-    const completedPrev30 = allDoneEntries
-      .filter((e) => e.atMs
-        && (now - e.atMs) > THIRTY_DAYS
-        && (now - e.atMs) <= 2 * THIRTY_DAYS).length;
-    // #1264: the last six calendar months of completed work, zero-filled
-    // and oldest-first, for the "Completed by month" strip. Counted over
-    // ALL paged history rather than the period filter — the strip is a
-    // trend, and a period-scoped trend of one bar says nothing.
-    const monthly = [];
-    {
-      const ref = new Date(now);
-      const counts = new Map();
-      for (const e of allDoneEntries) {
-        if (!e.atMs) continue;
-        const dt = new Date(e.atMs);
-        const k = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
-        counts.set(k, (counts.get(k) || 0) + 1);
-      }
-      for (let i = 5; i >= 0; i--) {
-        const dt = new Date(ref.getFullYear(), ref.getMonth() - i, 1);
-        const k = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
-        monthly.push({
-          key: k,
-          label: `${AppView.REPORT_MONTHS[dt.getMonth()]} ${dt.getFullYear()}`,
-          shortLabel: AppView.REPORT_MONTHS[dt.getMonth()].slice(0, 3),
-          count: counts.get(k) || 0,
-        });
-      }
-    }
-    // #1264: true when any SHOWN proposal entry has no recorded merge
-    // time — the renderer keys the started-date disclaimer off this, so
-    // apps whose whole history has real merge dates never see it.
-    const anyUndatedMerge = doneEntries
-      .some((e) => e.kind === 'proposal' && !e.hasMergeDate);
-    // With a period set, the filtered count IS the total — the server's
-    // mergedTotal describes all history and would contradict the list.
-    const doneTotal = since
-      ? doneEntries.length
-      : Math.max(num(d.mergedTotal), allDoneEntries.length);
-    // The 500-row pager cap can hide part of a period that predates the
-    // oldest paged row — disclose that instead of silently under-counting.
-    let periodIncomplete = false;
-    if (since && d.mergedTruncated) {
-      let oldest = 0;
-      for (const e of allDoneEntries) {
-        if (e.atMs && (!oldest || e.atMs < oldest)) oldest = e.atMs;
-      }
-      if (!oldest || since < oldest) periodIncomplete = true;
-    }
-
-    // ── In progress ──────────────────────────────────────────────────
-    const review = [];
-    const gov = [];
-    // #1251: issue numbers the Awaiting-review section already accounts for,
-    // via the proposal that closes them. The BOARD deliberately shows such
-    // an issue in its In progress column — a column is a place you go
-    // looking for your issue, and dropping it there left it findable
-    // nowhere. A report is a document you read top to bottom, where the
-    // same work under two headings reads as two pieces of work and inflates
-    // the counts, so the report keeps the one-entity-one-section rule and
-    // filters them out below.
-    const reviewedIssues = new Set();
-    for (const entry of buckets.inReview) {
-      const it = entry.item || {};
-      if (entry.kind === 'proposal' && Array.isArray(it.linked_issues)) {
-        for (const n of it.linked_issues) {
-          const parsed = parseInt(n, 10);
-          if (Number.isFinite(parsed)) reviewedIssues.add(parsed);
-        }
-      }
-      if (entry.kind === 'gov') {
-        gov.push({
-          kind: 'gov',
-          govKind: it.kind || '',
-          govKindLabel: AppView._reportGovKindLabel(it.kind),
-          title: (it.kind === 'rename' && it.payload && it.payload.newName)
-            ? it.payload.newName
-            : (it.title || AppView._reportGovKindLabel(it.kind)),
-          issueNumber: it.github_issue_number != null ? it.github_issue_number : null,
-          author: it.created_by_username || '',
-          yes: num(it.yes_count), no: num(it.no_count),
-          votesRequired: num(it.votes_required),
-          mergeWindowEndsAt: it.merge_window_ends_at || null,
-          chatCount: num(it.chat_count),
-          // #1264: how long this has sat waiting on people.
-          waitingSinceMs: ts(it.created_at),
-        });
-        continue;
-      }
-      review.push({
-        kind: 'proposal',
-        title: it.pr_title || `Change by ${it.username || 'someone'}`,
-        prNumber: it.pr_number != null ? it.pr_number : null,
-        author: it.username || '',
-        status: it.status || '',
-        yes: num(it.yes_count), no: num(it.no_count),
-        votesRequired: num(it.votes_required) || num(d.majority),
-        checkState: it.check_state || null,
-        checkLabel: AppView._reportCheckLabel(it.check_state),
-        mergeWindowEndsAt: it.merge_window_ends_at || null,
-        chatCount: num(it.chat_count),
-        // #1264: promotion is when the proposal entered review; rows
-        // promoted before that column existed fall back to created_at.
-        waitingSinceMs: ts(it.promoted_at || it.created_at),
-      });
-    }
-
-    const sessions = [];
-    const workIssues = [];
-    for (const entry of buckets.inProgress) {
-      const it = entry.item || {};
-      if (entry.kind === 'issue') {
-        // Counted under Awaiting review already — see reviewedIssues above.
-        if (it.number != null && reviewedIssues.has(it.number)) continue;
-        const ip = it.in_progress || null;
-        const people = [];
-        const push = (u) => { if (u && !people.includes(u)) people.push(u); };
-        if (ip && Array.isArray(ip.users)) ip.users.forEach(push);
-        if (ip && Array.isArray(ip.claims)) ip.claims.forEach((c) => push(c && c.username));
-        const h = it.headless;
-        // #1112: the same derivation the chip uses, so a printed report and
-        // the board it was printed from name the same state.
-        const st = AppView._issueWorkState(it);
-        workIssues.push({
-          kind: 'work-issue',
-          number: it.number != null ? it.number : null,
-          title: it.title || `Issue #${it.number}`,
-          htmlUrl: it.htmlUrl || '',
-          people,
-          headless: !!(h && (h.status === 'generating' || h.status === 'ready')),
-          claimed: !!(ip && Array.isArray(ip.claims) && ip.claims.length),
-          state: st ? st.key : null,
-          stateLabel: st ? (AppView.REPORT_WORK_STATE_LABELS[st.key] || '') : '',
-          at: it.updatedAt || null, atMs: ts(it.updatedAt),
-          chatCount: num(it.chatCount),
-        });
-        continue;
-      }
-      // my-session | shared-session
-      sessions.push({
-        kind: entry.kind,
-        mine: entry.kind === 'my-session',
-        title: it.session_title || it.pr_title || it.branch_name || `Session #${it.id}`,
-        owner: it.username || '',
-        busy: !!it.busy,
-        at: it.last_activity_at || it.created_at || null,
-        atMs: ts(it.last_activity_at || it.created_at),
-        chatCount: num(it.chat_count),
-      });
-    }
-
-    // ── Backlog ──────────────────────────────────────────────────────
-    // buckets.issues is already (a) free of issues linked to an open
-    // proposal and (b) free of in-progress issues, so Backlog cannot
-    // overlap Awaiting review or Issues-under-work.
-    const backlogGroups = AppView.REPORT_PRIORITY_GROUPS.map((g) => ({
-      key: g.key, label: g.label, issues: [],
-    }));
-    const groupFor = (key) => backlogGroups.find((g) => g.key === key) || backlogGroups[backlogGroups.length - 1];
-    for (const i of buckets.issues) {
-      const top = (i.priority && i.priority.top) || null;
-      const g = groupFor(AppView.ATTR_PRIORITY_VALUES.indexOf(top) !== -1 ? top : 'none');
-      g.issues.push({
-        kind: 'issue',
-        number: i.number != null ? i.number : null,
-        title: i.title || `Issue #${i.number}`,
-        htmlUrl: i.htmlUrl || '',
-        priority: top,
-        priorityLabel: top ? ((AppView._priorityMeta(top) || {}).label || top) : null,
-        assignee: (i.assignee && i.assignee.top) || null,
-        category: (i.category && i.category.top) || null,
-        at: i.updatedAt || null, atMs: ts(i.updatedAt),
-        chatCount: num(i.chatCount),
-        // #1264: provenance — when the issue was filed, by whom, and
-        // whether anyone has put a bounty on it.
-        createdAtMs: ts(i.createdAt),
-        reporter: i.created_by_username || '',
-        bountyCount: num(i.bounty_count),
-      });
-    }
-    const backlogTotal = backlogGroups.reduce((n, g) => n + g.issues.length, 0);
-
-    // ── Needs attention (#1264) ──────────────────────────────────────
-    // A deterministic cross-reference layer, NOT a fifth bucket — every
-    // entry here also appears in its own section below. Three rules only:
-    // failing/errored checks, a merge window that closed without a merge,
-    // and an auto-solve run waiting on a human answer.
-    const attention = [];
-    const windowClosed = (e) => {
-      const ends = e.mergeWindowEndsAt ? Date.parse(e.mergeWindowEndsAt) : NaN;
-      return Number.isFinite(ends) && ends <= now;
-    };
-    for (const e of review) {
-      const reasons = [];
-      if (e.checkState === 'failing') reasons.push('checks failing');
-      if (e.checkState === 'error') reasons.push('checks could not run');
-      if (e.status !== 'merging' && windowClosed(e)) {
-        reasons.push('merge window closed without a merge');
-      }
-      if (reasons.length) {
-        attention.push({ kind: 'proposal', title: e.title, prNumber: e.prNumber, reasons });
-      }
-    }
-    for (const e of gov) {
-      if (windowClosed(e)) {
-        attention.push({
-          kind: 'gov', title: e.title, issueNumber: e.issueNumber,
-          reasons: ['merge window closed without a merge'],
-        });
-      }
-    }
-    for (const e of workIssues) {
-      if (e.state === 'answer_needed') {
-        attention.push({
-          kind: 'issue', title: e.title, number: e.number, htmlUrl: e.htmlUrl,
-          reasons: ['an auto-solve run is waiting on an answer'],
-        });
-      }
-    }
-
-    const shownDone = doneEntries.length;
-    const model = {
-      app: {
-        name: (d.app && d.app.name) || 'This app',
-        slug: (d.app && d.app.slug) || '',
-        url: (d.app && d.app.url) || '',
-        repoUrl: (d.app && d.app.repoUrl) || '',
-      },
-      generatedAtMs: now,
-      generatedAt: new Date(now).toISOString(),
-      // ms of the period start, or null in All-history mode. The renderer
-      // keys the "Covering …" header line and the completed-in-30-days
-      // suppression off this.
-      periodStartMs: since,
-      summary: {
-        completed: doneTotal,
-        awaitingReview: review.length + gov.length,
-        beingWorkedOn: sessions.length + workIssues.length,
-        backlog: backlogTotal,
-        // #1264: two more tiles — high-priority backlog straight off the
-        // priority groups; contributors is filled in below from `owners`
-        // so the tile and the Work-by-owner rows can never disagree.
-        backlogHighPriority:
-          (backlogGroups.find((g) => g.key === 'high') || { issues: [] }).issues.length,
-        contributors: 0,
-        completedLast30,
-        completedPrev30,
-      },
-      // #1264: six zero-filled months, oldest first, for the trend strip;
-      // `monthlyIncomplete` discloses when the 500-row pager (or its
-      // one-page fallback) may have under-counted the oldest months.
-      monthly,
-      monthlyIncomplete: !!d.mergedTruncated || !!d.mergedPartial,
-      attention,
-      done: {
-        groups: monthOrder,
-        shown: shownDone,
-        total: doneTotal,
-        // In period mode the filtered count IS the total, so the "showing
-        // N of M" note never applies; periodIncomplete carries the one
-        // honest caveat instead.
-        truncated: since ? false : (!!d.mergedTruncated || doneTotal > shownDone),
-        periodIncomplete,
-        partial: !!d.mergedPartial,
-        anyUndatedMerge,
-        empty: shownDone === 0,
-      },
-      // #1112: one model group still, but the renderer prints it as TWO
-      // sections — "Awaiting review" (review + gov, where the work is done
-      // and people are the bottleneck) and "Underway" (sessions + issues,
-      // where the work itself is still happening). `empty` keeps its old
-      // meaning (nothing in either); the two flags below drive the sections.
-      inProgress: {
-        review, gov, sessions, issues: workIssues,
-        emptyAwaiting: !(review.length || gov.length),
-        emptyWork: !(sessions.length || workIssues.length),
-        empty: !(review.length || gov.length || sessions.length || workIssues.length),
-      },
-      backlog: {
-        groups: backlogGroups.filter((g) => g.issues.length),
-        total: backlogTotal,
-        truncatedList: !!d.issuesTruncated,
-        empty: backlogTotal === 0,
-      },
-    };
-    // #1264: owner stats are part of the model now — the "Work by owner"
-    // section renders with or without an AI summary — and the
-    // Contributors tile is their count, computed from the same object.
-    model.owners = AppView._buildOwnerStats(model);
-    model.summary.contributors = model.owners.length;
-    return model;
-  },
-
-  _reportGovKindLabel(kind) {
-    switch (kind) {
-      case 'rename': return 'App rename';
-      case 'secret_change': return 'Secret change';
-      case 'close_issue': return 'Close an issue';
-      case 'maintenance_campaign': return 'Maintenance campaign';
-      default: return 'Governance proposal';
-    }
-  },
-
-  _reportCheckLabel(state) {
-    switch (state) {
-      case 'passing': return 'Checks passing';
-      case 'failing': return 'Checks failing';
-      case 'error': return 'Checks could not run';
-      case 'pending': return 'Checks running';
-      default: return null;
-    }
-  },
-
-  // ── Work-by-owner stats: pure, DOM-free ─────────────────────────────
-  // Deterministic counts per contributor, aggregated from the report
-  // model. The LLM writes per-owner PROSE only (report-ai); every number
-  // shown next to it comes from here, so the counts can never hallucinate.
-  _buildOwnerStats(model) {
-    const m = model || {};
-    const map = new Map();
-    const get = (u) => {
-      if (!map.has(u)) map.set(u, { username: u, completed: 0, inReview: 0, inProgress: 0, backlog: 0 });
-      return map.get(u);
-    };
-    for (const g of ((m.done || {}).groups || [])) {
-      for (const e of (g.entries || [])) if (e.author) get(e.author).completed++;
-    }
-    const ip = m.inProgress || {};
-    for (const e of (ip.review || [])) if (e.author) get(e.author).inReview++;
-    for (const e of (ip.gov || [])) if (e.author) get(e.author).inReview++;
-    for (const e of (ip.sessions || [])) if (e.owner) get(e.owner).inProgress++;
-    for (const e of (ip.issues || [])) for (const p of (e.people || [])) get(p).inProgress++;
-    for (const g of ((m.backlog || {}).groups || [])) {
-      for (const e of (g.issues || [])) if (e.assignee) get(e.assignee).backlog++;
-    }
-    const total = (s) => s.completed + s.inReview + s.inProgress + s.backlog;
-    return Array.from(map.values()).sort((a, b) => total(b) - total(a) || (a.username < b.username ? -1 : 1));
-  },
-
-  // ── AI layer renderer: pure, DOM-free ───────────────────────────────
-  // ai (server report-ai summary or null) in → HTML out: highlights,
-  // narrative, risks and the provenance note. The per-owner section moved
-  // into the deterministic document (#1264, _renderReportOwnersHtml) —
-  // the AI's only contribution there is the optional blurb per owner.
-  // Every LLM-authored string passes through escapeHtml and renders as
-  // plain text — no markdown, no links, no attributes. Same hard rule as
-  // the rest of the report: no live-card data-* hooks.
-  _renderReportAiHtml(ai) {
-    const eh = (s) => escapeHtml(s == null ? '' : String(s));
-    if (!ai) {
-      return `<p class="ur-rpt-empty">No AI summary yet &mdash; use &ldquo;Generate AI summary&rdquo; above to add a plain-language overview, risks and per-person highlights.</p>`;
-    }
-    let html = '';
-
-    // Progress highlights — the skimmable layer, placed first. Rendered
-    // only when the summary carries bullets (older cached summaries
-    // predate the field).
-    const bullets = (Array.isArray(ai.highlights) ? ai.highlights : [])
-      .map((b) => (b == null ? '' : String(b).trim())).filter(Boolean);
-    if (bullets.length) {
-      html += `<section class="ur-rpt-section" data-section="ai-highlights">`
-        + `<h2 class="ur-rpt-h2">Progress highlights</h2>`
-        + `<ul class="ur-rpt-bullets">${bullets.map((b) => `<li>${eh(b)}</li>`).join('')}</ul>`
-        + `</section>`;
-    }
-
-    // Narrative — the report's main body.
-    const paras = String(ai.narrative || '').split(/\n{2,}|\n/).map((p) => p.trim()).filter(Boolean);
-    html += `<section class="ur-rpt-section" data-section="ai-summary">`
-      + `<h2 class="ur-rpt-h2">Summary</h2>`
-      + paras.map((p) => `<p class="ur-rpt-ai-p">${eh(p)}</p>`).join('')
-      + `</section>`;
-
-    // Critical risks.
-    const risks = Array.isArray(ai.risks) ? ai.risks : [];
-    let riskBody = '';
-    if (!risks.length) {
-      riskBody = `<p class="ur-rpt-empty">No critical risks flagged.</p>`;
-    } else {
-      riskBody = `<ul class="ur-rpt-list">${risks.map((r) => {
-        const sev = ['high', 'medium', 'low'].indexOf(r && r.severity) !== -1 ? r.severity : 'medium';
-        return `<li class="ur-rpt-row">`
-          + `<div class="ur-rpt-title"><span class="ur-rpt-risk-sev ur-rpt-risk-sev--${sev}">${eh(sev)}</span>${eh(r && r.title)}</div>`
-          + `<div class="ur-rpt-meta"><span>${eh(r && r.detail)}</span></div>`
-          + `</li>`;
-      }).join('')}</ul>`;
-    }
-    html += `<section class="ur-rpt-section" data-section="ai-risks">`
-      + `<h2 class="ur-rpt-h2">Critical risks</h2>${riskBody}</section>`;
-
-    const genMs = Date.parse(ai.generatedAt || '');
-    const when = Number.isFinite(genMs) ? new Date(genMs).toLocaleDateString() : '';
-    // The cache is one shared row per app, so say which period it was
-    // generated for — another member may have selected it.
-    const psMs = Date.parse(ai.periodStart || '');
-    const psLabel = Number.isFinite(psMs) ? new Date(psMs).toLocaleDateString() : '';
-    html += `<p class="ur-rpt-ai-note">AI-written summary${ai.model ? ` (${eh(ai.model)})` : ''}${when ? `, generated ${eh(when)}` : ''}${psLabel ? `, covering since ${eh(psLabel)}` : ''}. Verify against the lists below.</p>`;
-    return html;
-  },
-
-  // ── Work by owner: pure, DOM-free (#1264) ───────────────────────────
-  // A deterministic section of the report proper — the counts come from
-  // _buildOwnerStats (model.owners), so it renders with or without an AI
-  // summary. When a summary exists, its per-owner blurb (already filtered
-  // server-side to known usernames by sanitizeReportSummary) rides along
-  // as prose under the counts. Same hard markup rules as the rest of the
-  // report: escaped text, no live-card data-* hooks.
-  _renderReportOwnersHtml(ownerStats, ai) {
-    const eh = (s) => escapeHtml(s == null ? '' : String(s));
-    const stats = Array.isArray(ownerStats) ? ownerStats : [];
-    const blurbs = new Map((ai && Array.isArray(ai.owners) ? ai.owners : [])
-      .map((o) => [o && o.username, o && o.blurb]));
-    let body = '';
-    if (!stats.length) {
-      body = `<p class="ur-rpt-empty">No attributable work yet.</p>`;
-    } else {
-      body = `<ul class="ur-rpt-list">${stats.map((s) => {
-        const parts = [];
-        if (s.completed) parts.push(`${s.completed} completed`);
-        if (s.inReview) parts.push(`${s.inReview} awaiting review`);
-        // #1112: "underway" matches the section this count comes from.
-        if (s.inProgress) parts.push(`${s.inProgress} underway`);
-        if (s.backlog) parts.push(`${s.backlog} assigned in backlog`);
-        const blurb = blurbs.get(s.username);
-        return `<li class="ur-rpt-row">`
-          + `<div class="ur-rpt-title">${eh(s.username)}<span class="ur-rpt-tag ur-rpt-owner-counts">${eh(parts.join(' · ') || 'no items')}</span></div>`
-          + (blurb ? `<div class="ur-rpt-meta"><span>${eh(blurb)}</span></div>` : '')
-          + `</li>`;
-      }).join('')}</ul>`;
-    }
-    return `<section class="ur-rpt-section" data-section="owners">`
-      + `<h2 class="ur-rpt-h2">Work by owner (${eh(stats.length)})</h2>${body}</section>`;
-  },
-
-  // ── Previous reports (locked snapshots): pure, DOM-free ─────────────
-  // snaps (server list rows) + canManage in → HTML out. Same read-only
-  // document rules as the report: no live-card data-* hooks, no inline
-  // handlers — the share/unshare/copy buttons carry data-snap-* markers
-  // that _repaintReportView wires after each paint. Rendered ONLY into
-  // the on-screen view (never the standalone export/lock document).
-  _renderReportSnapshotsHtml(snaps, canManage) {
-    const eh = (s) => escapeHtml(s == null ? '' : String(s));
-    const ea = (s) => escapeAttr(s == null ? '' : String(s));
-    const list = Array.isArray(snaps) ? snaps : [];
-    if (!list.length) return '';
-    const rows = list.map((s) => {
-      const ms = Date.parse(s.lockedAt || '');
-      const when = Number.isFinite(ms)
-        ? `${new Date(ms).toLocaleDateString()} ${new Date(ms).toLocaleTimeString()}`
-        : 'undated';
-      let actions = `<span><a href="${ea(s.htmlPath)}" target="_blank" rel="noopener">Open</a></span>`;
-      if (canManage) {
-        actions += s.shared
-          ? `<span><button type="button" class="ur-rpt-linklike" data-snap-copy="${ea(s.sharePath)}">Copy link</button></span>`
-            + `<span><button type="button" class="ur-rpt-linklike" data-snap-unshare="${ea(s.id)}">Unshare</button></span>`
-          : `<span><button type="button" class="ur-rpt-linklike" data-snap-share="${ea(s.id)}">Share</button></span>`;
-      }
-      return `<li class="ur-rpt-row">`
-        + `<div class="ur-rpt-title">${eh(when)}`
-        + (s.lockedBy ? `<span class="ur-rpt-tag">locked by ${eh(s.lockedBy)}</span>` : '')
-        + (s.shared ? `<span class="ur-rpt-tag">Shared</span>` : '')
-        + `</div>`
-        + `<div class="ur-rpt-meta">${actions}</div>`
-        + `</li>`;
-    }).join('');
-    return `<section class="ur-rpt-section" data-section="snapshots">`
-      + `<h2 class="ur-rpt-h2">Previous reports</h2>`
-      + `<ul class="ur-rpt-list">${rows}</ul></section>`;
-  },
-
-  // ── Report CSS ───────────────────────────────────────────────────────
-  // Plain CSS, every rule scoped under `.ur-rpt`, deliberately using NO
-  // Tailwind utilities. Injected once into #dev-report for the on-screen
-  // view AND inlined into the export, so the downloaded file is the exact
-  // layout that was previewed and cannot be broken by a Tailwind
-  // content-scan miss.
-  REPORT_CSS: [
-    '.ur-rpt{--rpt-fg:#18181b;--rpt-muted:#52525b;--rpt-faint:#71717a;--rpt-line:#e4e4e7;--rpt-bg:#ffffff;--rpt-card:#fafafa;--rpt-accent:#7c3aed;',
-    'color:var(--rpt-fg);background:var(--rpt-bg);font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;',
-    'font-size:14px;line-height:1.55;max-width:56rem;margin:0 auto;padding:1.5rem 1.25rem 3rem;-webkit-text-size-adjust:100%;}',
-    '.ur-rpt--dark{--rpt-fg:#f4f4f5;--rpt-muted:#a1a1aa;--rpt-faint:#8b8b93;--rpt-line:#3f3f46;--rpt-bg:transparent;--rpt-card:rgba(255,255,255,0.03);--rpt-accent:#a78bfa;}',
-    '.ur-rpt *{box-sizing:border-box;}',
-    '.ur-rpt a{color:var(--rpt-accent);text-decoration:none;}',
-    '.ur-rpt a:hover{text-decoration:underline;}',
-    '.ur-rpt-head{border-bottom:2px solid var(--rpt-line);padding-bottom:1rem;margin-bottom:1.25rem;}',
-    '.ur-rpt-app{font-size:1.5rem;font-weight:700;margin:0;letter-spacing:-0.01em;}',
-    '.ur-rpt-kicker{font-size:0.8125rem;font-weight:600;text-transform:uppercase;letter-spacing:0.08em;color:var(--rpt-accent);margin:0 0 0.25rem;}',
-    '.ur-rpt-gen{font-size:0.8125rem;color:var(--rpt-muted);margin:0.5rem 0 0;}',
-    '.ur-rpt-note{font-size:0.75rem;color:var(--rpt-faint);margin:0.25rem 0 0;}',
-    '.ur-rpt-summary{display:flex;flex-wrap:wrap;gap:0.75rem;margin:0 0 1.5rem;padding:0;list-style:none;}',
-    '.ur-rpt-stat{flex:1 1 8rem;border:1px solid var(--rpt-line);border-radius:0.5rem;background:var(--rpt-card);padding:0.625rem 0.75rem;}',
-    '.ur-rpt-stat-n{display:block;font-size:1.375rem;font-weight:700;line-height:1.15;}',
-    '.ur-rpt-stat-l{display:block;font-size:0.6875rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--rpt-muted);margin-top:0.125rem;}',
-    '.ur-rpt-recent{font-size:0.8125rem;color:var(--rpt-muted);margin:-0.75rem 0 1.5rem;}',
-    '.ur-rpt-section{margin:0 0 1.75rem;}',
-    '.ur-rpt-h2{font-size:1.0625rem;font-weight:700;margin:0 0 0.125rem;padding-bottom:0.375rem;border-bottom:1px solid var(--rpt-line);}',
-    '.ur-rpt-sub{font-size:0.75rem;color:var(--rpt-faint);margin:0.375rem 0 0.75rem;}',
-    '.ur-rpt-h3{font-size:0.8125rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--rpt-muted);margin:1.125rem 0 0.5rem;}',
-    '.ur-rpt-list{list-style:none;margin:0;padding:0;}',
-    '.ur-rpt-row{border-bottom:1px solid var(--rpt-line);padding:0.5rem 0;}',
-    '.ur-rpt-row:last-child{border-bottom:0;}',
-    '.ur-rpt-title{font-weight:600;}',
-    '.ur-rpt-meta{font-size:0.75rem;color:var(--rpt-muted);margin-top:0.125rem;}',
-    '.ur-rpt-meta span+span::before{content:" \\00b7 ";color:var(--rpt-line);}',
-    '.ur-rpt-num{font-variant-numeric:tabular-nums;color:var(--rpt-muted);font-weight:400;}',
-    '.ur-rpt-tag{display:inline-block;font-size:0.6875rem;font-weight:600;border:1px solid var(--rpt-line);border-radius:0.25rem;padding:0 0.3125rem;margin-left:0.25rem;color:var(--rpt-muted);}',
-    '.ur-rpt-empty{font-size:0.8125rem;color:var(--rpt-faint);font-style:italic;margin:0.5rem 0;}',
-    // #1264: the "Completed by month" trend strip — label, proportional
-    // bar (inline width %), count. Plain scoped CSS like everything else.
-    '.ur-rpt-trend-list{list-style:none;margin:0.5rem 0 0;padding:0;}',
-    '.ur-rpt-trend-row{display:flex;align-items:center;gap:0.5rem;padding:0.125rem 0;}',
-    '.ur-rpt-trend-label{flex:0 0 2.5rem;font-size:0.75rem;color:var(--rpt-muted);}',
-    '.ur-rpt-trend-bar{flex:1 1 auto;height:0.5rem;border-radius:0.25rem;background:var(--rpt-card);border:1px solid var(--rpt-line);overflow:hidden;display:block;}',
-    '.ur-rpt-trend-fill{display:block;height:100%;background:var(--rpt-accent);border-radius:0.25rem;}',
-    '.ur-rpt-trend-n{flex:0 0 2rem;text-align:right;font-size:0.75rem;font-variant-numeric:tabular-nums;color:var(--rpt-muted);}',
-    '.ur-rpt-ai-p{margin:0.75rem 0 0;max-width:44rem;}',
-    '.ur-rpt-ai-note{font-size:0.75rem;color:var(--rpt-faint);font-style:italic;margin:-0.75rem 0 1.75rem;}',
-    '.ur-rpt-bullets{list-style:disc;margin:0.75rem 0 0;padding-left:1.25rem;}',
-    '.ur-rpt-bullets li{margin:0.25rem 0;}',
-    '.ur-rpt-linklike{background:none;border:0;padding:0;color:var(--rpt-accent);cursor:pointer;font:inherit;font-size:inherit;}',
-    '.ur-rpt-linklike:hover{text-decoration:underline;}',
-    '.ur-rpt-risk-sev{display:inline-block;font-size:0.6875rem;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;border-radius:0.25rem;padding:0 0.375rem;margin-right:0.5rem;vertical-align:1px;}',
-    '.ur-rpt-risk-sev--high{color:#b91c1c;border:1px solid #f87171;}',
-    '.ur-rpt-risk-sev--medium{color:#b45309;border:1px solid #fbbf24;}',
-    '.ur-rpt-risk-sev--low{color:#4d7c0f;border:1px solid #a3e635;}',
-    '.ur-rpt--dark .ur-rpt-risk-sev--high{color:#fca5a5;border-color:#7f1d1d;}',
-    '.ur-rpt--dark .ur-rpt-risk-sev--medium{color:#fcd34d;border-color:#78350f;}',
-    '.ur-rpt--dark .ur-rpt-risk-sev--low{color:#bef264;border-color:#365314;}',
-    '.ur-rpt-foot{border-top:2px solid var(--rpt-line);margin-top:2rem;padding-top:0.875rem;font-size:0.75rem;color:var(--rpt-faint);}',
-    '.ur-rpt-foot p{margin:0.25rem 0;}',
-    '.ur-rpt-discord-text{display:block;width:100%;min-height:11rem;margin-top:0.5rem;font:inherit;font-size:0.8125rem;line-height:1.5;color:var(--rpt-fg);background:var(--rpt-card);border:1px solid var(--rpt-line);border-radius:0.5rem;padding:0.625rem 0.75rem;resize:vertical;}',
-    '.ur-rpt-discord-actions{display:flex;gap:0.5rem;margin-top:0.5rem;}',
-  ].join(''),
-
-  REPORT_PRINT_CSS: [
-    '@media print{',
-    'body{background:#fff;}',
-    '.ur-rpt{max-width:none;padding:0;font-size:11pt;}',
-    '.ur-rpt-section{break-inside:auto;}',
-    '.ur-rpt-trend{break-inside:avoid;}',
-    '.ur-rpt-row{break-inside:avoid;}',
-    '.ur-rpt-h2,.ur-rpt-h3{break-after:avoid;}',
-    '.ur-rpt a{color:inherit;text-decoration:none;}',
-    '}',
-  ].join(''),
-
-  // ── Report rendering: pure, DOM-free, unit-tested ────────────────────
-  //
-  // model in → HTML string out. With `standalone: true` the same markup is
-  // wrapped in a full document (doctype, charset, title, inline CSS, print
-  // rules) so the download is self-contained and needs no network.
-  //
-  // HARD RULE: no `data-issue-row` / `data-proposal-row` / `data-gov-row` /
-  // `data-session-chip` attributes and no reuse of _renderIssueRow /
-  // _renderProposalCard — see the section header above.
-  _renderReportHtml(model, opts) {
-    const m = model || {};
-    const o = opts || {};
-    const standalone = !!o.standalone;
-    const app = m.app || {};
-    const sum = m.summary || {};
-    const eh = (s) => escapeHtml(s == null ? '' : String(s));
-    const ea = (s) => escapeAttr(s == null ? '' : String(s));
-    const genMs = Number.isFinite(m.generatedAtMs) ? m.generatedAtMs : Date.parse(m.generatedAt || '');
-    const gen = Number.isFinite(genMs) ? new Date(genMs) : null;
-    // The viewer's local timezone, via the browser's own formatter.
-    const genLabel = gen ? `${gen.toLocaleDateString()} ${gen.toLocaleTimeString()}` : '';
-    const dateOnly = (ms) => {
-      if (!ms) return 'undated';
-      try { return new Date(ms).toLocaleDateString(); } catch { return 'undated'; }
-    };
-    // Only external GitHub links navigate; everything else is inert text.
-    const link = (href, text) => (href
-      ? `<a href="${ea(href)}" target="_blank" rel="noopener">${eh(text)}</a>`
-      : eh(text));
-    const metaLine = (parts) => {
-      const kept = parts.filter((p) => p !== '' && p != null);
-      if (!kept.length) return '';
-      return `<div class="ur-rpt-meta">${kept.map((p) => `<span>${p}</span>`).join('')}</div>`;
-    };
-    const rows = (items) => `<ul class="ur-rpt-list">${items.join('')}</ul>`;
-    const voteText = (e) => {
-      const req = e.votesRequired || 0;
-      const yes = e.yes || 0;
-      const base = req ? `${yes} of ${req} yes` : `${yes} yes`;
-      return e.no ? `${base}, ${e.no} no` : base;
-    };
-    const countdown = (iso) => {
-      const ends = iso ? Date.parse(iso) : NaN;
-      if (!Number.isFinite(ends) || !Number.isFinite(genMs)) return '';
-      const left = ends - genMs;
-      if (left <= 0) return 'merge window closed';
-      const h = Math.floor(left / 3600000);
-      if (h >= 24) return `merges in ${Math.floor(h / 24)}d`;
-      if (h >= 1) return `merges in ${h}h`;
-      return `merges in ${Math.max(1, Math.round(left / 60000))}m`;
-    };
-
-    // ── Title block ───────────────────────────────────────────────────
-    let html = '';
-    // Period header line (reporting-period): named start → generated date.
-    const periodMs = Number.isFinite(m.periodStartMs) && m.periodStartMs > 0 ? m.periodStartMs : null;
-    html += `<header class="ur-rpt-head">`
-      + `<p class="ur-rpt-kicker">Progress report</p>`
-      + `<h1 class="ur-rpt-app">${eh(app.name)}</h1>`
-      + `<p class="ur-rpt-gen">Generated ${eh(genLabel)}</p>`
-      + (periodMs
-        ? `<p class="ur-rpt-gen">Covering ${eh(dateOnly(periodMs))} &rarr; ${eh(gen ? gen.toLocaleDateString() : 'today')}</p>`
-        : '')
-      + `<p class="ur-rpt-note">Open issues come from the app&rsquo;s GitHub repository; proposals and dev sessions come from Usernode.</p>`
-      + `</header>`;
-
-    // ── Summary strip ─────────────────────────────────────────────────
-    const stat = (n, label) => `<li class="ur-rpt-stat"><span class="ur-rpt-stat-n">${eh(n)}</span><span class="ur-rpt-stat-l">${eh(label)}</span></li>`;
-    html += `<ul class="ur-rpt-summary">`
-      + stat(sum.completed || 0, 'Completed')
-      + stat(sum.awaitingReview || 0, 'Awaiting review')
-      + stat(sum.beingWorkedOn || 0, 'Being worked on')
-      + stat(sum.backlog || 0, 'Backlog')
-      + stat(sum.contributors || 0, 'Contributors')
-      + stat(sum.backlogHighPriority || 0, 'High priority backlog')
-      + `</ul>`;
-    // With a period active, the Completed tile already answers "how much
-    // since the start date", so the momentum line is dropped. #1264: the
-    // bare 30-day count became a comparison against the 30 days before.
-    if (!periodMs) {
-      const last30 = sum.completedLast30 || 0;
-      const prev30 = sum.completedPrev30 || 0;
-      const pace = last30 > prev30 ? 'up' : (last30 < prev30 ? 'down' : 'steady');
-      html += `<p class="ur-rpt-recent">${eh(last30)} completed in the last 30 days vs ${eh(prev30)} in the 30 days before that &mdash; pace is ${pace}.</p>`;
-    }
-
-    // ── Completed by month (#1264) ────────────────────────────────────
-    // Six zero-filled months as label + proportional bar + count. Plain
-    // spans with an inline width — no script, no external asset — so the
-    // strip survives the standalone export and the sandboxed snapshot CSP.
-    // Skipped entirely when all six months are zero: an all-empty chart
-    // says less than no chart.
-    const monthly = Array.isArray(m.monthly) ? m.monthly : [];
-    const monthlyMax = monthly.reduce((x, mo) => Math.max(x, (mo && mo.count) || 0), 0);
-    if (monthlyMax > 0) {
-      const bars = monthly.map((mo) => {
-        const count = (mo && mo.count) || 0;
-        const pct = Math.round((count / monthlyMax) * 100);
-        return `<li class="ur-rpt-trend-row">`
-          + `<span class="ur-rpt-trend-label">${eh(mo.shortLabel || mo.label)}</span>`
-          + `<span class="ur-rpt-trend-bar"><span class="ur-rpt-trend-fill" style="width:${pct}%"></span></span>`
-          + `<span class="ur-rpt-trend-n">${eh(count)}</span>`
-          + `</li>`;
-      }).join('');
-      html += `<section class="ur-rpt-section ur-rpt-trend" data-section="monthly">`
-        + `<h2 class="ur-rpt-h2">Completed by month</h2>`
-        + `<ul class="ur-rpt-trend-list">${bars}</ul>`
-        + (m.monthlyIncomplete
-          ? `<p class="ur-rpt-sub">Not all history could be loaded, so the oldest months may be incomplete.</p>`
-          : '')
-        + `</section>`;
-    }
-
-    // ── Needs attention (#1264) ───────────────────────────────────────
-    // Deterministic cross-references into the sections below. The empty
-    // state is explicit so a reader knows the absence is deliberate.
-    const attn = Array.isArray(m.attention) ? m.attention : [];
-    let attnBody = '';
-    if (!attn.length) {
-      attnBody = `<p class="ur-rpt-empty">Nothing needs attention right now.</p>`;
-    } else {
-      attnBody = rows(attn.map((e) => `<li class="ur-rpt-row">`
-        + `<div class="ur-rpt-title">${eh(e.title)}</div>`
-        + metaLine([
-          e.prNumber != null
-            ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/pull/${e.prNumber}` : '', `PR #${e.prNumber}`)}</span>`
-            : '',
-          e.number != null
-            ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>`
-            : '',
-          e.issueNumber != null
-            ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/issues/${e.issueNumber}` : '', `#${e.issueNumber}`)}</span>`
-            : '',
-          eh((e.reasons || []).join(', ')),
-        ])
-        + `</li>`));
-    }
-    html += `<section class="ur-rpt-section" data-section="attention">`
-      + `<h2 class="ur-rpt-h2">Needs attention</h2>${attnBody}</section>`;
-
-    // ── AI layer (report-ai): highlights → narrative → risks ──────────
-    // Injected only when the caller passes a summary (or an explicit null
-    // for the invite line); legacy callers that omit `ai` entirely get
-    // the deterministic document unchanged, which is also what the
-    // standalone export does when no summary exists yet.
-    if (o.ai !== undefined) {
-      html += AppView._renderReportAiHtml(o.ai);
-    }
-
-    // ── Work by owner (#1264: deterministic, AI blurbs optional) ──────
-    html += AppView._renderReportOwnersHtml(m.owners, o.ai || null);
-
-    // ── Done ──────────────────────────────────────────────────────────
-    const done = m.done || {};
-    let doneBody = '';
-    if (done.empty) {
-      doneBody = `<p class="ur-rpt-empty">Nothing has been completed yet.</p>`;
-    } else {
-      for (const g of (done.groups || [])) {
-        doneBody += `<h3 class="ur-rpt-h3">${eh(g.label)} (${eh((g.entries || []).length)})</h3>`;
-        doneBody += rows((g.entries || []).map((e) => {
-          const head = e.kind === 'close-issue'
-            ? `Issue ${link(app.repoUrl && e.issueNumber ? `${app.repoUrl}/issues/${e.issueNumber}` : '', `#${e.issueNumber}`)} closed by vote`
-            : eh(e.title);
-          const pr = (e.kind !== 'close-issue' && e.prNumber != null)
-            ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/pull/${e.prNumber}` : '', `PR #${e.prNumber}`)}</span>`
-            : '';
-          // #1264: provenance tags ride on the title, like the board's
-          // own chips — an imported PR and/or the external agent used.
-          const tags = (e.imported
-            ? `<span class="ur-rpt-tag">Imported PR${e.importedAuthor ? ` by ${eh(e.importedAuthor)}` : ''}</span>`
-            : '')
-            + (e.externalAgent ? `<span class="ur-rpt-tag">built with ${eh(e.externalAgent)}</span>` : '');
-          // #1264: which issue(s) this change closed.
-          const closes = (e.linkedIssues && e.linkedIssues.length)
-            ? `closes ${e.linkedIssues.map((n) => link(app.repoUrl ? `${app.repoUrl}/issues/${n}` : '', `#${n}`)).join(', ')}`
-            : '';
-          return `<li class="ur-rpt-row">`
-            + `<div class="ur-rpt-title">${e.kind === 'close-issue' ? head : eh(e.title)}${tags}</div>`
-            + metaLine([
-              pr,
-              e.author ? eh(e.author) : '',
-              voteText(e),
-              closes,
-              e.kudos ? `${eh(e.kudos)} kudos` : '',
-              e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
-              `${eh(e.dateLabel)} ${eh(dateOnly(e.atMs))}`,
-            ])
-            + `</li>`;
-        }));
-      }
-      const notes = [];
-      if (done.truncated && done.total > done.shown) {
-        notes.push(`Showing the ${done.shown} most recent of ${done.total} completed items.`);
-      }
-      if (done.periodIncomplete) {
-        notes.push('Only the most recent completed items could be loaded, so this period may be incomplete.');
-      }
-      if (done.partial) {
-        notes.push('The full history could not be loaded, so this section shows only the most recent page.');
-      }
-      // #1264: the platform records merge times now — only rows merged
-      // before that existed still fall back to their start date, so the
-      // disclaimer renders only when such a row is actually on screen.
-      if (done.anyUndatedMerge) {
-        notes.push('Items without a recorded merge time are dated by when the work was started.');
-      }
-      if (notes.length) doneBody += `<p class="ur-rpt-sub">${notes.map(eh).join(' ')}</p>`;
-    }
-    html += `<section class="ur-rpt-section" data-section="done">`
-      + `<h2 class="ur-rpt-h2">Done &mdash; completed work (${eh(done.total || 0)})</h2>${doneBody}</section>`;
-
-    // ── Awaiting review ───────────────────────────────────────────────
-    // #1112: split out of the old single "In progress" H2. These two lists
-    // are work that is FINISHED and waiting on people; the section below is
-    // work still happening. Printing both under one heading is what made a
-    // reader unable to tell whether anything needed them.
-    const ip = m.inProgress || {};
-    const arCount = (ip.review || []).length + (ip.gov || []).length;
-    let arBody = '';
-    if (ip.emptyAwaiting) {
-      arBody = `<p class="ur-rpt-empty">Nothing is waiting for review or a vote.</p>`;
-    } else {
-      if ((ip.review || []).length) {
-        arBody += `<h3 class="ur-rpt-h3">Awaiting review or vote (${eh(ip.review.length)})</h3>`;
-        arBody += rows(ip.review.map((e) => `<li class="ur-rpt-row">`
-          + `<div class="ur-rpt-title">${eh(e.title)}</div>`
-          + metaLine([
-            e.prNumber != null
-              ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/pull/${e.prNumber}` : '', `PR #${e.prNumber}`)}</span>`
-              : '',
-            e.author ? eh(e.author) : '',
-            voteText(e),
-            e.waitingSinceMs ? `waiting since ${eh(dateOnly(e.waitingSinceMs))}` : '',
-            e.checkLabel ? eh(e.checkLabel) : '',
-            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
-            e.status === 'merging' ? 'merging' : countdown(e.mergeWindowEndsAt),
-          ])
-          + `</li>`));
-      }
-      if ((ip.gov || []).length) {
-        arBody += `<h3 class="ur-rpt-h3">Governance proposals (${eh(ip.gov.length)})</h3>`;
-        arBody += rows(ip.gov.map((e) => `<li class="ur-rpt-row">`
-          + `<div class="ur-rpt-title">${eh(e.title)}<span class="ur-rpt-tag">${eh(e.govKindLabel)}</span></div>`
-          + metaLine([
-            e.issueNumber != null
-              ? `<span class="ur-rpt-num">${link(app.repoUrl ? `${app.repoUrl}/issues/${e.issueNumber}` : '', `#${e.issueNumber}`)}</span>`
-              : '',
-            e.author ? eh(e.author) : '',
-            voteText(e),
-            e.waitingSinceMs ? `waiting since ${eh(dateOnly(e.waitingSinceMs))}` : '',
-            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
-            countdown(e.mergeWindowEndsAt),
-          ])
-          + `</li>`));
-      }
-    }
-    html += `<section class="ur-rpt-section" data-section="awaiting-review">`
-      + `<h2 class="ur-rpt-h2">Awaiting review (${eh(arCount)})</h2>${arBody}</section>`;
-
-    // ── Underway ──────────────────────────────────────────────────────
-    // Work still happening: live sessions plus the issues somebody or
-    // something is on. Each issue row names its exact state rather than the
-    // old catch-all "in progress" note.
-    const uwCount = (ip.sessions || []).length + (ip.issues || []).length;
-    let ipBody = '';
-    if (ip.emptyWork) {
-      ipBody = `<p class="ur-rpt-empty">Nothing is underway.</p>`;
-    } else {
-      if ((ip.sessions || []).length) {
-        ipBody += `<h3 class="ur-rpt-h3">Being worked on right now (${eh(ip.sessions.length)})</h3>`;
-        ipBody += rows(ip.sessions.map((e) => `<li class="ur-rpt-row">`
-          + `<div class="ur-rpt-title">${eh(e.title)}${e.busy ? `<span class="ur-rpt-tag">agent running</span>` : ''}</div>`
-          + metaLine([
-            e.owner ? eh(e.owner) : '',
-            e.mine ? 'your session' : 'shared session',
-            e.atMs ? `last active ${eh(dateOnly(e.atMs))}` : '',
-            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
-          ])
-          + `</li>`));
-      }
-      if ((ip.issues || []).length) {
-        ipBody += `<h3 class="ur-rpt-h3">Issues with work underway (${eh(ip.issues.length)})</h3>`;
-        ipBody += rows(ip.issues.map((e) => `<li class="ur-rpt-row" data-work-state="${ea(e.state || '')}">`
-          + `<div class="ur-rpt-title">${eh(e.title)}</div>`
-          + metaLine([
-            e.number != null ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>` : '',
-            e.people && e.people.length ? eh(e.people.join(', ')) : '',
-            e.stateLabel ? eh(e.stateLabel) : '',
-            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
-          ])
-          + `</li>`));
-      }
-    }
-    html += `<section class="ur-rpt-section" data-section="inprogress">`
-      + `<h2 class="ur-rpt-h2">Underway (${eh(uwCount)})</h2>${ipBody}</section>`;
-
-    // ── Backlog ───────────────────────────────────────────────────────
-    const bl = m.backlog || {};
-    let blBody = '';
-    if (bl.empty) {
-      blBody = `<p class="ur-rpt-empty">The backlog is empty.</p>`;
-    } else {
-      for (const g of (bl.groups || [])) {
-        blBody += `<h3 class="ur-rpt-h3">${eh(g.label)} (${eh(g.issues.length)})</h3>`;
-        blBody += rows(g.issues.map((e) => `<li class="ur-rpt-row">`
-          + `<div class="ur-rpt-title">${eh(e.title)}${e.bountyCount
-            ? `<span class="ur-rpt-tag">${eh(e.bountyCount)} ${e.bountyCount === 1 ? 'bounty' : 'bounties'}</span>`
-            : ''}</div>`
-          + metaLine([
-            e.number != null ? `<span class="ur-rpt-num">${link(e.htmlUrl, `#${e.number}`)}</span>` : '',
-            e.createdAtMs
-              ? `filed ${eh(dateOnly(e.createdAtMs))}${e.reporter ? ` by ${eh(e.reporter)}` : ''}`
-              : (e.reporter ? `filed by ${eh(e.reporter)}` : ''),
-            e.assignee ? eh(e.assignee) : '',
-            e.category ? eh(e.category) : '',
-            e.atMs ? `active ${eh(dateOnly(e.atMs))}` : '',
-            e.chatCount ? `${eh(e.chatCount)} in discussion` : '',
-          ])
-          + `</li>`));
-      }
-      if (bl.truncatedList) {
-        const all = app.repoUrl ? `${app.repoUrl}/issues` : '';
-        blBody += `<p class="ur-rpt-sub">GitHub returned more open issues than the platform fetches, so this backlog is partial. `
-          + `${all ? `See the ${link(all, 'full issue list')}.` : ''}</p>`;
-      }
-    }
-    html += `<section class="ur-rpt-section" data-section="backlog">`
-      + `<h2 class="ur-rpt-h2">Backlog (${eh(bl.total || 0)})</h2>${blBody}</section>`;
-
-    // ── Footer ────────────────────────────────────────────────────────
-    html += `<footer class="ur-rpt-foot">`
-      + (app.url ? `<p>${eh(app.url)}</p>` : (app.slug ? `<p>${eh(app.slug)}</p>` : ''))
-      + `<p>${eh(sum.completed || 0)} completed &middot; ${eh(sum.awaitingReview || 0)} awaiting review &middot; `
-      + `${eh(sum.beingWorkedOn || 0)} being worked on &middot; ${eh(sum.backlog || 0)} in the backlog.</p>`
-      + `<p>This report reflects what the person who generated it can see, including their own private dev sessions.</p>`
-      + `</footer>`;
-
-    if (!standalone) return html;
-    const title = `${app.name || 'App'} — progress report`;
-    return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8">`
-      + `<meta name="viewport" content="width=device-width, initial-scale=1">`
-      + `<title>${eh(title)}</title>`
-      + `<style>html,body{margin:0;padding:0;background:#fff;}${AppView.REPORT_CSS}${AppView.REPORT_PRINT_CSS}</style>`
-      + `</head><body><div class="ur-rpt">${html}</div></body></html>\n`;
-  },
-
-  // Save the report as a single self-contained file. Blob + temporary
-  // <a download> + revokeObjectURL, the pattern the admin CSV export
-  // already established (frontend/src/features/admin/admin-console.js).
-  downloadReport() {
-    if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
-    const model = AppView._buildReportModel(AppView._reportInputs(), AppView._reportModelOpts());
-    // A summary is embedded when one exists; with none, the export omits
-    // the AI layer entirely (no "use the button above" invite in a
-    // standalone document).
-    const doc = AppView._renderReportHtml(
-      model,
-      AppView._reportAi
-        ? { standalone: true, ai: AppView._reportAi }
-        : { standalone: true }
-    );
-    const slug = (model.app && model.app.slug) || 'app';
-    const d = new Date(model.generatedAtMs);
-    const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-    const name = `usernode-${slug}-progress-${stamp}.html`;
-    try {
-      const blob = new Blob([doc], { type: 'text/html;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = name;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not save the report');
-    }
-  },
-
-  // Re-pull the merged history and regenerate in place.
-  refreshReport() {
-    if (AppView._reportLoading) return;
-    AppView._resetReportCaches();
-    AppView._repaintReportView();
-  },
-
-  // Fetch the shared AI summary once per report visit. GETs are cheap
-  // (server cache + staleness hash); errors degrade to the no-summary
-  // invite line rather than breaking the deterministic report.
-  async _ensureReportAi() {
-    if (AppView._reportAiFetching || AppView._reportAi !== undefined) return;
-    if (!AppView.appData) return;
-    AppView._reportAiFetching = true;
-    try {
-      // The staleness hash is computed server-side against the same
-      // period the client is looking at.
-      const sinceIso = AppView._reportEffectiveSince();
-      const qs = sinceIso ? `?since=${encodeURIComponent(sinceIso)}` : '';
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai${qs}`);
-      const data = res.ok ? await res.json() : null;
-      AppView._reportAi = data && data.summary
-        ? { ...data.summary, stale: !!data.stale }
-        : null;
-    } catch {
-      AppView._reportAi = null;
-    } finally {
-      AppView._reportAiFetching = false;
-    }
-    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-  },
-
-  // Generate/regenerate the AI summary. Debited to the clicking user;
-  // the server 409s a concurrent generation and 429s budget/rate limits.
-  async generateReportAi() {
-    if (AppView._reportAiGenerating || !AppView.appData) return;
-    AppView._reportAiGenerating = true;
-    AppView._repaintReportView();
-    try {
-      const sinceIso = AppView._reportEffectiveSince();
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(sinceIso ? { since: sinceIso } : {}),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.summary) {
-        AppView._reportAi = { ...data.summary, stale: false };
-      } else if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast(data.error || 'Could not generate the AI summary');
-      }
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not generate the AI summary');
-    } finally {
-      AppView._reportAiGenerating = false;
-      if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-    }
-  },
-
-  // Fetch the locked-snapshot list once per report visit; errors degrade
-  // to an empty list (the section simply doesn't render).
-  async _ensureReportSnapshots() {
-    if (AppView._reportSnapshotsFetching || AppView._reportSnapshots !== undefined) return;
-    if (!AppView.appData) return;
-    AppView._reportSnapshotsFetching = true;
-    try {
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-snapshots`);
-      const data = res.ok ? await res.json() : null;
-      AppView._reportSnapshots = data && Array.isArray(data.snapshots) ? data.snapshots : [];
-      // The default period just upgraded from "All history" to "Since
-      // last report" — re-check the AI staleness against it. One-shot:
-      // the guard above stops any refetch loop once _reportSnapshots is
-      // defined.
-      if (AppView._reportSince === undefined && AppView._reportSnapshots.length
-        && AppView._reportAi !== undefined && !AppView._reportAiFetching) {
-        AppView._reportAi = undefined;
-      }
-    } catch {
-      AppView._reportSnapshots = [];
-    } finally {
-      AppView._reportSnapshotsFetching = false;
-    }
-    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-  },
-
-  // Freeze the current report (same document the download builds) as a
-  // permanent dated snapshot. Admin-gated server-side; the button only
-  // renders for managers.
-  async lockReport() {
-    if (AppView._reportLocking || !AppView.appData) return;
-    if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
-    AppView._reportLocking = true;
-    AppView._repaintReportView();
-    try {
-      const model = AppView._buildReportModel(AppView._reportInputs(), AppView._reportModelOpts());
-      const doc = AppView._renderReportHtml(
-        model,
-        AppView._reportAi
-          ? { standalone: true, ai: AppView._reportAi }
-          : { standalone: true }
-      );
-      const res = await fetch(`/api/apps/${AppView.appData.slug}/report-snapshots`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ html: doc }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.snapshot) {
-        AppView._reportSnapshots = undefined; // refetch the list on repaint
-        if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Report locked');
-      } else if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast(data.error || 'Could not lock the report');
-      }
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not lock the report');
-    } finally {
-      AppView._reportLocking = false;
-      if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-    }
-  },
-
-  async shareReportSnapshot(id) {
-    if (!AppView.appData) return;
-    try {
-      const res = await fetch(
-        `/api/apps/${AppView.appData.slug}/report-snapshots/${encodeURIComponent(id)}/share`,
-        { method: 'POST' }
-      );
-      const data = await res.json().catch(() => ({}));
-      if (res.ok && data.sharePath) {
-        AppView._reportSnapshots = undefined;
-        AppView.copyReportShareLink(data.sharePath, 'Share link copied');
-      } else if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast(data.error || 'Could not share the report');
-      }
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not share the report');
-    }
-    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-  },
-
-  async unshareReportSnapshot(id) {
-    if (!AppView.appData) return;
-    try {
-      const res = await fetch(
-        `/api/apps/${AppView.appData.slug}/report-snapshots/${encodeURIComponent(id)}/unshare`,
-        { method: 'POST' }
-      );
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        AppView._reportSnapshots = undefined;
-        if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Share link revoked');
-      } else if (window.PlatformUI && PlatformUI.toast) {
-        PlatformUI.toast(data.error || 'Could not unshare the report');
-      }
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not unshare the report');
-    }
-    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-  },
-
-  // Absolute URL built at click time (location.origin), so the pure list
-  // renderer stays origin-free. Clipboard failure falls back to toasting
-  // the URL itself so the admin can copy it by hand.
-  async copyReportShareLink(path, msg) {
-    const url = `${location.origin}${path}`;
-    try {
-      await navigator.clipboard.writeText(url);
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg || 'Link copied');
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(url);
-    }
-  },
-
-  // ── Discord message (reporting-period): pure, DOM-free ──────────────
-  // model (+ possibly-null AI summary) in → plain string out, written for
-  // a general audience: no PR numbers, no merge windows, no check states.
-  // Uses only **bold**, _italics_ and `- ` bullets — Discord renders all
-  // three natively. Hard-capped at 1,900 characters (Discord's limit is
-  // 2,000), trimming bullets first.
-  _buildDiscordMessage(model, ai) {
-    const m = model || {};
-    const app = m.app || {};
-    const sum = m.summary || {};
-    const dateOnly = (ms) => {
-      try { return new Date(ms).toLocaleDateString(); } catch { return ''; }
-    };
-    const periodMs = Number.isFinite(m.periodStartMs) && m.periodStartMs > 0 ? m.periodStartMs : null;
-    let title = `**${app.name || 'This app'} — progress update**`;
-    if (periodMs) title += ` _(covering since ${dateOnly(periodMs)})_`;
-
-    // Non-technical nouns only — never "PR", "merge", "checks",
-    // "governance".
-    const c = sum.completed || 0;
-    const a = sum.awaitingReview || 0;
-    const w = sum.beingWorkedOn || 0;
-    const b = sum.backlog || 0;
-    const numbersLine = [
-      `${c} improvement${c === 1 ? '' : 's'} finished`,
-      `${a} change${a === 1 ? '' : 's'} waiting for votes`,
-      `${w} in progress`,
-      `${b} idea${b === 1 ? '' : 's'} in the backlog`,
-    ].join(' · ');
-
-    // What's new: the AI summary's plain-language highlights (cap 6), or —
-    // with no summary — up to 5 finished-item titles from the model.
-    const bullets = [];
-    if (ai) {
-      for (const h of (Array.isArray(ai.highlights) ? ai.highlights : [])) {
-        const t = h == null ? '' : String(h).trim();
-        if (t) bullets.push(t);
-        if (bullets.length >= 6) break;
-      }
-    } else {
-      for (const g of ((m.done || {}).groups || [])) {
-        for (const e of (g.entries || [])) {
-          const t = e && e.title ? String(e.title).trim() : '';
-          if (t) bullets.push(t);
-          if (bullets.length >= 5) break;
-        }
-        if (bullets.length >= 5) break;
-      }
-    }
-
-    // Needs attention: up to 3 plainly-worded risk titles (high/medium
-    // only); the section is omitted entirely when nothing qualifies.
-    const risks = ai
-      ? (Array.isArray(ai.risks) ? ai.risks : [])
-        .filter((r) => r && (r.severity === 'high' || r.severity === 'medium'))
-        .map((r) => String((r.title == null ? '' : r.title)).trim())
-        .filter(Boolean)
-        .slice(0, 3)
-      : [];
-
-    const assemble = (bl, rk) => {
-      const parts = [title];
-      if (bl.length) {
-        parts.push('', `**What's new**`);
-        for (const x of bl) parts.push(`- ${x}`);
-      }
-      parts.push('', '**By the numbers**', numbersLine);
-      if (rk.length) {
-        parts.push('', '**Needs attention**');
-        for (const x of rk) parts.push(`- ${x}`);
-      }
-      // The app's public link, and nothing else — never a share link (a
-      // draft report has none, and auto-including one could leak an
-      // unshared snapshot URL).
-      if (app.url) parts.push('', app.url);
-      return parts.join('\n');
-    };
-
-    const bl = bullets.slice();
-    const rk = risks.slice();
-    let msg = assemble(bl, rk);
-    while (msg.length > 1900 && (bl.length || rk.length)) {
-      if (bl.length) bl.pop(); else rk.pop();
-      msg = assemble(bl, rk);
-    }
-    if (msg.length > 1900) msg = msg.slice(0, 1900);
-    return msg;
-  },
-
-  // The editable copy panel, rendered inside the report root when a
-  // message has been composed. Read-only document rules still apply: the
-  // three controls are wired post-paint by _repaintReportView, like the
-  // snapshot buttons.
-  _renderReportDiscordPanelHtml() {
-    if (AppView._reportDiscordMsg == null) return '';
-    const note = AppView._reportDiscordFallback
-      ? 'Numbers-only version — the richer update with highlights needs the AI summary, which could not be generated.'
-      : 'Edit the text freely, then copy and paste it into Discord. Nothing is posted automatically.';
-    return `<section class="ur-rpt-section" data-section="discord">`
-      + `<h2 class="ur-rpt-h2">Discord message</h2>`
-      + `<p class="ur-rpt-sub">${escapeHtml(note)}</p>`
-      + `<textarea id="dev-report-discord-text" class="ur-rpt-discord-text" aria-label="Discord message">${escapeHtml(AppView._reportDiscordMsg)}</textarea>`
-      + `<div class="ur-rpt-discord-actions">`
-      + `<button type="button" id="dev-report-discord-copy" class="gc-vote-btn">Copy message</button>`
-      + `<button type="button" id="dev-report-discord-close" class="gc-vote-btn">Close</button>`
-      + `</div></section>`;
-  },
-
-  // Compose the Discord message: make sure a fresh AI summary exists for
-  // the selected period (the server returns the cache without an LLM call
-  // when the input hash is unchanged, so this never double-bills), fall
-  // back to the numbers-only version when it can't be generated, then
-  // open the panel.
-  async generateDiscordMessage() {
-    if (AppView._reportDiscordBusy || !AppView.appData) return;
-    if (!AppView._reportMerged) { AppView._ensureReportData(); return; }
-    AppView._reportDiscordBusy = true;
-    AppView._repaintReportView();
-    let ai = AppView._reportAi || null;
-    try {
-      if (!ai || ai.stale) {
-        const sinceIso = AppView._reportEffectiveSince();
-        const res = await fetch(`/api/apps/${AppView.appData.slug}/report-ai/generate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(sinceIso ? { since: sinceIso } : {}),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.summary) {
-          AppView._reportAi = { ...data.summary, stale: false };
-          ai = AppView._reportAi;
-        } else {
-          ai = null;
-          if (window.PlatformUI && PlatformUI.toast) {
-            PlatformUI.toast(data.error || 'Could not generate the AI summary');
-          }
-        }
-      }
-    } catch {
-      ai = null;
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Could not generate the AI summary');
-    }
-    const model = AppView._buildReportModel(AppView._reportInputs(), AppView._reportModelOpts());
-    AppView._reportDiscordMsg = AppView._buildDiscordMessage(model, ai);
-    AppView._reportDiscordFallback = !ai;
-    AppView._reportDiscordBusy = false;
-    if (AppView._getViewMode() === 'report') AppView._repaintReportView();
-  },
-
-  // Copy the textarea's CURRENT value — the user may have edited it.
-  // Clipboard failure falls back to toasting the text itself, the same
-  // posture as copyReportShareLink.
-  async copyDiscordMessage() {
-    const ta = document.getElementById('dev-report-discord-text');
-    const text = ta ? ta.value : (AppView._reportDiscordMsg || '');
-    try {
-      await navigator.clipboard.writeText(text);
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast('Message copied');
-    } catch {
-      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(text);
-    }
-  },
+  // The last published board, so a tab tap can republish it with a new
+  // active key without rebuilding every card.
+  _lastKanbanView: { activeTab: 'issues', cols: [] },
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
   // ── Session cards in the In progress area ──────────────────────────
   // The viewer's PRIVATE in-progress (active/paused, not-yet-promoted)
@@ -7473,19 +6890,82 @@ const AppView = {
   // "Imported PR" badge, and one provenance badge is the right number. Also
   // returns '' when build-venues.js has not loaded, so the card degrades to
   // exactly what it rendered before rather than to a broken chip.
-  _sessionVenueChipHtml(s) {
+  _sessionVenueChipSpec(s) {
     const BV = (typeof window !== 'undefined' && window.BuildVenues) || null;
-    if (!BV || !s || s.source === 'imported') return '';
-    return BV.chipHtml(BV.currentVenue({
+    if (!BV || !s || s.source === 'imported') return null;
+    const v = BV.venue(BV.currentVenue({
       source: s.source,
       agentBackend: s.agent_backend,
       externalAgent: s.external_agent,
     }));
+    if (!v) return null;
+    return { t: 'venue', key: 'venue', label: v.label, title: `${v.label}: ${v.blurb}` };
   },
 
-  _sessionStatusTagHtml(s) {
+  // The session card's state chip, as a SPEC. Three sources, in
+  // precedence order: the busy spinner, MergeStatus's lifecycle descriptor
+  // (rendered by the card's `ms` badge variant, which is badgeHtml's shell
+  // as data), and the plain paused chip.
+  // The Underway card's meta lines. The subtitle, plus — when checks are
+  // failing — WHICH ones (#1766).
+  //
+  // The chip above already says "Checks failing · 3". Bruno's report is that
+  // the three have no names anywhere in the UI, so the only way to learn them
+  // was to read test_results out of the API by hand. The server now sends a
+  // bounded summary (summarizeFailingChecks), derived from the same rows the
+  // coding agent has always been handed in its prompt.
+  //
+  // Two names, then a count. A card is a pointer, not the ledger: the whole
+  // list belongs on the topic page, and three lines of check titles in a
+  // launcher row would push the card past the thing it exists to be.
+  // A card meta line's WHEN (#1808).
+  //
+  // Every card that ends its meta line with an age used to push a plain
+  // `{ t: 'text' }` part, so the age was all a reader could ever get: a row
+  // reading "3d ago" had no way to say which day, and the two merged-card
+  // sites pushed a bare numeric `toLocaleDateString` instead, which said
+  // 06/16/2025 beside neighbours that all said "3d ago". A `span` part
+  // carries `title`, so the exact instant is one hover away everywhere.
+  //
+  // `prefix` is for the rows that read "closed by vote · Jun 16" — the whole
+  // phrase is one part, and the title belongs to the phrase.
+  //
+  // Returns null for an instant that will not parse, so a caller can push it
+  // conditionally rather than draw an empty part.
+  _agePart(ts, prefix) {
+    const { text, title } = relStamp(ts);
+    if (!text) return null;
+    return { t: 'span', cls: '', s: `${prefix || ''}${text}`, title };
+  },
+
+  _sessionCardMeta(s, subtitle) {
+    const meta = [{ t: 'text', s: subtitle }];
+    const f = s && s.failing_checks;
+    if (!f || !f.total || !Array.isArray(f.rows) || !f.rows.length) return meta;
+    const shown = f.rows.slice(0, 2).map((r) => r.name).filter(Boolean);
+    if (!shown.length) return meta;
+    const rest = f.total - shown.length;
+    const names = shown.join(' · ') + (rest > 0 ? ` · +${rest} more` : '');
+    meta.push({
+      t: 'span', cls: '',
+      s: `Failing: ${names}`,
+      // The full first reason, where a pointer cannot carry it. Advisory
+      // rows are named too but marked, because they do not block the merge
+      // and a reviewer counting them as blockers reads a held-up merge that
+      // is not held up.
+      title: f.rows
+        .map((r) => `${r.advisory ? '[advisory] ' : ''}${r.name} — ${r.reason}`)
+        .join('\n'),
+    });
+    return meta;
+  },
+
+  _sessionStatusTagSpec(s) {
     if (AppView._sessionBusy(s)) {
-      return '<span class="dev-badge bg-emerald-500/10 text-emerald-500"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>';
+      return {
+        t: 'chip', key: 'state', cls: 'dev-badge bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+        label: 'working…', spinner: true,
+      };
     }
     // A submitted build stays status='active' until the owner puts it up for
     // a vote, so the generic session state alone cannot distinguish a draft
@@ -7498,45 +6978,62 @@ const AppView = {
       const life = MergeStatus.lifecycle(s);
       if (life.key === 'checks_running' && s.check_phase) {
         const phase = AppView._checksPhaseCopy(s.check_phase);
-        return `<span class="ms-badge ms-badge-neutral" title="${escapeAttr(phase.detail)}">`
-          + `<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${escapeHtml(phase.title)}</span>`;
+        return {
+          t: 'ms', key: 'state', tone: 'neutral',
+          label: phase.title, title: phase.detail, spinner: true,
+        };
       }
-      return MergeStatus.badgeHtml(life);
+      if (!life || !life.label) return null;
+      return {
+        t: 'ms', key: 'state', tone: life.tone || 'neutral', label: life.label,
+        title: life.title || undefined, spinner: !!life.spinner,
+        glyph: life.glyph || undefined,
+      };
     }
     return s && s.status === 'paused'
-      ? '<span class="dev-badge bg-zinc-500/10 text-zinc-500">paused</span>'
-      : '';
+      ? { t: 'chip', key: 'state', cls: 'dev-badge bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', label: 'paused' }
+      : null;
   },
 
-  _importedSessionBadgeHtml(s) {
+  _importedSessionBadgeSpec(s) {
     return s && s.source === 'imported'
-      ? '<span class="dev-badge bg-amber-500/10 text-amber-600 dark:text-amber-400">Imported PR</span>'
-      : '';
+      ? { t: 'chip', key: 'imported', cls: 'dev-badge bg-amber-500/10 text-amber-800 dark:text-amber-400', label: 'Imported PR' }
+      : null;
   },
 
-  // One of the viewer's own session cards. A clickable <div> (not
-  // <button>) so the inner Archive / visibility buttons are valid HTML.
-  // Two rows: title row (icon + wrapping title + chevron) and an actions
-  // row (status tag + buttons) that flex-wraps — the title can never be
-  // crushed by fixed-width controls. Clicking the card opens the owner's
-  // dev chat; the "Open chat" button (visible sessions only) opens the
-  // public discussion instead.
-  _renderMySessionCard(s) {
+  // Imported Underway rows are proposal-shaped, but deliberately have no
+  // voting controls until promotion. Their menu therefore exposes only the
+  // metadata editors and permanent GitHub destination that survive the
+  // lifecycle transition.
+  _importedUnderwayMenuItems(s) {
+    const items = AppView._attrMenuItems('proposal', s.id, s);
+    if (s.pr_url) {
+      items.push({
+        label: 'View PR on GitHub',
+        icon: 'github',
+        title: s.pr_url,
+        act: () => window.open(s.pr_url, '_blank', 'noopener'),
+      });
+    }
+    return items;
+  },
+
+  // One of the viewer's own session cards, as a MODEL (card/model.ts).
+  // The whole card is the tap target — it opens the owner's dev chat —
+  // so the inner controls stay real buttons inside a role="button" div.
+  _mySessionCardModel(s) {
     const label = AppView._sessionCardLabel(s);
     const imported = s.source === 'imported';
-    const statusTag = AppView._sessionStatusTagHtml(s);
     const shared = !!s.shared_at;
     const transcriptShared = !!s.transcript_shared_at;
     // Count comes from the shared-sessions row; a freshly-shared session
-    // may not be in _sharedById yet (background refresh pending) — the
-    // badge still renders, with the count at 0.
+    // may not be in _sharedById yet (background refresh pending).
     const sh = shared ? (AppView._sharedById || {})[s.id] : null;
     // #689: a PR exists once the first commit is pushed, so pr_number set
     // means there is something to preview. The owner is always authorized
-    // on ensure-staging, which rebuilds the preview if the idle GC
-    // reclaimed it.
-    const preview = AppView.cardPreviewHtml(s, { kind: 'own-session', sessionId: s.id });
-    const author = escapeHtml(s.imported_pr_author || 'unknown author');
+    // on ensure-staging, which rebuilds a preview the idle GC reclaimed.
+    const preview = AppView._cardPreviewSpec(s, { kind: 'own-session', sessionId: s.id });
+    const author = s.imported_pr_author || 'unknown author';
     const subtitle = imported
       ? `Imported pull request by ${author} · not up for vote yet`
       : (shared
@@ -7550,18 +7047,36 @@ const AppView = {
     //
     // Visibility is PROMOTED to the face and is no longer a ⋯ row: it is the
     // one thing you do to your own session card, the subtitle right above it
-    // states the current state, and the card now reserves an action band that
+    // states the current state, and the card reserves an action band that
     // otherwise held nothing but the icon Preview.
-    const visibilityBtn = imported || AppView.readOnly ? '' : (shared
-      ? `<button class="gc-vote-btn" title="Make this session private again (removes it from everyone&#39;s In progress area, and stops anyone reading the chat)" onclick="AppView._setSessionShared(${s.id}, false, null)">Hide</button>`
-      : `<button class="gc-vote-btn" title="Show this session in everyone&#39;s In progress area — others can comment and open its live preview, but can&#39;t read your chat unless you also share it" onclick="AppView._setSessionShared(${s.id}, true, null)">Make visible</button>`);
-    const menu = [];
+    const actions = [];
+    if (imported && !AppView.readOnly) {
+      actions.push({
+        key: 'promote', cls: 'gc-vote-btn', label: 'Put up for vote',
+        title: 'Put this imported pull request up for vote',
+        act: { fn: 'promoteImportedSession', args: [s.id] }, passNode: true,
+      });
+    } else if (!imported && !AppView.readOnly) {
+      actions.push(shared
+        ? {
+          key: 'vis', cls: 'gc-vote-btn', label: 'Hide',
+          title: "Make this session private again (removes it from everyone's In progress area, and stops anyone reading the chat)",
+          act: { fn: '_setSessionShared', args: [s.id, false, null] },
+        }
+        : {
+          key: 'vis', cls: 'gc-vote-btn', label: 'Make visible',
+          title: "Show this session in everyone's In progress area. Others can comment and open its live preview, but can't read your chat unless you also share it",
+          act: { fn: '_setSessionShared', args: [s.id, true, null] },
+        });
+    }
+
+    const menu = imported ? AppView._importedUnderwayMenuItems(s) : [];
     // The SECOND opt-in, offered only once the session is visible (there is
     // nowhere for a reader to reach an invisible session's chat from).
     if (shared && !imported) {
       menu.push(transcriptShared
         ? {
-          label: 'Chat shared — stop sharing',
+          label: 'Chat shared. Stop sharing',
           icon: 'chat',
           title: 'Stop others reading this chat (they keep the card and the discussion)',
           act: () => AppView._setTranscriptShared(s.id, false, null),
@@ -7569,7 +7084,7 @@ const AppView = {
         : {
           label: 'Share chat',
           icon: 'chat',
-          title: "Let everyone read this chat, read-only — they can't reply in it, and can't see your costs or uploaded files",
+          title: "Let everyone read this chat, read-only. They can't reply in it, and can't see your costs or uploaded files",
           act: () => AppView._setTranscriptShared(s.id, true, null),
         });
       const chatN = sh ? (parseInt(sh.chat_count, 10) || 0) : 0;
@@ -7578,6 +7093,23 @@ const AppView = {
         icon: 'chat',
         title: 'Open the public discussion on this session',
         act: () => AppView.openTopic('session', s.id),
+      });
+    }
+    // #1766: the second half of the report — "there is no way to re-run them
+    // either from the UI". _recheckAction already exists and is already
+    // owner/admin gated, already refuses when the state is passing, and
+    // already disables itself mid-request; it was simply never offered on an
+    // Underway card, only on the promoted topic page. So an owner watching
+    // their own session fail could see the verdict and do nothing about it
+    // without leaving the board.
+    menu.push({ label: 'View checks', icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
+    const recheck = AppView._recheckAction(s);
+    if (recheck && !recheck.disabled) {
+      menu.push({
+        label: 'Re-run checks',
+        icon: 'retry',
+        title: recheck.title,
+        act: () => AppView.castRecheck(s.id),
       });
     }
     if (!imported) {
@@ -7594,75 +7126,111 @@ const AppView = {
         },
       });
     }
-    // `preview` goes to the rail, not in here — see _cardRailHtml below.
-    const promoteBtn = imported && !AppView.readOnly
-      ? `<button class="gc-vote-btn" title="Put this imported pull request up for vote" onclick="AppView.promoteImportedSession(${s.id}, this)">Put up for vote</button>`
-      : '';
-    const actions = AppView._cardActionsHtml({ primary: [promoteBtn || visibilityBtn] });
 
     // A private session gets the muted/draft shell — that IS the signal
     // nobody else can see it, replacing the caption that used to sit above
     // the group. Single-row shell like every other card on the board.
     const mutedCls = shared || imported ? '' : ` ${AppView.DEV_CARD_MUTED_CLS}`;
-    const navAttr = imported ? `data-shared-session-row="${s.id}"` : `data-session-chip="${s.id}"`;
-    return `<div ${navAttr} role="button" tabindex="0"
-      class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}${mutedCls}"
-      title="${s.busy ? 'AI is working — ' : ''}${label}">
-      ${AppView._cardContentHtml({
-        icon: AppView._devCardIcon('session'),
-        titleHtml: label,
-        // The clamp can hide the end of a long title, so the truncating
-        // element itself carries the full text (`label` is already escaped).
-        titleAttrs: ` title="${label}"`,
-        metaHtml: subtitle,
-        badges: [AppView._importedSessionBadgeHtml(s), statusTag, AppView._sessionVenueChipHtml(s), AppView.issueChipsHtml(s.linked_issues)],
-        chatCount: null,
-        actions,
-      })}
-      ${AppView._cardRailHtml(`session:${s.id}`, imported ? [] : menu, { preview })}
-    </div>`;
+    const attrs = { role: 'button', tabindex: '0', title: `${s.busy ? 'AI is working: ' : ''}${label}` };
+    if (imported) attrs['data-shared-session-row'] = String(s.id);
+    else attrs['data-session-chip'] = String(s.id);
+    return {
+      key: `my-session:${s.id}`,
+      cls: `${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}${mutedCls}`,
+      attrs,
+      icon: AppView._devCardIcon('session'),
+      // The clamp can hide the end of a long title, so the truncating
+      // element itself carries the full text.
+      title: { text: label, title: label },
+      meta: AppView._sessionCardMeta(s, subtitle),
+      pill: null,
+      linked: [],
+      badges: [
+        ...(imported
+          ? AppView._attrChipSpecs('proposal', s.id, s, { omitUnset: true })
+          : []),
+        AppView._sessionStatusTagSpec(s),
+        AppView._importedSessionBadgeSpec(s),
+        AppView._sessionVenueChipSpec(s),
+        ...AppView.issueChipSpecs(s.linked_issues),
+      ].filter(Boolean),
+      chatCount: null,
+      actions,
+      actionPreview: null,
+      // `preview` goes to the rail, not the action band. The chevron rides
+      // with it: tapping the card opens the owner's dev chat.
+      rail: { menuKey: AppView._registerCardMenu(`session:${s.id}`, menu), chevron: true, preview },
+      extra: [],
+      dense: true,
+      uncapped: false,
+    };
   },
 
-  // Another user's shared session. Opens the public discussion topic —
-  // never the owner's dev chat (those endpoints stay owner-scoped
-  // server-side). `opts.noNav` renders the static header variant for the
-  // topic sub-view.
+  // Another user's shared session, as a MODEL. Opens the public discussion
+  // topic — never the owner's dev chat (those endpoints stay owner-scoped
+  // server-side). `opts.noNav` is the static header variant for the topic
+  // sub-view.
   //
   // "Read chat" is GONE as a pill: the shared transcript lives on this
   // session's own detail page (and auto-expands there), which is the one
   // canonical destination a tap on this card already goes to.
-  _renderSharedSessionCard(s, opts) {
+  _sharedSessionCardModel(s, opts) {
     const noNav = !!(opts && opts.noNav);
     const label = AppView._sessionCardLabel(s);
-    const owner = escapeHtml(s.username || 'someone');
+    const owner = s.username || 'someone';
     const imported = s.source === 'imported';
-    const author = escapeHtml(s.imported_pr_author || 'unknown author');
-    const statusTag = AppView._sessionStatusTagHtml(s);
-    const preview = AppView.cardPreviewHtml(s, { kind: 'shared-session', sessionId: s.id });
-    const nav = noNav ? '' : ` data-shared-session-row="${s.id}" role="button" tabindex="0"`;
-    // This card has no ⋯ menu of its own, so the rail is the chevron alone
-    // until there is a preview to pin under it — at which point it becomes a
-    // real column (chevron centred above the eye).
-    const rail = AppView._cardRailHtml('', null, {
-      chevron: !noNav, preview: noNav ? '' : preview,
-    });
-    return `<div${nav} class="${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" title="${label}">
-      ${AppView._cardContentHtml({
-        icon: AppView._devCardIcon('session'),
-        titleHtml: label,
-        titleAttrs: ` title="${label}"`,
-        metaHtml: imported
+    const author = s.imported_pr_author || 'unknown author';
+    const preview = AppView._cardPreviewSpec(s, { kind: 'shared-session', sessionId: s.id });
+    const menu = imported && !noNav ? AppView._importedUnderwayMenuItems(s) : [];
+    menu.push({ label: 'View checks', icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
+    const recheck = AppView._recheckAction(s);
+    if (recheck && !recheck.disabled) {
+      menu.push({ label: 'Re-run checks', icon: 'retry', act: () => AppView.castRecheck(s.id) });
+    }
+    const attrs = { title: label };
+    if (!noNav) {
+      attrs['data-shared-session-row'] = String(s.id);
+      attrs.role = 'button';
+      attrs.tabindex = '0';
+    }
+    return {
+      key: `shared-session:${s.id}`,
+      cls: `${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}`,
+      attrs,
+      icon: AppView._devCardIcon('session'),
+      title: { text: label, title: label },
+      meta: [{
+        t: 'text',
+        s: imported
           ? `Imported pull request by ${author} · imported by ${owner}`
           : `${owner} is working on this`,
-        badges: [AppView._importedSessionBadgeHtml(s), statusTag, AppView.issueChipsHtml(s.linked_issues)],
-        chatCount: s.chat_count,
-        // No pills of its own: reading the chat IS the whole-card tap, so the
-        // dense band renders reserved-and-empty (see _cardContentHtml).
-        actions: '',
-        dense: !noNav,
-      })}
-      ${rail}
-    </div>`;
+      }],
+      pill: null,
+      linked: [],
+      badges: [
+        ...(imported
+          ? AppView._attrChipSpecs('proposal', s.id, s, { omitUnset: !noNav })
+          : []),
+        AppView._sessionStatusTagSpec(s),
+        AppView._importedSessionBadgeSpec(s),
+        ...AppView.issueChipSpecs(s.linked_issues),
+      ].filter(Boolean),
+      chatCount: s.chat_count,
+      // No pills of its own: reading the chat IS the whole-card tap, so the
+      // dense band renders reserved-and-empty.
+      actions: [],
+      actionPreview: null,
+      // Ordinary shared sessions keep the chevron-only rail. Imported PRs
+      // add their proposal attribute editors / GitHub destination.
+      rail: {
+        menuKey: AppView._registerCardMenu(`session:${s.id}`, menu),
+        chevron: !noNav,
+        preview: noNav ? null : preview,
+      },
+      extra: [],
+      dense: !noNav,
+      uncapped: noNav,
+    };
   },
 
   // ── In-progress section dividers ─────────────────────────────────────
@@ -7670,143 +7238,122 @@ const AppView = {
   // divider label's tooltip, and the private group's own cards carry the
   // muted shell, so the information survives at a fraction of the height.
   PRIVATE_DIVIDER_TITLE: 'Only you can see your active sessions.',
-  VISIBLE_DIVIDER_TITLE: 'Visible to everyone — including a live preview of your changes.',
+  VISIBLE_DIVIDER_TITLE: 'Visible to everyone, including a live preview of your changes.',
   OTHERS_DIVIDER_TITLE: 'Dev sessions other people have made visible.',
 
-  _sessionsCaptionHtml() {
-    return AppView._columnDividerHtml('Yours · private', AppView.PRIVATE_DIVIDER_TITLE);
+  _privateDividerRow() {
+    return { t: 'divider', key: 'div:private', d: { label: 'Yours · private', title: AppView.PRIVATE_DIVIDER_TITLE } };
   },
 
-  _visibleSessionsCaptionHtml() {
-    return AppView._columnDividerHtml('Yours · visible', AppView.VISIBLE_DIVIDER_TITLE);
+  _visibleDividerRow() {
+    return { t: 'divider', key: 'div:visible', d: { label: 'Yours · visible', title: AppView.VISIBLE_DIVIDER_TITLE } };
   },
 
-  _othersSessionsCaptionHtml() {
-    return AppView._columnDividerHtml('Others', AppView.OTHERS_DIVIDER_TITLE);
+  _othersDividerRow() {
+    return { t: 'divider', key: 'div:others', d: { label: 'Others', title: AppView.OTHERS_DIVIDER_TITLE } };
   },
 
   // The visible note that replaces the filter bar's silent skip of session
-  // cards. Text search and #number DO filter sessions now; priority,
-  // category and assignee genuinely cannot apply to a dev session (it
-  // carries no such metadata), so rather than quietly ignoring those the
-  // column says so. Returns '' when no such filter is active or there are
-  // no sessions to explain.
-  _sessionFilterNoteHtml(sessionCount) {
-    if (!sessionCount) return '';
+  // cards. Text search, #number and a named person DO filter sessions now
+  // (#1404 matches a person against the session's author); priority, category
+  // and the Unassigned sentinel genuinely cannot apply to an ordinary dev
+  // session, so rather than quietly ignoring those the column says so.
+  // Imported PRs carry all three attributes while Underway and are excluded
+  // from this count. Returns null when no such filter is active or there are
+  // no ordinary sessions to explain.
+  _sessionFilterNoteRow(sessionCount) {
+    if (!sessionCount) return null;
     const f = AppView._kanbanFilters || {};
     const which = [];
     if (f.priority) which.push('priority');
     if (f.category) which.push('category');
-    if (f.assignee) which.push('assignee');
-    if (!which.length) return '';
+    if (f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED) which.push('assignee');
+    if (!which.length) return null;
     const list = which.length === 1
       ? which[0]
       : `${which.slice(0, -1).join(', ')} or ${which[which.length - 1]}`;
-    return `<div class="text-xs text-zinc-400 dark:text-zinc-500 italic px-0.5">`
-      + `Dev sessions don't carry priority, category or assignee — the ${sessionCount} `
-      + `session card${sessionCount === 1 ? '' : 's'} below ${sessionCount === 1 ? 'is' : 'are'} not filtered by ${escapeHtml(list)}.</div>`;
+    return {
+      t: 'note',
+      key: 'note:session-filter',
+      text: `Regular dev sessions don't carry priority, category or assignee. The ${sessionCount} `
+        + `session card${sessionCount === 1 ? '' : 's'} below ${sessionCount === 1 ? 'is' : 'are'} not filtered by ${list}.`,
+    };
   },
 
-  // Archived toggle — collapsed by default on every render (no
-  // persistence). Hidden entirely when the viewer has no archived
-  // sessions for this app. Toggle + Unarchive are delegated. Keeps its
-  // slot between the private and visible session groups.
-  _archivedToggleHtml() {
+  // The archived-sessions block. OPEN/CLOSED is the component's state now
+  // (card/list-rows.tsx) rather than a class toggle that every innerHTML
+  // repaint reset; this only supplies the rows. Returns null when the
+  // viewer has no archived sessions for this app.
+  _archivedToggleRow() {
     const archived = AppView._archivedSessions || [];
-    if (!archived.length) return '';
-    return `
-      <div class="pt-1" data-archived-block>
-        <button type="button" data-archived-toggle aria-expanded="false"
-          class="text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 inline-flex items-center gap-1">
-          <svg data-archived-caret class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-          Show archived (${archived.length})
-        </button>
-        <div data-archived-list class="hidden space-y-2 pt-2">
-          ${archived.map((s) => {
-            const label = AppView._sessionCardLabel(s);
-            return `<div class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_MUTED_CLS}">
-              ${AppView._devCardIcon('session')}
-              <span class="flex-1 min-w-0">
-                <span class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 break-words">${label}</span>
-                <span class="block text-xs text-zinc-400 dark:text-zinc-500 truncate">Archived</span>
-              </span>
-              <button type="button" class="gc-vote-btn" data-unarchive-chip="${s.id}" title="Restore this session (reopens its PR)">Unarchive</button>
-            </div>`;
-          }).join('')}
-        </div>
-      </div>`;
+    if (!archived.length) return null;
+    return {
+      t: 'archived',
+      key: 'archived',
+      rows: archived.map((s) => ({
+        id: s.id,
+        label: AppView._sessionCardLabel(s),
+        cls: `${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_MUTED_CLS}`,
+        icon: AppView._devCardIcon('session'),
+      })),
+    };
   },
 
-  _toggleArchivedList(toggle) {
-    const block = toggle.closest('[data-archived-block]');
-    const listEl = block && block.querySelector('[data-archived-list]');
-    if (!listEl) return;
-    const caret = block.querySelector('[data-archived-caret]');
-    const open = listEl.classList.toggle('hidden') === false;
-    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-    if (caret) caret.style.transform = open ? 'rotate(90deg)' : '';
-  },
-
-  // The pinned own-sessions block for LIST view, above the feed and
-  // outside its pager: the private divider + private session cards, the
-  // archived toggle, then the visible divider + the viewer's shared
-  // session cards. '' when the viewer has nothing to show.
-  _mySessionsBlockHtml() {
-    const mine = AppView._mySessions || [];
-    const priv = mine.filter((s) => !s.shared_at);
-    const vis = mine.filter((s) => !!s.shared_at);
-    const archivedHtml = AppView._archivedToggleHtml();
-    if (!mine.length && !archivedHtml) return '';
-    let html = '<div class="space-y-2 mb-2">';
-    if (priv.length) {
-      html += AppView._sessionsCaptionHtml();
-      html += priv.map((s) => AppView._renderMySessionCard(s)).join('');
-    }
-    html += archivedHtml;
-    if (vis.length) {
-      html += AppView._visibleSessionsCaptionHtml();
-      html += vis.map((s) => AppView._renderMySessionCard(s)).join('');
-    }
-    html += '</div>';
-    return html;
-  },
-
-  // The In progress KANBAN column's cards: the filter no-op note, then
-  // pinned PRIVATE own sessions, the archived toggle, the viewer's VISIBLE
-  // own sessions, issue cards, and other users' shared sessions — the
-  // ordering is unchanged; only the two grey captions became dividers.
-  // `entries` are the typed {kind, item} entries from _bucketDevItems.
-  _inProgressCardsHtml(entries, filtering) {
+  // The feed does NOT pin the viewer's own sessions above it.
+  //
+  // `_mySessionsRows()` built that block — the private divider, the archived
+  // toggle, the visible divider and the viewer's own session cards — and sat
+  // outside the stream's pager. Activity is the app's activity, and a private
+  // draft nobody else can see is not that; it is the viewer's own workspace,
+  // which the Improve panel lists as "Changes in progress" and the board's
+  // Underway column carries in full.
+  //
+  // Nothing was orphaned by removing it: _inProgressRows below builds the
+  // same rows from the same helpers for that column, which is where an own
+  // session is still reached from the board.
+  _inProgressRows(entries) {
     const list = entries || [];
     const mine = list.filter((e) => e.kind === 'my-session');
     const priv = mine.filter((e) => !e.item.shared_at);
     const vis = mine.filter((e) => !!e.item.shared_at);
     const issues = list.filter((e) => e.kind === 'issue');
     const shared = list.filter((e) => e.kind === 'shared-session');
-    const archivedHtml = AppView._archivedToggleHtml();
-    if (!list.length && !archivedHtml) {
-      return `<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">${filtering ? 'No matching cards' : 'Nothing here yet'}</div>`;
-    }
-    let html = '<div class="space-y-2">';
+    const archived = AppView._archivedToggleRow();
+    if (!list.length && !archived) return [];
+    const rows = [];
     // The visible "these filters don't apply here" note sits above every
     // group, so it can't be mistaken for a note about just one of them.
-    html += AppView._sessionFilterNoteHtml(priv.length + vis.length + shared.length);
+    const regularSessionCount = [...priv, ...vis, ...shared]
+      .filter((entry) => entry.item.source !== 'imported').length;
+    const note = AppView._sessionFilterNoteRow(regularSessionCount);
+    if (note) rows.push(note);
     if (priv.length) {
-      html += AppView._sessionsCaptionHtml();
-      html += priv.map((e) => AppView._renderMySessionCard(e.item)).join('');
+      rows.push(AppView._privateDividerRow());
+      for (const e of priv) {
+        const card = AppView._mySessionCardModel(e.item);
+        rows.push({ t: 'card', key: card.key, card });
+      }
     }
-    html += archivedHtml;
+    if (archived) rows.push(archived);
     if (vis.length) {
-      html += AppView._visibleSessionsCaptionHtml();
-      html += vis.map((e) => AppView._renderMySessionCard(e.item)).join('');
+      rows.push(AppView._visibleDividerRow());
+      for (const e of vis) {
+        const card = AppView._mySessionCardModel(e.item);
+        rows.push({ t: 'card', key: card.key, card });
+      }
     }
-    html += issues.map((e) => AppView._renderIssueRow(e.item)).join('');
+    for (const e of issues) {
+      const card = AppView._issueCardModel(e.item);
+      rows.push({ t: 'card', key: card.key, card });
+    }
     if (shared.length) {
-      html += AppView._othersSessionsCaptionHtml();
-      html += shared.map((e) => AppView._renderSharedSessionCard(e.item)).join('');
+      rows.push(AppView._othersDividerRow());
+      for (const e of shared) {
+        const card = AppView._sharedSessionCardModel(e.item);
+        rows.push({ t: 'card', key: card.key, card });
+      }
     }
-    html += '</div>';
-    return html;
+    return rows;
   },
 
   // Share / unshare one of the viewer's own sessions ("Make visible" /
@@ -7852,7 +7399,7 @@ const AppView = {
   // and what doesn't, before they publish it.
   SHARE_CHAT_CONFIRM: {
     title: 'Let everyone read this chat?',
-    message: 'Anyone who can see this app will be able to read the whole conversation — '
+    message: 'Anyone who can see this app will be able to read the whole conversation. '
       + "your messages, the AI's replies, and what the coding agent did. They can't reply "
       + "in your chat, and they can't see your costs or your uploaded files. You can turn "
       + 'this off at any time.',
@@ -7980,10 +7527,6 @@ const AppView = {
   // load (below), not per mount, so it survives every repaint; the repaint
   // itself no-ops when no card surface is mounted.
   _onSessionStateChanged() {
-    // Never rebuild the board out from under an in-progress drag — same
-    // guard _repaintDevBody / _repaintKanbanBoard apply to WS-driven
-    // repaints. The next settled event repaints.
-    if (AppView._dragState) return;
     if (!AppView.appData) return;
     if (typeof App !== 'undefined' && App.currentTab !== 'dev') return;
     // _repaintCards, not _repaintDevBody: an auto-run can be watched from
@@ -8021,8 +7564,9 @@ const AppView = {
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
       ? (s) => DevChat.renderMarkdown(s, { images: true })
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+    // No box of its own: the About sheet is the box (topic/topic-head.tsx).
     return issue && issue.body && issue.body.trim()
-      ? `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(issue.body)}</div>`
+      ? `<div class="dev-issue-body">${renderMd(issue.body)}</div>`
       : '';
   },
 
@@ -8043,42 +7587,39 @@ const AppView = {
   // thread on GitHub. Returns '' when there are no comments so nothing
   // renders. Markdown goes through the same DevChat.renderMarkdown pipeline
   // as the body.
-  _issueCommentsHtml(comments, truncated, htmlUrl) {
+  // The GitHub thread under an issue's topic card, as the view model
+  // features/dev-board/issue-comments.tsx draws.
+  //
+  // `_issueCommentsHtml` lived here. What it decided stays: which authors are
+  // bots and the SANITIZER — a comment body is arbitrary GitHub markdown, run
+  // through `DevChat.renderMarkdown` (the same one the dev chat and the group
+  // chat's transcript use), with an escaped-`<pre>` fallback for a page where
+  // dev-chat.js did not load.
+  //
+  // What does NOT stay is the date's slice. `createdAt.slice(0, 10)` took the
+  // first ten characters of GitHub's ISO string, which is a UTC date: a
+  // comment posted at 8pm in Sao Paulo was stamped with the NEXT day, and one
+  // posted at 6am in Tokyo with the previous one. It also carried no time at
+  // all — the thing #1808 was filed about, sitting directly above a Discussion
+  // thread that got it right. The raw instant goes through now and
+  // features/dev-board/issue-comments.tsx formats it in the reader's own zone
+  // with the shared helper.
+  _issueCommentsView(comments, truncated, htmlUrl) {
     const list = Array.isArray(comments) ? comments : [];
-    if (!list.length) return '';
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (s) => DevChat.renderMarkdown(s)
-      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
-
-    const rows = list.map((c) => {
-      const isBot = AppView._isBotCommentAuthor(c.author);
-      const author = c.author ? escapeHtml(c.author) : 'unknown';
-      const date = (c.createdAt || '').slice(0, 10);
-      const botTag = isBot
-        ? ' <span class="text-[10px] uppercase tracking-wide text-sky-600 dark:text-sky-400">bot</span>'
-        : '';
-      return `<div class="dev-issue-comment border border-zinc-200 dark:border-zinc-800 rounded-xl p-3">
-          <div class="flex items-center gap-2 mb-1">
-            <span class="text-xs font-medium text-zinc-700 dark:text-zinc-200">${author}</span>${botTag}
-            ${date ? `<span class="text-[10px] text-zinc-400 dark:text-zinc-500">${escapeHtml(date)}</span>` : ''}
-          </div>
-          <div class="text-xs text-zinc-600 dark:text-zinc-300">${renderMd(c.body || '')}</div>
-        </div>`;
-    });
-
-    const omitted = truncated
-      ? `<div class="text-[11px] text-zinc-400 dark:text-zinc-500 px-1">Earlier comments omitted — ${
-          htmlUrl
-            ? `<a href="${escapeHtml(htmlUrl)}" target="_blank" rel="noopener" class="underline hover:text-zinc-600 dark:hover:text-zinc-300">view the full thread on GitHub</a>`
-            : 'view the full thread on GitHub'
-        }.</div>`
-      : '';
-
-    return `<div class="flex flex-col gap-2 mt-2">
-        <div class="text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500 px-1">Discussion</div>
-        ${omitted}
-        ${rows.join('')}
-      </div>`;
+      ? (str) => DevChat.renderMarkdown(str)
+      : (str) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(str)}</pre>`;
+    return {
+      comments: list.map((c, i) => ({
+        key: String(c.id != null ? c.id : `i${i}`),
+        author: c.author || 'unknown',
+        bot: AppView._isBotCommentAuthor(c.author),
+        createdAt: c.createdAt || '',
+        bodyHtml: renderMd(c.body || ''),
+      })),
+      truncated: !!truncated,
+      htmlUrl: htmlUrl || null,
+    };
   },
 
   // ── Shared dev-chat transcript (read-only) ─────────────────────────
@@ -8113,43 +7654,43 @@ const AppView = {
   // mergedRowSelect). The viewer's OWN rows carry transcript_shared_at
   // instead, so accept either shape — the owner gets the section too, as
   // the "preview what everyone else sees" path.
-  _transcriptSectionHtml(item) {
-    if (!item) return '';
-    const shared = !!(item.transcript_shared || item.transcript_shared_at);
-    if (!shared) return '';
-    const id = item.id;
-    const label = (typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText)
-      ? SessionTranscript.headerText(item, { expanded: false })
-      : 'Read the dev chat';
-    const expanded = AppView._transcriptOpen === id;
-    return `<div class="st-section" data-transcript-section="${id}">
-        <button type="button" class="st-section-head" data-transcript-toggle="${id}"
-          aria-expanded="${expanded ? 'true' : 'false'}">
-          <span class="st-caret" aria-hidden="true"></span>
-          <span data-transcript-label>${escapeHtml(label)}</span>
-          <span class="st-readonly-tag">read-only</span>
-        </button>
-        <div class="st-body" data-transcript-body="${id}" ${expanded ? '' : 'hidden'}></div>
-      </div>`;
+  // The shared-chat disclosure. Its BODY stays public/js/session-transcript
+  // .js's — a controller host the head renders once, empty, with a constant
+  // className and never looks inside.
+  //
+  // `_transcriptLabels` holds the EXPANDED label, once the transcript
+  // payload has named its owner. It is kept across repaints because a
+  // repaint rebuilds the section from the model, and the collapsed label
+  // would otherwise come back the moment anything else on the head changed.
+  _transcriptLabels: Object.create(null),
+
+  _transcriptSectionView(item) {
+    if (!item) return null;
+    if (!(item.transcript_shared || item.transcript_shared_at)) return null;
+    const expanded = AppView._transcriptOpen === item.id;
+    const cached = expanded ? AppView._transcriptLabels[item.id] : null;
+    return {
+      id: item.id,
+      label: cached
+        || ((typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText)
+          ? SessionTranscript.headerText(item, { expanded: false })
+          : 'Read the dev chat'),
+      expanded,
+    };
   },
 
   // Expand/collapse + lazy load. Flips _transcriptOpen (the durable state)
   // as well as the DOM, so the next repaint of the topic head paints the
   // section in the same state instead of snapping it shut.
-  _toggleTranscript(toggle) {
-    const id = parseInt(toggle.dataset.transcriptToggle, 10);
-    const body = document.querySelector(`[data-transcript-body="${id}"]`);
-    if (!body) return;
-    const opening = body.hasAttribute('hidden');
+  // The disclosure's `hidden` and `aria-expanded` were written in place
+  // here; both are model fields now (topic/model.ts), so this flips the
+  // durable state and repaints. The body's CONTENTS stay
+  // session-transcript.js's, which is why the load still runs by id.
+  toggleTranscript(id) {
+    const opening = AppView._transcriptOpen !== id;
     AppView._transcriptOpen = opening ? id : null;
-    if (opening) {
-      body.removeAttribute('hidden');
-      toggle.setAttribute('aria-expanded', 'true');
-      AppView._loadSessionTranscript(id);
-    } else {
-      body.setAttribute('hidden', '');
-      toggle.setAttribute('aria-expanded', 'false');
-    }
+    AppView._renderTopicHead();
+    if (opening) AppView._loadSessionTranscript(id);
   },
 
   // Fetch (or repaint from cache) one session's sanitised transcript.
@@ -8159,17 +7700,37 @@ const AppView = {
   async _loadSessionTranscript(sessionId) {
     if (!sessionId) return;
     const paint = (data) => {
+      // Swap the collapsed label ("Read the dev chat (24 messages)") for the
+      // expanded one ("Dev chat by alice · 24 messages · read-only") now that
+      // the payload names the owner. It used to be written straight onto
+      // `[data-transcript-label]`; the head renders that text, so the label
+      // is cached here and the repaint below picks it up.
+      //
+      // THE REPAINT IS CONDITIONAL, and that is not an optimisation.
+      // `_renderTopicHead` calls this loader on every paint of an expanded
+      // transcript, so an unconditional repaint here closes a SYNCHRONOUS
+      // cycle: paint → render → load → (cached) paint → render → … The
+      // first pass survives because it awaits the fetch, which unwinds the
+      // stack; the pass after it finds the cache and recurses until the
+      // stack overflows. That is a hard error on every load of a shared
+      // session's page, where the transcript arrives already expanded.
+      //
+      // Same shape as the vote roster's re-entry (see `_loadVoteRoster`),
+      // and the same rule: a loader a renderer calls per paint must not
+      // unconditionally re-enter that renderer. Here the repaint exists
+      // solely to pick up a CHANGED label, so that is what gates it.
+      let labelChanged = false;
+      if (typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText) {
+        const next = SessionTranscript.headerText(data.session, { expanded: true });
+        labelChanged = AppView._transcriptLabels[sessionId] !== next;
+        AppView._transcriptLabels[sessionId] = next;
+      }
+      if (labelChanged) AppView._renderTopicHead();
+      // The BODY stays session-transcript.js's — a controller host the head
+      // renders once, empty, and never looks inside. The publish above
+      // flushes synchronously, so the fresh host is already here.
       const slot = document.querySelector(`[data-transcript-body="${sessionId}"]`);
       if (!slot) return;
-      // Swap the collapsed label ("Read the dev chat (24 messages)") for the
-      // expanded one ("Dev chat by alice · 24 messages · read-only") now
-      // that the payload names the owner. Keyed on a data attribute, not
-      // nth-child, so reordering the header's spans can't silently break it.
-      const head = document.querySelector(`[data-transcript-toggle="${sessionId}"]`);
-      if (head && typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText) {
-        const label = head.querySelector('[data-transcript-label]');
-        if (label) label.textContent = SessionTranscript.headerText(data.session, { expanded: true });
-      }
       const body = (typeof SessionTranscript !== 'undefined' && SessionTranscript.renderHtml)
         ? SessionTranscript.renderHtml(data)
         : '';
@@ -8214,7 +7775,7 @@ const AppView = {
       </div>`;
   },
 
-  FORK_CHAT_TITLE: 'Start your own dev session from this chat — you get a copy of the '
+  FORK_CHAT_TITLE: 'Start your own dev session from this chat. You get a copy of the '
     + "conversation and your own branch off theirs. Their session isn't affected.",
 
   // Fork a shared chat into the viewer's own new session, then open it.
@@ -8234,7 +7795,7 @@ const AppView = {
       }
       const created = body.session;
       if (!created || !created.id) {
-        PlatformUI.toast("Fork created, but couldn't open it — check your sessions.");
+        PlatformUI.toast("Fork created, but couldn't open it. Check your sessions.");
         if (btn) { btn.disabled = false; btn.textContent = original; }
         return;
       }
@@ -8261,7 +7822,13 @@ const AppView = {
       if (!t || t.kind !== 'issue' || t.id !== number) return;
       const slot = document.getElementById('dev-issue-comments');
       if (!slot) return;
-      slot.innerHTML = AppView._issueCommentsHtml(data.comments, data.truncated, item.htmlUrl);
+      // The thread is features/dev-board/issue-comments.tsx's. The host is
+      // re-rendered by `_renderTopicHead` on every WS-driven refresh, so this
+      // mounts each time — the portal registry keys on the element, and the
+      // one the previous head left behind is swept as detached.
+      AppView._reactDevBoard()?.mountIssueComments(slot);
+      AppView._reactDevBoard()?.publishIssueComments(
+        AppView._issueCommentsView(data.comments, data.truncated, item.htmlUrl));
     };
 
     const cached = AppView._ghComments[number];
@@ -8297,7 +7864,49 @@ const AppView = {
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
       ? (s) => DevChat.renderMarkdown(s)
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
-    return `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(md)}</div>`;
+    return `<div class="dev-issue-body">${renderMd(md)}</div>`;
+  },
+
+  // The complete GitHub PR description is deliberately quieter than the
+  // generated summary above: reviewers can expand it when they need the
+  // implementation and testing detail without making every proposal topic
+  // start with a wall of text. Keep the disclosure state outside the DOM so
+  // checks polling and websocket-driven topic repaints do not collapse it.
+  _proposalBodyOpen: new Set(),
+
+  _setProposalBodyOpen(proposalId, open) {
+    const id = Number(proposalId);
+    if (!Number.isInteger(id) || id <= 0) return;
+    if (open) AppView._proposalBodyOpen.add(id);
+    else AppView._proposalBodyOpen.delete(id);
+  },
+
+  // The disclosure as a MODEL. `topic/topic-head.tsx` draws it; the open
+  // flag stays HERE rather than becoming component state, for the reason the
+  // note above gives — a repaint must not collapse it — and because that is
+  // the same seam the before/after visuals and the transcript section use.
+  // `html` is `DevChat.renderMarkdown`'s output: another renderer's markup,
+  // sanitised where it is built, rendered through a sink.
+  _proposalBodyView(pr) {
+    const md = pr && typeof pr.pr_body === 'string' ? pr.pr_body.trim() : '';
+    if (!md) return null;
+    const id = Number(pr && pr.id);
+    const hasStableId = Number.isInteger(id) && id > 0;
+    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      // Proposal descriptions can carry the same reviewer evidence as issue
+      // bodies (for example an annotated screenshot). Keep image rendering
+      // opt-in at this trusted surface; renderMarkdown still permits only
+      // HTTPS or same-origin absolute URLs and sanitizes the resulting HTML.
+      ? (s) => DevChat.renderMarkdown(s, { images: true })
+      : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
+    return {
+      // A proposal with no stable id cannot have its open state remembered,
+      // so it renders the disclosure without one rather than keying a Set on
+      // NaN — same rule the string version applied to its `ontoggle`.
+      id: hasStableId ? id : null,
+      open: hasStableId && AppView._proposalBodyOpen.has(id),
+      html: renderMd(md),
+    };
   },
 
   // The placeholder-title marker (AI naming was unavailable when this
@@ -8309,28 +7918,27 @@ const AppView = {
   // The title-heal sweeper (src/services/title-heal.js) still removes it
   // automatically once the API is back.
 
-  // One PR-proposal card, built from the shared bands (_cardContentHtml):
-  // the icon chip and the title lead, then the PR meta line, the badges,
-  // the tally pill and the action pills (vote / preview / kudos /
-  // Discussion / Open session) each on their own full-width row. With
+  // One PR-proposal card as a MODEL: the icon chip and the title lead, then
+  // the PR meta line, the badges, the tally pill and the action pills (vote
+  // / preview / kudos / Explore) each on their own full-width band. With
   // { noNav: true } (the topic sub-view's header card) the tap-to-open
-  // affordance and Discussion button are dropped — you're already in the
-  // discussion — and the tally rides at the front of the badge row instead
-  // of taking a row of its own.
-  _renderProposalCard(pr, opts) {
+  // affordance is dropped — you're already in the discussion — and the
+  // tally rides at the front of the badge row instead of taking a band of
+  // its own.
+  _proposalCardModel(pr, opts) {
     const noNav = !!(opts && opts.noNav);
     const ctx = AppView._proposalsCtx || {};
     const majority = ctx.majority || 1;
     const isMerging = pr.status === 'merging';
     const isMerged = pr.status === 'merged';
-    let titleHtml;
+    const title = { text: '', title: pr.pr_title || `Change by ${pr.username || ''}` };
     if (pr.revert_of_session_id) {
-      const origLabel = pr.original_pr_title
-        ? `${escapeHtml(pr.original_pr_title)}`
+      title.lead = { s: '↩ Revert of', cls: 'text-amber-800 dark:text-amber-300' };
+      title.text = pr.original_pr_title
+        ? pr.original_pr_title
         : `PR #${pr.original_pr_number || pr.revert_of_session_id}`;
-      titleHtml = `<span class="text-amber-500">↩ Revert of</span> ${origLabel}`;
     } else {
-      titleHtml = pr.pr_title ? escapeHtml(pr.pr_title) : `Change by ${escapeHtml(pr.username || '')}`;
+      title.text = pr.pr_title ? pr.pr_title : `Change by ${pr.username || ''}`;
     }
     // ── Meta line ──
     // Provenance moved OFF the badge row and INTO this line as plain words.
@@ -8338,27 +7946,29 @@ const AppView = {
     // "Auto-title pending" were four badges competing for the four badge
     // slots with the signals that actually change what you'd do next; as
     // meta words they cost no slot and still read at a glance.
-    const metaParts = [
-      `<a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">PR#${pr.pr_number || pr.id}</a>`,
-    ];
+    const meta = [{
+      t: 'link', href: pr.pr_url || '#', s: `PR#${pr.pr_number || pr.id}`,
+      cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400',
+    }];
     const provenance = AppView._proposalProvenanceWords(pr);
-    if (provenance) metaParts.push(provenance);
-    if (pr.username) metaParts.push(escapeHtml(pr.username));
-    if (pr.created_at) metaParts.push(escapeHtml(relTime(pr.created_at)));
+    if (provenance) meta.push({ t: 'text', s: provenance });
+    if (pr.username) meta.push({ t: 'text', s: pr.username });
+    const prAge = pr.created_at ? AppView._agePart(pr.created_at) : null;
+    if (prAge) meta.push(prAge);
     // Live proposals link their "Closes #N" pills to the issue's IN-APP
-    // discussion (votes/bounty/thread live there; the GitHub link stays
-    // one click away in the issue topic head). Merged cards keep the
-    // external GitHub links — those issues are closed, so the in-app
-    // topic (resolved from the open-issues cache) would dead-end and
-    // GitHub is their permanent record.
+    // discussion (votes/bounty/thread live there; the GitHub link stays one
+    // click away in the issue topic head). Merged cards keep the external
+    // GitHub links — those issues are closed, so the in-app topic (resolved
+    // from the open-issues cache) would dead-end and GitHub is their
+    // permanent record.
     //
-    // These are pills, and they go in the PILL band (`linkedHtml`), not on
-    // the end of the meta line where they used to sit: that line is one
-    // ellipsising row, so on a kanban card the linkage — the thing that says
-    // what this change is FOR — was the first thing to disappear.
-    const closesPills = isMerged
-      ? AppView.closesPillHtml(pr)
-      : AppView.issueChipsHtml(pr.linked_issues, { label: 'Closes' });
+    // These are pills, and they go in the PILL band, not on the end of the
+    // meta line where they used to sit: that line is one ellipsising row, so
+    // on a kanban card the linkage — the thing that says what this change is
+    // FOR — was the first thing to disappear.
+    const linked = isMerged
+      ? AppView.closesPillSpecs(pr)
+      : AppView.issueChipSpecs(pr.linked_issues, { label: 'Closes' });
 
     // mine: the viewer authored this PR, so they own its dev session. Drives
     // both "Open session" and the violet "yours" icon below.
@@ -8366,19 +7976,17 @@ const AppView = {
     // #687: an imported PR has no platform-owned dev session — its code is
     // maintained on GitHub by an external author.
     const imported = pr.source === 'imported';
-    const chatN = parseInt(pr.chat_count) || 0;
 
     // ── Badges: at most four metadata chips ──
     // The pill absorbs the tally, the pulsing "Vote" badge, the merge-state
     // badge, the checks badge, the console-errors badge, the advisory chip
     // and the explicit-approval chip. Unset metadata chips don't render.
-    const badges = AppView._attrChipsHtml('proposal', pr.id, pr, {
-      omitUnset: !noNav, asArray: true,
-    });
-    // The pill LEADS the status band as a flexible bar. The detail head keeps
-    // the inline capsule — it already has a wide header, and a bar that wide
-    // there would just read as a rule.
-    const pill = AppView.statusPillHtml(pr, { majority, locked: ctx.locked, inline: noNav });
+    const badges = AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: !noNav });
+    // The pill LEADS the status band as a flexible bar. The detail head
+    // keeps the inline capsule — it already has a wide header, and a bar
+    // that wide there would just read as a rule.
+    const pillState = AppView.statusPillState(pr, { majority, locked: ctx.locked });
+    const pill = pillState && pillState.label ? { state: pillState, inline: noNav } : null;
 
     // ── Actions: Yes / No / Explore + icon Preview; ⋯ is in the rail ──
     // Explore is PROMOTED off the ⋯ menu for a live proposal the pill rule
@@ -8389,45 +7997,59 @@ const AppView = {
     // every render site shares. It stays a ⋯ row on a merged card, where the
     // action band belongs to kudos instead, and on the detail head, which
     // already spells it out in full in its own action list below the header.
-    const preview = AppView.cardPreviewHtml(pr, { kind: 'proposal', sessionId: pr.id });
-    const exploreBtn = (!noNav && AppView._showExplorePill(pr) && !isMerged && !AppView.readOnly)
-      ? AppView._exploreChatBtnHtml(pr) : '';
-    const primary = (isMerged || AppView.readOnly)
-      ? [] : [...AppView._cardVoteButtonsHtml(pr), exploreBtn];
+    const preview = AppView._cardPreviewSpec(pr, { kind: 'proposal', sessionId: pr.id });
+    // ⋯, NOT the action band (#1787 round four). It is a door to a side
+    // conversation ABOUT the proposal rather than one of the things you do
+    // to it, and at ~170px it was the widest pill on the card — routinely
+    // pushing Vote or Withdraw into the fold it should have been in itself.
+    //
+    // No new mechanism for this: `_proposalMenuItems` has always offered the
+    // row and suppressed it when the face carried one (`st.exploreOnFace`).
+    // Telling it the face carries none is the whole change, and the detail
+    // head is untouched — it has room, spells the pill out in full, and has
+    // no ⋯ for a menu row to live in.
+    const actions = (isMerged || AppView.readOnly) ? [] : [...AppView._cardVoteButtonSpecs(pr)];
     const menu = AppView._proposalMenuItems(pr, {
-      mine, imported, isMerged, isMerging, noNav, exploreOnFace: !!exploreBtn,
+      mine, imported, isMerged, isMerging, noNav, exploreOnFace: false,
     });
-    // The eye is a rail affordance on the dense card and a band affordance on
-    // the uncapped detail head, which has no chevron for it to sit under.
-    const actions = AppView._cardActionsHtml({ primary, preview: noNav ? preview : '' });
 
     // #195/#211: the before/after capture tiles no longer live on the card —
     // they are a detail-view concern (see _renderTopicHead's actions block),
     // reached from the ⋯ menu's "Before/after screenshots" item. The card
     // keeps only the data hook so the tiles' own scope resolution still
     // works when the detail view paints them.
-    const isUnvoted = pr.status === 'promoted' && !pr.my_vote;
-
-    return `
-      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
-        ${AppView._cardContentHtml({
-          icon: AppView._devCardIcon(isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'), mine && !isMerged ? { title: 'This is your PR — open its session.' } : undefined),
-          titleHtml,
-          titleAttrs: ` title="${escapeAttr(pr.pr_title || `Change by ${pr.username || ''}`)}"`,
-          metaHtml: metaParts.join(' · '),
-          linkedHtml: closesPills,
-          badges,
-          chatCount: chatN,
-          uncapped: noNav,
-          pill: noNav ? '' : pill,
-          inlinePill: noNav ? pill : '',
-          actions,
-          dense: !noNav,
-        })}
-        ${AppView._cardRailHtml(`proposal:${pr.id}`, menu, {
-          chevron: !noNav, preview: noNav ? '' : preview,
-        })}
-      </div>`;
+    const attrs = { 'data-ref-pr': String(pr.pr_number || pr.id) };
+    if (pr.status === 'promoted' && !pr.my_vote) attrs['data-unvoted'] = '1';
+    if (!noNav) {
+      attrs['data-proposal-row'] = String(pr.id);
+      attrs.title = "Open this proposal's discussion";
+    }
+    return {
+      key: `proposal:${pr.id}`,
+      cls: `gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}`,
+      attrs,
+      icon: AppView._devCardIcon(
+        isMerged ? 'done' : (mine ? 'proposalMine' : 'proposal'),
+        mine && !isMerged ? { title: 'This is your PR. Its session is under ⋯.' } : undefined),
+      title,
+      meta,
+      pill,
+      linked,
+      badges,
+      chatCount: parseInt(pr.chat_count) || 0,
+      actions,
+      // The eye is a rail affordance on the dense card and a band affordance
+      // on the uncapped detail head, which has no chevron for it to sit under.
+      actionPreview: noNav ? preview : null,
+      rail: {
+        menuKey: AppView._registerCardMenu(`proposal:${pr.id}`, menu),
+        chevron: !noNav,
+        preview: noNav ? null : preview,
+      },
+      extra: [],
+      dense: !noNav,
+      uncapped: noNav,
+    };
   },
 
   // The provenance words that replaced four badges on the meta line. Kept
@@ -8459,19 +8081,29 @@ const AppView = {
   // Keeps the reviewed_head_sha revision argument: the server rejects a vote
   // cast against a head the voter never saw, and dropping it here would
   // silently disable that guard.
-  _cardVoteButtonsHtml(pr) {
+  _cardVoteButtonSpecs(pr) {
     if (!pr || pr.status !== 'promoted') return [];
     const nativeHead = pr.source !== 'imported'
       && typeof pr.reviewed_head_sha === 'string'
       && /^[0-9a-f]{40}$/i.test(pr.reviewed_head_sha)
       ? pr.reviewed_head_sha.toLowerCase()
       : null;
-    const revisionArg = nativeHead ? `, '${nativeHead}'` : '';
+    const rev = nativeHead ? [nativeHead] : [];
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
     return [
-      `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`,
-      `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">No (${noT.label})</button>`,
+      {
+        key: 'yes',
+        cls: `gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}`,
+        title: yesT.tip, label: `Yes (${yesT.label})`,
+        act: { fn: 'castVote', args: [pr.id, 'yes', ...rev] },
+      },
+      {
+        key: 'no',
+        cls: `gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}`,
+        title: noT.tip, label: `No (${noT.label})`,
+        act: { fn: 'castVote', args: [pr.id, 'no', ...rev] },
+      },
     ];
   },
 
@@ -8548,13 +8180,13 @@ const AppView = {
       const direct = !!entry.my_kudos_direct;
       const reason = isSelf
         ? 'You can’t give kudos to your own PR'
-        : (mineKudos && !direct ? 'Credited via an issue bounty award — can’t be retracted' : '');
+        : (mineKudos && !direct ? 'Credited via an issue bounty award, can’t be retracted' : '');
       const count = entry.count || 0;
       items.push({
         label: (mineKudos && direct ? 'Retract kudos' : 'Give kudos') + (count ? ` (${count})` : ''),
         icon: 'kudos',
         title: reason || (mineKudos && direct
-          ? 'You gave kudos to this PR — this retracts it'
+          ? 'You gave kudos to this PR. This retracts it'
           : 'Thank the author of this change'),
         disabled: !!reason,
         act: reason ? null : () => {
@@ -8608,97 +8240,380 @@ const AppView = {
     return items;
   },
 
-  // The proposal's details block (PR link, proposer, linked issues,
-  // vote roster, locked note), rendered in the topic sub-view between
-  // the header card and the thread.
-  _proposalDetailsHtml(pr) {
+  // The proposal detail block's MODEL (topic/model.ts); topic/topic-head.tsx
+  // draws it. Four of its blocks are the SHARED note box — see that file's
+  // header for what that folded together.
+  _proposalDetailsView(pr) {
     const ctx = AppView._proposalsCtx || {};
     const slug = AppView.appData ? AppView.appData.slug : '';
-    const linked = (Array.isArray(pr.linked_issues) ? pr.linked_issues : [])
-      .map((v) => (typeof v === 'number' ? v : Number(v)))
-      .filter((n) => Number.isInteger(n) && n > 0);
-    const chips = linked.map((n) =>
-      `<a href="#app/${slug}/dev/issues/${n}" class="dev-badge font-mono bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20" title="Open issue #${n}">#${n}</a>`
-    ).join(' ');
     const imported = pr.source === 'imported';
-    const details = [];
-    if (pr.pr_url) details.push(`<a href="${pr.pr_url}" target="_blank" rel="noopener" class="text-violet-400 hover:underline">View PR on GitHub</a>`);
-    details.push(`${imported ? 'imported by' : 'proposed by'} <span class="font-medium">${escapeHtml(pr.username || '')}</span>`);
-    if (pr.created_at) details.push(escapeHtml(relTime(pr.created_at)));
+
+    const meta = [];
+    if (pr.pr_url) meta.push({ href: pr.pr_url, parts: ['View PR on GitHub'] });
+    meta.push({ parts: [`${imported ? 'imported by' : 'proposed by'} `, { b: pr.username || '' }] });
+    if (pr.created_at) meta.push({ parts: [relStamp(pr.created_at).text] });
+
+    const notes = [];
     // #687: imported proposals have no in-app dev session — the code is
     // maintained on GitHub by its author, so there's no continue-in-dev-chat,
     // sync-with-main, or in-app edit. Spell that out where those controls
     // would otherwise be discovered.
-    const importedNote = imported
-      ? `<div class="text-xs text-amber-600 dark:text-amber-400 mt-1">Imported pull request${pr.imported_pr_author ? ` — authored by <span class="font-medium">${escapeHtml(pr.imported_pr_author)}</span>` : ''}. The code is maintained on GitHub; there's no in-app dev session for it. Voting and checks work the same as any proposal.</div>`
-      : '';
+    const underway = pr.status === 'active' || pr.status === 'paused';
+    const IMPORTED_TAIL = "The code is maintained on GitHub; there's no in-app dev session for it. "
+      + (underway
+        ? 'Its checks and proposal details are available now; voting begins only after it is put up for vote.'
+        : 'Voting and checks work the same as any proposal.');
+    if (imported) {
+      notes.push({
+        key: 'imported',
+        tone: 'warn',
+        parts: pr.imported_pr_author
+          ? ['Imported pull request, authored by ', { b: pr.imported_pr_author }, `. ${IMPORTED_TAIL}`]
+          : [`Imported pull request. ${IMPORTED_TAIL}`],
+      });
+    }
     // #967: for a connector-authored proposal, say plainly who wrote the
     // code and on whose account — an imported proposal that arrived this
     // way was built by the proposer's own agent, not by a stranger and not
     // out of the platform's credits.
     const agentName = AppView.externalAgentName(pr.external_agent);
-    const agentNote = agentName
-      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Built with <span class="font-medium">${escapeHtml(agentName)}</span> by <span class="font-medium">${escapeHtml(pr.username || 'the proposer')}</span>, on their own coding-agent subscription, from a branch in their GitHub fork.</div>`
-      : '';
-    // #866: say in prose what the Preview slot says in a pill, so the
-    // detail view explains why there's no Preview button yet (or why there
-    // won't be one) instead of leaving a reviewer to guess.
-    let previewNote = '';
-    if (!pr.staging_url && pr.staging_building) {
-      previewNote = '<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">A staging preview is being built for this proposal — it usually takes a few minutes, and a Preview button appears as soon as it\'s ready. Automated checks run against that preview, so they\'ll still be pending until then.</div>';
-    } else if (!pr.staging_url && pr.staging_error) {
-      previewNote = `<div class="text-xs text-amber-600 dark:text-amber-400 mt-1">The staging preview couldn't be built, so there's nothing to preview and the automated checks can't run: ${escapeHtml(String(pr.staging_error).slice(0, 300))}</div>`;
+    if (agentName) {
+      notes.push({
+        key: 'agent',
+        tone: 'muted',
+        parts: [
+          'Built with ', { b: agentName },
+          ' by ', { b: pr.username || 'the proposer' },
+          ', on their own coding-agent subscription, from a branch in their GitHub fork.',
+        ],
+      });
     }
-    const lockedNote = (ctx.locked && pr.status !== 'merged')
-      ? '<div class="text-xs text-amber-500 mt-1">App is locked — this also needs at least one admin yes before it merges.</div>'
-      : '';
-    // #788 follow-up: a flagged proposal explains itself inline instead
-    // of only via the chip tooltip / help popover. Numbers derive
-    // exactly as _votingHelpText's (qualified tally first, votes_required
-    // snapshot first) so the note can never contradict the pill.
-    let explicitNote = '';
-    if (pr.requires_explicit_approval && pr.status !== 'merged' && pr.status !== 'merging') {
+    // #866: say in prose what the Preview slot says in a pill, so the detail
+    // view explains why there's no Preview button yet (or why there won't be
+    // one) instead of leaving a reviewer to guess.
+    if (!pr.staging_url && pr.staging_building) {
+      notes.push({
+        key: 'preview', tone: 'muted',
+        parts: ["A staging preview is being built for this proposal. It usually takes a few minutes, and a Preview button appears as soon as it's ready. Automated checks run against that preview, so they'll still be pending until then."],
+      });
+    } else if (!pr.staging_url && pr.staging_error) {
+      notes.push({
+        key: 'preview', tone: 'warn',
+        parts: [`The staging preview couldn't be built, so there's nothing to preview and the automated checks can't run: ${String(pr.staging_error).slice(0, 300)}`],
+      });
+    }
+
+    const linked = (Array.isArray(pr.linked_issues) ? pr.linked_issues : [])
+      .map((v) => (typeof v === 'number' ? v : Number(v)))
+      .filter((n) => Number.isInteger(n) && n > 0)
+      .map((n) => ({
+        n,
+        href: App._appUrl(slug, 'dev', { kind: 'issue', id: n }, 'topic'),
+      }));
+
+    // ORDER IS THE CONTRACT: conflict, then checks, then platform variables
+    // — a reader scanning a blocked proposal reads them top to bottom. A
+    // proposal has EITHER a checks verdict or a checks status note, never
+    // both, so the middle slot is one entry either way.
+    //
+    // #1442 adds the predicted conflict directly under the attempted one:
+    // same class of problem, same remedy, and at most one of the two ever
+    // renders (_mergeabilityNote stands down for a real attempt).
+    const verdict = AppView._checksVerdictView(pr);
+    const blocks = [
+      AppView._mergeConflictNote(pr),
+      AppView._mergeabilityNote(pr),
+      ...(verdict ? [{ t: 'checks', v: verdict }] : AppView._checksStatusNotes(pr)),
+      AppView._platformEnvNote(pr),
+    ].filter(Boolean).map((b) => (b.t === 'checks' ? b : { t: 'note', box: b }));
+
+    // #788 follow-up: a flagged proposal explains itself inline instead of
+    // only via the chip tooltip / help popover. Numbers derive exactly as
+    // _votingHelpText's (qualified tally first, votes_required snapshot
+    // first) so the note can never contradict the pill.
+    const showHelp = pr.status === 'promoted' || pr.status === 'merging';
+    let explicitNote = null;
+    if (showHelp && pr.requires_explicit_approval
+        && pr.status !== 'merged' && pr.status !== 'merging') {
       const eYes = pr.qualified_yes_count != null
         ? (parseInt(pr.qualified_yes_count) || 0) : (parseInt(pr.yes_count) || 0);
       const eSnap = parseInt(pr.votes_required);
-      const eReq = (Number.isFinite(eSnap) && eSnap > 0)
-        ? eSnap : (parseInt(ctx.majority) || 1);
+      const eReq = (Number.isFinite(eSnap) && eSnap > 0) ? eSnap : (parseInt(ctx.majority) || 1);
       const eBody = eYes >= eReq
         ? `It has the Yes votes it needs (${eYes} of ${eReq}) and will merge as soon as the usual checks and conflict gates clear.`
         : `It needs ${eReq} real Yes vote${eReq === 1 ? '' : 's'} and has ${eYes} so far.`;
-      explicitNote = `<div class="text-xs text-amber-600 dark:text-amber-400 mt-1">This proposal edits the app's admins list, so it won't merge on a timer. ${eBody} It can still be voted down, and it still closes on the usual schedule if nobody engages.</div>`;
+      explicitNote = `This proposal edits the app's admins list, so it won't merge on a timer. ${eBody} It can still be voted down, and it still closes on the usual schedule if nobody engages.`;
     }
-    const roster = pr.status !== 'merged'
-      ? `<div id="dev-vote-roster-${pr.id}" class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Loading votes…</div>`
-      : '';
-    // "How voting works" explainer affordances — only on live proposals
-    // (the vote/time rules are settled once merged). The circular "?" sits
-    // on the meta line next to the tally that the card above renders; the
-    // one-line hint under the roster is the discoverable text entry point.
-    // Both carry data-voting-help and open the same popover (see _attrInit
-    // → _openVotingHelpPopover), reading the current topic item live.
-    const showHelp = pr.status !== 'merged';
-    const helpBtn = showHelp
-      ? ` <button type="button" class="voting-help-btn" data-voting-help aria-label="How voting and merges work" title="How voting and merges work">?</button>`
-      : '';
-    const helpHint = showHelp
-      ? `<div class="voting-help-hint mt-1">Merges are decided by votes over time. <button type="button" class="voting-help-link" data-voting-help>How voting works</button></div>`
-      : '';
-    return `
-      <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">
-        <div>${details.join(' · ')}${helpBtn}</div>
-        ${importedNote}
-        ${agentNote}
-        ${previewNote}
-        ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
-        ${AppView._mergeConflictDetailHtml(pr)}
-        ${AppView._checksDetailHtml(pr)}
-        ${AppView._platformEnvDetailHtml(pr)}
-        ${roster}
-        ${helpHint}
-        ${explicitNote}
-        ${lockedNote}
-      </div>`;
+
+    // "How voting works" explainer affordances — only on live proposals (the
+    // vote/time rules are settled once merged). The circular "?" sits on the
+    // meta line next to the tally the card above renders; the one-line hint
+    // under the roster is the discoverable text entry point. Both carry
+    // data-voting-help and open the same popover (see _attrInit →
+    // _openVotingHelpPopover), reading the current topic item live.
+    const details = {
+      meta,
+      help: showHelp,
+      notes,
+      linked,
+      blocks,
+      // The roster arrives from its own fetch; the head paints 'loading'
+      // and `_loadVoteRoster` republishes when it answers.
+      roster: showHelp ? (AppView._voteRoster[pr.id] || { phase: 'loading' }) : null,
+      helpHint: showHelp,
+      explicitNote,
+      lockedNote: (showHelp && ctx.locked && pr.status !== 'merged')
+        ? 'App is locked, so it also needs at least one admin yes before it merges.'
+        : null,
+    };
+    details.ledger = AppView._topicLedgerRows(pr, details);
+    return details;
+  },
+
+  // ── The "Where it stands" ledger ─────────────────────────────────────
+  // One row per fact, built from the SAME material the four boxes used to
+  // draw from — blockReasons, the checks verdict or its status note, the
+  // conflict / mergeability / platform-variable notes, the vote roster and
+  // the provenance notes — so nothing about what a state means moved; only
+  // where it is said. Each row's `key` is its data-note.
+  TOPIC_LEDGER_LABELS: {
+    conflict: 'Conflicts with main',
+    mergeability: 'Conflicts with main',
+    checks: 'Checks',
+    env: 'Platform variables',
+    console: 'Console errors',
+    imported: 'Imported',
+    agent: 'Built with',
+    preview: 'Preview',
+  },
+  _topicLedgerRows(pr, d) {
+    const rows = [];
+    const labels = AppView.TOPIC_LEDGER_LABELS;
+    const toneOf = (t) => (t === 'error' ? 'bad' : (t === 'warn' ? 'warn' : (t === 'ok' ? 'ok' : 'mute')));
+    const strip = (h) => String(h || '').replace(/^[⚠✓]\s*/, '');
+    const fromBox = (box) => {
+      const row = {
+        key: box.key, tone: toneOf(box.tone), spinner: !!box.spinner,
+        label: labels[box.key] || strip(box.heading),
+        sub: box.sub || null,
+        progress: box.progress || null,
+        text: labels[box.key] ? [strip(box.heading)] : [],
+        foot: [], actions: box.action ? [box.action] : [],
+      };
+      // A box's `rows` are ONE ORDERED ARRAY on purpose — _mergeabilityNote
+      // puts its file list directly under the sentence that introduces it.
+      // Bucketing lines into `foot` and lists into a separate `list` threw
+      // that order away and the renderer put every list last, so on #1496
+      // "Changed on both sides:" was followed by three unrelated sentences
+      // before the files appeared. `foot` carries both now, in order: a
+      // text run array is a line, `{ list }` is a list.
+      for (const r of box.rows || []) {
+        if (r.t === 'list') row.foot.push({ list: r.items || [] });
+        else if (!row.text.length) row.text = r.parts;
+        else row.foot.push(r.parts);
+      }
+      return row;
+    };
+    const fromVerdict = (v) => {
+      const total = v.failures.length + v.passes.length;
+      const row = {
+        key: 'checks', tone: v.failing ? 'bad' : 'ok', label: 'Checks',
+        sub: v.failing
+          ? `${v.failures.length} of ${total} failing`
+          : `${total} passed`,
+        text: [strip(v.heading)],
+        foot: [v.advisoryNote, v.checkedNote, v.baseNote, v.fixNote].filter(Boolean).map((n) => [n]),
+        // Kept apart as well as flattened: when this row is demoted to a
+        // later step (_topicLedgerPath) the fix note has to go, because
+        // "pushing a fix re-runs the checks" is an instruction, and the
+        // step above it is the one with something to do.
+        notes: { advisory: v.advisoryNote, checked: v.checkedNote, base: v.baseNote },
+        fails: v.failures, passes: v.passes,
+        actions: v.action ? [v.action] : [],
+      };
+      if (v.baseNote) row.attrs = { 'data-checks-base': 'superseded' };
+      return row;
+    };
+    for (const b of d.blocks || []) rows.push(b.t === 'checks' ? fromVerdict(b.v) : fromBox(b.box));
+
+    // Reasons the boxes above do not already say — "Behind main" is the
+    // common one; it never had a box, only the pill and the reasons list.
+    const covered = new Set(rows.map((r) => r.key));
+    const saidByBox = {
+      checks_failing: 'checks', preview_failed: 'checks', checks_base_superseded: 'checks',
+      mergeability_conflict: 'mergeability', merge_conflict: 'conflict', conflict_failed: 'conflict',
+      console_errors: 'console',
+    };
+    for (const r of AppView.blockReasons(pr)) {
+      const by = saidByBox[r.key];
+      if (by && covered.has(by)) continue;
+      const [label, count] = String(r.label || '').split(' · ');
+      const n = count ? parseInt(count, 10) : NaN;
+      rows.push({
+        key: r.key, tone: r.soft ? 'warn' : 'bad',
+        label: label || r.key,
+        sub: r.key === 'behind' && Number.isFinite(n)
+          ? `${n} commit${n === 1 ? '' : 's'}`
+          : (count || null),
+        count: Number.isFinite(n) ? n : null,
+        text: [r.detail], foot: [],
+      });
+    }
+
+    if (d.roster) {
+      const ctx = AppView._proposalsCtx || {};
+      const yes = pr.qualified_yes_count != null
+        ? (parseInt(pr.qualified_yes_count) || 0) : (parseInt(pr.yes_count) || 0);
+      const snap = parseInt(pr.votes_required);
+      const req = (Number.isFinite(snap) && snap > 0) ? snap : (parseInt(ctx.majority) || 1);
+      // No count under the label: the roster line says what it needs, in
+      // the wording the approval policy chooses, and a second count from a
+      // different field beside it would only ever be a contradiction.
+      rows.push({
+        key: 'votes', tone: yes >= req ? 'ok' : 'vote', label: 'Votes',
+        text: [], roster: d.roster, foot: [],
+        warnFoot: [d.explicitNote, d.lockedNote].filter(Boolean).map((n) => [n]),
+      });
+    }
+
+    for (const n of d.notes || []) {
+      rows.push({
+        key: n.key, tone: n.tone === 'warn' ? 'warn' : 'mute',
+        label: labels[n.key] || 'Note', text: n.parts, foot: [],
+      });
+    }
+    const path = AppView._topicLedgerPath(pr, rows);
+    // The caption under the heading. Numbering says the steps are ordered;
+    // this says they are a gate — every one of them has to clear, and how
+    // many are still outstanding.
+    const steps = path.filter((r) => r.step);
+    d.pathSteps = steps.length || null;
+    d.pathLeft = steps.length ? steps.filter((r) => !r.stepDone).length : null;
+    return path;
+  },
+
+  // ── The path a blocked proposal takes ────────────────────────────────
+  // The rows above are one per SUBSYSTEM, each built by a builder that
+  // cannot see the others. That is how #1496 came to say "Syncing
+  // automatically, then it retries the merge" three lines under "It cannot
+  // merge until somebody reconciles them": both sentences are true — the
+  // sync runs and then fails on the conflict — and neither knew the other
+  // was on the page. Six sentences described one situation and two of them
+  // named different people to act.
+  //
+  // This pass rewrites those rows as ONE ORDERED PATH: sync, then checks,
+  // then the vote. Each step is numbered, and its `sub` says who acts and
+  // when, so "what happens next" is read rather than inferred. Conflict and
+  // behind-main collapse into a single sync step, because they are one
+  // fact: the branch is behind, and catching it up needs a person when the
+  // two sides touched the same lines.
+  //
+  // It runs ONLY when there is a sync step. With no sync pending the four
+  // boxes never contradicted each other, and numbering "Checks" as step 1
+  // of 1 would say less than "Checks" does.
+  //
+  // Row KEYS are never touched here. A row's key is its `data-note`, and
+  // dapp.json's declared checks address rows by it.
+  _topicLedgerPath(pr, rows) {
+    const at = (k) => rows.findIndex((r) => r.key === k);
+    const iConflict = Math.max(at('mergeability'), at('conflict'));
+    const iBehind = at('behind');
+    if (iConflict < 0 && iBehind < 0) return rows;
+
+    const fresh = (AppView._freshnessOf && AppView._freshnessOf(pr)) || {};
+    const behindRow = iBehind >= 0 ? rows[iBehind] : null;
+    const behindN = behindRow && Number.isFinite(behindRow.count)
+      ? behindRow.count
+      : (parseInt(pr && pr.behind_main, 10) || 0);
+    const conflictFiles = iConflict >= 0
+      ? (Array.isArray(pr && pr.conflict_files) && pr.conflict_files.length
+        ? pr.conflict_files
+        : (Array.isArray(fresh.files) ? fresh.files : []))
+      : [];
+    const creator = (pr && pr.username) || 'its author';
+
+    // ── Step 1: one row for "get this branch onto current main" ─────────
+    const sync = iConflict >= 0 ? rows[iConflict] : behindRow;
+    const manual = iConflict >= 0;
+    const moved = behindN > 0
+      ? `Main has moved ${behindN} commit${behindN === 1 ? '' : 's'} ahead`
+      : 'Main has moved ahead';
+    sync.label = 'Sync with main';
+    sync.tone = manual ? 'bad' : 'warn';
+    sync.sub = manual ? `${creator}, now` : 'automatic, now';
+    sync.text = manual
+      ? [conflictFiles.length
+        ? `${moved}, and ${conflictFiles.length} file${conflictFiles.length === 1 ? '' : 's'} changed on both sides, so the automatic sync cannot finish this one.`
+        : `${moved} and the two changes touch the same lines, so the automatic sync cannot finish this one.`]
+      : [`${moved}. The platform is syncing this proposal onto it, then it retries the merge.`];
+    // The remedy sentence is the only foot line worth keeping from the box:
+    // it names the person and the exact action. The rest restated the row's
+    // own text. The file list keeps its lead-in and sits under it.
+    const remedy = manual
+      ? (AppView._conflictRemedy(pr, pr && pr.merge_conflict_state === 'failed' ? 'failed'
+        : (pr && pr.merge_conflict_state === 'conflict' ? 'conflict' : 'predicted')).parts)
+      : null;
+    // The file list does NOT survive into the step. It was the bulkiest
+    // thing on the panel and the least actionable: both-sides-changed is an
+    // upper bound on the conflict rather than the conflict (two edits at
+    // opposite ends of one file land in it and merge fine), and it does not
+    // change the one move available — run the sync and let git name the real
+    // overlaps. The COUNT stays, in the sentence, where it says how big the
+    // job is without pretending to say which files it is.
+    sync.foot = [];
+    if (remedy) sync.foot.push(remedy);
+    if (manual && iBehind >= 0) rows.splice(iBehind, 1);
+
+    // ── Step 2: checks, which are not the blocker while step 1 stands ───
+    const checks = rows[at('checks')];
+    if (checks) {
+      checks.label = 'Re-run checks';
+      checks.sub = 'automatic, after 1';
+      // A verdict measured against a base main has left behind describes
+      // code that would no longer merge. Saying "Merge is blocked until
+      // they pass" in the present tense made a five-day-old run read as
+      // the live state of the branch.
+      // A failing verdict is demoted only when it cannot be trusted or
+      // re-run until step 1 happens: a MANUAL sync (nobody can re-run them
+      // over a branch that will not merge) or a base main has already left
+      // behind. A proposal that is merely a few commits behind keeps its
+      // failing verdict at full weight — the platform will sync it by
+      // itself, and the failing check is the author's actual next move. A
+      // PASSING verdict is never rewritten either way: "nothing to do here"
+      // over a green run throws away the one piece of good news on the page.
+      const stale = manual || !!(checks.attrs && checks.attrs['data-checks-base']);
+      if (stale && checks.tone === 'bad') {
+        checks.tone = 'mute';
+        checks.text = ['They start themselves once the branch is up to date. Nothing to do here.'];
+        const n = checks.notes || {};
+        checks.foot = [n.advisory, n.base, n.checked].filter(Boolean).map((x) => [x]);
+      }
+    }
+
+    // ── Step 3: the vote, which cannot finish before the checks do ──────
+    const votes = rows[at('votes')];
+    if (votes) votes.sub = `the group, after ${checks ? 2 : 1}`;
+
+    // The path rows are numbered in PATH order, not in the order the
+    // builders happened to append them: `d.blocks` puts the checks box
+    // first, and behind-main is only added afterwards from blockReasons, so
+    // reading positions off the array numbered a behind-main proposal
+    // "checks 1, sync 2" — the reverse of what has to happen. Lift them out
+    // and put them back as a block, in order, where the first of them sat.
+    const path = [sync, checks, votes].filter(Boolean);
+    const at0 = Math.min(...path.map((r) => rows.indexOf(r)));
+    for (const r of path) rows.splice(rows.indexOf(r), 1);
+    rows.splice(at0, 0, ...path);
+    // A step is CLEARED when its own row already reads ok: checks that
+    // passed, a vote that reached the threshold. The sync step is never
+    // cleared, because it is only on the path while it is pending. Two
+    // states are what makes the boxes worth drawing as boxes — a checklist
+    // where nothing can ever be ticked is just a list.
+    path.forEach((r, i) => {
+      r.step = i + 1;
+      r.stepDone = r !== sync && r.tone === 'ok';
+    });
+    return rows;
   },
 
   // ── "How voting works" explainer ────────────────────────────────────
@@ -8710,17 +8625,11 @@ const AppView = {
   // fractions are env-tunable (MERGE_GATE_CONSTANTS in
   // services/active-users.js) and per-app thresholds are on the roadmap
   // (issue #428) — so quoting fixed numbers here would drift out of date.
-  _VOTING_HELP_RULES_HTML:
-    '<ul class="voting-help-rules">'
-    + '<li>Only people who’ve actually used the app recently count as voters. The number of Yes votes needed scales with how many active testers there are.</li>'
-    + '<li>A proposal with clear support and no objections merges on its own after a short visibility window (a few days), so everyone has a chance to look — <strong>silence counts as agreement</strong>.</li>'
-    + '<li>The more support a proposal has, the shorter the wait. A clear majority merges almost immediately; thin, unopposed support waits longer.</li>'
-    + '<li><strong>No</strong> votes make a proposal harder to pass: they raise the number of Yes votes needed and lengthen the wait.</li>'
-    + '<li>If enough people vote No, the proposal becomes <strong>Contested</strong> — the time-based path turns off and it needs a straight majority of Yes votes to merge.</li>'
-    + '<li>A proposal that’s being voted down with little support is closed automatically after a countdown (“Rejecting in …”).</li>'
-    + '<li>Even after winning the vote, a proposal only merges once its <strong>automated checks pass</strong> and it’s <strong>up to date with the main app</strong>. Locked apps also need an admin’s Yes.</li>'
-    + '<li>Apps can customize these rules: restricting approvals to <strong>invited approvers</strong> (everyone else’s votes stay visible but advisory) and/or requiring a fixed <strong>“at least N approvals”</strong> instead of the timed majority system.</li>'
-    + '</ul>',
+  // `_VOTING_HELP_RULES_HTML` lived here — the eight-rule blurb as one
+  // concatenated HTML string with `<strong>` runs escaped inside it. It is
+  // features/dev-board/voting-help.tsx's markup now, verbatim: prose with
+  // emphasis is the thing JSX is better at than a string, and it is the part
+  // of this popover a reader is most likely to edit.
 
   // The live "This proposal, right now" line. Reads the serialized gate
   // fields the /promoted endpoint attaches (votes_required,
@@ -8760,13 +8669,19 @@ const AppView = {
       blocker = 'automatic conflict resolution failed, so the proposer must resolve it before it can merge';
     } else if (mcs === 'resolving' || pr.resolving === true) {
       blocker = 'conflicts with the main app are being reconciled automatically before it can merge';
+    // #1442 — above the checks clause on purpose. A proposal that conflicts
+    // with main cannot merge whatever its checks say, and the whole point of
+    // the issue is that passing checks were the loudest thing on the screen
+    // while this was true and invisible.
+    } else if (AppView._freshnessOf(pr).mergeability === 'conflict') {
+      blocker = 'it conflicts with the main app, so its creator has to sync with main and resolve them before it can merge';
     } else if (check === 'failing') {
       blocker = 'its automated checks are failing, so it can’t merge until they pass';
     } else if (check === 'pending') {
       blocker = 'its automated checks are still running, so it can’t merge until they finish';
     } else if (check === 'error') {
       blocker = 'its automated checks couldn’t run, so it can’t merge until they pass';
-    } else if ((parseInt(pr.behind_main, 10) || 0) > 0 || mcs === 'behind' || mcs === 'conflict') {
+    } else if ((AppView._freshnessOf(pr).behindBy || 0) > 0 || mcs === 'behind' || mcs === 'conflict') {
       blocker = 'it’s behind the main app and will sync automatically before merging';
     } else if (reached && ctx.locked) {
       blocker = 'the app is locked, so it also needs an admin’s Yes';
@@ -8780,7 +8695,7 @@ const AppView = {
     // sends no merge_window_ends_at for a flagged row.
     const noTimer = !!pr.requires_explicit_approval;
     const noTimerNote = noTimer
-      ? ` This changes who can administer the app, so it won’t merge on a timer — it needs ${required} actual Yes vote${required === 1 ? '' : 's'}.`
+      ? ` This changes who can administer the app, so it won’t merge on a timer. It needs ${required} actual Yes vote${required === 1 ? '' : 's'}.`
       : '';
 
     // #646: "at least N approvals" mode — clock-free, so none of the
@@ -8794,7 +8709,7 @@ const AppView = {
       if (reached) {
         s = blocker
           ? `It has the approvals it needs (${yes} of ${n}), but it can’t merge yet: ${blocker}.`
-          : `It has the approvals it needs (${yes} of ${n}) — queued to merge shortly.`;
+          : `It has the approvals it needs (${yes} of ${n}). Queued to merge shortly.`;
       } else {
         s = `This app requires at least ${n} approval${n === 1 ? '' : 's'} from ${who}. Currently ${yes} of ${n}.`;
         if (blocker) s += ` Note: ${blocker}.`;
@@ -8823,28 +8738,28 @@ const AppView = {
       // normal threshold is met, subject to the usual blockers.
       sentence = blocker
         ? `It has enough Yes votes (${yes} of ${required}), but it can’t merge yet: ${blocker}.`
-        : `It has the votes it needs (${yes} of ${required}) — queued to merge shortly.`;
+        : `It has the votes it needs (${yes} of ${required}). Queued to merge shortly.`;
       foldedBlocker = true;
     } else if (noTimer && pr.rejection_armed && inReject) {
       // Rejection is deliberately untouched by the no-timer modifier.
       const cd = AppView._fmtCountdown(rejectEnds - now);
-      sentence = `More No than Yes, without enough support — this closes in ${cd} unless it gains support. ${tally}`;
+      sentence = `More No than Yes, and not enough support yet. It will be set aside in ${cd} unless support arrives. ${tally}`;
     } else if (noTimer) {
       sentence = `It needs ${required} of ${active} active testers to vote Yes. ${tally}`;
     } else if (!contested && inMergeWindow && (reached || lazyLead)) {
       const cd = AppView._fmtCountdown(mergeEnds - now);
       sentence = reached
-        ? `There are enough Yes votes (${yes} of ${required}) — this merges in ${cd} unless someone objects.`
-        : `It has support (${yes} of ${required} needed) and no objections — it merges in ${cd} unless the vote changes; silence counts as agreement.`;
+        ? `There are enough Yes votes (${yes} of ${required}). It goes live in ${cd} unless someone objects.`
+        : `It has support (${yes} of ${required} needed) and nobody has objected. It goes live in ${cd} unless the vote changes. Quiet is taken as a nod, so speak up if something bothers you.`;
     } else if (pr.rejection_armed && inReject) {
       const cd = AppView._fmtCountdown(rejectEnds - now);
-      sentence = `More No than Yes, without enough support — this closes in ${cd} unless it gains support. ${tally}`;
+      sentence = `More No than Yes, and not enough support yet. It will be set aside in ${cd} unless support arrives. ${tally}`;
     } else if (contested) {
-      sentence = `It’s contested — enough people object that the timed path is off, so it now needs a clear majority of Yes votes to pass. ${tally}`;
+      sentence = `It needs a conversation. Enough people have objected that the timer is off, so it now needs a clear majority of Yes votes to pass. ${tally}`;
     } else if (reached) {
       sentence = blocker
         ? `It has enough Yes votes (${yes} of ${required}), but it can’t merge yet: ${blocker}.`
-        : `It has the votes it needs (${yes} of ${required}) and green checks — queued to merge shortly.`;
+        : `It has the votes it needs (${yes} of ${required}) and green checks. Queued to merge shortly.`;
       foldedBlocker = true;
     } else {
       sentence = `It needs ${required} of ${active} active testers to vote Yes. ${tally}`;
@@ -8889,15 +8804,13 @@ const AppView = {
     pop.className = 'voting-help-popover';
     pop.setAttribute('role', 'dialog');
     pop.setAttribute('aria-label', 'How voting and merges work');
-    const live = AppView._votingHelpText(pr);
-    pop.innerHTML =
-      '<div class="attr-pop-head">How voting &amp; merges work</div>'
-      + (live
-        ? '<div class="vh-live"><div class="vh-live-title">This proposal, right now</div>'
-          + `<div class="vh-live-body">${escapeHtml(live)}</div></div>`
-        : '')
-      + `<div class="vh-rules">${AppView._VOTING_HELP_RULES_HTML}</div>`;
     document.body.appendChild(pop);
+    // The BODY is features/dev-board/voting-help.tsx's — the head, the live
+    // line and the rules — mounted as a portal where this used to be one
+    // `innerHTML` string. Everything below stays: the anchor's rect, which
+    // side has more room, and the height cap that makes the body scroll
+    // internally instead of spilling past the viewport.
+    AppView._reactDevBoard()?.mountVotingHelp(pop, { live: AppView._votingHelpText(pr) });
     AppView._votingHelpOpen = { prId: pr && pr.id };
 
     // Position under the anchor, fully clamped to the viewport so it never
@@ -8943,51 +8856,563 @@ const AppView = {
     }
   },
 
-  // #47: expanded per-test detail for the proposal detail screen — the
-  // structured replacement for the old flat console-error list. Renders a
-  // green-tick / red-cross row per test with the screen it checked and, for
-  // a failure, the reason (failed load, missing element, or the console
-  // errors that fired). Only renders once a run exists with results; a
-  // passing/empty/legacy-null state falls back to the advisory console
-  // detail so mid-rollout proposals still surface something.
-  _checksDetailHtml(pr) {
-    if (!pr) return '';
+  // ── The detail block's note boxes ────────────────────────────────────
+  //
+  // Four renderers drew the SAME bordered, tinted box with a heading, some
+  // rows and sometimes a button. They build that box's MODEL now
+  // (topic/model.ts's `NoteBox`) and topic/topic-head.tsx draws it, so the
+  // tone is a name rather than four hand-written class strings.
+  //
+  // The rows are ONE ordered array of tagged entries, not a `lines` list
+  // plus a `list`: each box that has a list puts it somewhere different —
+  // under the sentence introducing it here, directly under the heading in
+  // the platform-variables box — and a two-field shape renders both, in the
+  // wrong order, with nothing to catch it.
+
+  // Where a proposal's head branch lives — the client-side twin of
+  // services/proposal-update.js `branchHomeOf`, answered from the same
+  // columns the row carries (`imported_pr_head_repo`, `branch_name`):
+  //
+  //   'app_repo'  — a branch in the app's own repository. A native session's
+  //                 `dev/…` branch, or the `usernode/from-…` mirror the
+  //                 connector writes for a submitted fork branch (task 153).
+  //                 The platform can write it, so it syncs with main itself.
+  //   'user_fork' — a branch in the author's own fork, which the platform
+  //                 only tracks. Nobody but the author can bring it up to
+  //                 date, and the conflict copy has to say so.
+  _headHome(pr) {
+    if (!pr || pr.source !== 'imported') return 'app_repo';
+    const norm = (v) => {
+      const m = /(?:github\.com[/:])?([^/\s]+)\/([^/\s#?]+?)(?:\.git)?\/?$/i.exec(String(v || '').trim());
+      return m ? `${m[1]}/${m[2]}`.toLowerCase() : null;
+    };
+    const head = norm(pr.imported_pr_head_repo);
+    const app = norm(pr.repo_url || (AppView.appData && AppView.appData.repo_url));
+    if (head && app) return head === app ? 'app_repo' : 'user_fork';
+    return /^usernode\/(?:from|patch)-/.test(String(pr.branch_name || '')) ? 'app_repo' : 'user_fork';
+  },
+
+  // The sentence that says who brings a conflicted proposal up to date, and
+  // how. It depends on where the head lives, not on the state that asked:
+  //
+  //   native     — the author's dev-chat has a "Sync with main" button, and
+  //                that is the way out;
+  //   mirror     — an imported row whose head the PLATFORM wrote. Its author
+  //                has no dev-chat for it; the branch is revised where it was
+  //                written and submitted again as an update to this proposal.
+  //                The platform retries the sync itself on the next attempt,
+  //                so `retrying` is only said when no attempt has failed yet;
+  //   user_fork  — the platform cannot write there at all, so the only way
+  //                out is the author's own push, which the proposal follows.
+  //
+  // Returns the row's `parts` (NoteRow text runs) and, for the pill detail,
+  // the same sentence as plain text.
+  _conflictRemedy(pr, mode) {
+    const creator = pr.username || 'the proposal’s creator';
+    const home = AppView._headHome(pr);
+    let parts;
+    if (pr.source !== 'imported') {
+      parts = mode === 'failed'
+        ? [{ b: creator }, ' needs to resolve it: run "Sync with main" from the session\'s dev-chat.']
+        : mode === 'conflict'
+          ? ['Automatic resolution may not run for this proposal. ', { b: creator },
+            ' needs to finish the merge: open the session\'s dev-chat and run "Sync with main".']
+          : [{ b: creator }, ' needs to bring it up to date: open the session’s dev-chat and run "Sync with main".'];
+    } else if (home === 'app_repo') {
+      parts = mode === 'failed'
+        ? [{ b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Usernode keeps this branch itself, so the merge is retried once the update lands.']
+        : ['Usernode keeps this branch itself and will try to resolve it automatically at the next merge attempt. If that fails, ',
+          { b: creator }, ' needs to bring the branch up to date with main in the coding agent that wrote it and submit it again as an update to this proposal.'];
+    } else {
+      parts = ['This branch lives in ', { b: creator }, '’s own fork, which Usernode cannot write to, so it cannot sync it itself. ',
+        { b: creator }, ' needs to merge main into the branch and push it; the proposal follows the push.'];
+    }
+    // The pill's plain-text detail. A native row keeps the sentence the pill
+    // has always carried; an imported one gets the note's sentence, since
+    // that is the first time the pill has had anything true to say about it.
+    const nativeDetail = {
+      failed: 'The proposal’s owner needs to resolve it manually from their dev session.',
+      conflict: 'Its creator needs to finish the merge from their dev session ("Sync with main").',
+      predicted: 'Its creator needs to sync with main and resolve the conflicts from their dev session ("Sync with main").',
+    };
+    return {
+      parts,
+      text: pr.source !== 'imported'
+        ? nativeDetail[mode]
+        : parts.map((x) => (typeof x === 'string' ? x : x.b)).join(''),
+    };
+  },
+
+  // #361: expanded merge-conflict detail. Lists the conflicting file paths
+  // and when the snapshot was last checked, plus the standing guidance to
+  // run "Sync with main" from the session's dev-chat.
+  //
+  // #386: renders for the 'failed' state — an auto-resolve attempt actually
+  // ran and could not fix the conflict — and (since the silent-merge-failure
+  // fix) for 'conflict': a real merge attempt 405'd at GitHub. 'conflict'
+  // matters because the auto-resolver only picks up vote-eligible proposals,
+  // so a failed merge can otherwise sit with no visible record of the attempt
+  // and nothing telling anyone who has to act. While the resolver IS actively
+  // working the card shows "Resolving conflicts…" instead (the 'resolving'
+  // state outranks both in MergeStatus.lifecycle).
+  _mergeConflictNote(pr) {
+    const mcs = pr.merge_conflict_state;
+    if (mcs !== 'failed' && mcs !== 'conflict') return null;
+    if (pr.resolving) return null;
+    const files = Array.isArray(pr.conflict_files) ? pr.conflict_files : [];
+    // The file list sits directly under the sentence that introduces it —
+    // see `NoteRow` on why the rows are one ordered array.
+    const rows = [];
+    if (files.length) {
+      rows.push({ t: 'line', parts: ['Conflicting files:'] });
+      rows.push({
+        t: 'list', cls: 'mt-0.5 ml-3 list-disc space-y-0.5',
+        items: files.map((f) => ({ mono: true, text: String(f) })),
+      });
+    }
+    if (pr.conflict_checked_at) {
+      rows.push({ t: 'line', parts: [`Last attempt ${relTime(pr.conflict_checked_at)}.`], weight: 'foot' });
+    }
+    rows.push({
+      t: 'line',
+      weight: 'foot',
+      parts: AppView._conflictRemedy(pr, mcs === 'failed' ? 'failed' : 'conflict').parts,
+    });
+    return {
+      key: 'conflict',
+      tone: 'error',
+      heading: mcs === 'failed'
+        ? 'Automatic conflict resolution failed.'
+        : 'A merge was attempted, but this proposal conflicts with main.',
+      rows,
+    };
+  },
+
+  // #1442 — the conflict nobody has hit yet. _mergeConflictNote above is a
+  // record of an ATTEMPTED merge that failed; this is GitHub's prediction
+  // that the next one will, made while the proposal is still collecting
+  // votes. That gap is the whole issue: proposal 3590 showed every check
+  // green and no conflict note for the entire time it was unmergeable,
+  // because nothing had tried to merge it yet.
+  //
+  // The real attempt outranks the prediction, so this returns null whenever
+  // _mergeConflictNote is rendering. 'unknown' is not rendered at all: GitHub
+  // computes mergeability lazily and reports nothing meanwhile, so a note
+  // saying so would fire on ordinary healthy proposals for a few seconds.
+  _mergeabilityNote(pr) {
+    if (!pr) return null;
+    const fresh = AppView._freshnessOf(pr);
+    if (fresh.mergeability !== 'conflict') return null;
+    const mcs = pr.merge_conflict_state;
+    if (mcs === 'failed' || mcs === 'conflict' || pr.resolving) return null;
+
+    const rows = [{
+      t: 'line',
+      parts: ['Main has moved on since this was written, and the two changes touch the same lines. It cannot merge until somebody reconciles them.'],
+    }];
+    if (fresh.files.length) {
+      rows.push({ t: 'line', parts: ['Changed on both sides:'] });
+      rows.push({
+        t: 'list', cls: 'mt-0.5 ml-3 list-disc space-y-0.5',
+        items: fresh.files.slice(0, 20).map((f) => ({ mono: true, text: String(f) })),
+      });
+      // Both-sides-changed is an upper bound on the conflict, not the
+      // conflict: two edits at opposite ends of one file land here and
+      // merge fine. Saying so keeps the list from reading as a verdict.
+      rows.push({
+        t: 'line', weight: 'foot',
+        parts: [fresh.filesComplete === false
+          ? 'That is a sample of the files, and some of them may merge cleanly.'
+          : 'Some of those may still merge cleanly. They are where to look first.'],
+      });
+    }
+    if (fresh.checkedAt) {
+      rows.push({ t: 'line', parts: [`Checked ${relTime(fresh.checkedAt)}.`], weight: 'foot' });
+    }
+    rows.push({
+      t: 'line', weight: 'foot',
+      parts: AppView._conflictRemedy(pr, 'predicted').parts,
+    });
+    return {
+      key: 'mergeability',
+      tone: 'error',
+      heading: 'This proposal no longer merges into main on its own.',
+      rows,
+    };
+  },
+
+  // Platform-variables check row. Only ever renders for a proposal that
+  // touches the platform's own variables.
+  _platformEnvNote(pr) {
+    if (!pr) return null;
+    const state = pr.platform_env_state;
+    if (!state || state === 'skipped') return null;
+    const detail = pr.platform_env_detail || {};
+    const added = Array.isArray(detail.added) ? detail.added : [];
+    const missing = Array.isArray(detail.missing) ? detail.missing : [];
+
+    if (state === 'error') {
+      return {
+        key: 'env', tone: 'neutral',
+        heading: "Platform variables couldn't be checked.",
+        rows: [{ t: 'line', parts: ['This does not block the merge. The check is re-run when votes reach the threshold.'] }],
+      };
+    }
+
+    if (state === 'failing') {
+      // The panel that fixes this lives on THIS app (the note only ever
+      // renders for a self-app proposal), so open it in place rather than
+      // sending anyone off to a deep link. A full admin sets the value
+      // outright; everyone else opens a proposal from the same panel.
+      const one = missing.length === 1;
+      return {
+        key: 'env', tone: 'warn',
+        heading: '⚠ New platform variables have no value set. Merge is blocked.',
+        // The keys lead — they are what a reader has to act on — and the
+        // two explanatory lines follow them.
+        rows: [
+          {
+            t: 'list',
+            items: missing.map((m) => ({
+              code: String((m && m.key) || ''),
+              text: (m && m.description) ? String(m.description).slice(0, 240) : '',
+            })),
+          },
+          { t: 'line', parts: [`Deploying without ${one ? 'it' : 'them'} would restart the platform missing configuration it now expects.`], weight: 'foot' },
+          { t: 'line', parts: [`No rebuild needed. Set the value${one ? '' : 's'} and vote again.`], weight: 'foot' },
+        ],
+        action: {
+          key: 'env-fix',
+          cls: 'mt-1.5 text-xs px-2 py-1 rounded border border-amber-500/50 hover:bg-amber-500/10 transition-colors',
+          label: App.user && App.user.canAdminWrite ? 'Set them now' : 'Propose a value',
+          act: { fn: 'openPlatformVariables' },
+        },
+      };
+    }
+
+    if (!added.length) return null;
+    // Keys whose value THIS proposal carries (the panel's "+ New variable"
+    // flow) read differently from keys somebody set separately: the value is
+    // part of what a voter is approving, and it lands on merge.
+    const carried = Array.isArray(detail.pendingValues) ? detail.pendingValues : [];
+    const rows = [{ t: 'line', parts: [`This proposal adds ${added.join(', ')}, already set and ready for the deploy.`] }];
+    if (carried.length) {
+      rows.push({
+        t: 'line',
+        parts: [`${carried.join(', ')} ${carried.length === 1 ? 'carries its value' : 'carry their values'} with this proposal, applied when it merges.`],
+      });
+    }
+    return { key: 'env', tone: 'ok', heading: '✓ New platform variables are configured.', rows };
+  },
+
+  // #381: the advisory "may break the app" note, for a proposal whose
+  // staging preview logged console errors.
+  _consoleCheckNote(pr) {
+    if (!pr || pr.console_check_state !== 'errors') return null;
+    const errors = Array.isArray(pr.console_errors) ? pr.console_errors : [];
+    const rows = [{ t: 'line', parts: ['The staging preview logged these console errors when it loaded:'] }];
+    // The errors themselves, or — when the check recorded the verdict but
+    // not the messages — a line saying so in their place.
+    rows.push(errors.length
+      ? {
+        t: 'list', cls: 'mt-1 ml-3 list-disc space-y-0.5',
+        items: errors.map((e) => ({
+          kind: (e && e.kind) ? String(e.kind) : 'console',
+          text: String((e && e.message) || '').slice(0, 500),
+          source: (e && e.source) ? String(e.source).slice(0, 200) : null,
+        })),
+      }
+      : { t: 'line', parts: ['Console errors were detected on the staging preview.'], weight: 'foot' });
+    if (pr.console_checked_at) {
+      rows.push({ t: 'line', parts: [`Last checked ${relTime(pr.console_checked_at)}.`], weight: 'foot' });
+    }
+    rows.push({
+      t: 'line',
+      parts: ['Pushing a fix rebuilds the preview and re-runs the check. The warning clears if the errors are gone.'],
+      weight: 'foot',
+    });
+    return {
+      key: 'console', tone: 'warn',
+      heading: '⚠ This change may break the app.',
+      rows,
+    };
+  },
+
+  // "Re-run checks", when the viewer may ask for one. Returns null when the
+  // button would be inert.
+  _recheckAction(pr) {
+    if (!pr) return null;
+    if (AppView.readOnly) return null;
+    if (pr.status && !['active', 'promoted'].includes(pr.status)) return null;
+    if (pr.status === 'active' && !pr.check_state) return null;
+    if (pr.check_state === 'passing') return null;
+    const owner = !!(App.user && pr.user_id === App.user.id);
+    // `recheckable` is a staging ?demo=1 hint (set only on mock rows) so the
+    // button is reviewable regardless of the demo viewer's owner/admin
+    // status; real proposals never carry it and stay owner/admin-only.
+    if (!owner && !App.user?.canAdminWrite && !pr.recheckable) return null;
+    // #607: a WS/poll-driven re-render mid-request must not resurrect an
+    // enabled button — keep it disabled while the request is in flight.
+    if (AppView._recheckInFlight.has(pr.id)) {
+      return { key: 'recheck', cls: 'gc-vote-btn mt-1', label: 'Re-running…', disabled: true };
+    }
+    return {
+      key: 'recheck', cls: 'gc-vote-btn mt-1', label: 'Re-run checks',
+      title: 'Rebuild the staging preview if needed and re-run the automated tests',
+      act: { fn: 'castRecheck', args: [pr.id] }, passNode: true,
+    };
+  },
+
+  // The checks run's NON-verdict states — starting, running, errored,
+  // skipped — plus the legacy console fallback. Each is one note box; the
+  // pass/fail verdict has its own shape (_checksVerdictView below), because
+  // its rows nest and its passing rows fold away.
+  // The run's live counts as the three shapes the UI needs: a bar (ran /
+  // passed / failed / expected), a one-line `sub` for under the label, and a
+  // sentence for the note. Null until the first frame has been recorded.
+  _checksProgressView(pr) {
+    const p = pr && pr.checks_progress;
+    if (!p || typeof p !== 'object') return null;
+    const n = (v) => (Number.isInteger(v) && v >= 0 ? v : 0);
+    const ran = n(p.ran); const passed = n(p.passed); const failed = n(p.failed);
+    const expected = Number.isInteger(p.expected) && p.expected > 0 ? p.expected : null;
+    const unit = AppView._unitSuiteProgressView(p.unit);
+    const build = AppView._buildProgressView(p.build);
+    if (!ran && !expected && !unit && !build) return null;
+    const of = expected ? ` of ${expected}` : '';
+    const bits = [`${ran}${of} run`, `${passed} passed`];
+    if (failed) bits.push(`${failed} failed`);
+    let sub = (ran || expected) ? bits.join(' · ') : '';
+    // A colon, not a dash: the count is a label and this is its value (#1389).
+    const sentence = !(ran || expected) ? ''
+      : expected
+        ? `${ran} of ${expected} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`
+        : `${ran} checks have run so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`;
+    if (unit && !sub) sub = unit.sub;
+    if (build && !sub && !build.done) sub = build.sub;
+    return {
+      bar: { ran, passed, failed, expected, done: !!p.done, unit: unit ? unit.bar : null, build: build ? build.steps : null },
+      sub, sentence, unit, build,
+    };
+  },
+
+  // The build half, step by step: fetch the branch, build the image, clone
+  // the database, start the preview. Live while "Preview building…" (the
+  // current step is named, the finished ones carry their time) and kept
+  // through the testing half as one line saying what the build cost.
+  BUILD_STEP_COPY: {
+    source_fetch: { label: 'fetch branch', doing: 'fetching the branch', done: 'branch fetched' },
+    image_build: { label: 'build image', doing: 'building the preview image', done: 'image built' },
+    clone: { label: 'clone database', doing: 'cloning the database', done: 'database cloned' },
+    health: { label: 'start preview', doing: 'starting the preview', done: 'preview started' },
+    // The hand-off after the container is up and before the first test
+    // runs: edge verification, the ready note, and — the long case — a wait
+    // behind an earlier run on the same proposal. "Prepare", not "start":
+    // it is still this phase, and a queued run is not starting anything.
+    prepare_checks: { label: 'prepare checks', doing: 'preparing the checks', done: 'checks prepared' },
+  },
+  // The queued wait, as a label suffix on the step and as its live verb.
+  PREPARE_QUEUED_COPY: {
+    label: ' (waiting for an earlier run)',
+    doneLabel: ' (waited for an earlier run)',
+    doing: 'waiting for an earlier run on this proposal to finish',
+    done: ' after waiting for an earlier run',
+  },
+  _fmtMs(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 60) return `${s}s`;
+    return `${Math.floor(s / 60)}m ${s % 60}s`;
+  },
+  _buildProgressView(b) {
+    if (!b || typeof b !== 'object') return null;
+    const keys = ['source_fetch', 'image_build', 'clone', 'health', 'prepare_checks'];
+    const doneSteps = Array.isArray(b.steps) ? b.steps.filter((s) => s && keys.includes(s.key)) : [];
+    const current = typeof b.step === 'string' ? b.step : null;
+    const done = current === 'done';
+    const queued = current === 'prepare_checks' && !!b.queued;
+    const q = AppView.PREPARE_QUEUED_COPY;
+    // The image build's own progress (see _imageProgressView): live under
+    // the running "build image" step, and as the finished step's phases.
+    const image = current === 'image_build' ? AppView._imageProgressView(b.image) : null;
+    const steps = keys.map((key) => {
+      const copy = AppView.BUILD_STEP_COPY[key];
+      const rec = doneSteps.find((s) => s.key === key);
+      const state = rec ? 'done' : (key === current ? 'now' : 'todo');
+      let via = '';
+      if (rec && rec.via === 'template') via = ' (from template)';
+      else if (rec && rec.via === 'queued') via = q.doneLabel;
+      else if (key === 'prepare_checks' && queued) via = q.label;
+      const step = { key, label: copy.label + via, ms: rec && Number.isFinite(rec.ms) ? rec.ms : null, state };
+      if (key === 'image_build') {
+        if (image) { step.phases = image.phases; step.detail = image.detail; }
+        else if (rec && Array.isArray(rec.phases) && rec.phases.length) {
+          step.phases = rec.phases.map((ph) => ({ name: String(ph.name), ms: Number.isFinite(ph.ms) ? ph.ms : null, state: 'done' }));
+        }
+      }
+      return step;
+    });
+    // The fifth step is not part of the build's own time, so it gets its
+    // own clause rather than a place in the list (see `prepared` below).
+    const prepared = doneSteps.find((s) => s.key === 'prepare_checks') || null;
+    const parts = doneSteps.filter((s) => s.key !== 'prepare_checks').map((s) => {
+      const copy = AppView.BUILD_STEP_COPY[s.key];
+      const via = s.via === 'template' ? ' from template' : '';
+      // The image step names its phases so a slow build says which phase
+      // it spent the time in.
+      const phases = s.key === 'image_build' && Array.isArray(s.phases) && s.phases.length
+        ? `: ${s.phases.filter((ph) => Number.isFinite(ph.ms)).map((ph) => `${ph.name} ${AppView._fmtMs(ph.ms)}`).join(', ')}`
+        : '';
+      return `${copy.done}${via} (${AppView._fmtMs(s.ms)}${phases})`;
+    });
+    let sentence;
+    let sub;
+    if (done) {
+      const total = Number.isFinite(b.totalMs) ? b.totalMs
+        : doneSteps.filter((s) => s.key !== 'prepare_checks').reduce((n, s) => n + (s.ms || 0), 0);
+      // "Preview built in 20s, checks prepared in 9m 40s": the wait is the
+      // finding, so it is a clause of its own rather than a fifth item
+      // inside the build's total.
+      const preparedClause = prepared && Number.isFinite(prepared.ms)
+        ? `, checks prepared in ${AppView._fmtMs(prepared.ms)}${prepared.via === 'queued' ? q.done : ''}`
+        : '';
+      sentence = `Preview built in ${AppView._fmtMs(total)}${preparedClause}: ${parts.join(', ')}.`;
+      sub = `built in ${AppView._fmtMs(total)}`;
+    } else {
+      const copy = current && AppView.BUILD_STEP_COPY[current];
+      let doing = copy ? copy.doing : 'building';
+      if (queued) doing = q.doing;
+      if (image && image.doing) doing = `${doing} (${image.doing})`;
+      sentence = parts.length
+        ? `Preview build: ${parts.join(', ')}, now ${doing}.`
+        : `Preview build: ${doing}.`;
+      sub = `build: ${doing}`;
+    }
+    return { steps, sentence, sub, done, current, image };
+  },
+
+  // Inside the "build image" step. On the cluster the image is a buildpack
+  // build whose lifecycle phases (prepare, analyze, detect, restore, build,
+  // export) come with their own times, and the running phase's last log
+  // line is the detail; on docker it is the builder's step counter. Copy
+  // says which and never guesses a phase list it was not given.
+  IMAGE_PHASE_COPY: {
+    prepare: 'fetching source', analyze: 'analyzing the last image', detect: 'detecting buildpacks',
+    restore: 'restoring cached layers', build: 'running the buildpacks', export: 'exporting the image',
+    completion: 'finishing',
+  },
+  _imageProgressView(img) {
+    if (!img || typeof img !== 'object') return null;
+    const phase = typeof img.phase === 'string' ? img.phase : null;
+    const donePhases = Array.isArray(img.phases) ? img.phases.filter((ph) => ph && typeof ph.name === 'string') : [];
+    const detail = typeof img.detail === 'string' && img.detail.trim() ? img.detail.trim().slice(0, 160) : null;
+    const hasCounter = Number.isInteger(img.index) && Number.isInteger(img.total) && img.total > 0;
+    // The phase row, from the phases the runtime ACTUALLY reported.
+    //
+    // It used to be derived from a hard-coded buildpack lifecycle whenever
+    // every reported name was one of that lifecycle's — which an EMPTY list
+    // satisfies vacuously. So a runtime that reports no phases at all got the
+    // whole lifecycle drawn as pending, and the topic page showed "analyze
+    // detect restore build export" on a build where none of those was
+    // running: this deployment builds previews with docker, which reports a
+    // STEP COUNTER and no phases. A row is drawn now only from names that
+    // were reported, plus the running one; the lifecycle is consulted solely
+    // to order them and to say which of ITS phases are still ahead, and only
+    // when at least one reported name belongs to it.
+    const known = ['prepare', 'analyze', 'detect', 'restore', 'build', 'export'];
+    const names = donePhases.map((ph) => ph.name);
+    if (phase && !names.includes(phase) && phase !== 'completion') names.push(phase);
+    const lifecycle = names.length > 0 && names.every((n) => known.includes(n));
+    const lastKnown = lifecycle ? known.indexOf(names[names.length - 1]) : -1;
+    const order = lifecycle
+      ? known.filter((n) => names.includes(n) || known.indexOf(n) > lastKnown)
+      : names;
+    const phases = order.map((name) => {
+      const rec = donePhases.find((ph) => ph.name === name);
+      return { name, ms: rec && Number.isFinite(rec.ms) ? rec.ms : null, state: rec ? 'done' : (name === phase ? 'now' : 'todo') };
+    });
+    // A step counter is a fraction, so it draws as a bar the way the checks
+    // and the unit suite do, rather than as a row of names it does not have.
+    const bar = hasCounter ? { ran: img.index, expected: img.total } : null;
+    let doing = null;
+    if (hasCounter) {
+      doing = `step ${img.index} of ${img.total}${phase ? ` in ${phase}` : ''}${detail ? `: ${detail}` : ''}`;
+    } else if (phase) {
+      const copy = AppView.IMAGE_PHASE_COPY[phase] || `${phase} phase`;
+      doing = `${copy}${detail ? `: ${detail}` : ''}`;
+    } else if (detail) {
+      doing = detail;
+    }
+    return { phase, phases, bar, detail, doing, index: hasCounter ? img.index : null, total: hasCounter ? img.total : null };
+  },
+
+  // The repo unit suite (`npm test`) runs in its own container alongside the
+  // browser checks and reports the same way: a phase before any test has
+  // run (cloning, installing), then TAP counts. The counts are the runner's
+  // own approximation until its summary block lands, so the copy says "so
+  // far" and never claims a verdict; the verdict is the exit code, later.
+  _unitSuiteProgressView(u) {
+    if (!u || typeof u !== 'object') return null;
+    const n = (v) => (Number.isInteger(v) && v >= 0 ? v : 0);
+    const ran = n(u.ran); const passed = n(u.passed); const failed = n(u.failed); const skipped = n(u.skipped);
+    const expected = Number.isInteger(u.expected) && u.expected > 0 ? u.expected : null;
+    const phase = typeof u.phase === 'string' ? u.phase : 'running';
+    const done = !!u.done;
+    let sub;
+    let sentence;
+    if (done) {
+      const ok = u.exitOk !== false;
+      sub = ok ? `npm test finished: ${passed} passed` : `npm test finished: ${failed} failed`;
+      sentence = ok
+        ? `The repo unit suite (npm test) finished: ${passed} passed${skipped ? `, ${skipped} skipped` : ''}.`
+        : `The repo unit suite (npm test) finished with failures: ${failed} failed, ${passed} passed.`;
+    } else if (phase === 'cloning' || phase === 'installing') {
+      const what = phase === 'cloning' ? 'cloning the branch' : 'installing dependencies';
+      sub = `npm test: ${what}`;
+      sentence = `The repo unit suite (npm test) is ${what}.`;
+    } else {
+      const of = expected ? ` of ~${expected}` : '';
+      const bits = [`npm test: ${ran}${of} run`, `${passed} passed`];
+      if (failed) bits.push(`${failed} failed`);
+      sub = bits.join(' · ');
+      sentence = `The repo unit suite (npm test) has run ${ran}${of} tests so far: ${passed} passed${failed ? `, ${failed} failed` : ''}.`;
+    }
+    return { bar: { phase, ran, passed, failed, skipped, expected, done }, sub, sentence };
+  },
+
+  _checksStatusNotes(pr) {
+    if (!pr) return [];
     const state = pr.check_state;
+    const recheck = AppView._recheckAction(pr);
     if (!state) {
       // #607: a fresh proposal with nothing recorded yet — the first run
       // hasn't stamped 'pending' (staging build still going). Show an
       // explicit starting state instead of a bare "Re-run checks" button.
-      // The re-run escape hatch only appears once the proposal is old
-      // enough (10 min, mirroring the server's stale-checks sweep) that
-      // "starting" has plausibly wedged.
+      // The re-run escape hatch only appears once the proposal is old enough
+      // (10 min, mirroring the server's stale-checks sweep) that "starting"
+      // has plausibly wedged.
       if (!pr.console_check_state) {
         const stale = AppView._checksRunStale(pr.created_at);
-        return `
-        <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
-          <div class="font-medium"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks are starting…</div>
-          <div class="mt-0.5 opacity-90">The staging preview is being prepared, then automated tests run against it. Merge is blocked until all tests pass.</div>
-          ${stale ? '<div class="mt-1 opacity-80">If this has been stuck for a while, the platform re-runs the checks automatically — or re-run them now.</div>' : ''}
-          ${stale ? AppView._recheckBtnHtml(pr) : ''}
-        </div>`;
+        const rows = [{ t: 'line', parts: ['The staging preview is being prepared, then automated tests run against it. Merge is blocked until all tests pass.'] }];
+        if (stale) rows.push({ t: 'line', parts: ['If this has been stuck for a while, the platform re-runs the checks automatically, or re-run them now.'], weight: 'foot' });
+        return [{
+          key: 'checks', tone: 'neutral', spinner: true,
+          heading: 'Checks are starting…', rows, action: stale ? recheck : null,
+        }];
       }
       // #447: a never-recorded legacy/clone check still offers a manual
       // re-run for owners/admins so it isn't stuck blocked with no way out.
-      const fallback = AppView._consoleCheckDetailHtml(pr);
-      const rb = AppView._recheckBtnHtml(pr);
-      return rb ? `${fallback}<div class="mt-1">${rb}</div>` : fallback;
+      const fallback = AppView._consoleCheckNote(pr);
+      if (!fallback) return [];
+      return [{ ...fallback, key: 'checks', action: recheck }];
     }
-    const results = Array.isArray(pr.test_results) ? pr.test_results : [];
 
     if (state === 'pending') {
       // #447: stuck-'pending' checks now self-heal (the platform re-runs them
       // automatically once they've been running too long) and can be kicked
       // manually. #607: a FRESH run (under the ~10-min stale window) shows
-      // just the spinner + started-at line — offering "Re-run checks"
-      // seconds after a run began was the confusion in the issue report.
+      // just the spinner + started-at line — offering "Re-run checks" seconds
+      // after a run began was the confusion in the issue report.
       const stale = AppView._checksRunStale(pr.checks_checked_at);
-      const started = pr.checks_checked_at
-        ? `<div class="mt-0.5 opacity-80">Started ${escapeHtml(relTime(pr.checks_checked_at))}.</div>`
-        : '';
       // Name the STAGE the run is actually in. A checks run is two very
       // differently-sized halves — build the branch + clone the app's data,
       // then run the suite against the live preview — and one opaque message
@@ -8995,83 +9420,146 @@ const AppView = {
       // unrecognised / absent phase (legacy rows, a proposal checked before
       // this shipped) keeps the previous wording verbatim.
       const phase = AppView._checksPhaseCopy(pr.check_phase);
+      const rows = [{ t: 'line', parts: [`${phase.detail} Merge is blocked until all tests pass.`] }];
+      if (pr.checks_checked_at) rows.push({ t: 'line', parts: [`Started ${relTime(pr.checks_checked_at)}.`], weight: 'foot' });
       // …and WHY it started. "Started 4 minutes ago" answers a different
-      // question from "who asked for this": a run kicked off by the platform's
-      // own recovery sweeper reads as inexplicable churn without it, and a
-      // reviewer who just pressed Re-run has no confirmation that the run they
-      // are looking at is theirs. NULL / unrecognised renders nothing at all,
-      // so legacy rows are unchanged.
+      // question from "who asked for this": a run kicked off by the
+      // platform's own recovery sweeper reads as inexplicable churn without
+      // it, and a reviewer who just pressed Re-run has no confirmation that
+      // the run they are looking at is theirs. NULL / unrecognised renders
+      // nothing at all, so legacy rows are unchanged.
       const why = AppView._checksTriggerCopy(pr.check_trigger);
-      const trigger = why
-        ? `<div class="mt-0.5 opacity-80">${escapeHtml(why)}</div>`
-        : '';
-      return `
-        <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
-          <div class="font-medium"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${escapeHtml(phase.title)}</div>
-          <div class="mt-0.5 opacity-90">${escapeHtml(phase.detail)} Merge is blocked until all tests pass.</div>
-          ${started}
-          ${trigger}
-          ${stale ? '<div class="mt-1 opacity-80">If this has been running for a while, the platform re-runs the checks automatically — or re-run them now.</div>' : ''}
-          ${stale ? AppView._recheckBtnHtml(pr) : ''}
-        </div>`;
+      if (why) rows.push({ t: 'line', parts: [why], weight: 'foot' });
+      // What happens to THIS run if main moves first. Three rows used to
+      // describe the same proposal without any of them saying which acts
+      // first: the checks row said a run was going, the "Behind main" pill
+      // said a sync was coming, and neither said that the sync ends the run.
+      // It does: a sync moves the commit this run is judged against, so the
+      // run in flight is restarted on the synced commit. Say it here, on the
+      // row the reader is watching, rather than leaving it to be inferred
+      // from two other rows.
+      const behindNow = AppView._freshnessOf(pr).behindBy || 0;
+      if (behindNow > 0) {
+        rows.push({
+          t: 'line',
+          parts: [`Main has moved ${behindNow} commit${behindNow === 1 ? '' : 's'} ahead. This run is judged against the commit before that, so when the platform syncs this proposal the run starts again on the synced commit.`],
+          weight: 'foot',
+        });
+      }
+      if (stale) rows.push({ t: 'line', parts: ['If this has been running for a while, the platform re-runs the checks automatically, or re-run them now.'], weight: 'foot' });
+      // Live progress, when the run has reported any. `progress` is drawn as
+      // a bar by the ledger row; `sub` is the same fact as text under the
+      // label. Neither exists before the first frame, so a build-phase run
+      // reads exactly as it did.
+      const progress = AppView._checksProgressView(pr);
+      if (progress) {
+        const lines = [];
+        if (progress.build) lines.push({ t: 'line', parts: [progress.build.sentence], ...(progress.build.done ? { weight: 'foot' } : {}) });
+        if (progress.sentence) lines.push({ t: 'line', parts: [progress.sentence] });
+        if (progress.unit) lines.push({ t: 'line', parts: [progress.unit.sentence] });
+        rows.splice(1, 0, ...lines);
+      }
+      return [{
+        key: 'checks', tone: 'neutral', spinner: true,
+        heading: phase.title, rows, action: stale ? recheck : null,
+        progress: progress ? progress.bar : null,
+        sub: progress ? progress.sub : null,
+      }];
     }
+
     if (state === 'error') {
-      return `
-        <div class="mt-2 rounded border border-red-500/30 bg-red-500/5 px-2 py-1.5 text-red-500">
-          <div class="font-medium">⚠ Checks couldn't run.</div>
-          <div class="mt-0.5 opacity-90">The staging build or the test run itself broke, so the platform can't confirm the app works. Merge is blocked until checks pass.</div>
-          <div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the checks.</div>
-          ${AppView._recheckBtnHtml(pr)}
-        </div>`;
+      return [{
+        key: 'checks', tone: 'error', heading: "⚠ Checks couldn't run.",
+        rows: [
+          { t: 'line', parts: ["The staging build or the test run itself broke, so the platform can't confirm the app works. Merge is blocked until checks pass."] },
+          { t: 'line', parts: ['Pushing a fix rebuilds the preview and re-runs the checks.'], weight: 'foot' },
+        ],
+        action: recheck,
+      }];
     }
+
     if (state === 'skipped') {
       // #461: an explicit terminal "nothing to test" verdict — grey and
       // NON-blocking (the merge gate treats it like passing). The recorded
       // reason rides in check_error_detail; owners/admins can still force a
       // real run via the re-run button.
       const reason = pr.check_error_detail
-        ? escapeHtml(String(pr.check_error_detail).slice(0, 280))
+        ? String(pr.check_error_detail).slice(0, 280)
         : 'there was nothing to test';
-      return `
-        <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
-          <div class="font-medium">Checks skipped.</div>
-          <div class="mt-0.5 opacity-90">Automated checks were skipped — ${reason}. This does not block the merge.</div>
-          ${AppView._recheckBtnHtml(pr)}
-        </div>`;
+      return [{
+        key: 'checks', tone: 'neutral', heading: 'Checks skipped.',
+        rows: [{ t: 'line', parts: [`Automated checks were skipped: ${reason}. This does not block the merge.`] }],
+        action: recheck,
+      }];
     }
-    if (!results.length) return ''; // 'passing' with no detail to show — the green badge is enough.
+    return [];
+  },
 
-    // Every declared check now runs, so a suite is hundreds of rows rather
-    // than a dozen, and the rows are no longer equal in weight: a BLOCKING
-    // failure is why the merge is stuck, an ADVISORY failure is a check that
-    // has never been seen passing (it reports, it does not block), and a
-    // pass is context. Ordered by that weight, and the passes — the bulk —
-    // fold away so the card opens on what someone has to act on.
-    const rowHtml = (r) => {
-      const pass = r && r.status === 'pass';
-      const advisory = !pass && !!(r && r.advisory);
-      const icon = pass ? '✓' : '✗';
-      const iconCls = pass ? 'text-emerald-500' : (advisory ? 'text-zinc-500' : 'text-red-500');
-      const name = escapeHtml(String((r && r.name) || 'test'));
-      const path = (r && r.path) ? `<span class="opacity-60 font-mono">${escapeHtml(String(r.path))}</span>` : '';
-      const chip = advisory
-        ? ' <span class="rounded bg-zinc-500/10 px-1 text-[0.65rem] uppercase tracking-wide opacity-70">advisory</span>'
-        : '';
-      let detail = '';
-      if (!pass) {
-        const reason = (r && r.failureReason) ? escapeHtml(String(r.failureReason).slice(0, 500)) : 'failed';
-        const errs = Array.isArray(r && r.consoleErrors) ? r.consoleErrors : [];
-        const errItems = errs.map((e) => {
-          const msg = escapeHtml(String((e && e.message) || '').slice(0, 500));
-          const src = (e && e.source) ? escapeHtml(String(e.source).slice(0, 200)) : '';
-          const kind = (e && e.kind) ? escapeHtml(String(e.kind)) : 'console';
-          return `<li class="font-mono text-[0.7rem] break-all opacity-90"><span class="opacity-70">[${kind}]</span> ${msg}${src ? ` <span class="opacity-60">(${src})</span>` : ''}</li>`;
-        }).join('');
-        detail = `<div class="ml-4 opacity-90">${reason}</div>${errItems ? `<ul class="ml-6 list-disc space-y-0.5">${errItems}</ul>` : ''}`;
-      }
-      const rowCls = advisory ? ' class="opacity-70"' : '';
-      return `<li${rowCls}><span class="${iconCls} font-medium">${icon}</span> ${name} ${path}${chip}</li>${detail}`;
-    };
+  // The pass/fail VERDICT. Every declared check now runs, so a suite is
+  // hundreds of rows rather than a dozen, and the rows are no longer equal in
+  // weight: a BLOCKING failure is why the merge is stuck, an ADVISORY failure
+  // is a check that has never been seen passing (it reports, it does not
+  // block), and a pass is context. Ordered by that weight, and the passes —
+  // A flake rate worth printing. Below the floor a check reads as reliable
+  // and the chip would be noise on every row; the server has already
+  // withheld a rate for a check with too few observations to judge.
+  FLAKE_CHIP_FLOOR: 0.05,
+  _checkReason(r) {
+    const base = (r && r.failureReason) ? String(r.failureReason).slice(0, 500) : null;
+    const runs = r && Number(r.runs);
+    const fails = r && Number(r.fails);
+    if (!Number.isFinite(runs) || runs < 2 || !Number.isFinite(fails) || fails < 1) return base;
+    // A check that failed and then passed when asked again is not blocking
+    // this merge, and the row is green — but it is the single most useful
+    // thing on the page for whoever owns that check, so it says so rather
+    // than swallowing the failure to keep the panel tidy.
+    const lead = (r && r.passedOnRetry)
+      ? `Failed ${fails} of ${runs} runs on this build, then passed when re-run.`
+      : `Failed ${fails} of ${runs} runs on this build.`;
+    return base ? `${lead} ${base}` : lead;
+  },
+
+  _flakePercent(rate) {
+    const n = Number(rate);
+    if (!Number.isFinite(n) || n < AppView.FLAKE_CHIP_FLOOR) return null;
+    return Math.min(99, Math.round(n * 100));
+  },
+
+  // the bulk — fold away so the block opens on what someone has to act on.
+  _checksVerdictView(pr) {
+    if (!pr) return null;
+    const state = pr.check_state;
+    if (state !== 'passing' && state !== 'failing') return null;
+    const results = Array.isArray(pr.test_results) ? pr.test_results : [];
+    if (!results.length) return null; // 'passing' with no detail — the green badge is enough.
+
+    const row = (r, i) => ({
+      key: `${(r && r.name) || 'test'}:${i}`,
+      pass: !!(r && r.status === 'pass'),
+      advisory: !(r && r.status === 'pass') && !!(r && r.advisory),
+      name: String((r && r.name) || 'test'),
+      path: (r && r.path) ? String(r.path) : null,
+      // The share of this check's recorded runs that failed, as a percent,
+      // or null when it has never failed or has too little history to say.
+      // A check that gates a merge while failing one run in six is the one
+      // nobody could see before; the chip is the whole point of recording
+      // pass_count and fail_count.
+      flaky: AppView._flakePercent(r && r.flakeRate),
+      // A check dispatched several times in one run (its first appearance)
+      // that disagreed with itself is the loudest flake signal there is,
+      // and unlike the lifetime rate it needs no history to read. It leads
+      // the reason, because "it failed" and "it failed once out of three"
+      // call for different next moves.
+      reason: AppView._checkReason(r),
+      // A row that passed only after a retry keeps its reason line, which
+      // the verdict view otherwise drops for anything green.
+      keepReason: !!(r && r.passedOnRetry),
+      errors: (Array.isArray(r && r.consoleErrors) ? r.consoleErrors : []).map((e) => ({
+        kind: (e && e.kind) ? String(e.kind) : 'console',
+        message: String((e && e.message) || '').slice(0, 500),
+        source: (e && e.source) ? String(e.source).slice(0, 200) : null,
+      })),
+    });
 
     const blockingRows = results.filter((r) => r && r.status !== 'pass' && !r.advisory);
     const advisoryRows = results.filter((r) => r && r.status !== 'pass' && r.advisory);
@@ -9088,117 +9576,55 @@ const AppView = {
     const total = (rows) => rows.reduce((n, r) => n + weight(r), 0);
     const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
     const advisoryChecks = total(advisoryRows);
-    const summaryBits = [
-      plural(total(results), 'check', 'checks'),
-      `${passRows.length} passed`,
-    ];
+    const summaryBits = [plural(total(results), 'check', 'checks'), `${passRows.length} passed`];
     if (blockingRows.length) summaryBits.push(plural(total(blockingRows), 'blocking failure', 'blocking failures'));
     if (advisoryChecks) summaryBits.push(plural(advisoryChecks, 'advisory failure', 'advisory failures'));
-    const summary = `<div class="mt-0.5 opacity-80">${escapeHtml(summaryBits.join(' · '))}</div>`;
 
-    const failureList = blockingRows.concat(advisoryRows).map(rowHtml).join('');
-    // Under this many, folding costs a click and saves nothing.
-    const PASS_FOLD_AT = 8;
-    let passList = '';
-    if (passRows.length && passRows.length <= PASS_FOLD_AT) {
-      passList = `<ul class="mt-1 ml-1 space-y-0.5">${passRows.map(rowHtml).join('')}</ul>`;
-    } else if (passRows.length) {
-      passList = `
-        <details class="mt-1">
-          <summary class="cursor-pointer opacity-80">Show ${passRows.length} passing checks</summary>
-          <ul class="mt-1 ml-1 space-y-0.5">${passRows.map(rowHtml).join('')}</ul>
-        </details>`;
-    }
-
-    const wrapCls = failing
-      ? 'border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-500'
-      : 'border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-500';
     let heading;
-    if (failing) heading = '⚠ Some checks failed — merge is blocked until they pass.';
+    if (failing) heading = '⚠ Some checks failed. Merge is blocked until they pass.';
     else if (advisoryRows.length) heading = '✓ Every merge-blocking check passed on the staging build.';
     else heading = '✓ All checks passed on the staging build.';
-    const advisoryNote = (!failing && advisoryRows.length)
-      ? '<div class="mt-1 opacity-80">Advisory checks have never been observed passing on this app, so they report without blocking. Fix one and its first pass makes it a permanent guard rail.</div>'
-      : '';
-    const checked = pr.checks_checked_at
-      ? `<div class="mt-1 opacity-80">Last checked ${escapeHtml(relTime(pr.checks_checked_at))}.</div>`
-      : '';
-    return `
-      <div class="mt-2 rounded border px-2 py-1.5 ${wrapCls}">
-        <div class="font-medium">${heading}</div>
-        ${summary}
-        ${failureList ? `<ul class="mt-1 ml-1 space-y-0.5">${failureList}</ul>` : ''}
-        ${passList}
-        ${advisoryNote}
-        ${checked}
-        ${failing ? '<div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the checks — the block clears when they pass.</div>' : ''}
-        ${failing ? AppView._recheckBtnHtml(pr) : ''}
-      </div>`;
+
+    return {
+      failing,
+      heading,
+      summary: summaryBits.join(' · '),
+      failures: blockingRows.concat(advisoryRows).map(row),
+      passes: passRows.map(row),
+      // Under this many, folding costs a click and saves nothing.
+      foldPasses: passRows.length > AppView.PASS_FOLD_AT,
+      advisoryNote: (!failing && advisoryRows.length)
+        ? 'Advisory checks have never been observed passing on this app, so they report without blocking. Fix one and its first pass makes it a permanent guard rail.'
+        : null,
+      checkedNote: pr.checks_checked_at ? `Last checked ${relTime(pr.checks_checked_at)}.` : null,
+      // #1442 — WHICH main the verdict is a statement about. `stale` above
+      // answers the other axis (has the proposal's own head moved since);
+      // this one answers "green against what?", and green against a main
+      // that has since moved is how a proposal reads mergeable while it
+      // conflicts. Only rendered when it is actually superseded: 'current'
+      // is the ordinary case and needs no sentence.
+      baseNote: AppView._checksBaseNote(pr),
+      fixNote: failing
+        ? 'Pushing a fix rebuilds the preview and re-runs the checks. The block clears when they pass.'
+        : null,
+      action: failing ? AppView._recheckAction(pr) : null,
+    };
   },
 
-  // Platform-variables check row. Only ever renders for a proposal that
-  // touches the platform's own `platform_env` declarations — for every
-  // other proposal platform_env_state is 'skipped' or NULL and this is a
-  // no-op, which is why it can sit unconditionally in the checks card.
-  //
-  // 'passing' renders nothing when the proposal added no variables: a
-  // green line saying "adds no environment variables" on every PR would
-  // be noise. It DOES render when variables were added and are all set,
-  // because "the new variable is configured" is worth confirming before
-  // you vote to deploy it.
-  _platformEnvDetailHtml(pr) {
-    if (!pr) return '';
-    const state = pr.platform_env_state;
-    if (!state || state === 'skipped') return '';
-    const detail = pr.platform_env_detail || {};
-    const added = Array.isArray(detail.added) ? detail.added : [];
-    const missing = Array.isArray(detail.missing) ? detail.missing : [];
-
-    if (state === 'error') {
-      return `
-        <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
-          <div class="font-medium">Platform variables couldn't be checked.</div>
-          <div class="mt-0.5 opacity-90">This does not block the merge — the check is re-run when votes reach the threshold.</div>
-        </div>`;
-    }
-
-    if (state === 'failing') {
-      const items = missing.map((m) => {
-        const key = escapeHtml(String((m && m.key) || ''));
-        const desc = (m && m.description)
-          ? ` <span class="opacity-80">— ${escapeHtml(String(m.description).slice(0, 240))}</span>`
-          : '';
-        return `<li><code class="font-mono">${key}</code>${desc}</li>`;
-      }).join('');
-      // The panel that fixes this lives on THIS app (the card only ever
-      // renders for a self-app proposal), so open it in place rather than
-      // sending anyone off to a deep link. A full admin sets the value
-      // outright; everyone else opens a proposal from the same panel.
-      const fixLabel = App.user && App.user.canAdminWrite ? 'Set them now' : 'Propose a value';
-      return `
-        <div class="mt-2 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-amber-600 dark:text-amber-500">
-          <div class="font-medium">⚠ New platform variables have no value set — merge is blocked.</div>
-          <ul class="mt-1 ml-4 list-disc space-y-0.5">${items}</ul>
-          <div class="mt-1 opacity-90">Deploying without ${missing.length === 1 ? 'it' : 'them'} would restart the platform missing configuration it now expects.</div>
-          <div class="mt-1 opacity-80">No rebuild needed — set the value${missing.length === 1 ? '' : 's'} and vote again.</div>
-          <button type="button" class="mt-1.5 text-xs px-2 py-1 rounded border border-amber-500/50 hover:bg-amber-500/10 transition-colors" onclick="AppView.openPlatformVariables()">${fixLabel}</button>
-        </div>`;
-    }
-
-    if (!added.length) return '';
-    const list = added.map((k) => `<code class="font-mono">${escapeHtml(String(k))}</code>`).join(', ');
-    // Keys whose value THIS proposal carries (the panel's "+ New variable"
-    // flow) read differently from keys somebody set separately: the value
-    // is part of what a voter is approving, and it lands on merge.
-    const carried = Array.isArray(detail.pendingValues) ? detail.pendingValues : [];
-    const carriedList = carried.map((k) => `<code class="font-mono">${escapeHtml(String(k))}</code>`).join(', ');
-    return `
-      <div class="mt-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 text-emerald-600 dark:text-emerald-500">
-        <div class="font-medium">✓ New platform variables are configured.</div>
-        <div class="mt-0.5 opacity-90">This proposal adds ${list}, already set and ready for the deploy.</div>
-        ${carried.length ? `<div class="mt-0.5 opacity-90">${carriedList} ${carried.length === 1 ? 'carries its value' : 'carry their values'} with this proposal — applied when it merges.</div>` : ''}
-      </div>`;
+  // #1442 — one sentence for a verdict earned against a superseded base.
+  // Shared by the verdict view and the status notes so the two can never
+  // word it differently.
+  _checksBaseNote(pr) {
+    const fresh = AppView._freshnessOf(pr);
+    if (fresh.baseVerdict !== 'superseded') return null;
+    const n = fresh.baseBehindBy || 0;
+    return n
+      ? `These ran against main as it was ${n} commit${n === 1 ? '' : 's'} ago, so they describe code this proposal would no longer merge into. Syncing with main re-runs them against the current one.`
+      : 'These ran against a version of main that has since moved on, so they describe code this proposal would no longer merge into. Syncing with main re-runs them against the current one.';
   },
+
+  PASS_FOLD_AT: 8,
+
 
   // Open the Platform variables panel from the blocked-merge note above.
   // The note only ever renders on a self-app proposal, so "the current app"
@@ -9265,32 +9691,28 @@ const AppView = {
     return AppView.CHECKS_TRIGGER_COPY[trigger] || '';
   },
 
-  // #447: the "Re-run checks" action. Renders for the proposal's owner or an
-  // admin when the checks are stuck running, couldn't run, were never
-  // recorded, or are failing — never for a clean 'passing' run. Hitting it
-  // rebuilds the staging preview if it's gone and re-runs the test suite; the
-  // badge updates in place off the existing checks broadcasts.
-  _recheckBtnHtml(pr) {
-    if (!pr) return '';
-    if (AppView.readOnly) return '';
-    if (pr.check_state === 'passing') return '';
-    const owner = !!(App.user && pr.user_id === App.user.id);
-    // `recheckable` is a staging ?demo=1 hint (set only on mock rows) so the
-    // button is reviewable regardless of the demo viewer's owner/admin status;
-    // real proposals never carry it and stay owner/admin-only.
-    if (!owner && !App.user?.isAdmin && !pr.recheckable) return '';
-    // #607: a WS/poll-driven re-render mid-request must not resurrect an
-    // enabled button — keep it disabled while the request is in flight.
-    if (AppView._recheckInFlight.has(pr.id)) {
-      return `<button type="button" class="gc-vote-btn mt-1" disabled>Re-running…</button>`;
-    }
-    return `<button type="button" class="gc-vote-btn mt-1" title="Rebuild the staging preview if needed and re-run the automated tests" onclick="AppView.castRecheck(${pr.id}, this)">Re-run checks</button>`;
-  },
 
   // POST /api/sessions/:id/recheck (owner/admin). Fire-and-forget on the
   // server; progress arrives via the checks_ready / staging_ready broadcasts
   // that drive refreshDevData, so we just disable the button transiently.
   _recheckInFlight: new Set(),
+  _sessionChecksClose: null,
+  openSessionChecks(sessionId) {
+    if (AppView._sessionChecksClose) AppView._sessionChecksClose();
+    const react = AppView._reactDevBoard();
+    if (!react) return;
+    const host = document.createElement('div');
+    host.dataset.sessionChecksHost = '';
+    document.body.appendChild(host);
+    const close = () => {
+      react.unmount(host);
+      host.remove();
+      if (AppView._sessionChecksClose === close) AppView._sessionChecksClose = null;
+    };
+    AppView._sessionChecksClose = close;
+    react.mountSessionChecks(host, { sessionId, onClose: close });
+  },
+
   async castRecheck(sessionId, btn) {
     if (AppView._recheckInFlight.has(sessionId)) return;
     AppView._recheckInFlight.add(sessionId);
@@ -9317,6 +9739,7 @@ const AppView = {
       // the spinning "Checks running…" badge renders immediately (the WS
       // pending broadcast covers everyone else's screens).
       AppView.refreshDevData('recheck');
+      return true;
     } catch (err) {
       PlatformUI.toast(`Re-run failed: ${err.message}`);
       if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
@@ -9325,77 +9748,7 @@ const AppView = {
     }
   },
 
-  // #381: expanded console-error detail for the proposal detail screen.
-  // Lists the error messages the staging preview's headless browser
-  // captured, when it last ran, and the standing remediation (push a fix
-  // → rebuild → the check re-runs and clears the warning). Only renders for
-  // the 'errors' state; clean/unknown proposals show nothing (the absence
-  // of a badge is enough). Advisory — no vote/merge implications.
-  _consoleCheckDetailHtml(pr) {
-    if (!pr || pr.console_check_state !== 'errors') return '';
-    const errors = Array.isArray(pr.console_errors) ? pr.console_errors : [];
-    const items = errors.map((e) => {
-      const msg = escapeHtml(String((e && e.message) || '').slice(0, 500));
-      const src = (e && e.source) ? escapeHtml(String(e.source).slice(0, 200)) : '';
-      const kind = (e && e.kind) ? escapeHtml(String(e.kind)) : 'console';
-      return `<li class="font-mono text-[0.7rem] break-all"><span class="opacity-70">[${kind}]</span> ${msg}${src ? ` <span class="opacity-60">(${src})</span>` : ''}</li>`;
-    }).join('');
-    const list = items
-      ? `<ul class="mt-1 ml-3 list-disc space-y-0.5">${items}</ul>`
-      : '<div class="mt-1">Console errors were detected on the staging preview.</div>';
-    const checked = pr.console_checked_at
-      ? `<div class="mt-1 opacity-80">Last checked ${escapeHtml(relTime(pr.console_checked_at))}.</div>`
-      : '';
-    return `
-      <div class="mt-2 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-amber-600 dark:text-amber-500">
-        <div class="font-medium">⚠ This change may break the app.</div>
-        <div class="mt-0.5 opacity-90">The staging preview logged these console errors when it loaded:</div>
-        ${list}
-        ${checked}
-        <div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the check — the warning clears if the errors are gone.</div>
-      </div>`;
-  },
 
-  // #361: expanded merge-conflict detail for the proposal detail screen.
-  // Lists the conflicting file paths and when the snapshot was last
-  // checked, plus the standing guidance to run "Sync with main" from the
-  // session's dev-chat.
-  // #386: renders for the 'failed' state — an auto-resolve attempt actually
-  // ran and could not fix the conflict — and (since the silent-merge-failure
-  // fix) for 'conflict': a real merge attempt 405'd at GitHub. 'conflict'
-  // matters because the auto-resolver only picks up vote-eligible proposals,
-  // so a failed merge can otherwise sit with no visible record of the
-  // attempt and nothing telling anyone who has to act. While the resolver
-  // IS actively working the card shows "Resolving conflicts…" instead
-  // (the 'resolving' state outranks both in MergeStatus.lifecycle).
-  _mergeConflictDetailHtml(pr) {
-    const mcs = pr.merge_conflict_state;
-    if (mcs !== 'failed' && mcs !== 'conflict') return '';
-    if (pr.resolving) return '';
-    const files = Array.isArray(pr.conflict_files) ? pr.conflict_files : [];
-    const heading = mcs === 'failed'
-      ? 'Automatic conflict resolution failed.'
-      : 'A merge was attempted, but this proposal conflicts with main.';
-    const fileList = files.length
-      ? `<div class="mt-1">Conflicting files:</div>
-         <ul class="mt-0.5 ml-3 list-disc space-y-0.5">${files.map((f) =>
-           `<li class="font-mono text-[0.7rem] break-all">${escapeHtml(String(f))}</li>`).join('')}</ul>`
-      : '';
-    const checked = pr.conflict_checked_at
-      ? `<div class="mt-1 opacity-80">Last attempt ${escapeHtml(relTime(pr.conflict_checked_at))}.</div>`
-      : '';
-    const creator = pr.username ? `<span class="font-medium">${escapeHtml(pr.username)}</span>` : 'the proposal\u2019s creator';
-    const guidance = mcs === 'failed'
-      ? `${creator} needs to resolve it: run "Sync with main" from the session's dev-chat.`
-      : `Automatic resolution may not run for this proposal — ${creator} needs to finish the merge: open the session's dev-chat and run "Sync with main".`;
-    return `
-      <div class="mt-2 rounded border border-red-500/30 bg-red-500/5 px-2 py-1.5 text-red-500">
-        <div class="font-medium">${heading}</div>
-        ${fileList}
-        ${checked}
-        <div class="mt-1 opacity-80">${guidance}</div>
-      </div>`;
-  },
 
   // ── Governance "being applied" state (#1010) ─────────────────────────
   //
@@ -9460,8 +9813,8 @@ const AppView = {
       return {
         spinner: false, tone: 'amber', busy: false,
         label: st.kind === 'close_issue'
-          ? 'Close didn\'t complete — try voting again'
-          : 'Didn\'t complete — try voting again',
+          ? 'Close didn\'t complete. Try voting again'
+          : 'Didn\'t complete. Try voting again',
         title: st.error
           ? `The apply didn't finish: ${st.error}`
           : 'The apply didn\'t finish. Voting again re-drives it.',
@@ -9471,16 +9824,16 @@ const AppView = {
       return {
         spinner: false, tone: 'amber', busy: false,
         label: st.kind === 'close_issue'
-          ? 'Still closing — refresh to check'
-          : 'Still applying — refresh to check',
+          ? 'Still closing. Refresh to check'
+          : 'Still applying. Refresh to check',
         title: 'This is taking much longer than usual. The apply may still '
-          + 'be running on the server — refresh to see where it landed.',
+          + 'be running on the server. Refresh to see where it landed.',
       };
     }
     if (st.phase === 'slow') {
       return {
         spinner: true, tone: 'amber', busy: true,
-        label: `${label.replace(/…$/, '')} — still working, GitHub may be slow…`,
+        label: `${label.replace(/…$/, '')}, still working, GitHub may be slow…`,
         title: 'Still working. GitHub can be slow to accept the close; '
           + 'nothing is lost while this runs.',
       };
@@ -9488,8 +9841,8 @@ const AppView = {
     return {
       spinner: true, tone: 'amber', busy: true, label,
       title: issue.kind === 'close_issue'
-        ? 'The vote passed — the issue is being closed here and on GitHub.'
-        : 'The vote passed — this change is being applied.',
+        ? 'The vote passed. The issue is being closed here and on GitHub.'
+        : 'The vote passed. This change is being applied.',
     };
   },
 
@@ -9557,8 +9910,8 @@ const AppView = {
       return {
         spinner: false, tone: 'neutral', busy: false,
         label: issue.kind === 'close_issue'
-          ? 'Close pending — will retry automatically'
-          : 'Apply pending — will retry automatically',
+          ? 'Close pending, will retry automatically'
+          : 'Apply pending, will retry automatically',
         title: 'The vote passed, but the change hasn\'t gone through yet. '
           + 'The platform retries automatically.',
       };
@@ -9566,8 +9919,8 @@ const AppView = {
     return {
       spinner: true, tone: 'amber', busy: true, label,
       title: issue.kind === 'close_issue'
-        ? 'The vote passed — the issue is being closed here and on GitHub.'
-        : 'The vote passed — this change is being applied.',
+        ? 'The vote passed. The issue is being closed here and on GitHub.'
+        : 'The vote passed. This change is being applied.',
     };
   },
 
@@ -9578,15 +9931,17 @@ const AppView = {
 
   // Same slot + treatment as the proposal card's "Merging…" badge, so an
   // applying governance row reads identically to an in-flight merge.
-  _govApplyBadgeHtml(state) {
-    if (!state || !state.label) return '';
-    const cls = state.tone === 'neutral'
-      ? 'gc-merging-badge gc-checks-running-badge' : 'gc-merging-badge';
-    const spin = state.spinner
-      ? '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>'
-      : '';
-    const title = state.title ? ` title="${escapeAttr(state.title)}"` : '';
-    return `<span class="${cls}"${title}>${spin}${escapeHtml(state.label)}</span>`;
+  _govApplyBadgeSpec(state) {
+    if (!state || !state.label) return null;
+    return {
+      t: 'chip',
+      key: 'govApply',
+      cls: state.tone === 'neutral'
+        ? 'gc-merging-badge gc-checks-running-badge' : 'gc-merging-badge',
+      label: state.label,
+      title: state.title || undefined,
+      spinner: !!state.spinner,
+    };
   },
 
   // Mark a proposal as locally applying and paint it immediately. Timers
@@ -9668,10 +10023,10 @@ const AppView = {
     return true;
   },
 
-  // One governance card (env-var change, or a legacy rename row still
-  // open from before renames moved to dapp.json PRs). Up/down controls
-  // post to the existing /api/issues/:id/vote.
-  _renderGovCard(issue, opts) {
+  // One governance card (env-var change, or a legacy rename row still open
+  // from before renames moved to dapp.json PRs) as a MODEL. Up/down
+  // controls post to the existing /api/issues/:id/vote.
+  _govCardModel(issue, opts) {
     const noNav = !!(opts && opts.noNav);
     const ctx = AppView._proposalsCtx || {};
     const majority = ctx.majority || 1;
@@ -9689,13 +10044,15 @@ const AppView = {
     // admin/withdraw controls, no countdown; the pill is a snapshot.
     const settled = !!issue.status && issue.status !== 'open';
     const applied = !!(issue.payload && issue.payload.appliedAt);
-    const metaParts = ['Governance proposal'];
-    if (issue.created_by_username) metaParts.push(escapeHtml(issue.created_by_username));
-    if (issue.created_at) metaParts.push(escapeHtml(relTime(issue.created_at)));
+    const meta = [{ t: 'text', s: 'Governance proposal' }];
+    if (issue.created_by_username) meta.push({ t: 'text', s: issue.created_by_username });
+    const issueAge = issue.created_at ? AppView._agePart(issue.created_at) : null;
+    if (issueAge) meta.push(issueAge);
     if (settled && applied) {
       const how = String(issue.payload.appliedBy || '').startsWith('admin:')
         ? 'closed by admin' : 'closed by vote';
-      metaParts.push(escapeHtml(`${how} ${relTime(issue.payload.appliedAt)}`));
+      const settledAge = AppView._agePart(issue.payload.appliedAt, `${how} `);
+      meta.push(settledAge || { t: 'text', s: how });
     }
     // The governance row is shaped into the same fields statusPillState
     // reads, so a rename / secret-change / close-issue proposal gets the
@@ -9727,7 +10084,8 @@ const AppView = {
         approval_policy: issue.approval_policy,
         approvals_required: issue.approvals_required,
       };
-    const statusPill = AppView.statusPillHtml(pillRow, { majority, kind: 'gov', inline: noNav });
+    const pillState = AppView.statusPillState(pillRow, { majority, kind: 'gov' });
+    const pill = pillState && pillState.label ? { state: pillState, inline: noNav } : null;
 
     // #621: read-only viewers see the pill only — no vote / admin /
     // withdraw controls. Settled rows show none for anyone.
@@ -9739,14 +10097,25 @@ const AppView = {
     // the server's toggle-off branch and silently retract the vote.
     const applyState = settled ? null : AppView._govApplyState(issue);
     const busy = !!(applyState && applyState.busy);
-    const applyBadge = AppView._govApplyBadgeHtml(applyState);
-    const busyAttr = busy
-      ? ` disabled title="${escapeAttr(applyState.label)}"` : '';
     const upT = AppView._voteBtnTally(issue.qualified_yes_count, upCount, issue.approval_policy, 'Yes');
     const downT = AppView._voteBtnTally(issue.qualified_no_count, downCount, issue.approval_policy, 'No');
-    const primary = ro ? [] : [
-      `<button class="gc-vote-btn gc-vote-btn-yes${issue.my_vote === 'up' ? ' gc-vote-active' : ''}"${busy ? busyAttr : upT.title} onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upT.label})</button>`,
-      `<button class="gc-vote-btn gc-vote-btn-no${issue.my_vote === 'down' ? ' gc-vote-active' : ''}"${busy ? busyAttr : downT.title} onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downT.label})</button>`,
+    const actions = ro ? [] : [
+      {
+        key: 'yes',
+        cls: `gc-vote-btn gc-vote-btn-yes${issue.my_vote === 'up' ? ' gc-vote-active' : ''}`,
+        label: `Yes (${upT.label})`,
+        title: busy ? applyState.label : upT.tip,
+        disabled: busy,
+        act: { fn: 'castIssueVote', args: [issue.id, 'up'] },
+      },
+      {
+        key: 'no',
+        cls: `gc-vote-btn gc-vote-btn-no${issue.my_vote === 'down' ? ' gc-vote-active' : ''}`,
+        label: `No (${downT.label})`,
+        title: busy ? applyState.label : downT.tip,
+        disabled: busy,
+        act: { fn: 'castIssueVote', args: [issue.id, 'down'] },
+      },
     ];
 
     // Admin merge, View campaign and Withdraw are the demoted three.
@@ -9785,48 +10154,99 @@ const AppView = {
         act: () => AppView.withdrawGovProposal(issue.id),
       });
     }
-    const actions = AppView._cardActionsHtml({ primary });
 
-    const govChatN = parseInt(issue.chat_count) || 0;
     // Chat-reference highlighting hook: twins carry github_issue_number;
     // close-issue proposals have no twin, so their TARGET number stands in.
     const refIssueN = issue.github_issue_number
       || (isCloseIssue && issue.payload ? issue.payload.issueNumber : null);
-
-    return `
-      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${busy ? ' opacity-70' : ''}" data-gov-row="${issue.id}"${refIssueN ? ` data-ref-issue="${refIssueN}"` : ''}${noNav ? '' : ' title="Open this proposal\'s discussion"'}>
-        ${AppView._cardContentHtml({
-          icon: AppView._devCardIcon('gov'),
-          titleHtml: escapeHtml(titleText),
-          titleAttrs: ` title="${escapeAttr(titleText)}"`,
-          metaHtml: metaParts.join(' · '),
-          badges: [applyBadge],
-          chatCount: govChatN,
-          uncapped: noNav,
-          pill: noNav ? '' : statusPill,
-          inlinePill: noNav ? statusPill : '',
-          actions,
-          dense: !noNav,
-        })}
-        ${AppView._cardRailHtml(`gov:${issue.id}`, menu, { chevron: !noNav })}
-      </div>`;
+    const attrs = { 'data-gov-row': String(issue.id) };
+    if (refIssueN) attrs['data-ref-issue'] = String(refIssueN);
+    if (!noNav) attrs.title = "Open this proposal's discussion";
+    return {
+      key: `gov:${issue.id}`,
+      cls: `gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${busy ? ' opacity-70' : ''}`,
+      attrs,
+      icon: AppView._devCardIcon('gov'),
+      title: { text: titleText, title: titleText },
+      meta,
+      pill,
+      linked: [],
+      badges: [AppView._govApplyBadgeSpec(applyState)].filter(Boolean),
+      chatCount: parseInt(issue.chat_count) || 0,
+      actions,
+      actionPreview: null,
+      rail: { menuKey: AppView._registerCardMenu(`gov:${issue.id}`, menu), chevron: !noNav },
+      extra: [],
+      dense: !noNav,
+      uncapped: noNav,
+    };
   },
 
   // Who voted yes/no on a PR proposal (GET /api/sessions/:id/votes),
   // painted into the expanded card.
+  //
+  // The roster used to be a `#dev-vote-roster-N` node this wrote into. The
+  // head renders it from the model now, so this caches the answer and
+  // repaints — which also means a WS-driven repaint mid-flight can no
+  // longer blank a roster that had already loaded.
+  //
+  // ── The repaint must not re-enter the fetch ──────────────────────────
+  //
+  // `_renderTopicHead` calls this on every paint (it always did), and
+  // publishing now REPAINTS. Without the in-flight guard below that closes
+  // a loop: fetch → publish → paint → fetch → …, which pegged a CPU core
+  // the moment a proposal topic opened. The guard makes the load run once
+  // per topic; `castVote` clears the entry when the tally actually changes.
+  _voteRoster: Object.create(null),
+  _voteRosterInFlight: new Set(),
+  // Rosters that need re-reading but are still worth showing meanwhile.
+  //
+  // Invalidating used to mean DELETING the cached view, so the next paint
+  // rendered `{ phase: 'loading' }` — "Loading votes…" — and the real roster
+  // came back a fetch later. Two paints, the first one blank. That is the
+  // flicker, and the reason it kept happening after the refresh kinds were
+  // narrowed is that `vote_update` is broadcast for about two dozen things
+  // that are not a vote: a rename, a title heal, a sync, a conflict
+  // resolution, a merge, fleet maintenance. Every one of them dropped the
+  // roster out from under a reader.
+  //
+  // So an invalidation now marks the entry stale and leaves it on screen.
+  // The re-read happens underneath and swaps the value in when it lands;
+  // "Loading votes…" is reserved for a roster that has genuinely never been
+  // loaded. A stale roster is at worst a few hundred milliseconds behind,
+  // which is strictly better than a blank one.
+  _voteRosterStale: new Set(),
+
+  _invalidateVoteRoster(sessionId) {
+    if (sessionId == null) return;
+    const id = Number(sessionId);
+    if (AppView._voteRoster[sessionId]) AppView._voteRosterStale.add(id);
+    else delete AppView._voteRoster[sessionId];
+  },
+
   async _loadVoteRoster(sessionId) {
-    const el = document.getElementById(`dev-vote-roster-${sessionId}`);
-    if (!el) return;
+    if (AppView._voteRosterInFlight.has(sessionId)) return;
+    const stale = AppView._voteRosterStale.has(Number(sessionId));
+    if (AppView._voteRoster[sessionId] && !stale) return;
+    AppView._voteRosterStale.delete(Number(sessionId));
+    AppView._voteRosterInFlight.add(sessionId);
+    const publish = (view) => {
+      AppView._voteRosterInFlight.delete(sessionId);
+      AppView._voteRoster[sessionId] = view;
+      AppView._renderTopicHead();
+    };
     try {
       const res = await fetch(`/api/sessions/${sessionId}/votes`);
-      if (!res.ok) { el.textContent = ''; return; }
+      if (!res.ok) { publish({ phase: 'hidden' }); return; }
       const data = await res.json();
       const ctx = AppView._proposalsCtx || {};
       // #646: on invited-approver apps the endpoint lists which voters'
       // votes QUALIFY — tag those names so advisory votes are legible.
       const approverSet = new Set(data.approvers || []);
+      // A non-breaking space, not `&nbsp;` — the head renders this as a
+      // text child, so the entity would show up literally.
       const fmt = (arr) => (arr && arr.length
-        ? arr.map((u) => '@' + u + (approverSet.has(u) ? '&nbsp;✓' : '')).join(', ')
+        ? arr.map((u) => '@' + u + (approverSet.has(u) ? '\u00a0✓' : '')).join(', ')
         : '—');
       // #695: on invited apps the headline count splits into approver
       // votes (✓, the ones that count) + the advisory surplus; under the
@@ -9844,12 +10264,14 @@ const AppView = {
         : (data.approvers
           ? ` · only invited approvers' (✓) votes count`
           : ` · needs ${ctx.majority || 1} of ${ctx.activeUsers || 1} active users`);
-      el.innerHTML =
-        `<span class="text-emerald-500 font-medium">Yes ${rosterCount(data.yes)}:</span> ${fmt((data.yes || []).map((u) => escapeHtml(u)))}`
-        + ` &nbsp;<span class="text-red-400 font-medium">No ${rosterCount(data.no)}:</span> ${fmt((data.no || []).map((u) => escapeHtml(u)))}`
-        + `<span class="text-zinc-500">${escapeHtml(needs)}</span>`;
+      publish({
+        phase: 'ready',
+        yes: { label: `Yes ${rosterCount(data.yes)}`, names: fmt(data.yes) },
+        no: { label: `No ${rosterCount(data.no)}`, names: fmt(data.no) },
+        needs,
+      });
     } catch {
-      el.textContent = '';
+      publish({ phase: 'hidden' });
     }
   },
 
@@ -9874,7 +10296,7 @@ const AppView = {
     const oldText = btn ? btn.textContent : '';
     if (btn) {
       btn.disabled = true;
-      btn.textContent = 'Putting up for vote…';
+      btn.textContent = 'Sharing with the group…';
     }
     try {
       const resp = await fetch(`/api/sessions/${sessionId}/promote`, { method: 'POST' });
@@ -9932,7 +10354,7 @@ const AppView = {
       return;
     }
     await AppView._loadDevFeed();
-    // _loadDevFeed's repaint no-ops in the opened-topic view (#dev-feed is
+    // _loadDevFeed's repaint no-ops in the opened-topic view (#dev-body is
     // absent), so the withdrawn proposal card would stay stale there. Repaint
     // the topic head from the freshly-refetched data.
     if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
@@ -9969,7 +10391,7 @@ const AppView = {
     }
     await AppView._loadDevFeed();
     // Same as withdrawProposal: refresh the opened-topic card too, since
-    // _loadDevFeed's feed repaint no-ops when #dev-feed isn't mounted.
+    // _loadDevFeed's repaint no-ops when #dev-body isn't mounted.
     if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
         && document.getElementById('gc-thread-head')) {
       AppView._renderTopicHead();
@@ -10022,15 +10444,10 @@ const AppView = {
     }
   },
 
-  // Small "💬 N" thread-message badge shared by issue rows and proposal
-  // cards. Always rendered (even at 0) so live bumps have a target, but
-  // visually hidden until the thread has at least one human message —
-  // a sea of gray "💬 0" pills was pure noise.
-  _devChatBadge(count) {
-    const n = parseInt(count) || 0;
-    // .dev-badge owns the geometry; the utility classes only supply the tint.
-    return `<span class="dev-chat-badge dev-badge ${n ? 'bg-violet-500/10 text-violet-400' : 'hidden bg-zinc-500/10 text-zinc-500'}" data-count="${n}" title="Messages in this thread">&#128172; ${n}</span>`;
-  },
+  // The "💬 N" thread badge is card/dev-card.tsx's (`Badge`, the `chat`
+  // variant) — always rendered, even at 0, so `bumpThreadBadge` has a
+  // target, but wearing `hidden` until the thread has a human message. The
+  // model carries only the count; `_devChatBadge` built the string.
 
   // ── Community-voted priority + assigned-person chips ─────────────────
   // Two chips per issue / proposal card: the top-voted priority and the
@@ -10048,9 +10465,9 @@ const AppView = {
   // hover the linked-issue pills use, never a brightness filter.
   _priorityMeta(value) {
     switch (value) {
-      case 'high': return { label: 'High', cls: 'bg-red-500/10 text-red-500', hover: 'hover:bg-red-500/20' };
-      case 'medium': return { label: 'Medium', cls: 'bg-amber-500/10 text-amber-500', hover: 'hover:bg-amber-500/20' };
-      case 'low': return { label: 'Low', cls: 'bg-sky-500/10 text-sky-500', hover: 'hover:bg-sky-500/20' };
+      case 'high': return { label: 'High', cls: 'bg-red-500/10 text-red-700 dark:text-red-400', hover: 'hover:bg-red-500/20' };
+      case 'medium': return { label: 'Medium', cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-300', hover: 'hover:bg-amber-500/20' };
+      case 'low': return { label: 'Low', cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400', hover: 'hover:bg-sky-500/20' };
       default: return null;
     }
   },
@@ -10078,13 +10495,23 @@ const AppView = {
   // the six built-ins don't use so a custom chip never reads as a built-in
   // one. Picked by a stable string hash (see _categoryTint) so a given
   // category is always the same colour across the board, list and filter.
+  //
+  // The fifth was `indigo` until the widget-language reskin, and the swap to
+  // `purple` is that reskin finishing its own job rather than a taste change.
+  // Indigo was picked when `violet-*` really was violet: purple sat right
+  // beside the accent and indigo was the nearest free hue. `violet-*` is the
+  // BLUE accent now (see tailwind.config.js), which frees the purple end of
+  // the spectrum and leaves indigo stranded between two families that ARE in
+  // use — the accent and `sky` (Improvement). It also removes the last
+  // stock-`indigo-` class in the tree, so the one-palette rule can be
+  // enforced across every source file instead of two directories.
   CATEGORY_CUSTOM_TINTS: [
     { cls: 'bg-teal-500/10 text-teal-500', hover: 'hover:bg-teal-500/20' },
-    { cls: 'bg-cyan-500/10 text-cyan-500', hover: 'hover:bg-cyan-500/20' },
+    { cls: 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-400', hover: 'hover:bg-cyan-500/20' },
     { cls: 'bg-fuchsia-500/10 text-fuchsia-500', hover: 'hover:bg-fuchsia-500/20' },
     { cls: 'bg-lime-500/10 text-lime-600', hover: 'hover:bg-lime-500/20' },
-    { cls: 'bg-indigo-500/10 text-indigo-400', hover: 'hover:bg-indigo-500/20' },
-    { cls: 'bg-orange-500/10 text-orange-500', hover: 'hover:bg-orange-500/20' },
+    { cls: 'bg-purple-500/10 text-purple-400', hover: 'hover:bg-purple-500/20' },
+    { cls: 'bg-orange-500/10 text-orange-700 dark:text-orange-400', hover: 'hover:bg-orange-500/20' },
   ],
 
   // Deterministic tint for a custom category slug — the same small string
@@ -10111,12 +10538,12 @@ const AppView = {
   // USER INPUT for custom categories — every caller must escapeHtml it.
   _categoryMeta(value) {
     switch (value) {
-      case 'feature': return { label: 'Feature', cls: 'bg-emerald-500/10 text-emerald-500', hover: 'hover:bg-emerald-500/20' };
-      case 'bug': return { label: 'Bug', cls: 'bg-red-500/10 text-red-500', hover: 'hover:bg-red-500/20' };
-      case 'improvement': return { label: 'Improvement', cls: 'bg-sky-500/10 text-sky-500', hover: 'hover:bg-sky-500/20' };
-      case 'design': return { label: 'Design', cls: 'bg-violet-500/10 text-violet-400', hover: 'hover:bg-violet-500/20' };
-      case 'docs': return { label: 'Docs', cls: 'bg-amber-500/10 text-amber-500', hover: 'hover:bg-amber-500/20' };
-      case 'chore': return { label: 'Chore', cls: 'bg-zinc-500/10 text-zinc-500', hover: 'hover:bg-zinc-500/20' };
+      case 'feature': return { label: 'Feature', cls: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', hover: 'hover:bg-emerald-500/20' };
+      case 'bug': return { label: 'Bug', cls: 'bg-red-500/10 text-red-700 dark:text-red-400', hover: 'hover:bg-red-500/20' };
+      case 'improvement': return { label: 'Improvement', cls: 'bg-sky-500/10 text-sky-700 dark:text-sky-400', hover: 'hover:bg-sky-500/20' };
+      case 'design': return { label: 'Design', cls: 'bg-violet-500/10 text-violet-700 dark:text-violet-400', hover: 'hover:bg-violet-500/20' };
+      case 'docs': return { label: 'Docs', cls: 'bg-amber-500/10 text-amber-800 dark:text-amber-300', hover: 'hover:bg-amber-500/20' };
+      case 'chore': return { label: 'Chore', cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', hover: 'hover:bg-zinc-500/20' };
       default: break;
     }
     if (!value) return null;
@@ -10159,10 +10586,10 @@ const AppView = {
   // for the assignee initial-avatar, drawn from the same colour family the
   // card badges use so the circles sit consistently in light + dark themes.
   ASSIGNEE_AVATAR_TINTS: [
-    'bg-violet-500/20 text-violet-600 dark:text-violet-300',
-    'bg-emerald-500/20 text-emerald-600 dark:text-emerald-300',
-    'bg-sky-500/20 text-sky-600 dark:text-sky-300',
-    'bg-amber-500/20 text-amber-600 dark:text-amber-300',
+    'bg-violet-500/20 text-violet-700 dark:text-violet-300',
+    'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300',
+    'bg-sky-500/20 text-sky-700 dark:text-sky-300',
+    'bg-amber-500/20 text-amber-800 dark:text-amber-300',
     'bg-rose-500/20 text-rose-600 dark:text-rose-300',
   ],
 
@@ -10179,31 +10606,24 @@ const AppView = {
     return tints[Math.abs(h) % tints.length];
   },
 
-  // The assignee's initial-avatar: a tiny tinted circle carrying the
-  // uppercased first letter of the username. Mirrors the leaderboard's
-  // initial-in-a-circle at chip scale (no photo avatars anywhere in the app).
-  // Falls back to '?' for an empty/space-leading value.
-  _assigneeAvatarHtml(username) {
-    const s = String(username || '');
-    const initial = (s.trim().charAt(0) || '?').toUpperCase();
-    const tint = AppView._assigneeTint(s);
-    return `<span class="attr-avatar ${tint}">${escapeHtml(initial)}</span>`;
-  },
+  // The assignee's initial-avatar — a tiny tinted circle carrying the
+  // uppercased first letter of the username, mirroring the leaderboard's
+  // initial-in-a-circle at chip scale (no photo avatars anywhere in the app)
+  // — and the muted dashed placeholder for an unassigned task, are
+  // card/dev-card.tsx's `attr` badge now. `_assigneeAvatarHtml` and
+  // `_assigneeAvatarPlaceholderHtml` built them as strings and had no caller
+  // left once `_attrChipSpec` started resolving the tint and the initial
+  // itself; the '?' fallback for a blank or space-leading name moved with
+  // them. `_assigneeTint` above stays — it is the derivation, and the spec
+  // reads it.
 
-  // The muted placeholder avatar for an unassigned task — a dashed grey
-  // outline circle with no letter.
-  _assigneeAvatarPlaceholderHtml() {
-    return '<span class="attr-avatar attr-avatar-empty"></span>';
-  },
-
-  // One chip. `summary` is { top, count, myValue } as the feed routes
-  // attach it. Both the interactive <button> and the explicitly read-only
-  // <span> reuse the SAME geometry class every other chip in the badge row
-  // uses (.dev-badge — one height, one padding, one radius), with the
-  // utility classes supplying only the tint, so a row of them sits on a
-  // single baseline. The button-only `.attr-chip` reset strips UA chrome so
-  // the button matches the span exactly.
-  _attrChipHtml(field, targetType, targetRef, summary, readonly) {
+  // One chip's SPEC. `summary` is { top, count, myValue } as the feed routes
+  // attach it. Both the interactive button and the read-only span render in
+  // card/dev-card.tsx from the same geometry class every other chip in the
+  // badge row uses (.dev-badge), with the utility classes here supplying
+  // only the tint. A custom category's label is RAW USER INPUT — React
+  // escapes text children, which is what the old escapeHtml call did.
+  _attrChipSpec(field, targetType, targetRef, summary, readonly) {
     const s = summary || { top: null, count: 0, myValue: null };
     const count = parseInt(s.count) || 0;
     let label;
@@ -10211,34 +10631,32 @@ const AppView = {
     let hover;
     if (field === 'priority') {
       const meta = AppView._priorityMeta(s.top);
-      if (meta) { label = `&#9873; ${meta.label}`; cls = meta.cls; hover = meta.hover; }
-      else { label = '&#9873; Set priority'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+      if (meta) { label = { kind: 'glyph', glyph: '⚑', text: meta.label }; cls = meta.cls; hover = meta.hover; }
+      else { label = { kind: 'glyph', glyph: '⚑', text: 'Set priority' }; cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'; hover = 'hover:bg-zinc-500/20'; }
     } else if (field === 'category') {
-      // #504: lead with a small colour swatch (the same attr-dot used in the
-      // popover) so the category reads at a glance, then the label.
-      // #780: escapeHtml the label — for a custom category it is user input.
+      // #504: lead with the small colour swatch (the same attr-dot used in
+      // the popover) so the category reads at a glance, then the label.
       const meta = AppView._categoryMeta(s.top);
-      if (meta) { label = `<span class="attr-dot ${meta.cls}"></span>${escapeHtml(meta.label)}`; cls = meta.cls; hover = meta.hover; }
-      else { label = '<span class="attr-dot bg-zinc-500/10 text-zinc-500"></span>Set category'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+      if (meta) { label = { kind: 'dot', cls: meta.cls, text: meta.label }; cls = meta.cls; hover = meta.hover; }
+      else { label = { kind: 'dot', cls: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400', text: 'Set category' }; cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400'; hover = 'hover:bg-zinc-500/20'; }
+    } else if (s.top) {
+      // #489: the assignee leads with a coloured initial-avatar (an at-a-
+      // glance "who owns this"); the empty state reads as an explicit
+      // "Unassigned" rather than only a CTA.
+      const name = String(s.top);
+      label = {
+        kind: 'avatar',
+        tint: AppView._assigneeTint(name),
+        initial: (name.trim().charAt(0) || '?').toUpperCase(),
+        text: `@${name}`,
+      };
+      cls = 'bg-violet-500/10 text-violet-700 dark:text-violet-400';
+      hover = 'hover:bg-violet-500/20';
     } else {
-      // #489: the assignee now leads with a coloured initial-avatar (an at-a-
-      // glance "who owns this") instead of the generic person emoji, and the
-      // empty state reads as an explicit "Unassigned" rather than only a CTA.
-      if (s.top) {
-        label = `${AppView._assigneeAvatarHtml(s.top)}<span class="dev-badge-name">@${escapeHtml(s.top)}</span>`;
-        cls = 'bg-violet-500/10 text-violet-400';
-        hover = 'hover:bg-violet-500/20';
-      } else {
-        label = `${AppView._assigneeAvatarPlaceholderHtml()}<span class="dev-badge-name">Unassigned</span>`;
-        cls = 'bg-zinc-500/10 text-zinc-500';
-        hover = 'hover:bg-zinc-500/20';
-      }
+      label = { kind: 'avatarEmpty', text: 'Unassigned' };
+      cls = 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400';
+      hover = 'hover:bg-zinc-500/20';
     }
-    // Faint trailing count, matching how the ★ bounty pill shows its number.
-    // No leading space: .dev-badge's flex gap owns the spacing now, and a
-    // literal space on top of it read as a gap-and-a-half.
-    const countHtml = count > 1 ? `<span class="opacity-60">&middot;${count}</span>` : '';
-    const base = 'attr-chip dev-badge';
     let title;
     if (field === 'priority') {
       title = 'Vote on this card\'s priority';
@@ -10247,10 +10665,10 @@ const AppView = {
     } else {
       title = s.top ? 'Suggest or vote on who should take this' : 'Assign someone to this task';
     }
-    if (readonly) {
-      return `<span class="${base} ${cls}">${label}${countHtml}</span>`;
-    }
-    return `<button type="button" class="${base} ${cls} ${hover}" data-attr-chip data-attr-field="${field}" data-attr-target-type="${targetType}" data-attr-target-ref="${targetRef}" title="${escapeAttr(title)}">${label}${countHtml}</button>`;
+    return {
+      t: 'attr', key: `attr:${field}`, field, targetType, targetRef,
+      cls, hover, title, count, readonly: !!readonly, label,
+    };
   },
 
   // All three chips for a card, in the badge row. opts.readonly drops the
@@ -10267,7 +10685,7 @@ const AppView = {
   //
   // Returns an ARRAY when opts.asArray is set, so _cardBadgesHtml can apply
   // the badge budget across chips and the status pill together.
-  _attrChipsHtml(targetType, targetRef, item, opts) {
+  _attrChipSpecs(targetType, targetRef, item, opts) {
     const readonly = !!(opts && opts.readonly) || AppView.readOnly;
     const omitUnset = !!(opts && opts.omitUnset);
     const it = item || {};
@@ -10281,9 +10699,9 @@ const AppView = {
     const out = [];
     for (const [field, summary] of fields) {
       if (omitUnset && !(summary && summary.top)) continue;
-      out.push(AppView._attrChipHtml(field, targetType, targetRef, summary, readonly));
+      out.push(AppView._attrChipSpec(field, targetType, targetRef, summary, readonly));
     }
-    return (opts && opts.asArray) ? out : out.join('');
+    return out;
   },
 
   // The ⋯ descriptors that replace the unset attribute chips: the three
@@ -10338,9 +10756,9 @@ const AppView = {
       `[data-attr-chip][data-attr-field="${field}"][data-attr-target-type="${targetType}"][data-attr-target-ref="${targetRef}"]`
     );
     if (chip) return chip;
-    const card = document.querySelector(
-      targetType === 'issue' ? `[data-ref-issue="${targetRef}"]` : `[data-proposal-row="${targetRef}"]`
-    );
+    const card = document.querySelector(targetType === 'issue'
+      ? `[data-ref-issue="${targetRef}"]`
+      : `[data-proposal-row="${targetRef}"], [data-shared-session-row="${targetRef}"]`);
     if (!card) return null;
     return {
       dataset: { attrField: field, attrTargetType: targetType, attrTargetRef: String(targetRef) },
@@ -10440,8 +10858,15 @@ const AppView = {
     const pop = document.createElement('div');
     pop.id = 'attr-popover';
     pop.className = 'attr-popover';
-    pop.innerHTML = '<div class="px-3 py-2 text-xs text-zinc-500 dark:text-zinc-400">Loading…</div>';
     document.body.appendChild(pop);
+    // The HOST stays ours — created here, placed under the chip below,
+    // removed on close — and its CHILDREN are
+    // features/dev-board/attr-popover.tsx's, mounted once per open. A new
+    // element each time means a new portal entry; the previous open's entry is
+    // swept by `pruneDetachedLegacyPortals` (lib/legacy-portals.tsx), because
+    // `_closeAttrPopover` removes the node.
+    AppView._reactDevBoard()?.mountAttrPopover(pop);
+    AppView._publishAttrPopover({ phase: 'loading', field, groups: [], emptyNote: null, add: null, suggestions: [] });
     AppView._attrPopover = { field, targetType, targetRef, slug };
 
     // Position under the chip, clamped to the viewport.
@@ -10464,9 +10889,14 @@ const AppView = {
         AppView._positionAttrPopover(pop, chip);
       }
     } catch {
-      const live = document.getElementById('attr-popover');
-      if (live) live.innerHTML = '<div class="px-3 py-2 text-xs text-red-500">Couldn\'t load options.</div>';
+      if (document.getElementById('attr-popover')) {
+        AppView._publishAttrPopover({ phase: 'error', field, groups: [], emptyNote: null, add: null, suggestions: [] });
+      }
     }
+  },
+
+  _publishAttrPopover(patch) {
+    AppView._reactDevBoard()?.publishAttrPopover(patch);
   },
 
   // Place the popover just under `chip`, clamped to the viewport. Shared
@@ -10505,162 +10935,147 @@ const AppView = {
     pop.style.top = `${top}px`;
   },
 
-  // Render the popover contents from a { field, options, myValue } payload
-  // and wire its controls. Re-run after each vote so counts/checks update
-  // in place without closing the dropdown.
+  // Build the popover's view model from a { field, options, myValue } payload
+  // and hand it to features/dev-board/attr-popover.tsx. Re-run after each vote
+  // so counts and checks update in place without closing the dropdown.
+  //
+  // This was `_renderAttrPopoverBody`, which built the markup AND re-bound
+  // every listener on each repaint. The rows' click, the Add button and the
+  // typeahead are props on the component now; what stays here is every
+  // DECISION — the vocabulary, the tints, the counts, and #600's
+  // default-to-me rule.
   _renderAttrPopoverBody(data) {
     const pop = document.getElementById('attr-popover');
     if (!pop) return;
     const field = data.field;
-    const check = '<svg class="w-3.5 h-3.5 text-violet-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
+    const byVal = new Map((data.options || []).map((o) => [o.value, o]));
+    const row = (value, dot, label) => {
+      const o = byVal.get(value);
+      return { value, dot, label, count: o ? o.count : 0, mine: !!(o && o.mine) };
+    };
 
-    // #1187: `data-attr-opt-mine` marks the option the viewer already voted
-    // for, so the click handler below can treat a re-click as a deselect
-    // (assignee only — see the wiring). The title spells the affordance out.
-    const optRow = (label, value, count, mine) =>
-      `<button type="button" class="attr-opt" data-attr-opt-value="${escapeAttr(value)}" data-attr-opt-mine="${mine ? '1' : '0'}"${mine && field === 'assignee' ? ' title="Click again to remove your pick"' : ''}>
-        <span class="attr-opt-label">${label}</span>
-        <span class="attr-opt-right">${count ? `<span class="attr-opt-count">${count}</span>` : ''}${mine ? check : ''}</span>
-      </button>`;
-
-    let inner = '';
+    const groups = [];
+    let emptyNote = null;
+    let add = null;
     if (field === 'priority') {
-      const byVal = new Map((data.options || []).map((o) => [o.value, o]));
-      inner += '<div class="attr-pop-head">Priority</div>';
-      for (const v of AppView.ATTR_PRIORITY_VALUES) {
-        const o = byVal.get(v);
-        const meta = AppView._priorityMeta(v);
-        inner += optRow(`<span class="attr-dot ${meta.cls}"></span>${meta.label}`, v, o ? o.count : 0, !!(o && o.mine));
-      }
+      groups.push({
+        head: 'Priority',
+        divided: false,
+        options: AppView.ATTR_PRIORITY_VALUES.map((v) => {
+          const meta = AppView._priorityMeta(v);
+          return row(v, meta.cls, meta.label);
+        }),
+      });
     } else if (field === 'category') {
-      // #504: list the fixed category set (like priority), each with its
-      // colour swatch, showing counts + the viewer's current check.
-      // #780: then the app's CUSTOM options under a divider, and a text box
-      // to type a new one. Counts come from this card's tally either way, so
-      // an option nobody has voted for here shows 0.
-      const byVal = new Map((data.options || []).map((o) => [o.value, o]));
+      // #504: the fixed set, each with its colour swatch, showing counts and
+      // the viewer's current check. #780: then the app's CUSTOM options under
+      // a divider, and a box to type a new one. Counts come from this card's
+      // tally either way, so an option nobody has voted for here shows 0.
       const catRow = (v) => {
-        const o = byVal.get(v);
         const meta = AppView._categoryMeta(v);
-        return optRow(
-          `<span class="attr-dot ${meta.cls}"></span>${escapeHtml(meta.label)}`,
-          v, o ? o.count : 0, !!(o && o.mine)
-        );
+        return row(v, meta.cls, meta.label);
       };
-      inner += '<div class="attr-pop-head">Category</div>';
-      for (const v of AppView.ATTR_CATEGORY_VALUES) inner += catRow(v);
+      groups.push({
+        head: 'Category',
+        divided: false,
+        options: AppView.ATTR_CATEGORY_VALUES.map(catRow),
+      });
       const customs = AppView._customCategories();
       if (customs.length) {
-        inner += '<div class="attr-pop-head attr-pop-head-divided">Custom</div>';
-        for (const c of customs) inner += catRow(c.value);
+        groups.push({ head: 'Custom', divided: true, options: customs.map((c) => catRow(c.value)) });
       }
-      inner += `<div class="attr-pop-add">
-        <input type="text" id="attr-category-input" class="attr-pop-input" placeholder="Type a category…" autocomplete="off" maxlength="${AppView.ATTR_CATEGORY_MAX_LEN}" />
-        <button type="button" id="attr-category-add" class="attr-pop-addbtn">Add</button>
-      </div>`;
+      add = {
+        inputId: 'attr-category-input',
+        buttonId: 'attr-category-add',
+        placeholder: 'Type a category…',
+        maxLength: AppView.ATTR_CATEGORY_MAX_LEN,
+        defaultValue: '',
+        suggest: false,
+      };
     } else {
-      inner += '<div class="attr-pop-head">Assigned person</div>';
       const opts = data.options || [];
-      if (opts.length) {
-        for (const o of opts) {
-          inner += optRow(`@${escapeHtml(o.value)}`, o.value, o.count, !!o.mine);
-        }
-      } else {
-        inner += '<div class="px-3 py-1.5 text-xs text-zinc-400 dark:text-zinc-500">No suggestions yet.</div>';
-      }
-      inner += `<div class="attr-pop-add">
-        <input type="text" id="attr-assignee-input" class="attr-pop-input" placeholder="Type a name…" autocomplete="off" maxlength="64" />
-        <div id="attr-assignee-suggest" class="attr-pop-suggest hidden"></div>
-        <button type="button" id="attr-assignee-add" class="attr-pop-addbtn">Add</button>
-      </div>`;
-    }
-
-    pop.innerHTML = inner;
-
-    // Vote on an existing option. #1187: the assignee row is a TOGGLE —
-    // clicking the name the viewer already voted for withdraws that vote
-    // (unassign) instead of re-casting it, mirroring the PM view's
-    // drag-to-Unassigned. Priority/category keep the idempotent re-vote:
-    // their checked state doubles as "my current pick" and un-picking them
-    // was never the reported gap.
-    pop.querySelectorAll('.attr-opt').forEach((b) => {
-      b.addEventListener('click', () => {
-        if (field === 'assignee' && b.dataset.attrOptMine === '1') {
-          AppView._withdrawAttrVote();
-        } else {
-          AppView._castAttrVote(b.dataset.attrOptValue);
-        }
+      groups.push({
+        head: 'Assigned person',
+        divided: false,
+        // `dot: null` is what tells the component to draw `@name` instead of
+        // a swatch and a word.
+        options: opts.map((o) => ({
+          value: o.value, dot: null, label: o.value, count: o.count, mine: !!o.mine,
+        })),
       });
-    });
-
-    if (field === 'category') {
-      // #780: type a new category. No typeahead (unlike assignee) — the
-      // options are all listed right above. Before POSTing we fold the typed
-      // text onto an option already listed when it matches case-insensitively,
-      // so "Bug" votes for the built-in `bug` and "PERFORMANCE" votes for the
-      // existing custom option rather than attempting a duplicate.
-      const input = pop.querySelector('#attr-category-input');
-      const addBtn = pop.querySelector('#attr-category-add');
-      const submit = () => {
-        const typed = (input.value || '').trim().replace(/\s+/g, ' ');
-        if (!typed) return;
-        const lower = typed.toLowerCase();
-        const known = AppView.ATTR_CATEGORY_VALUES.includes(lower)
-          ? lower
-          : (AppView._customCategories().find((c) => c.value.toLowerCase() === lower) || {}).value;
-        AppView._castAttrVote(known || typed);
-      };
-      addBtn.addEventListener('click', submit);
-      input.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter') { ev.preventDefault(); submit(); }
-      });
-      input.focus();
-    } else if (field === 'assignee') {
-      const input = pop.querySelector('#attr-assignee-input');
-      const addBtn = pop.querySelector('#attr-assignee-add');
-      const suggest = pop.querySelector('#attr-assignee-suggest');
-      const submit = () => {
-        const v = (input.value || '').trim();
-        if (v) AppView._castAttrVote(v);
-      };
-      addBtn.addEventListener('click', submit);
-      input.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter') { ev.preventDefault(); submit(); }
-      });
-      // Username typeahead off /api/users/search (same endpoint the invite
-      // typeahead uses). Free text is still allowed — these are hints only.
-      input.addEventListener('input', () => {
-        const q = (input.value || '').trim();
-        clearTimeout(AppView._attrSuggestTimer);
-        if (!q) { suggest.classList.add('hidden'); suggest.innerHTML = ''; return; }
-        AppView._attrSuggestTimer = setTimeout(async () => {
-          try {
-            const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`);
-            if (!res.ok) return;
-            const { users } = await res.json();
-            if (!users || !users.length) { suggest.classList.add('hidden'); suggest.innerHTML = ''; return; }
-            suggest.innerHTML = users.map((u) =>
-              `<button type="button" class="attr-suggest-item" data-attr-suggest="${escapeAttr(u.username)}">@${escapeHtml(u.username)}</button>`).join('');
-            suggest.classList.remove('hidden');
-            suggest.querySelectorAll('[data-attr-suggest]').forEach((it) => {
-              it.addEventListener('click', () => AppView._castAttrVote(it.dataset.attrSuggest));
-            });
-          } catch { /* ignore */ }
-        }, 200);
-      });
+      if (!opts.length) emptyNote = 'No suggestions yet.';
       // #600: default the name box to the signed-in user's own username so
       // "assign it to me" is one click of Add — but only when the viewer has
-      // no current pick (!data.myValue), so we never quietly overwrite a vote
-      // they already made. Setting .value programmatically does NOT fire the
-      // `input` listener above, so the typeahead stays closed; select() keeps
-      // "assign someone else" a first-keystroke away.
+      // no current pick, so a vote they already made is never quietly
+      // overwritten. `select()` below keeps "assign someone else" one
+      // keystroke away.
       const me = (typeof App !== 'undefined' && App.user && App.user.username) || '';
-      if (me && !data.myValue) {
-        input.value = me;
-        input.select();
-      }
-      input.focus();
+      add = {
+        inputId: 'attr-assignee-input',
+        buttonId: 'attr-assignee-add',
+        placeholder: 'Type a name…',
+        maxLength: 64,
+        defaultValue: (me && !data.myValue) ? me : '',
+        suggest: true,
+      };
     }
+
+    AppView._publishAttrPopover({ phase: 'ready', field, groups, emptyNote, add, suggestions: [] });
+
+    // The publish is flushed, so the field exists on the next line — the same
+    // contract the `innerHTML` assignment this replaces gave.
+    if (!add) return;
+    const input = document.getElementById(add.inputId);
+    if (!input) return;
+    if (add.defaultValue) input.select();
+    input.focus();
+  },
+
+  // The typed value in whichever add box is open, committed.
+  //
+  // #780: no typeahead for a category (the options are all listed right
+  // above), and before POSTing we fold the typed text onto an option already
+  // listed when it matches case-insensitively — so "Bug" votes for the
+  // built-in `bug` and "PERFORMANCE" votes for the existing custom option
+  // rather than attempting a duplicate.
+  _submitAttrTyped() {
+    const ctx = AppView._attrPopover;
+    if (!ctx) return;
+    if (ctx.field === 'category') {
+      const input = document.getElementById('attr-category-input');
+      const typed = ((input && input.value) || '').trim().replace(/\s+/g, ' ');
+      if (!typed) return;
+      const lower = typed.toLowerCase();
+      const known = AppView.ATTR_CATEGORY_VALUES.includes(lower)
+        ? lower
+        : (AppView._customCategories().find((c) => c.value.toLowerCase() === lower) || {}).value;
+      AppView._castAttrVote(known || typed);
+      return;
+    }
+    const input = document.getElementById('attr-assignee-input');
+    const v = ((input && input.value) || '').trim();
+    if (v) AppView._castAttrVote(v);
+  },
+
+  // Username typeahead off /api/users/search (the same endpoint the invite
+  // typeahead uses). Free text is still allowed — these are hints only. The
+  // debounce, the fetch and the failure handling stay here; the component
+  // draws whatever list this publishes.
+  _onAttrAssigneeInput() {
+    const input = document.getElementById('attr-assignee-input');
+    const q = ((input && input.value) || '').trim();
+    clearTimeout(AppView._attrSuggestTimer);
+    if (!q) { AppView._publishAttrPopover({ suggestions: [] }); return; }
+    AppView._attrSuggestTimer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`);
+        if (!res.ok) return;
+        const { users } = await res.json();
+        AppView._publishAttrPopover({
+          suggestions: (users || []).map((u) => u.username),
+        });
+      } catch { /* ignore */ }
+    }, 200);
   },
 
   // POST the caller's vote for `value`, then repaint the on-card chips and
@@ -10731,22 +11146,25 @@ const AppView = {
       item = (AppView._ghIssues || []).find((i) => i.number === targetRef);
     } else {
       item = (AppView._proposals || []).find((p) => p.id === targetRef)
-        || (AppView._merged || []).find((p) => p.id === targetRef);
+        || (AppView._merged || []).find((p) => p.id === targetRef)
+        || (AppView._mySessions || []).find(
+          (p) => p.id === targetRef && p.source === 'imported')
+        || (AppView._sharedSessions || []).find(
+          (p) => p.id === targetRef && p.source === 'imported');
     }
     if (item) item[field] = summary;
   },
 
   // Repaint every surface that shows chips. #608: this used to repaint
-  // only #dev-feed / #gc-thread-head / #gc-merged, so in kanban and PM
-  // view modes (which mount #dev-kanban-board / #dev-pm instead) a vote
-  // updated the cache but the visible chips stayed stale until a reload.
-  // _repaintCards is mode-aware (list feed + Completed block, kanban
-  // board, PM view, plus the opened-topic head), all from cache. The
-  // popover lives on <body>, positioned by coordinates, so the repaint
-  // never removes it — but its chip's card can move (PM view regroups by
-  // assignee) or leave the board (kanban filter no longer matching), so
-  // re-anchor it to the freshly-rendered chip, or close it when the chip
-  // is gone.
+  // only #dev-feed / #gc-thread-head / #gc-merged, so in the board view
+  // (which mounts #dev-kanban-board instead) a vote updated the cache but
+  // the visible chips stayed stale until a reload. _repaintCards is
+  // mode-aware (the Feed, the Kanban board, plus the opened-topic head),
+  // all from cache. The popover lives on <body>, positioned by coordinates,
+  // so the repaint never removes it — but its chip's card can leave the
+  // board (a kanban filter no longer matching) or move in the Feed (a new
+  // comment re-sorts it), so re-anchor it to the freshly-rendered chip, or
+  // close it when the chip is gone.
   _refreshAttrCards() {
     AppView._repaintCards();
     AppView._reanchorAttrPopover();
@@ -10768,6 +11186,8 @@ const AppView = {
   // Live badge bump for a thread the viewer doesn't have open (called
   // from GroupChat when a threaded message arrives).
   bumpThreadBadge(type, ref) {
+    // `sel` is now only "did we recognise this type" — the selectors it
+    // holds are what the in-place write below used to target.
     let sel = null;
     if (type === 'issue') {
       const issue = (AppView._ghIssues || []).find((i) => i.number === ref);
@@ -10789,21 +11209,14 @@ const AppView = {
       if (g) g.chat_count = (parseInt(g.chat_count) || 0) + 1;
       sel = `[data-gov-row="${ref}"] .dev-chat-badge`;
     }
-    const el = sel && document.querySelector(sel);
-    if (el) {
-      const n = (parseInt(el.dataset.count) || 0) + 1;
-      el.dataset.count = String(n);
-      el.innerHTML = `&#128172; ${n}`;
-      el.classList.remove('hidden', 'bg-zinc-500/10', 'text-zinc-500');
-      el.classList.add('bg-violet-500/10', 'text-violet-400');
-      // #1139: this is the one path that makes a pill visible WITHOUT a
-      // repaint, so it owns clearing the band's empty flag — otherwise the
-      // freshly-revealed 💬 badge would sit inside a display:none row until
-      // the board next re-rendered. Every other pill change goes through
-      // _repaintCards, which recomputes the flag from the render inputs.
-      const band = el.closest('.dev-card-status');
-      if (band) band.removeAttribute('data-empty');
-    }
+    // The badge used to be bumped IN PLACE here — count, tint, `hidden` and
+    // the band's #1139 `data-empty` flag, four writes onto a node the card
+    // renderer owned. Every one of them is a model field now
+    // (card/dev-card.tsx computes the empty flag from the render inputs),
+    // so this bumps the CACHE above and repaints. A publish that changes one
+    // number is cheap, and it can't drift from what a later repaint would
+    // have drawn — which is exactly what the in-place write risked.
+    if (sel) AppView._repaintCards();
   },
 
   // #130/#194: reveal a PR / issue reference (from a chat chip or a
@@ -10851,7 +11264,7 @@ const AppView = {
       title: 'Undo this merge?',
       message:
         'This opens a revert PR that backs out this merged change.\n\n'
-        + 'It still needs a merge vote to land — undoing is a proposal the group votes on, just like any other change.',
+        + 'It still needs a merge vote to land. Undoing is a proposal the group votes on, just like any other change.',
       confirmLabel: 'Open revert PR',
       cancelLabel: 'Cancel',
       danger: true,
@@ -10904,7 +11317,7 @@ const AppView = {
         : isCampaign
           ? 'This bypasses the platform vote and starts the campaign right now: an AI will open one maintenance PR per app across the fleet.\n\n'
           : 'This bypasses the active-user vote majority and applies the proposed secret change right now (the app redeploys with the new value).\n\n')
-        + 'Use only when you\'re confident the change should ship — the override is announced in group chat with your username.',
+        + 'Use only when you\'re confident the change should ship. The override is announced in group chat with your username.',
       confirmLabel: isCloseIssue ? 'Close now' : isCampaign ? 'Start now' : 'Apply now',
       cancelLabel: 'Cancel',
       danger: true,
@@ -10930,55 +11343,20 @@ const AppView = {
 
   // ---- Open Issues section ------------------------------------------------
 
-  // Auto-solve rank for the feed sort (#177/#227). Lower renders first
-  // within the issues group: an in-flight run ('generating') tops the
-  // list, a finished run awaiting review ('ready') follows, everything
-  // else — no headless session, or defensively any unknown/future
-  // status — sorts as a plain issue. 'failed' never reaches the client
-  // (the /github-issues query filters to generating/ready), so it lands
-  // in the plain bucket too. Ranking happens at render time (not
-  // server-side) because the optimistic auto-solve start and the
-  // headless poller both mutate `headless` in place and re-render
-  // without refetching.
-  _headlessRank(issue) {
-    const s = issue.headless && issue.headless.status;
-    return s === 'generating' ? 0 : s === 'ready' ? 1 : 2;
-  },
+  // _headlessRank (the auto-solve rank, #177/#227) used to live here. It
+  // ordered the retired List view's issues group — 'generating' first, then
+  // 'ready', then everything else. The Feed is pure recency and the Kanban
+  // board buckets by column rather than ranking within one, so nothing reads
+  // it any more. The auto-solve STATE is still rendered on every issue row.
 
-  // #388: merge-pipeline pin rank for the feed sort. Lower renders first
-  // within the proposal group, so a PR actually being merged (or having
-  // its conflicts resolved) surfaces at the top of the stack instead of
-  // sinking under proposals with newer chatter — "it's obvious it's the
-  // next one to merge". The precedence deliberately matches the card's
-  // state-badge precedence (#361/#386: merging > resolving > failed) so
-  // the list position always agrees with the badge the user sees:
-  //   0 — 'merging'  ("Merging…")            being merged right now
-  //   1 — resolving  ("Resolving conflicts…")  auto-resolver sync in flight
-  //   2 — merge_conflict_state 'failed' ("⚠ Conflict resolution failed") or
-  //       'conflict' ("⚠ Merge failed — conflict"): a real attempt failed
-  //       and the auto-resolver may never pick it up (it only touches
-  //       vote-eligible proposals), so the card must stay visible until the
-  //       creator finishes the merge.
-  //   3 — everything else (normal, by recency)
-  // A bare 'behind' snapshot is NOT pinned: it renders as the neutral
-  // "Behind main · N" badge, and many PRs can be behind main.
-  _proposalPinRank(pr) {
-    if (!pr) return 4;
-    if (pr.status === 'merging') return 0;
-    if (pr.resolving) return 1;
-    if (pr.merge_conflict_state === 'failed' || pr.merge_conflict_state === 'conflict') return 2;
-    // #47: a proposal whose checks failed / couldn't run blocks merge and
-    // needs the owner's attention — pin it just below the conflict-failed
-    // affordance so it stays visible above ordinary chatter.
-    if (pr.check_state === 'failing' || pr.check_state === 'error') return 3;
-    return 4;
-  },
+
 
   // The Open Issues list exactly as rendered: env-var-proposal twins
   // filtered out (#131 — those rows render in the dedicated Environment
-  // variables section). Ordering is owned by _feedItems(), whose
-  // comparator folds in the auto-solve rank (_headlessRank) ahead of
-  // recency. The filter runs on a copy, so _ghIssues itself keeps the
+  // variables section). Ordering is owned by _feedItems(), which is pure
+  // recency now — the auto-solve rank it used to fold in ahead of recency
+  // belongs to the Kanban comparator alone. The filter runs on a copy, so
+  // _ghIssues itself keeps the
   // canonical fetch order (GitHub updated-desc). The feed renderer and
   // the open-card index lookup must both use this helper so paging
   // counts match what's on screen.
@@ -10987,29 +11365,31 @@ const AppView = {
       .filter((i) => !(AppView._envIssueNumbers && AppView._envIssueNumbers.has(i.number)));
   },
 
-  // One issue row for the forum feed, with everything the old Open
-  // Issues section rendered per row (bounty/kudos, Create proposal, the
-  // Generate-proposal state machine, Preview, creator attribution) plus the
-  // accordion expansion into the issue body + thread chat.
+  // One issue card as a MODEL, with everything the old Open Issues section
+  // rendered per row (bounty/kudos, Create proposal, the Generate-proposal
+  // state machine, Preview, creator attribution).
   // The middle "start work" button reads "Create proposal" (no session yet)
-  // or "Create new proposal" (viewer already has one) — see createBtn below.
-  _renderIssueRow(issue, opts) {
+  // or "Create new proposal" (viewer already has one) — see
+  // _issuePrimaryActionSpec.
+  _issueCardModel(issue, opts) {
     const noNav = !!(opts && opts.noNav);
-    const meta = AppView._ghIssuesMeta || {};
     const n = issue.number;
     const href = issue.htmlUrl || '#';
     // ── Meta line ──
     // #N, the creator, and the facts that used to be badges: the ★ bounty
     // count and the auto-title marker. Both cost a badge slot each and
     // neither changes what you'd do next, so they read as meta words.
-    const metaParts = [
-      `<a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>`,
+    const meta = [
+      { t: 'link', href, s: `#${n}`, cls: 'font-mono text-violet-700 hover:underline dark:text-violet-400' },
     ];
-    if (issue.created_by_username) metaParts.push(escapeHtml(issue.created_by_username));
+    if (issue.created_by_username) meta.push({ t: 'text', s: issue.created_by_username });
     if (issue.bounty_count) {
-      metaParts.push(`<span title="Kudos bounties pledged on this issue" class="text-amber-500">&#9733; ${parseInt(issue.bounty_count, 10) || 0}</span>`);
+      meta.push({
+        t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: 'Kudos bounties pledged on this issue',
+        s: `★ ${parseInt(issue.bounty_count, 10) || 0}`,
+      });
     }
-    if (issue.title_fallback) metaParts.push('auto-title pending');
+    if (issue.title_fallback) meta.push({ t: 'text', s: 'auto-title pending' });
 
     // ── Icon ──
     // #250: mirrors the auto-solve state so proposal issues read at a
@@ -11021,15 +11401,15 @@ const AppView = {
       ? AppView._devCardIcon('issueProposal', { pulse: true, title: 'A proposal is being generated for this issue' })
       : h && h.status === 'ready'
         ? (h.mySessionId
-            ? AppView._devCardIcon('issueProposalMine', { title: 'You have a session for this issue — go to it.' })
-            : AppView._devCardIcon('issueProposal', { title: 'Proposal ready — review it to start a session' }))
+            ? AppView._devCardIcon('issueProposalMine', { title: 'You have a session for this issue. Go to it.' })
+            : AppView._devCardIcon('issueProposal', { title: 'Proposal ready. Review it to start a session' }))
         : AppView._devCardIcon('issue');
 
     // "Propose to close" — opens the reason modal and files a close_issue
     // governance proposal. While one is already open for this issue (an open
     // close_issue row in _govProposals targeting this number), the ⋯ menu
-    // row below renders disabled as "Close proposed" instead (the server
-    // also 409s a duplicate).
+    // row renders disabled as "Close proposed" instead (the server also
+    // 409s a duplicate).
     const closeProposal = (AppView._govProposals || []).find((g) =>
       g.kind === 'close_issue' && g.status === 'open'
       && Number(g.payload && g.payload.issueNumber) === n);
@@ -11040,56 +11420,47 @@ const AppView = {
     // rather than hiding inside the ⋯ menu.
     const closeApplying = closeProposal ? AppView._govApplyState(closeProposal) : null;
     const closeBadge = closeApplying && closeApplying.busy
-      ? `<span class="gc-merging-badge" title="${escapeAttr(closeApplying.title || closeApplying.label)}"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Closing&hellip;</span>`
+      ? {
+        t: 'chip', key: 'close', cls: 'gc-merging-badge', spinner: true,
+        label: 'Closing…', title: closeApplying.title || closeApplying.label,
+      }
       : closeProposal
-        ? `<span class="gc-checks-running-badge" title="A close proposal for this issue is up for vote">Close proposed</span>`
-        : '';
+        ? {
+          t: 'chip', key: 'close', cls: 'gc-checks-running-badge',
+          label: 'Close proposed', title: 'A close proposal for this issue is up for vote',
+        }
+        : null;
 
     // ── Badges: close status + work state + at most three metadata chips ──
     const badges = [
       closeBadge,
-      AppView._inProgressChipHtml(issue),
-      ...AppView._attrChipsHtml('issue', n, issue, { omitUnset: !noNav, asArray: true }),
-    ];
+      AppView._inProgressChipSpec(issue),
+      ...AppView._attrChipSpecs('issue', n, issue, { omitUnset: !noNav }),
+    ].filter(Boolean);
 
-    // ── Actions: the state-driven primary + In progress + icon Preview + ⋯ ──
-    const primaryBtn = AppView.readOnly ? '' : AppView._issuePrimaryActionHtml(issue);
-    // Promoted off the ⋯ menu: claiming an issue is what a reader does with
-    // it before writing any code, and the chip it toggles is right above in
-    // the status band — so the toggle belongs beside it, not two taps away.
-    // Board only: the detail view already spells this action out in full in
-    // its own action list, so promoting it into the head as well would show
-    // the same toggle twice on one screen.
-    const progressBtn = (noNav || AppView.readOnly)
-      ? '' : AppView._issueProgressActionHtml(issue);
+    // ── Actions: the state-driven primary + the claim toggle ──
+    const actions = [];
+    if (!AppView.readOnly) {
+      const primary = AppView._issuePrimaryActionSpec(issue, { noNav });
+      if (primary) actions.push(primary);
+      // Promoted off the ⋯ menu: claiming an issue is what a reader does
+      // with it before writing any code, and the chip it toggles is right
+      // above in the status band — so the toggle belongs beside it, not two
+      // taps away. Board only: the detail view already spells this action
+      // out in full in its own action list.
+      if (!noNav) actions.push(AppView._issueProgressActionSpec(issue));
+    }
     // A ready auto-solve run with a live preview gets the same icon
     // affordance every other previewable thing on the board gets.
     const hasRunPreview = !!(h && h.status === 'ready' && h.stagingUrl
       && (h.outcome === 'code' || h.outcome === 'spec_code'));
     const preview = hasRunPreview
-      ? AppView.cardPreviewHtml({ staging_url: h.stagingUrl },
+      ? AppView._cardPreviewSpec({ staging_url: h.stagingUrl },
         { kind: 'issue-run', sessionId: h.sessionId })
-      : '';
-    const menu = AppView._issueMenuItems(issue, { noNav, progressOnFace: !!progressBtn });
-    // Dense: the eye is pinned to the bottom of the rail. Detail head: it stays
-    // in the (uncapped, chevron-less) action list.
-    const actions = AppView._cardActionsHtml({
-      primary: [primaryBtn, progressBtn], preview: noNav ? preview : '',
-    });
+      : null;
+    const menu = AppView._issueMenuItems(issue, { noNav, progressOnFace: !noNav && !AppView.readOnly });
 
-    // Topic-view-only admin escape hatch: the live claimer list with a
-    // per-claim clear control, so a stuck claim can be removed without
-    // SQL. The DELETE route is the authoritative gate (claimer or
-    // write-admin); this affordance just doesn't render for others.
-    const ipClaims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
-      ? issue.in_progress.claims : [];
-    const adminClaimList = (noNav && ipClaims.length
-      && typeof App !== 'undefined' && App.user && App.user.canAdminWrite)
-      ? `<div class="mt-1 flex flex-wrap items-center gap-1 px-0.5 text-[0.65rem] text-zinc-500 dark:text-zinc-400">Claims:${ipClaims.map((c) =>
-          ` <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500">${escapeHtml(c.username || '?')}<button type="button" class="hover:text-sky-700 dark:hover:text-sky-300" title="Release ${escapeAttr(c.username || 'this user')}'s claim (admin)" onclick="AppView.clearIssueClaim(${n}, ${parseInt(c.userId, 10) || 0})">&times;</button></span>`
-        ).join('')}</div>`
-      : '';
-
+    const extra = [];
     // #1112: the chip is four words wide — it can name the state but not
     // explain it. On the topic head, where the reader has actually stopped
     // to find out what is happening, spell it out in one plain sentence:
@@ -11097,9 +11468,25 @@ const AppView = {
     // feed's dense cards have no room and the chip's tooltip carries the
     // same text there.
     const workState = noNav ? AppView._issueWorkState(issue) : null;
-    const workNote = workState
-      ? `<div class="mt-1 px-0.5 text-[0.7rem] leading-snug text-zinc-500 dark:text-zinc-400" data-work-note="${escapeAttr(workState.key)}">${escapeHtml(workState.note)}</div>`
-      : '';
+    if (workState) {
+      extra.push({ t: 'note', key: 'work', text: workState.note, workState: workState.key });
+    }
+    // Topic-view-only admin escape hatch: the live claimer list with a
+    // per-claim clear control, so a stuck claim can be removed without SQL.
+    // The DELETE route is the authoritative gate (claimer or write-admin);
+    // this affordance just doesn't render for others.
+    const ipClaims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
+      ? issue.in_progress.claims : [];
+    if (noNav && ipClaims.length
+      && typeof App !== 'undefined' && App.user && App.user.canAdminWrite) {
+      extra.push({
+        t: 'claims',
+        key: 'claims',
+        claims: ipClaims.map((c) => ({
+          username: c.username || '?', userId: parseInt(c.userId, 10) || 0, issue: n,
+        })),
+      });
+    }
 
     // #133/#556: the creating user renders in the meta line above, and the
     // author-only inline title edit is topic-head only (noNav) — feed cards
@@ -11112,28 +11499,42 @@ const AppView = {
     const canEditTitle = !!(noNav && !AppView.readOnly && issue.created_by_username
       && typeof App !== 'undefined' && App.user
       && issue.created_by_username === App.user.username);
-    const editTitleBtn = canEditTitle
-      ? ` <button type="button" class="align-middle text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors" title="Edit this issue's title (you created it)" aria-label="Edit title" onclick="AppView.beginIssueTitleEdit(${n})"><svg class="w-3.5 h-3.5 inline -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>`
-      : '';
+    const editing = canEditTitle && AppView._editingIssueTitle === n;
 
-    return `
-      <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-ref-issue="${n}"${noNav ? '' : ` data-issue-row="${n}" title="Open this issue's discussion"`}>
-        ${AppView._cardContentHtml({
-          icon,
-          titleHtml: `${escapeHtml(issue.title)}${editTitleBtn}`,
-          titleAttrs: `${canEditTitle ? ` data-issue-title="${n}"` : ''} title="${escapeHtml(rowTitle)}"`,
-          metaHtml: metaParts.join(' · '),
-          badges,
-          chatCount: issue.chatCount,
-          uncapped: noNav,
-          actions,
-          extraHtml: `${workNote}${adminClaimList}`,
-          dense: !noNav,
-        })}
-        ${AppView._cardRailHtml(`issue:${n}`, menu, {
-          chevron: !noNav, preview: noNav ? '' : preview,
-        })}
-      </div>`;
+    const attrs = { 'data-ref-issue': String(n) };
+    if (!noNav) {
+      attrs['data-issue-row'] = String(n);
+      attrs.title = "Open this issue's discussion";
+    }
+    return {
+      key: `issue:${n}`,
+      cls: `gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}`,
+      attrs,
+      icon,
+      title: {
+        text: issue.title,
+        title: rowTitle,
+        edit: canEditTitle && !editing ? { issue: n } : undefined,
+        editing: editing ? { issue: n, initial: issue.title || '' } : undefined,
+      },
+      meta,
+      pill: null,
+      linked: [],
+      badges,
+      chatCount: issue.chatCount,
+      actions,
+      // Dense: the eye is pinned to the bottom of the rail. Detail head: it
+      // stays in the (uncapped, chevron-less) action list.
+      actionPreview: noNav ? preview : null,
+      rail: {
+        menuKey: AppView._registerCardMenu(`issue:${n}`, menu),
+        chevron: !noNav,
+        preview: noNav ? null : preview,
+      },
+      extra,
+      dense: !noNav,
+      uncapped: noNav,
+    };
   },
 
   // ── The issue card's ONE primary action ──────────────────────────────
@@ -11148,49 +11549,102 @@ const AppView = {
   //   no run, I have a session     → Create new proposal
   //   run generating               → Generating proposal…      (disabled)
   //   run ready, I cloned it       → Go to session
-  //   run ready, outcome question  → Answer & regenerate       (ONE button:
-  //                                  it opens the issue's discussion where
-  //                                  the questions were posted, from which
-  //                                  the ⋯ "Generate proposal" re-runs)
+  //   run ready, outcome question  → Answer & regenerate       (ONE button.
+  //                                  YOUR run: opens the run's own session,
+  //                                  which is where it asked. Somebody
+  //                                  else's: that transcript is owner-scoped
+  //                                  and unopenable, so it falls back to the
+  //                                  issue discussion — board only, since
+  //                                  the head already IS that discussion)
   //   run ready, other outcomes    → Review spec / Review solution /
   //                                  Changes ready — review & start session
   //
   // "Generate proposal" for a never-run issue lives in the ⋯ menu: starting
   // a headless run spends the viewer's credits, so it should be a chosen
   // action rather than the card's most prominent button.
-  _issuePrimaryActionHtml(issue) {
+  _issuePrimaryActionSpec(issue, opts) {
+    const noNav = !!(opts && opts.noNav);
     const n = issue.number;
     const h = issue.headless;
     if (h && h.status === 'generating') {
-      return `<button class="gc-vote-btn" disabled title="A headless AI session is working on this issue${h.username ? ` (started by ${escapeAttr(h.username)})` : ''}">Generating proposal&hellip;</button>`;
+      return {
+        key: 'primary', cls: 'gc-vote-btn', disabled: true, label: 'Generating proposal…',
+        title: `A headless AI session is working on this issue${h.username ? ` (started by ${h.username})` : ''}`,
+      };
     }
     if (h && h.status === 'ready') {
       if (h.mySessionId) {
-        return `<button class="gc-vote-btn" title="You already started a session from this proposal — open it" onclick="AppView.goToAutoSessionClone(${h.mySessionId})">Go to session</button>`;
+        return {
+          key: 'primary', cls: 'gc-vote-btn', label: 'Go to session',
+          title: 'You already started a session from this proposal. Open it',
+          act: { fn: 'goToAutoSessionClone', args: [h.mySessionId] },
+        };
       }
       if (h.outcome === 'question') {
-        // One button, not two. It lands on the issue's discussion, where the
-        // run posted its questions; re-running is the ⋯ menu's Generate
-        // proposal row once they're answered.
-        return `<button class="gc-vote-btn" title="The auto-solve run has a question for you — answer it on this issue, then use ⋯ → Generate proposal to re-run" onclick="AppView.openTopic('issue', ${n})">Answer &amp; regenerate</button>`;
+        // Where the question actually IS decides where this button goes.
+        //
+        // A headless run does not post its questions to the issue: it drafts
+        // its spec and asks in ITS OWN transcript, then waits (#1372's run
+        // ends "reply with the URL(s) ... then tell me to build the spec").
+        // So for the person who started the run, the destination that lets
+        // them do what the label promises is that session — the spec viewer
+        // and the reply box are both there, and answering in it is what
+        // makes the agent regenerate.
+        //
+        // This button used to send everyone to the issue's discussion
+        // instead. On the board that at least moved; on the topic head the
+        // destination WAS the current view, so the click re-rendered what
+        // was already on screen and the button read as broken.
+        if (h.mine && h.sessionId) {
+          return {
+            key: 'primary', cls: 'gc-vote-btn', label: 'Answer & regenerate',
+            title: 'Your auto-solve run is waiting on an answer. Open its session to read the question and reply',
+            act: { fn: 'openAutoRunSession', args: [h.sessionId] },
+          };
+        }
+        // Somebody else's run. Dev chats are owner-scoped by authorization,
+        // not just by missing UI (see /api/apps/:slug/shared-sessions), so
+        // its transcript is genuinely not navigable here and sending them
+        // there would only swap one dead button for another. The issue's
+        // discussion is the one place they can contribute — a real
+        // navigation from the board, and nothing at all from the head,
+        // which already IS that discussion.
+        if (noNav) return null;
+        return {
+          key: 'primary', cls: 'gc-vote-btn', label: 'Answer & regenerate',
+          title: 'This auto-solve run has a question. Answer it on this issue, then use ⋯ → Generate proposal to re-run',
+          act: { fn: 'openTopic', args: ['issue', n] },
+        };
       }
       const hasPreview = !!h.stagingUrl && (h.outcome === 'code' || h.outcome === 'spec_code');
       const outcomeNote = h.outcome === 'spec' ? 'it drafted a spec'
         : h.outcome === 'code' ? 'it pushed a code change'
           : h.outcome === 'spec_code' ? 'it drafted a spec and pushed a code change'
             : 'it finished a run';
-      const label = hasPreview ? 'Changes ready &mdash; review &amp; start session'
-        : h.outcome === 'spec' ? 'Review spec &amp; start session'
-          : h.outcome === 'code' ? 'Review solution &amp; start session'
+      const label = hasPreview ? 'Changes ready. Review & start session'
+        : h.outcome === 'spec' ? 'Review spec & start session'
+          : h.outcome === 'code' ? 'Review solution & start session'
             : 'Start session from proposal';
-      return `<button class="gc-vote-btn" title="Clone the finished proposal (${outcomeNote}) into your own dev chat — others can clone it too" onclick="AppView.startFromAutoSession(${h.sessionId})">${label}</button>`;
+      return {
+        key: 'primary', cls: 'gc-vote-btn', label,
+        title: `Clone the finished proposal (${outcomeNote}) into your own dev chat. Others can clone it too`,
+        act: { fn: 'startFromAutoSession', args: [h.sessionId] },
+      };
     }
     // #287: strictly per-viewer, and reverts to "Create proposal" once the
     // session is archived (the server filters archived rows out of
     // myPrSessionId).
     return issue.myPrSessionId
-      ? `<button class="gc-vote-btn" title="Start another dev chat for this issue" onclick="AppView.createPrForIssue(${n})">Create new proposal</button>`
-      : `<button class="gc-vote-btn" title="Start a dev chat to solve this issue" onclick="AppView.createPrForIssue(${n})">Create proposal</button>`;
+      ? {
+        key: 'primary', cls: 'gc-vote-btn', label: 'Create new proposal',
+        title: 'Start another dev chat for this issue',
+        act: { fn: 'createPrForIssue', args: [n] },
+      }
+      : {
+        key: 'primary', cls: 'gc-vote-btn', label: 'Create proposal',
+        title: 'Start a dev chat to solve this issue',
+        act: { fn: 'createPrForIssue', args: [n] },
+      };
   },
 
   // The issue card's SECOND action: the claim toggle, promoted out of the
@@ -11202,14 +11656,23 @@ const AppView = {
   // promised progress the button cannot deliver, and it was the same phrase
   // as the chip covering six OTHER states, so pressing it looked like it
   // ought to produce whichever of them the reader had last seen.
-  _issueProgressActionHtml(issue) {
+  _issueProgressActionSpec(issue) {
     const n = issue.number;
     const claims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
       ? issue.in_progress.claims : [];
     return claims.some((c) => c.mine)
-      ? `<button class="gc-vote-btn" title="Give up your claim on this issue so somebody else can take it" onclick="AppView.clearIssueClaim(${n})">Release my claim</button>`
-      : `<button class="gc-vote-btn" title="Tell everyone you&#39;re taking this issue — a claim, not a promise of progress. Clears on its own after ~7 days without activity; discussion in the issue&#39;s thread keeps it alive." onclick="AppView.markIssueInProgress(${n})">Claim this issue</button>`;
+      ? {
+        key: 'claim', cls: 'gc-vote-btn', label: 'Release my claim',
+        title: 'Give up your claim on this issue so somebody else can take it',
+        act: { fn: 'clearIssueClaim', args: [n] },
+      }
+      : {
+        key: 'claim', cls: 'gc-vote-btn', label: 'Claim this issue',
+        title: "Tell everyone you're taking this issue. A claim, not a promise of progress. Clears on its own after ~7 days without activity; discussion in the issue's thread keeps it alive.",
+        act: { fn: 'markIssueInProgress', args: [n] },
+      };
   },
+
 
   // Everything an issue card demoted off its face, as ⋯ descriptors.
   _issueMenuItems(issue, state) {
@@ -11234,8 +11697,8 @@ const AppView = {
           label: 'Generate proposal',
           icon: 'generate',
           title: h && h.status === 'ready' && h.outcome === 'question'
-            ? 'Questions were posted on the issue — answer them, then generate a proposal again'
-            : 'Spin up a headless AI session that starts solving this issue on its own — uses your credits',
+            ? 'Questions were posted on the issue. Answer them, then generate a proposal again'
+            : 'Spin up a headless AI session that starts solving this issue on its own. Uses your credits',
           act: () => AppView.confirmAutoSession(n),
         });
       }
@@ -11249,7 +11712,7 @@ const AppView = {
         label: issue.my_bounty ? 'Bountied' : 'Pledge kudos',
         icon: 'kudos',
         title: kudosReason
-          || 'Pledge a kudos bounty — paid to whoever’s merged PR closes this issue',
+          || 'Pledge a kudos bounty, paid to whoever’s merged PR closes this issue',
         disabled: !!kudosReason,
         act: kudosReason ? null : () => AppView.giveIssueBounty(n),
       });
@@ -11258,7 +11721,7 @@ const AppView = {
       // per-user, never exclusive) and can only clear their own from here.
       //
       // st.progressOnFace — the board card promotes this to a button
-      // (_issueProgressActionHtml), so the row would duplicate it. It is
+      // (_issueProgressActionSpec), so the row would duplicate it. It is
       // still a row wherever the face doesn't carry it (read-only boards).
       const ipClaims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
         ? issue.in_progress.claims : [];
@@ -11274,7 +11737,7 @@ const AppView = {
           : {
             label: 'Claim this issue',
             icon: 'progress',
-            title: 'Tell everyone you’re taking this issue — a claim, not a promise of progress. Clears on its own after ~7 days without activity; discussion in the issue’s thread keeps it alive.',
+            title: 'Tell everyone you’re taking this issue. A claim, not a promise of progress. Clears on its own after ~7 days without activity; discussion in the issue’s thread keeps it alive.',
             act: () => AppView.markIssueInProgress(n),
           });
       }
@@ -11305,7 +11768,7 @@ const AppView = {
           : {
             label: 'Propose to close',
             icon: 'close',
-            title: 'Propose closing this issue — the group votes; if it passes, the issue is closed here and on GitHub',
+            title: 'Propose closing this issue. The group votes; if it passes, the issue is closed here and on GitHub',
             danger: true,
             act: () => AppView.promptCloseIssue(n),
           });
@@ -11338,26 +11801,18 @@ const AppView = {
   // editor stays open showing the error), and on openTopic.
   _editingIssueTitle: null,
 
+  // The editor is the title band's own markup now (card/dev-card.tsx's
+  // `TitleContent`, keyed on the model's `editing`), so this sets the flag
+  // and repaints. The repaint guard below is unchanged and still needed:
+  // _renderTopicHead rebuilds `#gc-thread-head` wholesale, which discards
+  // the editor and any typed text along with it.
   beginIssueTitleEdit(n) {
-    const holder = document.querySelector(`#gc-thread-head [data-issue-title="${n}"]`);
     const issue = (AppView._ghIssues || []).find((i) => i.number === n);
-    if (!holder || !issue) return;
+    if (!issue) return;
     AppView._editingIssueTitle = n;
-    holder.innerHTML = `
-      <div class="flex flex-wrap items-center gap-2">
-        <input id="dev-issue-title-input" type="text" maxlength="200"
-          class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
-        <button type="button" class="gc-vote-btn" onclick="AppView.saveIssueTitle(${n})">Save</button>
-        <button type="button" class="gc-vote-btn" onclick="AppView.cancelIssueTitleEdit()">Cancel</button>
-        <span id="dev-issue-title-error" class="w-full text-xs text-red-400 hidden"></span>
-      </div>`;
-    const input = document.getElementById('dev-issue-title-input');
-    input.value = issue.title || '';
-    input.focus();
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); AppView.saveIssueTitle(n); }
-      if (e.key === 'Escape') { e.preventDefault(); AppView.cancelIssueTitleEdit(); }
-    });
+    // Not blocked by the guard: no editor is in the DOM yet, which is the
+    // second half of its predicate.
+    AppView._renderTopicHead();
   },
 
   cancelIssueTitleEdit() {
@@ -11403,53 +11858,16 @@ const AppView = {
 
   // ---- Merged (closed) PRs section ----------------------------------------
 
-  // #149: only the first 3 closed PRs render by default; the rest sit behind
-  // a show-more toggle, mirroring the Open Issues pattern above.
-  _mergedShownDefault: 3,
-
-  // Build the inner HTML for the Merged section from the cached
-  // AppView._merged list. Rendered once inside loadVotePanel's bodyHtml and
-  // re-rendered in place (into #gc-merged) by toggleMergedPrs so the
-  // show-more/show-less toggle needs no refetch.
-  _renderMergedInner() {
-    const merged = AppView._merged || [];
-    const { majority, activeUsers } = AppView._mergedCtx || { majority: 1, activeUsers: 1 };
-    const shown = AppView._mergedExpanded
-      ? merged.length
-      : Math.min(AppView._mergedShownDefault, merged.length);
-
-    let html = `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Completed</div><div class="space-y-2">`;
-    for (let i = 0; i < shown; i++) {
-      html += merged[i].row_type === 'close_issue'
-        ? AppView._renderCompletedCloseIssueCard(merged[i])
-        : AppView._renderMergedCard(merged[i], majority);
-    }
-    html += '</div>';
-
-    // Footer pager, same styling as the Open Issues pager.
-    //   • collapsed (with more loaded rows) → "Show N more" reveals the
-    //     rest of the already-fetched page (client-side, no refetch).
-    //   • expanded, server has more pages → "Load more" fetches the next
-    //     keyset page from the server and appends it (#429).
-    //   • expanded, no more pages → "Show less" collapses back to 3.
-    const btns = [];
-    if (!AppView._mergedExpanded && merged.length > AppView._mergedShownDefault) {
-      btns.push(`<button class="gc-vote-btn" onclick="AppView.toggleMergedPrs()">Show ${merged.length - shown} more</button>`);
-    }
-    if (AppView._mergedExpanded) {
-      if (AppView._mergedHasMore) {
-        const loading = AppView._mergedLoadingMore;
-        btns.push(`<button class="gc-vote-btn" ${loading ? 'disabled' : ''} onclick="AppView.loadMoreMerged()">${loading ? 'Loading…' : 'Load more'}</button>`);
-      }
-      if (merged.length > AppView._mergedShownDefault) {
-        btns.push(`<button class="gc-vote-btn" onclick="AppView.toggleMergedPrs()">Show less</button>`);
-      }
-    }
-    if (btns.length) {
-      html += `<div class="mt-1 flex gap-2">${btns.join('')}</div>`;
-    }
-    return html;
-  },
+  // #149: the retired Completed SECTION. `_renderMergedInner`, its
+  // `_mergedShownDefault` / `_mergedExpanded` show-more toggle and
+  // `toggleMergedPrs`
+  // rendered a standalone "Completed" block. Nothing has called them since
+  // THE UI OVERHAUL folded completed rows into the Feed's own stream (see
+  // _feedItems) and gave the kanban Done column its own footer — the sweep
+  // for uncalled members found all three together. The rows themselves live
+  // on as _mergedCardModel / _completedCloseIssueCardModel, and the paging
+  // that block used to own is the feed footer's `loadMerged` and the Done
+  // column's, both built in _workshopView / _kanbanView.
 
   // #429: fetch the next keyset page of merged PRs and append it in place.
   // Uses the (created_at, id) cursor of the last loaded row so paging is
@@ -11461,16 +11879,11 @@ const AppView = {
     if (!AppView.appData || !AppView._mergedCursor) return;
     const slug = AppView.appData.slug;
     AppView._mergedLoadingMore = true;
-    // Reflect the disabled/"Loading…" state immediately. In kanban mode the
-    // Done-column footer lives in #dev-kanban (there is no #gc-merged), so
-    // repaint the whole board; in list mode update the Completed section in
-    // place.
-    if (AppView._getViewMode() === 'kanban') {
-      AppView._repaintDevBody();
-    } else {
-      const el0 = document.getElementById('gc-merged');
-      if (el0) el0.innerHTML = AppView._renderMergedInner();
-    }
+    // Reflect the disabled/"Loading…" state immediately. Both modes repaint
+    // the whole body now: the kanban Done-column footer lives in #dev-kanban,
+    // and the Feed's completed rows are inline in #dev-feed — the separate
+    // #gc-merged section this used to patch in place is gone.
+    AppView._repaintDevBody();
     try {
       const cur = AppView._mergedCursor;
       const qs = AppView._demoQS();
@@ -11510,98 +11923,97 @@ const AppView = {
       AppView._mergedLoadingMore = false;
       // Paint the freshly loaded cards into whichever view is active.
       // _repaintDevBody re-renders #dev-kanban and re-attaches Kudos /
-      // Ask-AI for the kanban Done column; list mode updates #gc-merged.
-      if (AppView._getViewMode() === 'kanban') {
-        AppView._repaintDevBody();
-      } else {
-        const el = document.getElementById('gc-merged');
-        if (el) {
-          el.innerHTML = AppView._renderMergedInner();
-          if (window.Kudos) Kudos.attach(el);
-          AppView._applyExploreChatAvailability(el);
-        }
-      }
+      // Ask-AI for the kanban Done column, and re-renders #dev-feed with the
+      // completed rows inline for the Feed.
+      AppView._repaintDevBody();
     }
   },
 
-  // One merged ("Completed") proposal card. Extracted from
-  // _renderMergedInner so the kanban "Done" column can render the same
-  // markup per row without the section header / show-more footer.
-  // `majority` defaults to the cached merged context.
-  _renderMergedCard(pr, majority) {
+
+  // One merged ("Completed") proposal card as a MODEL. `majority` defaults
+  // to the cached merged context.
+  _mergedCardModel(pr, majority) {
     const maj = majority != null
       ? majority
       : ((AppView._mergedCtx && AppView._mergedCtx.majority) || 1);
-    const date = new Date(pr.created_at).toLocaleDateString();
-    const mergedLabel = pr.pr_title
-      ? escapeHtml(pr.pr_title)
-      : `Change by ${escapeHtml(pr.username)}`;
+    // #1808: the ago ladder's degraded form ("Jun 16", or "Jun 16, 2025" once
+    // it is not this year) instead of a bare numeric `toLocaleDateString`,
+    // which said 06/16/2025 on a row whose neighbours all said "3d ago".
+    const date = AppView._agePart(pr.created_at);
+    const mergedLabel = pr.pr_title ? pr.pr_title : `Change by ${pr.username}`;
     const mergedQuoteTitle = pr.pr_title || `PR #${pr.pr_number || pr.id}`;
     const mine = !!(App.user && pr.user_id === App.user.id);
 
     // ── Meta line ──
     // The revert relationship reads here rather than as an action pill: on a
     // merged card it is a FACT about the change, not something to do.
-    const metaParts = [
-      `<a href="${pr.pr_url || '#'}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">PR#${pr.pr_number || pr.id}</a>`,
-    ];
-    if (pr.username) metaParts.push(escapeHtml(pr.username));
-    metaParts.push(date);
+    const meta = [{
+      t: 'link', href: pr.pr_url || '#', s: `PR#${pr.pr_number || pr.id}`,
+      cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400',
+    }];
+    if (pr.username) meta.push({ t: 'text', s: pr.username });
+    if (date) meta.push(date);
     if (pr.revert_of_session_id) {
-      metaParts.push('<span class="text-amber-500" title="This PR is itself a revert">↩ revert</span>');
+      meta.push({ t: 'span', cls: 'text-amber-800 dark:text-amber-300', title: 'This PR is itself a revert', s: '↩ revert' });
     } else if (pr.revert_session_id) {
       const rs = pr.revert_status;
       const rpr = pr.revert_pr_number || pr.revert_session_id;
-      const label = rs === 'merged'
-        ? `Undone by PR#${rpr}`
-        : rs === 'merging'
-          ? `Revert merging (PR#${rpr})`
-          : `Revert in vote · PR#${rpr}`;
-      metaParts.push(`<a href="${pr.revert_pr_url || '#'}" target="_blank" rel="noopener" class="text-amber-500 hover:text-amber-400 font-medium">${escapeHtml(label)}</a>`);
+      meta.push({
+        t: 'link', href: pr.revert_pr_url || '#',
+        cls: 'text-amber-800 hover:text-amber-400 font-medium dark:text-amber-300',
+        s: rs === 'merged'
+          ? `Undone by PR#${rpr}`
+          : rs === 'merging'
+            ? `Revert merging (PR#${rpr})`
+            : `Revert in vote · PR#${rpr}`,
+      });
     }
-    const closes = AppView.closesPillHtml(pr);
 
     // The settled pill (denominator is the threshold snapshotted at merge
     // time) plus the metadata chips that actually carry a value. Completion
     // settles the merge vote, not task organization: collaborators may still
     // correct priority, assignee or category from this card.
-    const badges = AppView._attrChipsHtml('proposal', pr.id, pr, {
-      omitUnset: true, asArray: true,
-    });
-    const pill = AppView.statusPillHtml(pr, { majority: maj });
+    const pillState = AppView.statusPillState(pr, { majority: maj });
 
     // ONE text action on a settled card: kudos. Undo and Explore stay in ⋯
     // (both are follow-up work rather than a response to the change), and
     // the read-only "You voted X" box is still gone from the card face —
     // the pill's tooltip and the detail view's vote roster carry that.
     //
-    // Kudos is the exception because thanking the author is the whole of what
-    // a settled card asks of a reader, and it is the only action here that
-    // shows STATE (the count) — which a ⋯ row can't while it's closed. The
-    // board's existing Kudos.attach() call hydrates it; the button is left
-    // out entirely when kudos.js isn't loaded.
-    const kudosBtn = (window.Kudos && !AppView.readOnly)
-      ? Kudos.renderButton(pr, { compact: true }) : '';
+    // Kudos is the exception because thanking the author is the whole of
+    // what a settled card asks of a reader, and it is the only action here
+    // that shows STATE (the count) — which a ⋯ row can't while it's closed.
+    // It is a CONTROLLER HOST: the card renders an empty span and
+    // `_fillKudosHosts` writes Kudos.renderButton's markup into it, because
+    // Kudos.attach / _refreshButton / _renderPopover all keep writing there.
+    // The button is left out entirely when kudos.js isn't loaded.
+    const hasKudos = !!(window.Kudos && !AppView.readOnly);
     const menu = AppView._proposalMenuItems(pr, {
-      mine, imported: pr.source === 'imported', isMerged: true, kudosOnFace: !!kudosBtn,
+      mine, imported: pr.source === 'imported', isMerged: true, kudosOnFace: hasKudos,
     });
-    const actions = AppView._cardActionsHtml({ primary: [kudosBtn] });
-
-    return `
-        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-ref-pr="${pr.pr_number || pr.id}" data-proposal-row="${pr.id}" title="Open this proposal's discussion">
-          ${AppView._cardContentHtml({
-            icon: AppView._devCardIcon('done'),
-            titleHtml: mergedLabel,
-            titleAttrs: ` title="${escapeHtml(mergedQuoteTitle)}"`,
-            metaHtml: metaParts.join(' · '),
-            linkedHtml: closes,
-            badges,
-            chatCount: parseInt(pr.chat_count) || 0,
-            pill,
-            actions,
-          })}
-          ${AppView._cardRailHtml(`merged:${pr.id}`, menu)}
-        </div>`;
+    return {
+      key: `merged:${pr.id}`,
+      cls: `gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}`,
+      attrs: {
+        'data-completed': '1',
+        'data-ref-pr': String(pr.pr_number || pr.id),
+        'data-proposal-row': String(pr.id),
+        title: "Open this proposal's discussion",
+      },
+      icon: AppView._devCardIcon('done'),
+      title: { text: mergedLabel, title: mergedQuoteTitle },
+      meta,
+      pill: pillState && pillState.label ? { state: pillState, inline: false } : null,
+      linked: AppView.closesPillSpecs(pr),
+      badges: AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: true }),
+      chatCount: parseInt(pr.chat_count) || 0,
+      actions: hasKudos ? [{ key: 'kudos', label: '', kudos: pr.id }] : [],
+      actionPreview: null,
+      rail: { menuKey: AppView._registerCardMenu(`merged:${pr.id}`, menu), chevron: true },
+      extra: [],
+      dense: true,
+      uncapped: false,
+    };
   },
 
   // One APPLIED close-issue proposal ("Issue close") card in the Completed
@@ -11609,70 +12021,84 @@ const AppView = {
   // Same green check icon as merged PRs so the column reads uniformly, but
   // the meta line says "Issue close" where a code proposal shows its PR
   // number, and there are deliberately NO code-proposal actions (Undo,
-  // kudos, Explore in dev chat, priority/assignee chips). The settled tally pill mirrors
-  // the merged-PR treatment: payload.required is the threshold snapshotted
-  // at apply time; status 'merged' keeps voteCountPill clock-free. Clicking
-  // opens the governance discussion via the delegated [data-gov-row]
-  // handler (openTopic('gov', id)).
-  _renderCompletedCloseIssueCard(row) {
+  // kudos, Explore in dev chat). The priority/assignee/category chips DO
+  // stay: moving a task to Done settles the close vote, not its metadata —
+  // /merged attaches the closed issue's own tally, and the chips keep
+  // targeting ('issue', issueNumber) so collaborators can still correct
+  // them, exactly like on a merged PR card. The settled tally
+  // pill mirrors the merged-PR treatment: payload.required is the threshold
+  // snapshotted at apply time; status 'merged' keeps the pill clock-free.
+  // Clicking opens the governance discussion via the delegated
+  // [data-gov-row] handler (openTopic('gov', id)).
+  _completedCloseIssueCardModel(row) {
     const p = row.payload || {};
     const issueN = p.issueNumber || null;
     const titleText = issueN
       ? `Close issue #${issueN}: "${p.issueTitle || row.title}"`
       : (row.title || 'Close issue');
-    const who = row.created_by_username
-      ? ` <span class="text-zinc-500">· ${escapeHtml(row.created_by_username)}</span>`
-      : '';
     const how = String(p.appliedBy || '').startsWith('admin:')
       ? 'closed by admin' : 'closed by vote';
     const when = p.appliedAt || row.created_at;
-    const date = when ? new Date(when).toLocaleDateString() : '';
+    const date = when ? AppView._agePart(when, `${how} · `) : null;
     // GitHub link for the closed target, normalized like the kanban Issues
     // footer's repo link.
     const repo = (AppView.appData && AppView.appData.repo_url) || '';
     const base = repo ? repo.replace(/\.git$/, '').replace(/\/$/, '') : '';
-    const issueRef = issueN
-      ? (base
-        ? `<a href="${base}/issues/${issueN}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">#${issueN}</a> · `
-        : `<span class="font-mono">#${issueN}</span> · `)
-      : '';
-    // Same composite pill as every other settled row: status 'merged'
-    // keeps it clock-free, and payload.required is the threshold
-    // snapshotted at apply time.
-    const tallyPill = AppView.statusPillHtml({
+    const meta = [{ t: 'text', s: 'Issue close' }];
+    if (issueN) {
+      meta.push(base
+        ? { t: 'link', href: `${base}/issues/${issueN}`, s: `#${issueN}`, cls: 'font-mono text-emerald-700 hover:underline dark:text-emerald-400' }
+        : { t: 'span', cls: 'font-mono', s: `#${issueN}` });
+    }
+    meta.push(date || { t: 'text', s: how });
+    // Same composite pill as every other settled row.
+    const pillState = AppView.statusPillState({
       yes_count: parseInt(row.up_count) || 0,
       no_count: parseInt(row.down_count) || 0,
       votes_required: p.required != null ? p.required : null,
       status: 'merged',
     }, { majority: parseInt(p.required) || 1, kind: 'gov' });
-    // No actions at all on a settled close-issue row, so no ⋯ either. Its
-    // action band is still RESERVED (empty) by the dense contract — this row
-    // sits in the same Done column as merged PR cards, and an inch-shorter
-    // card there is exactly the raggedness the four bands exist to remove.
-    return `
-        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-gov-row="${row.id}"${issueN ? ` data-ref-issue="${issueN}"` : ''} title="Open this proposal's discussion">
-          ${AppView._cardContentHtml({
-            icon: AppView._devCardIcon('done'),
-            titleHtml: `${escapeHtml(titleText)}${who}`,
-            titleAttrs: ` title="${escapeHtml(titleText)}"`,
-            metaHtml: `Issue close · ${issueRef}${how}${date ? ` · ${date}` : ''}`,
-            badges: [],
-            chatCount: parseInt(row.chat_count) || 0,
-            pill: tallyPill,
-          })}
-          ${AppView.DEV_CARD_CHEVRON}
-        </div>`;
+    const attrs = {
+      'data-completed': '1',
+      'data-gov-row': String(row.id),
+      title: "Open this proposal's discussion",
+    };
+    if (issueN) attrs['data-ref-issue'] = String(issueN);
+    return {
+      key: `close-issue:${row.id}`,
+      cls: `gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}`,
+      attrs,
+      icon: AppView._devCardIcon('done'),
+      title: {
+        text: titleText,
+        title: titleText,
+        trail: row.created_by_username
+          ? { s: row.created_by_username, cls: 'text-zinc-500 dark:text-zinc-400' }
+          : undefined,
+      },
+      meta,
+      pill: pillState && pillState.label ? { state: pillState, inline: false } : null,
+      linked: [],
+      // The closed issue's own community-voted chips, only when set — same
+      // omitUnset board default as every other card.
+      badges: issueN
+        ? AppView._attrChipSpecs('issue', issueN, row, { omitUnset: true })
+        : [],
+      chatCount: parseInt(row.chat_count) || 0,
+      // No actions at all on a settled close-issue row, so no ⋯ either. Its
+      // action band is still RESERVED (empty) by the dense contract — this
+      // row sits in the same Done column as merged PR cards, and an
+      // inch-shorter card there is exactly the raggedness the four bands
+      // exist to remove.
+      actions: [],
+      actionPreview: null,
+      rail: { chevron: true },
+      extra: [],
+      dense: true,
+      uncapped: false,
+    };
   },
 
-  // Expand / collapse the Merged section in place (no panel reload).
-  toggleMergedPrs() {
-    AppView._mergedExpanded = !AppView._mergedExpanded;
-    const el = document.getElementById('gc-merged');
-    if (el) {
-      el.innerHTML = AppView._renderMergedInner();
-      AppView._applyExploreChatAvailability(el);
-    }
-  },
 
   // "Give kudos" — pledge a bounty on a GitHub issue. Debits the shared
   // weekly kudos allowance server-side; optimistically bumps the local count
@@ -11904,13 +12330,13 @@ const AppView = {
         defaultModel = data.default || (models[0] && models[0].id) || '';
       }
     } catch {
-      PlatformUI.toast("Couldn't load the model list — try again.");
+      PlatformUI.toast("Couldn't load the model list. Try again.");
       return;
     }
     if (!models.length || !defaultModel) {
       PlatformUI.toast(provider === 'openrouter'
         ? 'No OpenRouter models are available under your key.'
-        : "Couldn't load the model list — try again.");
+        : "Couldn't load the model list. Try again.");
       return;
     }
     const stored = provider === 'claude' ? localStorage.getItem('usernode:dc:model') : null;
@@ -11993,6 +12419,8 @@ const AppView = {
       PlatformUI.toast(errorText || "You're out of today's free AI credits.");
       return;
     }
+    const react = AppView._reactDevBoard();
+    if (!react) return;
     const root = document.createElement('div');
     root.id = 'credit-options-modal';
     root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
@@ -12008,21 +12436,20 @@ const AppView = {
       // /api/auth/me, so the card offers only what this deployment supports.
       externalFlowsAvailable: !!(typeof App !== 'undefined' && App.user
         && App.user.externalFlowsAvailable),
+      // #1281: the session-CLI bridge is opt-in, so it only appears in the
+      // card's "Are you a developer?" half for a user who turned it on.
+      sessionBridgeEnabled: !!(typeof App !== 'undefined' && App.user
+        && App.user.sessionBridgeEnabled),
     };
-    root.innerHTML = `
-      <div class="min-h-full flex items-center justify-center p-4">
-        <div class="dc-credits-modal-card w-full max-w-lg rounded-xl bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 shadow-xl p-4">
-          ${CreditOptions.cardHtml(state)}
-          <div class="flex justify-end mt-3">
-            <button type="button" data-credits-close
-              class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Not now</button>
-          </div>
-        </div>
-      </div>`;
     const close = () => {
+      AppView._creditsModalClose = null;
+      react.unmount(root);
       root.remove();
       document.removeEventListener('keydown', onKey);
     };
+    // Published so `_dismissDevModals` can close this the same way Escape
+    // does — listener removal included.
+    AppView._creditsModalClose = close;
     const onKey = (e) => { if (e.key === 'Escape') close(); };
     root.addEventListener('click', (e) => {
       if (e.target === root) close();
@@ -12030,6 +12457,11 @@ const AppView = {
     });
     document.addEventListener('keydown', onKey);
     document.body.appendChild(root);
+    // The card is `features/dev-board/modals/credit-options-modal.tsx`; the
+    // BODY inside it is still CreditOptions' own markup, and `wire` binds
+    // below it on the next line — which is why the store flushes
+    // synchronously.
+    react.mountCreditOptionsModal(root, { cardHtml: CreditOptions.cardHtml(state) });
     // #1049: "Use Claude Code" / "Use Codex" start the guided walkthrough in
     // a new session rather than dropping the user in Settings to work out
     // what to do next. Every other route is still a hash navigation, which
@@ -12060,6 +12492,8 @@ const AppView = {
   _showAutoSessionModal(issueNumber, models, preselect, modalOptions = {}) {
     let root = document.getElementById('auto-session-modal');
     if (root) root.remove();
+    const react = AppView._reactDevBoard();
+    if (!react) return Promise.resolve(null);
     root = document.createElement('div');
     root.id = 'auto-session-modal';
     root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
@@ -12076,90 +12510,70 @@ const AppView = {
         ? DevChat.modelOptionText(m)
         : (m.label || m.name || m.id);
     };
-    const options = models.map((m) =>
-      `<option value="${escapeAttr(m.id)}"${m.id === preselect ? ' selected' : ''}>${escapeHtml(optionText(m) || m.id)}</option>`
-    ).join('');
+    // #800's caption, RESOLVED PER OPTION rather than recomputed by a change
+    // handler. The picker used to bind `change` and rewrite one <p>; the
+    // caption is component state now, so each option carries its own.
+    const noteText = (m) => (openRouter
+      ? ((typeof DevChat !== 'undefined' && DevChat._openRouterModelCostSummary)
+        ? `${DevChat._openRouterModelCostSummary(m)}. ${DevChat._openRouterModelCompatibilitySummary(m)}`
+        : '')
+      : ((typeof DevChat !== 'undefined' && DevChat.modelNoteText)
+        ? DevChat.modelNoteText(m)
+        : ''));
+    const noteTitle = (text) => (!openRouter && text
+      && typeof DevChat !== 'undefined' && DevChat.MODEL_GUIDANCE_TOOLTIP
+      ? DevChat.MODEL_GUIDANCE_TOOLTIP
+      : '');
+    const options = models.map((m) => {
+      const note = noteText(m) || '';
+      return { id: m.id, label: optionText(m) || m.id, note, noteTitle: noteTitle(note) };
+    });
     const venue = window.BuildVenues ? BuildVenues.venue(modalOptions.venueId || 'usernode-claude') : null;
-    const venueHtml = venue
-      ? `Building in <b>${escapeHtml(venue.label)}</b> — your saved default. ${escapeHtml(venue.blurb)}`
-      : '';
-    root.innerHTML = `
-      <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
-        <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
-          <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Generate proposal for issue #${issueNumber}?</h2>
-          <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
-            ${openRouter
-              ? 'This sends the issue directly to your selected <b>OpenRouter model</b>. It can inspect the repository, answer with a question, or commit and push a change to its own branch (never a PR or deploy). The run bills your OpenRouter key and does not use platform Claude credits.'
-              : 'This spins up a <b>headless AI session</b> that immediately starts working on the issue on its own — investigating the repo and drafting a spec, pushing a code change, or coming back with a question. When the drafted spec looks straightforward, the session <b>may also implement it</b> in the same run (committing and pushing to its own branch — never a PR or deploy). It is not connected to your dev chat, but it <b>will automatically use your tokens/credits</b> the moment you confirm.'}
-          </p>
-          <p class="text-xs text-amber-500 mb-2">
-            Experimental — not recommended for normal users at the moment. Costs are billed
-            to you even if the result isn't useful.
-          </p>
-          <!-- WHERE it builds, named before you confirm — the pot the costs
-               above land in depends on it. Empty when build-venues.js
-               hasn't loaded, which leaves the popup as it was. -->
-          <p class="text-xs text-zinc-500 dark:text-zinc-400 mb-4">${venueHtml}</p>
-          <label class="block text-xs font-medium text-zinc-500 mb-1" for="auto-session-model">${openRouter ? 'OpenRouter model' : 'Chat model'}</label>
-          <select id="auto-session-model"
-            class="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100">
-            ${options}
-          </select>
-          <!-- #800: caption for the selected model, kept in sync below. -->
-          <p id="auto-session-model-note" class="mt-1 mb-5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400"></p>
-          <div class="flex justify-end gap-2">
-            <button data-role="cancel" type="button"
-              class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
-            <button data-role="confirm" type="button"
-              class="rounded-lg px-4 py-2 text-sm font-medium text-white bg-violet-600 hover:bg-violet-500 transition-colors">Generate proposal</button>
-          </div>
-        </div>
-      </div>`;
-    document.body.appendChild(root);
+    const intro = openRouter
+      ? 'This sends the issue directly to your selected OpenRouter model. It can inspect the repository, answer with a question, or commit and push a change to its own branch (never a PR or deploy). The run bills your OpenRouter key and does not use platform Claude credits.'
+      : 'This spins up a headless AI session that immediately starts working on the issue on its own: investigating the repo and drafting a spec, pushing a code change, or coming back with a question. When the drafted spec looks straightforward, the session may also implement it in the same run (committing and pushing to its own branch, never a PR or deploy). It is not connected to your dev chat, but it will automatically use your tokens/credits the moment you confirm.';
 
-    // #800: describe whichever model is selected, updating on change.
-    const modelSel = root.querySelector('#auto-session-model');
-    const noteEl = root.querySelector('#auto-session-model-note');
-    const paintNote = () => {
-      if (!noteEl) return;
-      const chosen = models.find((m) => m.id === (modelSel && modelSel.value));
-      const text = openRouter
-        ? ((typeof DevChat !== 'undefined' && DevChat._openRouterModelCostSummary)
-          ? `${DevChat._openRouterModelCostSummary(chosen)}. ${DevChat._openRouterModelCompatibilitySummary(chosen)}`
-          : '')
-        : ((typeof DevChat !== 'undefined' && DevChat.modelNoteText)
-          ? DevChat.modelNoteText(chosen)
-          : '');
-      noteEl.textContent = text;
-      noteEl.title = !openRouter && text && typeof DevChat !== 'undefined' && DevChat.MODEL_GUIDANCE_TOOLTIP
-        ? DevChat.MODEL_GUIDANCE_TOOLTIP
-        : '';
-    };
-    paintNote();
-    if (modelSel) modelSel.addEventListener('change', paintNote);
+    document.body.appendChild(root);
+    react.mountAutoSessionModal(root, {
+      issueNumber,
+      intro,
+      venue: venue ? { label: venue.label, blurb: venue.blurb } : null,
+      pickerLabel: openRouter ? 'OpenRouter model' : 'Chat model',
+      options,
+      preselect: preselect || (options[0] && options[0].id) || '',
+    });
 
     return new Promise((resolve) => {
       let settled = false;
       const cleanup = (result) => {
         if (settled) return;
         settled = true;
+        AppView._autoSessionCleanup = null;
         document.removeEventListener('keydown', onKey, true);
+        react.unmount(root);
         root.remove();
         resolve(result);
       };
       const onKey = (e) => {
         if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
       };
-      root.querySelector('[data-role="cancel"]').addEventListener('click', () => cleanup(null));
-      root.querySelector('[data-role="confirm"]').addEventListener('click', () => {
-        const sel = root.querySelector('#auto-session-model');
-        cleanup((sel && sel.value) || null);
-      });
+      // The card's two buttons dispatch by NAME (the same shape the cards
+      // use), so the resolver has to be reachable from outside this closure.
+      AppView._autoSessionCleanup = cleanup;
       root.addEventListener('click', (e) => {
         if (e.target === root || e.target.dataset.modalBackdrop !== undefined) cleanup(null);
       });
       document.addEventListener('keydown', onKey, true);
     });
+  },
+
+  /** The Generate-proposal dialog's two outcomes, called from its card. */
+  _autoSessionCleanup: null,
+  _autoSessionCancel() {
+    if (AppView._autoSessionCleanup) AppView._autoSessionCleanup(null);
+  },
+  _autoSessionConfirm(modelId) {
+    if (AppView._autoSessionCleanup) AppView._autoSessionCleanup(modelId || null);
   },
 
   // "Start session from proposal" — clone the finished headless session
@@ -12187,8 +12601,8 @@ const AppView = {
       // The clone is a NEW session with its own venue, resolved from the
       // cloner's default rather than inherited from the auto session — so
       // the one place to say where their copy will build is here, before
-      // they land in it. (The venue line above the composer says it again
-      // on every paint; this covers the fallback the line can't explain.)
+      // they land in it. (The venue selector in the session header says it
+      // again on every paint; this covers the fallback it can't explain.)
       AppView._reportVenueFallback(data.agentFallbackReason);
       DevChat.sessions.unshift(data.session);
       if (typeof App !== 'undefined' && App.switchTab) {
@@ -12204,6 +12618,23 @@ const AppView = {
   // again. No DevChat.sessions.unshift needed: the switchTab path reloads
   // the session list itself before opening the session.
   async goToAutoSessionClone(sessionId) {
+    if (typeof DevChat === 'undefined') return;
+    if (typeof App !== 'undefined' && App.switchTab) {
+      await App.switchTab('dev', sessionId, 'sessions');
+    }
+  },
+
+  // "Answer & regenerate" — open the headless auto-run's OWN session, where
+  // it drafted its spec and asked its question. Only ever wired for a run
+  // the viewer started: /api/sessions/:id is owner-scoped, and openSession
+  // returns silently on a non-ok response, so pointing anyone else here
+  // would produce exactly the dead button this replaced. Same navigation as
+  // goToAutoSessionClone — the switchTab path loads the session itself, so
+  // it does not matter that headless rows are excluded from the session
+  // LIST (/api/sessions filters is_headless = FALSE); openSession fetches
+  // /api/sessions/:id directly and resumes the row if it is paused, which a
+  // finished run always is.
+  async openAutoRunSession(sessionId) {
     if (typeof DevChat === 'undefined') return;
     if (typeof App !== 'undefined' && App.switchTab) {
       await App.switchTab('dev', sessionId, 'sessions');
@@ -12255,8 +12686,8 @@ const AppView = {
   //   2 blocked        Checks failing · N / Checks couldn't run /
   //                    Preview won't boot / Merge conflict /
   //                    Conflict resolution failed / Behind main · N
-  //   3 contested      Contested · 4/6
-  //   4 counting down  Merging in ~2d / Merging in 5h · 1/2 / Rejecting in ~6h
+  //   3 contested      Needs a conversation · 4/6
+  //   4 counting down  Goes live in ~2d / Goes live in 5h · 1/2 / Set aside in ~6h
   //   5 needs my vote  Vote · 2/5                           (pulsing dot)
   //   6 plain tally    3 / 5 · 2 of 3 approvals
   //
@@ -12279,21 +12710,84 @@ const AppView = {
   // single label from. Each entry is { key, label, detail } — `label` is the
   // pill wording, `detail` the sentence the detail view spells out. Empty
   // array = nothing is blocking. Pure; no DOM, no state reads.
+  // #1442 — one reader for the freshness block, because the same numbers
+  // arrive in two shapes: the flat snake_case columns /promoted has always
+  // sent (app-view.js reads those directly), and the nested camelCase
+  // `freshness` object the same route now nests beside them for the API
+  // clients. Neither is authoritative over the other; a row is simply
+  // whichever the caller had. Everything is nullable, and null means NOT
+  // MEASURED, which is never the same as measured-and-fine.
+  _freshnessOf(pr) {
+    const p = pr || {};
+    const f = (p.freshness && typeof p.freshness === 'object') ? p.freshness : {};
+    const num = (a, b) => {
+      for (const v of [a, b]) {
+        if (v === null || v === undefined || v === '') continue;
+        const n = parseInt(v, 10);
+        if (!Number.isNaN(n)) return n;
+      }
+      return null;
+    };
+    const files = Array.isArray(f.mergeabilityFiles) ? f.mergeabilityFiles
+      : (Array.isArray(p.mergeability_files) ? p.mergeability_files : []);
+    const complete = f.mergeabilityFilesComplete !== undefined && f.mergeabilityFilesComplete !== null
+      ? f.mergeabilityFilesComplete : p.mergeability_files_complete;
+    return {
+      checkedAt: f.checkedAt || p.freshness_checked_at || null,
+      mergeability: p.mergeability || f.mergeability || null,
+      files: files.filter((x) => typeof x === 'string'),
+      filesComplete: complete === undefined ? null : complete,
+      baseVerdict: p.checks_base_verdict || f.checksBaseVerdict || null,
+      baseBehindBy: num(p.checks_base_behind_by, f.checksBaseBehindBy),
+      // The measured count wins over the column frozen at submission, which
+      // is the whole point of #1442. `behind_main` is the last fallback, and
+      // it is still what the merge gate reads.
+      behindBy: num(num(p.freshness_behind_by, f.behindBy), p.behind_main),
+      error: f.error || p.freshness_error || null,
+    };
+  },
+
   blockReasons(pr) {
     const p = pr || {};
     const out = [];
+    const fresh = AppView._freshnessOf(p);
     // Merge-pipeline conflicts: a real attempt failed and a human is needed.
     if (p.merge_conflict_state === 'failed') {
       out.push({
         key: 'conflict_failed',
         label: 'Conflict resolution failed',
-        detail: 'The last automatic conflict resolution failed — the proposal’s owner needs to resolve it manually from their dev session.',
+        detail: `The last automatic conflict resolution failed. ${AppView._conflictRemedy(p, 'failed').text}`,
       });
     } else if (p.merge_conflict_state === 'conflict') {
       out.push({
         key: 'merge_conflict',
         label: 'Merge conflict',
-        detail: 'A merge was attempted but this proposal conflicts with main. Its creator needs to finish the merge from their dev session ("Sync with main").',
+        detail: `A merge was attempted but this proposal conflicts with main. ${AppView._conflictRemedy(p, 'conflict').text}`,
+      });
+    }
+    // #1442 — GitHub's PREDICTION that this proposal no longer merges, made
+    // before any merge is attempted, so it fires while merge_conflict_state
+    // is still null. That is the case this exists for: proposal 3590 sat at
+    // 412 of 412 checks passing and conflicted with main in seven files, and
+    // nothing on the screen said so. Ranked with the pipeline conflicts
+    // above because it is the same problem for the reader (a human has to
+    // resolve something), and skipped when one of those already fired: an
+    // attempted merge that failed beats a prediction about one.
+    if (fresh.mergeability === 'conflict'
+        && p.merge_conflict_state !== 'failed' && p.merge_conflict_state !== 'conflict') {
+      const n = fresh.files.length;
+      const shown = fresh.files.slice(0, 6);
+      const more = n > shown.length ? ` and ${n - shown.length} more` : '';
+      const remedy = AppView._conflictRemedy(p, 'predicted').text;
+      out.push({
+        key: 'mergeability_conflict',
+        // The unit is part of the count. "Conflicts with main · 10" sat on
+        // the same card as "Behind main · 118" in the same grammar, one
+        // counting FILES and the other COMMITS, and read as 10 commits.
+        label: n ? `Conflicts with main · ${n} file${n === 1 ? '' : 's'}` : 'Conflicts with main',
+        detail: n
+          ? `This proposal no longer merges into main on its own. ${remedy} Changed on both sides: ${shown.join(', ')}${more}.${fresh.filesComplete === false ? ' That list is a sample, not the whole set.' : ''}`
+          : `This proposal no longer merges into main on its own. ${remedy}`,
       });
     }
     // Checks: the real merge gate.
@@ -12319,14 +12813,34 @@ const AppView = {
     }
     // Behind main resolves itself, so it is the mildest blocking reason —
     // last in the list and rendered `attention` rather than `blocked`.
-    const behind = parseInt(p.behind_main, 10) || 0;
+    //
+    // #1442: the count comes from the freshness measurement now, not from
+    // the `behind_main` column frozen when the proposal was submitted. A
+    // proposal that read "0" for eight commits is what this fixes.
+    const behind = fresh.behindBy || 0;
     if (behind > 0 || p.merge_conflict_state === 'behind') {
       out.push({
         key: 'behind',
         label: behind ? `Behind main · ${behind}` : 'Behind main',
         detail: behind
-          ? `This proposal is ${behind} commit${behind === 1 ? '' : 's'} behind main — syncing automatically, then it retries the merge.`
-          : 'This proposal is behind main — syncing automatically, then it retries the merge.',
+          ? `This proposal is ${behind} commit${behind === 1 ? '' : 's'} behind main. Syncing automatically, then it retries the merge.`
+          : 'This proposal is behind main. Syncing automatically, then it retries the merge.',
+        soft: true,
+      });
+    }
+    // #1442 — the checks passed, but against a main that has since moved, so
+    // the verdict describes code this proposal would no longer merge into.
+    // Soft on purpose: it does not block the merge and it does not mean the
+    // checks were wrong. It is the sentence that explains how a proposal can
+    // be green and conflicting at the same time.
+    if (fresh.baseVerdict === 'superseded' && p.check_state !== 'failing' && p.check_state !== 'error') {
+      const n = fresh.baseBehindBy || 0;
+      out.push({
+        key: 'checks_base_superseded',
+        label: n ? `Checks ran on older main · ${n}` : 'Checks ran on older main',
+        detail: n
+          ? `The checks passed, but they ran against main as it was ${n} commit${n === 1 ? '' : 's'} ago. They describe code this proposal would no longer merge into. Syncing with main re-runs them against the current one.`
+          : 'The checks passed, but they ran against a version of main that has since moved on. Syncing with main re-runs them against the current one.',
         soft: true,
       });
     }
@@ -12338,8 +12852,8 @@ const AppView = {
         key: 'console_errors',
         label: n ? `Console errors · ${n}` : 'Console errors',
         detail: n
-          ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'} — this change may break the app. It does not block the merge.`
-          : 'The staging preview logged console errors — this change may break the app. It does not block the merge.',
+          ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'}. This change may break the app. It does not block the merge.`
+          : 'The staging preview logged console errors. This change may break the app. It does not block the merge.',
         soft: true,
         advisory: true,
       });
@@ -12351,7 +12865,12 @@ const AppView = {
   // itself is unit-testable: { tier, key, label, tone, spinner, dot, fill,
   // yes, no, majority, suffix, reasons, lock, advisory }.
   statusPillState(item, opts) {
-    const p = item || {};
+    // No row, no pill. The guard used to sit in `statusPillHtml`, which is
+    // retired with the rest of the card markup — leaving it out here would
+    // have `{}` fall through to the tier-6 tally and draw "0 / N" for a row
+    // that does not exist.
+    if (!item) return null;
+    const p = item;
     const o = opts || {};
     const ctx = AppView._proposalsCtx || {};
     const snap = parseInt(p.votes_required, 10);
@@ -12419,15 +12938,19 @@ const AppView = {
     // vote states — neutral, with a spinner while genuinely in flight.
     if (isCode && (p.check_state === 'pending'
       || (!p.check_state && p.status === 'promoted' && !p.console_check_state))) {
+      // The live counts ride the label when the run has any: a board of
+      // cards should say how far each run is, not just that it is running.
+      const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
+      const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
       return { ...base, tier: 2, key: 'checks_running',
-        label: p.check_state === 'pending' ? 'Checks running…' : 'Checks starting…',
+        label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
         tone: 'neutral', spinner: true, reasons, advisory: 0,
-        title: 'Automated tests are still running on the staging build — merge is blocked until they pass.' };
+        title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.' };
     }
     // 3 — contested: the timed path is off, it needs a straight majority.
     if (isOpenRow && p.contested) {
-      return { ...base, tier: 3, key: 'contested', label: `Contested · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,
-        title: 'Enough No votes that the time-based merge path is off — this needs a straight majority of Yes votes.' };
+      return { ...base, tier: 3, key: 'contested', label: `Needs a conversation · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,
+        title: 'Enough people have objected that the timer is off. This needs a straight majority of Yes votes, so talk it through.' };
     }
     // "At least N approvals" mode is clock-free, so it can't count down.
     if (p.approvals_required != null && isOpenRow) {
@@ -12437,7 +12960,7 @@ const AppView = {
         label: `${yes} of ${n} approval${n === 1 ? '' : 's'}`,
         tone: reached ? 'ok' : 'progress', reasons,
         title: reached
-          ? `Approval target reached (${yes} of ${n}) — merges as soon as checks pass`
+          ? `Approval target reached (${yes} of ${n}). Merges as soon as checks pass`
           : `Needs at least ${n} approval${n === 1 ? '' : 's'} to merge` };
     }
     // 4 — counting down. A flagged (admins-changing) row never merges on a
@@ -12449,17 +12972,17 @@ const AppView = {
     if (isOpenRow && !p.requires_explicit_approval && inWindow && (reachedMaj || lazyLead)) {
       const suffix = reachedMaj ? '' : ` · ${yes}/${maj}`;
       return { ...base, tier: 4, key: 'merge_countdown', tone: 'ok', fill: 'full-yes', countdown: windowEndsMs,
-        label: `Merging in ${AppView._fmtCountdown(windowEndsMs - Date.now())}${suffix}`,
+        label: `Goes live in ${AppView._fmtCountdown(windowEndsMs - Date.now())}${suffix}`,
         suffix, reasons,
         title: reachedMaj
-          ? `Enough yes votes (${yes} / ${maj}) — merges when the visibility window elapses unless opposed`
-          : `Has support (${yes} / ${maj} yes) and no opposition — merges when the countdown ends unless more votes arrive` };
+          ? `Enough Yes votes (${yes} / ${maj}). Goes live when the visibility window ends unless someone objects`
+          : `Has support (${yes} / ${maj} yes) and nobody has objected. Goes live when the countdown ends unless more votes come in` };
     }
     const rejectEndsMs = p.reject_window_ends_at ? Date.parse(p.reject_window_ends_at) : NaN;
     if (isOpenRow && p.rejection_armed && Number.isFinite(rejectEndsMs) && rejectEndsMs > Date.now()) {
       return { ...base, tier: 4, key: 'reject_countdown', tone: 'blocked', fill: 'full-no', countdown: rejectEndsMs, reject: true,
-        label: `Rejecting in ${AppView._fmtCountdown(rejectEndsMs - Date.now())}`, reasons,
-        title: `More No than Yes and not enough support (${yes} / ${maj}) — closes when this elapses unless support arrives` };
+        label: `Set aside in ${AppView._fmtCountdown(rejectEndsMs - Date.now())}`, reasons,
+        title: `More No than Yes and not much support yet (${yes} / ${maj}). It will be set aside when this runs out unless someone speaks up` };
     }
     // 5 — needs your vote. Absorbs the standalone pulsing "Vote" badge.
     if (p.status === 'promoted' && !p.my_vote && !AppView.readOnly) {
@@ -12474,112 +12997,14 @@ const AppView = {
         ? `needed ${snap} of ${activeAtMerge} active users at merge time` : undefined };
   },
 
-  // Render the composite pill. Reuses .gc-vote-count's shell (and its
-  // proportional-fill children) so the geometry is identical to what the
-  // tally pill always had — only the label, tone and what's folded inside
-  // it change.
-  statusPillHtml(item, opts) {
-    if (!item) return '';
-    const o = opts || {};
-    const s = AppView.statusPillState(item, o);
-    if (!s || !s.label) return '';
-    // Fill: `true` = proportional stripes, 'full-yes'/'full-no' = solid.
-    let fills = '';
-    if (s.fill === 'full-yes') {
-      fills = '<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>';
-    } else if (s.fill === 'full-no') {
-      fills = '<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-no"></span>';
-    } else if (s.fill) {
-      const maj = s.majority || 1;
-      if (s.yes >= maj) {
-        fills = '<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>';
-      } else if (s.no >= maj) {
-        fills = '<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-no"></span>';
-      } else {
-        fills = `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${Math.min(100, (s.yes / maj) * 100)}%"></span>`
-          + `<span class="gc-vote-fill gc-vote-fill-no" style="width:${Math.min(100, (s.no / maj) * 100)}%"></span>`;
-      }
-    }
-    const dot = s.dot
-      ? '<span class="gc-vote-count-dot"><span class="gc-vote-count-dot-ping"></span><span class="gc-vote-count-dot-core"></span></span>'
-      : '';
-    const spinner = s.spinner
-      ? '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>'
-      : '';
-    const advisory = s.advisory > 0
-      ? `<span class="gc-vote-count-suffix" title="${escapeAttr(`${s.advisory} advisory vote${s.advisory === 1 ? '' : 's'} from non-approvers — they don't count toward merging`)}">+${s.advisory}</span>`
-      : '';
-    const lock = s.lock
-      ? '<span class="gc-vote-count-lock" aria-hidden="true" title="This changes who can administer the app, so it won’t merge on a timer — it needs real Yes votes to reach the app’s normal threshold.">&#128274;</span>'
-      : '';
-    // "and N more reasons" — the pill names the worst one; the detail view
-    // enumerates every one of them.
-    const extra = Array.isArray(s.reasons) ? Math.max(0, s.reasons.length - 1) : 0;
-    const titleParts = [];
-    if (s.title) titleParts.push(s.title);
-    else if (s.reasons && s.reasons[0]) titleParts.push(s.reasons[0].detail);
-    if (s.tier === 2 && extra > 0) {
-      titleParts.push(`and ${extra} more reason${extra === 1 ? '' : 's'} — open for details`);
-    }
-    const title = titleParts.length ? ` title="${escapeAttr(titleParts.join(' · '))}"` : '';
-    // The 30s ticker rewrites countdown labels in place; carry the same
-    // data-window-ends / data-label-suffix contract voteCountPill uses.
-    const cd = s.countdown
-      ? ` ${s.reject ? 'gc-reject-countdown' : 'gc-merge-countdown'}" data-window-ends="${s.countdown}"${s.suffix ? ` data-label-suffix="${escapeAttr(s.suffix)}"` : ''}`
-      : '"';
-    // Full-width by default (the board): the pill spans the card's content
-    // width so the proportional fill reads as a progress bar rather than a
-    // thumbnail-sized capsule. opts.inline keeps the old capsule for any
-    // caller that wants it in a row of chips (the detail head uses it).
-    const block = o.inline ? '' : ' dev-status-pill-block';
-    return `<span class="gc-vote-count gc-vote-count-${s.tone} dev-status-pill${block}${cd}${title}>`
-      + fills
-      + `<span class="gc-vote-count-label">${dot}${spinner}${escapeHtml(s.label)}${advisory}${lock}</span>`
-      + '</span>';
-  },
+  // The pill's MARKUP moved to card/dev-card.tsx (`StatusPill`), which
+  // renders the state above verbatim — the tone class, the proportional or
+  // solid fill, the pulsing dot, the spinner, the advisory suffix and the
+  // lock glyph, inside .gc-vote-count's shell so the geometry is identical
+  // to what the tally pill always had. `statusPillHtml` built that string
+  // and is retired with the rest of the card family; the DERIVATION stays
+  // here, which is the half that was worth unit-testing anyway.
 
-  // ── The badge budget ─────────────────────────────────────────────────
-  //
-  // A card carries AT MOST BADGE_MAX badges, plus the 💬 count pinned
-  // outside the cap (it is a count-with-shortcut, not a status signal).
-  // Priority, highest first:
-  //
-  //   1 In progress · X                  (issues)
-  //   2 priority   — only when set
-  //   3 assignee   — only when set
-  //   4 category   — only when set
-  //
-  // The composite status pill leads this row (`opts.pill`) and the linked
-  // issue pills follow it (`opts.lead`) — both only on the board, where the
-  // merged status band holds all three — but NEITHER counts against the cap:
-  // the cap governs the metadata chips only — which is also why four is
-  // still the right number, that is exactly the set. State and linkage are
-  // not "one more chip"; they are the two things the row exists to show, so
-  // a card with four chips set must not be able to push them out.
-  //
-  // Everything that used to compete for this row — Auto-title pending,
-  // Imported PR, Built with <agent>, Platform maintenance, Explicit
-  // approval, Console errors, the ★ bounty count — moved out: provenance
-  // and the bounty are plain words on the META LINE, the rest are folded
-  // into the pill (lock glyph / tooltip) and spelled out in the detail view.
-  BADGE_MAX: 4,
-  _cardBadgesHtml(badges, chatCount, opts) {
-    const o = opts || {};
-    const all = (badges || []).filter(Boolean);
-    // o.uncapped — the topic detail head, which has the full page width
-    // and is where every chip must be reachable. The BOARD always caps.
-    const kept = o.uncapped ? all : all.slice(0, AppView.BADGE_MAX);
-    const chat = (chatCount === null || chatCount === undefined)
-      ? '' : AppView._devChatBadge(chatCount);
-    // Dense (board) order: state bar, then linkage, then the metadata chips,
-    // then the 💬 count. The pill and the linked-issue pills are PREPENDED —
-    // they are what the merged band exists to show, and the band clips at its
-    // end, so they must never be what gets cut. Everything after them keeps
-    // the historical `chips + chat` order, which is also what the detail head
-    // renders (it never clips, and its pill/linkage arrive inside `badges`).
-    if (o.dense) return (o.pill || '') + (o.lead || '') + kept.join('') + chat;
-    return kept.join('') + chat;
-  },
 
   voteCountPill(pr, majority) {
     if (!pr) return '';
@@ -12608,7 +13033,7 @@ const AppView = {
         && pr.status !== 'merged' && pr.status !== 'merging')
       ? Math.max(0, (parseInt(pr.yes_count) || 0) - yes) : 0;
     const advisoryChip = advisoryYes > 0
-      ? `<span class="gc-vote-advisory" title="${advisoryYes} advisory Yes vote${advisoryYes === 1 ? '' : 's'} from non-approvers — they don't count toward merging">+${advisoryYes} advisory</span>`
+      ? `<span class="gc-vote-advisory" title="${advisoryYes} advisory Yes vote${advisoryYes === 1 ? '' : 's'} from non-approvers. They don't count toward merging">+${advisoryYes} advisory</span>`
       : '';
 
     // #788: this proposal changes who can administer the app. The app's
@@ -12617,7 +13042,7 @@ const AppView = {
     // Suppressed on settled rows (the vote is history there).
     const explicitChip = (pr.requires_explicit_approval
         && pr.status !== 'merged' && pr.status !== 'merging')
-      ? '<span class="gc-vote-explicit" title="This changes the app\'s admins, so it won\'t merge on a timer — it needs real Yes votes to reach the app\'s normal threshold. It can still be voted down.">Explicit approval</span>'
+      ? '<span class="gc-vote-explicit" title="This changes the app\'s admins, so it won\'t merge on a timer. It needs real Yes votes to reach the app\'s normal threshold. It can still be voted down.">Explicit approval</span>'
       : '';
 
     // #646: "at least N" mode — a clock-free approvals-progress pill
@@ -12628,7 +13053,7 @@ const AppView = {
       const reached = yes >= n;
       const who = pr.approval_policy === 'invited' ? 'invited approvers' : 'any user';
       const title = reached
-        ? `Approval target reached (${yes} of ${n}) — merges as soon as checks pass`
+        ? `Approval target reached (${yes} of ${n}). Merges as soon as checks pass`
         : `Needs at least ${n} approval${n === 1 ? '' : 's'} from ${who} to merge`;
       const fills = reached
         ? `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
@@ -12646,7 +13071,7 @@ const AppView = {
     //   - lazy consensus: below threshold but Yes strictly leads with no
     //     contest — the proposal auto-merges when the clock ends unless
     //     someone objects (silence is consent).
-    // Render "Merging in ~X" instead of the bare tally so voters see it's
+    // Render "Goes live in ~X" instead of the bare tally so voters see it's
     // on track and how long they have left to object. Only for live (not
     // merged/merging) rows — a settled row never counts down. The
     // `gc-merge-countdown` class + data-window-ends drive the client timer.
@@ -12662,8 +13087,8 @@ const AppView = {
       && !pr.contested && inWindow && (state === 'yes' || lazyLead)) {
       const label = AppView._fmtCountdown(windowEndsMs - Date.now());
       const title = state === 'yes'
-        ? `Enough yes votes (${yes} / ${maj}) — merges when the visibility window elapses unless opposed`
-        : `Has support (${yes} / ${maj} yes) and no opposition — merges when the countdown ends unless more votes arrive`;
+        ? `Enough Yes votes (${yes} / ${maj}). Goes live when the visibility window ends unless someone objects`
+        : `Has support (${yes} / ${maj} yes) and nobody has objected. Goes live when the countdown ends unless more votes come in`;
       // Below threshold the tally rides along in the label so it's clear
       // the vote is still open and can be swung either way. The suffix is
       // mirrored into data-label-suffix so the 30s ticker preserves it when
@@ -12673,13 +13098,13 @@ const AppView = {
       return `<span class="gc-vote-count gc-vote-count-yes gc-merge-countdown" data-window-ends="${windowEndsMs}"${suffixAttr}`
         + ` title="${title}">`
         + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
-        + `<span class="gc-vote-count-label">Merging in ${label}${suffix}</span>`
+        + `<span class="gc-vote-count-label">Goes live in ${label}${suffix}</span>`
         + `</span>` + advisoryChip + explicitChip;
     }
 
     // Rejection (auto-takedown) countdown: the group is voting this down
     // (No > Yes, under the 1/3 support line) and the takedown clock is armed.
-    // Render a red "Rejecting in ~X" pill. Mutually exclusive with the merge
+    // Render a red "Set aside in ~X" pill. Mutually exclusive with the merge
     // countdown above (can't reach the Yes threshold while losing). The
     // `gc-reject-countdown` class + data-window-ends drive the same timer.
     const rejectEndsMs = pr.reject_window_ends_at ? Date.parse(pr.reject_window_ends_at) : NaN;
@@ -12687,9 +13112,9 @@ const AppView = {
     if (isOpenRow && pr.rejection_armed && inReject) {
       const label = AppView._fmtCountdown(rejectEndsMs - Date.now());
       return `<span class="gc-vote-count gc-vote-count-no gc-reject-countdown" data-window-ends="${rejectEndsMs}"`
-        + ` title="More No than Yes and not enough support (${yes} / ${maj}) — closes when this elapses unless support arrives">`
+        + ` title="More No than Yes and not much support yet (${yes} / ${maj}). It will be set aside when this runs out unless someone speaks up">`
         + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-no"></span>`
-        + `<span class="gc-vote-count-label">Rejecting in ${label}</span>`
+        + `<span class="gc-vote-count-label">Set aside in ${label}</span>`
         + `</span>` + advisoryChip + explicitChip;
     }
     // #58: when both at-merge figures are present, surface the historical
@@ -12763,7 +13188,7 @@ const AppView = {
     if (!name) return '';
     const label = (value === 'claude-code' || value === 'codex')
       ? `Built with ${name}` : 'Built with a coding agent';
-    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-600 dark:text-violet-400 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Usernode opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
+    return `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-700 dark:text-violet-400 shrink-0" title="${escapeHtml('The code was written by the proposer’s own coding agent (' + name + ') on their subscription, in their GitHub fork. Usernode opened the pull request; the group still votes on it.')}">${escapeHtml(label)}</span>`;
   },
 
   // #381: advisory "may break the app" warning. Shown alongside (not
@@ -12776,8 +13201,8 @@ const AppView = {
     const n = Array.isArray(pr.console_errors) ? pr.console_errors.length : 0;
     const label = n ? `Console errors · ${n}` : 'Console errors';
     const title = n
-      ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'} — this change may break the app. Open the discussion to see them.`
-      : 'The staging preview logged console errors — this change may break the app.';
+      ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'}. This change may break the app. Open the discussion to see them.`
+      : 'The staging preview logged console errors. This change may break the app.';
     return `<span class="gc-warning-badge" title="${escapeHtml(title)}">⚠ ${escapeHtml(label)}</span>`;
   },
 
@@ -12812,7 +13237,7 @@ const AppView = {
       // instead of silence. Rows carrying a console snapshot are genuine
       // pre-#47 legacy — keep their advisory fallback.
       if (!pr.console_check_state) {
-        return `<span class="gc-checks-running-badge" title="The staging preview is being prepared and automated tests are about to run — merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks starting…</span>`;
+        return `<span class="gc-checks-running-badge" title="The staging preview is being prepared and automated tests are about to run. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks starting…</span>`;
       }
       return AppView.consoleWarningBadgeHtml(pr);
     }
@@ -12827,25 +13252,27 @@ const AppView = {
         ? pr.test_results.filter((r) => r && r.status !== 'pass').length : 0;
       const label = n ? `Checks failing · ${n}` : 'Checks failing';
       const title = n
-        ? `${n} automated test${n === 1 ? '' : 's'} failed on the staging build — merge is blocked until checks pass. Open the discussion to see them.`
-        : 'Automated tests failed on the staging build — merge is blocked until checks pass.';
+        ? `${n} automated test${n === 1 ? '' : 's'} failed on the staging build. Merge is blocked until checks pass. Open the discussion to see them.`
+        : 'Automated tests failed on the staging build. Merge is blocked until checks pass.';
       return `<span class="gc-blocked-badge" title="${escapeHtml(title)}">⚠ ${escapeHtml(label)}</span>`;
     }
     if (state === 'error') {
-      return `<span class="gc-conflict-badge" title="The staging build or the test run itself broke, so the platform can't confirm the app works — merge is blocked until checks pass.">⚠ Checks couldn't run</span>`;
+      return `<span class="gc-conflict-badge" title="The staging build or the test run itself broke, so the platform can't confirm the app works. Merge is blocked until checks pass.">⚠ Checks couldn't run</span>`;
     }
     if (state === 'skipped') {
       // #461: explicit terminal "nothing to test" verdict — grey, no
       // spinner, and NON-blocking (the merge gate treats it like passing).
       const why = pr.check_error_detail
-        ? `Automated checks were skipped — ${String(pr.check_error_detail).slice(0, 280)}. This does not block the merge.`
-        : 'Automated checks were skipped — there was nothing to test. This does not block the merge.';
+        ? `Automated checks were skipped: ${String(pr.check_error_detail).slice(0, 280)}. This does not block the merge.`
+        : 'Automated checks were skipped: there was nothing to test. This does not block the merge.';
       return `<span class="gc-checks-running-badge" title="${escapeHtml(why)}">Checks skipped</span>`;
     }
     // 'pending' (or anything else): tests are still running. #405: grey
     // (gc-checks-running-badge), not amber, so a not-yet-started check is
     // visibly distinct from the amber in-flight merge stages.
-    return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build — merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…</span>`;
+    const live = state === 'pending' ? AppView._checksProgressView(pr) : null;
+    const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
+    return `<span class="gc-checks-running-badge" title="Automated tests are still running on the staging build. Merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks running…${count}</span>`;
   },
 
   // #195/#270: before/after visual tiles for a session's stored capture
@@ -12903,6 +13330,14 @@ const AppView = {
     // onto the matching pair. ids are 32-hex-validated, so they're safe
     // inside the data-* attributes; path goes through esc(). `mobile`
     // flags a phone-frame capture group (#768) so the overlay can label it.
+    // A side with NO capture. It used to return '' — one lone tile plus a
+    // caption, which reads as a capture that failed rather than as a pair
+    // with one honest half. The placeholder keeps the row two-up so the
+    // caption below it explains a shape the reader can already see.
+    const emptyTile = (label, mobile) => `<figure ${mobile ? 'data-viewport="mobile"' : ''} class="usn-visual-figure" style="flex:1 1 0;min-width:0;display:block;margin:0">
+        <div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
+        <div class="usn-visual-empty${mobile ? ' usn-visual-phone' : ''}" aria-hidden="true"></div>
+      </figure>`;
     const tile = (label, side, b, a, path, mobile) => {
       const v = side === 'before' ? b : a;
       if (!v) return '';
@@ -12918,15 +13353,19 @@ const AppView = {
       // (the whole point of the reliability work) — a still-only tile is
       // marked "no recording" beside its label.
       const marker = (clickToPlay && !v.webm)
-        ? ' <span class="text-zinc-400 dark:text-zinc-500" style="text-transform:none;letter-spacing:0">· no recording</span>'
+        ? ' <span class="text-zinc-500 dark:text-zinc-500" style="text-transform:none;letter-spacing:0">· no recording</span>'
         : '';
-      const labelHtml = `<div class="text-[0.65rem] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}${marker}</div>`;
+      const labelHtml = `<div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}${marker}</div>`;
+      // #768's `mobile` was a text suffix on the row label — "(mobile)" —
+      // which a reader takes in AFTER deciding the tile looks oddly cropped.
+      // The outline says it before they read anything.
+      const framed = (m) => `<div class="usn-visual-media${mobile ? ' usn-visual-phone' : ''}">${m}</div>`;
       // Without the overlay there's nothing to click — render an inert
       // figure so the tile isn't a button that does nothing.
       if (!overlay) {
         return `<figure ${mobile ? 'data-viewport="mobile"' : ''} data-visual-tile="${side}" data-path="${esc(path)}" style="flex:1 1 0;min-width:0;display:block;margin:0">
           ${labelHtml}
-          ${media}
+          ${framed(media)}
         </figure>`;
       }
       const dataAttrs = [
@@ -12940,9 +13379,9 @@ const AppView = {
         a && a.webm ? `data-after-webm="${a.webm}"` : '',
         a && a.gif ? `data-after-gif="${a.gif}"` : '',
       ].filter(Boolean).join(' ');
-      return `<button type="button" ${dataAttrs} title="${label} — open before/after comparison" style="flex:1 1 0;min-width:0;display:block;text-align:left;padding:0;border:0;background:none;cursor:pointer;font:inherit;color:inherit" onclick="AppView.openVisualComparison(this)">
-        <div class="text-[0.65rem] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
-        ${media}
+      return `<button type="button" ${dataAttrs} title="${label}: open before/after comparison" style="flex:1 1 0;min-width:0;display:block;text-align:left;padding:0;border:0;background:none;cursor:pointer;font:inherit;color:inherit" onclick="AppView.openVisualComparison(this)">
+        <div class="text-[0.65rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}</div>
+        ${framed(media)}
       </button>`;
     };
 
@@ -12953,30 +13392,44 @@ const AppView = {
       const a = sideIds(g.after);
       const path = g.path || '/';
       const mobile = g.viewport === 'mobile';
-      const before = tile('Before', 'before', b, a, path, mobile);
-      const after = tile('After', 'after', b, a, path, mobile);
-      if (!after && !before) continue;
+      const before = tile('Before', 'before', b, a, path, mobile)
+        || (a ? emptyTile('Before', mobile) : '');
+      const after = tile('After', 'after', b, a, path, mobile)
+        || (b ? emptyTile('After', mobile) : '');
+      if (!a && !b) continue;
       // Label the row with its captured path unless it's the single
       // root-only DESKTOP group (unchanged from the pre-#270 single-tile
       // output). A mobile group (#768) is always labelled — the phone
       // frame needs calling out even at the root.
       const label = (single && (path === '/' || !path) && !mobile)
         ? ''
-        : `<div class="text-[0.7rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin:6px 0 2px">Before / after — <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`;
+        : `<div class="text-[0.7rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin:6px 0 2px">Before / after: <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`;
       // Honest-pair captions: explain a missing "before" (route is new —
       // there's no production version to compare) and a fell-back "before"
       // (the deep route 404'd on production, so the tile shows the home
       // page) so a mismatched-looking comparison isn't read as a bug.
       let note = '';
       if (a && !b) {
-        note = 'New page — no production version to compare';
+        note = 'New page (no production version to compare)';
       } else if (b && g.beforeFellBack) {
-        note = '"Before" shows the home page — this page didn’t exist in production yet';
+        note = '"Before" shows the home page. This page didn’t exist in production yet';
       }
       const noteHtml = note
         ? `<div class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" style="margin:2px 0 0">${esc(note)}</div>`
         : '';
-      rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>${noteHtml}`);
+      rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:stretch;margin:4px 0 2px">${before}${after}</div>${noteHtml}`);
+    }
+    // ONE STRIP, and the rest behind a disclosure. Every group used to stack
+    // inline, so a three-route capture was three full-width before/after
+    // strips in the middle of a transcript — the proposal's own title ended
+    // up a screen above its actions. The first route is the one the
+    // submission named first, which is the one worth seeing without asking.
+    //
+    // NOT in gallery mode (`preload: 'none'`): that view exists to show every
+    // recording at once, and hiding four fifths of it would defeat it.
+    if (rows.length > 1 && !clickToPlay) {
+      const [first, ...rest] = rows;
+      return `${first}<details class="usn-visual-more"><summary class="usn-visual-more-summary">All ${rows.length} screens</summary>${rest.join('')}</details>`;
     }
     return rows.join('');
   },
@@ -13022,22 +13475,22 @@ const AppView = {
     const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
     const column = (label, v) => {
       const has = v && (v.png || v.webm || v.gif);
-      const heading = `<div class="text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-400">${label}</div>`;
+      const heading = `<div class="text-[0.7rem] font-semibold text-zinc-500 dark:text-zinc-400">${label}</div>`;
       if (!has) {
-        return `<div style="${colStyle}">${heading}<div class="text-xs text-zinc-500" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">No ${label.toLowerCase()} version to compare.</div></div>`;
+        return `<div style="${colStyle}">${heading}<div class="text-xs text-zinc-500 dark:text-zinc-400" style="padding:24px 0;text-align:center;border:1px dashed rgba(127,127,127,0.3);border-radius:8px">No ${label.toLowerCase()} version to compare.</div></div>`;
       }
       const media = v.webm
         ? `<video src="/visuals/${v.webm}"${v.png ? ` poster="/visuals/${v.png}"` : ''} muted loop autoplay playsinline controls style="${mediaStyle}"></video>`
         : `<img src="/visuals/${v.png || v.gif}" alt="${label}" style="${mediaStyle}">`;
       const orig = pick(v.webm, v.gif, v.png);
       const origLink = orig
-        ? `<a href="/visuals/${orig}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-400 hover:text-violet-300">Open original ↗</a>`
+        ? `<a href="/visuals/${orig}" target="_blank" rel="noopener" class="text-[0.7rem] text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300">Open original ↗</a>`
         : '';
       return `<div style="${colStyle}">${heading}${media}${origLink}</div>`;
     };
 
     const pathLabel = ((path && path !== '/') || mobile)
-      ? `<div class="text-xs text-zinc-400" style="margin-bottom:10px">Before / after — <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`
+      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400" style="margin-bottom:10px">Before / after: <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`
       : '';
     const bodyHtml = `${pathLabel}<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column('Before', before)}${column('After', after)}</div>`;
 
@@ -13081,46 +13534,22 @@ const AppView = {
   // the open/closed choice survives the panel's frequent full re-renders.
   _visualsOpen: new Set(),
 
-  // #211: collapsed-by-default wrapper around visualsTilesHtml for the
-  // App-information-and-activity panel's PR rows. Renders a small
-  // "Show before/after" toggle; the tiles themselves sit in an inert
-  // <template> until expanded, so hidden screenshots/videos cost no
-  // bandwidth and autoplay loops don't run off-screen. The dev-chat
-  // "Changes ready" card intentionally keeps calling visualsTilesHtml
-  // directly — its inline tiles stay as before (issue #211).
-  visualsToggleHtml(sessionId, visuals) {
-    const tiles = AppView.visualsTilesHtml(visuals);
-    if (!tiles) return '';
-    const open = AppView._visualsOpen.has(sessionId);
-    return `<div class="usn-visuals-toggle">
-      <button type="button" class="gc-vote-btn" aria-expanded="${open}" onclick="AppView.toggleVisuals(${sessionId}, this)">${open ? 'Hide before/after' : 'Show before/after'}</button>
-      <template class="usn-visuals-tpl">${tiles}</template>
-      <div class="usn-visuals-body">${open ? tiles : ''}</div>
-    </div>`;
-  },
-
-  // #211: expand/collapse handler for the toggle above. Injects the tile
-  // markup from the row's <template> on open and clears it on close
-  // (clearing, rather than display:none, stops any looping <video>).
-  toggleVisuals(sessionId, btn) {
-    // Two layouts share this handler: the home panel's self-contained
-    // .usn-visuals-toggle wrapper, and the proposal card (the toggle pill
-    // lives in the actions row, the template/body below it — the card root
-    // carries data-visuals-scope so we can find them).
-    const wrap = btn.closest('.usn-visuals-toggle, [data-visuals-scope]');
-    if (!wrap) return;
-    const body = wrap.querySelector('.usn-visuals-body');
-    const tpl = wrap.querySelector('template.usn-visuals-tpl');
-    const open = !AppView._visualsOpen.has(sessionId);
-    if (open) {
-      AppView._visualsOpen.add(sessionId);
-      if (body && tpl) body.innerHTML = tpl.innerHTML;
-    } else {
-      AppView._visualsOpen.delete(sessionId);
-      if (body) body.innerHTML = '';
-    }
-    btn.textContent = open ? 'Hide before/after' : 'Show before/after';
-    btn.setAttribute('aria-expanded', String(open));
+  // #211: expand/collapse the before/after captures on the topic head.
+  //
+  // It used to keep the tiles in an inert `<template>` and copy them into a
+  // sibling body on open — a bandwidth trick, and the only way an innerHTML
+  // card could avoid running autoplay loops off-screen. `open` is a model
+  // field now (topic/model.ts), so a closed block simply renders no tiles,
+  // which is the same saving without the template.
+  //
+  // `visualsToggleHtml` — the App-information panel's self-contained
+  // `.usn-visuals-toggle` wrapper, which this handler's other branch served
+  // — is retired with it: nothing had called it since that panel was
+  // rebuilt, which is how the uncalled-member sweep found it.
+  toggleVisuals(sessionId) {
+    if (AppView._visualsOpen.has(sessionId)) AppView._visualsOpen.delete(sessionId);
+    else AppView._visualsOpen.add(sessionId);
+    AppView._renderTopicHead();
   },
 
   // #80: derive the GitHub issue URL for issue #N from a PR's html_url
@@ -13338,7 +13767,7 @@ const AppView = {
       main = `${subj} started work on this and paused it${when}, so nobody is working on it at the moment.`
         + (clears ? ` This clears itself on ${clears} unless the session picks up again.` : '');
     } else if (s.key === 'answer_needed') {
-      main = 'An auto-solve run got part way and asked a question — it needs an answer from someone before it can go further.';
+      main = 'An auto-solve run got part way and asked a question. It needs an answer from someone before it can go further.';
     } else if (s.key === 'draft_ready') {
       main = 'An auto-solve run finished and left a draft here for someone to look over.';
     } else {
@@ -13363,11 +13792,11 @@ const AppView = {
   // a plain informational span (private work, claims-only, or headless-only
   // — those rows' own buttons navigate).
   _WORK_TONE_CLS: {
-    violet: 'bg-violet-500/10 text-violet-400',
-    sky: 'bg-sky-500/10 text-sky-500',
-    emerald: 'bg-emerald-500/10 text-emerald-500',
-    zinc: 'bg-zinc-500/10 text-zinc-500',
-    amber: 'bg-amber-500/10 text-amber-500',
+    violet: 'bg-violet-500/10 text-violet-700 dark:text-violet-400',
+    sky: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
+    emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+    zinc: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+    amber: 'bg-amber-500/10 text-amber-800 dark:text-amber-300',
   },
   _WORK_TONE_HOVER: {
     violet: 'hover:bg-violet-500/20',
@@ -13377,21 +13806,29 @@ const AppView = {
     amber: 'hover:bg-amber-500/20',
   },
 
-  _inProgressChipHtml(issue) {
+  // The work-state chip's SPEC. A chip whose state names a linked session
+  // is a button that opens it; every other state is an inert span.
+  _inProgressChipSpec(issue) {
     const st = AppView._issueWorkState(issue);
-    if (!st) return '';
+    if (!st) return null;
     const tone = AppView._WORK_TONE_CLS[st.tone] || AppView._WORK_TONE_CLS.sky;
     const hover = AppView._WORK_TONE_HOVER[st.tone] || AppView._WORK_TONE_HOVER.sky;
-    const spin = st.spinner
-      ? '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>'
-      : '';
     const ip = issue.in_progress || null;
     const target = ip && ip.target;
     const targetId = target ? parseInt(target.sessionId, 10) : 0;
+    const data = { 'data-work-state': st.key };
     if (target && targetId) {
-      return `<button type="button" class="dev-badge ${tone} ${hover}" data-work-state="${escapeAttr(st.key)}" title="${escapeAttr(`${st.tip} — open the linked work`)}" onclick="AppView.openInProgressTarget('${escapeAttr(String(target.kind))}', ${targetId})">${spin}${escapeHtml(st.label)}</button>`;
+      return {
+        t: 'chipBtn', key: 'work', cls: `dev-badge ${tone}`, hover,
+        label: st.label, title: `${st.tip}. Open the linked work`,
+        spinner: !!st.spinner, data,
+        act: { fn: 'openInProgressTarget', args: [String(target.kind), targetId] },
+      };
     }
-    return `<span class="dev-badge ${tone}" data-work-state="${escapeAttr(st.key)}" title="${escapeAttr(st.tip)}">${spin}${escapeHtml(st.label)}</span>`;
+    return {
+      t: 'chip', key: 'work', cls: `dev-badge ${tone}`,
+      label: st.label, title: st.tip, spinner: !!st.spinner, data,
+    };
   },
 
   // Navigate to the work behind an issue's "In progress" chip, reusing
@@ -13417,8 +13854,19 @@ const AppView = {
   // below this never needs pr_url (session cards have none pre-PR) and
   // never leaves the app. opts.label prefixes each chip (the live
   // proposal card passes 'Closes' to keep its established wording).
-  issueChipsHtml(linkedIssues, opts) {
+  issueChipSpecs(linkedIssues, opts) {
     const prefix = opts && opts.label ? `${opts.label} ` : '';
+    const cls = 'dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400';
+    return AppView._sanitizeIssueNumbers(linkedIssues).map((n) => ({
+      t: 'issueChip', key: `issue:${n}`, n, prefix, cls,
+      title: `Open issue #${n}'s discussion`,
+    }));
+  },
+
+  // Mirror prMetadata.sanitizeIssueNumbers: drop anything that isn't a
+  // positive integer, dedupe, sort ascending. Shared by the in-app chips
+  // above and the GitHub links below, which used to each carry a copy.
+  _sanitizeIssueNumbers(linkedIssues) {
     const raw = Array.isArray(linkedIssues) ? linkedIssues : [];
     const seen = new Set();
     const nums = [];
@@ -13426,45 +13874,46 @@ const AppView = {
       const n = typeof v === 'number' ? v : Number(v);
       if (Number.isInteger(n) && n > 0 && !seen.has(n)) { seen.add(n); nums.push(n); }
     }
-    if (!nums.length) return '';
     nums.sort((a, b) => a - b);
-    const cls = 'dev-badge font-mono bg-violet-500/10 text-violet-400 hover:bg-violet-500/20';
-    return nums.map((n) =>
-      `<button type="button" class="${cls}" title="Open issue #${n}'s discussion" data-issue-chip="${n}" onclick="AppView.openTopic('issue', ${n})">${prefix}#${n}</button>`
-    ).join(' ');
+    return nums;
   },
 
-  closesPillHtml(pr) {
-    if (!pr || !pr.pr_url) return '';
-    // Sanitize defensively (mirror prMetadata.sanitizeIssueNumbers): drop
-    // anything that isn't a positive integer, dedupe, sort ascending.
-    const raw = Array.isArray(pr.linked_issues) ? pr.linked_issues : [];
-    const seen = new Set();
-    const nums = [];
-    for (const v of raw) {
-      const n = typeof v === 'number' ? v : Number(v);
-      if (Number.isInteger(n) && n > 0 && !seen.has(n)) { seen.add(n); nums.push(n); }
-    }
-    if (!nums.length) return '';
-    nums.sort((a, b) => a - b);
-
+  // The GitHub "Closes #N" links, as SPECS. Merged cards use these (their
+  // issues are closed, so the in-app topic would dead-end and GitHub is
+  // the permanent record); live proposals use issueChipSpecs instead.
+  closesPillSpecs(pr) {
+    if (!pr || !pr.pr_url) return [];
     const merged = pr.status === 'merged';
     const verb = merged ? 'Closed' : 'Closes';
     // Match the PR-number link tint at each site: emerald for merged,
     // violet for open.
     const cls = merged
-      ? 'dev-badge font-mono bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20'
-      : 'dev-badge font-mono bg-violet-500/10 text-violet-400 hover:bg-violet-500/20';
-
-    return nums.map((n) => {
+      ? 'dev-badge font-mono bg-emerald-500/10 text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-400'
+      : 'dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400';
+    const out = [];
+    for (const n of AppView._sanitizeIssueNumbers(pr.linked_issues)) {
       const href = AppView.issueUrlFromPrUrl(pr.pr_url, n);
-      if (!href) return '';
-      return `<a href="${href}" target="_blank" rel="noopener" class="${cls}" title="${verb} issue #${n} on GitHub">${verb} #${n}</a>`;
-    }).join(' ');
+      if (!href) continue;
+      out.push({
+        t: 'issueLink', key: `closes:${n}`, n, href, verb, cls,
+        title: `${verb} issue #${n} on GitHub`,
+      });
+    }
+    return out;
+  },
+
+  // The same links as an HTML string, for the ONE caller outside the card
+  // family: the dev chat's session header (features/dev-chat/dev-chat.js),
+  // which is still an innerHTML template.
+  closesPillHtml(pr) {
+    return AppView.closesPillSpecs(pr).map((p) =>
+      `<a href="${p.href}" target="_blank" rel="noopener" class="${p.cls}" title="${escapeAttr(p.title)}">${p.verb} #${p.n}</a>`
+    ).join(' ');
   },
 
   voteButtonsHtml(pr, opts) {
     if (!pr) return '';
+    AppView._rememberSessionTesting(pr.id, pr);
     // Group-chat inline rows pass { collapseVoted: true }: once the viewer
     // has voted, the whole control set is replaced by a single read-only
     // "You voted X" box. The activity drawer passes nothing, so it keeps the
@@ -13478,15 +13927,6 @@ const AppView = {
     // (now no-op) Yes/No buttons for someone who never voted; the pill +
     // status badge already convey the outcome.
     if (opts && opts.collapseVoted && pr.status !== 'promoted') return '';
-    // #127: stash the PR's testing guidance in the by-session registry so
-    // the Preview onclick passes it to the overlay (which renders its own
-    // "Test this change" button + instructions panel) without the markdown
-    // ever transiting an HTML attribute.
-    if (pr.testing_md || pr.testing_path) {
-      AppView._sessionTesting[pr.id] = { md: pr.testing_md || null, path: pr.testing_path || null };
-    } else {
-      delete AppView._sessionTesting[pr.id];
-    }
     const preview = AppView._previewAffordanceHtml(pr);
     // #621: read-only viewers keep the Preview affordance but get no
     // vote controls — the tally pill on the card already shows counts.
@@ -13564,14 +14004,11 @@ const AppView = {
   //   card — dropping it would leave them a card with no affordance at all.
   //   It carries a real accessible name, and the two non-interactive states
   //   render as <span>, not a disabled <button>.
-  PREVIEW_EYE_SVG: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'
-    + '<path stroke-linecap="round" stroke-linejoin="round" d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/>'
-    + '<circle cx="12" cy="12" r="2.75"/></svg>',
-  // The unavailable state: the same eye with a slash through it.
-  PREVIEW_EYE_OFF_SVG: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'
-    + '<path stroke-linecap="round" stroke-linejoin="round" d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/>'
-    + '<circle cx="12" cy="12" r="2.75"/>'
-    + '<path stroke-linecap="round" d="M4 20 20 4"/></svg>',
+  //
+  // The two eye glyphs used to live here as SVG strings. They are
+  // `EyeIcon` / `EyeOffIcon` in frontend/@/components/ui/icons.tsx now —
+  // the shell's design-system gate keeps every path in one module, and this
+  // affordance has no string renderer left to feed.
 
   PREVIEW_TITLES: {
     proposal: 'Open this proposal’s staging preview',
@@ -13580,13 +14017,34 @@ const AppView = {
     'issue-run': 'Open the generated proposal’s staging preview',
   },
 
-  cardPreviewHtml(item, opts) {
+  // Keep testing guidance out of DOM attributes. Every preview surface —
+  // including imported PR cards while Underway — records it in this
+  // by-session registry, and swapToStagingForSession passes it to the
+  // existing "How to test" panel in the preview overlay.
+  _rememberSessionTesting(sessionId, item) {
+    if (!sessionId) return;
+    const it = item || {};
+    if (it.testing_md || it.testing_path) {
+      AppView._sessionTesting[sessionId] = {
+        md: it.testing_md || null,
+        path: it.testing_path || null,
+      };
+    } else {
+      delete AppView._sessionTesting[sessionId];
+    }
+  },
+
+  // The Preview affordance's STATE — the truth table, in one place. Both
+  // renderers are card/dev-card.tsx's `Preview`: the card's icon-only eye
+  // and the topic head's labelled pill differ only by `iconOnly`.
+  _cardPreviewSpec(item, opts) {
     const it = item || {};
     const o = opts || {};
     const kind = o.kind || 'proposal';
     const iconOnly = o.iconOnly !== false;
     const sessionId = o.sessionId != null ? o.sessionId : it.id;
-    if (!sessionId) return '';
+    if (!sessionId) return null;
+    AppView._rememberSessionTesting(sessionId, it);
     const url = it.staging_url || o.stagingUrl || '';
     // A shared/own session with no live URL is still previewable when the
     // branch has pushed changes — the click routes through ensure-staging,
@@ -13597,33 +14055,31 @@ const AppView = {
     const label = AppView.PREVIEW_TITLES[kind] || AppView.PREVIEW_TITLES.proposal;
 
     if (live) {
-      const t = url ? label : `${label} (rebuilds it if it went to sleep)`;
-      const inner = iconOnly
-        ? AppView.PREVIEW_EYE_SVG
-        : 'Preview';
-      const cls = 'gc-vote-btn gc-vote-btn-preview' + (iconOnly ? ' gc-vote-btn-icon' : '');
-      return `<button type="button" class="${cls}" aria-label="Open preview" title="${escapeAttr(t)}"`
-        + ` onclick="AppView.swapToStagingForSession(${sessionId}, '${escapeAttr(url)}')">${inner}</button>`;
+      return {
+        state: 'live', sessionId, url, iconOnly,
+        title: url ? label : `${label} (rebuilds it if it went to sleep)`,
+      };
     }
     if (it.staging_building) {
-      const t = 'The staging preview is being built — this usually takes a few minutes. A Preview button appears here as soon as it’s ready.';
-      if (!iconOnly) {
-        return `<span class="gc-checks-running-badge" title="${escapeAttr(t)}">`
-          + '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Preview building…</span>';
-      }
-      return `<span class="gc-vote-btn gc-vote-btn-icon gc-checks-running-badge" role="img" aria-label="Preview building" title="${escapeAttr(t)}">`
-        + '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span></span>';
+      return {
+        state: 'building', iconOnly,
+        title: 'The staging preview is being built. This usually takes a few minutes. A Preview button appears here as soon as it’s ready.',
+      };
     }
     if (it.staging_error) {
-      const t = `Preview unavailable — ${String(it.staging_error).slice(0, 280)}`;
-      if (!iconOnly) {
-        return `<span class="gc-conflict-badge" title="${escapeAttr(t)}">Preview unavailable</span>`;
-      }
-      return `<span class="gc-vote-btn gc-vote-btn-icon gc-conflict-badge" role="img" aria-label="Preview unavailable" title="${escapeAttr(t)}">`
-        + AppView.PREVIEW_EYE_OFF_SVG + '</span>';
+      return {
+        state: 'error', iconOnly,
+        title: `Preview unavailable: ${String(it.staging_error).slice(0, 280)}`,
+      };
     }
-    return '';
+    return null;
   },
+
+  // `cardPreviewHtml` — the string twin of the component above — is
+  // retired. It existed for `_detailActionsHtml`, the topic head's body
+  // block, which was the last innerHTML caller; the head renders from
+  // `_cardPreviewSpec` through card/dev-card.tsx's `Preview` now, so the
+  // truth table has exactly one renderer again.
 
   _previewAffordanceHtml(pr) {
     if (!pr) return '';
@@ -13631,7 +14087,7 @@ const AppView = {
       return `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`;
     }
     if (pr.staging_building) {
-      return '<span class="gc-checks-running-badge" title="The staging preview for this proposal is being built — this usually takes a few minutes. A Preview button appears here as soon as it&#39;s ready.">'
+      return '<span class="gc-checks-running-badge" title="The staging preview for this proposal is being built. This usually takes a few minutes. A Preview button appears here as soon as it&#39;s ready.">'
         + '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Preview building…</span>';
     }
     if (pr.staging_error) {
@@ -13646,15 +14102,18 @@ const AppView = {
   // "1✓ +2" — with an explanatory tooltip. Everywhere else it's the raw
   // total, unchanged. Returns { label, title } (title includes the
   // leading space, or '' when not applicable).
+  // `title` is the READY-TO-CONCATENATE attribute (leading space included)
+  // the remaining string builders splice in; `tip` is the same text bare,
+  // for a React card that passes it as a prop.
   _voteBtnTally(qualified, raw, policy, side) {
     if (policy !== 'invited' || qualified == null) {
-      return { label: `${raw}`, title: '' };
+      return { label: `${raw}`, title: '', tip: undefined };
     }
     const q = parseInt(qualified) || 0;
     const a = Math.max(0, (parseInt(raw) || 0) - q);
     const label = a > 0 ? `${q}✓ +${a}` : `${q}✓`;
-    const title = ` title="${q} approver ${side} vote${q === 1 ? '' : 's'} · ${a} advisory ${side} vote${a === 1 ? '' : 's'} (advisory votes don't count toward merging)"`;
-    return { label, title };
+    const tip = `${q} approver ${side} vote${q === 1 ? '' : 's'} · ${a} advisory ${side} vote${a === 1 ? '' : 's'} (advisory votes don't count toward merging)`;
+    return { label, title: ` title="${tip}"`, tip };
   },
 
   // Admin force-merge: bypass the active-user vote majority entirely
@@ -13671,7 +14130,7 @@ const AppView = {
       title: 'Force-merge this PR?',
       message:
         'This bypasses the active-user vote majority and merges the PR right now.\n\n'
-        + 'Use only when you\'re confident the change should ship — the override is announced in group chat with your username.',
+        + 'Use only when you\'re confident the change should ship. The override is announced in group chat with your username.',
       confirmLabel: 'Force-merge',
       cancelLabel: 'Cancel',
       danger: true,
@@ -13799,10 +14258,10 @@ const AppView = {
         // Not an error: the guard found the target already closed and
         // retired the proposal instead of applying it.
         PlatformUI.toast(
-          `Issue #${targetN || '?'} was already closed — the proposal was resolved automatically.`
+          `Issue #${targetN || '?'} was already closed. The proposal was resolved automatically.`
         );
       } else if (outcome && outcome.awaitingAdmin) {
-        PlatformUI.toast('Vote passed — an admin still needs to approve before it applies.');
+        PlatformUI.toast('Vote passed. An admin still needs to approve before it applies.');
       } else if (outcome && outcome.error) {
         PlatformUI.toast(`The change didn't complete: ${outcome.error}`);
       }
@@ -13834,39 +14293,13 @@ const AppView = {
     dialogIsland('rename')?.open();
   },
 
-  // Amber "⑂ Forked from <name>" lineage label. Lived in the header's
-  // right-hand action group until the header slim-down moved it under
-  // the "App" build line, now in the drawer's footer
-  // (#drawer-row-app-fork, whose visibility this function drives — the
-  // slot id is unchanged). `forked_from` is resolved server-side to
-  // { appId, slug, name, linkable }; when linkable the label links to the
-  // source app, otherwise (source deleted → name "<deleted>") it renders
-  // as inert text. No-op for non-forks.
-  renderForkBadge() {
-    const slot = document.getElementById('app-fork-badge-slot');
-    if (!slot) return;
-    const setRow = (visible) => {
-      if (window.App?.DrawerStatus) App.DrawerStatus.setForkVisible(visible);
-    };
-    const ref = AppView.appData && AppView.appData.forked_from;
-    if (!ref || typeof ref !== 'object') { slot.innerHTML = ''; setRow(false); return; }
-    const name = ref.name || '<deleted>';
-    // Text form, not a pill: this line sits in the drawer footer directly
-    // under the "App" version line, and a filled amber pill between two
-    // quiet mono version lines shouted louder than a lineage note needs
-    // to. Amber is retained as the lineage colour.
-    const cls = 'drawer-ver drawer-ver--fork max-w-full truncate';
-    const label = `⑂ Forked from ${escapeHtml(name)}`;
-    if (ref.linkable && ref.slug) {
-      slot.innerHTML = `<a href="#app/${encodeURIComponent(ref.slug)}" `
-        + `class="${cls}" `
-        + `title="Forked from ${escapeAttr(name)} — open the original">${label}</a>`;
-    } else {
-      slot.innerHTML = `<span class="${cls} opacity-90" `
-        + `title="The original app no longer exists">${label}</span>`;
-    }
-    setRow(true);
-  },
+  // The "⑂ Forked from <name>" lineage label used to be rendered here, into
+  // a slot in the drawer's reference footer. The Streamlined Concept board
+  // draws no such footer, and lineage is a fact about an app rather than
+  // about the drawer you have open, so it renders on the app's own page now
+  // — frontend/src/features/apps/browse-detail.tsx, off the same server-
+  // resolved `forked_from` this function read. No slot, no writer, no
+  // ImproveStatus.setForkVisible.
 
   // ── Fork dialog ───────────────────────────────────────────────────
   // #1078 chunk I moved `_forkSource`, the reveal, the field reset and the
@@ -13984,7 +14417,7 @@ const AppView = {
     }
 
     await DevChat.loadSessions(AppView.appData.slug);
-    // Landing on #app/<slug>/dev/sessions/<id> IS the user opening the
+    // Landing on /app/<slug>/dev/sessions/<id> IS the user opening the
     // session — from the drawer's completion row, the session list, a
     // bookmark or Back. Carries the "user saw it" signal (?opened=1) that
     // dismisses the session's unread completion; the machine refetches in
@@ -14029,12 +14462,12 @@ const AppView = {
     }
     if (AppView._proposalHint) {
       AppView._proposalHint = false;
-      const view = document.getElementById('dc-view');
-      if (view) {
-        view.insertAdjacentHTML('afterbegin',
-          '<div class="mx-3 mt-2 px-3 py-2 rounded-lg bg-violet-500/10 border border-violet-500/20 text-xs text-zinc-600 dark:text-zinc-300 shrink-0">'
-          + 'Describe the change you want — when it\'s ready, promoting this session\'s PR is what creates the proposal everyone votes on.'
-          + '</div>');
+      // #1078: `#dc-view`'s children are a React island, so the hint is a
+      // FIELD of its model rather than an insertAdjacentHTML in front of
+      // them — a second author on nodes React reconciles. The copy lives in
+      // features/dev-chat/view.tsx with the markup it belongs to.
+      if (typeof DevChat !== 'undefined' && DevChat.showProposalHint) {
+        DevChat.showProposalHint();
       }
     }
   },
@@ -14051,8 +14484,8 @@ const AppView = {
     const setLabel = (text, tone) => {
       stateEl.textContent = text;
       stateEl.className = 'text-xs ' + (tone === 'err'
-        ? 'font-medium text-red-500 dark:text-red-400'
-        : 'text-zinc-400 dark:text-zinc-500');
+        ? 'font-medium text-red-700 dark:text-red-400'
+        : 'text-zinc-500 dark:text-zinc-500');
     };
 
     try {
@@ -14164,16 +14597,12 @@ const AppView = {
     } catch {}
   },
 
-  // #353: the self-app is a hash-routed SPA — its internal screens live in
-  // location.hash (`#app/...`, `#leaderboard`, `#admin/...`), so a testing
-  // path joined as a server pathname just loads the home feed. Mirror the
-  // server-side normalisation (src/services/visuals.js selfAppHashPath):
-  // when the path's first segment is one of the SPA hash routes, move it
-  // into the fragment; leave the bare '/', an already-'/#...' path, and
-  // genuinely standalone server pages (/cli/authorize) untouched. 'admin'
-  // joined the list in #860, when the seven standalone admin pages became
-  // #admin console sections.
-  _SELF_APP_HASH_ROUTES: ['app', 'leaderboard', 'group-chat', 'individual-chat', 'admin', 'messages'],
+  // App screens now use clean `/app/<slug>/...` paths. The self-app's other
+  // SPA screens (`#leaderboard`, `#admin/...`) still live in location.hash,
+  // so testing paths for those screens need the older normalization. Mirror
+  // the server-side helper in src/services/visuals.js; leave app paths, '/',
+  // already-'/#...' paths, and standalone server pages untouched.
+  _SELF_APP_HASH_ROUTES: ['leaderboard', 'group-chat', 'individual-chat', 'admin', 'messages'],
   _selfAppHashPath(p) {
     const path = typeof p === 'string' ? p : null;
     if (!path || !path.startsWith('/') || path.startsWith('/#')) return path;
@@ -14202,12 +14631,19 @@ const AppView = {
     const staging = AppView._staging();
     const jump = !!(opts && opts.jump);
     const dock = !!(opts && opts.dock);
+    // Streamlined Concept: every preview open funnels through here (#439),
+    // so this is where "the viewer is SEEING" gets published — it flips the
+    // header's eye/pencil pair and the session strip's Preview chip. The
+    // matching false is closeStagingOverlay's.
+    window.Improve?.setPreviewActive?.(true);
 
     // #621: read-only viewers can't trigger a rebuild (the ensure POST is
     // collab-gated) — open the last-known staging URL directly. If it was
     // GC'd they see the dead-preview page rather than a rebuild spinner.
     if (AppView.readOnly) {
       if (fallbackUrl) AppView.swapToStaging(fallbackUrl, testing, { jump, dock });
+      // Nothing opened — take the optimistic publish above back.
+      else window.Improve?.setPreviewActive?.(false);
       return;
     }
 
@@ -14284,7 +14720,7 @@ const AppView = {
     AppView._setStagingLoader(true, {
       title: 'Spinning the preview back up…',
       sub: 'The preview was paused after a while of inactivity. Rebuilding it '
-        + 'from the session’s latest changes — this usually takes 20–60 seconds.',
+        + 'from the session’s latest changes. This usually takes 20–60 seconds.',
     });
     AppView._pendingStagingPreview = { sessionId, jump, testing, dock, loadId };
     if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
@@ -14376,8 +14812,8 @@ const AppView = {
 
     // Build iframe URLs with the URL API so a deep link carrying its own
     // query string composes with the token param (no '?token=' concat).
-    // The URL API also keeps a `#app/...` fragment after the token query,
-    // so the self-app deep link below loads correctly (#353).
+    // The URL API also keeps any remaining self-app fragment route after the
+    // token query; clean `/app/...` testing paths stay in the pathname.
     const buildSrc = (path) => {
       const visit = AppView.appData && AppView.appData.self_hosted
         ? AppView._selfAppHashPath(path)
@@ -14495,9 +14931,10 @@ const AppView = {
     }, AppView.STAGING_IFRAME_LOAD_TIMEOUT_MS);
   },
 
-  // #127: Preview entry point for vote-panel / group-chat rows — looks up
-  // the testing guidance stashed by voteButtonsHtml at render time, so the
-  // existing Preview button passes it through without any new UI there.
+  // #127: Preview entry point for proposal/session rows — looks up the
+  // testing guidance stashed when their preview affordance was modelled, so
+  // the existing Preview button passes it through without any markdown in
+  // DOM attributes.
   swapToStagingForSession(sessionId, stagingUrl) {
     // #439: route through ensure-then-open so a vote-panel preview that was
     // torn down (idle GC, lost container) rebuilds on click instead of
@@ -14664,7 +15101,7 @@ const AppView = {
   },
 
   // #127: per-render registry of { md, path } testing guidance keyed by
-  // session id, populated by voteButtonsHtml. Exists so bot-authored
+  // session id, populated by every preview surface. Exists so bot-authored
   // markdown never transits an inline onclick attribute.
   _sessionTesting: {},
 
@@ -14698,7 +15135,7 @@ const AppView = {
         ? DevChat.renderMarkdown(t.md)
         : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`);
     } else {
-      staging.setTestHtml('<span class="text-zinc-500">Use the button above to jump to the changed feature.</span>');
+      staging.setTestHtml('<span class="text-zinc-500 dark:text-zinc-400">Use the button above to jump to the changed feature.</span>');
     }
 
     staging.setTestBtn({
@@ -15030,7 +15467,7 @@ const AppView = {
         if (elapsed >= 60) {
           AppView._setStagingLoader(true, {
             title: 'Still waiting on the preview',
-            sub: `The preview hasn’t responded yet (${elapsed}s). Hang tight — this keeps retrying automatically.`,
+            sub: `The preview hasn’t responded yet (${elapsed}s). Hang tight, this keeps retrying automatically.`,
           });
         } else if (elapsed >= 20) {
           AppView._setStagingLoader(true, {
@@ -15048,6 +15485,9 @@ const AppView = {
   closeStagingOverlay() {
     const staging = AppView._staging();
     const iframe = staging.frame();
+    // The "seeing" half of the doing↔seeing loop ends here — see the
+    // matching publish in ensureStaging.
+    window.Improve?.setPreviewActive?.(false);
     // #771: leave docked mode first (strips the docked class + pinned
     // geometry, disconnects the slot observer) and collapse the dev-chat
     // placeholder slot. The open check on stagingPanel makes this safe to
@@ -15350,6 +15790,26 @@ const AppView = {
         '*'
       );
     } catch {}
+  },
+
+  // #1581: WebKit exposes the IFRAME ELEMENT's background during a child
+  // document's rubber-band scroll, even when that document paints html/body.
+  // Accept only a solid color from the exact frame it will paint. The React
+  // bridges own their styles; the guest viewer is an explicitly static DOM
+  // region (landing.tsx's ViewerRegion), recreated when a guest leaves an app.
+  handleBackgroundBridgeMessage(e) {
+    const data = e.data;
+    if (!data || data.__usernode_background !== 'changed') return;
+    if (data.color !== null && (typeof data.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(data.color))) return;
+    const id = AppView.SAFE_AREA_FRAME_IDS.find((id) => {
+      const frame = document.getElementById(id);
+      return frame && e.source === frame.contentWindow;
+    });
+    if (!id) return;
+    const background = data.color ? data.color.toLowerCase() : '';
+    if (id === 'app-iframe') AppView._appFrame().setBackground?.(background);
+    else if (id === 'staging-iframe') AppView._staging()?.setBackground?.(background);
+    else document.getElementById(id).style.backgroundColor = background;
   },
 
   // ── App LLM access consent flow (issue #34) ────────────────────────
@@ -15701,6 +16161,8 @@ const AppView = {
   // confirm-modal.js. Resolves { dailyCapCents, allowByok } on Allow,
   // null on "Not now" / backdrop / Esc.
   _llmModalEl: null,
+  /** The open dialog's resolver, so its card's buttons can dispatch by name. */
+  _llmConsentSettle: null,
   showLlmConsentModal(info) {
     return new Promise((resolve) => {
       // Recreate the element on every open so listeners from a prior
@@ -15709,6 +16171,8 @@ const AppView = {
         AppView._llmModalEl.remove();
         AppView._llmModalEl = null;
       }
+      const react = AppView._reactDevBoard();
+      if (!react) { resolve(null); return; }
       const root = document.createElement('div');
       root.id = 'llm-consent-modal';
       root.className = 'hidden fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
@@ -15727,58 +16191,43 @@ const AppView = {
       const byokOnly = !noCapacity
         && Number(info.entitlement?.limitCents) === 0
         && !!info.hasApiKey;
-      const purposeLine = info.llm?.purpose
-        ? `<p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3 italic">&ldquo;${escapeHtml(info.llm.purpose)}&rdquo;</p>`
-        : '';
-      const suggestedNote = suggested != null
-        ? `<p class="text-xs text-zinc-500 dark:text-zinc-500 mt-1">Suggested by this app &mdash; you can change it.</p>`
-        : `<p class="text-xs text-zinc-500 dark:text-zinc-500 mt-1">You can change this anytime in Settings.</p>`;
-      const byokBlock = info.hasApiKey
-        ? `<label class="flex items-start gap-2 cursor-pointer select-none mt-4">
-             <input id="llm-consent-byok" type="checkbox" ${byokOnly ? 'checked' : ''} class="accent-violet-500 w-4 h-4 mt-0.5" />
-             <span class="text-xs text-zinc-700 dark:text-zinc-300">${byokOnly
-               ? 'Use my own API key for this app (required until platform credits are unlocked; still limited by the cap above).'
-               : 'If my daily platform budget runs out, let this app keep going on my own API key (still limited by the cap above).'}</span>
-           </label>`
-        : '';
-      const capacityBlock = noCapacity
-        ? `<div class="rounded-lg border border-amber-300/70 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-3 text-sm text-amber-900 dark:text-amber-200">
-             ${eligibilityUnavailable
-               ? 'Credit eligibility could not be checked. Close this dialog and try again shortly.'
-               : 'No AI payer is available yet. <a class="underline font-medium" href="#settings/connectors">Connect GitHub or X</a> to unlock $10/day, or <a class="underline font-medium" href="#settings/api-key">add your own Anthropic API key</a>.'}
-           </div>`
-        : `<label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="llm-consent-cap">Daily cap for this app ($ per day)</label>
-           <input id="llm-consent-cap" type="number" min="0.01" step="0.01"
-             value="${(prefillCents / 100).toFixed(2)}"
-             class="w-32 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
-           ${suggestedNote}
-           ${byokBlock}`;
 
-      root.innerHTML = `
-        <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
-          <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
-            <h2 class="text-lg font-bold mb-2 text-zinc-900 dark:text-zinc-100">Allow ${escapeHtml(appName)} to use AI?</h2>
-            ${purposeLine}
-            <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
-              ${byokOnly
-                ? `This lets <strong>${escapeHtml(appName)}</strong> use your own Anthropic API key, without exposing the key to the app.`
-                : `This lets <strong>${escapeHtml(appName)}</strong> spend from your daily AI budget &mdash; the same one your dev chats use &mdash; up to the daily cap below.`}
-            </p>
-            ${capacityBlock}
-            <div id="llm-consent-error" class="hidden text-sm text-red-500 mt-3"></div>
-            <div class="flex justify-end gap-2 mt-5">
-              <button id="llm-consent-decline" type="button"
-                class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Not now</button>
-              <button id="llm-consent-allow" type="button"
-                ${noCapacity ? 'disabled' : ''}
-                class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium text-white transition-colors">${noCapacity ? 'Unavailable' : 'Allow'}</button>
-            </div>
-          </div>
-        </div>`;
+      react.mountLlmConsentModal(root, {
+        appName,
+        purpose: info.llm?.purpose ? String(info.llm.purpose) : null,
+        intro: byokOnly
+          ? `This lets ${appName} use your own Anthropic API key, without exposing the key to the app.`
+          : `This lets ${appName} spend from your daily AI budget (the same one your dev chats use) up to the daily cap below.`,
+        capacity: noCapacity
+          ? { t: 'blocked', eligibilityUnavailable }
+          : {
+            t: 'cap',
+            prefill: (prefillCents / 100).toFixed(2),
+            suggestedNote: suggested != null
+              ? 'Suggested by this app. You can change it.'
+              : 'You can change this anytime in Settings.',
+            byok: info.hasApiKey
+              ? {
+                checked: byokOnly,
+                label: byokOnly
+                  ? 'Use my own API key for this app (required until platform credits are unlocked; still limited by the cap above).'
+                  : 'If my daily platform budget runs out, let this app keep going on my own API key (still limited by the cap above).',
+              }
+              : null,
+          },
+      });
 
+      // The dialog used to be HIDDEN on close and only removed by the next
+      // open. It is unmounted and removed now: a hidden scrim holding a live
+      // React portal is a leak `rootCount()` would count, and the node had
+      // no other reader.
       const done = (result) => {
+        AppView._llmConsentSettle = null;
         root.classList.add('hidden');
         document.removeEventListener('keydown', onKey);
+        react.unmount(root);
+        root.remove();
+        if (AppView._llmModalEl === root) AppView._llmModalEl = null;
         resolve(result);
       };
       const onKey = (ev) => {
@@ -15789,33 +16238,45 @@ const AppView = {
       root.addEventListener('click', (ev) => {
         if (ev.target === root || ev.target.dataset.modalBackdrop !== undefined) done(null);
       }, { once: false });
-      root.querySelector('#llm-consent-decline').addEventListener('click', () => done(null));
-      root.querySelector('#llm-consent-allow').addEventListener('click', () => {
+
+      // The three validation branches stay HERE, not in the card: what they
+      // decide is the value the dialog resolves with, and the message goes
+      // into `#llm-consent-error`, a host the card renders once and empty.
+      AppView._llmConsentSettle = (allow) => {
+        if (!allow) { done(null); return; }
         if (noCapacity) return;
         const errEl = root.querySelector('#llm-consent-error');
         const dollars = parseFloat(root.querySelector('#llm-consent-cap').value);
         const cents = Math.round(dollars * 100);
-        if (!Number.isFinite(dollars) || !Number.isInteger(cents) || cents <= 0) {
-          errEl.textContent = 'Enter a valid daily cap (at least $0.01).';
+        const fail = (msg) => {
+          errEl.textContent = msg;
           errEl.classList.remove('hidden');
+        };
+        if (!Number.isFinite(dollars) || !Number.isInteger(cents) || cents <= 0) {
+          fail('Enter a valid daily cap (at least $0.01).');
           return;
         }
         if (cents > maxCents) {
-          errEl.textContent = `The cap can't exceed your own daily limit ($${(maxCents / 100).toFixed(2)}).`;
-          errEl.classList.remove('hidden');
+          fail(`The cap can't exceed your own daily limit ($${(maxCents / 100).toFixed(2)}).`);
           return;
         }
         const byokInput = root.querySelector('#llm-consent-byok');
         if (byokOnly && !(byokInput && byokInput.checked)) {
-          errEl.textContent = 'Your own API key must be enabled while platform credits are locked.';
-          errEl.classList.remove('hidden');
+          fail('Your own API key must be enabled while platform credits are locked.');
           return;
         }
         done({ dailyCapCents: cents, allowByok: !!(byokInput && byokInput.checked) });
-      });
+      };
 
       root.classList.remove('hidden');
     });
+  },
+
+  _llmConsentDecline() {
+    if (AppView._llmConsentSettle) AppView._llmConsentSettle(false);
+  },
+  _llmConsentAllow() {
+    if (AppView._llmConsentSettle) AppView._llmConsentSettle(true);
   },
 };
 
@@ -15827,6 +16288,8 @@ if (typeof window !== 'undefined') {
     try { AppView.handleLlmBridgeMessage(e); } catch {}
     // #685: issue-state availability announcements from the app iframe.
     try { AppView.handleIssueStateMessage(e); } catch {}
+    // #487 follow-up: "my own service worker is serving this document".
+    try { AppView.handleOfflineReadyMessage(e); } catch {}
     // #752: file-storage relay (uploadFile/deleteFile/getStorageUsage).
     try { AppView.handleStorageBridgeMessage(e); } catch {}
     // #1195: user-directory relay (lookupUser/searchUsers).
@@ -15835,6 +16298,7 @@ if (typeof window !== 'undefined') {
     try { AppView.handleLocaleBridgeMessage(e); } catch {}
     // #970: the bridge's startup request for this frame's safe-area insets.
     try { AppView.handleSafeAreaBridgeMessage(e); } catch {}
+    try { AppView.handleBackgroundBridgeMessage(e); } catch {}
   });
 
   // #970: anything that can change a frame's rect relative to the page's
@@ -15868,19 +16332,49 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = AppView;
 }
 
-function relTime(iso) {
-  const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return '';
-  const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
-  if (diffSec < 60) return 'just now';
-  const diffMin = Math.round(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
-  const diffHr = Math.round(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
-  const diffDay = Math.round(diffHr / 24);
-  if (diffDay < 30) return `${diffDay}d ago`;
-  return new Date(iso).toLocaleDateString();
+// #1808: the legacy copy of `agoStamp` from frontend/src/lib/timestamp.ts —
+// form B, the age for a card, feed or list row. This file is a classic script
+// loaded by a <script> tag and cannot import from the bundle, and bridging it
+// through `window.UsernodeReact` would make the live format depend on which of
+// the two loaded first. So it is a hand-kept copy, and
+// tests/message-timestamp.test.js EXECUTES both against one table of instants
+// and asserts they answer identically. Read that file's header for the rule;
+// change both together or the test says so.
+//
+// Two things it fixes over the shape it replaces: the relative form stops at
+// SEVEN days (it used to run to thirty, so rows read "23d ago", which is a
+// duration and not information), and every caller now has a `title` carrying
+// the unelided stamp.
+const REL_FLOOR_MS = 7 * 24 * 60 * 60 * 1000;
+function relStamp(iso, now) {
+  const date = iso instanceof Date ? iso : new Date(iso ?? NaN);
+  if (Number.isNaN(date.getTime())) return { text: '', title: '' };
+  const ref = now || new Date();
+  const title = date.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  });
+  const elapsed = ref.getTime() - date.getTime();
+  if (elapsed >= REL_FLOOR_MS) {
+    return {
+      text: date.toLocaleDateString(undefined, date.getFullYear() === ref.getFullYear()
+        ? { month: 'short', day: 'numeric' }
+        : { year: 'numeric', month: 'short', day: 'numeric' }),
+      title,
+    };
+  }
+  // A future instant (server/browser clock skew) clamps to "just now" rather
+  // than printing a negative age.
+  const seconds = Math.max(0, Math.floor(elapsed / 1000));
+  if (seconds < 60) return { text: 'just now', title };
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return { text: `${minutes}m ago`, title };
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return { text: `${hours}h ago`, title };
+  return { text: `${Math.floor(hours / 24)}d ago`, title };
 }
+
+// The text alone, for the callers that have nowhere to hang a title.
+function relTime(iso) { return relStamp(iso).text; }
 
 // Expose AppView on the global object. `const AppView = {…}` above is a
 // top-level lexical binding: in a classic (non-module) script it's reachable

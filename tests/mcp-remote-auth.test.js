@@ -197,5 +197,8 @@ test('the service worker hard-bypasses every connector path', () => {
   // The version bump is what pushes the new classifications (and the new
   // credit-options.js) to already-installed clients.
   assert.notEqual(SW_VERSION, 'v6', 'the service-worker version was bumped');
-  assert.match(SW_SRC, /const SW_VERSION = 'v7';/);
+  // Past v6, not exactly v7: the shell cache has been bumped since (v8 stores
+  // build-scoped asset URLs) and every later bump carries these
+  // classifications too.
+  assert.match(SW_SRC, /const SW_VERSION = 'v(?:[7-9]|\d{2,})';/);
 });

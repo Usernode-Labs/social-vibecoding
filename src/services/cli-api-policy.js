@@ -137,6 +137,14 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // no way to land the fix. The route itself refuses everything that is not
   // the caller's own open proposal.
   { method: 'POST', pattern: '/api/apps/:slug/proposals/:id/update-from-fork' },
+  // Sharing work to the IN-PROGRESS area instead of putting it to a vote
+  // (#1347). Allowlisted for the same reason as the route above: the agent
+  // that wrote the code lives in the connector, and until this existed its
+  // only destination was a group vote — so work still moving had to be either
+  // invisible or prematurely up for review. The route creates a session owned
+  // by the caller and hands it to the same fork-attribution gate every other
+  // hand-off goes through; it can write nothing that is not the caller's own.
+  { method: 'POST', pattern: '/api/apps/:slug/work/share-in-progress' },
   { method: 'POST', pattern: '/api/apps/:slug/issues/:number/headless-session' },
   { method: 'POST', pattern: '/api/sessions/:id/clone-headless' },
   { method: 'POST', pattern: '/api/sessions/:id/promote' },

@@ -30,17 +30,22 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { XIcon } from '@/components/ui/icons';
 
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { messageStamp } from '../../lib/timestamp';
 import { devConsole, type DevConsoleEntry } from './store';
 
 /** How close to the bottom counts as "following the tail" (px). */
 const STICK_SLACK_PX = 40;
 
 function LogRow({ entry }: { entry: DevConsoleEntry }) {
+  // The TEXT stays a bare 24-hour time: these rows are a live tail, they are
+  // read in a narrow column, and a date on every one of them is the noise
+  // #1808's fix exists to avoid. The full instant hangs on `title` instead,
+  // which is what a reader pasting a log line into an issue needs.
   const time = new Date(entry.ts).toLocaleTimeString('en-US', { hour12: false });
   const meta = entry.source ? ` @ ${entry.source}${entry.line ? `:${entry.line}` : ''}` : '';
   return (
     <div className={`dc-log-entry dc-log-${entry.level}`}>
-      <span className="dc-log-time">{time}</span>
+      <time className="dc-log-time" title={messageStamp(entry.ts).title}>{time}</time>
       <span className="dc-log-level">{entry.level.toUpperCase()}</span>
       <span className="dc-log-msg">{entry.args.join(' ') + meta}</span>
     </div>
@@ -136,7 +141,7 @@ export function DevConsolePanel() {
         <span className="font-medium text-zinc-200">
           Developer console
         </span>
-        <span id="dev-console-counts" className="text-xs text-zinc-500">
+        <span id="dev-console-counts" className="text-xs text-zinc-500 dark:text-zinc-400">
           {showLive ? devConsole.countsLabel() : null}
         </span>
         <span className="flex-1">
@@ -167,14 +172,14 @@ export function DevConsolePanel() {
         </select>
         <button
           id="dev-console-clear"
-          className="text-xs text-zinc-400 hover:text-zinc-200"
+          className="text-xs text-zinc-500 hover:text-zinc-200 dark:text-zinc-400"
           onClick={() => devConsole.clear()}
         >
           Clear
         </button>
         <button
           id="dev-console-close"
-          className="text-zinc-400 hover:text-zinc-100"
+          className="text-zinc-500 hover:text-zinc-100 dark:text-zinc-400"
           aria-label="Close"
           onClick={() => devConsole.hide()}
         >
@@ -194,7 +199,7 @@ export function DevConsolePanel() {
       <div
         ref={emptyRef}
         id="dev-console-empty-hint"
-        className="hidden px-3 py-2 text-xs text-zinc-500 border-t border-zinc-800 shrink-0"
+        className="hidden px-3 py-2 text-xs text-zinc-500 border-t border-zinc-800 shrink-0 dark:text-zinc-400"
       >
         No messages yet. If this app was created before dev-console support shipped, ask the coding agent in Dev Chat to "add dev-console forwarding to public/index.html".
       </div>

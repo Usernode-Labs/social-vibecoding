@@ -12,9 +12,11 @@
 // 'auto_solve_done' (#161 — a headless auto-solve run finished; `detail`
 // holds the outcome: spec | code | spec_code (#170) | question | failed)
 // and 'spec_shared' (#86 — someone privately shared a spec version with
-// you; `detail` carries the version number as a string).
+// you; `detail` carries the version number as a string). Managed OpenRouter
+// ownership/review events use openrouter_key_created/openrouter_key_review.
 
 const log = require('./logger');
+const usernames = require('./usernames');
 const { listActiveUserIds } = require('./active-users');
 
 // Usernames in this app are [A-Za-z0-9_]+, length-restricted on signup.
@@ -85,13 +87,16 @@ function parseMentions(text) {
   return [...out];
 }
 
-async function resolveUsers(pool, usernames) {
-  if (!usernames.length) return [];
-  const { rows } = await pool.query(
-    `SELECT id, username FROM users WHERE LOWER(username) = ANY($1::text[])`,
-    [usernames]
-  );
-  return rows;
+// Resolve `@name` captures to users. Reads the retired-handle ledger as
+// well as `users`: once someone renames, their old handle is
+// reserved forever, so `@alice` in a message written after alice became
+// `ada` would otherwise resolve to nobody and the mention would silently
+// do nothing. Nobody else can ever hold `alice`, so pointing it at ada is
+// unambiguous. Named `names` here because `usernames` is now the module.
+async function resolveUsers(pool, names) {
+  if (!names.length) return [];
+  return (await usernames.resolveHandles(pool, names))
+    .map((r) => ({ id: r.id, username: r.username }));
 }
 
 // Visibility scoping: for a collab-private app, restrict a candidate
@@ -245,6 +250,64 @@ async function createSessionDoneNotification(pool, { userId, appId, sessionId })
   return rows;
 }
 
+// #1405 path A: a connector session put work somewhere (kind=
+// 'connector_submitted'). Aimed at the TASK OWNER — the person whose agent did
+// it — which is the exact inverse of createPrProposedNotifications' rule that
+// "the proposer is always excluded".
+//
+// That rule is right for a human clicking Promote: you know what you just did.
+// The connector breaks the assumption, because the proposer is an agent acting
+// on your behalf while you may be nowhere near the screen. So this is a
+// separate kind rather than a relaxation of that one — pr_proposed means "come
+// vote" and fans out to collaborators; this means "your agent did a thing" and
+// goes to one person.
+//
+// `detail` is which destination it took: 'submitted' (up for a vote) or
+// 'shared' (#1347's in-progress area). Unread-deduped per session AND per
+// detail, so sharing repeatedly onto the same card — which #1347 deliberately
+// allows — notifies once, while a later submit of that same card still does.
+async function createConnectorSubmittedNotification(pool, { userId, appId, sessionId, detail }) {
+  if (!userId || !sessionId) return [];
+  const kindDetail = (detail || 'submitted').slice(0, 32);
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+     SELECT $1, $2, $3, NULL, 'connector_submitted', $4::varchar
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = $1 AND n.session_id = $3
+          AND n.kind = 'connector_submitted' AND n.detail IS NOT DISTINCT FROM $4
+          AND n.read_at IS NULL
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    [userId, appId || null, sessionId, kindDetail]
+  );
+  return rows;
+}
+
+// #1405 path B: the agent said it is waiting on this user, and the wait has now
+// been outstanding long enough to be worth a nudge (kind=
+// 'agent_awaiting_input'). Created by the sweeper in
+// services/connector-input-waits.js, never at arming time — the whole point of
+// the delay is that somebody at their keyboard answers before this ever runs.
+//
+// No session: the question is about the CHAT, which the platform cannot see.
+// `appId` is whatever app the agent named, and may be null.
+//
+// Deliberately NOT deduped on unread. Each row corresponds to one armed wait
+// that survived its delay, and the arming side already guarantees at most one
+// live wait per user (see the partial unique index in schema.sql) — so the
+// bound lives where it can actually be enforced rather than here.
+async function createAgentAwaitingInputNotification(pool, { userId, appId }) {
+  if (!userId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
+     VALUES ($1, $2, NULL, NULL, 'agent_awaiting_input')
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    [userId, appId || null]
+  );
+  return rows;
+}
+
 // #161: headless auto-solve completion (kind='auto_solve_done').
 // Always created at runHeadlessSession's terminal writes (no arming —
 // starting an auto-solve opts you into its completion notification).
@@ -284,6 +347,45 @@ async function createSpecSharedNotification(pool, { recipientId, appId, sessionI
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
     [recipientId, appId, sessionId, sharerId || null, String(version).slice(0, 32)]
   );
+  return rows;
+}
+
+// Company-funded OpenRouter keys are security/billing objects, so every
+// platform admin receives an ownership record when one is created and a
+// review nudge when the optional verification policy is enabled and its user
+// loses their last verified identity. `detail`
+// carries only the local managed-key id; the raw child key never enters the
+// notification table, logs, WebSocket payload, or admin UI.
+async function createManagedOpenRouterAdminNotifications(pool, {
+  sourceUserId, managedKeyId, kind = 'openrouter_key_created',
+}) {
+  if (!sourceUserId || !managedKeyId
+      || !['openrouter_key_created', 'openrouter_key_review'].includes(kind)) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, source_user_id, kind, detail)
+     SELECT admin.id, $1, $2::varchar(32), $3::varchar(32)
+       FROM users admin
+      WHERE admin.is_admin = TRUE
+        AND (
+          $2::varchar(32) <> 'openrouter_key_review'
+          OR NOT EXISTS (
+            SELECT 1 FROM notifications existing
+             WHERE existing.user_id = admin.id
+               AND existing.source_user_id = $1
+               AND existing.kind = $2::varchar(32)
+               AND existing.detail = $3::varchar(32)
+               AND existing.read_at IS NULL
+          )
+        )
+     RETURNING id, user_id, source_user_id, kind, detail, created_at`,
+    [sourceUserId, kind, String(managedKeyId).slice(0, 32)],
+  );
+  return rows;
+}
+
+async function notifyManagedOpenRouterAdmins(pool, args) {
+  const rows = await createManagedOpenRouterAdminNotifications(pool, args);
+  await Promise.all(rows.map((row) => hydrateAndPush(pool, row)));
   return rows;
 }
 
@@ -535,13 +637,28 @@ async function markApproverInviteNotificationsRead(pool, userId, appId) {
 // skipped or repeated across page boundaries — the id is a stable
 // tiebreak. Ordering + the keyset comparison ride the existing
 // idx_notifications_user_recent index on (user_id, created_at DESC).
-async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
+// `kinds` narrows the page to a set of notification kinds. It exists for the
+// bell's Messages tab: that tab is a client-side filter over the same feed, so
+// paging it through the unfiltered cursor fetched 100 rows that were mostly
+// something else and typically surfaced no new message at all. Filtering in
+// SQL means one page of "older messages" IS a page of older messages.
+//
+// The filter is applied after the index, not by it: the ordering and the
+// keyset comparison still ride idx_notifications_user_recent on
+// (user_id, created_at DESC), and `kind` is a cheap equality check on the rows
+// that index already produced.
+async function listForUser(pool, userId, { limit = 100, before = null, kinds = null } = {}) {
   const params = [userId];
   let cursorClause = '';
   if (before && before.createdAt && before.id != null) {
     params.push(before.createdAt, before.id);
     // $2 = cursor created_at, $3 = cursor id.
     cursorClause = `AND (n.created_at, n.id) < ($2, $3)`;
+  }
+  let kindClause = '';
+  if (Array.isArray(kinds) && kinds.length) {
+    params.push(kinds);
+    kindClause = `AND n.kind = ANY($${params.length})`;
   }
   params.push(limit);
   const limitIdx = params.length; // last param is the limit
@@ -569,6 +686,7 @@ async function listForUser(pool, userId, { limit = 100, before = null } = {}) {
      LEFT JOIN users su ON su.id = n.source_user_id
      WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL}
      ${cursorClause}
+     ${kindClause}
      ORDER BY n.created_at DESC, n.id DESC
      LIMIT $${limitIdx}`,
     params
@@ -856,7 +974,11 @@ module.exports = {
   createCheckFailedNotification,
   createSessionDoneNotification,
   createAutoSolveDoneNotification,
+  createConnectorSubmittedNotification,
+  createAgentAwaitingInputNotification,
   createSpecSharedNotification,
+  createManagedOpenRouterAdminNotifications,
+  notifyManagedOpenRouterAdmins,
   hydrateAndPush,
   createPrProposedNotifications,
   createCollabInviteNotification,

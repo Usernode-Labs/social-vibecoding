@@ -81,17 +81,18 @@ function makeBrowse(opts = {}) {
     'home-screen', 'home-search-bar', 'app-list', 'home-featured-list',
     'home-create-body'].forEach(mkEl);
   // The chrome _syncLevel drives, recorded so the level tests can assert it.
-  const chrome = { backIcon: null, title: null, transitions: [] };
+  const chrome = { backIcon: null, backHref: null, title: null, transitions: [] };
   // The shot deep link aligns the URL with replaceState — record the URLs.
   const history = { calls: [], replaceState: (_a, _b, url) => history.calls.push(url) };
 
   const fetchCalls = [];
+  const storage = opts.storage || {};
   const sandbox = {
     console,
     App: {
       user: opts.user || { id: 1 },
       navigateToApp: () => {},
-      setBackIcon: (m) => { chrome.backIcon = m; },
+      setBackIcon: (m, href) => { chrome.backIcon = m; chrome.backHref = href; },
       setHeaderTitle: (t) => { chrome.title = t; },
       navigateHome: () => { chrome.wentHome = (chrome.wentHome || 0) + 1; },
     },
@@ -139,6 +140,16 @@ function makeBrowse(opts = {}) {
     },
     setTimeout, clearTimeout, setInterval, clearInterval,
     URLSearchParams,
+    // The Sort control remembers the reader's choice (#1383). Backed by a
+    // plain object the caller seeds through `opts.storage` and reads back
+    // off the returned `storage` — so both halves of the round trip are
+    // assertable, and a browser that refuses storage is still exercised by
+    // passing `storage: null`.
+    localStorage: opts.storage === null ? null : {
+      getItem: (k) => (Object.prototype.hasOwnProperty.call(storage, k) ? storage[k] : null),
+      setItem: (k, v) => { storage[k] = String(v); },
+      removeItem: (k) => { delete storage[k]; },
+    },
     history,
     requestAnimationFrame: (fn) => fn(),
     location: { search: opts.search || '', hash: '' },
@@ -158,16 +169,23 @@ function makeBrowse(opts = {}) {
   vm.runInContext(BROWSE_SRC, sandbox);
   // The store ./mount.ts plants, with the same initial value browse-store.js
   // ships (which is also the shell's prerendered empty state).
-  const state = { level: 'list', rows: null, empty: null, error: false, detail: null };
+  const state = { level: 'list', rows: null, empty: null, error: false, detail: null, sort: 'recommended' };
   sandbox.Browse._store = {
     get: () => state,
     set: (patch) => Object.assign(state, patch),
     subscribe: () => () => {},
     setFlush: () => {},
   };
+  // Home.render() is the LAUNCHER's paint, and this harness has neither
+  // HomeLayout nor the grid store loaded — so count the calls instead of
+  // running them. Worth counting rather than merely silencing: #1567 made
+  // Home.toggleAdded repaint, and that call is the whole fix.
+  const renders = { count: 0 };
+  sandbox.__Home.render = () => { renders.count += 1; };
   return {
     Browse: sandbox.Browse, Home: sandbox.__Home, AppCard: sandbox.AppCard,
     state, nodes, fetchCalls, chrome, history, location: sandbox.location,
+    storage, renders,
   };
 }
 
@@ -189,6 +207,58 @@ const app = (over) => ({
 });
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
+
+test('#1523: quality outranks featuring/popularity, while explicit sorts and search retain all apps', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._open = true;
+  Browse._apps = [
+    app({ slug: 'demo', name: 'Demo app', active_users: 999, featured: true,
+      directory: { tier: 'more', state: 'demo' } }),
+    app({ slug: 'unreviewed', active_users: 10, directory: { tier: 'unreviewed' } }),
+    app({ slug: 'working', icon_emoji: '🎮', active_users: 1, directory: { tier: 'ready', state: 'working' } }),
+  ];
+  Browse.render();
+  assert.deepEqual(slugs(state), ['working', 'unreviewed', 'demo']);
+  assert.equal(state.curated, true);
+  assert.equal(state.moreExpanded, false);
+  Browse.toggleMore();
+  assert.equal(state.moreExpanded, true);
+  Browse.toggleMore();
+  Browse.setQuery('Demo app', { immediate: true });
+  assert.equal(state.curated, false, 'matching demos are visible without expanding');
+  assert.deepEqual(slugs(state), ['demo']);
+  assert.equal(rowFor(state, 'demo').openable, true, 'real demo apps are still usable');
+  assert.equal(rowFor(state, 'demo').demo, false, 'not a staging-only inert fixture');
+  Browse.setQuery('', { immediate: true });
+  assert.equal(state.curated, true);
+  assert.equal(state.moreExpanded, false);
+  Browse.setSort('users');
+  assert.equal(state.curated, false, 'explicit metric sorts are global, not grouped');
+  assert.deepEqual(slugs(state), ['demo', 'unreviewed', 'working']);
+});
+
+test('#1523: disclosure survives a detail round trip and resets on a new directory visit', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._load = () => {};
+  Browse._apps = [app({ slug: 'demo', directory: { tier: 'more', state: 'demo' } })];
+  Browse.open();
+  Browse.toggleMore();
+  Browse.showDetail('demo');
+  Browse.showList();
+  assert.equal(state.moreExpanded, true);
+  Browse.close(); Browse.open();
+  assert.equal(state.moreExpanded, false);
+});
+
+test('#1523: preview URLs seed only disclosure state and forward the staging fixture opt-in', async () => {
+  const { Browse, state, fetchCalls, storage } = makeBrowse({ search: '?demo=1&curation=1&sort=recommended&shot=browse-more' });
+  Browse.open();
+  await flush();
+  assert.equal(state.moreExpanded, true);
+  assert.ok(fetchCalls.some((c) => c.url === '/api/apps?demo=1&curation=1'));
+  assert.ok(fetchCalls.every((c) => c.method === 'GET'));
+  assert.deepEqual(storage, {}, 'a review URL does not overwrite user preferences');
+});
 
 // ── sortApps: featured first, then the server's activity order ────
 
@@ -263,6 +333,231 @@ test('sortApps: does not mutate the input array', () => {
   assert.deepEqual(apps.map((a) => a.slug), ['x', 'f']);
 });
 
+// ── sortApps: the five orders of the Sort control (#1383) ─────────
+//
+// Every comparator returns 0 on a tie, so Array.prototype.sort's stability
+// falls back to the order /api/apps already shipped (activity, then age).
+// That is why "equal user counts fall back to the server order" above still
+// holds under the default, and why each of these fixtures separates the rows
+// on exactly the signal it is naming.
+
+test('sortApps: users ranks purely by user count, curation included', () => {
+  const { Browse } = makeBrowse();
+  const apps = [
+    app({ slug: 'feat', featured: true, featured_order: 0, active_users: 1 }),
+    app({ slug: 'popular', active_users: 50 }),
+    app({ slug: 'mid', active_users: 10 }),
+  ];
+  assert.deepEqual(Browse.sortApps(apps, 'users').map((a) => a.slug),
+    ['popular', 'mid', 'feat'],
+    'an EXPLICIT choice outranks the featured pin — otherwise the control looks broken');
+});
+
+test('sortApps: featured pinning applies under recommended ONLY', () => {
+  const { Browse } = makeBrowse();
+  const apps = [
+    app({ slug: 'plain', active_users: 9, merged_prs: 4, created_at: '2026-08-01' }),
+    app({ slug: 'feat', featured: true, featured_order: 0, created_at: '2020-01-01' }),
+  ];
+  assert.equal(Browse.sortApps(apps, 'recommended')[0].slug, 'feat');
+  for (const key of ['users', 'active', 'merged', 'new']) {
+    assert.equal(Browse.sortApps(apps, key)[0].slug, 'plain', `${key} must not pin`);
+  }
+});
+
+test('sortApps: active leads on 30-day merges, then the last thing that happened', () => {
+  const { Browse } = makeBrowse();
+  const apps = [
+    app({ slug: 'quiet', merged_prs_recent: 0, last_merged_at: '2026-08-25' }),
+    app({ slug: 'steady-old', merged_prs_recent: 3, last_merged_at: '2026-08-10', last_deploy_at: '2026-02-01' }),
+    app({ slug: 'busy', merged_prs_recent: 9, last_merged_at: '2026-01-01' }),
+    app({ slug: 'steady-deploy', merged_prs_recent: 3, last_merged_at: '2026-08-01', last_deploy_at: '2026-08-24' }),
+  ];
+  assert.deepEqual(Browse.sortApps(apps, 'active').map((a) => a.slug),
+    ['busy', 'steady-deploy', 'steady-old', 'quiet'],
+    'a deploy counts as activity too, not just a merge');
+});
+
+test('sortApps: active breaks a total tie on users', () => {
+  const { Browse } = makeBrowse();
+  const apps = [
+    app({ slug: 'few', merged_prs_recent: 2, last_merged_at: '2026-08-01', active_users: 1 }),
+    app({ slug: 'many', merged_prs_recent: 2, last_merged_at: '2026-08-01', active_users: 30 }),
+  ];
+  assert.deepEqual(Browse.sortApps(apps, 'active').map((a) => a.slug), ['many', 'few']);
+});
+
+test('sortApps: merged ranks lifetime accepted changes, recency breaking ties', () => {
+  const { Browse } = makeBrowse();
+  const apps = [
+    app({ slug: 'tie-old', merged_prs: 5, last_merged_at: '2026-02-20' }),
+    app({ slug: 'shallow', merged_prs: 2, last_merged_at: '2026-08-24' }),
+    app({ slug: 'deep', merged_prs: 40, last_merged_at: '2026-01-01' }),
+    app({ slug: 'tie-recent', merged_prs: 5, last_merged_at: '2026-08-20' }),
+  ];
+  assert.deepEqual(Browse.sortApps(apps, 'merged').map((a) => a.slug),
+    ['deep', 'tie-recent', 'tie-old', 'shallow']);
+});
+
+test('sortApps: a row that has never merged anything sinks, it does not lead', () => {
+  const { Browse } = makeBrowse();
+  // last_merged_at is NULL for an app with no merged history at all, and
+  // NULL must never read as "merged at the epoch" or as "merged just now".
+  const apps = [
+    app({ slug: 'never', merged_prs: 5, last_merged_at: null }),
+    app({ slug: 'once', merged_prs: 5, last_merged_at: '2020-01-01' }),
+  ];
+  assert.deepEqual(Browse.sortApps(apps, 'merged').map((a) => a.slug), ['once', 'never']);
+});
+
+test('sortApps: new ranks by creation date, undated rows last', () => {
+  const { Browse } = makeBrowse();
+  const apps = [
+    app({ slug: 'older', created_at: '2025-01-01', active_users: 99 }),
+    app({ slug: 'undated' }),
+    app({ slug: 'newest', created_at: '2026-08-20' }),
+  ];
+  assert.deepEqual(Browse.sortApps(apps, 'new').map((a) => a.slug),
+    ['newest', 'older', 'undated']);
+});
+
+test('sortApps: missing and non-numeric aggregates are read as zero', () => {
+  const { Browse } = makeBrowse();
+  // /api/apps coerces these server-side, but Home's cache seeds the first
+  // paint and an older cached payload has none of the three new fields.
+  const apps = [
+    app({ slug: 'unknown' }),
+    app({ slug: 'junk', merged_prs: null, merged_prs_recent: 'lots', last_merged_at: 'not-a-date' }),
+    app({ slug: 'real', merged_prs: 1, merged_prs_recent: 1, last_merged_at: '2026-08-01' }),
+  ];
+  assert.equal(Browse.sortApps(apps, 'merged')[0].slug, 'real');
+  assert.equal(Browse.sortApps(apps, 'active')[0].slug, 'real');
+  assert.equal(Browse.sortApps(apps, 'merged').length, 3, 'and nothing is dropped');
+});
+
+test('sortApps: an unknown, absent or oddly-cased key resolves sanely', () => {
+  const { Browse } = makeBrowse();
+  assert.equal(Browse.resolveSort('nope'), 'recommended');
+  assert.equal(Browse.resolveSort(undefined), 'recommended');
+  assert.equal(Browse.resolveSort(''), 'recommended');
+  assert.equal(Browse.resolveSort('  Users '), 'users', 'trimmed and lowercased');
+  const apps = [app({ slug: 'a', active_users: 1 }), app({ slug: 'b', featured: true, featured_order: 0 })];
+  assert.deepEqual(Browse.sortApps(apps, 'nope').map((a) => a.slug),
+    Browse.sortApps(apps, 'recommended').map((a) => a.slug));
+});
+
+test('sortApps: every order REORDERS the directory, none of them filters it', () => {
+  const { Browse } = makeBrowse();
+  const apps = [
+    app({ slug: 'a', active_users: 3, merged_prs: 2, merged_prs_recent: 1, created_at: '2026-01-01' }),
+    app({ slug: 'b', featured: true, featured_order: 0 }),
+    app({ slug: 'c', merged_prs: 9, last_merged_at: '2026-08-01' }),
+    app({ slug: 'd', created_at: '2026-08-20' }),
+    app({ slug: 'e' }),
+  ];
+  const expected = ['a', 'b', 'c', 'd', 'e'];
+  for (const { key } of Browse.SORTS) {
+    assert.deepEqual(Browse.sortApps(apps, key).map((a) => a.slug).sort(), expected,
+      `${key} kept every app`);
+  }
+  assert.deepEqual(apps.map((a) => a.slug), expected, 'and never mutated the input');
+});
+
+// ── Remembering the choice, and the read-only ?sort= override ─────
+
+test('setSort: applies, persists and republishes the order', () => {
+  const { Browse, state, storage } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'few', active_users: 1 }),
+    app({ slug: 'many', active_users: 40 }),
+  ];
+  Browse.setSort('users');
+  assert.equal(Browse._sort, 'users');
+  assert.equal(storage[Browse.SORT_STORAGE_KEY], 'users', 'remembered for the next visit');
+  assert.equal(state.sort, 'users', 'the <select> is controlled off the store');
+  assert.deepEqual(slugs(state), ['many', 'few'], 'and the rows repainted with it');
+});
+
+test('setSort: an unknown key lands on recommended rather than breaking the list', () => {
+  const { Browse, state, storage } = makeBrowse();
+  Browse.setSort('drop-tables');
+  assert.equal(Browse._sort, 'recommended');
+  assert.equal(storage[Browse.SORT_STORAGE_KEY], 'recommended');
+  assert.equal(state.sort, 'recommended');
+});
+
+test('setSort: a browser that refuses storage still sorts', () => {
+  const { Browse, state } = makeBrowse({ storage: null });
+  Browse.setSort('new');
+  assert.equal(Browse._sort, 'new');
+  assert.equal(state.sort, 'new');
+});
+
+test('_applyInitialSort: the remembered choice is restored on entry', () => {
+  const { Browse, state } = makeBrowse({ storage: { 'usernode:browse-sort': 'merged' } });
+  Browse._applyInitialSort();
+  assert.equal(Browse._sort, 'merged');
+  assert.equal(state.sort, 'merged');
+});
+
+test('_applyInitialSort: a stale or absent stored value falls back to recommended', () => {
+  assert.equal(makeBrowse({ storage: { 'usernode:browse-sort': 'trending' } })
+    .Browse._storedSort(), null, 'a key we no longer ship is not a choice');
+  const { Browse } = makeBrowse({ storage: { 'usernode:browse-sort': 'trending' } });
+  Browse._applyInitialSort();
+  assert.equal(Browse._sort, 'recommended');
+  const fresh = makeBrowse();
+  fresh.Browse._applyInitialSort();
+  assert.equal(fresh.Browse._sort, 'recommended');
+});
+
+test('?sort= wins over the remembered choice and is never written back', () => {
+  const { Browse, state, storage } = makeBrowse({
+    search: '?sort=new',
+    storage: { 'usernode:browse-sort': 'merged' },
+  });
+  Browse.open(null);
+  assert.equal(Browse._sort, 'new', 'the deep link decides what this visit shows');
+  assert.equal(state.sort, 'new');
+  assert.equal(storage['usernode:browse-sort'], 'merged',
+    'a link somebody sent must not rewrite what YOU chose');
+});
+
+test('?sort= with an unknown value defers to the remembered choice', () => {
+  const { Browse } = makeBrowse({
+    search: '?sort=bananas',
+    storage: { 'usernode:browse-sort': 'merged' },
+  });
+  Browse._applyInitialSort();
+  assert.equal(Browse._sort, 'merged');
+  assert.equal(Browse._urlSort(), null, 'garbage is not a silent "recommended"');
+});
+
+test('?sort=recommended is honoured as an explicit choice', () => {
+  const { Browse } = makeBrowse({
+    search: '?sort=recommended',
+    storage: { 'usernode:browse-sort': 'merged' },
+  });
+  Browse._applyInitialSort();
+  assert.equal(Browse._sort, 'recommended', 'the default is still a value you can link to');
+});
+
+test("the screen's <option> list is a faithful copy of Browse.SORTS", () => {
+  const { Browse } = makeBrowse();
+  // browse-screen.tsx cannot read the controller: window.Browse does not
+  // exist in the SSG prerender pass, so it carries its own copy of the five
+  // labels. This is the guard that keeps the copy honest.
+  const src = read('frontend/src/features/apps/browse-screen.tsx');
+  const block = src.match(/const SORT_OPTIONS[\s\S]*?\n\];/);
+  assert.ok(block, 'SORT_OPTIONS is still declared in browse-screen.tsx');
+  const copied = [...block[0].matchAll(/\{\s*key:\s*'([^']+)',\s*label:\s*'([^']+)'\s*\}/g)]
+    .map((m) => ({ key: m[1], label: m[2] }));
+  // Array.from, not .map: SORTS is the vm realm's array, and its .map would
+  // hand back an array whose prototype deepStrictEqual refuses to match.
+  assert.deepEqual(copied, Array.from(Browse.SORTS, (s) => ({ key: s.key, label: s.label })),
+    'the <option> list and the comparators must name the same five orders');
+});
+
 // ── Search covers EVERY visible app (home's is scoped to yours) ────
 
 test('visibleApps: filters on Home.matchesQuery over the whole list', () => {
@@ -278,6 +573,22 @@ test('visibleApps: filters on Home.matchesQuery over the whole list', () => {
   assert.deepEqual(Browse.visibleApps().map((a) => a.slug), ['word-5e6f'], 'slug matches');
   Browse._query = '';
   assert.equal(Browse.visibleApps().length, 3, 'no query = everything, yours included');
+});
+
+test('visibleApps: the search narrows, the sort orders, and they compose', () => {
+  const { Browse } = makeBrowse();
+  Browse._apps = [
+    app({ slug: 'chess-old', name: 'Chess Classic', created_at: '2024-01-01', active_users: 40 }),
+    app({ slug: 'chess-new', name: 'Chess Arena', created_at: '2026-08-20', active_users: 1 }),
+    app({ slug: 'word', name: 'Word Garden', created_at: '2026-08-24', active_users: 99 }),
+  ];
+  Browse._query = 'chess';
+  Browse.setSort('new');
+  assert.deepEqual(Browse.visibleApps().map((a) => a.slug), ['chess-new', 'chess-old'],
+    'newest first, within the filter');
+  Browse.setSort('users');
+  assert.deepEqual(Browse.visibleApps().map((a) => a.slug), ['chess-old', 'chess-new'],
+    'the order changed, the filtered SET did not');
 });
 
 // ── render ───────────────────────────────────────────────────────
@@ -296,11 +607,11 @@ test('rowView: an app-store row — icon, name, meta, Add state', () => {
   // The whole app record rides the descriptor, because the icon tile and the
   // chip strip are shared decisions (app-card.js) the row does not re-make.
   assert.equal(fresh.app.slug, 'fresh');
-  // Added rows read "Added", fresh ones "Add" — the flag is the descriptor's,
-  // the two labels are browse-list.tsx's.
+  // Added rows read "Added", fresh ones "Add to Your apps" (#1553) — the flag
+  // is the descriptor's, the two labels are browse-list.tsx's.
   assert.equal(fresh.added, false);
   assert.equal(rowFor(state, 'mine').added, true);
-  assert.match(rowFor(state, 'mine').addTitle, /tap to remove/);
+  assert.match(rowFor(state, 'mine').addTitle, /Tap to remove/);
   // The "…" menu is gone from this screen — the detail page absorbed it.
   assert.doesNotMatch(BROWSE_SRC, /card-menu-btn/);
   assert.doesNotMatch(BROWSE_SRC, /card-add-btn/, 'the corner badge is a real button now');
@@ -325,9 +636,18 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   assert.doesNotMatch(listTag, /divide-/,
     'the phone hairline is .browse-row + .browse-row in app.css');
 
+  // Phone: the rows sit in ONE white card (the max-md classes on the container
+  // above) and the hairline between them is INSET to the text column, so it
+  // stops short of the card's corner radius. It is a pseudo-element rather
+  // than `border-top` — a border cannot be inset — which is also what frees
+  // the md+ block below to own the `border` shorthand outright.
+  assert.match(listTag, /max-md:rounded-2xl/, 'phone: the rows sit in one card');
+  assert.match(listTag, /max-md:bg-white/, 'phone: that card is a white surface');
   const css = read('public/css/app.css');
-  assert.match(css, /\.browse-row \+ \.browse-row \{ border-top: 1px solid/,
+  assert.match(css, /\.browse-row \+ \.browse-row::before \{/,
     'phone: a hairline between consecutive rows');
+  assert.match(css, /\.browse-row \+ \.browse-row::before \{[\s\S]*?left: 4\.75rem/,
+    'and it is inset to the text column, not the card edge');
   // The md block re-states the sibling selector so the full box wins at
   // equal specificity instead of relying on source order alone.
   const browseStart = css.indexOf('/* ── Browse screen rows / boxes');
@@ -338,7 +658,20 @@ test('browse rows: the layout switch is pure CSS on the container', () => {
   const mdBlock = browseCss.slice(browseCss.indexOf('@media (min-width: 768px)'));
   const box = mdBlock.slice(0, mdBlock.indexOf('}\n}') + 3);
   assert.match(box, /\.browse-row,\s*\n\s*\.browse-row \+ \.browse-row \{/);
-  assert.match(box, /border: 1px solid var\(--browse-border\)/);
+  // At md+ every row is its OWN box, so the between-rows hairline has nothing
+  // left to separate — it would draw across the top of every box but the
+  // first. The md block cancels it explicitly rather than relying on the
+  // border shorthand to paint over it, which is what the shorthand used to do
+  // back when the hairline was a `border-top`.
+  assert.match(mdBlock, /\.browse-row \+ \.browse-row::before \{ content: none/,
+    'md+: the between-rows hairline is cancelled, not painted over');
+  // What changed with the widget language is what the box is made of — a white
+  // surface on the grey page ground instead of a hairline outline — so the
+  // shorthand is transparent and the separation comes from the fill. It stays
+  // declared so the hover rule has a width to colour in without the box
+  // changing size under the cursor.
+  assert.match(box, /border: 1px solid transparent/);
+  assert.match(box, /background-color: var\(--bg-primary\)/);
   assert.match(box, /border-radius/);
   // One theme token instead of `.dark` variants, which would out-specify
   // the sibling and hover rules.
@@ -374,6 +707,42 @@ test('metaLine: users · updated · status, pluralised, missing bits skipped', (
   // No timestamps at all still yields a usable line, and null is safe.
   assert.equal(Browse.metaLine(null), '');
   assert.match(Browse.metaLine({ status: 'running' }), /^0 users$/);
+});
+
+test('metaLine: the line answers the question the active sort asked (#1383)', () => {
+  const { Browse } = makeBrowse();
+  const ago = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const a = app({
+    active_users: 4, merged_prs: 12, merged_prs_recent: 3,
+    last_deploy_at: ago(1), created_at: ago(3),
+  });
+
+  const recommended = Browse.metaLine(a, 'recommended');
+  assert.equal(recommended, '4 users · Updated 1h ago', 'the default line is unchanged');
+  assert.equal(Browse.metaLine(a, 'users'), recommended, 'so is the users line');
+
+  assert.equal(Browse.metaLine(a, 'active'), '4 users · 3 merged in 30d · Updated 1h ago');
+  assert.equal(Browse.metaLine(a, 'merged'), '4 users · 12 changes merged · Updated 1h ago');
+  assert.equal(Browse.metaLine(a, 'new'), '4 users · Created 3h ago',
+    'sorting by age shows the age it sorted on, not the deploy');
+});
+
+test('metaLine: a zero aggregate is dropped, not rendered as "0"', () => {
+  const { Browse } = makeBrowse();
+  const quiet = app({ active_users: 2, merged_prs: 0, merged_prs_recent: 0 });
+  assert.equal(Browse.metaLine(quiet, 'active'), '2 users');
+  assert.equal(Browse.metaLine(quiet, 'merged'), '2 users');
+  assert.match(Browse.metaLine(app({ merged_prs: 1 }), 'merged'), /1 change merged/,
+    'and the one that is there is pluralised');
+});
+
+test('metaLine: the rows carry the line the store says they were sorted with', () => {
+  const { Browse, state } = makeBrowse();
+  Browse._apps = [app({ slug: 'one', active_users: 2, merged_prs: 7 })];
+  Browse.setSort('merged');
+  assert.equal(state.sort, 'merged');
+  assert.match(rowFor(state, 'one').meta, /7 changes merged/,
+    'the meta line and the data-sort anchor can never disagree');
 });
 
 test('rowView: staging demo rows are inert (no detail page to open)', () => {
@@ -537,7 +906,10 @@ test('showDetail / showList publish the level, which drives both containers', ()
 
   Browse.showList();
   assert.equal(state.level, 'list');
-  assert.equal(chrome.backIcon, 'home');
+  // #1569: the list shares Home's root header; only detail pages need the
+  // extra back slot. Home remains a destination in the shared menu.
+  assert.equal(chrome.backIcon, 'none');
+  assert.equal(chrome.backHref, undefined);
   assert.equal(chrome.title, 'All apps');
 });
 
@@ -563,6 +935,7 @@ test('handleBack goes HOME when the detail page was entered from home', () => {
   Browse.noteDetailOrigin('home');
   Browse.showDetail('a');
   assert.equal(Browse._detailOrigin, 'home');
+  assert.equal(chrome.backIcon, 'home', 'a detail opened from Home keeps its Home button');
   assert.equal(Browse.handleBack(), true, 'still claims the button');
   assert.equal(chrome.wentHome, 1, 'leaves the screen instead of showing the list');
   assert.equal(location.hash, '',
@@ -760,6 +1133,55 @@ test('toggleAdded posts { favorited } and flips the cached flags', async () => {
   });
 });
 
+// ── #1567: the write REPAINTS, it does not wait for a reload ─────────
+
+test('toggleAdded repaints Your apps before the write lands, and tells the caller too', async () => {
+  const { Home, renders, fetchCalls } = makeBrowse();
+  const fresh = app({ slug: 'fresh' });
+  Home._apps = [fresh];
+  let notified = 0;
+  const p = Home.toggleAdded('fresh', true, () => { notified += 1; });
+  // Both before the POST has resolved: the section is the optimistic flip's
+  // to show, and this is what made an add from the home screen look like it
+  // had done nothing until a reload.
+  assert.equal(renders.count, 1, 'the launcher grid and the panels repaint');
+  assert.equal(notified, 1, "and the caller's own list is told as well");
+  assert.equal(fetchCalls.length, 1, 'one write');
+  await p;
+  assert.equal(renders.count, 1, 'a successful write adds no second paint');
+});
+
+test('toggleAdded repaints again on the failure path, through the reload', async () => {
+  const { Home, renders } = makeBrowse({ fetchOk: false });
+  const fresh = app({ slug: 'fresh' });
+  Home._apps = [fresh];
+  let notified = 0;
+  // load() is the launcher's own re-sync; the paint it would do is counted
+  // here so the revert is as visible as the optimistic flip was.
+  Home.load = async () => { Home.render(); };
+  await Home.toggleAdded('fresh', true, () => { notified += 1; });
+  assert.equal(fresh.is_favorited, false, 'reverted');
+  assert.equal(renders.count, 2, 'painted the add, then painted it back out');
+  assert.equal(notified, 2);
+});
+
+test('a failed add clears the reveal, so nothing expands for an app that never arrived', async () => {
+  const { Home } = makeBrowse({ fetchOk: false });
+  const fresh = app({ slug: 'fresh' });
+  Home._apps = [fresh];
+  Home.load = async () => {};
+  await Home.toggleAdded('fresh', true, () => {});
+  assert.equal(Home._revealSlug, null);
+});
+
+test('a removal never sets the reveal — an expanded grid showing an absence is nonsense', async () => {
+  const { Home } = makeBrowse();
+  const mine = app({ slug: 'mine', is_favorited: true });
+  Home._apps = [mine];
+  await Home.toggleAdded('mine', false, () => {});
+  assert.equal(Home._revealSlug, null);
+});
+
 test('toggleAdded on a member app writes the hidden opt-out, not a delete (#618)', async () => {
   const { Home } = makeBrowse();
   const member = app({ slug: 'mine', is_collaborator: true });
@@ -850,6 +1272,17 @@ test('browse.js is a bundle module the #browse-screen island imports', () => {
     /from '\.\/app-card-view'/);
 });
 
+test('#1553: the row button names the destination, like every other surface', () => {
+  // "Add" alone did not say add to WHAT, and this row was the only place the
+  // platform left that a guess — the detail page's button, the app-chip menu
+  // and this button's own title attribute all spell out "Your apps".
+  const listSrc = read('frontend/src/features/apps/browse-list.tsx');
+  assert.match(listSrc, /'Added' : 'Add to Your apps'/);
+  assert.doesNotMatch(listSrc, /'Added' : 'Add'/);
+  // The state label stays short: the row it sits on already says which app.
+  assert.match(listSrc, /view\.added \? 'Added'/);
+});
+
 // ── app.js routing ───────────────────────────────────────────────
 
 test('#apps and #apps/<slug> both route to navigateToBrowse', () => {
@@ -899,9 +1332,10 @@ test('navigateToBrowse / _exitBrowse follow the screen pattern', () => {
 
 test('the header back button consults Browse.handleBack', () => {
   const handler = APP_SRC.slice(APP_SRC.indexOf("getElementById('back-btn').addEventListener"));
-  const body = handler.slice(0, 700);
+  const body = handler.slice(0, 1800);
   assert.match(body, /App\._inBrowse && window\.Browse\?\.handleBack\?\.\(\)/);
-  // Ordered after the admin/settings hooks and before navigateHome.
+  // Ordered after the admin/settings hooks and before the href fallback and
+  // the navigateHome below it.
   assert.ok(body.indexOf('Browse?.handleBack') < body.indexOf('App.navigateHome()'));
 });
 

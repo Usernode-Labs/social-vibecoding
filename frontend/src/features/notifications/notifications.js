@@ -24,20 +24,35 @@
 //  - clicking a leaf item navigates to the app's group-chat tab and
 //    marks that one read.
 //
-// #84 grouping: `items` stays the single newest-first source of truth.
-// The dropdown renders a PURE TRANSFORM of it (_groupByApp) — one
-// collapsed header row per app with a count + latest-notification
-// preview, expandable to reveal the per-kind leaf rows. Single-item
-// apps render as a plain leaf row (no group chrome). Expansion state is
-// persisted to localStorage and survives refreshes. Scrolling near the
-// bottom loads older pages via the keyset cursor (nextBefore/hasMore).
+// #1385 flat list: `items` stays the single newest-first source of truth, and
+// the dropdown renders ONE ROW PER NOTIFICATION in that order — no per-app
+// headers, no expand/collapse, no per-group leaf pager.
+//
+// It used to nest (#84): a collapsed header row per app carrying a count and
+// the newest item's preview, expandable to reveal per-kind leaves, with the
+// expansion set persisted to localStorage. That earned its keep when the
+// drawer showed everything ever received, where one busy app could bury
+// another's single row. Two later changes took the premise away —
+// notifications arrive newest-first, and #1367's follow-up moved the READ ones
+// behind "See older notifications", so the default list is only what is new.
+// Grouping a short unread list by app costs a tap to read anything and buys
+// nothing back. Every row also NAMES its own app in its text already (see
+// rowView, which builds every kind's segments around `appLine`), so the header
+// was repeating the row directly beneath it.
+//
+// Older pages still load through the keyset cursor (nextBefore/hasMore). The
+// control that pulls them is now ONE button at the foot of the list instead of
+// one inside each expanded group, and that relocation is load-bearing rather
+// than cosmetic: `_showMoreGroup` was the only caller of `loadMore()` in the
+// codebase, so removing the group chrome without replacing it would have
+// stranded server pagination on page one.
 
-const EXPANDED_STORAGE_KEY = 'notif_expanded_groups_v1';
-// Per-expanded-group leaf cap — initial number of leaves shown for an
-// expanded group, and the increment for each inline "Show more" click.
-// Beyond this the group renders an inline pagination button that reveals
-// the next page of already-loaded leaves in place (no navigation away).
-const GROUP_LEAF_CAP = 10;
+// The module's one import (#1808). Notification rows used to carry a
+// hand-rolled relative age with no floor, so a year-old row read "412d ago";
+// the shared helper prints a real date past a week. Bundled, not imported by
+// Node, in tests/notification-row-lines.test.js — see the note there.
+import { agoStamp } from '../../lib/timestamp';
+
 const NATIVE_INVALIDATION_TIMEOUT_MS = 10000;
 const NATIVE_INVALIDATION_REFRESH_VERSION = 1;
 
@@ -74,17 +89,23 @@ const Notifications = {
   // operate on `items` alone.
   saved: [],
   unread: 0,
-  open: false,
-  // Pagination cursor for the per-group "Show more →" pager.
+  // `open` is a GETTER now, defined beside show()/hide() below — the drawer
+  // owns the presentation, so this module derives the state rather than
+  // storing a flag that would disagree with the screen during the drawer's
+  // deferred exit. A plain `open: false` here would shadow it.
+  // Pagination cursor for the list's foot "Load older notifications" pager.
   nextBefore: null,  // { createdAt, id } | null
   hasMore: false,
   loading: false,
-  // Set<string> of expanded group keys (appId as string, or 'general').
-  expanded: new Set(),
-  // Map<string, number> of group key -> how many leaves to reveal for
-  // that group. Ephemeral (not persisted): resets on reload so the
-  // drawer opens compact. An absent key means the default GROUP_LEAF_CAP.
-  revealed: new Map(),
+  // The Messages tab's own cursor, walked by loadOlderMessages() over
+  // `?kind=conversation`. Deliberately separate from the three above: the two
+  // queries skip different rows, so sharing a cursor would let one tab's
+  // paging strand rows the other can then never reach. `msgHasMore` starts
+  // true because the tab has not asked yet — the first press is what
+  // discovers whether there is anything older.
+  msgNextBefore: null,  // { createdAt, id } | null
+  msgHasMore: true,
+  msgLoading: false,
   // Only the newest first-page refresh may replace the authoritative feed.
   // This prevents an older boot/bell request from completing after a native
   // network-only invalidation and overwriting its fresher result.
@@ -97,22 +118,20 @@ const Notifications = {
   _networkFreshnessFloor: false,
 
   init() {
-    Notifications._loadExpanded();
-
-    const btn = document.getElementById('notifications-btn');
-    if (btn) btn.addEventListener('click', Notifications.toggle);
-
+    // THE UI OVERHAUL merged the bell into the hamburger, so #notifications-btn
+    // is gone and so is the outside-click dismissal that used to live here:
+    // opening, closing and dismissing this list are all the drawer's business
+    // now (features/header/header-menu-controller.js). What is left is the
+    // "Mark all read" control, which is still this module's.
     const markAll = document.getElementById('notifications-mark-all');
     if (markAll) markAll.addEventListener('click', Notifications.markAllRead);
 
-    // Dismiss on outside click.
-    document.addEventListener('click', (e) => {
-      if (!Notifications.open) return;
-      const panel = document.getElementById('notifications-panel');
-      const btnEl = document.getElementById('notifications-btn');
-      if (!panel || !btnEl) return;
-      if (panel.contains(e.target) || btnEl.contains(e.target)) return;
-      Notifications.hide();
+    // Every drawer open starts on the "new" list rather than wherever the last
+    // visit left it: the drawer opens on what is NEW. This used to re-fold the
+    // app groups on the same announcement; #1385 removed them, so the show-older
+    // reset is all that is left of that pair.
+    document.addEventListener('sv:drawer-open', () => {
+      Notifications._setShowOlder(false);
     });
 
     // Anonymous SPA boot (fold-auth-pages-into-SPA): the initial fetch
@@ -121,45 +140,6 @@ const Notifications = {
     if (window.App && App.user) Notifications.refresh();
     else document.addEventListener('sv:authed',
       () => Notifications.refresh(), { once: true });
-  },
-
-  // --- expansion persistence -------------------------------------------
-
-  _loadExpanded() {
-    try {
-      const raw = localStorage.getItem(EXPANDED_STORAGE_KEY);
-      const arr = raw ? JSON.parse(raw) : [];
-      Notifications.expanded = new Set(Array.isArray(arr) ? arr.map(String) : []);
-    } catch {
-      Notifications.expanded = new Set();
-    }
-  },
-
-  _saveExpanded() {
-    try {
-      localStorage.setItem(
-        EXPANDED_STORAGE_KEY,
-        JSON.stringify([...Notifications.expanded])
-      );
-    } catch { /* storage may be unavailable; non-fatal */ }
-  },
-
-  // Drop persisted expansion entries for apps that no longer have any
-  // notifications, so the store doesn't grow unbounded over time.
-  _pruneExpanded(liveKeys) {
-    let changed = false;
-    for (const key of [...Notifications.expanded]) {
-      if (!liveKeys.has(key)) {
-        Notifications.expanded.delete(key);
-        changed = true;
-      }
-    }
-    if (changed) Notifications._saveExpanded();
-    // Reveal counts are ephemeral, but still drop entries for apps with
-    // no notifications so the map doesn't grow unbounded over a session.
-    for (const key of [...Notifications.revealed.keys()]) {
-      if (!liveKeys.has(key)) Notifications.revealed.delete(key);
-    }
   },
 
   // --- fetching --------------------------------------------------------
@@ -224,14 +204,21 @@ const Notifications = {
       Notifications.nextBefore = data.nextBefore || null;
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
-      if (Notifications.open) {
-        Notifications._renderSaved();
-        Notifications._renderInvites();
-        Notifications._renderList();
-      }
+      // Rendered UNCONDITIONALLY now, where this was gated on `open`.
+      //
+      // The gate existed because the bell's panel was presented on demand and
+      // filled at that moment: show() rendered the three sections before
+      // handing the node to the kit, precisely so the sheet measured the right
+      // height. THE UI OVERHAUL moved the list into the hamburger, which is
+      // always mounted — translated off-screen rather than built on open — so
+      // there is no "before presenting" to render at, and no cost to keeping
+      // the store current. The payoff is that the drawer opens onto CURRENT
+      // rows instead of last-open's.
+      Notifications._renderSaved();
+      Notifications._renderInvites();
+      Notifications._renderList();
       // After the first populated refresh, so a deep-linked drawer opens
-      // onto real rows rather than an empty-state flash — same ordering
-      // WorkDrawer._maybeShotOpen() uses.
+      // onto real rows rather than an empty-state flash.
       Notifications._maybeShotOpen();
       return true;
     } catch (err) {
@@ -272,8 +259,12 @@ const Notifications = {
         return false;
       }
     }
-    Notifications._onItemClick(id);
-    return true;
+    try {
+      return await Notifications._onItemClick(id) !== false;
+    } catch (err) {
+      console.warn('[notifications] destination failed', err);
+      return false;
+    }
   },
 
   async loadMore() {
@@ -300,11 +291,70 @@ const Notifications = {
       }
       Notifications.hasMore = !!data.hasMore;
       Notifications.nextBefore = data.nextBefore || null;
-      if (Notifications.open) Notifications._renderList();
+      Notifications._renderList();
     } catch (err) {
       console.warn('[notifications] loadMore failed', err);
     } finally {
       Notifications.loading = false;
+    }
+  },
+
+  /**
+   * Page the CONVERSATION kinds specifically, on their own cursor.
+   *
+   * The Messages tab is a client-side filter over the shared feed, so it
+   * cannot page on the shared cursor: a page of 100 older rows is 100 older
+   * rows of everything, and on a busy account it routinely contains no message
+   * at all. That is why the tab's footer link used to be a jump to All rather
+   * than a pager — it was the honest thing to offer while the only page
+   * available was the unfiltered one.
+   *
+   * `?kind=conversation` (src/routes/notifications.js) makes a filtered page
+   * possible, and this walks it on `msgNextBefore` — kept SEPARATE from
+   * `nextBefore` on purpose. Advancing the shared cursor past rows this query
+   * skipped would strand every non-message notification between the two
+   * positions, so the All tab could never reach them. Rows still land in the
+   * one shared `items` array, deduped, because both tabs render from it.
+   */
+  async loadOlderMessages() {
+    if (Notifications.msgLoading || !Notifications.msgHasMore) return;
+    Notifications.msgLoading = true;
+    Notifications._renderList();
+    try {
+      const params = new URLSearchParams({ limit: '100', kind: 'conversation' });
+      // First press has no cursor: it starts from the newest message and pages
+      // back, and the dedup below drops everything already on screen.
+      if (Notifications.msgNextBefore) {
+        params.set('before', String(Notifications.msgNextBefore.createdAt));
+        params.set('before_id', String(Notifications.msgNextBefore.id));
+      }
+      const res = await fetch(`/api/notifications?${params.toString()}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const incoming = Array.isArray(data.notifications) ? data.notifications : [];
+      const seen = new Set(Notifications.items.map((n) => n.id));
+      for (const n of incoming) {
+        if (!seen.has(n.id)) {
+          Notifications.items.push(n);
+          seen.add(n.id);
+        }
+      }
+      // Re-sort: a filtered page reaches further back than the shared cursor
+      // has, so its rows do not simply append in feed order the way loadMore's
+      // do. The list is created_at DESC with id as the tiebreak, matching the
+      // server's ORDER BY.
+      Notifications.items.sort((a, b) => {
+        const at = new Date(a.createdAt || a.created_at || 0).getTime();
+        const bt = new Date(b.createdAt || b.created_at || 0).getTime();
+        return (bt - at) || (Number(b.id) - Number(a.id));
+      });
+      Notifications.msgHasMore = !!data.hasMore;
+      Notifications.msgNextBefore = data.nextBefore || null;
+    } catch (err) {
+      console.warn('[notifications] loadOlderMessages failed', err);
+    } finally {
+      Notifications.msgLoading = false;
+      Notifications._renderList();
     }
   },
 
@@ -350,7 +400,29 @@ const Notifications = {
       return;
     }
     Notifications._renderBadge();
-    if (Notifications.open) Notifications._renderList();
+    Notifications._renderList();
+  },
+
+  // ── Presentation: the hamburger drawer ──────────────────────────
+  //
+  // This module used to own a surface of its own — #notifications-panel, an
+  // anchored dropdown on desktop and a kit bottom sheet on touch, both
+  // presented from here. THE UI OVERHAUL merged the bell into the hamburger,
+  // so the list is rendered inside #header-menu-panel and the DRAWER owns the
+  // presentation, including the kit adoption. These three forward to it so
+  // every existing caller — a notification click, a screenshot deep link, the
+  // native Social coordinator — keeps working unchanged.
+  //
+  // `open` is derived rather than stored because both surfaces defer their
+  // exit behind a spring (see HeaderMenu.isPresenting and the sheet
+  // controller's dismiss promise), so a flag set here would disagree with
+  // what is on screen for ~200ms after a close.
+  //
+  // It asks about the SHEET and the drawer both. The rows are the sheet's now
+  // (Streamlined Concept), but this module's own dismiss-before-you-navigate
+  // rule predates that and still has to cover a drawer somebody opened.
+  get open() {
+    return !!window.NotificationsSheet?.isOpen?.();
   },
 
   toggle() {
@@ -358,100 +430,79 @@ const Notifications = {
     else Notifications.show();
   },
 
-  _sheet: null,
-
   show() {
-    const panel = document.getElementById('notifications-panel');
-    if (!panel) return;
-    // One drawer at a time: opening the bell closes the cog drawer.
-    if (window.WorkDrawer && WorkDrawer.open) WorkDrawer.hide();
-    // Touch platforms: the panel rides inside a draggable kit bottom
-    // sheet instead of the top-right dropdown. (A top-sheet variant
-    // was tried and reverted — the bottom sheet felt better.) Desktop
-    // keeps the anchored panel below.
-    if (PlatformUI.isTouch() && !Notifications._sheet) {
-      panel.classList.remove('hidden');
-      panel.classList.add('platform-sheet-adopted');
-      // Render BEFORE presenting: the kit sheet measures its height
-      // once at present time to seed the slide-up spring. Presenting
-      // the panel empty and filling it afterwards made the FIRST-ever
-      // open "pop" (a grabber-height slide, then the content snapped
-      // in); later opens still held the previous render, so only the
-      // first one looked broken.
-      Notifications._renderSaved();
-      Notifications._renderInvites();
-      Notifications._renderList();
-      const sheet = PlatformUI.sheet({
-        contentEl: panel,
-        onDismiss: () => {
-          panel.classList.remove('platform-sheet-adopted');
-          panel.classList.add('hidden');
-          document.body.appendChild(panel);
-          Notifications._sheet = null;
-          Notifications.open = false;
-        },
-      });
-      if (sheet) {
-        Notifications._sheet = sheet;
-        Notifications.open = true;
-        return;
-      }
-      panel.classList.remove('platform-sheet-adopted');
-    }
-    panel.classList.remove('hidden');
-    Notifications.open = true;
-    Notifications._renderSaved();
-    Notifications._renderInvites();
-    Notifications._renderList();
+    window.NotificationsSheet?.open?.();
   },
 
-  // Screenshot-state deep link (`?shot=notifications`): the drawer only
-  // exists behind a click on the header bell, so the capture pipeline and
-  // any dapp.json test would otherwise never see it — and #1280's saved
-  // section lives nowhere else. Same idiom as WorkDrawer._maybeShotOpen();
-  // pair it with ?demo=1 in staging so the pinned sections have mock rows
-  // to render. Once per page load — reopening after a manual dismiss would
-  // fight the user, and refresh() runs again on live events.
+  hide() {
+    window.NotificationsSheet?.close?.();
+  },
+
+  // Screenshot-state deep link (`?shot=notifications`): the list only exists
+  // behind a click on the hamburger, so the capture pipeline and any dapp.json
+  // test would otherwise never see it — and #1280's saved section lives
+  // nowhere else. Pair it with ?demo=1 in staging so the pinned sections have
+  // mock rows to render. Once per page load — reopening after a manual
+  // dismiss would fight the user, and refresh() runs again on live events.
+  //
+  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB. That tab is
+  // React state inside the sheet, so without a URL that reaches it neither the
+  // capture pipeline nor a declared check could see the tab, its collapsed
+  // conversation rows, or its "All messages" entry — the platform's own rule
+  // for a screen that is otherwise only reachable by clicking. The sheet reads
+  // the same parameter for the tab; this only has to open it.
+  //
   _shotOpened: false,
   _maybeShotOpen() {
     if (Notifications._shotOpened || Notifications.open) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
-    if (shot !== 'notifications') return;
+    if (shot !== 'notifications' && shot !== 'notifications-messages') return;
     Notifications._shotOpened = true;
-    Notifications.show();
+    // The list is the Notifications SHEET now (Streamlined Concept), so the
+    // deep link resolves a screen underneath and presents over it rather
+    // than opening the drawer.
+    if (window.App?.openNotificationsSheet) window.App.openNotificationsSheet();
+    else Notifications.show();
   },
 
-  hide() {
-    if (Notifications._sheet) {
-      Notifications._sheet.dismiss();
-      return;
-    }
-    const panel = document.getElementById('notifications-panel');
-    if (!panel) return;
-    panel.classList.add('hidden');
-    Notifications.open = false;
+  // #1329: a presented drawer is MODAL on touch — it covers the screen the
+  // action navigates to, so leaving it up strands the user under a stuck,
+  // mostly-empty sheet over a dimmed backdrop. Every action below that
+  // actually routes calls this first.
+  //
+  // It closes the drawer at EVERY width now. The rule used to be sheet-gated,
+  // so the desktop anchored dropdown could keep its documented keep-open
+  // behaviour; there is no anchored dropdown any more, and a side drawer left
+  // open over the screen you just navigated to is the same problem the touch
+  // sheet had.
+  _dismissSheetForNav() {
+    if (Notifications.open) Notifications.hide();
   },
 
   // --- mark read -------------------------------------------------------
 
   async markAllRead() {
-    // Only the bell's own (non-session) kinds count here — the cog
-    // drawer's session-related notifications have their own mark-all
-    // and must not be cleared by the bell's button.
-    if (Notifications._bellUnread() === 0) return;
+    // Mark-all clears EVERYTHING the bell counts, session kinds included.
+    //
+    // It used to exclude them (`exclude_kinds: [...SESSION_NOTIF_KINDS]`) on
+    // the grounds that the session badge was a second surface with a mark-all
+    // of its own. That surface is gone: the completed-session count is part of
+    // the bell's number now, and an exclusion here would leave a count nothing
+    // in the drawer can dismiss — which is the bug this change exists to fix.
+    if (Notifications.unread === 0) return;
     try {
       const res = await fetch('/api/notifications/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ all: true, exclude_kinds: [...SESSION_NOTIF_KINDS] }),
+        body: JSON.stringify({ all: true }),
       });
       if (!res.ok) return;
       const data = await res.json();
       Notifications.unread = data.unread || 0;
       const now = new Date().toISOString();
       Notifications.items = Notifications.items.map((n) => (
-        isSessionNotif(n) ? n : { ...n, readAt: n.readAt || now }
+        { ...n, readAt: n.readAt || now }
       ));
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
@@ -475,46 +526,6 @@ const Notifications = {
     if (!Notifications.items.some(isPriorityNotif)) DevChat.setCompletionTitle(null);
   },
 
-  // Per-group "Mark read": app groups and platform-conversation groups use
-  // separate backend scopes so equal integer ids can never clear each other.
-  async _markGroupRead(groupKey, appId, conversationId) {
-    const numericAppId = (appId != null && appId !== '') ? Number(appId) : null;
-    const numericConversationId = (conversationId != null && conversationId !== '')
-      ? Number(conversationId) : null;
-    // No backend scope for the synthetic "general" (null-app) bucket —
-    // fall back to clearing its leaves by id.
-    if ((numericAppId == null || Number.isNaN(numericAppId))
-        && (numericConversationId == null || Number.isNaN(numericConversationId))) {
-      const ids = Notifications.items
-        .filter((n) => groupKeyFor(n) === groupKey && !n.readAt)
-        .map((n) => n.id);
-      for (const id of ids) await Notifications._markOneRead(id);
-      Notifications._renderList();
-      return;
-    }
-    try {
-      const res = await fetch('/api/notifications/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(numericConversationId != null
-          ? { conversation_id: numericConversationId }
-          : { app_id: numericAppId }),
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      Notifications.unread = data.unread || 0;
-      const now = new Date().toISOString();
-      Notifications.items = Notifications.items.map((n) =>
-        (groupKeyFor(n) === groupKey && !n.readAt) ? { ...n, readAt: now } : n
-      );
-      Notifications._reconcileCompletionTitle();
-      Notifications._renderBadge();
-      Notifications._renderList();
-    } catch (err) {
-      console.warn('[notifications] markGroupRead failed', err);
-    }
-  },
-
   async _markOneRead(id) {
     // Optimistically mark read in-memory and re-render the open drawer
     // right away: the unread dot disappears and unread-first sorting
@@ -526,7 +537,7 @@ const Notifications = {
       if (Notifications.unread > 0) Notifications.unread -= 1;
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
-      if (Notifications.open) Notifications._renderList();
+      Notifications._renderList();
     }
     try {
       const res = await fetch('/api/notifications/read', {
@@ -544,14 +555,59 @@ const Notifications = {
     }
   },
 
+  // Reading a conversation clears its notifications. Reflect that in THIS
+  // document, without a second round-trip.
+  //
+  // `POST /api/conversations/:id/read` already marks every unread
+  // notification row for that conversation read server-side (see markRead in
+  // services/conversations.js — including the invite, which carries no
+  // message id and so matches its NULL branch). Nothing needs asking for.
+  // What needs fixing is local: this tab's `items`/`unread` would otherwise
+  // stay stale until the next refresh, so the bell would go on counting
+  // messages you have just sat and read.
+  //
+  // That was survivable while the Messages row owned the messages count and
+  // the bell subtracted it. The bell owns it now, so a stale badge is the
+  // visible bug — which is why this reconcile lands in the same change.
+  //
+  // Called by the Messages store on a local read, and on a `conversation_read`
+  // for this same viewer in another tab. `window.Notifications` is the seam:
+  // this module stays import-free (see the top of the file), so the store
+  // calls in rather than being imported.
+  markConversationRead(conversationId) {
+    const id = Number(conversationId);
+    if (!Number.isSafeInteger(id) || id <= 0) return;
+    const now = new Date().toISOString();
+    let cleared = 0;
+    for (const n of Notifications.items) {
+      if (!n || n.readAt || Number(n.conversationId) !== id) continue;
+      n.readAt = now;
+      cleared += 1;
+    }
+    if (!cleared) return;
+    // `unread` is the server's account-wide total; only ever walk it down by
+    // what was actually cleared here, and never below zero.
+    Notifications.unread = Math.max(0, Notifications.unread - cleared);
+    Notifications._renderBadge();
+    Notifications._renderList();
+  },
+
   _onItemClick(id) {
     const item = Notifications.items.find((n) => n.id === id);
-    if (!item) return;
-    // Deliberately do NOT hide the drawer here: it stays open over the
-    // navigated-to view so the user can keep clicking through other
-    // notifications. The drawer only dismisses via outside-click or the
-    // explicit close button.
+    if (!item) return false;
+    // Desktop: deliberately do NOT hide the anchored panel here — it stays
+    // open over the navigated-to view so the user can keep clicking through
+    // other notifications, and only dismisses via outside-click or the
+    // explicit close button. Touch is the opposite contract (#1329): the kit
+    // bottom sheet is modal and would COVER the destination screen, so each
+    // branch below that actually routes calls _dismissSheetForNav() first —
+    // a no-op when no sheet is presented.
     Notifications._markOneRead(id);
+    if (item.kind === 'test_alert') {
+      Notifications._dismissSheetForNav();
+      window.location.hash = '#settings/alerts';
+      return;
+    }
     // Platform conversations are never routed through an app tab. Prefer the
     // React bridge because it re-renders even when this is the current hash;
     // the hash fallback keeps native exact-notification opens functional
@@ -560,9 +616,29 @@ const Notifications = {
       const conversationId = Number(item.conversationId);
       if (Number.isSafeInteger(conversationId) && conversationId > 0
           && conversationId <= 2147483647) {
+        Notifications._dismissSheetForNav();
         const messages = window.UsernodeReact?.messages;
         if (messages?.open) messages.open(conversationId);
         else window.location.hash = `#messages/${conversationId}`;
+      }
+      return;
+    }
+    if (item.kind === 'app_quota_changed' || item.kind === 'app_quota_request_declined') {
+      Notifications._dismissSheetForNav();
+      App.showCreateModal();
+      return;
+    }
+    if (item.kind === 'app_quota_requested') {
+      Notifications._dismissSheetForNav();
+      App.navigateToAdminConsole('users');
+      return;
+    }
+    if (item.kind === 'openrouter_key_created' || item.kind === 'openrouter_key_review') {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
+        App.navigateToAdminConsole('users');
+      } else {
+        window.location.hash = '#admin/users';
       }
       return;
     }
@@ -571,8 +647,9 @@ const Notifications = {
     // auto_solve_done opens the Issues tab with that issue's accordion
     // expanded.
     if (item.kind === 'session_done' && item.appSlug && item.sessionId) {
+      Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
-        App.openAppTab(item.appSlug, 'dev', { subTab: 'sessions', sessionId: item.sessionId });
+        return App.openAppTab(item.appSlug, 'dev', { subTab: 'sessions', sessionId: item.sessionId });
       } else {
         window.location.hash = `#app/${item.appSlug}/dev/sessions/${item.sessionId}`;
       }
@@ -594,16 +671,39 @@ const Notifications = {
           title: `Spec v${version}`,
         });
       }
+      Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
-        App.openAppTab(item.appSlug, 'dev', { subTab: 'chat' });
+        return App.openAppTab(item.appSlug, 'dev', { subTab: 'chat' });
       } else {
         window.location.hash = `#app/${item.appSlug}/dev/chat`;
       }
       return;
     }
-    if (item.kind === 'auto_solve_done' && item.appSlug) {
+    // #1405 path A: your agent submitted or shared work. Both are about ONE
+    // change, and both used to fall through to the app's general chat with
+    // everything else that had a slug — a screen that says nothing about the
+    // thing the notification is announcing. A submission is a proposal up for
+    // a vote; a share is a session on the Dev board with its own public
+    // discussion. Each lands on its own topic.
+    if (item.kind === 'connector_submitted' && item.appSlug && item.sessionId) {
+      Notifications._dismissSheetForNav();
+      const kind = item.detail === 'shared' ? 'session' : 'proposal';
+      const id = parseInt(item.sessionId, 10);
       if (typeof App !== 'undefined' && App.openAppTab) {
-        App.openAppTab(item.appSlug, 'dev', {
+        return App.openAppTab(item.appSlug, 'dev', {
+          subTab: 'topic',
+          ref: { kind, id },
+        });
+      } else {
+        const seg = kind === 'session' ? 'shared' : 'proposals';
+        window.location.hash = `#app/${item.appSlug}/dev/${seg}/${id}`;
+      }
+      return;
+    }
+    if (item.kind === 'auto_solve_done' && item.appSlug) {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.openAppTab) {
+        return App.openAppTab(item.appSlug, 'dev', {
           subTab: 'issues',
           ref: item.headlessIssueNumber || null,
         });
@@ -615,6 +715,10 @@ const Notifications = {
       return;
     }
     if (item.appSlug) {
+      // Every path below navigates (the topic sub-branch returns after
+      // routing; an invalid topic ref falls through to the chat/proposals
+      // navigation), so one dismiss covers the whole block.
+      Notifications._dismissSheetForNav();
       // Mentions/replies/reactions land on the app's Dev → Chat — unless
       // the message lives in a topic thread (#194 parity), in which case
       // the click opens that issue/proposal/governance discussion where
@@ -633,7 +737,7 @@ const Notifications = {
         const topicId = parseInt(item.threadRef, 10);
         if (topicKind && Number.isInteger(topicId) && topicId > 0) {
           if (typeof App !== 'undefined' && App.openAppTab) {
-            App.openAppTab(item.appSlug, 'dev', {
+            return App.openAppTab(item.appSlug, 'dev', {
               subTab: 'topic',
               ref: { kind: topicKind, id: topicId },
             });
@@ -645,10 +749,17 @@ const Notifications = {
           return;
         }
       }
-      const voteKinds = new Set(['pr_proposed', 'stale_pr', 'kudos', 'check_failed']);
-      const toProposals = voteKinds.has(item.kind);
+      // Every kind that is ABOUT A PROPOSAL opens that proposal — the vote
+      // nudge, the going-stale warning, the blocked check and the kudos.
+      // `subTab: 'proposals'` plus the session id is the legacy spelling of a
+      // typed topic ref; _normalizeTab turns it into { kind: 'proposal', id }
+      // and the topic view opens full-screen. Without an id there is no
+      // proposal to open and it falls back to the board, which is where the
+      // card is.
+      const proposalKinds = new Set(['pr_proposed', 'stale_pr', 'kudos', 'check_failed']);
+      const toProposals = proposalKinds.has(item.kind);
       if (typeof App !== 'undefined' && App.openAppTab) {
-        App.openAppTab(item.appSlug, 'dev', toProposals
+        return App.openAppTab(item.appSlug, 'dev', toProposals
           ? { subTab: 'proposals', ref: item.sessionId || null }
           : { subTab: 'chat' });
       } else {
@@ -657,13 +768,6 @@ const Notifications = {
           : `#app/${item.appSlug}/dev/chat`;
       }
     }
-  },
-
-  _toggleGroup(groupKey) {
-    if (Notifications.expanded.has(groupKey)) Notifications.expanded.delete(groupKey);
-    else Notifications.expanded.add(groupKey);
-    Notifications._saveExpanded();
-    Notifications._renderList();
   },
 
   // --- rendering -------------------------------------------------------
@@ -675,68 +779,93 @@ const Notifications = {
     return Notifications.unread + Notifications.invites.length;
   },
 
-  // Count of unread session-related items (session_done / auto_solve_done /
-  // stale_pr / check_failed) currently loaded — the green badge on the
-  // header cog (work-drawer.js). Counted from the loaded items page; the
-  // unread-dedup keeps completions to one-per-session and they're recent,
-  // so they sit within the first page in practice.
-  _sessionUnread() {
-    return Notifications.items.filter((n) => isSessionNotif(n) && !n.readAt).length;
-  },
-
-  // Of those, the ones that are a finished dev session specifically. Only
-  // used to publish the count on the badge as `data-session-done`, so a
-  // route check can assert the green badge is showing BECAUSE a session
-  // finished rather than because some other cog-drawer kind is unread.
+  // Of the loaded items, the ones that are a finished dev session
+  // specifically. Published on the bell badge as `data-session-done`, so a
+  // route check can assert the badge is showing BECAUSE a session finished
+  // rather than because something else is unread. Counted from the loaded
+  // items page; the unread-dedup keeps completions to one-per-session and
+  // they're recent, so they sit within the first page in practice.
   _sessionDoneUnread() {
     return Notifications.items.filter((n) => n && n.kind === 'session_done' && !n.readAt).length;
   },
 
-  // The bell's own unread count: everything except the session-related
-  // kinds that live in the cog drawer now.
-  _bellUnread() {
-    return Math.max(0, Notifications.unread - Notifications._sessionUnread());
-  },
-
   _renderBadge() {
-    // Two badges. Green (on the header cog) = the viewer's unread
-    // session-related notifications; red (on the bell) = everything else
-    // (mentions/replies/reactions/kudos/votes) + pending invites. The green
-    // count is split OUT of the red one so the two never double-count, and
-    // each hides at zero.
-    const aiUnread = Notifications._sessionUnread();
-    const redCount = Notifications._bellUnread() + Notifications.invites.length;
+    // ONE EVENT, ONE BADGE, ON THE SURFACE THAT OWNS IT — and one count.
+    //
+    // The bell's number is now every unread notification plus pending
+    // invites, session kinds included. There is no second badge and no
+    // split.
+    //
+    // The split it replaces put unread session kinds on #improve-btn, on the
+    // grounds that the sessions themselves are behind that button so its
+    // count sent you somewhere the bell could not. What it actually did was
+    // put a count on a control that CANNOT CLEAR IT: the only things that
+    // mark a session notification read are a click on its row in this list,
+    // a group-chat mark-read, and mark-all — all of them behind the bell.
+    // Opening the Improve panel marks nothing, so a finished session left a
+    // number pointing at the one surface with no way to dismiss it, and the
+    // viewer never found the notification that was waiting for them. Folding
+    // it back in also re-aligns the bell with the two counts that never
+    // learned about the split: the tab title (_updateTitle, which reads
+    // _badgeTotal) and the home-screen icon badge (_publishAppBadge, which
+    // reads `unread`).
+    //
+    // #improve-btn keeps a LIVE indicator — the working pulse dot — because
+    // "a session is running right now" is a fact about that button, not an
+    // event waiting to be read.
+    const notifCount = Notifications._badgeTotal();
 
-    const badge = document.getElementById('notifications-badge');
-    if (badge) {
-      if (redCount > 0) {
-        badge.textContent = redCount > 99 ? '99+' : String(redCount);
-        badge.classList.remove('hidden');
+    const paint = (id, count) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      if (count > 0) {
+        el.textContent = count > 99 ? '99+' : String(count);
+        el.classList.remove('hidden');
       } else {
-        badge.classList.add('hidden');
+        el.classList.add('hidden');
       }
-    }
+    };
+    // The bell's badge, in the header's right group. The only badge this
+    // function paints, and the only one there is.
+    //
+    // Painting it by id is the sanctioned arrangement rather than an
+    // exception: the span is rendered once by <PlatformHeader/> with a
+    // CONSTANT className and a constant `data-session-done="0"`, so React
+    // never reconciles over what is written here. This module also does not
+    // import the store: most of its test harnesses rebuild individual method
+    // bodies with `new Function`, so a method that closed over a module-scope
+    // binding would be a method those harnesses cannot run.
+    paint('notifications-badge', notifCount);
 
-    const aiBadge = document.getElementById('notifications-badge-ai');
-    if (aiBadge) {
-      aiBadge.dataset.sessionDone = String(Notifications._sessionDoneUnread());
-      if (aiUnread > 0) {
-        aiBadge.textContent = aiUnread > 99 ? '99+' : String(aiUnread);
-        aiBadge.classList.remove('hidden');
-      } else {
-        aiBadge.classList.add('hidden');
-      }
+    // How many of those are specifically "your session finished", published
+    // as an attribute so a declared check can assert the badge is showing for
+    // that reason rather than merely being present.
+    const badgeEl = document.getElementById('notifications-badge');
+    if (badgeEl) {
+      badgeEl.setAttribute('data-session-done', String(Notifications._sessionDoneUnread()));
     }
-
-    const markAll = document.getElementById('notifications-mark-all');
-    if (markAll) markAll.disabled = Notifications._bellUnread() === 0;
+    // The app-context sheet's per-change unread dots (Streamlined Concept):
+    // which sessions have an unread session-kind notification right now.
+    // Published into the notifications store — the sheet's rows subscribe.
+    //
+    // Only when the SET changes. The store compares by identity, so pushing a
+    // freshly-built array every time would notify every subscriber (the
+    // screen, the pinned sections and every session row) on every badge
+    // repaint — and _renderBadge runs on each WS event and each refresh.
+    if (Notifications._store) {
+      const ids = Notifications.items
+        .filter((n) => isSessionNotif(n) && !n.readAt && n.sessionId)
+        .map((n) => n.sessionId);
+      const prev = Notifications._store.get().sessionUnreadIds || [];
+      const same = prev.length === ids.length && prev.every((v, i) => v === ids[i]);
+      if (!same) Notifications._store.set({ sessionUnreadIds: ids });
+    }
     Notifications._updateTitle();
-    // The cog drawer renders its pinned section from this same items
-    // store — nudge it whenever the store (and therefore the badges)
-    // changed, so an open drawer stays in sync.
-    if (window.WorkDrawer && WorkDrawer.onNotificationsChanged) {
-      WorkDrawer.onNotificationsChanged();
-    }
+    Notifications._publishAppBadge();
+    // The cog drawer used to render a pinned section from this same items
+    // store and was nudged here whenever the store changed. It is retired;
+    // the list in the hamburger is React-rendered from the store directly,
+    // so it re-renders on its own.
   },
 
   _updateTitle() {
@@ -744,6 +873,42 @@ const Notifications = {
     const total = Notifications._badgeTotal();
     if (total > 0) document.title = `(${total}) ${base}`;
     else document.title = base;
+  },
+
+  // #1445: the homescreen icon badge. Two feature-detected targets, both
+  // fed the server's account-wide unread total (`Notifications.unread` —
+  // the same number countUnread stamps into every push payload, so the
+  // icon never disagrees with what the next push would set):
+  //
+  //   - navigator.setAppBadge / clearAppBadge for installed PWAs. The
+  //     Flutter WebView has neither, so the detect no-ops there.
+  //   - window.SocialPush.publishBadgeCount for the native shell.
+  //     SocialPush owns capability probing and session-admission gating
+  //     (it is a classic script loaded before this deferred bundle, but
+  //     the optional chain also tolerates a mixed cache generation that
+  //     predates the seam).
+  //
+  // Publishes 0 when signed out so a device is not left badged for a
+  // session that ended in-app. Best-effort throughout: a badge failure
+  // must never break the bell render this rides on.
+  _publishAppBadge() {
+    const signedIn = typeof window !== 'undefined' && window.App && App.user;
+    const count = signedIn ? Math.max(0, Number(Notifications.unread) || 0) : 0;
+    try {
+      if (typeof navigator !== 'undefined') {
+        if (count > 0 && typeof navigator.setAppBadge === 'function') {
+          Promise.resolve(navigator.setAppBadge(count)).catch(() => {});
+        } else if (count === 0 && typeof navigator.clearAppBadge === 'function') {
+          Promise.resolve(navigator.clearAppBadge()).catch(() => {});
+        }
+      }
+    } catch { /* Unsupported surface — the OS badge is best-effort. */ }
+    try {
+      if (typeof window !== 'undefined' && window.SocialPush
+        && typeof window.SocialPush.publishBadgeCount === 'function') {
+        window.SocialPush.publishBadgeCount(count);
+      }
+    } catch { /* Same stance for the native seam. */ }
   },
 
   // --- pinned saved-messages section (#1280) ----------------------------
@@ -767,7 +932,26 @@ const Notifications = {
   // moment you looked at it would make the section unusable.
   _onSavedClick(messageId) {
     const saved = Notifications.saved.find((s) => s.messageId === messageId);
-    if (!saved || !saved.appSlug) return;
+    if (!saved) return;
+    // A conversation save opens the Messages screen on that conversation, via
+    // the island's controller with the hash as the fallback — the same pair
+    // _onItemClick uses for the conversation notification kinds, and for the
+    // same reason: the hash keeps a native exact-open working during startup
+    // before the island publishes. There is no per-message deep link in
+    // Messages yet, so it lands on the thread and the reader scrolls, which is
+    // the resolution the app-chat branch below settles for too when a message
+    // was posted outside a topic.
+    if (saved.conversationId) {
+      Notifications._dismissSheetForNav();
+      const messages = window.UsernodeReact?.messages;
+      if (messages?.open) messages.open(saved.conversationId);
+      else window.location.hash = `#messages/${saved.conversationId}`;
+      return;
+    }
+    if (!saved.appSlug) return;
+    // Both branches below navigate — see _onItemClick for the touch-sheet
+    // contract (#1329).
+    Notifications._dismissSheetForNav();
     const kindMap = { issue: 'issue', session: 'proposal', governance: 'gov' };
     const topicKind = kindMap[saved.threadType];
     const topicId = parseInt(saved.threadRef, 10);
@@ -798,27 +982,33 @@ const Notifications = {
   // reachable by a bare reference behind a typeof guard, not on window).
   async _unsave(messageId) {
     const saved = Notifications.saved.find((s) => s.messageId === messageId);
-    if (!saved || !saved.appSlug) return;
+    if (!saved || !(saved.appSlug || saved.conversationId)) return;
+    const endpoint = saved.conversationId
+      ? `/api/conversations/${saved.conversationId}/messages/${messageId}/bookmark`
+      : `/api/apps/${saved.appSlug}/messages/${messageId}/bookmark`;
     const previous = Notifications.saved;
     Notifications.saved = Notifications.saved.filter((s) => s.messageId !== messageId);
     Notifications._renderSaved();
-    if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
+    if (saved.conversationId) {
+      // The Messages twin of the GroupChat repaint below: if that
+      // conversation is open, its row's star stops being filled.
+      window.UsernodeReact?.messages?.paintSaved?.(messageId, false);
+    } else if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
       GroupChat._paintBookmark(messageId, false);
       const msg = GroupChat._findMessage && GroupChat._findMessage(messageId);
       if (msg) msg.bookmarked = false;
     }
     try {
-      const res = await fetch(
-        `/api/apps/${saved.appSlug}/messages/${messageId}/bookmark`,
-        { method: 'DELETE' }
-      );
+      const res = await fetch(endpoint, { method: 'DELETE' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
     } catch (err) {
       // Put it back rather than leaving the drawer disagreeing with the
       // server about what is saved.
       Notifications.saved = previous;
       Notifications._renderSaved();
-      if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
+      if (saved.conversationId) {
+        window.UsernodeReact?.messages?.paintSaved?.(messageId, true);
+      } else if (typeof GroupChat !== 'undefined' && GroupChat._paintBookmark) {
         GroupChat._paintBookmark(messageId, true);
       }
       console.warn('[notifications] unsave failed', err);
@@ -868,6 +1058,9 @@ const Notifications = {
       }
       const target = data.appSlug || slug;
       if (target && typeof App !== 'undefined' && App.openAppTab) {
+        // About to navigate — on touch the sheet would otherwise stay
+        // presented over the app screen this opens (#1329).
+        Notifications._dismissSheetForNav();
         App.openAppTab(target, 'group-chat');
       }
     } catch (err) {
@@ -900,63 +1093,77 @@ const Notifications = {
   // become the collapsed header's preview). Both re-sorts are stable
   // partitions, so ordering inside each tier is unchanged; once a
   // completion is read it drops back to its chronological spot.
-  // Items the bell itself renders: everything EXCEPT the session-related
-  // kinds, which live in the header cog's drawer (work-drawer.js). The
-  // full items array stays the single source of truth — pagination,
-  // mark-read and the completion-title reconcile all keep operating on
-  // it; only the bell's rendering and badge math are filtered.
+  // Items the list renders: ALL of them.
+  //
+  // This used to exclude the session-related kinds (session_done,
+  // auto_solve_done, stale_pr, check_failed), because those rendered in the
+  // header cog's pinned "Needs attention" section instead. THE UI OVERHAUL
+  // retired the cog, so keeping the filter would make four notification kinds
+  // invisible everywhere — the one thing a drawer merge must not do.
+  //
+  // The badge split is gone too — one bell, one number, session kinds
+  // included (see _renderBadge). isSessionNotif is still here for the
+  // app-context sheet's per-change unread dots, which need to know which
+  // sessions have an unread notification against them.
+  // ── New vs older (#1367 follow-up) ───────────────────────────────
+  //
+  // The drawer shows what is NEW. A notification you have already read has
+  // done its job — it told you a thing — and leaving it in the list means the
+  // one that arrived this morning is buried under three weeks of things you
+  // have already dealt with. So the default list is the UNREAD ones, and the
+  // read ones are one tap away behind "See older notifications".
+  //
+  // `readAt` is the existing server-side field and the existing meaning of
+  // "viewed": it is set when you click a notification, when you use a group's
+  // "Mark read", and by "Mark all read". Nothing new is stored, and nothing is
+  // deleted — "go away" here means "leave the new list", which is why the
+  // older view can always bring them back.
+  //
+  // Per drawer OPEN, not persisted: `sv:drawer-open` resets it to false (see
+  // init), so a visit always starts on what is new.
+  showOlder: false,
+
+  _setShowOlder(next) {
+    const value = !!next;
+    if (Notifications.showOlder === value) return;
+    Notifications.showOlder = value;
+    if (Notifications.items.length) Notifications._renderList();
+  },
+
+  /** The controller entry point behind the footer button. */
+  toggleOlder() {
+    Notifications._setShowOlder(!Notifications.showOlder);
+  },
+
+  /** Every notification the bell owns, read or not. */
+  _allBellItems() {
+    return Notifications.items;
+  },
+
+  /** What the list actually renders: unread only, unless older is revealed. */
   _bellItems() {
-    return Notifications.items.filter((n) => !isSessionNotif(n));
+    if (Notifications.showOlder) return Notifications.items;
+    return Notifications.items.filter((n) => !n.readAt);
   },
 
-  _groupByApp() {
-    const byKey = new Map();
-    for (const n of Notifications._bellItems()) {
-      const key = groupKeyFor(n);
-      let g = byKey.get(key);
-      if (!g) {
-        g = {
-          key,
-          appId: n.appId != null ? n.appId : null,
-          appName: n.conversationId != null
-            ? (n.conversationTitle || 'Messages')
-            : (n.appName || 'General'),
-          appSlug: n.appSlug || null,
-          conversationId: n.conversationId != null ? n.conversationId : null,
-          items: [],
-          unreadCount: 0,
-          hasUnreadPriority: false,
-        };
-        byKey.set(key, g);
-      }
-      g.items.push(n);
-      if (!n.readAt) g.unreadCount += 1;
-      if (isPriorityNotif(n)) g.hasUnreadPriority = true;
-    }
-    const groups = [...byKey.values()];
-    for (const g of groups) {
-      if (!g.hasUnreadPriority) continue;
-      // Array.prototype.sort is spec-stable, so this is a stable
-      // partition: priority items first, newest-first inside each half.
-      g.items.sort((a, b) => (isPriorityNotif(a) ? 0 : 1) - (isPriorityNotif(b) ? 0 : 1));
-    }
-    groups.sort((a, b) => (a.hasUnreadPriority ? 0 : 1) - (b.hasUnreadPriority ? 0 : 1));
-    return groups;
-  },
-
-  // One descriptor per top-level entry (an app group or a single-notif leaf
-  // row). The list component joins them with the stronger between-apps
-  // divider — never before the first or after the last — and owns every
-  // handler this method used to attach by querySelectorAll: the leaf clicks,
-  // the group toggle, per-group "Mark read", inline "Show more" and the touch
-  // swipe tray. All of them still stopPropagation, for the reason they always
-  // did: a re-render detaches the clicked node, and the document-level
-  // outside-click handler would then see a target outside the panel and
-  // wrongly dismiss the drawer.
+  // One descriptor per notification, newest-first — the whole list, flat
+  // (#1385). The list component owns every handler this method used to attach
+  // by querySelectorAll: the row clicks, the foot pager and the touch swipe
+  // tray. All of them still stopPropagation, for the reason they always did: a
+  // re-render detaches the clicked node, and the document-level outside-click
+  // handler would then see a target outside the panel and wrongly dismiss the
+  // drawer.
   _renderList() {
     const store = Notifications._store;
     if (!store) return;
     const touch = isTouchNow();
+
+    // How many read notifications the older view would add. Drives the footer
+    // button's presence AND its count, and separates the two empty states
+    // below: "nothing has ever arrived" is not the same as "you are caught
+    // up", and telling a viewer the first when the second is true reads as
+    // the drawer having lost their history.
+    const olderCount = Notifications._allBellItems().filter((n) => n.readAt).length;
 
     if (Notifications._bellItems().length === 0) {
       // The pinned sections may still have content — only show the empty
@@ -966,58 +1173,82 @@ const Notifications = {
       // a bug.
       store.set({
         list: [],
-        empty: Notifications.invites.length === 0 && Notifications.saved.length === 0,
+        // The full screen shows read rows regardless of the drawer's
+        // showOlder reveal, so its list maps ALL items even when the
+        // drawer's own list is empty (Streamlined Concept).
+        screenList: screenViews(Notifications.items),
+        // `empty` is still the ORIGINAL "you have never had a notification"
+        // hint, so it now also requires that there be no older ones to
+        // reveal — otherwise a fully-read drawer would claim nothing had
+        // ever arrived while offering to show you what had.
+        empty: Notifications.invites.length === 0
+          && Notifications.saved.length === 0
+          && olderCount === 0,
+        // …and this is the new one: caught up, with history behind it.
+        caughtUp: olderCount > 0 && !Notifications.showOlder,
+        olderCount,
+        showOlder: Notifications.showOlder,
+        // Nothing to append a pager to — see the note in the populated branch.
+        canLoadMore: false,
+        // The screen HAS rows to append to (the read ones above), so its
+        // pager follows the server cursor even while the drawer's is off.
+        screenCanLoadMore: Notifications.hasMore,
+        loadingMore: Notifications.loading,
+        messagesCanLoadMore: Notifications.msgHasMore,
+        loadingOlderMessages: Notifications.msgLoading,
         touch,
       });
       return;
     }
 
-    const groups = Notifications._groupByApp();
-    // Keep persisted expansion tidy: drop apps that have no notifs now.
-    Notifications._pruneExpanded(new Set(groups.map((g) => g.key)));
-
-    const entries = [];
-    for (const g of groups) {
-      // App-associated notifications ALWAYS render under their app group
-      // header (header + dot + expand/pagination chrome), even when the
-      // app only has one notification — so the layout is consistent
-      // regardless of count. Only app-less ("general") notifications fall
-      // back to a plain leaf row when there's a single one.
-      if (g.items.length === 1 && g.appId == null) {
-        entries.push({ type: 'row', row: rowView(g.items[0]) });
-        continue;
-      }
-      entries.push({ type: 'group', group: groupView(g, Notifications.expanded.has(g.key)) });
-    }
-    store.set({ list: entries, empty: false, touch });
+    // Straight through, in `items` order. No partition and no re-sort: the
+    // feed is already newest-first, and a flat list that reorders itself is
+    // exactly the thing #1385 asked to stop. (Unread completion notifications
+    // used to float to the top of the grouped list; see PRIORITY_KINDS.)
+    store.set({
+      list: Notifications._bellItems().map(rowView),
+      screenList: screenViews(Notifications.items),
+      empty: false,
+      caughtUp: false,
+      olderCount,
+      showOlder: Notifications.showOlder,
+      // The foot pager, and whether a page is already in flight. Offered only
+      // when there are rows to append to — with none, the empty/caught-up hint
+      // owns that space and the older-toggle is the affordance that belongs
+      // there.
+      canLoadMore: Notifications.hasMore,
+      screenCanLoadMore: Notifications.hasMore,
+      loadingMore: Notifications.loading,
+      // The Messages tab's pager, on its own cursor — see loadOlderMessages().
+      messagesCanLoadMore: Notifications.msgHasMore,
+      loadingOlderMessages: Notifications.msgLoading,
+      touch,
+    });
   },
 
-  // Reveal one more page (GROUP_LEAF_CAP) of leaves for a group. If every
-  // already-loaded leaf is shown but more pages exist server-side, bump
-  // the intended reveal and pull the next cross-app page; loadMore()
-  // re-renders on completion, so the freshly-arrived leaves appear.
-  _showMoreGroup(key) {
-    if (!key) return;
-    const g = Notifications._groupByApp().find((x) => x.key === key);
-    const current = Notifications.revealed.get(key) || GROUP_LEAF_CAP;
-    const loaded = g ? g.items.length : 0;
-    if (current < loaded) {
-      Notifications.revealed.set(key, current + GROUP_LEAF_CAP);
-      Notifications._renderList();
-    } else if (Notifications.hasMore) {
-      Notifications.revealed.set(key, current + GROUP_LEAF_CAP);
-      Notifications.loadMore();
-    }
+  /**
+   * The list's foot pager: pull the next page of older notifications.
+   *
+   * This is the flat-list replacement for `_showMoreGroup`, which #1385
+   * retired along with the group chrome it lived in. It is deliberately a
+   * method rather than a direct `loadMore` binding on the button, because the
+   * two are not the same thing: `loadMore()` is the transport (it no-ops while
+   * a page is in flight, or once the cursor is exhausted) and this is the
+   * user-facing action, which the drawer may later want to guard differently.
+   *
+   * There is NO client-side reveal cap any more. The old one existed to keep
+   * an expanded group from unrolling thirty rows inside a collapsed list; a
+   * flat list already shows what it has loaded, so a second cap on top of the
+   * server's page size would only hide rows the viewer had already paid to
+   * fetch. `loadMore()` re-renders on completion, so the arriving page simply
+   * appears at the bottom.
+   */
+  loadOlder() {
+    if (!Notifications.hasMore || Notifications.loading) return;
+    Notifications.loadMore();
   },
 
 };
-
-// Stable group key for a notification: the app id when present, else a
-// synthetic 'general' bucket so app-less notifications are never dropped.
-function groupKeyFor(n) {
-  if (n && n.conversationId != null) return `conversation:${n.conversationId}`;
-  return n && n.appId != null ? String(n.appId) : 'general';
-}
 
 const CONVERSATION_NOTIF_KINDS = new Set([
   'conversation_invite',
@@ -1027,23 +1258,36 @@ const CONVERSATION_NOTIF_KINDS = new Set([
   'conversation_reaction',
 ]);
 
-// #161: completion notifications pin to the top of the drawer while
-// UNREAD — a finished session demands attention; once read it returns
-// to its natural chronological position. Deliberately limited to these
-// two kinds; grow this set rather than adding a server-side priority
-// column if more "priority" kinds emerge.
+// #161 defined these as the kinds that "demand attention": a finished dev
+// session or headless run, while still unread.
+//
+// #1385 stopped the DRAWER acting on it. The pin was a grouped-list device — it
+// floated an app's group above the others and led within it, which is also what
+// made it the collapsed header's preview — and a flat list the request asked to
+// be chronological cannot also reorder itself. Nothing was deleted: the set
+// still drives DevChat's completion title through isPriorityNotif() below, and
+// restoring a top-of-list pin is one stable partition in _renderList if the
+// group decides it wants one.
+//
+// Deliberately limited to these two kinds; grow this set rather than adding a
+// server-side priority column if more "priority" kinds emerge.
 const PRIORITY_KINDS = new Set(['session_done', 'auto_solve_done']);
 function isPriorityNotif(n) {
   return !!n && PRIORITY_KINDS.has(n.kind) && !n.readAt;
 }
 
-// The session-related kinds that render in the header cog's drawer
-// (work-drawer.js) instead of the bell: the four system-generated
-// (source-user-less) notifications about the viewer's OWN sessions and
-// proposals. Everything social — mentions, replies, reactions, kudos,
-// vote nudges, invites, spec shares — stays in the bell. The canonical
-// set lives here (the bell filters on it); work-drawer.js carries a
-// matching literal fallback for standalone loading.
+// The four system-generated (source-user-less) notifications about the
+// viewer's OWN sessions and proposals. Everything social — mentions,
+// replies, reactions, kudos, vote nudges, invites, spec shares — is
+// everything else.
+//
+// These used to render in the header cog's drawer INSTEAD of the bell, and
+// this set was the filter that kept the two apart. THE UI OVERHAUL merged
+// both into the hamburger, so all of it renders in one list now. The badge
+// split that outlived the drawer is gone as well — the bell counts these
+// along with everything else — so what the set is left doing is naming the
+// kinds the app-context sheet draws a per-change unread dot for
+// (`sessionUnreadIds`, published by _renderBadge).
 const SESSION_NOTIF_KINDS = new Set([
   'session_done', 'auto_solve_done', 'stale_pr', 'check_failed',
 ]);
@@ -1067,13 +1311,26 @@ function isTouchNow() {
 // `time` is the age of the SAVE, not of the message: the section is
 // ordered by when you saved things, so a timestamp measuring anything else
 // would contradict the order the rows are in.
+// One section, two kinds of save. A conversation save carries a
+// `conversationId` and no `appSlug`; an app-chat save the reverse — that
+// field IS the discriminator, here and at the click and unsave sites, so
+// nothing has to carry a separate `kind` string that could disagree with it.
+//
+// `appName` keeps its name in the descriptor because the component renders it
+// as "@who in <that>", and the answer to "in what" is the app for one kind
+// and the conversation for the other. Renaming the field to suit both would
+// have touched every call site to say the same thing.
 function savedView(s) {
+  const conversationId = Number(s.conversationId) || 0;
   return {
     messageId: s.messageId,
     slug: s.appSlug || '',
+    conversationId,
     who: s.author ? `@${s.author}` : 'System',
-    appName: s.appName || s.appSlug || 'an app',
-    time: relativeTime(s.savedAt),
+    appName: conversationId
+      ? (s.conversationTitle || 'a conversation')
+      : (s.appName || s.appSlug || 'an app'),
+    ...stampFields(s.savedAt),
     text: (s.content || '').slice(0, 140),
   };
 }
@@ -1092,55 +1349,16 @@ function inviteView(inv) {
     who: inv.invitedBy ? `@${inv.invitedBy}` : 'Someone',
     verb: isApprover ? 'invited you to be an approver on' : 'invited you to collaborate on',
     appName: inv.appName || inv.appSlug || 'an app',
-    time: relativeTime(inv.createdAt),
+    ...stampFields(inv.createdAt),
   };
 }
 
-// Collapsed/expanded group header + (when expanded) its leaf rows, as data.
-// `count` is the unread count on an unread group and the total on a fully
-// read one — two different pills, which is why `hasUnread` travels with it.
-function groupView(g, isExpanded) {
-  const hasUnread = g.unreadCount > 0;
-  const latest = g.items[0];
-
-  // Expanded: reveal up to `visible` leaves (default GROUP_LEAF_CAP, grown
-  // by inline "Show more" clicks), then an inline pagination button.
-  const visible = Notifications.revealed.get(g.key) || GROUP_LEAF_CAP;
-  const shown = isExpanded ? g.items.slice(0, visible) : [];
-  const localRemaining = g.items.length - shown.length;
-  let more = null;
-  if (isExpanded) {
-    if (localRemaining > 0) {
-      // More already-loaded leaves to reveal in place.
-      more = { key: g.key, label: `Show ${Math.min(GROUP_LEAF_CAP, localRemaining)} more →` };
-    } else if (Notifications.hasMore) {
-      // All loaded leaves shown, but older pages may add more to this group.
-      more = { key: g.key, label: 'Show more →' };
-    }
-  }
-
-  return {
-    key: g.key,
-    appId: g.appId != null ? g.appId : '',
-    conversationId: g.conversationId != null ? g.conversationId : '',
-    expanded: isExpanded,
-    hasUnread,
-    accent: hasUnread
-      ? 'bg-violet-500/5 border-l-2 border-violet-500'
-      : 'border-l-2 border-transparent',
-    chevron: isExpanded ? '▾' : '▸', // ▾ / ▸
-    appName: g.appName || 'General',
-    count: hasUnread ? g.unreadCount : g.items.length,
-    preview: `${previewText(latest)} · ${relativeTime(latest.createdAt)}`,
-    leaves: shown.map(rowView),
-    more,
-  };
-}
 
 // #138: derive the title/body + deep-link fields for a completion alert
-// (chime/OS notification) from a notification row. Mirrors the per-kind
-// copy in previewText / the row renderers so the OS notification reads the
-// same as the bell-menu entry.
+// (chime/OS notification) from a notification row. Mirrors the per-kind copy in
+// rowView so the OS notification reads the same as the bell-menu entry. (It
+// used to name previewText too — that was the collapsed group header's
+// one-liner, which #1385 retired with the rest of the group chrome.)
 function completionAlertInfo(n) {
   const appName = n.appName || 'your app';
   if (n.kind === 'auto_solve_done') {
@@ -1149,7 +1367,7 @@ function completionAlertInfo(n) {
     let body;
     if (n.detail === 'failed') {
       title = 'Proposal failed';
-      body = `Proposal for ${issue} in ${appName} failed — you can retry`;
+      body = `Proposal for ${issue} in ${appName} failed. You can retry`;
     } else if (n.detail === 'question') {
       title = 'Proposal has a question';
       body = `Proposal for ${issue} in ${appName} is waiting for your input`;
@@ -1175,56 +1393,122 @@ function completionAlertInfo(n) {
     sessionId: n.sessionId || null,
     headlessIssueNumber: null,
     title: 'Dev session finished',
-    body: `Your dev session in ${appName} finished — ${label}`,
+    body: `Your dev session in ${appName} finished: ${label}`,
   };
 }
 
-// One-line summary used in a collapsed group header. Mirrors the per-kind
-// verbs used by renderRow's full rows.
-function previewText(n) {
-  const who = n.sourceUsername ? `@${n.sourceUsername}` : 'someone';
-  switch (n.kind) {
-    case 'conversation_invite':   return `✉️ ${who} invited you to a conversation`;
-    case 'conversation_message':  return `💬 ${who} sent a message`;
-    case 'conversation_mention':  return `${who} mentioned you`;
-    case 'conversation_reply':    return `${who} replied to you`;
-    case 'conversation_reaction': return `${n.detail || '❤️'} ${who} reacted to your message`;
-    case 'kudos':       return `\u{1F44F} ${who} gave kudos to your PR`;
-    case 'reaction':    return `${n.detail || '❤️'} ${who} reacted to your message`;
-    case 'stale_pr':    return `⏳ Your PR is going stale`;
-    case 'check_failed': return `⚠️ Your proposal's preview won't boot`;
-    case 'pr_proposed': return `\u{1F5F3}️ ${who} proposed a PR to vote on`;
-    case 'reply':       return `${who} replied to you`;
-    case 'mention':     return `${who} mentioned you`;
-    case 'spec_shared': return `\u{1F4CB} ${who} shared a spec with you`;
-    case 'collab_invite':          return `✉️ ${who} invited you to collaborate`;
-    case 'collab_invite_accepted': return `✅ ${who} accepted your invite`;
-    case 'approver_invite':          return `🗳️ ${who} invited you to be an approver`;
-    case 'approver_invite_accepted': return `✅ ${who} accepted your approver invite`;
-    case 'session_done':           return `✅ Your dev session finished`;
-    case 'auto_solve_done':
-      return n.detail === 'failed'
-        ? `⚠️ Proposal for issue #${n.headlessIssueNumber || '?'} failed`
-        : n.detail === 'question'
-          ? `🤖 Proposal for issue #${n.headlessIssueNumber || '?'} has questions for you`
-          : `🤖 Proposal for issue #${n.headlessIssueNumber || '?'} is ready`;
-    default:            return who;
+
+// Consecutive notifications from ONE conversation, as a single row.
+//
+// A message notification is created per member PER MESSAGE (sendMessage in
+// services/conversations.js), so a friend sending four lines puts four
+// near-identical rows in the sheet and buries everything else under them.
+// The per-conversation count was the one thing the retired Messages tag did
+// better than the bell, and this is where it comes back: the run collapses to
+// its newest row carrying `count`, so a thread reads as one thing.
+//
+// CONSECUTIVE, not "all rows for this conversation". The feed is newest-first
+// chronological and the collapsed row sits exactly where its newest member
+// sat, so nothing reorders and nothing jumps a section boundary. Two bursts
+// with other notifications between them stay two rows, which is honest: they
+// happened at different times, and merging them would date the older one
+// wrongly.
+//
+// The read state has to match too. A run is entirely unread or entirely read,
+// which is what lets the sheet's Unread tab filter whole rows without ever
+// hiding an unread message inside a row it counted as read.
+function collapseConversationRuns(items) {
+  const runs = [];
+  for (const n of items) {
+    const prev = runs[runs.length - 1];
+    const id = n && n.conversationId != null ? Number(n.conversationId) : null;
+    if (prev && id !== null && prev.conversationId === id
+        && prev.read === !!n.readAt) {
+      prev.count += 1;
+      continue;
+    }
+    runs.push({ item: n, conversationId: id, read: !!(n && n.readAt), count: 1 });
   }
+  return runs;
 }
 
-// One notification row, as data. It has ONE renderer again — NotificationRow in
-// ./notifications-list.tsx — which both drawers use: the bell's own list, and
-// the cog drawer's pinned "Needs attention" section, which reaches this builder
-// through `Notifications._rowView` (see the publication at the bottom). Until
-// #1191 slice 6's fourth conversion there was a second, HTML-string renderer
-// here for the cog, because that host was still built by `innerHTML`.
+// The sheet's rows: one descriptor per run. `count` rides only on a genuine
+// collapse, so a lone notification's view is byte-identical to what it was.
+function screenViews(items) {
+  return collapseConversationRuns(items).map((run) => (
+    run.count > 1 ? { ...rowView(run.item), count: run.count } : rowView(run.item)
+  ));
+}
+
+// One notification row, as data. It has ONE renderer — ScreenRow in
+// ./notifications-sheet.tsx — which draws THREE lines:
 //
-// `segments` is the meta line after the leading unread dot, in order:
+//     <kind>                                        ← `label`
+//     <subject>                                     ← `segments`
+//     <where> · by @<who> · <when>                  ← `appLine` / `by` / `time`
+//
+// ── WHAT KIND, THEN WHICH ONE, THEN WHERE FROM ───────────────────────
+//
+// Every kind used to write a SENTENCE about itself: "@evan proposed a PR to
+// vote on in Notes", "Your dev session in Notes finished", "Proposal for issue
+// #12 in Notes is ready". Three problems, and they compound:
+//
+//   1. The app's name was in the sentence AND in the meta line directly under
+//      it. Every row said where it came from twice.
+//   2. The actor was in the sentence, so the row led with a username rather
+//      than with what happened — and a list of them all started the same way.
+//   3. The SUBJECT (the PR's title, the session's name) was in `body`, a
+//      third line this renderer does not draw. So the one thing that told two
+//      proposal notifications apart was not on screen at all.
+//
+// So the sentence is gone. What is left are three FACTS, and the row now gives
+// each of them its own line instead of packing two into a headline:
+//
+//   `label`     what KIND of thing this is: "New proposal", "Submitted by
+//               your agent", "Session finished". A short category, and the
+//               same words for every row of that kind, so a list of them
+//               scans down the left edge.
+//   `segments`  WHICH one: the PR's title, the session's name, the message.
+//               This used to be `body`, a third field nothing rendered, so
+//               the one thing telling two proposal rows apart was invisible.
+//   the meta    WHERE it came from and who did it — everything the old
+//               sentence was repeating out of the line under itself.
+//
+// They were one line for a round, joined by a colon ("New proposal: Fix the
+// header spacing"), and that line is where a row runs out of width first: the
+// subject is the part that varies and the part that truncates, and it was
+// paying for a label of fixed length in front of it on every row. Split, the
+// label sits in the kind's own smaller ink and the subject gets the full
+// width — the same three facts, in falling order of how much of the row's
+// width they deserve.
+//
+// `segments` is the subject, as parts:
 //   { t: 'who' }    → @username, in the strong ink
-//   { t: 'strong' } → an app name / issue label, in the slightly softer strong
-//   { t: 'text' }   → ordinary copy
+//   { t: 'strong' } → a title, a conversation, an issue ref
+//   { t: 'text' }   → connecting words
 // Every value is RAW text. Escaping is the renderer's job, and React does it
 // by construction — which is the point of moving the rows there.
+//
+// A kind with nothing to name — a collaborator invite is entirely its own
+// label — leaves `segments` EMPTY, and the renderer then draws the label on
+// the subject's line and no kind line at all. Two lines when there are two
+// things to say; a category heading over nothing would be worse than either.
+//
+// `by` is the meta line's attribution and is set ONLY where the source user is
+// the ACTOR. The two OpenRouter-key rows carry a `sourceUsername` that is the
+// SUBJECT instead — it names whose key it is — and "by @them" would be a false
+// claim about who did something, so those keep the name in the headline and
+// set no `by` at all. A system row — a stale PR, a failed check, a finished
+// session — has no actor and no `by` either.
+// The two lines of a row's own copy. Spread into the view — `...headline(…)`
+// — rather than assigned to one field, because it fills two.
+function headline(label, subject) {
+  return {
+    label,
+    segments: subject ? [{ t: 'strong', v: String(subject) }] : [],
+  };
+}
+
 function rowView(n) {
   // #103: keep the violet left line on every row, read or unread, so a
   // notification never "loses its line" when read. Only the background
@@ -1232,13 +1516,30 @@ function rowView(n) {
   const unreadCls = n.readAt
     ? 'border-l-2 border-violet-500'
     : 'bg-violet-500/5 border-l-2 border-violet-500';
-  const appLine = n.appName ? n.appName : 'app';
+  // WHERE this came from, for the meta line — and EMPTY when there is no
+  // app, not the literal string 'app'. Plenty of kinds have no app at all (a
+  // conversation, an account-level key, an agent question the platform cannot
+  // place), and every one of them used to render "app · 4m ago" under itself.
+  // The renderer drops a falsy part, so an app-less row simply says less.
+  const appLine = n.appName ? n.appName : '';
   const who = n.sourceUsername ? n.sourceUsername : 'someone';
   const base = {
     id: n.id,
     unread: !n.readAt,
     unreadCls,
-    time: relativeTime(n.createdAt),
+    ...stampFields(n.createdAt),
+    // The sheet buckets rows into Today/Earlier and leads each with an
+    // avatar-initial chip, so the raw timestamp and the resolved names ride
+    // along as data.
+    createdAtMs: Date.parse(n.createdAt) || 0,
+    who,
+    appLine,
+    // Meta-line attribution. Null unless the source user actually DID this.
+    by: null,
+    // The kind line. Every branch below overwrites it; '' would render a
+    // blank first line, which is why nothing is allowed to fall through
+    // with the default.
+    label: '',
     // The meta line's own layout. `mb` and `wrap` differ per kind, and the
     // plain mention/reply row is the only one that is not a flex row at all.
     mb: true,
@@ -1246,283 +1547,303 @@ function rowView(n) {
     wrap: false,
     icon: null,
     segments: [],
-    body: null,
   };
+
+  if (n.kind === 'test_alert') {
+    return { ...base, label: 'Usernode test alert', icon: '🔔',
+      segments: [{ t: 'text', v: 'You requested a push notification test. Open Alerts settings to try again.' }] };
+  }
 
   if (CONVERSATION_NOTIF_KINDS.has(n.kind)) {
     const conversation = n.conversationTitle || 'Messages';
     const snippet = (n.messageContent || '').slice(0, 140);
-    const labels = {
-      conversation_invite: ['✉️', 'invited you to'],
-      conversation_message: ['💬', 'sent a message in'],
-      conversation_mention: ['@', 'mentioned you in'],
-      conversation_reply: ['↩️', 'replied to you in'],
-      conversation_reaction: [n.detail || '❤️', 'reacted to your message in'],
+    // The conversation is the SUBJECT of every one of these, so it leads —
+    // and for a plain message the snippet follows it, which is the only part
+    // of a message notification anybody reads. The other four say what
+    // happened in it instead, because "@you" is the whole news there.
+    //
+    // The three that used to read "Mentioned you in <conversation>" lost the
+    // trailing preposition when the line broke under them: "Mentioned you in"
+    // alone above its object is a sentence cut in half, and the line below is
+    // plainly what it is in.
+    const copy = {
+      conversation_invite: headline('Invite', conversation),
+      // The only kind whose label is not a fixed category. A message's kind
+      // IS its thread — "Message" over the snippet would name the surface,
+      // which the meta line already does.
+      conversation_message: headline(conversation, snippet),
+      conversation_mention: headline('Mentioned you', conversation),
+      conversation_reply: headline('Replied', conversation),
+      conversation_reaction: headline('Reacted', conversation),
+    }[n.kind];
+    const icons = {
+      conversation_invite: '✉️',
+      conversation_message: '💬',
+      conversation_mention: '@',
+      conversation_reply: '↩️',
+      conversation_reaction: n.detail || '❤️',
     };
-    const [icon, verb] = labels[n.kind];
-    const body = n.kind === 'conversation_invite'
-      ? { text: 'Open Messages to accept or decline', medium: false, mention: false }
-      : (snippet ? { text: snippet, medium: false, mention: true } : null);
     return {
       ...base,
       wrap: true,
-      icon,
-      segments: [
-        { t: 'who', v: who },
-        { t: 'text', v: verb },
-        { t: 'strong', v: conversation },
-      ],
-      body,
+      icon: icons[n.kind],
+      by: n.sourceUsername || null,
+      // What the sheet's Messages tab filters on. Carried as a flag rather
+      // than re-deriving it there from `kind`: CONVERSATION_NOTIF_KINDS lives
+      // in this module and the tab must never drift from the set the rest of
+      // the routing, grouping and copy already agree on.
+      conversation: true,
+      conversationId: n.conversationId != null ? Number(n.conversationId) : null,
+      // A conversation row names MESSAGES as its source, not "app".
+      //
+      // `appLine` is the sheet's secondary line and falls back to the literal
+      // string 'app' when a notification has no app, which every conversation
+      // row is by construction (serialize nulls the app fields on one). So the
+      // sheet rendered "app · 4m ago" under every message.
+      //
+      // Deliberately the SURFACE and not the conversation's title: the title
+      // is the headline's own subject, and repeating it under itself reads as
+      // a rendering fault rather than as attribution.
+      appLine: 'Messages',
+      ...copy,
     };
   }
 
-  // Kudos rows have no chat-message body; they show the PR title (or
-  // "PR #N" if the PR has no LLM-generated title yet) and a small 👏
-  // icon to distinguish from mention rows at a glance.
+  if (n.kind === 'app_quota_changed') {
+    const [before, after] = String(n.detail || '').split(':');
+    const detail = /^\d+$/.test(before) && /^\d+$/.test(after)
+      ? `${before} → ${after} app slots` : 'View your current app allowance';
+    return { ...base, appLine: 'Account', wrap: true, icon: '＋',
+      label: 'App allowance changed', segments: [{ t: 'text', v: detail }] };
+  }
+  if (n.kind === 'app_quota_requested') {
+    return { ...base, appLine: 'Admin', wrap: true, icon: '＋',
+      label: 'Requested more app slots', segments: [{ t: 'who', v: who }] };
+  }
+  if (n.kind === 'app_quota_request_declined') {
+    return { ...base, appLine: 'Account', wrap: true, icon: 'ℹ️',
+      label: 'App allowance request declined',
+      segments: [{ t: 'text', v: 'Your app allowance is unchanged.' }] };
+  }
+
+  // The two OpenRouter-key rows: `who` is WHOSE KEY it is, not who acted, so
+  // the name stays in the headline and `by` stays null. They carry no app —
+  // a company key is an account-level fact — and clicking one opens Admin →
+  // Users, so that is what the meta line names as their source.
+  if (n.kind === 'openrouter_key_created' || n.kind === 'openrouter_key_review') {
+    const review = n.kind === 'openrouter_key_review';
+    return {
+      ...base,
+      appLine: 'Admin',
+      wrap: true,
+      icon: review ? '⚠️' : '🔑',
+      label: review ? 'Company key needs review' : 'Company key issued',
+      segments: [{ t: 'who', v: who }],
+    };
+  }
+
+  const prLabel = n.prTitle || (n.prNumber ? `PR #${n.prNumber}` : null);
+
   if (n.kind === 'kudos') {
     return {
       ...base,
       icon: '\u{1F44F}',
-      segments: [
-        { t: 'who', v: who },
-        { t: 'text', v: 'gave kudos to your PR in' },
-        { t: 'strong', v: appLine },
-      ],
-      body: {
-        text: n.prTitle || (n.prNumber ? `PR #${n.prNumber}` : 'your PR'),
-        medium: true,
-        mention: false,
-      },
+      by: n.sourceUsername || null,
+      ...headline('Kudos', prLabel || 'your PR'),
     };
   }
 
-  // Reaction rows lead with the emoji someone reacted with, then preview
-  // the message they reacted to.
   if (n.kind === 'reaction') {
     return {
       ...base,
       icon: n.detail || '❤️',
-      segments: [
-        { t: 'who', v: who },
-        { t: 'text', v: 'reacted to your message in' },
-        { t: 'strong', v: appLine },
-      ],
-      body: { text: (n.messageContent || '').slice(0, 140), medium: false, mention: true },
+      by: n.sourceUsername || null,
+      ...headline('Reacted', (n.messageContent || '').slice(0, 140)),
     };
   }
 
-  // Stale-PR rows are system warnings (no source user): the author's
-  // promoted PR has gone quiet and is heading for auto-archive. Lead with
-  // a ⏳ and show the PR title so it's actionable at a glance. #971: these
-  // rows are about a PROPOSAL, so the PR title still leads; the session
-  // title is only a fallback ahead of the bare "PR #N".
+  // A system warning, no actor: the author's promoted PR has gone quiet and is
+  // heading for auto-archive. The old copy spelled the whole mechanism out
+  // ("is going stale, it'll auto-archive soon without votes"); what the row
+  // has to say is that it needs votes, and the rest is on the proposal.
   if (n.kind === 'stale_pr') {
     return {
       ...base,
       icon: '⏳',
-      segments: [
-        { t: 'text', v: 'Your PR in' },
-        { t: 'strong', v: appLine },
-        { t: 'text', v: "is going stale — it'll auto-archive soon without votes" },
-      ],
-      body: {
-        text: n.prTitle || n.sessionTitle || (n.prNumber ? `PR #${n.prNumber}` : 'your PR'),
-        medium: true,
-        mention: false,
-      },
+      ...headline('Needs votes', prLabel || n.sessionTitle || 'your PR'),
     };
   }
 
-  // Check-failed rows are system warnings (no source user): the owner's
-  // promoted proposal can't merge because its staging preview failed to
-  // boot, so automated checks never ran. Lead with ⚠️ and show the PR
-  // title; clicking lands on the proposal so they can push a fix. #971: PR
-  // title leads (this is a proposal row); the session title is a fallback
-  // ahead of the bare "PR #N".
+  // Also a system warning: the staging preview would not boot, so the checks
+  // that gate merge never ran.
   if (n.kind === 'check_failed') {
     return {
       ...base,
       icon: '⚠️',
-      segments: [
-        { t: 'text', v: 'Your proposal in' },
-        { t: 'strong', v: appLine },
-        { t: 'text', v: "can't merge — its preview won't boot, so checks can't run" },
-      ],
-      body: {
-        text: n.prTitle || n.sessionTitle || (n.prNumber ? `PR #${n.prNumber}` : 'your proposal'),
-        medium: true,
-        mention: false,
-      },
+      ...headline('Checks blocked', prLabel || n.sessionTitle || 'your proposal'),
     };
   }
 
-  // PR-proposed (vote-request) rows: someone promoted a PR and we're
-  // nudging this user to come vote. Lead with a ballot box and show the
-  // PR title; clicking lands on the app's group-chat vote panel.
+  // Someone promoted a PR and this is the nudge to come and vote. THE row this
+  // whole rewrite is measured against: it read "@evan proposed a PR to vote on
+  // in Notes" with the PR's own title on an unrendered third line, so the one
+  // thing that distinguished two of them was invisible.
   if (n.kind === 'pr_proposed') {
     return {
       ...base,
       icon: '\u{1F5F3}️',
-      segments: [
-        { t: 'who', v: who },
-        { t: 'text', v: 'proposed a PR to vote on in' },
-        { t: 'strong', v: appLine },
-      ],
-      body: {
-        text: n.prTitle || (n.prNumber ? `PR #${n.prNumber}` : 'a PR'),
-        medium: true,
-        mention: false,
-      },
+      by: n.sourceUsername || null,
+      ...headline('New proposal', prLabel || 'a PR'),
     };
   }
 
-  // #161: dev-session completion — the owner left mid-turn and it
-  // finished. Clicking deep-links straight into the dev session.
-  // #971: label precedence is sessionTitle → prTitle → branchName. The
-  // session title is the canonical display name (schema.sql #249) and is
-  // mirrored from pr_title once a PR exists, so a promoted session reads
-  // exactly as it did before; a pre-PR session now shows its real title
-  // instead of `dev/<user>-<epoch>`.
+  // #1405 path A: your agent put work somewhere while you were away. The label
+  // carries the DESTINATION, because that is the part you cannot infer —
+  // "submitted" is at a vote with checks running, "shared" is visible on the
+  // Dev board with nobody being asked to decide anything.
+  if (n.kind === 'connector_submitted') {
+    const shared = n.detail === 'shared';
+    return {
+      ...base,
+      wrap: true,
+      icon: shared ? '\u{1F441}️' : '\u{1F4E4}',
+      ...headline(
+        shared ? 'Shared by your agent' : 'Submitted by your agent',
+        n.sessionTitle || prLabel || 'your change',
+      ),
+    };
+  }
+
+  // #1405 path B: the agent asked you something and you have not answered.
+  //
+  // The copy says it was ASKED, never that you are currently being waited on.
+  // Clearing depends on the agent calling back and it may forget, so "is
+  // waiting on you" would be FALSE on the row you see after already replying —
+  // and a notification making a false claim reads as broken. This phrasing
+  // stays true either way, which is what makes a stale one merely redundant.
+  if (n.kind === 'agent_awaiting_input') {
+    return {
+      ...base,
+      wrap: true,
+      icon: '\u{1F4AC}',
+      ...headline('Claude asked you something', n.sessionTitle || null),
+    };
+  }
+
+  // #161: dev-session completion — the owner left mid-turn and it finished.
+  // #971: label precedence is sessionTitle → prTitle → branchName. The session
+  // title is the canonical display name (schema.sql #249) and is mirrored from
+  // pr_title once a PR exists, so a promoted session reads exactly as it did
+  // before; a pre-PR session shows its real title instead of
+  // `dev/<user>-<epoch>`.
   if (n.kind === 'session_done') {
     return {
       ...base,
       wrap: true,
       icon: '✅',
-      segments: [
-        { t: 'text', v: 'Your dev session in' },
-        { t: 'strong', v: appLine },
-        { t: 'text', v: 'finished' },
-      ],
-      body: {
-        text: n.sessionTitle || n.prTitle || n.branchName || 'your session',
-        medium: true,
-        mention: false,
-      },
+      ...headline(
+        'Session finished',
+        n.sessionTitle || prLabel || n.branchName || 'your session',
+      ),
     };
   }
 
-  // #161: headless proposal-run completion. Clicking lands on the app's
-  // group chat and reveals the issue row (where "Start session from
-  // proposal" lives).
+  // #161: headless proposal-run completion. #150: a question outcome isn't
+  // "ready" work product — it is the run asking the reporter for input, so the
+  // label says so.
   if (n.kind === 'auto_solve_done') {
     const failed = n.detail === 'failed';
-    // #150: a question outcome isn't "ready" work product — it's the run
-    // asking the reporter for input, so say so in the headline.
-    const verb = failed ? 'failed'
-      : (n.detail === 'question' ? 'has questions for you' : 'is ready');
-    const outcomeText = {
-      spec: 'drafted a spec',
-      code: 'pushed code',
-      spec_code: 'drafted a spec and pushed code',
-      question: 'replied with a question',
-      failed: 'failed — you can retry',
-    }[n.detail] || 'finished';
+    const label = failed ? 'Proposal failed'
+      : (n.detail === 'question' ? 'Proposal has a question' : 'Proposal ready');
     return {
       ...base,
       wrap: true,
       icon: failed ? '⚠️' : '\u{1F916}',
-      segments: [
-        { t: 'text', v: 'Proposal for' },
-        { t: 'strong', v: n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue' },
-        { t: 'text', v: 'in' },
-        { t: 'strong', v: appLine },
-        { t: 'text', v: verb },
-      ],
-      body: { text: outcomeText, medium: true, mention: false },
+      ...headline(
+        label,
+        n.headlessIssueNumber ? `issue #${n.headlessIssueNumber}` : 'an issue',
+      ),
     };
   }
 
-  // (#86) Private spec share: someone sent this user a spec version.
-  // Clicking opens the app's group chat with the read-only spec panel
-  // showing that exact version (see _onItemClick). Second line prefers
-  // the session's title / PR title / branch name (already joined
-  // server-side); the spec's own H1 appears as soon as the panel loads.
+  // (#86) Private spec share: someone sent this user a spec version. Clicking
+  // opens the app's general chat with the read-only spec panel showing that
+  // exact version (see _onItemClick).
   if (n.kind === 'spec_shared') {
     return {
       ...base,
       wrap: true,
       icon: '\u{1F4CB}',
-      segments: [
-        { t: 'who', v: who },
-        { t: 'text', v: 'shared a spec with you in' },
-        { t: 'strong', v: appLine },
-      ],
-      body: {
-        text: n.sessionTitle || n.prTitle || n.branchName || `Spec v${n.detail || '?'}`,
-        medium: true,
-        mention: false,
-      },
+      by: n.sourceUsername || null,
+      ...headline(
+        'Spec shared',
+        n.sessionTitle || prLabel || n.branchName || `v${n.detail || '?'}`,
+      ),
     };
   }
 
-  // Collab-invite history rows (the actionable Accept/Decline buttons
-  // live ONLY in the pinned Invites section, driven by pendingInvites —
-  // once resolved this is just a plain history row).
+  // Collab-invite history rows (the actionable Accept/Decline buttons live
+  // ONLY in the pinned Invites section, driven by pendingInvites — once
+  // resolved this is just a plain history row). The app's name is the meta
+  // line's job, so the label is the whole headline.
   if (n.kind === 'collab_invite' || n.kind === 'collab_invite_accepted'
     || n.kind === 'approver_invite' || n.kind === 'approver_invite_accepted') {
-    const verb = n.kind === 'collab_invite'
-      ? 'invited you to collaborate on'
+    const label = n.kind === 'collab_invite'
+      ? 'Invited you to collaborate'
       : n.kind === 'collab_invite_accepted'
-        ? 'accepted your invite to collaborate on'
+        ? 'Accepted your collaborator invite'
         : n.kind === 'approver_invite'
-          ? 'invited you to be an approver on'
-          : 'accepted your approver invite on';
+          ? 'Invited you to be an approver'
+          : 'Accepted your approver invite';
     return {
       ...base,
       mb: false,
       wrap: true,
       icon: n.kind === 'collab_invite' ? '✉️'
         : n.kind === 'approver_invite' ? '🗳️' : '✅',
-      segments: [
-        { t: 'who', v: who },
-        { t: 'text', v: verb },
-        { t: 'strong', v: appLine },
-      ],
-      body: null,
+      by: n.sourceUsername || null,
+      ...headline(label, null),
     };
   }
 
-  // Mentions and replies. The only row whose meta line is NOT a flex row,
-  // so its copy sits inline between the spans rather than in one.
+  // Mentions and replies, and anything else that carries a chat message.
   return {
     ...base,
     metaFlex: false,
-    segments: [
-      { t: 'who', v: who },
-      {
-        t: 'text',
-        v: n.kind === 'mention' ? 'mentioned you in'
-          : (n.kind === 'reply' ? 'replied to you in' : 'in'),
-      },
-      { t: 'strong', v: appLine },
-    ],
-    body: { text: (n.messageContent || '').slice(0, 140), medium: false, mention: true },
+    by: n.sourceUsername || null,
+    ...headline(
+      n.kind === 'mention' ? 'Mentioned you'
+        : (n.kind === 'reply' ? 'Replied to you' : 'Posted'),
+      (n.messageContent || '').slice(0, 140),
+    ),
   };
 }
 
-function relativeTime(ts) {
-  if (!ts) return '';
-  const then = new Date(ts).getTime();
-  const now = Date.now();
-  const diff = Math.max(0, now - then) / 1000;
-  if (diff < 60) return 'just now';
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  return `${Math.floor(diff / 86400)}d ago`;
+// `relativeTime` lived here. It never stopped being relative, so a row from
+// last spring read "412d ago" — a duration, not a date. It is `agoStamp` from
+// lib/timestamp.ts now, which prints "Mar 4" past a week (#1808).
+//
+// Both halves of a row's stamp cross to the component as descriptor fields:
+// `time` is what the row prints and `timeTitle` is what it hangs on `title`,
+// so a "3d ago" is one hover from the exact instant.
+function stampFields(ts) {
+  const { text, title } = agoStamp(ts);
+  return { time: text, timeTitle: title };
 }
 
-// #1079 chunk B: the cog drawer's "Needs attention" section renders these very
-// same per-kind rows (WorkDrawer.pendingSection). While both files were classic
-// <script>s they shared one global scope and it simply called the row builder;
-// inside the bundle each module has its own scope, so it has to be published on
-// the object work-drawer already reaches through (Notifications.items,
-// ._onItemClick, ._renderBadge, …).
+// #1079 chunk B published this row builder on the object rather than leaving
+// it in file scope: the cog drawer's "Needs attention" section rendered these
+// very same per-kind rows, and once each module had its own scope inside the
+// bundle it could no longer just call a neighbour's function.
 //
-// #1191 slice 6 conversion 4 converted that host too, so what crosses here is
-// the DESCRIPTOR rather than an HTML string: both drawers render these rows
-// with the same React component (NotificationRow in ./notifications-list.tsx),
-// which is why the HTML flavour of the row — `rowHtml`, its four class-string
-// helpers, `escapeHtml` and `renderMentionSnippet` — is gone from this file.
+// #1191 slice 6 conversion 4 then made what crosses here a DESCRIPTOR rather
+// than an HTML string, so both drawers rendered the rows with one React
+// component (NotificationRow in ./notifications-list.tsx).
+//
+// THE UI OVERHAUL retired the cog drawer and merged its pinned rows into this
+// list, so there is one caller again. The seam stays as it is: the descriptor
+// is what keeps ./notifications-list.tsx presentational, and it is what let the
+// list be lifted wholesale into the hamburger without this module noticing.
 Notifications._rowView = rowView;
 
 // Published exactly where the classic <script> published it: at module

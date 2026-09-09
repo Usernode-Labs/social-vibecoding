@@ -93,6 +93,8 @@
   --un-dur-spring: 725ms;
   --un-dur-spring-stiff: 532ms;
   --un-dur-spring-gentle: 1006ms;
+  /* One fade clock for dialog cards AND the full-page dim (#1566). */
+  --un-dialog-fade-duration: 180ms;
 }
 
 @supports (animation-timing-function: linear(0, 1)) {
@@ -359,7 +361,13 @@ html.un-android .un-switch:checked:active::before {
    it ride up over the header, and the layer sits BENEATH the header in
    stacking order — level 0 and first in tree order in element mode, below
    .un-navbar's z-index:100 in window mode. So the puck is revealed by the
-   content sliding away rather than painted on top of the chrome. */
+   content sliding away rather than painted on top of the chrome.
+
+   The 34px box below is mirrored by PTR_PUCK in native.js, which derives
+   the whole travel pose from it (park, hold, per-px travel) so the puck
+   rests FULLY below the anchor line with equal space above and below —
+   issue #1526. The two copies are cross-checked by a test in
+   tests/native-kit.test.js; change them together. */
 
 .un-ptr-layer {
   position: absolute;
@@ -548,7 +556,7 @@ html.un-android .un-switch:checked:active::before {
   will-change: opacity;
 }
 .un-backdrop.un-backdrop-fade {
-  transition: opacity 180ms ease;
+  transition: opacity var(--un-dialog-fade-duration) ease;
 }
 
 /* ── Bottom sheet ──────────────────────────────────────────────────────
@@ -753,11 +761,63 @@ html.un-kb .un-action-sheet {
 .un-action-btn + .un-action-btn {
   border-top: 1px solid var(--un-hairline);
 }
+/* A group label inside the stack, as opposed to .un-action-title on its own,
+   which is the sheet's one centred caption. Left-aligned and heavier so it
+   reads as a heading over the rows beneath it rather than as another caption,
+   and it takes a hairline above when it follows a row — the rule the rows
+   already draw between themselves, carried over the boundary so a group
+   visibly starts. */
+.un-action-title.un-action-section {
+  text-align: left;
+  font-weight: 600;
+  padding-bottom: 8px;
+}
+.un-action-btn + .un-action-title.un-action-section {
+  border-top: 1px solid var(--un-hairline);
+}
 .un-action-btn.un-destructive {
   color: var(--un-action-danger);
 }
 .un-action-btn.un-action-cancel {
   font-weight: 600;
+}
+
+/* ── Menu-row icons ────────────────────────────────────────────────────
+   Rows given `icon` / `iconEl` draw the glyph to the left of the label.
+   The class lands on EVERY row of a menu where at least one row has an
+   icon, so the rows that don't get an empty spacer and all the labels
+   still start at the same x — a menu with the icons only half applied
+   reads as a bug rather than a style.
+
+   The icon inherits `currentColor`, which is what makes a destructive
+   row's icon red and a disabled row's icon dim with no rule of its own.
+   The sheet centres the icon+label pair (iOS action sheets centre their
+   labels); the popover leaves it ranged left. */
+.un-action-btn.un-has-icon,
+.un-popover-item.un-has-icon {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.un-action-btn.un-has-icon {
+  justify-content: center;
+}
+.un-item-icon {
+  flex: none;
+  width: 1.15em;
+  height: 1.15em;
+  opacity: 0.75;
+}
+.un-item-icon-empty {
+  opacity: 0;
+}
+/* The label WRAPS — it does not truncate. A menu row before icons existed
+   was a bare text node in a block button, so a long label has always run to
+   a second line, and an ellipsis here would newly hide the end of every long
+   row on the platform. `min-width: 0` is what lets it wrap inside the flex
+   row instead of forcing the icon out. */
+.un-item-label {
+  min-width: 0;
 }
 
 /* ── Anchored popover / dropdown menu ──────────────────────────────────
@@ -846,7 +906,7 @@ html.un-kb .un-action-sheet {
   text-align: center;
   transform: translate(-50%, -50%) scale(1.12);
   opacity: 0;
-  transition: transform 260ms var(--un-ease-spring), opacity 180ms ease, top 250ms ease-out;
+  transition: transform 260ms var(--un-ease-spring), opacity var(--un-dialog-fade-duration) ease, top 250ms ease-out;
   will-change: transform, opacity;
 }
 .un-alert.un-in {
@@ -933,7 +993,7 @@ html.un-kb .un-action-sheet {
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
   transform: translate(-50%, -50%) scale(1.04);
   opacity: 0;
-  transition: transform 260ms var(--un-ease-spring), opacity 180ms ease, top 250ms ease-out;
+  transition: transform 260ms var(--un-ease-spring), opacity var(--un-dialog-fade-duration) ease, top 250ms ease-out;
   will-change: transform, opacity;
   outline: none;
 }
@@ -1026,10 +1086,12 @@ html.un-android .un-toast.un-in {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .un-toast,
+  .un-toast {
+    transition: opacity 180ms ease;
+  }
   .un-modal,
   .un-alert {
-    transition: opacity 180ms ease;
+    transition: opacity var(--un-dialog-fade-duration) ease;
   }
   /* Keyboard-inset moves still apply, just without animation. */
   .un-sheet,

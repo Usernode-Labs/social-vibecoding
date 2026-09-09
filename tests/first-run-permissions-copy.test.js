@@ -84,6 +84,7 @@ async function showFirstRunSheet(permissions) {
       return t;
     },
     clearTimeout,
+    setInterval() {},
     fetch() { return Promise.reject(new Error('unexpected fetch')); },
   };
   sandbox.window = sandbox;

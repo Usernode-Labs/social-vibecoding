@@ -1,0 +1,360 @@
+/**
+ * `#app-list` — the launcher grid, as the only React writer below that node.
+ *
+ * ── The ownership split this conversion makes ─────────────────────────
+ *
+ * Before: `Home.render()` built the whole grid as an HTML string, assigned it
+ * to `#app-list.innerHTML`, and then re-attached every listener with four
+ * `querySelectorAll` sweeps (`Home._wireCards`). Every WS app event and every
+ * search keystroke destroyed and rebuilt the subtree.
+ *
+ * After: `Home.render()` computes the view model in ./grid-store.ts and this
+ * component renders it. React reconciles — a status change repaints one tile's
+ * label instead of rebuilding forty nodes, and a card element survives across
+ * renders, which is what lets the per-card gesture wiring below attach once.
+ *
+ * home.js keeps everything that is NOT markup: the app list and its WS
+ * fan-out, the layout fetch and its persistence, the card menus, the drag
+ * geometry (`_targetCellFor` / `_planFor` / `_rectForCell`), and the kit
+ * attachment. That is the boundary the migration skill asks for — one owner
+ * per subtree — and it is why the gesture code below is CALLED from here
+ * rather than reimplemented here: those functions attach listeners to nodes,
+ * they do not write markup, so they are not a second writer.
+ *
+ * ── The markup is like-for-like, and that is load-bearing ─────────────
+ *
+ * Same classes, same `data-*`, same structure as the string this replaces.
+ * Four separate consumers depend on it and none of them would fail loudly:
+ *
+ *   * the kit's placement recognizer selects
+ *     `.app-card[data-yours]:not([data-demo])`;
+ *   * `App._tileFor(slug)` (public/js/app.js) finds the zoom-out rect with
+ *     `#app-list .app-card[data-slug="…"]`;
+ *   * app.css styles `.app-card`, `.app-icon-tile[data-icon]`,
+ *     `.app-card-title` and `.app-card-status`;
+ *   * dapp.json's declared checks select on these chains.
+ *
+ * The new widget language reaches these tiles through the token layer
+ * (tailwind.config.js) and app.css, not by respelling the classes here — so
+ * the reskin and this conversion stay independently reviewable.
+ *
+ * ── Why the cell is an inline style, written as an ATTRIBUTE ──────────
+ *
+ * Per-cell placement is `grid-column`/`grid-row` on the item. Those cannot be
+ * Tailwind utilities: the values are per-viewer data, and Tailwind's extractor
+ * is a regex over source text, so an arbitrary-value class built from a
+ * variable would never compile. Inline is also what the string version did.
+ *
+ * It is written with `setAttribute`, not through React's `style` prop, and
+ * that is load-bearing. React sets styles through the CSSOM, one longhand at
+ * a time, and `grid-column` + `grid-row` together cover all four longhands of
+ * `grid-area` — so the browser re-serializes the declaration block as the
+ * SHORTHAND: `style="grid-area: 1 / 2 / span 1 / span 1"`. The text
+ * `grid-row` disappears from the attribute, and dapp.json's declared check
+ * for placed tiles selects on `.app-card[data-yours="true"][style*="grid-row"]`.
+ * Writing the attribute keeps the exact spelling the string version emitted,
+ * which is the like-for-like rule applied to a value the CSSOM would
+ * otherwise rewrite underneath us. React does not manage `style` on this
+ * element (no `style` prop is passed), so there is no writer to race.
+ */
+
+import { useCallback, useEffect, useRef } from 'react';
+
+import { useStoreState } from '../../lib/use-store-state';
+import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { TileSkeleton } from '../apps/tile-skeleton';
+import { gridStore, type GridItem, type HomeAppView, type IconView } from './grid-store';
+
+function controller(): any {
+  return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
+}
+
+function cellStyle(item: GridItem): string | undefined {
+  const p = item.placement;
+  if (!p) return undefined;
+  return `grid-column:${p.col + 1}/span ${p.w};grid-row:${p.row + 1}/span ${p.h}`;
+}
+
+function AppIcon({ icon }: { icon: IconView }) {
+  if (icon.kind === 'image') {
+    // w-full/h-full, not a fixed size: the tile draws a 1px hairline border
+    // and the image fills the CONTENT box so it stays flush inside the ring
+    // rather than being cropped by it (same note as AppCard.iconTileFor).
+    return <img src={icon.src} alt="" draggable={false} className="w-full h-full object-cover" />;
+  }
+  if (icon.kind === 'emoji') return <span className="text-3xl leading-none">{icon.emoji}</span>;
+  return <>{icon.letter}</>;
+}
+
+/**
+ * One launcher tile.
+ *
+ * `wireRef` receives the card element once (React keeps the node across
+ * re-renders because the list is keyed by slug), and hands it to the gesture
+ * wiring in home.js. The WeakSet guard is belt-and-braces for a remount:
+ * attaching the prewarm listener twice would fire two `mountFrame` calls for
+ * one press.
+ */
+const wired = new WeakSet<Element>();
+
+/**
+ * The launcher's loading state.
+ *
+ * ── It is in the PRERENDER now, and that is the whole point ───────────
+ *
+ * These used to wait one effect tick behind a `mounted` flag, so that the
+ * first client render matched the empty `<div id="app-list">` the shell
+ * prerendered — hydrating anything else is a mismatch, which `console.error`s,
+ * which fails proposal checks. The cost was written off as "one frame of the
+ * same blank the prerender already shows".
+ *
+ * It is not one frame. public/sw.js serves that prerendered document to every
+ * navigation it can win, and the React bundle does not hydrate until it has
+ * parsed and executed — measured at ~2.2s on a 4x-throttled cold load. For all
+ * of that time the home screen showed an EMPTY launcher, which does not read
+ * as "loading", it reads as "you have no apps".
+ *
+ * The fix is not to render them earlier on the client but to render them in
+ * NODE as well: `renderToStaticMarkup(<Shell/>)` walks this same branch with
+ * the same INITIAL store, so the placeholders are baked into the shipped
+ * document and the first client render produces the identical tree. Same
+ * agreement, one less blank screen — and the `mounted` gate goes with it,
+ * because what it was protecting against no longer exists.
+ *
+ * ── Why eight ─────────────────────────────────────────────────────────
+ *
+ * Two full rows of the 4-column grid: enough to read as a launcher filling
+ * up, short enough that a viewer with three apps does not watch five
+ * placeholders evaporate.
+ */
+const SKELETON_TILES = 8;
+
+function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; yours: boolean }) {
+  const node = useRef<HTMLDivElement | null>(null);
+  const wireRef = useCallback((el: HTMLDivElement | null) => {
+    node.current = el;
+    if (!el || wired.has(el)) return;
+    wired.add(el);
+    const N = controller();
+    N?._wirePrewarm?.(el);
+  }, [app.demo, yours]);
+
+  useEffect(() => {
+    if (!node.current) return;
+    return controller()?._wireCardLongPressMenu?.(node.current);
+  }, [app.slug, app.demo, yours]);
+
+  // See the header note: the cell is an attribute so the CSSOM cannot fold
+  // `grid-column` + `grid-row` into a `grid-area` shorthand. Layout effect,
+  // not `useEffect`, because the tile must be in its cell in the same frame
+  // it appears — a paint at the grid's default flow position is a visible
+  // jump, and home.js measures cards right after a re-render.
+  //
+  // Keyed on `style`, so a repaint that did not MOVE the tile leaves the
+  // attribute alone. That matters mid-gesture: home.js's displacement preview
+  // writes `transform` onto real cards through the CSSOM, and rewriting the
+  // whole attribute under it would drop the slide. When the placement does
+  // change, the drop has already landed and the stale transform should go
+  // with it — which is what this then does.
+  useIsomorphicLayoutEffect(() => {
+    const el = node.current;
+    if (!el) return;
+    if (style) el.setAttribute('style', style);
+    else el.removeAttribute('style');
+  }, [style]);
+
+  return (
+    <div
+      ref={wireRef}
+      className={`app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${
+        app.clickable ? (yours ? 'cursor-grab' : 'cursor-pointer') : 'cursor-not-allowed grayscale-[0.75]'
+      }`}
+      data-slug={app.slug}
+      data-status={app.status}
+      data-locked={String(app.locked)}
+      tabIndex={0}
+      role="button"
+      aria-label={app.name}
+      aria-haspopup="menu"
+      title={`${app.name}. Hold or right-click for app actions`}
+      {...(app.demo ? { 'data-demo': 'true' } : null)}
+      {...(yours ? { 'data-yours': 'true' } : null)}
+      onPointerDownCapture={(e) => {
+        if ((e.target as HTMLElement).closest('.retry-btn')) { e.stopPropagation(); return; }
+        const N = controller();
+        if (N) N._cardPointerType = e.pointerType;
+      }}
+      onPointerCancel={() => { controller()?.closeCardMenu?.(); }}
+      onContextMenu={(e) => {
+        if ((e.target as HTMLElement).closest('.retry-btn')) return;
+        e.preventDefault();
+        // Mobile browsers may emit contextmenu during the same held touch.
+        if (!controller()?._menu) controller()?.openCardMenu?.(app.slug, e.currentTarget);
+      }}
+      onKeyDown={(e) => {
+        if (e.target !== e.currentTarget) return;
+        if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+          e.preventDefault();
+          controller()?.openCardMenu?.(app.slug, e.currentTarget);
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (!e.repeat && app.clickable) (window as any).App?.navigateToApp(app.slug);
+        }
+      }}
+      onClick={(e) => {
+        const N = controller();
+        // A completed drag (or a long-press that opened the menu) ends with
+        // the pointer still on the card, so the browser fires a click right
+        // after pointerup — eat it so the gesture doesn't also open the app.
+        if (N?._suppressClick) { N._suppressClick = false; return; }
+        const t = e.target as HTMLElement;
+        if (t.closest('.retry-btn')) return;
+        if (!app.clickable) return;
+        (window as any).App?.navigateToApp(app.slug);
+      }}
+    >
+      {app.showRetry ? (
+        <button
+          className="retry-btn absolute top-2 right-2 text-xs text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors"
+          data-slug={app.slug}
+          onClick={(e) => { e.stopPropagation(); controller()?._onRetry?.(app.slug, e.currentTarget); }}
+        >
+          Retry
+        </button>
+      ) : null}
+      <div className="relative w-14 h-14 shrink-0">
+        {/*
+            The tile KEEPS its 3.5rem box — the grid's cell height, the drag
+            overlay's mirror and HomeLayout's geometry are all measured
+            against it, so growing it to the deck's 4rem is a layout change,
+            not a reskin, and belongs in its own commit.
+
+            No `data-tint`: the reskin gave every tile a slug-derived identity
+            colour, and a launcher of six pastels reads as six unrelated
+            things rather than as one shelf. `.app-icon-tile` alone is the
+            single off-white face with a hairline — the same one on every
+            surface, which is the point.
+        */}
+        <div
+          className="app-icon-tile w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-xl"
+          data-icon={app.icon.kind}
+        >
+          <AppIcon icon={app.icon} />
+        </div>
+        {app.forkName ? (
+          <span
+            className="fork-tag absolute -bottom-1 -left-1 w-5 h-5 flex items-center justify-center rounded-full bg-amber-500 text-white text-xs font-bold shadow-sm"
+            title={`Forked from ${app.forkName}`}
+            aria-label={`Forked from ${app.forkName}`}
+          >
+            ⑂
+          </span>
+        ) : null}
+      </div>
+      <div className="w-full min-w-0">
+        <div className="app-card-title" title={app.name}>{app.name}</div>
+        {app.statusLabel ? (
+          <p
+            className={`app-card-status ${app.isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}`}
+            {...(app.failureReason ? { title: app.failureReason } : null)}
+          >
+            {app.statusLabel}
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+export function AppGrid() {
+  const state = useStoreState(gridStore);
+  const listRef = useRef<HTMLDivElement | null>(null);
+
+  // `grid-template-rows` is written to the ELEMENT rather than rendered as a
+  // style prop for one reason: app.css's `grid-auto-rows` must remain the only
+  // row sizing when the template is '' (desktop and the search view), and an
+  // empty `style={{gridTemplateRows: ''}}` still emits a style attribute that
+  // reads as an author-level override. Writing it imperatively lets '' mean
+  // "remove the declaration", which is what the string version's
+  // `listEl.style.gridTemplateRows = ''` did.
+  useIsomorphicLayoutEffect(() => {
+    const el = listRef.current;
+    if (el) el.style.gridTemplateRows = state.rowTemplate;
+  }, [state.rowTemplate]);
+
+  // The kit's placement recognizer, re-attached whenever the canvas it
+  // measures against changes. home.js owns every callback (the geometry is
+  // its); this owns only WHEN the attachment happens, which used to be the
+  // tail of _wireCards. Detach on unmount so a remount cannot leave two
+  // recognizers fighting for the same gesture.
+  const canDrag = state.view === 'grid' && state.ready;
+  useEffect(() => {
+    const el = listRef.current;
+    const N = controller();
+    if (!el || !N) return undefined;
+    N._attachGridPlacement?.(el, canDrag);
+    return () => { N._detachGridPlacement?.(); };
+  }, [canDrag, state.items.length, state.rowTemplate]);
+
+  // Everything below runs AFTER the grid has painted, exactly where the tail
+  // of the old Home.render() ran it.
+  useEffect(() => {
+    if (!state.ready) return;
+    const N = controller();
+    const el = listRef.current;
+    if (el) { N?._maybeOpenShotMenu?.(el); }
+    N?._searchReveal?.sync?.();
+    if (el) N?._maybeShowShotGrid?.(el);
+    // Its sibling for the drag that starts in a Discover rail (#1763). Called
+    // from HERE as well as from the lane's own effect for the reason the grid
+    // shot is called from here at all: #app-list renders a className, so every
+    // commit takes `un-reordering` back off it, and the overlay a shot painted
+    // before this commit is no longer a rendering of a lift. It finds the rail
+    // itself — a repaint of the grid is not one of the panels.
+    N?._maybeShowShotIncoming?.();
+  });
+
+  return (
+    <div
+      ref={listRef}
+      id="app-list"
+      className="grid grid-cols-4 gap-1.5 sm:gap-2 p-2 pt-1.5 sm:p-3 sm:pt-2"
+      data-view={state.ready ? state.view : undefined}
+    >
+      {state.notice ? (
+        <div
+          className={`col-span-full p-4 text-sm ${
+            state.notice.tone === 'error' ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'
+          }`}
+        >
+          {state.notice.text}
+        </div>
+      ) : null}
+      {state.emptyQuery !== null ? (
+        <div className="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
+          {`No apps match “${state.emptyQuery}”. Clear the search and try `}
+          <span className="text-violet-700 dark:text-violet-400">Discover</span>
+          {' below.'}
+        </div>
+      ) : null}
+      {state.resultsHeading ? (
+        <div className="home-section-header col-span-full">{state.resultsHeading}</div>
+      ) : null}
+      {!state.ready && !state.notice ? (
+        <TileSkeleton
+          n={SKELETON_TILES}
+          label="Loading your apps"
+          className="col-span-full grid grid-cols-4 gap-1.5 sm:gap-2"
+        />
+      ) : null}
+      {state.items.map((item) => (
+        <AppCardTile
+          key={`card:${item.app.slug}`}
+          app={item.app}
+          style={cellStyle(item)}
+          yours={state.view === 'grid'}
+        />
+      ))}
+    </div>
+  );
+}

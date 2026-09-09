@@ -66,6 +66,9 @@ const MAX_TAIL_LINES = 8;
 // Printed by the container script between dependency install and `npm
 // test`. Output that never reached it failed in setup, not in the suite.
 const SETUP_DONE_SENTINEL = '__UNIT_SUITE_SETUP_DONE__';
+// Printed once the checkout is in place, before `npm ci`. Only the live
+// phase reads it ("cloning" vs "installing"); the verdict never does.
+const CLONED_SENTINEL = '__UNIT_SUITE_CLONED__';
 
 function isEnabled() {
   const v = String(process.env.UNIT_SUITE_CHECK_ENABLED ?? '1').trim().toLowerCase();
@@ -97,7 +100,7 @@ function failureDetail(stdout, stderr, { timedOut = false } = {}) {
     parts.push(`Suite run exceeded ${Math.round(UNIT_SUITE_TIMEOUT_MS / 1000)}s and was killed.`);
   }
   if (!out.includes(SETUP_DONE_SENTINEL) && !timedOut) {
-    parts.push('Suite setup failed (clone / npm ci) — the tests never ran.');
+    parts.push('Suite setup failed (clone / npm ci), so the tests never ran.');
   }
   const notOk = lines.filter((l) => l.startsWith('not ok '));
   if (notOk.length) {
@@ -135,6 +138,7 @@ else
   exit 90
 fi
 git submodule update --init --recursive --depth 1 >/dev/null 2>&1 || true
+echo "${CLONED_SENTINEL}"
 if [ -f package-lock.json ]; then
   npm ci --no-audit --no-fund --loglevel=error
 else
@@ -157,12 +161,103 @@ fi
 npm test
 `;
 
+// Live progress of a run, read off the container's stdout as it streams
+// (docker.runOneShot's onStdoutLine). node:test, tap and most TAP-emitting
+// runners print one `ok N` / `not ok N` line per test, nested ones indented,
+// and a `# tests / # pass / # fail / # skipped / # cancelled` block at the
+// end; jest prints neither, and then the phase is all this can say. The
+// running counts are an approximation on purpose — a parent test's own
+// `not ok` repeats a child's failure, and a describe() suite gets an `ok`
+// of its own — so the summary block, when it arrives, REPLACES them. None
+// of it touches the verdict, which stays the exit code.
+function makeUnitSuiteTracker(expected = null) {
+  let phase = 'cloning';
+  let passed = 0;
+  let failed = 0;
+  let skipped = 0;
+  let summary = null;
+  const total = Number.isInteger(expected) && expected > 0 ? expected : null;
+  return {
+    // Returns true when the line changed the state.
+    feed(line) {
+      const l = String(line || '');
+      if (l === CLONED_SENTINEL) { phase = 'installing'; return true; }
+      if (l === SETUP_DONE_SENTINEL) { phase = 'running'; return true; }
+      const m = /^\s*(not ok|ok)\b(.*)$/.exec(l);
+      if (m) {
+        if (phase !== 'running') phase = 'running';
+        if (/#\s*(SKIP|TODO)\b/i.test(m[2])) skipped += 1;
+        else if (m[1] === 'ok') passed += 1;
+        else failed += 1;
+        return true;
+      }
+      const sm = /^# (tests|pass|fail|skipped|cancelled|todo) (\d+)\s*$/.exec(l);
+      if (sm) {
+        summary = summary || {};
+        summary[sm[1]] = parseInt(sm[2], 10);
+        return true;
+      }
+      return false;
+    },
+    finish(exitOk) { phase = 'done'; this.exitOk = !!exitOk; return this.snapshot(); },
+    snapshot() {
+      const s = summary;
+      // The summary's `pass` excludes skipped/todo, and `tests` counts both
+      // plus cancelled, so `ran` is `tests` once it is known.
+      const p = s && Number.isInteger(s.pass) ? s.pass : passed;
+      const f = s && Number.isInteger(s.fail) ? s.fail + (Number.isInteger(s.cancelled) ? s.cancelled : 0) : failed;
+      const k = s && Number.isInteger(s.skipped) ? s.skipped + (Number.isInteger(s.todo) ? s.todo : 0) : skipped;
+      const ran = s && Number.isInteger(s.tests) ? s.tests : p + f + k;
+      return {
+        phase,
+        ran, passed: p, failed: f, skipped: k,
+        expected: s && Number.isInteger(s.tests) ? s.tests : total,
+        done: phase === 'done',
+        ...(phase === 'done' ? { exitOk: !!this.exitOk } : {}),
+        ...(s ? { summary: { ...s } } : {}),
+        updatedAt: new Date().toISOString(),
+      };
+    },
+  };
+}
+
+// The suite's size is not knowable before it runs (node's TAP prints no
+// plan until the end), so the bar's denominator is the LAST completed run's
+// `# tests` for this app, kept on the apps row. Best-effort both ways: a
+// missing figure means "N tests so far" with no bar, never a wrong bar.
+async function loadExpectedTests(pool, appId) {
+  if (!pool || !appId) return null;
+  try {
+    const { rows } = await pool.query(
+      'SELECT unit_suite_last_tests FROM apps WHERE id = $1', [appId]
+    );
+    const n = rows[0] && rows[0].unit_suite_last_tests;
+    return Number.isInteger(n) && n > 0 ? n : null;
+  } catch (err) {
+    log.warn('unit-suite', 'Expected-tests lookup failed', { appId, err: err.message });
+    return null;
+  }
+}
+
+async function storeExpectedTests(pool, appId, total) {
+  if (!pool || !appId || !Number.isInteger(total) || total <= 0) return false;
+  try {
+    await pool.query('UPDATE apps SET unit_suite_last_tests = $2 WHERE id = $1', [appId, total]);
+    return true;
+  } catch (err) {
+    log.warn('unit-suite', 'Expected-tests store failed', { appId, err: err.message });
+    return false;
+  }
+}
+
 // Run the proposal repo's unit suite and shape the outcome as one
 // extraRows entry plus its check-history record. Returns null when there
 // is nothing to run (feature off, GitHub off, no runnable test script) —
 // the checks run then proceeds exactly as before this feature existed.
-// Never throws.
-async function maybeRunUnitSuite({ pool, appId, sessionId, repoOwner, repoName, ref, prNumber }) {
+// `onProgress(snapshot)` is called with the tracker's snapshot each time a
+// stdout line changes it, and once more with phase 'done' when the run
+// ends; the caller owns any throttling. Never throws.
+async function maybeRunUnitSuite({ pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null }) {
   if (!isEnabled() || !github.isEnabled() || !repoOwner || !repoName || !ref) return null;
 
   let rawPkg = null;
@@ -188,12 +283,20 @@ async function maybeRunUnitSuite({ pool, appId, sessionId, repoOwner, repoName, 
     });
   }
 
+  const tracker = makeUnitSuiteTracker(await loadExpectedTests(pool, appId));
+  const report = (snap) => {
+    if (typeof onProgress !== 'function') return;
+    try { onProgress(snap); } catch { /* an observer cannot fail the run */ }
+  };
+  const observe = (line) => { if (tracker.feed(line)) report(tracker.snapshot()); };
+
   const startedAt = Date.now();
   let passed = false;
   let reason = '';
   try {
     const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
     await docker.runOneShot(`usernode-unit-suite-${sessionId}`, {
+      onStdoutLine: observe,
       image: UNIT_SUITE_IMAGE,
       cmd: ['bash', '-c', RUN_SCRIPT],
       env: {
@@ -215,9 +318,13 @@ async function maybeRunUnitSuite({ pool, appId, sessionId, repoOwner, repoName, 
     reason = failureDetail(err.stdout, err.stderr, { timedOut });
     if (!reason) reason = String(err.message || 'npm test failed').slice(0, FAILURE_DETAIL_MAX);
   }
+  const finalSnap = tracker.finish(passed);
+  report(finalSnap);
+  const summary = finalSnap.summary || null;
+  if (summary && Number.isInteger(summary.tests)) await storeExpectedTests(pool, appId, summary.tests);
   log.info('unit-suite', 'Unit suite finished', {
     sessionId, repo: `${repoOwner}/${repoName}`, ref, passed, graduated,
-    durationMs: Date.now() - startedAt,
+    durationMs: Date.now() - startedAt, tests: summary ? summary.tests : undefined,
   });
 
   return {
@@ -229,6 +336,9 @@ async function maybeRunUnitSuite({ pool, appId, sessionId, repoOwner, repoName, 
       advisory: passed ? false : !graduated,
       consoleErrors: [],
       failureReason: passed ? '' : reason,
+      // The TAP summary block, when the runner printed one: the size of the
+      // suite for the record. Absent for runners that print no TAP.
+      ...(summary ? { summary } : {}),
     },
     history: { checkKey, name: UNIT_CHECK_NAME, path: UNIT_CHECK_PATH, passed },
   };
@@ -236,6 +346,9 @@ async function maybeRunUnitSuite({ pool, appId, sessionId, repoOwner, repoName, 
 
 module.exports = {
   maybeRunUnitSuite,
+  makeUnitSuiteTracker,
+  loadExpectedTests,
+  storeExpectedTests,
   // Exported for tests.
   hasRunnableTestScript,
   failureDetail,
@@ -244,4 +357,5 @@ module.exports = {
   UNIT_CHECK_PATH,
   UNIT_CHECK_INDEX,
   SETUP_DONE_SENTINEL,
+  CLONED_SENTINEL,
 };

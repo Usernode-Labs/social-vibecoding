@@ -87,6 +87,20 @@
       "preview": "`REINDEX TABLE ${quoteIdent(table.name)}`"
     },
     {
+      "source": "src/middleware/auth.js",
+      "kind": "structural-template",
+      "fingerprint": "202f3cd543e04da1dc8d",
+      "count": 1,
+      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platfo"
+    },
+    {
+      "source": "src/middleware/topochain-auth.js",
+      "kind": "structural-template",
+      "fingerprint": "707ac8bf3044e407ae12",
+      "count": 1,
+      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin, ${nativeWebSessionIsLive('s')} AS native_session_valid FROM sessions s JOIN users u ON s.user_id = u.id"
+    },
+    {
       "source": "src/routes/admin.js",
       "kind": "structural-template",
       "fingerprint": "398169416381769c08fe",
@@ -152,7 +166,7 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "ee6527c5eafba31903a2",
+      "fingerprint": "6addf75e8851124809f5",
       "count": 1,
       "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
     },
@@ -162,6 +176,13 @@
       "fingerprint": "a8b771920b8319e47251",
       "count": 1,
       "preview": "query"
+    },
+    {
+      "source": "src/routes/cli-auth.js",
+      "kind": "structural-template",
+      "fingerprint": "f19dc833c7ff22a7347f",
+      "count": 1,
+      "preview": "`SELECT 1 FROM sessions WHERE token = $1 AND user_id = $2 AND clock_timestamp() < expires_at AND ${nativeWebSessionIsLive('sessions')}`"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -257,13 +278,6 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "767046d15a8b591a58c7",
-      "count": 1,
-      "preview": "`SELECT COALESCE(SUM(total_cost_cents), 0)::float AS cents FROM llm_usage WHERE date = CURRENT_DATE ${adminFilter('user_id', includeAdmins)}`"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
       "fingerprint": "7b689087e7ec4ffd947e",
       "count": 1,
       "preview": "`WITH base AS ( SELECT u.id AS user_id, u.is_admin FROM users u WHERE ${userCohort} ${adminFilter('u.id', includeAdmins)} ), flags AS ( SELECT b.user_id, b.is_a"
@@ -318,6 +332,13 @@
       "preview": "`WITH cohorts AS ( SELECT id AS user_id, date_trunc('week', created_at)::date AS cohort_wk FROM users WHERE TRUE ${adminFilter('id', includeAdmins)} ), activity"
     },
     {
+      "source": "src/routes/dashboard.js",
+      "kind": "structural-template",
+      "fingerprint": "d5accaf0d7be85f38b5e",
+      "count": 1,
+      "preview": "`SELECT COALESCE(SUM(total_cost_cents) FILTER (WHERE date = CURRENT_DATE), 0)::float AS cents, COALESCE(SUM(total_cost_cents) FILTER (WHERE date >= date_trunc('"
+    },
+    {
       "source": "src/routes/debug.js",
       "kind": "structural-template",
       "fingerprint": "a740c5c5517cf3fe1b4b",
@@ -347,22 +368,15 @@
     },
     {
       "source": "src/routes/home-panels.js",
-      "kind": "runtime-expression",
-      "fingerprint": "b233a9a8cce906aaab1b",
+      "kind": "structural-template",
+      "fingerprint": "6342aec040e022e3a331",
       "count": 1,
-      "preview": "hidden ? `UPDATE users SET home_panels_hidden = array_append(array_remove(COALESCE(home_panels_hidden, '{}'), $2), $2) WHERE id = $1 RETURNING home_panels_hidde"
+      "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, COUNT(*)::int AS all_total, COUNT(*) FILTER ( WHERE ${scopeFilter} AND (${totalSql(doneExpr)}) )::"
     },
     {
       "source": "src/routes/home-panels.js",
       "kind": "structural-template",
-      "fingerprint": "4ac99c0eca6fdce41b58",
-      "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${DONE_EXPR})::int AS done, COALESCE( array_agg(COALESCE(c.reward, ct.reward)) FILTER (WHERE NOT (${DONE_"
-    },
-    {
-      "source": "src/routes/home-panels.js",
-      "kind": "structural-template",
-      "fingerprint": "a6530980cc1485e6e7d5",
+      "fingerprint": "bc985dc7d04a921eaa79",
       "count": 1,
       "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
     },
@@ -418,6 +432,20 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
+      "fingerprint": "031bf907bfa049c90235",
+      "count": 1,
+      "preview": "`SELECT version, built_at, commit_sha, pr_number, shared_to_group_at, LENGTH(content) AS char_count, content FROM chat_session_specs s WHERE s.session_id = $1 A"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "2252c6068a154006e298",
+      "count": 1,
+      "preview": "`SELECT s.version, s.content, s.built_at, s.commit_sha, s.pr_number, s.shared_to_group_at FROM chat_session_specs s JOIN chat_sessions cs ON cs.id = s.session_i"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
       "fingerprint": "53cbf4a100d8fd060870",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET ${sets.join(', ')} WHERE id = $2`"
@@ -435,6 +463,13 @@
       "fingerprint": "e16f1722cca1c2b80269",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`"
+    },
+    {
+      "source": "src/routes/status.js",
+      "kind": "structural-template",
+      "fingerprint": "1ae08ea76410c3bc332e",
+      "count": 1,
+      "preview": "`SELECT s.expires_at, u.is_admin, u.username, u.id AS user_id FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = $1 AND ${nativeWebSessionIsLive('"
     },
     {
       "source": "src/routes/topochain/admin/app-version-configs.js",
@@ -605,6 +640,20 @@
       "preview": "`SELECT DISTINCT ${USER_SELECT_QUALIFIED} FROM users u ${joinClause} ${whereClause} ORDER BY u.id DESC LIMIT $${dataParams.length - 1} OFFSET $${dataParams.leng"
     },
     {
+      "source": "src/routes/topochain/admin/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "27d7dffe2bcda3d40d0a",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS c FROM waitlist_signups w ${where}`"
+    },
+    {
+      "source": "src/routes/topochain/admin/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "74fc8edae7a6433dc149",
+      "count": 1,
+      "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, w.invited_by, (SELECT COUNT(*)::int FROM waitlist_signups c W"
+    },
+    {
       "source": "src/routes/topochain/ingest.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "0374518af384f1d0ee6a",
@@ -631,6 +680,13 @@
       "fingerprint": "290ccdd3d61df3eb966d",
       "count": 1,
       "preview": "`SELECT id, type, name, description, starts_at, ends_at, is_active FROM season_events WHERE ${conds.join(' AND ')} ORDER BY starts_at ASC, id ASC`"
+    },
+    {
+      "source": "src/routes/topochain/mobile.js",
+      "kind": "structural-template",
+      "fingerprint": "61c57c9794df3c33690c",
+      "count": 1,
+      "preview": "`SELECT user_id FROM sessions WHERE token = $1 AND user_id = $2 AND expires_at > NOW() AND ${nativeWebSessionIsLive('sessions')} FOR SHARE`"
     },
     {
       "source": "src/routes/topochain/mobile.js",
@@ -670,13 +726,6 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "18dd0edeafca08104ed0",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.stat"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
       "fingerprint": "760e6c035395e025ef99",
       "count": 1,
       "preview": "`SELECT i.id, i.kind, i.title, i.description, i.payload, i.status, i.github_issue_number, i.created_by, i.created_at, u.username AS created_by_username, (SELECT"
@@ -705,9 +754,16 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "f4fdcc68ff0cbcf73ff1",
+      "fingerprint": "c0f8e5747ee725a64c53",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "e933979c578bc1fbc742",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
     },
     {
       "source": "src/services/agent-turn.js",
@@ -726,16 +782,16 @@
     {
       "source": "src/services/check-history.js",
       "kind": "structural-template",
-      "fingerprint": "09d1952d59bf2c795161",
+      "fingerprint": "1dfaa6c9adb884fed818",
       "count": 1,
       "preview": "`INSERT INTO app_check_history AS h (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_failed_at, last_seen_at, pass_count, fail_"
     },
     {
       "source": "src/services/check-history.js",
       "kind": "structural-template",
-      "fingerprint": "8d9c757a659d4ad24d6a",
+      "fingerprint": "73bb2c779f8c52b9b224",
       "count": 1,
-      "preview": "`INSERT INTO app_check_history (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at) VALUES ${values.join(', ')} ON CONFLIC"
+      "preview": "`INSERT INTO app_check_history (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, consecutive_passes) VALUES ${values.jo"
     },
     {
       "source": "src/services/conflict-resolver.js",
@@ -887,13 +943,6 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "072b7bda222bacb9f37e",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
       "fingerprint": "4823252a1dc346965ea1",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, n.user_id, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm"
@@ -909,6 +958,13 @@
       "source": "src/services/notifications.js",
       "kind": "structural-template",
       "fingerprint": "5d008acef858a3fdc990",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "959aa72e71a995b89db6",
       "count": 1,
       "preview": "`SELECT n.id, n.kind, n.read_at, n.created_at, n.app_id, a.slug AS app_slug, a.name AS app_name, n.chat_message_id, cm.content AS message_content, cm.thread_typ"
     },
@@ -983,6 +1039,13 @@
       "preview": "`SELECT ${appAccess.nonSecretAppColumnList()} FROM apps WHERE id = $1`"
     },
     {
+      "source": "src/services/topochain/challenge-onboarding.js",
+      "kind": "structural-template",
+      "fingerprint": "f5ca617f29f6a39ad971",
+      "count": 1,
+      "preview": "`/* challenge onboarding */ SELECT c.id, c.season_event_id, c.challenge_template_id, c.display_order, c.enabled, c.completed, COALESCE(c.schedule_start, ct.sche"
+    },
+    {
       "source": "src/services/topochain/db-console-role.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "35f1322f2f4f01e6afff",
@@ -1018,6 +1081,20 @@
       "preview": "`SELECT ${columnList} FROM ${table} ORDER BY 1`"
     },
     {
+      "source": "src/services/topochain/native-session-protocol.js",
+      "kind": "structural-template",
+      "fingerprint": "3dc5e15e8d408d0e7773",
+      "count": 1,
+      "preview": "`SELECT token FROM sessions WHERE native_session_incarnation_id = $1 AND user_id = $2 AND expires_at >= $3 AND ${nativeWebSessionIsLive('sessions')} FOR KEY SHA"
+    },
+    {
+      "source": "src/services/topochain/native-session-protocol.js",
+      "kind": "structural-template",
+      "fingerprint": "d4d4b0f3f08a9940bfb1",
+      "count": 1,
+      "preview": "`SELECT token, user_id, native_session_incarnation_id, native_session_credential_reference, (SELECT c.attempt_id FROM native_session_credentials c WHERE c.crede"
+    },
+    {
       "source": "src/services/topochain/snapshot-builder.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "8bc6a43a6ca98c6d2fe8",
@@ -1037,6 +1114,13 @@
       "fingerprint": "7a85376a5a47e5ee63f8",
       "count": 1,
       "preview": "`SET LOCAL ROLE ${consoleRole.ROLE}`"
+    },
+    {
+      "source": "src/services/turn-lifecycle.js",
+      "kind": "structural-template",
+      "fingerprint": "544d173eb6008737473d",
+      "count": 1,
+      "preview": "`UPDATE chat_sessions SET active_turn = active_turn || $3::jsonb WHERE id = $1 AND active_turn IS NOT NULL AND ${ident.sql} AND active_turn->>'stopRequestedAt' "
     },
     {
       "source": "src/services/turn-lifecycle.js",
@@ -1072,6 +1156,20 @@
       "fingerprint": "ffdbcfbaa56765b4a618",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET headless_status = $4, headless_outcome = COALESCE($5, headless_outcome), headless_step = NULL, headless_turn_id = NULL, last_activity_"
+    },
+    {
+      "source": "src/services/workshop-themes.js",
+      "kind": "structural-template",
+      "fingerprint": "2e26921bc2eaf7ee6d9c",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.linked_issues, cs.status, cs.created_at, u.username, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.s"
+    },
+    {
+      "source": "src/services/ws.js",
+      "kind": "structural-template",
+      "fingerprint": "47c0995a68c0e5f4afc4",
+      "count": 1,
+      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = $1 AND ${nativeWebSessionIsLive('s')}`"
     }
   ]
 }

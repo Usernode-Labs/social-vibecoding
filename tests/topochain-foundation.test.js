@@ -39,8 +39,11 @@ function fakeRes() {
   return {
     statusCode: 200,
     body: null,
+    headers: new Map(),
     status(code) { this.statusCode = code; return this; },
     json(obj) { this.body = obj; return this; },
+    setHeader(name, value) { this.headers.set(name.toLowerCase(), String(value)); },
+    getHeader(name) { return this.headers.get(name.toLowerCase()); },
   };
 }
 
@@ -232,19 +235,37 @@ function withMockPool(mockPool, fn) {
 }
 
 function makeMobileTokenPool(tokensByHash, { failLookup = false } = {}) {
-  return {
+  const pool = {
+    lastLookupSql: null,
+    connectCalls: 0,
     async query(sql, params) {
-      if (/FROM mobile_auth_tokens/.test(sql) && /SELECT/.test(sql)) {
+      if (/JOIN mobile_auth_tokens/.test(sql) && /SELECT/.test(sql)) {
+        pool.lastLookupSql = sql;
         if (failLookup) throw new Error('connection reset');
         const row = tokensByHash[params[0]];
-        return { rows: row ? [row] : [] };
-      }
-      if (/UPDATE mobile_auth_tokens SET last_used_at/.test(sql)) {
-        return { rows: [] };
+        const credentialExpiry = row?.credential_expires_at ?? row?.expires_at;
+        if (!row || row.nativeCredentialValid === false
+            || new Date(row.expires_at) <= new Date()
+            || new Date(row.expires_at).getTime() !== new Date(credentialExpiry).getTime()) {
+          return { rows: [] };
+        }
+        return { rows: [{
+          credential_reference: `nsc_${'A'.repeat(43)}`,
+          credential_generation: 1,
+          installation_id: `nsi_${'B'.repeat(43)}`,
+          attempt_id: `nsa_${'C'.repeat(43)}`,
+          renewal_due: false,
+          ...row,
+        }] };
       }
       throw new Error(`unexpected SQL in mock: ${sql.slice(0, 60)}`);
     },
+    async connect() {
+      pool.connectCalls += 1;
+      throw new Error('a current lease must not open a write transaction');
+    },
   };
+  return pool;
 }
 
 const FUTURE = new Date(Date.now() + 60 * 60 * 1000);
@@ -252,7 +273,7 @@ const PAST = new Date(Date.now() - 60 * 1000);
 
 test('mobileTokenAuth: missing Authorization header -> 401 Unauthenticated.', async () => {
   await withMockPool(makeMobileTokenPool({}), async (mod) => {
-    const mw = mod.mobileTokenAuth({}, { ability: 'session' });
+    const mw = mod.mobileTokenAuth({});
     const res = fakeRes();
     await runMiddleware(mw, { headers: {} }, res);
     assert.equal(res.statusCode, 401);
@@ -262,9 +283,32 @@ test('mobileTokenAuth: missing Authorization header -> 401 Unauthenticated.', as
 
 test('mobileTokenAuth: unknown token -> 401 Unauthenticated.', async () => {
   await withMockPool(makeMobileTokenPool({}), async (mod) => {
-    const mw = mod.mobileTokenAuth({}, { ability: 'session' });
+    const mw = mod.mobileTokenAuth({});
     const res = fakeRes();
     await runMiddleware(mw, { headers: { authorization: 'Bearer nope' } }, res);
+    assert.equal(res.statusCode, 401);
+    assert.deepEqual(res.body, { success: false, error: 'Unauthenticated.' });
+  });
+});
+
+test('mobileTokenAuth: an orphan legacy bearer has no authority', async () => {
+  const token = 'orphan-legacy-session';
+  const pool = makeMobileTokenPool({
+    [sha256(token)]: {
+      id: 3,
+      user_id: 9,
+      ability: 'session',
+      expires_at: FUTURE,
+      username: 'p9',
+      nativeCredentialValid: false,
+    },
+  });
+  await withMockPool(pool, async (mod) => {
+    const mw = mod.mobileTokenAuth({});
+    const res = fakeRes();
+    await runMiddleware(mw, {
+      headers: { authorization: `Bearer ${token}` },
+    }, res);
     assert.equal(res.statusCode, 401);
     assert.deepEqual(res.body, { success: false, error: 'Unauthenticated.' });
   });
@@ -276,7 +320,7 @@ test('mobileTokenAuth: expired token -> 401 Unauthenticated.', async () => {
     [sha256(token)]: { id: 1, user_id: 9, ability: 'session', expires_at: PAST, username: 'p9' },
   });
   await withMockPool(pool, async (mod) => {
-    const mw = mod.mobileTokenAuth({}, { ability: 'session' });
+    const mw = mod.mobileTokenAuth({});
     const res = fakeRes();
     await runMiddleware(mw, { headers: { authorization: `Bearer ${token}` } }, res);
     assert.equal(res.statusCode, 401);
@@ -284,31 +328,17 @@ test('mobileTokenAuth: expired token -> 401 Unauthenticated.', async () => {
   });
 });
 
-test('mobileTokenAuth: a set-password token on a session endpoint -> 403', async () => {
-  const token = 'set-password-token';
+test('mobileTokenAuth: an unexpected non-session token fails closed -> 403', async () => {
+  const token = 'legacy-token';
   const pool = makeMobileTokenPool({
-    [sha256(token)]: { id: 2, user_id: 9, ability: 'set-password', expires_at: FUTURE, username: 'p9' },
+    [sha256(token)]: { id: 2, user_id: 9, ability: 'legacy', expires_at: FUTURE, username: 'p9' },
   });
   await withMockPool(pool, async (mod) => {
-    const mw = mod.mobileTokenAuth({}, { ability: 'session' });
+    const mw = mod.mobileTokenAuth({});
     const res = fakeRes();
     await runMiddleware(mw, { headers: { authorization: `Bearer ${token}` } }, res);
     assert.equal(res.statusCode, 403);
     assert.deepEqual(res.body, { success: false, error: 'A participant session token is required.' });
-  });
-});
-
-test('mobileTokenAuth: mirrored message when a session token hits a set-password endpoint', async () => {
-  const token = 'session-token';
-  const pool = makeMobileTokenPool({
-    [sha256(token)]: { id: 3, user_id: 9, ability: 'session', expires_at: FUTURE, username: 'p9' },
-  });
-  await withMockPool(pool, async (mod) => {
-    const mw = mod.mobileTokenAuth({}, { ability: 'set-password' });
-    const res = fakeRes();
-    await runMiddleware(mw, { headers: { authorization: `Bearer ${token}` } }, res);
-    assert.equal(res.statusCode, 403);
-    assert.deepEqual(res.body, { success: false, error: 'A set-password token is required.' });
   });
 });
 
@@ -318,20 +348,58 @@ test('mobileTokenAuth: valid session token -> next(), req.user resolved from the
     [sha256(token)]: { id: 4, user_id: 42, ability: 'session', expires_at: FUTURE, username: 'racer42' },
   });
   await withMockPool(pool, async (mod) => {
-    const mw = mod.mobileTokenAuth({}, { ability: 'session' });
+    const mw = mod.mobileTokenAuth({});
     const res = fakeRes();
     const req = { headers: { authorization: `Bearer ${token}` }, body: { user_id: 999 } };
     const result = await runMiddleware(mw, req, res);
     assert.deepEqual(result, { next: true });
     assert.equal(res.body, null);
     assert.deepEqual(req.user, { id: 42, username: 'racer42', isAdmin: false });
+    assert.deepEqual(req.mobileAuth, {
+      tokenId: 4,
+      ability: 'session',
+      expiresAt: FUTURE,
+      credentialReference: `nsc_${'A'.repeat(43)}`,
+      credentialGeneration: 1,
+      attemptId: `nsa_${'C'.repeat(43)}`,
+    });
+    assert.equal(res.getHeader('Usernode-Credential-Reference'), `nsc_${'A'.repeat(43)}`);
+    assert.equal(res.getHeader('Usernode-Credential-Generation'), '1');
+    assert.equal(res.getHeader('Usernode-Credential-Lease-Expires-At'), FUTURE.toISOString());
+    assert.equal(pool.connectCalls, 0);
+    assert.match(pool.lastLookupSql,
+      /FROM native_session_credentials c[\s\S]*JOIN mobile_auth_tokens t[\s\S]*t\.expires_at > NOW\(\)[\s\S]*c\.state = 'valid'[\s\S]*c\.expires_at > NOW\(\)[\s\S]*c\.expires_at = t\.expires_at/);
+  });
+});
+
+test('mobileTokenAuth: credential/token expiry drift fails closed', async () => {
+  const token = 'drifted-token';
+  const pool = makeMobileTokenPool({
+    [sha256(token)]: {
+      id: 5,
+      user_id: 42,
+      ability: 'session',
+      expires_at: FUTURE,
+      credential_expires_at: new Date(FUTURE.getTime() + 1000),
+      username: 'racer42',
+    },
+  });
+  await withMockPool(pool, async (mod) => {
+    const mw = mod.mobileTokenAuth({});
+    const res = fakeRes();
+    await runMiddleware(mw, {
+      headers: { authorization: `Bearer ${token}` },
+    }, res);
+    assert.equal(res.statusCode, 401);
+    assert.deepEqual(res.body, { success: false, error: 'Unauthenticated.' });
+    assert.equal(res.headers.size, 0);
   });
 });
 
 test('mobileTokenAuth: a lookup failure fails closed as 500, never session invalidation', async () => {
   const pool = makeMobileTokenPool({}, { failLookup: true });
   await withMockPool(pool, async (mod) => {
-    const mw = mod.mobileTokenAuth({}, { ability: 'session' });
+    const mw = mod.mobileTokenAuth({});
     const res = fakeRes();
     await runMiddleware(mw, { headers: { authorization: 'Bearer whatever' } }, res);
     assert.equal(res.statusCode, 500);

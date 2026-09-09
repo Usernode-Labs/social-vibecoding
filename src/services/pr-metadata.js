@@ -154,7 +154,7 @@ function buildVisualsBlock(visuals, domain) {
     if (single) {
       lines.push('## Before / after', '');
     } else {
-      lines.push(`### Before / after — \`${g.path}\`${g.viewport === 'mobile' ? ' (mobile)' : ''}`, '');
+      lines.push(`### Before / after: \`${g.path}\`${g.viewport === 'mobile' ? ' (mobile)' : ''}`, '');
     }
     if (g.before) {
       lines.push(
@@ -165,7 +165,7 @@ function buildVisualsBlock(visuals, domain) {
       if (g.beforeFellBack) {
         lines.push(
           '',
-          '_"Before" shows the production home page — this route didn\'t exist in production yet._'
+          '_"Before" shows the production home page, because this route didn\'t exist in production yet._'
         );
       }
     } else {
@@ -174,7 +174,7 @@ function buildVisualsBlock(visuals, domain) {
         '| --- |',
         `| ![After](${g.after}) |`,
         '',
-        '_No production version to compare — showing the staging preview only._'
+        '_No production version to compare, so this shows the staging preview only._'
       );
     }
   });

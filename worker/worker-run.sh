@@ -52,6 +52,28 @@ die() {
   exit 1
 }
 
+# Fold captured command output into something that survives a
+# single-line marker: drop CRs (git writes progress with them) and blank
+# lines, keep the LAST 10 lines, join them with " | ", hard-cap at 1000
+# chars.
+#
+# Why this exists: every `die` site below used to throw the failing
+# command's stderr away (`2>&1` into the void, then a fixed string), so a
+# clone that failed for ANY reason surfaced to the host — and from there
+# verbatim to the user — as the bare words "clone failed". Three
+# production sessions burned real money chasing a GitHub auth problem
+# that the discarded git stderr would have ruled out in one line. The
+# marker prefix ("clone failed:", "checkout failed:") stays stable and
+# machine-matchable; the detail rides after the colon.
+clip() {
+  printf '%s\n' "$1" \
+    | tr -d '\r' \
+    | grep -v '^[[:space:]]*$' \
+    | tail -n 10 \
+    | awk '{ printf "%s%s", (NR > 1 ? " | " : ""), $0 } END { printf "\n" }' \
+    | cut -c1-1000
+}
+
 : "${CLONE_URL:?CLONE_URL required}"
 : "${BRANCH:?BRANCH required}"
 : "${PAT:=}"
@@ -165,22 +187,32 @@ if [ ! -d /home/node/workspace/.git ]; then
   # it tries `git submodule update --init` (denied by plan-mode
   # permissions) and then `gh api` (binary not installed in this
   # image), leaving the spec stage unable to inspect the actual code.
-  git clone --recurse-submodules --shallow-submodules "$CLONE_URL" . 2>&1 \
-    || die "clone failed"
+  if ! CLONE_OUT="$(git clone --recurse-submodules --shallow-submodules "$CLONE_URL" . 2>&1)"; then
+    die "clone failed: $(clip "$CLONE_OUT")"
+  fi
 
   echo "__USERNODE_PHASE__ checkout"
-  git checkout "$BRANCH" 2>/dev/null \
-    || git checkout -b "$BRANCH" \
-    || die "checkout failed"
+  # The first checkout failing is EXPECTED (the branch usually doesn't
+  # exist on the remote yet), so only the second one's output is worth
+  # reporting.
+  if ! git checkout "$BRANCH" >/dev/null 2>&1; then
+    if ! CHECKOUT_OUT="$(git checkout -b "$BRANCH" 2>&1)"; then
+      die "checkout failed: $(clip "$CHECKOUT_OUT")"
+    fi
+  fi
 else
   # Defensive: another wrapper invocation against an existing checkout.
   # Should be rare — only happens if MODE=warm is invoked twice without
   # tearing down the container, which the host doesn't do.
   echo "__USERNODE_PHASE__ checkout (existing)"
-  git fetch origin --quiet 2>&1 || echo "__USERNODE_WARN__ fetch failed"
-  git checkout "$BRANCH" 2>/dev/null \
-    || git checkout -b "$BRANCH" \
-    || die "checkout failed"
+  if ! FETCH_OUT="$(git fetch origin --quiet 2>&1)"; then
+    echo "__USERNODE_WARN__ fetch failed: $(clip "$FETCH_OUT")"
+  fi
+  if ! git checkout "$BRANCH" >/dev/null 2>&1; then
+    if ! CHECKOUT_OUT="$(git checkout -b "$BRANCH" 2>&1)"; then
+      die "checkout failed: $(clip "$CHECKOUT_OUT")"
+    fi
+  fi
 fi
 
 # Idempotent submodule sync — runs on every bootstrap (cold clone OR
@@ -191,8 +223,9 @@ fi
 # per submodule).
 if [ -f .gitmodules ]; then
   echo "__USERNODE_PHASE__ submodules"
-  git submodule update --init --recursive --depth=1 2>&1 \
-    || echo "__USERNODE_WARN__ submodule update failed"
+  if ! SUBMODULE_OUT="$(git submodule update --init --recursive --depth=1 2>&1)"; then
+    echo "__USERNODE_WARN__ submodule update failed: $(clip "$SUBMODULE_OUT")"
+  fi
 fi
 
 if [ -n "$PAT" ]; then

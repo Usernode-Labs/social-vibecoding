@@ -29,7 +29,12 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const adminJs = fs.readFileSync(path.join(ROOT, 'src/routes/admin.js'), 'utf8');
-const moduleJs = fs.readFileSync(path.join(ROOT, 'frontend/src/features/admin/admin-mail.js'), 'utf8');
+// `.tsx` since #1120 slice 12 — the section renders in React now. Almost
+// everything this file asserts is about what the section SAYS and which routes
+// it reads, neither of which the renderer changes; the two tests that were
+// ABOUT the old renderer are restated at the foot of this file.
+const moduleJs = fs.readFileSync(
+  path.join(ROOT, 'frontend/src/features/admin/admin-mail.tsx'), 'utf8');
 const consoleJs = fs.readFileSync(path.join(ROOT, 'frontend/src/features/admin/admin-console.js'), 'utf8');
 const limitsJs = fs.readFileSync(path.join(ROOT, 'src/middleware/rate-limits.js'), 'utf8');
 const eventsJs = fs.readFileSync(path.join(ROOT, 'src/services/events.js'), 'utf8');
@@ -185,8 +190,11 @@ test('the older v4 mail routes are still there and unchanged in shape', () => {
     path.join(ROOT, 'src/routes/topochain/admin/settings.js'), 'utf8');
   assert.match(settings, /\/mail-status/, 'the Topochain settings card keeps its own status route');
   assert.match(settings, /\/mail-activity/, 'and its own activity route');
-  const topochainJs = fs.readFileSync(path.join(ROOT, 'frontend/src/features/admin/admin-topochain.js'), 'utf8');
-  assert.match(topochainJs, /\/api\/v4\/admin\/settings\/mail-status/,
+  // The Topochain Settings screen is React since #1120 slice 26; its mail
+  // readiness card moved with it, still on the v4 settings route.
+  const settingsTsx = fs.readFileSync(
+    path.join(ROOT, 'frontend/src/features/admin/topochain/settings.tsx'), 'utf8');
+  assert.match(settingsTsx, /\/api\/v4\/admin\/settings\/mail-status/,
     'the Topochain card was not quietly repointed at the new routes');
 });
 
@@ -204,21 +212,34 @@ test('the section is registered and mapped to its module', () => {
 });
 
 test('the module hides the send form from a view-only admin', () => {
-  assert.match(moduleJs, /canWrite\(\)\s*\?/,
+  // `const write = canWrite()` then `{write ? … : …}` since the React
+  // conversion; either spelling is the same branch on the same gate.
+  assert.match(moduleJs, /canWrite\(\)/, 'the section asks whether this admin may write');
+  assert.match(moduleJs, /(?:canWrite\(\)|\bwrite)\s*\?/,
     'the form is rendered only for a full admin');
   assert.match(moduleJs, /needs full admin access/,
     'and a view-only admin is told why, rather than shown a dead button');
 });
 
-test('the module escapes everything it renders', () => {
-  // Recipients and provider error strings come from the ledger, which is
-  // fed by user-supplied addresses. Every interpolation into innerHTML
-  // must go through esc().
-  assert.match(moduleJs, /AdminConsole\.esc\(s\)/);
+test('the module cannot render user-supplied mail data as markup', () => {
+  // Recipients and provider error strings come from the ledger, which is fed
+  // by user-supplied addresses. This used to require every interpolation to
+  // pass through esc() on its way into an innerHTML template — a per-call-site
+  // obligation, and the kind that is one forgotten `${}` away from an
+  // injection.
+  //
+  // The React version removes the obligation instead of restating it: JSX text
+  // children are escaped by construction, so the only way to get markup into
+  // this section now is dangerouslySetInnerHTML, and there isn't one. That is
+  // the assertion — the whole class, not seven call sites.
+  assert.doesNotMatch(moduleJs, /dangerouslySetInnerHTML|\.innerHTML/,
+    'the section renders no raw HTML at all — every string is a text child');
+  // And the fields are still RENDERED, so the check above is not vacuous.
   for (const field of ['r.recipient', 'r.error', 'r.provider', 'r.kind',
     'outcome.status', 'outcome.provider', 'outcome.error']) {
-    assert.ok(moduleJs.includes(`esc(${field}`),
-      `${field} is escaped before it reaches innerHTML`);
+    assert.ok(moduleJs.includes(`{${field}`) || moduleJs.includes(`${field} `)
+      || moduleJs.includes(`${field}}`),
+      `${field} still reaches the rendered output`);
   }
 });
 
@@ -233,12 +254,23 @@ test('an unanswered request is reported differently from a refused send', () => 
 });
 
 test('destroy() makes in-flight responses harmless', () => {
-  // Nothing here polls, so the teardown is generational: a status,
-  // activity or test response that lands after the operator navigated
-  // away must not write into the next section's host element.
-  assert.match(moduleJs, /generation \+= 1/);
-  assert.match(moduleJs, /if \(mine !== generation\) return;/);
+  // Nothing here polls, so the teardown is not about a timer: a status,
+  // activity or test response that lands after the operator navigated away
+  // must not write into the next section's host element. That matters more
+  // here than in most sections — a test send legitimately takes up to ~17
+  // seconds, so the window is not theoretical.
+  //
+  // It used to be a `generation` counter bumped by destroy() and checked by
+  // every request path. Now destroy() drops the portal, React unmounts, and
+  // each awaited request checks whether ITS component is still alive — a
+  // narrower and truer question than "does that id still belong to me".
   const destroy = moduleJs.slice(moduleJs.indexOf('destroy() {'));
-  assert.match(destroy.slice(0, 400), /generation \+= 1/,
-    'destroy() bumps the generation');
+  assert.match(destroy.slice(0, 400), /unmountLegacyPortal\(/,
+    'destroy() drops the portal, which unmounts the component');
+  assert.match(moduleJs, /useEffect\(\(\) => \(\) => \{ alive\.current = false; \}, \[\]\)/,
+    'the component clears its alive flag on unmount');
+  const guards = (moduleJs.match(/if \(!alive\.current\) return;/g) || []).length;
+  const awaits = (moduleJs.match(/await fetchJson\(/g) || []).length;
+  assert.ok(guards >= awaits && awaits >= 3,
+    `every awaited request must be followed by an alive check (${guards} guards, ${awaits} requests)`);
 });

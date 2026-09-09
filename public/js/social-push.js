@@ -97,6 +97,8 @@
     _admissionGeneration: 0,
     _drainPromise: null,
     _drainRerunRequested: false,
+    _tapRetryTimer: null,
+    _tapRetryAttempt: 0,
     _foregroundInvalidationDirty: persistedForegroundToken !== null,
     _foregroundInvalidationToken: persistedForegroundToken,
     _foregroundInvalidationPersisted: persistedForegroundToken !== null,
@@ -258,6 +260,113 @@
       return state;
     },
 
+    // ── Homescreen icon badge (#1445) ──────────────────────────────────
+    //
+    // Notifications._publishAppBadge hands the server's unread total here;
+    // this module forwards it to the native shell's setSocialBadgeCount so
+    // the OS app icon badge tracks the bell. Deliberately NOT part of
+    // REQUIRED_CAPABILITIES: an app build without the capability must keep
+    // full push support, so the badge has its own probe. Same probe rules
+    // as isSupported — a degraded getBridgeInfo is inconclusive and must
+    // stay retryable, never latched as "unsupported".
+    _badgeSupportPromise: null,
+    _badgeCount: null,          // latest count handed to publishBadgeCount
+    _badgePublishedCount: null, // last count native confirmed applying
+    _badgePublishPromise: null,
+    _badgePublishRerun: false,
+
+    async _badgeSupported() {
+      if (SocialPush._badgeSupportPromise) return SocialPush._badgeSupportPromise;
+      let conclusive = false;
+      const probe = (async () => {
+        if (!window.usernode || window.usernode.isNative !== true ||
+            !window.NativeChrome ||
+            typeof window.usernode.setSocialBadgeCount !== 'function') {
+          conclusive = true;
+          return false;
+        }
+        const info = await NativeChrome.getInfo();
+        if (info && info.degraded === true) {
+          throw new Error('Native bridge capability probe was inconclusive');
+        }
+        conclusive = true;
+        const capabilities = Array.isArray(info && info.capabilities)
+          ? info.capabilities
+          : [];
+        return capabilities.includes('setSocialBadgeCount');
+      })();
+      const tracked = probe.catch(() => false).then((supported) => {
+        if (!conclusive && SocialPush._badgeSupportPromise === tracked) {
+          SocialPush._badgeSupportPromise = null;
+        }
+        return supported;
+      });
+      SocialPush._badgeSupportPromise = tracked;
+      return tracked;
+    },
+
+    // The one entry point: remember the latest count and (when the native
+    // session is admitted and the build supports it) push it across the
+    // bridge. Concurrent calls coalesce to the latest value; failures warn
+    // and never throw into the caller's render path.
+    publishBadgeCount(count) {
+      if (!Number.isSafeInteger(count) || count < 0) return Promise.resolve(false);
+      SocialPush._badgeCount = count;
+      return SocialPush._runBadgePublish();
+    },
+
+    _runBadgePublish() {
+      if (SocialPush._badgePublishPromise) {
+        SocialPush._badgePublishRerun = true;
+        return SocialPush._badgePublishPromise;
+      }
+      const run = (async () => {
+        let applied = false;
+        do {
+          SocialPush._badgePublishRerun = false;
+          applied = await SocialPush._badgePublishOnce();
+        } while (SocialPush._badgePublishRerun);
+        return applied;
+      })();
+      SocialPush._badgePublishPromise = run.finally(() => {
+        SocialPush._badgePublishPromise = null;
+        SocialPush._badgePublishRerun = false;
+      });
+      return SocialPush._badgePublishPromise;
+    },
+
+    async _badgePublishOnce() {
+      const value = SocialPush._badgeCount;
+      if (value === null) return false;
+      if (!SocialPush._sessionAdmitted()) return false;
+      if (!await SocialPush._badgeSupported()) return false;
+      // Admission may have flipped while the probe was in flight; the
+      // admission listener republishes, so skipping here loses nothing.
+      if (!SocialPush._sessionAdmitted()) return false;
+      if (SocialPush._badgePublishedCount === value) return true;
+      try {
+        await window.usernode.setSocialBadgeCount(value);
+        // Remember only the value actually sent — a newer count arriving
+        // mid-flight sets the rerun flag and goes out on the next lap.
+        SocialPush._badgePublishedCount = value;
+        return true;
+      } catch (err) {
+        console.warn('[social-push] badge publish failed:',
+          err && err.message ? err.message : err);
+        return false;
+      }
+    },
+
+    // Native state can move underneath a remembered publish (a new session
+    // admission replays state; a BFCache restore may resume a realm another
+    // realm badged over). Forget what was confirmed and send the remembered
+    // count again.
+    _republishBadge() {
+      SocialPush._badgePublishedCount = null;
+      if (SocialPush._badgeCount === null) return Promise.resolve(false);
+      return SocialPush._runBadgePublish();
+    },
+
     _notificationId(value) {
       const id = value && value.notificationId;
       return Number.isSafeInteger(id) && id > 0 && id <= 2147483647
@@ -266,21 +375,47 @@
     },
 
     async _drainOnce() {
+      const generation = SocialPush._admissionGeneration;
+      const currentSession = () => generation === SocialPush._admissionGeneration &&
+        SocialPush._sessionAdmitted();
       if (!window.App || !App.user || !window.Notifications ||
-          !SocialPush._sessionAdmitted() ||
+          !SocialPush._foregroundPageActive || !currentSession() ||
           !await SocialPush.isSupported()) return false;
+      if (!currentSession()) return false;
       const claim = await window.usernode.claimPendingSocialNotification();
+      if (!currentSession()) return false;
       if (claim == null) return true;
       const notificationId = SocialPush._notificationId(claim);
       if (notificationId == null) return false;
       const opened = await Notifications.openById(notificationId);
-      if (!opened) return false;
+      if (!opened || !currentSession()) return false;
       return await window.usernode.ackPendingSocialNotification(
         notificationId
       ) === true;
     },
 
-    drainPending() {
+    _clearTapRetry() {
+      if (SocialPush._tapRetryTimer) clearTimeout(SocialPush._tapRetryTimer);
+      SocialPush._tapRetryTimer = null;
+    },
+
+    _scheduleTapRetry() {
+      const delays = [500, 2000, 5000, 15000, 30000];
+      if (!SocialPush._foregroundPageActive || !SocialPush._supported ||
+          !SocialPush._sessionAdmitted() || SocialPush._tapRetryTimer ||
+          SocialPush._tapRetryAttempt >= delays.length) return;
+      const delay = delays[SocialPush._tapRetryAttempt++];
+      SocialPush._tapRetryTimer = setTimeout(() => {
+        SocialPush._tapRetryTimer = null;
+        SocialPush.drainPending({ retry: true });
+      }, delay);
+    },
+
+    drainPending({ retry = false } = {}) {
+      if (!retry) {
+        SocialPush._clearTapRetry();
+        SocialPush._tapRetryAttempt = 0;
+      }
       if (SocialPush._drainPromise) {
         SocialPush._drainRerunRequested = true;
         return SocialPush._drainPromise;
@@ -299,9 +434,11 @@
         } while (SocialPush._drainRerunRequested);
         return result;
       })();
-      SocialPush._drainPromise = run.finally(() => {
+      SocialPush._drainPromise = run.then((result) => {
         SocialPush._drainPromise = null;
         SocialPush._drainRerunRequested = false;
+        if (!result) SocialPush._scheduleTapRetry();
+        return result;
       });
       return SocialPush._drainPromise;
     },
@@ -446,6 +583,9 @@
   window.addEventListener('usernode:social-push-pending', () => {
     SocialPush.drainPending();
   });
+  document.addEventListener('sv:authed', () => {
+    SocialPush.drainPending();
+  });
   window.addEventListener('usernode:social-push-foreground', () => {
     SocialPush.refreshAfterForegroundPush();
   });
@@ -464,13 +604,19 @@
   window.addEventListener('usernode:native-session-admission', (event) => {
     SocialPush._admissionGeneration += 1;
     SocialPush._stateRerunGeneration = -1;
+    // Either way the admitted realm's badge confirmation is stale: a new
+    // admission replays native state, and a refusal means the next admitted
+    // session must not trust what this one published.
+    SocialPush._badgePublishedCount = null;
     if (!event || !event.detail || event.detail.admitted !== true) {
       SocialPush._clearState();
+      SocialPush._clearTapRetry();
       return;
     }
     SocialPush.getState();
     SocialPush.drainPending();
     SocialPush.retryForegroundInvalidation();
+    SocialPush._republishBadge();
   });
   // Native state must not be replayed until both the classic scripts and the
   // deferred React shell have installed their listeners. DOMContentLoaded is
@@ -566,6 +712,7 @@
 
   window.addEventListener('pagehide', () => {
     SocialPush._foregroundPageActive = false;
+    SocialPush._clearTapRetry();
     SocialPush._foregroundLifecycleEpoch += 1;
     // If this realm is later restored from BFCache, another realm may have
     // received and already consumed a shared invalidation while this UI was
@@ -600,6 +747,10 @@
     bridgePageActive = true;
     resetBridgeReadyBackoff();
     SocialPush.retryForegroundInvalidation();
+    SocialPush.drainPending();
+    // A restored realm cannot trust its pre-freeze badge confirmation —
+    // another realm may have badged over it while this one was away.
+    SocialPush._republishBadge();
     announceBridgeReady();
   });
   // The app reaching "ready" is the one signal that says the thing we were

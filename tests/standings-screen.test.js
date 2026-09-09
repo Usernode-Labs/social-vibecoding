@@ -46,6 +46,12 @@ const chJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/
 // 5 split the standings pane: chJs decides, this renders.
 const chTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8');
 const ctxJs = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/topochain-event-context.js'), 'utf8');
+// The bar's MARKUP moved to a component in #1191; topochain-event-context.js
+// keeps the data, the picks and the subscription, and pushes a view model.
+// Assertions about what is drawn read the component, assertions about what
+// decides it read the module.
+const barTsx = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/event-bar.tsx'), 'utf8');
+const barStore = fs.readFileSync(path.join(root, 'frontend/src/features/leaderboard/event-bar-store.js'), 'utf8');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
 
 // ─── Shell ───────────────────────────────────────────────────────────────
@@ -287,9 +293,18 @@ test('one module owns the event list, the picker and the hero', () => {
     'it owns the events fetch');
   assert.match(ctxJs, /TopochainEvents\.pickDefault\(data\.data\)/,
     'and the shared default pick');
-  assert.match(ctxJs, /id="tc-ev-select"/, 'it renders the picker');
-  assert.match(ctxJs, /id="tc-ev-hero"/, 'it renders the hero');
-  assert.match(ctxJs, /onChange\(fn\)/, 'and exposes a subscription for the panes');
+  assert.match(ctxJs, /_renderOptions\(\)/, 'it owns what the picker offers');
+  assert.match(ctxJs, /_renderHero\(\)/, 'and what the hero says');
+  assert.match(barTsx, /id="tc-ev-select"/, 'the component renders the picker');
+  assert.match(barTsx, /id="tc-ev-hero"/, 'and the hero');
+  assert.match(barTsx, /TopochainEventContext/,
+    'and hands a pick straight back to the one module that owns the selection');
+  assert.match(ctxJs, /onChange\(fn\)/, 'which exposes a subscription for the panes');
+  // ONE store between them, and it is the module's own — a second writer under
+  // this host is exactly what the single-owner rule forbids.
+  assert.match(barStore, /export const eventBarStore/);
+  assert.match(ctxJs, /import \{ eventBarStore \} from '\.\/event-bar-store\.js'/);
+  assert.match(barTsx, /import \{ eventBarStore \} from '\.\/event-bar-store\.js'/);
 });
 
 test('neither pane fetches or renders an event picker of its own any more', () => {
@@ -316,12 +331,24 @@ test("a server-resolved event id is fed back silently", () => {
 });
 
 test('pull-to-refresh dispatches on the active section', () => {
-  const fn = appJs.slice(appJs.indexOf('  _wirePullToRefresh() {'), appJs.indexOf('  bindEvents() {'));
-  assert.match(fn, /Leaderboard\.section === 'topochain'/, 'the handler branches on the section');
-  assert.match(fn, /TopochainLeaderboard\.loadLeaderboard\(\)/,
+  // The three-pane dispatch moved out of _wirePullToRefresh into
+  // App._refreshLeaderboard, so the service worker's late-arrival
+  // correction (App.refreshActiveScreen) refreshes this screen through the
+  // exact same loaders a manual pull uses. Assert the extracted helper
+  // still branches, AND that the pull still routes through it — a copy of
+  // this logic left behind in the pull handler is the drift this split was
+  // made to prevent.
+  const wire = appJs.slice(appJs.indexOf('  _wirePullToRefresh() {'), appJs.indexOf('  bindEvents() {'));
+  assert.match(wire, /pullToRefresh\(lb, \(\) => App\._refreshLeaderboard\(\)\)/,
+    'the pull must delegate to the shared helper');
+
+  const fn = appJs.slice(appJs.indexOf('  _refreshLeaderboard() {'));
+  const body = fn.slice(0, fn.indexOf('\n  },') + 1);
+  assert.match(body, /Leaderboard\.section === 'topochain'/, 'the handler branches on the section');
+  assert.match(body, /TopochainLeaderboard\.loadLeaderboard\(\)/,
     'a pull on the Topochain tab reloads Topochain standings, not kudos panes');
-  assert.match(fn, /Leaderboard\.section === 'challenges'/, 'and on the challenges section');
-  assert.match(fn, /TopochainChallenges\.loadChallenges\(\)/,
+  assert.match(body, /Leaderboard\.section === 'challenges'/, 'and on the challenges section');
+  assert.match(body, /TopochainChallenges\.loadChallenges\(\)/,
     'a pull on the Challenges tab reloads the challenge grid');
 });
 
@@ -530,18 +557,20 @@ test('the season caption replaces the "nothing is running" caption', () => {
   // board the screen exists to show. The two flags are mutually exclusive.
   assert.match(ctxJs, /_endedFallback\s*=\s*\n?\s*!TopochainEvents\.isSeasonAggregate\(pick\)/,
     'a season pick suppresses the ended-event caption rather than stacking with it');
-  assert.match(ctxJs, /Whole-season standings/, 'the season caption exists');
+  assert.match(barTsx, /Whole-season standings/, 'the season caption exists');
   // The caption must key off the SELECTION, not off "pickDefault landed
   // here": the standings pane's first fetch resolves the default server-side
   // and writes the id back silently, usually before this module's list lands,
   // so pickDefault never runs on most real loads. Keying off a flag set in
   // that branch left the caption missing exactly when it was needed.
-  assert.match(ctxJs, /\$\{isSeason \? `\s*\n\s*<p id="tc-ev-season-note"/,
+  assert.match(ctxJs, /const isSeason = TopochainEventContext\.isSeasonSelected\(\);[\s\S]*?seasonNote: isSeason,/,
     'the caption renders from isSeasonSelected(), not from a default-pick flag');
+  assert.match(barTsx, /hero\.seasonNote \? \([\s\S]{0,200}?id="tc-ev-season-note"/,
+    'and the component draws it from that one field');
   assert.ok(!/_seasonDefault/.test(ctxJs),
     'the default-pick flag is gone — the selection is the single source of truth');
   // The picker and the hero must not label the season event "(past)".
-  assert.match(ctxJs, /isSeason \? ' \(season\)'/, 'the option reads (season)');
+  assert.match(ctxJs, /if \(isSeason\) return ' \(season\)';/, 'the option reads (season)');
   assert.match(ctxJs, /const statusLabel = isSeason \? 'season'/, 'so does the hero badge');
 });
 
@@ -610,10 +639,18 @@ test('dapp.json checks the canonical routes and every legacy alias', () => {
     assert.ok(tests.some((t) => t.path === p), `a check exercises ${p}`);
   }
 
-  const drawerRow = tests.find(
-    (t) => typeof t.expectSelector === 'string' && t.expectSelector.includes('#drawer-row-leaderboard')
+  // The way IN. It was a hamburger row until THE UI OVERHAUL, which moved it
+  // to the home screen's Challenges area — beside the shared progress it
+  // links to, rather than in a menu you open from memory.
+  const entryPoint = tests.find(
+    (t) => typeof t.expectSelector === 'string'
+      && t.expectSelector.includes('#home-challenges-section')
+      && t.expectSelector.includes('home-panel-lb-browse')
   );
-  assert.ok(drawerRow, 'a check asserts the Leaderboard drawer row renders');
+  assert.ok(entryPoint, 'a check asserts the Challenges area\'s leaderboard link renders');
+  assert.ok(!tests.some((t) => typeof t.expectSelector === 'string'
+    && t.expectSelector.includes('#drawer-row-leaderboard')),
+  'and nothing still selects the retired drawer row');
 
   const shot = tests.find((t) => t.path === '/?shot=challenge-detail#leaderboard/challenges');
   assert.ok(shot, 'a check exercises the challenge-detail screenshot state');

@@ -12,6 +12,17 @@
  *
  * Shape:
  *   {
+ *     "description": "...",                    // one line, what the app IS.
+ *                                             // The launcher's Discover cards
+ *                                             // draw it; there is no such
+ *                                             // column on `apps`, and the
+ *                                             // directory derives a meta line
+ *                                             // instead. Read off the stored
+ *                                             // manifest snapshot by the
+ *                                             // client and capped at 160
+ *                                             // chars there; absent on most
+ *                                             // apps, and the card simply
+ *                                             // draws no sentence.
  *     "secrets": [
  *       {
  *         "key": "ECHO_APP_SECRET_KEY",       // env var name
@@ -46,6 +57,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
+const usernames = require('./usernames');
 const { validatePath } = require('./testing-notes');
 
 const MANIFEST_FILENAME = 'dapp.json';
@@ -69,12 +81,70 @@ const MANIFEST_FILENAME = 'dapp.json';
 // tail — including the two `?shot=feedback-*` checks added for #1054 — was
 // being dropped, which turns the over-ceiling guard into a blocker on every
 // subsequent proposal rather than a warning about a pathological manifest.
-// 400 checks still finish inside the capture budget: at the ~3.9s marginal
-// cost per check over a pool of 8 that is ~195s of ideal work against a
-// 420s TESTS_DEADLINE_MS, the 2x margin tests/checks-budget.test.js pins.
-// Raising it further means raising that deadline (and the container run
-// timeout above it) in the same change.
-const MAX_DECLARED_TESTS = 400;
+//
+// Raised 400 → 430 when the manifest reached 382 and the 20-slot headroom
+// floor tests/proposal-tests-manifest.test.js pins was crossed. 430 is the
+// most the UNCHANGED capture budget clears: at the ~3.9s marginal cost per
+// check over a pool of 8, a full 430-check suite is ~210s of ideal work
+// against the 420s TESTS_DEADLINE_MS — right at the 2x margin
+// tests/checks-budget.test.js pins. Raising it any further means raising
+// that deadline (and the container run timeout above it) in the same
+// change.
+//
+// Raised 430 → 480 (#1417), and that is the bump the note above says has to
+// move the deadline with it, so TESTS_DEADLINE_MS goes 420s → 470s in
+// services/visuals.js. The arithmetic is the same one: 480 checks at ~3.9s
+// over a pool of 8 is ~234s of ideal work, and 470s clears the 2x margin
+// with 2s to spare. RUN_TIMEOUT_MS stays at 600s — it only has to sit
+// 120s above the deadline, and 130s does.
+//
+// The manifest was at 410 when this was raised, which is EXACTLY the
+// 20-slot floor: the previous ceiling had no room for a single further
+// check, so any proposal declaring one at all was blocked. That is the
+// state this bump clears, not one feature's three checks.
+//
+// Raised 480 → 530 when the manifest reached 461 and crossed the 20-slot
+// floor again (19 left), which made the unit suite red on main itself and so
+// on every proposal after it. Same arithmetic, same coupled move: 530 checks
+// at ~3.9s over a pool of 8 is ~258s of ideal work, so TESTS_DEADLINE_MS
+// goes 470s → 520s to keep the 2x margin (clears it by ~3s), and because the
+// deadline has passed 480s this time RUN_TIMEOUT_MS moves too, 600s → 640s,
+// to stay the required 120s above it.
+//
+// Raised 530 → 560 when the manifest reached 512 and crossed the 20-slot floor
+// again (18 left) — the same event as the line above, for the third time, and
+// again it made the unit suite red on main itself and so on every proposal
+// after it. #1699 added the two checks that crossed it.
+//
+// Same arithmetic, same coupled move: 560 checks at ~3.9s over a pool of 8 is
+// ~273s of ideal work, so TESTS_DEADLINE_MS goes 520s → 560s to keep the 2x
+// margin (clears it by 14s, where the last move cleared by 3), and
+// RUN_TIMEOUT_MS goes 640s → 680s to stay the required 120s above it.
+//
+// The step is 30 rather than the 50 last time on purpose: 560 is what the
+// budget test's 2x rule allows without the deadline crossing 600s, and the
+// jump buys 48 slots — about two years at the rate the last three moves
+// happened. Deleting checks to make room is the thing the failing test
+// explicitly refuses, so the ceiling is the only lever.
+//
+// Raised again, 560 → 580, by a proposal in flight at the same time (this
+// one, which declares two checks of its own): same coupled move, 580 checks
+// at ~3.9s over a pool of 8 is ~283s of ideal work, so TESTS_DEADLINE_MS goes
+// 560s → 570s to keep the 2x margin (clears it by ~4s), and RUN_TIMEOUT_MS
+// 680s → 690s to stay the required 120s above it.
+//
+// Raised 580 → 600 by #1824, which declares two checks of its own and found
+// the manifest at 560 — exactly ON the 20-slot floor, so ANY proposal that
+// declared a check was red before it started. That is the fifth time this has
+// happened, and the reason it keeps happening is that the floor is a floor:
+// clearing it by zero is indistinguishable from crossing it until the next
+// person adds a check.
+//
+// Same arithmetic, same coupled move: 600 checks at ~3.9s over a pool of 8 is
+// ~293s of ideal work, so TESTS_DEADLINE_MS goes 570s → 590s to keep the 2x
+// margin (clears it by ~5s), and RUN_TIMEOUT_MS 690s → 710s to stay the
+// required 120s above it. The step buys 38 slots over the 562 declared here.
+const MAX_DECLARED_TESTS = 600;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
@@ -264,10 +334,15 @@ const PLATFORM_ENV_UNWRITABLE = new Set([
   'GITHUB_BOT_TOKEN',
   // Model access and the platform's own dapp keypair.
   'ANTHROPIC_API_KEY',
+  // OpenRouter organization-level credential. This may create, disable and
+  // delete child keys, so it is deploy-owned and can never be entered in the
+  // platform-variable UI.
+  'OPENROUTER_MANAGEMENT_API_KEY',
   'USERNODE_APP_PUBKEY',
   'USERNODE_APP_SECRET_KEY',
   // Ingress / TLS, owned by the Caddy half of the deploy.
   'USERNODE_DOMAIN',
+  'USERNODE_APPS_DOMAIN',
   'ZEROSSL_API_KEY',
   'ZEROSSL_EAB_KID',
   'ZEROSSL_EAB_HMAC',
@@ -345,6 +420,39 @@ function readPlatformEnv(parsed) {
 // can't outrun the apps.name column or the rename UI's validation.
 const MAX_APP_NAME_LENGTH = 64;
 const MIN_APP_NAME_LENGTH = 1;
+
+// Bound for a generated app SLUG, which — unlike the display name — ends up
+// inside DNS labels the platform must be able to resolve (#1381):
+//
+//   usernode-app-<slug>            the production container name, resolved by
+//                                  Caddy and by the screenshot capture
+//   <slug>--s<sessionId>.<domain>  the staging preview host label
+//
+// A DNS label caps at 63 bytes and nothing will even send a query for a
+// longer one. `usernode-app-` is 13, so 50 is the largest slug that keeps the
+// production name legal, and it also leaves the preview host label at 60 for
+// a seven-digit session id. Nothing here bounds the staging CONTAINER name,
+// which is longer still — that one is unreachable by design now and carries a
+// short network alias instead.
+//
+// Existing longer slugs are grandfathered: renaming an app does not re-slug
+// it, and a slug is a permanent URL.
+const MAX_APP_SLUG_LENGTH = 50;
+
+// Build the slug for a newly created (or forked) app from its display name
+// and a random suffix. The suffix is what makes the slug unique, so it is
+// never what gets cut — the human-readable base is truncated around it, and a
+// truncation that lands mid-word must not leave a trailing hyphen.
+// Returns null when the name has no alphanumerics at all.
+function buildAppSlug(name, code) {
+  const base = String(name == null ? '' : name)
+    .trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  if (!base) return null;
+  const suffix = `-${String(code || '')}`;
+  const room = MAX_APP_SLUG_LENGTH - suffix.length;
+  const kept = base.length <= room ? base : base.slice(0, room).replace(/-+$/, '');
+  return `${kept}${suffix}`;
+}
 
 // Normalize a raw top-level `name` into a trimmed string or null. Anything
 // that isn't a string, is empty after trimming, or busts the length bound
@@ -1224,16 +1332,21 @@ async function reconcileAppAdmins(pool, app, manifest) {
     return false;
   }
 
+  // Resolved through src/services/usernames.js, NOT with a plain
+  // `LOWER(username) = ANY(...)` on `users`. A dapp.json lives in
+  // somebody else's repository and the platform cannot rewrite it, so a
+  // contributor who renames would otherwise silently lose admin on every
+  // app that declares their old handle — the manifest keeps saying `alice`
+  // long after alice became `ada`. resolveHandles reads the retired-handle
+  // ledger alongside `users`, so an old declared name keeps resolving to
+  // the same person; `declared` comes back as the name that MATCHED (old or
+  // new), which is what keeps the unresolved diff below honest.
   let resolved = [];
   if (declared.length) {
-    const { rows: userRows } = await pool.query(
-      `SELECT id, username FROM users WHERE LOWER(username) = ANY($1::text[])`,
-      [declared.map((u) => u.toLowerCase())]
-    );
-    resolved = userRows;
+    resolved = await usernames.resolveHandles(pool, declared);
   }
   const resolvedIds = resolved.map((r) => r.id).sort((a, b) => a - b);
-  const resolvedNames = new Set(resolved.map((r) => r.username.toLowerCase()));
+  const resolvedNames = new Set(resolved.map((r) => r.declared));
   const unresolved = declared.filter((u) => !resolvedNames.has(u.toLowerCase()));
   if (unresolved.length) {
     log.warn('app-manifest', 'dapp.json admins name(s) match no registered user', {
@@ -1529,5 +1642,7 @@ module.exports = {
   KEY_RE,
   MANIFEST_FILENAME,
   MAX_APP_NAME_LENGTH,
+  MAX_APP_SLUG_LENGTH,
+  buildAppSlug,
   MIN_APP_NAME_LENGTH,
 };

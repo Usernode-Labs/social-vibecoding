@@ -35,6 +35,23 @@ function importGithubClient() {
   return usesMockGithubForImports() ? githubMock : github;
 }
 
+// #1647: importing a pull request is an explicit "I'm taking this" action,
+// just like starting native proposal work. Record that ownership through the
+// same vote service as the assignee picker so proposal cards, filters and the
+// PM view all observe one source of truth. This deliberately writes against
+// the proposal id (not a linked issue): an imported PR belongs to its
+// importer even when its origin issue was previously assigned to somebody
+// else.
+async function selfAssignImportedProposal(pool, appId, sessionId, user) {
+  const username = typeof user?.username === 'string' ? user.username.trim() : '';
+  if (!user?.id || !username) {
+    throw new Error('Importing user has no assignable identity');
+  }
+  await topicAttrs.castVote(
+    pool, appId, 'proposal', sessionId, 'assignee', username, user.id
+  );
+}
+
 // Staging-only mock PR proposals for GET /api/apps/:slug/promoted,
 // appended only when the request carries ?demo=1 (forwarded from the
 // page URL by _demoQS in app-view.js). Sibling of stagingMockIssues in
@@ -65,8 +82,15 @@ function stagingMockProposals(viewer) {
     pr_title: title,
     pr_title_fallback: false,
     pr_summary_md: 'This is a sample plain-language summary so testers can see '
-      + 'the new explanation that now appears at the top of a proposal — written '
+      + 'the new explanation that now appears at the top of a proposal, written '
       + 'in everyday words, with no technical jargon.',
+    // The technical half, so a reviewer can see BOTH sections of the About
+    // sheet on ?demo=1 rather than only the labelled one. Obviously fake and
+    // deliberately written in the register the summary above must not use —
+    // the contrast between the two is the thing being reviewed.
+    pr_body: '## What changed\n\n- `renderTopicHead` now emits the summary '
+      + 'behind its own label\n- `parseImportSummary` bounds the field at 600 '
+      + 'characters\n\nSee `src/routes/votes.js` for the import path.',
     staging_url: null,
     testing_md: null,
     testing_path: null,
@@ -117,6 +141,24 @@ function stagingMockProposals(viewer) {
       { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [], failureReason: '' },
     ],
     checks_checked_at: hoursAgo(hours),
+    // #1442: the freshness snapshot. Measured-and-clean by default, which
+    // is what the great majority of real promoted proposals look like, so
+    // adding these columns does not make every existing fixture render an
+    // "unknown" caption. The four dedicated fixtures below override them so
+    // each of the three states this issue is about is reviewable via
+    // ?demo=1 rather than only reachable by waiting for main to move.
+    mergeability: 'clean',
+    mergeability_files: [],
+    mergeability_files_complete: true,
+    checks_base_sha: 'aaaa1111bbbb2222cccc3333dddd4444eeee5555',
+    checks_base_verdict: 'current',
+    checks_base_behind_by: 0,
+    freshness_main_sha: 'aaaa1111bbbb2222cccc3333dddd4444eeee5555',
+    freshness_merge_base_sha: 'aaaa1111bbbb2222cccc3333dddd4444eeee5555',
+    freshness_behind_by: 0,
+    freshness_ahead_by: 1,
+    freshness_checked_at: hoursAgo(0),
+    freshness_error: null,
     // Community-voted priority + assignee + category chips. Populated so
     // the card states are reviewable on staging via ?demo=1.
     priority: { top: 'high', count: 2, myValue: null },
@@ -125,13 +167,13 @@ function stagingMockProposals(viewer) {
   });
   const rows = [
     // Unopposed, thin support: threshold met but a multi-day visibility
-    // window still running → "Merging in ~2d" countdown pill.
+    // window still running → "Goes live in ~2d" countdown pill.
     mk(9000001, 900101,
       '[Mock] Long-title test: rework the proposal card header so the '
       + 'discussion badge and vote tally wrap gracefully on narrow phones',
       3, 2, 0, 4, { required: 2, windowEndsAt: hoursAhead(46) }),
     // Near-majority, no opposition: window almost elapsed → short
-    // "Merging in Xh" countdown.
+    // "Goes live in Xh" countdown.
     // #1251: the only mock proposal that declares a linked issue. 900017 is
     // a mock issue nothing else touches, so this pair is what makes the
     // board's "an issue with an open proposal is still on the board"
@@ -142,7 +184,7 @@ function stagingMockProposals(viewer) {
       20, 5, 0, 3, { required: 3, windowEndsAt: hoursAhead(5) }),
     linked_issues: [900017] },
     // Majority reached: no window, would merge immediately in prod.
-    // my_vote is set on this one mock (#482) so the kanban "Needs my vote"
+    // my_vote is set on this one mock (#482) so the kanban "Waiting on you"
     // filter visibly removes a card in the ?demo=1 preview instead of
     // matching every mock proposal.
     { ...mk(9000014, 900114,
@@ -150,7 +192,7 @@ function stagingMockProposals(viewer) {
       6, 6, 0, 2, { required: 5, windowEndsAt: null }), my_vote: 'up' },
     // Lazy consensus: BELOW the eased threshold (1 of 2 yes) but unopposed —
     // the count-based lazy clock is running, so the pill shows the countdown
-    // with the tally riding along ("Merging in ~2d · 1/2").
+    // with the tally riding along ("Goes live in ~2d · 1/2").
     mk(9000019, 900119,
       '[Mock] Lazy-consensus test: one supporter, nobody objecting — merges when the clock elapses',
       5, 1, 0, 1, { required: 2, windowEndsAt: hoursAhead(67) }),
@@ -230,12 +272,12 @@ function stagingMockProposals(viewer) {
       qualified_no_count: 0,
     },
     // Auto-takedown — slim No majority (No just edges ahead of Yes, under the
-    // 1/3 keep-alive line): long rejection window → "Rejecting in ~6d".
+    // 1/3 keep-alive line): long rejection window → "Set aside in ~6d".
     mk(9000016, 900116,
       '[Mock] Rejection test: replace the home feed with an infinite-scroll redesign',
       30, 2, 3, 6, { required: 6, rejectEndsAt: hoursAhead(140), rejectionArmed: true }),
     // Auto-takedown — lopsided opposition (No heavily outweighs Yes): short
-    // rejection window → "Rejecting in ~Xh".
+    // rejection window → "Set aside in ~Xh".
     mk(9000017, 900117,
       '[Mock] Rejection test: drop dark mode entirely to simplify the theme code',
       18, 1, 6, 4, { required: 6, rejectEndsAt: hoursAhead(7), rejectionArmed: true }),
@@ -272,12 +314,96 @@ function stagingMockProposals(viewer) {
     },
     // (c) Rejection still applies. The auto-takedown countdown is
     // untouched by the modifier, so a flagged proposal the group is
-    // voting down still shows "Rejecting in ~Xh" and still auto-closes.
+    // voting down still shows "Set aside in ~Xh" and still auto-closes.
     {
       ...mk(9000032, 900132,
         '[Mock] Explicit-approval test: admins change nobody wants (rejecting)',
         22, 0, 3, 3, { required: 3, rejectEndsAt: hoursAhead(9), rejectionArmed: true }),
       requires_explicit_approval: true,
+    },
+    // ── #1442 freshness fixtures ───────────────────────────────────────
+    //
+    // The three states the issue is about, each of which used to be
+    // invisible on a promoted proposal because nothing re-measured it. They
+    // exist as fixtures because none of them can be reached in a preview by
+    // clicking: they need main to move underneath a proposal that is already
+    // waiting for votes.
+    //
+    // (a) Behind main but still merging cleanly. This is the mild case, and
+    // the one the old card got LOUDEST about — being behind used to render
+    // an amber "Behind main · N" block reason, which meant the pill said
+    // "attention" for something that resolves itself. It is now a plain
+    // caption and the vote tally stays visible.
+    {
+      ...mk(9000033, 900133,
+        '[Mock] Freshness test: eight commits behind main, still merges cleanly',
+        6, 2, 0, 3, { required: 3, windowEndsAt: hoursAhead(20) }),
+      behind_main: 8,
+      freshness_behind_by: 8,
+      freshness_main_sha: 'bbbb2222cccc3333dddd4444eeee5555ffff6666',
+      freshness_merge_base_sha: 'aaaa1111bbbb2222cccc3333dddd4444eeee5555',
+      mergeability: 'clean',
+    },
+    // (b) The issue's own proposal: behind main AND predicted to conflict.
+    // The seven paths are the ones `git merge-tree` reported for PR #1431,
+    // so the conflicting-file list renders at a realistic length. This is a
+    // PREDICTION, which is why it sets `mergeability` and NOT
+    // merge_conflict_state — nothing has attempted a merge, so the
+    // conflict-resolver must not see this row as one it can drain.
+    {
+      ...mk(9000034, 900134,
+        '[Mock] Freshness test: conflicts with main in seven files',
+        9, 3, 0, 5, { required: 4 }),
+      behind_main: 8,
+      freshness_behind_by: 8,
+      freshness_main_sha: 'bbbb2222cccc3333dddd4444eeee5555ffff6666',
+      freshness_merge_base_sha: 'aaaa1111bbbb2222cccc3333dddd4444eeee5555',
+      mergeability: 'conflict',
+      mergeability_files: [
+        'public/js/app-view.js',
+        'public/js/merge-status.js',
+        'src/routes/votes.js',
+        'src/services/mcp-tools.js',
+        'src/services/visuals.js',
+        'src/db/schema.sql',
+        'dapp.json',
+      ],
+      mergeability_files_complete: true,
+    },
+    // (c) Checks passed, against a base main has since moved past. The
+    // verdict is real and the tests did pass; what they passed against is no
+    // longer what this would merge into. Soft on purpose: it is a caveat on
+    // a green result, not a failure, so it never blocks the vote.
+    {
+      ...mk(9000035, 900135,
+        '[Mock] Freshness test: checks passed on a base main has moved past',
+        14, 2, 0, 2, { required: 3, windowEndsAt: hoursAhead(30) }),
+      checks_base_sha: '1111aaaa2222bbbb3333cccc4444dddd5555eeee',
+      checks_base_verdict: 'superseded',
+      checks_base_behind_by: 12,
+      freshness_main_sha: 'bbbb2222cccc3333dddd4444eeee5555ffff6666',
+      behind_main: 3,
+      freshness_behind_by: 3,
+    },
+    // (d) Nothing measured yet, plus a recorded failure. GitHub answers
+    // `mergeable: null` while it computes a merge, and the whole point of
+    // the nullable columns is that this reads as "not measured" rather than
+    // as "clean" — a fixture exists so the unknown wording is reviewable
+    // instead of only appearing during a GitHub outage.
+    {
+      ...mk(9000036, 900136,
+        '[Mock] Freshness test: freshness not measured yet (GitHub unreachable)',
+        1, 1, 0, 0, { required: 3 }),
+      mergeability: 'unknown',
+      mergeability_files: [],
+      mergeability_files_complete: null,
+      checks_base_verdict: 'unknown',
+      checks_base_behind_by: null,
+      freshness_behind_by: null,
+      freshness_ahead_by: null,
+      freshness_main_sha: null,
+      freshness_merge_base_sha: null,
+      freshness_error: 'Could not read the repository from GitHub (request failed).',
     },
     // #381: a proposal whose staging preview logged console errors, so the
     // amber "⚠ Console errors" badge and the expanded error list in the
@@ -372,6 +498,41 @@ function stagingMockProposals(viewer) {
       test_results: [],
       checks_checked_at: hoursAgo(0.02),
     },
+    // The fifth build step. The container is up (four steps done, 20s) but
+    // the run is parked behind an earlier capture on the same proposal —
+    // the state the card used to spend minutes in reading "4/4" under
+    // "Preparing the staging preview…". The step row names the wait; the
+    // only way to review it, since a real preview has no queued run to show.
+    {
+      ...mk(9000028, 900128,
+        '[Mock] Checks-phase test: preview built, waiting behind an earlier run',
+        0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
+      check_state: 'pending',
+      check_phase: 'building',
+      check_trigger: 'pr-import',
+      recheckable: true,
+      test_results: [],
+      checks_checked_at: hoursAgo(0.02),
+      checks_progress: {
+        build: {
+          step: 'prepare_checks',
+          queued: true,
+          startedAt: hoursAgo(0.015),
+          steps: [
+            { key: 'source_fetch', ms: 2555 },
+            { key: 'image_build', ms: 5372, phases: [
+              { name: 'FROM docker.io/library/node:22-…', ms: 212 },
+              { name: 'COPY . .', ms: 276 },
+              { name: 'COPY --from=css /build/public/c…', ms: 3708 },
+            ] },
+            { key: 'clone', ms: 2426, via: 'template' },
+            { key: 'health', ms: 9585 },
+          ],
+          totalMs: 19964,
+        },
+        updatedAt: hoursAgo(0.015),
+      },
+    },
     // #607: a freshly promoted proposal whose first checks run hasn't even
     // stamped 'pending' yet (staging build still going) — NO verdict, NO
     // console snapshot. The grey "Checks starting…" spinner badge + the
@@ -426,7 +587,7 @@ function stagingMockProposals(viewer) {
         '[Mock] Checks-skipped test: nothing to test for this proposal',
         3, 9, 0, 1),
       check_state: 'skipped',
-      check_error_detail: 'branch has no commits beyond main — nothing to test',
+      check_error_detail: 'branch has no commits beyond main, so there is nothing to test',
       recheckable: true,
       test_results: [],
     },
@@ -561,9 +722,9 @@ function stagingMockProposals(viewer) {
       source: 'imported',
       imported_pr_author: 'staging-tester',
       external_agent: 'claude-code',
-      testing_md: '1. Open the board — the new "Snap to grid" toggle sits above the columns.\n'
+      testing_md: '1. Open the board. The new "Snap to grid" toggle sits above the columns.\n'
         + '2. Turn it on and drag a card: it should snap to the nearest column.\n'
-        + '3. Reload the page — the toggle keeps its setting.',
+        + '3. Reload the page. The toggle keeps its setting.',
       testing_path: '/board?demo-pr=1',
       check_state: 'failing',
       recheckable: true,
@@ -692,7 +853,7 @@ function stagingMockMerged() {
     pr_url: null,
     pr_title: title,
     pr_summary_md: 'This is a sample plain-language summary so testers can see '
-      + 'the new explanation at the top of a completed proposal — in everyday '
+      + 'the new explanation at the top of a completed proposal, in everyday '
       + 'words, with no technical jargon.',
     user_id: 0,
     status: 'merged',
@@ -868,6 +1029,12 @@ function stagingMockCompletedCloseIssues() {
     down_count: 0,
     chat_count: chat,
     last_message_at: null,
+    // The tally the target issue carried while open — a closed task keeps
+    // its priority/assignee/category chips in the Done column. Baked in
+    // because mock rows are injected after the real rows' summarize pass.
+    priority: { top: 'high', count: 2, myValue: null },
+    assignee: { top: 'maya-builder', count: 2, myValue: null },
+    category: { top: 'bug', count: 1, myValue: null },
   });
   return [
     mk(9100060, 'group-vote', 1, 2, 3),
@@ -1065,7 +1232,9 @@ async function classifyNativeHeadMove({ pool, session, liveHead }) {
 // #955: that reset is for AUTHOR pushes. The platform's own "sync with main"
 // commit changes the branch without changing the patch under review, so it
 // advances the pin and carries the votes with it instead.
-async function reconcileNativeReviewedHead({ config, pool, session, fresh = false, notify = true }) {
+async function reconcileNativeReviewedHead({
+  config, pool, session, fresh = false, notify = true, deferChecks = false,
+}) {
   if (!session || session.source === 'imported') {
     return { enforced: false, headSha: reviewedHeadForSession(session) };
   }
@@ -1158,7 +1327,7 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
       enforced: true,
       blocked: true,
       transient: true,
-      reason: 'This proposal is being synced with main — try again in a moment.',
+      reason: 'This proposal is being synced with main. Try again in a moment.',
     };
   }
 
@@ -1254,7 +1423,20 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
   const checksCarry = platformAdvance && !move.resolvedTree;
   const needsChecks = !sameSha(session.checks_commit_sha, liveHead) && !checksCarry;
   if (needsChecks) {
-    await kickNativeRevisionChecks({ config, pool, session, headSha: liveHead });
+    if (deferChecks) {
+      // A managed local upload may contain more than one commit. Clear the old
+      // verdict immediately, but let proposal_submit_build launch the single
+      // preview/check run after every exact-tree commit has been uploaded.
+      // The atomic reviewed-head/vote reset above is never deferred.
+      const visuals = require('../services/visuals');
+      await visuals.setChecksPending(pool, session.id, liveHead, 'building', 'commit-push')
+        .catch((err) => log.warn('votes', 'Deferred native revision setChecksPending failed (non-fatal)', {
+          sessionId: session.id, headSha: liveHead, err: err.message,
+        }));
+      try { visuals.notifyChecksPending(session.id, liveHead, 'building', 'commit-push'); } catch (_) {}
+    } else {
+      await kickNativeRevisionChecks({ config, pool, session, headSha: liveHead });
+    }
   } else if (checksCarry && !sameSha(session.checks_commit_sha, liveHead)) {
     await pool.query(
       `UPDATE chat_sessions SET checks_commit_sha = $1 WHERE id = $2`,
@@ -1282,7 +1464,7 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     // Our own commit, not the author's: say what actually happened instead of
     // asking everyone to re-review code they already approved.
     const label = session.pr_title
-      ? `PR #${session.pr_number} — ${session.pr_title}`
+      ? `PR #${session.pr_number}: ${session.pr_title}`
       : `PR #${session.pr_number}`;
     const how = move.resolvedTree
       ? 'was synced with main and its merge conflicts were resolved automatically'
@@ -1292,18 +1474,18 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
       : '';
     await sendSystemMessage(
       pool, session.app_id,
-      `${label} ${how} — existing votes were kept (now pinned to commit ${liveHead.slice(0, 8)}).${checksNote}`,
+      `${label} ${how}. Existing votes were kept (now pinned to commit ${liveHead.slice(0, 8)}).${checksNote}`,
       'system',
       { headChanged: true, votesKept: true, prNumber: session.pr_number, headSha: liveHead },
       { type: 'session', ref: session.id }
     ).catch(() => {});
   } else if (notify && !platformAdvance && (oldHead || votesDeleted > 0)) {
     const label = session.pr_title
-      ? `PR #${session.pr_number} — ${session.pr_title}`
+      ? `PR #${session.pr_number}: ${session.pr_title}`
       : `PR #${session.pr_number}`;
     const message = oldHead
-      ? `${label} was updated on GitHub — earlier votes were cleared, please re-review commit ${liveHead.slice(0, 8)}.`
-      : `${label} is now pinned to commit ${liveHead.slice(0, 8)} — earlier unbound votes were cleared, please re-review.`;
+      ? `${label} was updated on GitHub. Earlier votes were cleared, so please re-review commit ${liveHead.slice(0, 8)}.`
+      : `${label} is now pinned to commit ${liveHead.slice(0, 8)}. Earlier unbound votes were cleared, so please re-review.`;
     await sendSystemMessage(
       pool, session.app_id, message, 'system',
       { headChanged: !!oldHead, prNumber: session.pr_number, headSha: liveHead },
@@ -1319,6 +1501,7 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     votesDropped: votesDeleted,
     votesCarried: votesMoved,
     checksReset: needsChecks,
+    checksDeferred: needsChecks && deferChecks,
   });
   return {
     enforced: true,
@@ -1328,6 +1511,7 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     changed: oldHead != null,
     votesDropped: votesDeleted,
     votesCarried: votesMoved,
+    checksDeferred: needsChecks && deferChecks,
     platformAdvance,
     votesKept: platformAdvance,
   };
@@ -1376,6 +1560,28 @@ const MAX_IMPORT_LINKED_ISSUES = 50;
 function parseImportLinkedIssues(body) {
   const { sanitizeIssueNumbers } = require('../services/pr-metadata');
   return sanitizeIssueNumbers(body && body.linkedIssues).slice(0, MAX_IMPORT_LINKED_ISSUES);
+}
+
+// The plain-language summary an import may carry (the About sheet's user-facing
+// half). On-platform sessions get one from llm.generatePrMetadata; an imported
+// or connector-submitted PR had no way to supply one at all, so those proposals
+// rendered the technical description as their only content — which is what the
+// two-section About sheet exists to avoid.
+//
+// Bounded, because it is the body text a voter reads FIRST. An agent that
+// pastes its whole PR body here would collapse the two sections back into one,
+// so the cap is deliberately much smaller than the description's: a few
+// sentences, not a document. Truncation is silent for the same reason the
+// testing note's is — one over-long field must not cost somebody their whole
+// submission — and the field is optional, so an omitted one behaves exactly as
+// before rather than inventing a summary nobody wrote.
+const MAX_IMPORT_SUMMARY = 600;
+
+function parseImportSummary(body) {
+  const raw = body && typeof body.summary === 'string' ? body.summary : '';
+  const trimmed = raw.replace(/\r\n/g, '\n').trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, MAX_IMPORT_SUMMARY);
 }
 
 function revisionChangedVoteResponse(res, headSha, message = null) {
@@ -1455,7 +1661,7 @@ async function reconcilePromotedSweepHead({ config, pool, session }) {
 // user id (for the per-viewer my_vote / my_kudos subqueries). Callers
 // append their own WHERE / ORDER / LIMIT.
 function mergedRowSelect() {
-  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.pr_body, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            -- #1264: the exact merge time (and the promotion time beside it)
            -- so the progress report can date completed work by when it
            -- actually landed instead of when it was started. NULL on rows
@@ -1489,6 +1695,7 @@ function mergedRowSelect() {
            -- showing one opaque "still running". NULL = legacy wording.
            cs.check_phase,
            cs.check_trigger,
+           cs.checks_progress,
            -- Platform-variables pre-merge check (display mirror; the merge
            -- gate re-evaluates live).
            cs.platform_env_state, cs.platform_env_detail,
@@ -1692,7 +1899,7 @@ function voteRoutes(config) {
               prError.requestId ? `request id ${prError.requestId}` : null,
             ].filter(Boolean).join(', ');
             return res.status(503).json({
-              error: `GitHub is currently failing to create pull requests (${detail}). This is a GitHub-side problem, not this change — the work is safe on its branch. Try proposing again in a few minutes; do not re-run the request or push extra commits.`,
+              error: `GitHub is currently failing to create pull requests (${detail}). This is a GitHub-side problem, not this change: the work is safe on its branch. Try proposing again in a few minutes; do not re-run the request or push extra commits.`,
             });
           }
           return res.status(502).json({
@@ -1735,7 +1942,7 @@ function voteRoutes(config) {
           }
           if (pr && pr.merged) {
             return res.status(409).json({
-              error: `PR #${session.pr_number} was already merged on GitHub — this change has landed, so there is nothing to vote on.`,
+              error: `PR #${session.pr_number} was already merged on GitHub. This change has landed, so there is nothing to vote on.`,
             });
           }
           if (pr && pr.state === 'closed') {
@@ -1754,7 +1961,7 @@ function voteRoutes(config) {
                 sessionId: session.id, pr: session.pr_number, err: err.message,
               });
               return res.status(409).json({
-                error: `This proposal's pull request (#${session.pr_number}) was closed on GitHub and couldn't be reopened — re-propose it as a fresh proposal.`,
+                error: `This proposal's pull request (#${session.pr_number}) was closed on GitHub and couldn't be reopened. Re-propose it as a fresh proposal.`,
               });
             }
           }
@@ -1884,7 +2091,7 @@ function voteRoutes(config) {
       // centering fix for voting" instead of the opaque "PR #8 for
       // voting" which gives no hint about what's being voted on.
       const promoLabel = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
         `${req.user.username} promoted ${promoLabel} for voting`,
@@ -2303,41 +2510,61 @@ function voteRoutes(config) {
       // import button sends none, which leaves the column at the empty array
       // it defaulted to before.
       const importLinkedIssues = parseImportLinkedIssues(req.body);
+      const importSummary = parseImportSummary(req.body);
       const promote = req.body?.promote === true;
       const initialStatus = promote ? 'promoted' : 'active';
 
       // Browser imports join the shared In-progress board first. Automated
       // submission paths may opt into the historical straight-to-vote flow
       // with `promote: true`.
-      const { rows: inserted } = await pool.query(
-        `INSERT INTO chat_sessions
+      const importClient = await pool.connect();
+      let inserted;
+      try {
+        await importClient.query('BEGIN');
+        ({ rows: inserted } = await importClient.query(
+          `INSERT INTO chat_sessions
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
             source, imported_pr_head_sha, imported_pr_author, imported_pr_head_repo,
             promoted_at, shared_at, created_at,
-            testing_md, testing_path, testing_paths, linked_issues, pr_body)
+            testing_md, testing_path, testing_paths, linked_issues, pr_body,
+            pr_summary_md)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
             'imported', $8, $9, $10,
             CASE WHEN $7::text = 'promoted' THEN NOW() END,
             CASE WHEN $7::text = 'active' THEN NOW() END,
-            NOW(), $11, $12, $13::jsonb, $14, $15)
-         RETURNING id, status`,
-        [
-          app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
-          pr.title || `PR #${prNumber}`, initialStatus,
-          headSha, pr.user?.login || null, headRepoFullName,
-          importTesting.testingMd, importTesting.testingPath,
-          importTesting.testingPaths ? JSON.stringify(importTesting.testingPaths) : null,
-          // Always an array, never null: the column is INTEGER[] NOT NULL
-          // DEFAULT '{}', so an import with no request writes the empty
-          // array the omitted column used to default to — byte-identical to
-          // the row this route wrote before the field existed.
-          importLinkedIssues,
-          // #1333. The imported PR's body, mirrored on the way in. The route
-          // already holds `pr`, so this costs no extra GitHub call and the
-          // proposal reports a description from its very first read.
-          pr.body || null,
-        ]
-      );
+            NOW(), $11, $12, $13::jsonb, $14, $15, $16)
+           RETURNING id, status`,
+          [
+            app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
+            pr.title || `PR #${prNumber}`, initialStatus,
+            headSha, pr.user?.login || null, headRepoFullName,
+            importTesting.testingMd, importTesting.testingPath,
+            importTesting.testingPaths ? JSON.stringify(importTesting.testingPaths) : null,
+            // Always an array, never null: the column is INTEGER[] NOT NULL
+            // DEFAULT '{}', so an import with no request writes the empty
+            // array the omitted column used to default to — byte-identical to
+            // the row this route wrote before the field existed.
+            importLinkedIssues,
+            // #1333. The imported PR's body, mirrored on the way in. The route
+            // already holds `pr`, so this costs no extra GitHub call and the
+            // proposal reports a description from its very first read.
+            pr.body || null,
+            // The user-facing half of the About sheet. Null when the submitter
+            // sent none: the platform does not generate one here, so a proposal
+            // without it renders exactly as it did before this field existed.
+            importSummary,
+          ]
+        ));
+        await selfAssignImportedProposal(
+          importClient, app.id, inserted[0].id, req.user
+        );
+        await importClient.query('COMMIT');
+      } catch (err) {
+        await importClient.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        importClient.release();
+      }
       const sessionId = inserted[0].id;
       const session = {
         id: sessionId, app_id: app.id, app_slug: app.slug, user_id: req.user.id,
@@ -2365,7 +2592,7 @@ function voteRoutes(config) {
 
       if (promote) {
         // Explicit submissions still announce the vote exactly as before.
-        const label = pr.title ? `PR #${prNumber} — ${pr.title}` : `PR #${prNumber}`;
+        const label = pr.title ? `PR #${prNumber}: ${pr.title}` : `PR #${prNumber}`;
         await sendSystemMessage(pool, app.id,
           `${req.user.username} imported ${label} for voting`,
           'vote',
@@ -2580,7 +2807,7 @@ function voteRoutes(config) {
       }
 
       const voteLabel = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
         `${req.user.username} voted ${vote} on ${voteLabel}`,
@@ -2708,7 +2935,13 @@ function voteRoutes(config) {
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status,
                 cs.created_at, cs.promoted_at,
                 cs.merge_conflict_state, cs.behind_main,
-                cs.check_state, cs.check_error_detail, cs.check_phase, cs.check_trigger,
+                cs.check_state, cs.check_error_detail, cs.check_phase, cs.check_trigger, cs.checks_progress,
+                -- #1442: the same freshness cache /promoted reads, so the
+                -- home strip's pill and the proposal card cannot disagree
+                -- about whether a proposal is ready to merge.
+                cs.checks_base_sha, cs.checks_base_verdict, cs.checks_base_behind_by,
+                cs.mergeability, cs.mergeability_files, cs.mergeability_files_complete,
+                cs.freshness_behind_by, cs.freshness_checked_at,
                 cs.requires_explicit_approval,
                 -- #866: so the home strip can derive the same
                 -- building/unavailable preview state the proposal card
@@ -2819,6 +3052,18 @@ function voteRoutes(config) {
             check_state: m.check_state || null,
             test_results: m.test_results || [],
             checks_checked_at: m.checks_checked_at || null,
+            // #1442: the freshness fixtures carry through here too, so the
+            // home strip's pill can be reviewed against the same three
+            // states the proposal card renders.
+            mergeability: m.mergeability || null,
+            mergeability_files: m.mergeability_files || [],
+            mergeability_files_complete: m.mergeability_files_complete == null
+              ? null : m.mergeability_files_complete,
+            checks_base_sha: m.checks_base_sha || null,
+            checks_base_verdict: m.checks_base_verdict || null,
+            checks_base_behind_by: m.checks_base_behind_by == null ? null : m.checks_base_behind_by,
+            freshness_behind_by: m.freshness_behind_by == null ? null : m.freshness_behind_by,
+            freshness_checked_at: m.freshness_checked_at || null,
             // #866: carry the mock preview state through so the imported-PR
             // fixtures read the same on the home strip as on the card.
             source: m.source || null,
@@ -2896,7 +3141,7 @@ function voteRoutes(config) {
       // majority threshold is crossed and only reappears in the "merged"
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            -- #687 (PR-import): provenance so the client can render the
            -- "Imported PR" badge + GitHub-maintained note and hide the
            -- dev-side controls for externally-authored proposals.
@@ -2917,11 +3162,25 @@ function voteRoutes(config) {
            -- per-test detail block. Unlike the console snapshot this GATES
            -- merge (checkAndMerge blocks a non-'passing' proposal).
            cs.check_state, cs.test_results, cs.checks_checked_at,
+           cs.checks_commit_sha,
+           -- #1442: the freshness cache. behind_main above is now written
+           -- THROUGH from freshness_behind_by, so it and these agree; the
+           -- rest are the answers nothing used to re-derive once a proposal
+           -- was promoted — whether it still merges cleanly, and whether the
+           -- base its checks passed against is still on main. All nullable:
+           -- NULL is "not measured", which the card reads as unknown rather
+           -- than as a claim.
+           cs.checks_base_sha, cs.checks_base_verdict, cs.checks_base_behind_by,
+           cs.mergeability, cs.mergeability_files, cs.mergeability_files_complete,
+           cs.freshness_main_sha, cs.freshness_merge_base_sha,
+           cs.freshness_behind_by, cs.freshness_ahead_by,
+           cs.freshness_checked_at, cs.freshness_error,
            -- Which half of a 'pending' run is in flight ('building' |
            -- 'testing'), so the checks card names the stage instead of
            -- showing one opaque "still running". NULL = legacy wording.
            cs.check_phase,
            cs.check_trigger,
+           cs.checks_progress,
            -- Platform-variables pre-merge check (display mirror; the merge
            -- gate re-evaluates live).
            cs.platform_env_state, cs.platform_env_detail,
@@ -3107,6 +3366,16 @@ function voteRoutes(config) {
         row.requires_explicit_approval = !!row.requires_explicit_approval;
         row.qualified_yes_count = gate.qualifiedYes;
         row.qualified_no_count = gate.qualifiedNo;
+      }
+
+      // #1442: the freshness snapshot also rides as a nested camelCase block
+      // for API consumers (the connector's get_proposal shapes from the same
+      // vocabulary). The flat snake_case columns stay exactly where they were
+      // — public/js/app-view.js reads those — so this is additive on both
+      // sides rather than a rename anything has to follow.
+      {
+        const freshnessSvc = require('../services/proposal-freshness');
+        for (const row of rows) row.freshness = freshnessSvc.readFreshness(row);
       }
 
       res.json({
@@ -3302,8 +3571,7 @@ function voteRoutes(config) {
       let total = (totalRows[0]?.total || 0) + (closeTotalRows[0]?.close_total || 0);
 
       // Same priority + assigned-person summary on completed proposals, so
-      // the read-only chips stay visible after a PR merges. PR rows only —
-      // close-issue rows deliberately carry no priority/assignee chips.
+      // the read-only chips stay visible after a PR merges.
       const prPageRows = rows.filter((r) => r.row_type !== 'close_issue');
       const mergedAttrs = await topicAttrs.summarizeForProposals(
         pool, appRows[0].id,
@@ -3311,6 +3579,30 @@ function voteRoutes(config) {
       );
       for (const row of prPageRows) {
         const s = mergedAttrs.get(row.id) || topicAttrs.emptySummary();
+        row.priority = s.priority;
+        row.assignee = s.assignee;
+        row.category = s.category;
+      }
+
+      // Close-issue rows carry the CLOSED ISSUE's own tally, keyed by the
+      // target issue number from the proposal payload. Attribute votes are
+      // never deleted when an issue closes, so a task moved to Done keeps
+      // the priority / assignee / category it accumulated while open — the
+      // chips just have to keep reading them (they used to be dropped here
+      // on purpose, which made moving a task to Done look like it wiped
+      // those fields).
+      const closePageRows = rows.filter((r) => r.row_type === 'close_issue');
+      const closeIssueRef = (r) => {
+        const n = parseInt(r.payload && r.payload.issueNumber, 10);
+        return Number.isInteger(n) && n > 0 ? n : null;
+      };
+      const closeAttrs = await topicAttrs.summarizeForTargets(
+        pool, appRows[0].id, 'issue',
+        closePageRows.map(closeIssueRef).filter((n) => n != null), userId
+      );
+      for (const row of closePageRows) {
+        const ref = closeIssueRef(row);
+        const s = (ref != null && closeAttrs.get(ref)) || topicAttrs.emptySummary();
         row.priority = s.priority;
         row.assignee = s.assignee;
         row.category = s.category;
@@ -3331,14 +3623,33 @@ function voteRoutes(config) {
         const injected = stagingMockMerged().map((m) => ({ ...m, row_type: 'pr' }))
           .concat(stagingMockCompletedCloseIssues())
           .filter((m) => !have.has(key(m)));
+        // #1788: make room for the mocks BEFORE merging them in, rather than
+        // letting them compete with real history for the page.
+        //
+        // The old order was unshift, sort newest-first, then truncate to
+        // `limit`. That trims the mocks like anything else, and these rows are
+        // dated in DAYS — 9100060 is two days old — so they only survived
+        // while fewer than `limit` real completed rows were newer than them.
+        // On a day with 63 merges they fell off page one entirely, and since
+        // the mocks are first-page-only by design they then appeared nowhere.
+        //
+        // That is what made the "A task moved to Done keeps its chips" check
+        // look flaky: it was failing whenever the platform had been busy, so
+        // its recorded flake rate rose with our own merge rate and it began
+        // blocking unrelated proposals.
+        //
+        // Reserving the slots is the fix rather than re-dating the mocks to a
+        // few hours old: that would work today and rot again at a higher merge
+        // rate, and it would fight #1264, which spread these deliberately over
+        // ~150 days so the report's monthly strip has something to draw.
+        if (rows.length + injected.length > limit) {
+          hasMore = true;
+          rows.length = Math.max(0, limit - injected.length);
+        }
         rows.unshift(...injected);
         // Re-sort so the mock close-issue rows interleave among the mock
         // merged PRs by date instead of clumping at the top.
         rows.sort(completedRowCompare);
-        if (rows.length > limit) {
-          hasMore = true;
-          rows.length = limit;
-        }
         // The COUNT(*) above can't see the mock rows (they aren't in the
         // DB), so bump the total by however many we injected to keep the
         // demo badge self-consistent with the rows the board renders.
@@ -3554,7 +3865,7 @@ function voteRoutes(config) {
       if (!(await appAdmins.canForceMerge(pool, appForGate, req.user, { explicitApproval }))) {
         if (explicitApproval && await appAdmins.isAppAdmin(pool, session.app_id, req.user?.id)) {
           return res.status(403).json({
-            error: "This proposal changes the app's admins, so it needs explicit approval — only a platform admin can force-merge it",
+            error: "This proposal changes the app's admins, so it needs explicit approval: only a platform admin can force-merge it",
           });
         }
         return res.status(403).json({ error: 'Full admin access required' });
@@ -3786,7 +4097,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     if (stagingTeardown && stagingTeardown.leaked) {
       dstep({
         phase: 'staging_teardown',
-        message: 'Staging container could not be removed — left for the stale-preview sweeper.',
+        message: 'Staging container could not be removed. It is left for the stale-preview sweeper.',
       });
     } else {
       dstep({ phase: 'staging_teardown', message: 'Staging container torn down.' });
@@ -3863,7 +4174,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
           metadata: { issueNumber: n, prNumber: session.pr_number || null, count: awarded.length },
         });
         const recipient = session.user_id ? `<@${session.user_id}>` : 'the author';
-        const bountyMsg = `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} — PR #${session.pr_number || session.id} merged`;
+        const bountyMsg = `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} for PR #${session.pr_number || session.id}`;
         await sendSystemMessage(pool, session.app_id, bountyMsg, 'system').catch(() => {});
         // Dual-post into the proposal's thread (lifecycle in context).
         await sendSystemMessage(pool, session.app_id, bountyMsg, 'system',
@@ -3982,18 +4293,20 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
 
     // Announce in group chat, and dual-post into the proposal's own
     // thread so its discussion carries the outcome in context.
-    const mergedLabel = session.pr_title
-      ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
-      : `PR #${session.pr_number || session.id}`;
-    const mergedSuffix = force && forceBy
-      ? `force-merged by admin ${forceBy.username} (${yesCount}/${activeCount} vote${yesCount === 1 ? '' : 's'} at the time)`
-      : `merged and deployed! (${yesCount}/${activeCount} votes)`;
-    await sendSystemMessage(pool, session.app_id,
-      `${mergedLabel} ${mergedSuffix}`,
-      'system'
-    );
-    await sendSystemMessage(pool, session.app_id,
-      `${mergedLabel} ${mergedSuffix}`,
+    // The ordinary line leads with the change and thanks the voters; the
+    // "(yes/active votes)" figure stays at the end in the same shape, since
+    // migrate.js's votes_required backfill parses it out of historical
+    // announcements (rows merged since the snapshot columns exist never need
+    // that backfill, so the changed lead-in costs nothing there).
+    const prRef = `PR #${session.pr_number || session.id}`;
+    const mergedLabel = session.pr_title ? `${prRef}: ${session.pr_title}` : prRef;
+    const mergedLine = force && forceBy
+      ? `${mergedLabel} force-merged by admin ${forceBy.username} (${yesCount}/${activeCount} vote${yesCount === 1 ? '' : 's'} at the time)`
+      : session.pr_title
+        ? `${session.pr_title} is live (${prRef}). Thanks to everyone who voted (${yesCount}/${activeCount} votes)`
+        : `${prRef} is live. Thanks to everyone who voted (${yesCount}/${activeCount} votes)`;
+    await sendSystemMessage(pool, session.app_id, mergedLine, 'system');
+    await sendSystemMessage(pool, session.app_id, mergedLine,
       'system', null, { type: 'session', ref: session.id }
     ).catch(() => {});
 
@@ -4176,7 +4489,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
     if (explicitApproval) {
       dstep({
         phase: 'gate:explicit_approval',
-        message: `Proposal changes dapp.json's admins block (${explicitApprovalSource} check) — time-based merge paths are off: no visibility window, no lazy consensus. The app's normal threshold still applies.`,
+        message: `Proposal changes dapp.json's admins block (${explicitApprovalSource} check). Time-based merge paths are off: no visibility window, no lazy consensus. The app's normal threshold still applies.`,
         detail: {
           explicitApproval: true, source: explicitApprovalSource, mode: gate.mode,
           ...(explicitApprovalDetail || {}),
@@ -4189,7 +4502,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         ? `Approval target reached: ${yesCount} qualifying approval${yesCount === 1 ? '' : 's'} (needed at least ${required}${gate.policy === 'invited' ? ' from invited approvers' : ''}).`
         : gate.thresholdMet
           ? `Vote threshold reached: ${yesCount} yes votes (needed ${required}) with the visibility window elapsed.`
-          : `Lazy-consensus window elapsed: ${yesCount} yes vote${yesCount === 1 ? '' : 's'} (threshold ${required}) with no opposition — silence is consent.`,
+          : `Lazy-consensus window elapsed: ${yesCount} yes vote${yesCount === 1 ? '' : 's'} (threshold ${required}) with no opposition, so silence is consent.`,
       detail: { yesCount, required, majority, noCount, activeCount, lazyArmed: gate.lazyArmed, mode: gate.mode, policy: gate.policy },
     });
 
@@ -4206,13 +4519,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
         log.info('votes', 'Threshold + window met but app is locked; awaiting admin yes', {
           sessionId: session.id, yesCount, required,
         });
-        dstep({ phase: 'gate:lock', level: 'warn', message: 'App is locked and has no admin yes vote yet — merge blocked.', detail: { locked: true, adminYes: false } });
-        dend('blocked', 'Blocked — locked app awaiting an admin yes vote.');
+        dstep({ phase: 'gate:lock', level: 'warn', message: 'App is locked and has no admin yes vote yet, so the merge is blocked.', detail: { locked: true, adminYes: false } });
+        dend('blocked', 'Blocked: locked app awaiting an admin yes vote.');
         return { merged: false, yesCount, needed: required, awaitingAdmin: true };
       }
-      dstep({ phase: 'gate:lock', message: 'App is locked — admin yes vote present.', detail: { locked: true, adminYes: true } });
+      dstep({ phase: 'gate:lock', message: 'App is locked, and an admin yes vote is present.', detail: { locked: true, adminYes: true } });
     } else {
-      dstep({ phase: 'gate:lock', message: 'App is not locked — no admin-yes requirement.' });
+      dstep({ phase: 'gate:lock', message: 'App is not locked, so there is no admin-yes requirement.' });
     }
 
     // #8: refuse the merge if the branch is behind origin/main. We don't
@@ -4228,9 +4541,9 @@ async function checkAndMerge(config, pool, session, options = {}) {
     if ((session.behind_main || 0) > 0) {
       const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
       const label = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
-      const behindMsg = `${label} is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main — syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`;
+      const behindMsg = `${label} is ${session.behind_main} commit${session.behind_main === 1 ? '' : 's'} behind main. Syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`;
       await sendSystemMessage(pool, session.app_id, behindMsg, 'system');
       // Dual-post into the proposal's thread (lifecycle in context).
       await sendSystemMessage(pool, session.app_id, behindMsg, 'system',
@@ -4238,8 +4551,8 @@ async function checkAndMerge(config, pool, session, options = {}) {
       log.info('votes', 'Merge blocked: branch behind main', {
         sessionId: session.id, behind: session.behind_main,
       });
-      dstep({ phase: 'gate:behind_main', level: 'warn', message: `Branch is ${session.behind_main} commit(s) behind main — auto-sync queued, merge deferred.`, detail: { behind: session.behind_main } });
-      dend('conflict_resolving', 'Behind main — auto-sync queued; see the conflict-resolution run.');
+      dstep({ phase: 'gate:behind_main', level: 'warn', message: `Branch is ${session.behind_main} commit(s) behind main. Auto-sync queued, merge deferred.`, detail: { behind: session.behind_main } });
+      dend('conflict_resolving', 'Behind main: auto-sync queued; see the conflict-resolution run.');
       // Auto-heal: sync the branch with main (worker git-merge +
       // Claude-on-markers) and retry the merge. The PR keeps its votes
       // because the sync push doesn't go through the vote-resetting
@@ -4326,7 +4639,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         ? checkRows[0].test_results.filter((r) => r && r.status !== 'pass').length
         : 0;
       const label = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       // #237: for the 'error' state, surface the captured reason (usually a
       // staging preview that crashed on boot, e.g. a bad migration/seed) so
@@ -4336,19 +4649,32 @@ async function checkAndMerge(config, pool, session, options = {}) {
         ? `has ${failingCount || 'failing'} test${failingCount === 1 ? '' : 's'} failing`
         : checkState === 'error'
           ? (errorDetail
-            ? `couldn't run its tests — its staging preview failed to start (${errorDetail})`
+            ? `couldn't run its tests, because its staging preview failed to start (${errorDetail})`
             : "couldn't run its tests")
           : 'is still running its tests';
-      const blockMsg = `${label} reached the vote threshold but ${reason} — merge is blocked until checks pass. The proposal's tests re-run automatically when its owner pushes a fix.`;
-      await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
-      await sendSystemMessage(pool, session.app_id, blockMsg, 'system',
-        null, { type: 'session', ref: session.id }).catch(() => {});
+      const blockMsg = `${label} reached the vote threshold but ${reason}. Merge is blocked until checks pass. The proposal's tests re-run automatically when its owner pushes a fix.`;
+      // Said once. This gate runs on every vote and every check re-run, and
+      // it used to post the same sentence each time — eight copies on one
+      // topic thread. If the latest system line in this proposal's thread
+      // already says exactly this, there is nothing new to say.
+      const alreadySaid = await pool.query(
+        `SELECT content FROM chat_messages
+          WHERE app_id = $1 AND msg_type = 'system'
+            AND thread_type = 'session' AND thread_ref = $2
+          ORDER BY id DESC LIMIT 1`,
+        [session.app_id, session.id]
+      ).then((r) => !!(r.rows[0] && r.rows[0].content === blockMsg)).catch(() => false);
+      if (!alreadySaid) {
+        await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
+        await sendSystemMessage(pool, session.app_id, blockMsg, 'system',
+          null, { type: 'session', ref: session.id }).catch(() => {});
+      }
       log.info('votes', 'Merge blocked: checks not passing', {
         sessionId: session.id, checkState, failingCount,
         checksRevisionMismatch,
       });
       dstep({ phase: 'gate:checks', level: 'warn', message: `Merge blocked: checks not passing (state = ${checkState || 'pending'}${failingCount ? `, ${failingCount} failing` : ''}).`, detail: { checkState: checkState || 'pending', failingCount, checksRevisionMismatch } });
-      dend('blocked', 'Blocked — votes reached but checks must pass first.');
+      dend('blocked', 'Blocked: votes reached, but checks must pass first.');
       return {
         merged: false, yesCount, needed: required,
         checksBlocked: true, checkState: checkState || 'pending', failingCount,
@@ -4386,7 +4712,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
       if (envVerdict.state === 'failing') {
         const label = session.pr_title
-          ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+          ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
           : `PR #${session.pr_number || session.id}`;
         const blockMsg = platformEnvCheck.describeBlock(envVerdict.detail, label);
         await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
@@ -4400,7 +4726,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
           message: `Merge blocked: ${envVerdict.detail.missing.length} platform variable(s) declared but not set.`,
           detail: envVerdict.detail,
         });
-        dend('blocked', 'Blocked — a new platform variable has no value set.');
+        dend('blocked', 'Blocked: a new platform variable has no value set.');
         return {
           merged: false, yesCount, needed: required,
           platformEnvBlocked: true,
@@ -4429,7 +4755,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // Force-merge skips the gate block above, so its run opens here.
   await startDebugIfNeeded();
   if (force) {
-    dstep({ phase: 'gate:majority', message: `Force-merge by ${forceBy?.username || 'an admin'} — bypassing the vote/checks gates.`, detail: { yesCount, majority, forced: true } });
+    dstep({ phase: 'gate:majority', message: `Force-merge by ${forceBy?.username || 'an admin'}, bypassing the vote/checks gates.`, detail: { yesCount, majority, forced: true } });
   }
 
   const { rows: claim } = await pool.query(
@@ -4442,7 +4768,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
     log.info('votes', 'Merge already claimed by another request, skipping', {
       sessionId: session.id,
     });
-    dstep({ phase: 'claim', message: 'Merge already claimed by another request — skipping.' });
+    dstep({ phase: 'claim', message: 'Merge already claimed by another request, so skipping.' });
     dend('noop', 'Another request is already merging this proposal.');
     return { merged: false, inProgress: true };
   }
@@ -4567,7 +4893,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
                   message: 'GitHub refused the merge and the live native revision could not be verified.',
                   detail: { revisionBlocked: true, pinnedSha, reason },
                 });
-                dend('deferred', 'Merge deferred — current GitHub revision could not be verified.');
+                dend('deferred', 'Merge deferred: the current GitHub revision could not be verified.');
                 return {
                   merged: false,
                   revisionBlocked: true,
@@ -4599,13 +4925,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
             // is a re-pin and an immediate retry — not a return to review.
             const votesKept = !isImported && !!nativeRefresh?.votesKept;
             const movedLabel = session.pr_title
-              ? `PR #${session.pr_number} — ${session.pr_title}`
+              ? `PR #${session.pr_number}: ${session.pr_title}`
               : `PR #${session.pr_number}`;
             const movedMessage = isImported
-              ? `${movedLabel} wasn't merged — the PR was updated on GitHub since the vote, so GitHub declined to merge the older commit. It'll be re-checked against the new commit and can merge again once it passes.`
+              ? `${movedLabel} wasn't merged, because the PR was updated on GitHub since the vote, so GitHub declined to merge the older commit. It'll be re-checked against the new commit and can merge again once it passes.`
               : votesKept
-                ? `${movedLabel} wasn't merged on this attempt — it had just been synced with main, so the merge is now pinned to commit ${String(nativeRefresh.headSha).slice(0, 8)}. Existing votes were kept and the merge retries automatically.`
-                : `${movedLabel} wasn't merged — its GitHub head changed after review. Earlier-revision votes were cleared and the new commit is being checked; please re-review it.`;
+                ? `${movedLabel} wasn't merged on this attempt: it had just been synced with main, so the merge is now pinned to commit ${String(nativeRefresh.headSha).slice(0, 8)}. Existing votes were kept and the merge retries automatically.`
+                : `${movedLabel} wasn't merged, because its GitHub head changed after review. Earlier-revision votes were cleared and the new commit is being checked; please re-review it.`;
             await sendSystemMessage(pool, session.app_id,
               movedMessage,
               'system', null, { type: 'session', ref: session.id }
@@ -4616,10 +4942,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
                 ? 'GitHub refused the merge: the pinned commit was superseded by the platform\'s own sync. Re-pinned to it with votes intact and re-queued the merge.'
                 : 'GitHub refused the merge: the native PR head moved since review. Released the merge claim and reset the proposal to the new revision.', detail: { headMoved: true, votesKept, pinnedSha, refreshedHeadSha: nativeRefresh?.headSha || null } });
             dend('deferred', isImported
-              ? 'Head moved since the reviewed commit — deferred to the sync poller.'
+              ? 'Head moved since the reviewed commit, so it is deferred to the sync poller.'
               : votesKept
-                ? 'Superseded by the platform\'s own sync commit — re-queued with votes intact.'
-                : 'Head moved since review — returned to review on the new commit.');
+                ? 'Superseded by the platform\'s own sync commit, so it is re-queued with votes intact.'
+                : 'Head moved since review, so it returned to review on the new commit.');
             if (votesKept) {
               // Re-drive the app drain so the merge is re-attempted against the
               // corrected pin instead of waiting for the hourly sweeper. It
@@ -4647,7 +4973,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         dstep({ phase: 'github_merge', message: `GitHub merged PR #${session.pr_number}${mergeCommitSha ? ` as commit ${String(mergeCommitSha).slice(0, 9)}` : ''}.`, detail: { sha: mergeCommitSha } });
       }
     } else {
-      dstep({ phase: 'github_merge', message: 'GitHub not enabled or PR-less — skipping the GitHub merge call.' });
+      dstep({ phase: 'github_merge', message: 'GitHub not enabled or PR-less, so skipping the GitHub merge call.' });
     }
 
     // #687 Slice 4: run the shared post-merge finalizer. Both native and
@@ -4693,7 +5019,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
         }));
 
       const failLabel = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
         `${failLabel} merged on GitHub, but the production deploy failed: ${err.message}. ` +
@@ -4765,10 +5091,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
       if (prState && prState.state === 'closed' && !prState.merged) {
         try {
           await github.reopenPR(prOwner, prRepo, session.pr_number);
-          dstep({ phase: 'reopened_closed_pr', message: `PR #${session.pr_number} was closed on GitHub — reopened it; continuing with the normal conflict handling.` });
+          dstep({ phase: 'reopened_closed_pr', message: `PR #${session.pr_number} was closed on GitHub. Reopened it; continuing with the normal conflict handling.` });
         } catch (reopenErr) {
           const closedLabel = session.pr_title
-            ? `PR #${session.pr_number} — ${session.pr_title}`
+            ? `PR #${session.pr_number}: ${session.pr_title}`
             : `PR #${session.pr_number}`;
           // Drop out of 'promoted' so no vote/sweep re-picks a proposal
           // whose PR can never merge. 'paused' keeps the branch + CC
@@ -4779,7 +5105,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
             [session.id]
           ).catch(() => {});
           await sendSystemMessage(pool, session.app_id,
-            `${closedLabel} is closed on GitHub and couldn't be reopened — it has been taken off the vote panel. Re-propose it from the session's dev-chat.`,
+            `${closedLabel} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Re-propose it from the session's dev-chat.`,
             'system'
           ).catch(() => {});
           try {
@@ -4877,7 +5203,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
       const owner = session.user_id ? `<@${session.user_id}>` : 'the session owner';
       const label = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       // Honest wording: the auto-resolver drain only picks up proposals
       // that are vote-eligible to merge, so "syncing automatically" was a
@@ -4887,7 +5213,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
       // with main", which is the path that always works.
       await sendSystemMessage(pool, session.app_id,
         (force && autoResolve)
-          ? `${label} hit a conflict with main during an admin merge — resolving the conflict automatically and retrying the merge.`
+          ? `${label} hit a conflict with main during an admin merge. Resolving the conflict automatically and retrying the merge.`
           : `${label} hit a conflict with main during a merge attempt. ${owner}: finish the merge by running "Sync with main" from the session's dev-chat. (Auto-resolution retries only when the proposal is eligible to merge on votes.)`,
         'system'
       );
@@ -4930,7 +5256,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
     if (isConflict) {
       dstep({
         phase: 'conflict_detected', level: 'warn',
-        message: 'GitHub rejected the merge as a conflict — '
+        message: 'GitHub rejected the merge as a conflict. '
           + (!autoResolve ? 'auto-resolver not run (resolver re-entry).'
             : force ? 'per-session resolver dispatched directly with the force intent preserved.'
               : 'auto-resolver queued.'),
@@ -5044,7 +5370,7 @@ async function checkAndOpenRevert(config, pool, session, decider) {
         [session.id]
       ).catch(() => {});
       const label = session.pr_title
-        ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+        ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
       await sendSystemMessage(pool, session.app_id,
         `Couldn't auto-revert ${label}: ${backfillReason}. Please open the revert PR manually.`,
@@ -5093,7 +5419,7 @@ async function checkAndOpenRevert(config, pool, session, decider) {
     ).catch(() => {});
     log.error('votes', 'Revert PR creation failed', { sessionId: session.id, err: err.message });
     const label = session.pr_title
-      ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+      ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
       : `PR #${session.pr_number || session.id}`;
     await sendSystemMessage(pool, session.app_id,
       `Couldn't auto-revert ${label}: ${err.message}. ` +
@@ -5131,10 +5457,10 @@ async function checkAndOpenRevert(config, pool, session, decider) {
   // Announce in group chat so the new revert PR shows up in the vote
   // panel with context. Tag the original PR # for breadcrumbs.
   const label = session.pr_title
-    ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+    ? `PR #${session.pr_number || session.id}: ${session.pr_title}`
     : `PR #${session.pr_number || session.id}`;
   await sendSystemMessage(pool, session.app_id,
-    `${decider.username} proposed undoing ${label}. Opened revert PR #${revertInfo.prNumber} — needs ${majority}/${activeCount} votes to land.`,
+    `${decider.username} proposed undoing ${label}. Opened revert PR #${revertInfo.prNumber}, which needs ${majority}/${activeCount} votes to land.`,
     'system'
   );
 
@@ -5203,7 +5529,7 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
     const prBody =
       `Automated revert of ${origLabel}.\n\n` +
       `Undo vote reached majority on the original PR; deciding vote cast by \`${deciderUsername}\`. ` +
-      `This PR still needs a regular merge vote to land — vote in the app's group chat panel.\n\n` +
+      `This PR still needs a regular merge vote to land. Vote in the app's group chat panel.\n\n` +
       `Reverts commit ${mergeSha}.`;
 
     const prData = await github.createPR(repoOwner, repoName, {
@@ -5248,6 +5574,7 @@ module.exports = {
   // The request an imported pull request implements (#1217), likewise.
   parseImportLinkedIssues,
   MAX_IMPORT_LINKED_ISSUES,
+  selfAssignImportedProposal,
   recordVote,
   // (#1115) The applied-close demo rows live here because they belong to the
   // Completed stream, but GET /api/apps/:slug/governance/:id in issues.js has

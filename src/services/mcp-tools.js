@@ -94,35 +94,39 @@ const MAX_ANSWER_CHARS = 8000;          // MAX_CHAT_LEN in services/ws.js.
 
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
-// ── Acting tools: force a human confirmation ───────────────────────────
+// ── Acting tools ───────────────────────────────────────────────────────
 //
-// #1218. Claude Code reads `anthropic/requiresUserInteraction` off a tool's
-// `_meta` and, when it is true, shows that tool's permission prompt on EVERY
-// call — in `acceptEdits`, `auto` and `bypassPermissions` alike — with no
-// "don't ask again" option, and no allow rule can skip it. On Remote Control
-// and mobile it also withholds one-tap approval, so the confirmation comes
-// from somebody reading the prompt rather than from a tap.
+// The five calls that do something rather than read something. The list is
+// kept because the read-only naming contract cannot describe them by
+// inversion: `isHintEligibleTool` derives the reads from their prefixes, and
+// these are the remainder that has to stay out of the setup hint and out of
+// the shipped allow rules.
 //
-// It is DEFENCE IN DEPTH, not a control to lean on: it needs Claude Code
-// ≥ 2.1.199 and earlier versions ignore it and apply the standard permission
-// flow. That version gate is exactly why the allow rules Usernode ships
-// (READ_ONLY_ALLOW_RULES) enumerate the reads instead of allowing the whole
-// server — a blanket rule on an older client would auto-approve the tools
-// below.
-const ACTING_TOOL_META = Object.freeze({ 'anthropic/requiresUserInteraction': true });
-
-// The five that get it, and why each one deserves a person:
-//   submit_work            — opens or advances a proposal; starts a group vote
-//   create_request         — files publicly, on the app's board and GitHub
+// They no longer force a confirmation. #1218 marked them
+// `anthropic/requiresUserInteraction`, which makes Claude Code show that
+// tool's prompt on EVERY call — in `acceptEdits`, `auto` and
+// `bypassPermissions` alike — with no "don't ask again" and no allow rule
+// able to skip it. Claude Code checks the marking BEFORE it looks up allow
+// rules, so it also outranked the connector's own "always allow" in
+// Settings → Connectors: a user who granted it kept being asked anyway, with
+// nothing on either surface explaining why.
+//
+// It was the wrong control for THIS connector. Nothing here writes to an app.
+// Every one of these calls files a request — a proposal, an issue, a build —
+// and the platform merges none of it without a group vote. The vote is the
+// confirmation, and it is a better one than a prompt clicked through mid-loop
+// by the one person already driving the agent. #1218's reasoning holds for a
+// connector whose writes land directly; this connector's do not.
+//
+//   submit_work            — opens or advances a proposal, for the group to vote on
+//   create_request         — files on the app's board and as a GitHub issue
 //   prepare_work           — claims the request on the app's board; mints a
 //                            work order that dangles if it is never used
 //   start_platform_build   — spends the user's daily Usernode credits
 //   submit_platform_build  — puts that build to a group vote
 //
-// Everything else keeps normal behaviour. `answer_questions` is deliberately
-// NOT here: it is a write, but it only feeds text to a build the user already
-// started, and marking it would put an unskippable prompt in the middle of a
-// poll loop for no decision the user has not already made.
+// `answer_questions` is a write and is deliberately NOT here: it only feeds
+// text to a build the user already started.
 const ACTING_TOOLS = Object.freeze([
   'submit_work',
   'create_request',
@@ -501,11 +505,39 @@ function shapeChecks(session) {
     phase: session.check_phase || null,
     trigger: session.check_trigger || null,
     checkedAt: isoOrNull(session.checks_checked_at),
+    // A run in flight, as far as it has got: `{ ran, passed, failed,
+    // expected, done, updatedAt, unit }`, written as the capture container's
+    // frames stream in and cleared with the verdict. `unit` is the repo
+    // unit suite (`npm test`) run alongside: `{ phase, ran, passed, failed,
+    // skipped, expected, done }`. Null outside a run — and null during the
+    // build phase, before the first check has run.
+    progress: (session.checks_progress && typeof session.checks_progress === 'object')
+      ? session.checks_progress : null,
     // The commit this verdict describes, and whether that is still the head.
     // `stale` answers false when either side is unknown: an unprovable
     // mismatch must not read as a proven one.
     ranOnCommit: ranOn,
     stale: !!(ranOn && head && ranOn.toLowerCase() !== head.toLowerCase()),
+    // #1442. `stale` above is BRANCH-scoped: did this proposal's own head
+    // move since the tests ran? These three are BASE-scoped: has main moved
+    // out from under the commit they ran against? Both can be false while a
+    // green verdict is worthless — which is what happened on PR #1431, where
+    // 412 of 412 checks passed against a base eight commits stale and every
+    // staleness signal the platform had said "current".
+    //
+    // Deliberately additive rather than folded into `stale`: an agent reading
+    // "the branch has not moved" is reading something true, and overloading
+    // that field would make it mean two things at once.
+    //
+    //   ranOnBase     the commit on main the run's verdict is about, or null
+    //                 on a row that predates the column.
+    //   baseVerdict   'current' | 'superseded' | 'unknown'. 'unknown' when
+    //                 nothing has measured it, which is not 'current'.
+    //   baseBehindBy  how far main has moved since.
+    ranOnBase: session.checks_base_sha || null,
+    baseVerdict: session.checks_base_verdict || (session.checks_base_sha ? 'unknown' : null),
+    baseBehindBy: typeof session.checks_base_behind_by === 'number'
+      ? session.checks_base_behind_by : null,
     failing: failed
       .slice(0, MAX_LIST_ITEMS)
       .map((t) => untrusted(t.name || t.path || 'unnamed test', MAX_TITLE_CHARS)),
@@ -586,7 +618,7 @@ function shapeBranch(session) {
 // used since #1144. They have very different expected durations, which is the
 // entire reason an agent wants to know which one it is waiting on.
 const PHASE_CAPTION = {
-  building: 'the staging preview is still building (container build + database clone), so no test has run yet',
+  building: 'the staging preview is still building (container build + database clone) or being handed to the checks, so no test has run yet',
   testing: 'the automated tests are running against the preview',
 };
 
@@ -752,6 +784,39 @@ function shapeProposal(session, origin) {
     // that predates the job table, or a staging clone (the job table is
     // staging:private). Null means unknown — never "use main".
     baseSha: session.base_sha || null,
+    // #1442. Whether this proposal, right now, still merges cleanly into
+    // main — and how far behind it has drifted while waiting for votes.
+    // `behindMain` above is the same number as `freshness.behindBy` (the
+    // freshness pass writes through to that column), reported in both places
+    // because the merge gate reads one and the vocabulary here is the other.
+    //
+    // 'unknown' and null are load-bearing values: GitHub answers `mergeable:
+    // null` while it computes a merge, and a proposal nothing has measured
+    // yet must not report itself clean.
+    mergeability: session.mergeability || null,
+    freshness: require('./proposal-freshness').readFreshness(session),
+    // How current each part of this answer is. Everything above is read
+    // from the proposal's row, not from GitHub, and the row is written by
+    // several asynchronous jobs — the mirror copy after a submit, the
+    // pr-import sweep, the freshness pass, the checks run. A field can
+    // therefore lag the world by a sweep interval, and a caller comparing
+    // `headSha` to the branch it just pushed has to know that. `readAt` is
+    // this call; the others are when their own job last wrote.
+    asOf: {
+      readAt: new Date().toISOString(),
+      checks: isoOrNull(session.checks_checked_at),
+      freshness: isoOrNull(session.freshness_checked_at),
+      head: isoOrNull(session.imported_pr_head_at || session.updated_at),
+    },
+    // Writes the platform has in flight for this proposal right now. A
+    // staging build means checks_* and the preview URL are about to change;
+    // a caller that reads `checks.state` while this is true is reading the
+    // previous run.
+    pendingWrite: {
+      buildInFlight: (() => {
+        try { return !!require('./staging').hasInFlightBuild(session.id); } catch { return null; }
+      })(),
+    },
     externalAgent: session.external_agent || null,
     webPath: session.app_slug
       ? `${origin}/#app/${session.app_slug}/dev/sessions/${session.id}`
@@ -1148,6 +1213,90 @@ function registerTools(server, ctx) {
     });
   });
 
+  // ── notify_awaiting_input / notify_input_received (#1405 path B) ─────
+  //
+  // The pair that lets a coding agent say "I have asked the user something and
+  // I am now waiting", so the platform can nudge them if they have wandered
+  // off. The reasoning for the delay, the one-shot bound and the copy lives in
+  // services/connector-input-waits.js; what matters HERE is the permission
+  // shape, because it decides whether the feature is usable at all.
+  //
+  // Both are called at the boundaries of ordinary turns, so a prompt on every
+  // call would make them worse than not having them. They are therefore in the
+  // shipped allow rules as LITERAL entries beside `whoami` — never by widening
+  // the `get_*` / `list_*` globs, whose safety rests entirely on acting tools
+  // never taking those names.
+  //
+  // The justification is the same one `whoami` has: these touch only the
+  // CALLER'S OWN notification feed. They spend nothing, change no app, write
+  // nothing the group can see, and cannot be aimed at another user — `user.id`
+  // comes from the connection, never from input. That is a different category
+  // from the acting tools, every one of which puts something in front of other
+  // people.
+  server.registerTool('notify_awaiting_input', {
+    title: 'Say you are waiting on the user',
+    description: "Tell Usernode you have asked the user something and are waiting for their answer. If they have not replied after a short delay, Usernode notifies them (and pushes to their phone if they have that on) so a question does not sit unseen while they are away from the screen. Call it as the LAST thing in a turn that hands back with a question — the Claude app does not notify them by itself. Then call notify_input_received when they reply: that is what stops the notification, and forgetting it means one stray nudge. Arming twice supersedes rather than stacks, so at most one is ever outstanding, and it fires at most once. It notifies nobody but you, spends nothing and changes nothing about any app.",
+    inputSchema: {
+      question: z.string().optional()
+        .describe('What you asked, in a sentence. Stored so the record says what the user was actually asked; the notification itself leads with when it was asked rather than quoting it.'),
+      slug: z.string().optional()
+        .describe('The app this is about, if any — from list_apps. Omitted is fine; a question about no particular app still notifies.'),
+      delaySeconds: z.number().int().positive().optional()
+        .describe('How long to wait before notifying. Defaults to 10 minutes, which is long enough that somebody at their keyboard answers first. Clamped to between 1 minute and 2 hours.'),
+    },
+    outputSchema: {
+      armed: z.boolean(),
+      notifyAt: z.string(),
+      supersededPrevious: z.boolean(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ question, slug, delaySeconds }) => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    // Delegated whole, including the slug lookup: this module never issues a
+    // query of its own — see the contract at the top of the file.
+    const waits = require('./connector-input-waits');
+    const armed = await waits.arm(pool, {
+      userId: user.id,
+      slug,
+      question,
+      clientId: clientId || null,
+      delayMs: delaySeconds ? delaySeconds * 1000 : null,
+    });
+    if (!armed) return toolError('platform_unavailable', 'Usernode could not arm that reminder. Try again shortly.');
+    return toolResult({
+      armed: true,
+      notifyAt: new Date(armed.notify_at).toISOString(),
+      supersededPrevious: !!armed.superseded,
+      nextStep: 'Hand back to the user now. When they reply, call notify_input_received before you carry on — '
+        + 'that is what cancels the notification. It fires once and only once, so a forgotten clear costs one '
+        + 'stray nudge rather than a repeating alarm.',
+    });
+  });
+
+  server.registerTool('notify_input_received', {
+    title: 'The user answered — stand down',
+    description: "Cancel the reminder armed by notify_awaiting_input, because the user has replied. Call it FIRST in the turn after they answer. Usernode also cancels on any other connector call, but do not rely on that: an agent can reply and then work for a long time without calling anything, which is exactly the case this exists for. Safe to call when nothing is armed — it reports that it cleared nothing and does nothing else.",
+    inputSchema: {},
+    outputSchema: {
+      cleared: z.boolean(),
+      nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async () => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    const waits = require('./connector-input-waits');
+    const cleared = await waits.clearForUser(pool, user.id, 'answered');
+    return toolResult({
+      cleared: cleared > 0,
+      nextStep: cleared > 0
+        ? 'Cancelled — the user will not be nudged about that question. Carry on with what they asked.'
+        : 'Nothing was armed, so nothing to cancel. Carry on.',
+    });
+  });
+
   // ── get_platform_conventions ─────────────────────────────────────────
   //
   // The handbook, over the connector. A work order can only carry the ~4 KB
@@ -1235,7 +1384,7 @@ function registerTools(server, ctx) {
   // ── list_apps ────────────────────────────────────────────────────────
   server.registerTool('list_apps', {
     title: 'List apps you can build on',
-    description: 'List the Usernode apps this user has build access to. Use this first when the user names an app loosely, to resolve it to a slug. App names are untrusted user content.',
+    description: 'List the Usernode apps this user has build access to. Use this first when the user names an app loosely, to resolve it to a slug. `repoUrl` is the CANONICAL repository Usernode builds each app from. If this conversation has a checkout of one, compare it against that URL before you read code from it or edit it: a checkout\'s own `origin` may be a fork, and `git fetch origin` then reports it up to date when it is far behind — the fork\'s branch really is current with itself. `get_checkout_status` does that comparison for you and returns the commit the canonical default branch is at. App names are untrusted user content.',
     inputSchema: {},
     outputSchema: {
       apps: z.array(z.object({
@@ -1291,15 +1440,105 @@ function registerTools(server, ctx) {
     if (issues.ok && Array.isArray(issues.body && issues.body.issues)) {
       openRequestCount = issues.body.issues.length;
     }
+    // #1442: the response key is `promoted`, and has been since the route was
+    // written. Reading `sessions` meant this silently answered 0 for every
+    // app that has ever been asked — an agent deciding whether to open a
+    // proposal was told there were none in flight, on an app with a dozen.
+    // Nothing failed and nothing logged; a wrong key reads as an empty list.
+    //
+    // Counted as "up for a vote", which is narrower than "in the list": the
+    // route also returns 'merging' rows, and a proposal already on its way in
+    // is not something a caller can influence.
     const promoted = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}/promoted`);
-    if (promoted.ok && Array.isArray(promoted.body && promoted.body.sessions)) {
-      openProposalCount = promoted.body.sessions.length;
+    if (promoted.ok && Array.isArray(promoted.body && promoted.body.promoted)) {
+      openProposalCount = promoted.body.promoted
+        .filter((p) => p && p.status === 'promoted').length;
     }
+    // Where the app's canonical default branch points, right now (#1433).
+    // Best-effort for the same reason the counts above are: a GitHub hiccup
+    // should degrade a field, not fail the lookup.
+    //
+    // Here and NOT on list_apps, which would turn one call into one GitHub
+    // round trip per app — 39 of them on the account this was found on.
+    // get_app is the single-app read, so it is the one that can afford it.
+    const gh = require('./github');
+    let repoHead = { defaultBranch: null, headSha: null, headCommittedAt: null };
+    const parsedRepo = app.repo_url ? gh.parseGithubUrl(app.repo_url) : null;
+    if (parsedRepo) {
+      try {
+        repoHead = await gh.getRepoHead(parsedRepo.owner, parsedRepo.repo);
+      } catch { /* leave the nulls — see above */ }
+    }
+
     return readResult('get_app', {
       ...shapeApp({ ...app, slug: app.slug || slug }, origin),
       openRequestCount,
       openProposalCount,
+      defaultBranch: repoHead.defaultBranch,
+      headSha: repoHead.headSha,
+      headCommittedAt: repoHead.headCommittedAt,
     });
+  });
+
+  // ── get_checkout_status (#1433) ──────────────────────────────────────
+  //
+  // Named `get_` deliberately, and that is load-bearing rather than
+  // cosmetic. The naming contract in mcp-connect-constants.js makes the
+  // prefix MEAN read-only, so this tool is covered by the
+  // `mcp__usernode__get_*` rule already sitting in every scaffolded repo and
+  // every settings file anyone has copied. A tool whose whole purpose is to
+  // be called routinely, before work starts, must not be the one that
+  // prompts every time — that is how it stops being called.
+  //
+  // The reasoning for what it compares, and why the answer carries the base
+  // commit rather than an instruction to merge, is in
+  // services/checkout-status.js.
+  server.registerTool('get_checkout_status', {
+    title: 'Check a local checkout against the app\'s repository',
+    description: 'Compare a local checkout of an app\'s repository against the canonical one Usernode builds from, and report how far apart they are. Call this BEFORE reading a checkout to answer questions about the app, and before the first edit of any change — including when the session was started on a ready-made branch, which is when it matters most. Pass `headSha` (the output of `git rev-parse HEAD`) and, when you can, `remoteUrl` (the output of `git remote get-url origin`). A checkout cannot answer this by itself: `git fetch origin` compares it against ITS OWN remote, so a fork whose main is far behind reports 0 commits behind and reads as current. The answer names the canonical repository, where its default branch points now, how many commits the checkout is behind or ahead, and `baseToUse` — the commit the canonical default branch is actually at. `verdict` is one of `current`, `behind`, `ahead`, `diverged`, `unknown_commit` (the commit is not in the canonical repository at all), `repo_unreachable` (GitHub could not be read, so the check says nothing). Anything other than `current` means code read from that checkout may describe a version that no longer exists — say so rather than reporting findings from it as current. For work that will be SUBMITTED, take the base commit from prepare_work rather than merging a default branch yourself: which commit a change is diffed against decides what the group votes on.',
+    inputSchema: {
+      slug: z.string().describe('The app slug, as returned by list_apps.'),
+      headSha: z.string()
+        .describe('The checkout\'s current commit — the output of `git rev-parse HEAD`. An abbreviated sha is accepted.'),
+      remoteUrl: z.string().optional()
+        .describe('The checkout\'s origin remote — the output of `git remote get-url origin`. Optional, but it is what identifies a fork: without it the answer cannot say whether origin is the canonical repository.'),
+    },
+    outputSchema: {
+      canonicalRepo: z.string(),
+      defaultBranch: z.string().nullable(),
+      canonicalHead: z.string().nullable(),
+      canonicalHeadCommittedAt: z.string().nullable(),
+      remoteIsCanonical: z.boolean().nullable(),
+      headSha: z.string(),
+      containsCommit: z.boolean().nullable(),
+      behindBy: z.number().nullable(),
+      aheadBy: z.number().nullable(),
+      mergeBaseSha: z.string().nullable(),
+      verdict: z.string(),
+      baseToUse: z.string().nullable(),
+      note: z.string(),
+    },
+    annotations: readAnnotations,
+  }, async ({ slug, headSha, remoteUrl }) => {
+    const guard = scopeGuard(READ_SCOPE);
+    if (guard) return guard;
+    if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
+
+    // The app is read through the caller's own token on the platform's
+    // ordinary route, exactly as get_app does — so this tool can only ever
+    // look at an app the caller can already see.
+    const appResult = await callPlatform(baseUrl, accessToken, 'GET', `/api/apps/${slug}`);
+    if (!appResult.ok) return platformError(appResult);
+    const app = (appResult.body && (appResult.body.app || appResult.body)) || {};
+
+    const { checkoutStatus } = require('./checkout-status');
+    const result = await checkoutStatus({ gh: require('./github') }, {
+      repoUrl: app.repo_url || null,
+      headSha,
+      remoteUrl: remoteUrl || null,
+    });
+    if (result.code) return toolError(result.code, result.message);
+    return readResult('get_checkout_status', result);
   });
 
   // ── list_requests ────────────────────────────────────────────────────
@@ -1498,7 +1737,6 @@ function registerTools(server, ctx) {
       webPath: z.string(),
     },
     annotations: writeAnnotations,
-    _meta: ACTING_TOOL_META,
   }, async ({ slug, title, description }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -1558,12 +1796,11 @@ function registerTools(server, ctx) {
   // the two things a connector caller actually does — start on something, and
   // say how it is going — rather than around the two HTTP verbs.
   //
-  // Neither carries ACTING_TOOL_META. The five tools that do either spend an
-  // allowance, file publicly on GitHub, or start a group vote; a claim is
-  // platform-local, names only the caller, expires by itself and is cleared by
-  // one call. Putting an unskippable prompt on it would mean an agent that
-  // announces its work costs the user a click every time, which is how a
-  // coordination signal stops being sent.
+  // Neither is in ACTING_TOOLS: a claim is platform-local, names only the
+  // caller, expires by itself and is cleared by one call, so it is not one of
+  // the five that file something for the group to act on. Nothing on this
+  // connector forces a prompt any more — see the ACTING_TOOLS note above —
+  // but the split still decides the setup hint and the shipped allow rules.
   //
   // `note` is the "note progress" half, and it is a normal chat message on the
   // request's thread — the same channel answer_questions posts to and the same
@@ -1779,7 +2016,9 @@ function registerTools(server, ctx) {
         // unrecognised value arrives as null rather than as itself.
         phase: z.enum(['building', 'testing']).nullable()
           .describe("Which half of a pending run is in flight. 'building' means the staging preview is still being "
-            + "built, so no test has run yet and a `total` of 0 is expected; 'testing' means the suite is running "
+            + "built — or, once `progress.build.step` reads 'prepare_checks', is up and being handed to the checks, "
+            + "which can mean waiting behind an earlier run on the same proposal (`progress.build.queued`) — so no "
+            + "test has run yet and a `total` of 0 is expected; 'testing' means the suite is running "
             + 'against the preview. Null on a row that predates the column. Neither is a reason to push again.'),
         trigger: z.string().nullable()
           .describe('What started this run — e.g. commit-push, proposal-open, manual-recheck, boot-reconcile, '
@@ -1791,7 +2030,18 @@ function registerTools(server, ctx) {
           .describe('The commit this verdict describes.'),
         stale: z.boolean()
           .describe('True when ranOnCommit is no longer the head, so even a passing verdict describes superseded '
-            + 'code. False when either side is unknown — an unprovable mismatch is not a proven one.'),
+            + 'code. False when either side is unknown — an unprovable mismatch is not a proven one. This is '
+            + 'BRANCH staleness only; read baseVerdict for the other axis.'),
+        ranOnBase: z.string().nullable()
+          .describe('The commit on the app\'s default branch that this run\'s verdict is a statement ABOUT. Null on '
+            + 'a row that predates the column.'),
+        baseVerdict: z.enum(['current', 'superseded', 'unknown']).nullable()
+          .describe("'superseded' means the default branch has moved past ranOnBase, so a passing verdict was "
+            + 'earned against code this proposal would no longer merge into. It does NOT mean the checks were '
+            + 'wrong, and it does not block the merge — but it is the reason a proposal can read 412 of 412 '
+            + "passing and still conflict. 'unknown' means nothing has measured it, which is not 'current'."),
+        baseBehindBy: z.number().nullable()
+          .describe('How many commits the default branch has moved since ranOnBase. Null when unmeasured.'),
         failing: z.array(z.string())
           .describe('Names of the tests that are not passing, capped at 50. While state is pending these are left '
             + 'over from the PREVIOUS run and may already be fixed.'),
@@ -1829,7 +2079,41 @@ function registerTools(server, ctx) {
       yesVotes: z.number().nullable(),
       noVotes: z.number().nullable(),
       votesRequired: z.number().nullable(),
-      behindMain: z.number().nullable(),
+      behindMain: z.number().nullable()
+        .describe('Commits the default branch has that this proposal does not, re-measured while the proposal '
+          + 'waits for votes rather than frozen at submission. 0 is a measurement; null means unmeasured.'),
+      mergeability: z.enum(['clean', 'conflict', 'unknown']).nullable()
+        .describe("Whether this proposal still merges into the default branch WITHOUT a human resolving anything. "
+          + "'conflict' is a prediction from GitHub, made before any merge is attempted, so it is the earliest "
+          + 'warning available and the one thing worth acting on before the vote finishes: sync with main and '
+          + "resubmit. 'unknown' is a real answer — GitHub computes mergeability lazily and reports nothing "
+          + 'while it does — and must never be read as clean.'),
+      freshness: z.object({
+        checkedAt: z.string().nullable()
+          .describe('When these numbers were last measured. Everything else in this block is null or stale '
+            + 'relative to this timestamp, not to now.'),
+        mainSha: z.string().nullable(),
+        mergeBaseSha: z.string().nullable()
+          .describe('The common ancestor of the default branch and this proposal\'s head — the commit a diff of '
+            + 'this proposal is actually against.'),
+        behindBy: z.number().nullable(),
+        aheadBy: z.number().nullable(),
+        mergeability: z.enum(['clean', 'conflict', 'unknown']).nullable(),
+        mergeabilityFiles: z.array(z.string())
+          .describe('Paths that could conflict: files BOTH sides changed since the merge base. GitHub exposes no '
+            + 'conflicting-file list, so this is an upper bound — two edits to opposite ends of one file appear '
+            + 'here and would merge fine. Start looking here, do not treat it as the conflict itself.'),
+        mergeabilityFilesComplete: z.boolean().nullable()
+          .describe('False when a compare hit GitHub\'s 300-file cap, so the list above is a sample.'),
+        checksRanOnBase: z.string().nullable(),
+        checksBaseVerdict: z.enum(['current', 'superseded', 'unknown']).nullable(),
+        checksBaseBehindBy: z.number().nullable(),
+        error: z.string().nullable()
+          .describe('Why the last measurement could not answer. When set, the numbers beside it are the previous '
+            + 'successful reading, not a fresh one.'),
+      }).describe('How this proposal stands against the default branch RIGHT NOW. These three numbers used to be '
+        + 'frozen at submission, so a proposal eight commits behind and conflicting in seven files reported itself '
+        + 'ready to merge with every check green. Read them before concluding a proposal is ready.'),
       baseSha: z.string().nullable()
         .describe('The upstream commit this proposal\'s branch started from. Compare all forty characters against '
           + 'your checkout\'s HEAD before writing code: a wrong base is otherwise caught only at submit_work, after '
@@ -2001,6 +2285,44 @@ function registerTools(server, ctx) {
       + 'If they want the second proposal anyway, carry on below. ';
   };
 
+  // The stale-checkout warning, and it leads even the duplicate one (#1462).
+  //
+  // A duplicate proposal wastes an agent's hour. A stale checkout invalidates
+  // everything the agent has ALREADY concluded — it may have answered a
+  // question about the app from a version that no longer exists before it ever
+  // reached this call. So it goes first, and it is worded as something to say
+  // to the user rather than only something to fix.
+  //
+  // Silence on `current` and on `null`, which are not the same thing and must
+  // not read as the same thing: `null` means no headSha was passed, so nothing
+  // was checked. Only `verdict` values that describe a real divergence speak
+  // up. `ahead` is deliberately NOT one of them — a checkout ahead of the
+  // default branch is the ordinary state of a branch with commits on it.
+  //
+  // `repo_unreachable` DOES speak: a check that could not run is not a pass,
+  // and letting it read as one is the whole failure this is here to prevent.
+  const staleCheckoutWarning = (checkout) => {
+    if (!checkout) return '';
+    const { verdict } = checkout;
+    if (verdict === 'current' || verdict === 'ahead') return '';
+    const where = checkout.remoteIsCanonical === false
+      ? 'Its origin is NOT the app\'s own repository, so it is a fork'
+      : 'It is not at the app\'s current default branch';
+    const distance = Number.isInteger(checkout.behindBy) && checkout.behindBy > 0
+      ? ` — ${checkout.behindBy} commit${checkout.behindBy === 1 ? '' : 's'} behind`
+      : '';
+    if (verdict === 'repo_unreachable') {
+      return 'THE CHECKOUT COULD NOT BE VERIFIED: the app\'s repository could not be read, so '
+        + 'nothing here says the working copy is current. Treat it as unverified rather than as '
+        + 'checked and fine. ';
+    }
+    return `THIS CHECKOUT IS NOT THE APP'S CURRENT CODE (${verdict}). ${where}${distance}. `
+      + 'Anything already read from it may describe a version that no longer exists — if you have '
+      + 'answered a question about this app from it, say so to the user rather than letting the '
+      + 'answer stand. The work order below carries the RIGHT base commit, so start from that '
+      + 'rather than merging a default branch yourself. ';
+  };
+
   // ── prepare_work ─────────────────────────────────────────────────────
   //
   // The hand-off. Returns a self-contained work order — no Usernode
@@ -2018,6 +2340,10 @@ function registerTools(server, ctx) {
         .describe("The id of one of the user's own proposals that is already up for a vote, to REVISE it rather than open a new one — for fixing a failing check or acting on review comments. The work order starts at that proposal's current commit and its submission updates the same proposal, which clears the votes it has collected. Only the proposal's author can do this."),
       restart: z.boolean().optional()
         .describe('Only when the user explicitly wants to start this request over from the app\'s current code. Closes the job already open for it and mints a fresh one, which frees the old work-order slot and takes a new one. Omit it: calling prepare_work twice for the same request already returns the existing job, which is almost always what is wanted.'),
+      headSha: z.string().optional()
+        .describe('Your checkout\'s current commit — the output of `git rev-parse HEAD`. Pass it whenever this conversation has a checkout and the result reports `checkout`: whether what you are holding is the app\'s code at all, and how far it has drifted. Costs nothing when it is fine and catches a stale fork before you write against it rather than at submit_work.'),
+      remoteUrl: z.string().optional()
+        .describe('Your checkout\'s origin remote — the output of `git remote get-url origin`. Only meaningful alongside headSha, and it is what identifies a FORK: without it the check can say the commit is behind but not that origin is a different repository from the app\'s own.'),
     },
     outputSchema: {
       taskId: z.number(),
@@ -2046,6 +2372,18 @@ function registerTools(server, ctx) {
       // where that proposal's head lives.
       proposalId: z.number().nullable(),
       branchHome: z.enum(['app_repo', 'user_fork']).nullable(),
+      // Only when the caller passed headSha. Null otherwise — which means
+      // "not asked", never "fine": a caller that supplies nothing gets the
+      // same silence a stale checkout used to get.
+      checkout: z.object({
+        verdict: z.string(),
+        behindBy: z.number().nullable(),
+        aheadBy: z.number().nullable(),
+        remoteIsCanonical: z.boolean().nullable(),
+        canonicalRepo: z.string().nullable(),
+        baseToUse: z.string().nullable(),
+        note: z.string(),
+      }).nullable(),
       claimedRequest: z.boolean()
         .describe('Whether the request was marked as being worked on. False when this work order names no request, or when the claim did not land — the work order itself is unaffected either way, and claim_request retries it.'),
       // Proposals the group is ALREADY voting on for this same request
@@ -2068,8 +2406,7 @@ function registerTools(server, ctx) {
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-    _meta: ACTING_TOOL_META,
-  }, async ({ slug, requestNumber, brief, restart, proposalId }) => {
+  }, async ({ slug, requestNumber, brief, restart, proposalId, headSha, remoteUrl }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
     if (!requireSlug(slug)) return toolError('invalid_request', 'slug must be a valid app slug.');
@@ -2169,6 +2506,51 @@ function registerTools(server, ctx) {
       }
     }
 
+    // THE CHECKOUT CHECK, MOVED FORWARD (#1462).
+    //
+    // A wrong base used to surface at submit_work, as `base_mismatch` out of
+    // mirrorForkBranch — after the change was written, when the remedy has
+    // become a rebase across everything that moved underneath it. Everything
+    // needed to say it here is already in hand: this call knows the canonical
+    // repository and the base commit, and the caller knows its own HEAD.
+    //
+    // Opt-in on `headSha`, because the connector cannot detect a checkout it
+    // was never told about — an agent that passes nothing gets exactly the
+    // silence it got before, which is why the instructions now name
+    // get_checkout_status rather than relying on this.
+    //
+    // Advisory, never a refusal: the work order carries the RIGHT base, so a
+    // stale checkout is a thing to say loudly, not a reason to withhold the
+    // one artifact that fixes it. A failure inside the check is swallowed for
+    // the same reason the claim above is — the work order is what was asked
+    // for and it has already been minted.
+    let checkout = null;
+    if (typeof headSha === 'string' && headSha.trim()) {
+      try {
+        const { checkoutStatus } = require('./checkout-status');
+        const status = await checkoutStatus({ gh: require('./github') }, {
+          repoUrl: app.repo_url || null,
+          headSha,
+          remoteUrl: remoteUrl || null,
+        });
+        if (!status.code) {
+          checkout = {
+            verdict: status.verdict,
+            behindBy: status.behindBy ?? null,
+            aheadBy: status.aheadBy ?? null,
+            remoteIsCanonical: status.remoteIsCanonical ?? null,
+            canonicalRepo: status.canonicalRepo || null,
+            baseToUse: status.baseToUse || null,
+            note: status.note || '',
+          };
+        }
+      } catch (err) {
+        log.warn('mcp-tools', 'prepare_work checkout check failed (continuing)', {
+          slug, message: err && err.message,
+        });
+      }
+    }
+
     // The fork wording, the one-click link and the "do not open a PR" note
     // all live in `guidance` now, built by the service — nextStep is only
     // the rendering contract plus what to call next. Re-rendering is free:
@@ -2188,6 +2570,7 @@ function registerTools(server, ctx) {
       workOrder: result.workOrder,
       proposalId: result.proposalId || null,
       branchHome: result.branchHome || null,
+      checkout,
       claimedRequest,
       // The title is the proposal's own heading and the author is a username:
       // both are other Usernode users' writing, so both keep the envelope
@@ -2198,7 +2581,8 @@ function registerTools(server, ctx) {
           title: untrusted(p.title, MAX_TITLE_CHARS),
           author: p.author ? untrusted(p.author, MAX_TITLE_CHARS) : null,
         })),
-      nextStep: duplicateWarning(result)
+      nextStep: staleCheckoutWarning(checkout)
+        + duplicateWarning(result)
         + (result.proposalId
         ? `This work order REVISES proposal ${result.proposalId}, and it starts at that proposal's own current `
           + 'commit rather than at the app\'s main branch. Its coding agent submits it with submit_work using '
@@ -2230,7 +2614,7 @@ function registerTools(server, ctx) {
   // ── submit_work ──────────────────────────────────────────────────────
   server.registerTool('submit_work', {
     title: 'Submit finished work — a pushed branch, a patch, or an open PR',
-    description: "Turn finished work into a Usernode proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus the `branch` you actually pushed, whatever it is called; (2) `taskId` plus `patch`, when GitHub or the sandbox refused the push: Usernode applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed on your side; (3) `slug` plus `prNumber` for a pull request that is already open; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote — for fixing a failing check or acting on review comments — which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. Shape (4) needs no `slug`: naming the proposal names the app. When shape (4)'s target is a dev SESSION (a work-order continuation that is not yet up for a vote), it also takes `propose: true`: once the update lands, Usernode promotes the session — the same act as the owner's Propose-to-group button, reopening a paused session first — so pass it only when the user has asked for the change to go to the vote; landing quietly stays the default. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
+    description: "Turn finished work into a Usernode proposal: opens the pull request, builds a staging preview, runs the app's checks and puts it to the group's vote. FOUR SHAPES, each complete as written — (1) `taskId` plus the `branch` you actually pushed, whatever it is called; (2) `taskId` plus `patch`, when GitHub or the sandbox refused the push: Usernode applies the patch at the recorded base commit in the app's own repository and opens the pull request itself, so NO GitHub write access is needed on your side; (3) `slug` plus `prNumber` for a pull request that is already open; (4) `proposalId` plus `branch` to UPDATE a proposal of the user's that is already up for a vote — for fixing a failing check or acting on review comments — which advances that same proposal onto your new commit instead of opening a second one, and clears the votes it has collected. Shape (4) needs no `slug`: naming the proposal names the app. When shape (4)'s target is a dev SESSION (a work-order continuation that is not yet up for a vote), it also takes `propose: true`: once the update lands, Usernode promotes the session — the same act as the owner's Propose-to-group button, reopening a paused session first — so pass it only when the user has asked for the change to go to the vote; landing quietly stays the default. TWO DESTINATIONS: by default work goes up for a VOTE; `share: true` on shape (1) lands it in the app's IN-PROGRESS area instead \u2014 a shared session with a preview, no PR, no vote; the charter has the rule. A task belongs to the USER'S USERNODE ACCOUNT, not to one chat — any session connected as that account, including a coding agent's own connector, can submit it, and doing so is the expected path. Only work from the user's own GitHub account is submitted under their name.",
     inputSchema: {
       taskId: z.number().int().positive().optional()
         .describe('The task id from prepare_work — or printed in the work order text you were handed, which is the usual source when you are the coding agent. It belongs to the user’s Usernode account, not to the chat that gave it to you, so you can submit it yourself.'),
@@ -2248,7 +2632,9 @@ function registerTools(server, ctx) {
       source: z.enum(['work_order', 'assistant']).optional()
         .describe('Set to "work_order" when you are the coding agent submitting your own finished work, "assistant" when a human relayed it to you. Advisory only.'),
       title: z.string().optional().describe('A short title for the proposal. Defaults to the task description. On a SESSION update (shape 4 targeting a work-order continuation) it is stored and names the pull request created when the session is proposed — with or without propose: true — instead of the "<user>\'s changes" placeholder. On a target that already has a PR it RENAMES it (panel and GitHub; votes untouched) — a same-commit resubmit with just a title is the fix for a wrong auto-generated name, and it works on a fork-tracked proposal too. The answer reports `titleUpdated`, and `titleRejected` when the rename was refused: `imported_pr` means the pull request was opened by a different GitHub account and keeps its own author\'s title.'),
-      description: z.string().optional().describe('What changed and why, for the people voting on it.'),
+      description: z.string().optional().describe('What changed and why, for the people voting on it. This is the TECHNICAL half — it is filed as the pull request body and shown in the proposal\u2019s collapsed "Technical details" section, so implementation detail belongs here rather than in `summary`.'),
+      summary: z.string().optional()
+        .describe('The USER-FACING half, and the first thing a voter reads: 1-3 short sentences, in plain everyday English, saying what changes for somebody USING the app. No file names, no identifiers, no code, no developer jargon — those belong in `description`. Not every voter is a developer, and a proposal that arrives without this shows them nothing but the technical description. Write what they would notice: what is different on screen, what they can now do, or what stops going wrong. Kept short (about 600 characters) — it is a summary, not a second description.'),
       testingPaths: z.array(z.string()).optional()
         .describe('The in-app routes this change is visible on, most important first — e.g. ["/board?demo=1", "/settings"]. Usernode shoots a before/after screenshot pair of each one for the people voting. Point them at the SCREEN YOU CHANGED, never the home page; a route may carry " @mobile" to be shot in a phone-sized viewport. Up to 3 are used. Omit only if the change has no visible screen — otherwise the voters see screenshots of the app\'s home page, which show nothing of your change. On an UPDATE these replace the proposal\'s stored routes and the screenshots are re-shot on them; omit them there to keep the ones it already has. The answer reports back `testingPaths` — what will actually be shot — and `testingPathsRejected` for anything it could not use, so check them rather than waiting for get_proposal\'s `captureDefaultedToRoot`.'),
       testingSteps: z.string().optional()
@@ -2257,6 +2643,8 @@ function registerTools(server, ctx) {
         .describe('Only for an update: the proposal’s current commit as you last read it, from get_proposal’s `branch.headSha`. Pass it and Usernode refuses with `branch_moved` if somebody advanced the proposal while you were working, instead of building on a head you have not seen. Optional — omitted, your branch still has to sit on top of whatever the current head is.'),
       recheck: z.boolean().optional()
         .describe('Only with proposalId, on the commit already there: re-run the automated checks and re-shoot the screenshots — the same act as the panel\'s "Re-run checks" button. No code moves and NO votes are cleared. Use it when the verdict is stale for a reason outside this proposal (a platform-side fix, a preview that had died) instead of pushing a commit to provoke a run.'),
+      share: z.boolean().optional()
+        .describe('Land this work in the app\u2019s IN-PROGRESS area instead of putting it up for a vote (#1347). Usernode creates a shared dev session on the branch you pushed, builds it a staging preview and shows it on the Dev board beside everyone else\u2019s work underway \u2014 no pull request, no checks gate, no votes cast. Use it while the work is still moving and worth others seeing: a long change, a second opinion, or "here is where I got to". The work order stays OPEN, so keep committing; passing `share: true` again pushes the new commits onto the SAME card rather than making a second one. When it is ready for the group, call submit_work again with proposalId set to the sessionId this returned, the branch, and propose: true. Requires taskId + branch: a patch or an open pull request is a submission for review by construction, and both are refused here. Bounded by the same per-user active-session cap the browser\u2019s own "start a session" button obeys, because the preview behind the card is a real container.'),
       propose: z.boolean().optional()
         .describe('Only with proposalId, when its target is a dev SESSION (a work-order continuation that is not yet up for a vote): after the update lands, promote the session to a group vote — the same act as the owner\'s "Propose to group" button, reopening the session first when it is paused. Pass it only when the user asked for this change to go to the vote; landing quietly stays the default, because the session is their workspace and they may want more turns on it. Ignored on a proposal that is already up for a vote.'),
       agent: z.enum(['claude-code', 'codex', 'external']).optional()
@@ -2298,13 +2686,18 @@ function registerTools(server, ctx) {
       // or the target was already a proposal (nothing to promote).
       proposed: z.boolean().nullable(),
       proposeError: z.string().nullable(),
+      // #1347. Set when the work went to the IN-PROGRESS area instead of to a
+      // vote: `shared` says which destination it took, and `sessionId` is the
+      // card's id — the same number a later submit_work passes as proposalId
+      // to promote it. `null` on every ordinary submission.
+      shared: z.boolean().nullable(),
+      sessionId: z.number().nullable(),
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-    _meta: ACTING_TOOL_META,
   }, async ({
-    taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, agent,
-    testingPaths, testingSteps, expectedHeadSha, propose, recheck,
+    taskId, slug, prNumber, proposalId, branch, forkRepo, patch, source, title, description, summary, agent,
+    testingPaths, testingSteps, expectedHeadSha, propose, recheck, share,
   }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -2375,6 +2768,11 @@ function registerTools(server, ctx) {
         promote: true,
         ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
         ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
+        // The About sheet's user-facing half, carried on the same POST as the
+        // testing notes. Omitted when the agent sent none, so the route writes
+        // null and the proposal reads exactly as it did before — the platform
+        // does not invent one on this path.
+        ...(typeof summary === 'string' && summary.trim() ? { summary: summary.trim() } : {}),
         ...(extra.linkedIssues && extra.linkedIssues.length
           ? { linkedIssues: extra.linkedIssues }
           : {}),
@@ -2387,6 +2785,14 @@ function registerTools(server, ctx) {
     // route — not this module — applies every gate.
     const updateProposal = (targetSlug, id, payload) => callPlatform(
       baseUrl, accessToken, 'POST', `/api/apps/${targetSlug}/proposals/${id}/update-from-fork`, payload
+    );
+
+    // #1347's loopback, on the same arrangement as the two above: the POST
+    // carries this caller's own connector token, so the route applies the
+    // access gate, the active-session cap and the fork-attribution check
+    // exactly as it would for the browser.
+    const shareWork = (targetSlug, payload) => callPlatform(
+      baseUrl, accessToken, 'POST', `/api/apps/${targetSlug}/work/share-in-progress`, payload
     );
 
     const result = await externalAgentTasks.submitWork(taskDeps(), {
@@ -2412,8 +2818,10 @@ function registerTools(server, ctx) {
       // submission named — or, when it named none, '/' — and the group voted
       // on home-page screenshots of a change to somewhere else entirely.
       testing,
+      share: share === true,
       importProposal,
       updateProposal,
+      shareWork,
     });
     if (!result.ok) {
       // A platform refusal is reported in the platform's own words — the
@@ -2474,6 +2882,25 @@ function registerTools(server, ctx) {
         }
         if (attempt.ok) {
           proposed = true;
+          // The work order this session was carrying, if any, is finished
+          // now. `share: true` deliberately leaves it OPEN so the agent can
+          // keep committing onto the in-progress card, and the promote that
+          // ends that arrangement carries no taskId — it is documented as
+          // proposalId + branch + propose — so nothing downstream of the
+          // share ever closed the row. Each one then held a slot of the
+          // caller's open-work-order cap until it expired 14 days later.
+          //
+          // Done here rather than inside submitWork because the promote is a
+          // separate loopback that runs after it has already returned, and
+          // this is the first moment the work is genuinely in front of the
+          // group. Advisory: it never throws, and a promote that landed is
+          // never failed over its own bookkeeping.
+          await externalAgentTasks.closeTaskForSession(pool, user.id, proposalId, {
+            branch,
+            submittedVia: result.submittedVia,
+            source,
+            clientId: clientId || null,
+          });
           // Promote may have lazily created the PR (a session has none until
           // this moment) — fold it in so the answer names what the group is
           // now voting on.
@@ -2541,6 +2968,11 @@ function registerTools(server, ctx) {
         captureRerun: result.captureRerun === true,
         proposed,
         proposeError,
+        // #1347: this submission went to the vote, not to the in-progress
+        // area — stated rather than omitted, because the field is on every
+        // answer and a missing key reads as an unknown destination.
+        shared: null,
+        sessionId: null,
         webPath: result.proposalId
           ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
           : `${origin}/#app/${result.appSlug}`,
@@ -2557,6 +2989,43 @@ function registerTools(server, ctx) {
     // Telling Usernode twice is not an error. The second caller gets the
     // proposal that already exists rather than being sent back to
     // prepare_work, which would open a duplicate for work already voting.
+    // #1347. The work went to the IN-PROGRESS area, so every sentence about
+    // votes, checks and merging is wrong for it — a card there is not gated on
+    // anything and nobody is being asked to approve it yet. What the caller
+    // needs instead is the sessionId, because that is the number a later
+    // submit_work passes as proposalId to promote it.
+    if (result.shared) {
+      return toolResult({
+        proposalId: result.sessionId,
+        sessionId: result.sessionId,
+        shared: true,
+        appSlug: result.appSlug,
+        prNumber: null,
+        prUrl: null,
+        externalAgent: result.externalAgent,
+        headSha: result.headSha || null,
+        votesCleared: null,
+        submittedVia: null,
+        testingPaths: require('./testing-notes').displayPaths(testing.testingPaths),
+        testingPathsRejected: result.testingPathsRejected || testing.rejectedPaths || null,
+        testingUpdated: null,
+        captureRerun: null,
+        proposed: null,
+        proposeError: null,
+        webPath: result.sessionId
+          ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.sessionId}`
+          : `${origin}/#app/${result.appSlug}`,
+        nextStep: (result.reshared
+          ? 'The new commits are on the same in-progress card the group was already watching'
+          : 'It is now visible in the app\'s IN-PROGRESS area, not up for a vote')
+          + `${result.previewRebuilding ? ', and its staging preview is rebuilding' : ''}. `
+          + 'Nothing is gated on it and no votes are being collected. Keep committing and call submit_work with '
+          + '`share: true` again to push more commits onto this same card. When it is ready for the group, call '
+          + `submit_work with proposalId ${result.sessionId}, the branch, and propose: true — that puts THIS card `
+          + 'up for the vote instead of opening a second proposal for the same branch.',
+      });
+    }
+
     if (result.alreadySubmitted) {
       return toolResult({
         proposalId: result.proposalId,
@@ -2576,6 +3045,11 @@ function registerTools(server, ctx) {
         captureRerun: null,
         proposed: null,
         proposeError: null,
+        // #1347: this submission went to the vote, not to the in-progress
+        // area — stated rather than omitted, because the field is on every
+        // answer and a missing key reads as an unknown destination.
+        shared: null,
+        sessionId: null,
         webPath: result.proposalId
           ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
           : `${origin}/#app/${result.appSlug}`,
@@ -2605,6 +3079,11 @@ function registerTools(server, ctx) {
       // the session-update opt-in, so there is nothing extra to report here.
       proposed: null,
       proposeError: null,
+      // #1347: this submission went to the vote, not to the in-progress
+      // area — stated rather than omitted, because the field is on every
+      // answer and a missing key reads as an unknown destination.
+      shared: null,
+      sessionId: null,
       webPath: result.proposalId
         ? `${origin}/#app/${result.appSlug}/dev/sessions/${result.proposalId}`
         : `${origin}/#app/${result.appSlug}`,
@@ -2635,7 +3114,6 @@ function registerTools(server, ctx) {
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-    _meta: ACTING_TOOL_META,
   }, async ({ slug, requestNumber }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -2797,7 +3275,6 @@ function registerTools(server, ctx) {
       nextStep: z.string(),
     },
     annotations: writeAnnotations,
-    _meta: ACTING_TOOL_META,
   }, async ({ buildId }) => {
     const guard = scopeGuard(WRITE_SCOPE);
     if (guard) return guard;
@@ -2861,7 +3338,6 @@ module.exports = {
   MAX_ANSWER_CHARS,
   MAX_CONVENTIONS_CHARS,
   PLATFORM_INTERNAL_URL,
-  ACTING_TOOL_META,
   ACTING_TOOLS,
   clip,
   checkWriteLength,

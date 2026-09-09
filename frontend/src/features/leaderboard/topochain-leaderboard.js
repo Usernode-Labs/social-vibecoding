@@ -459,7 +459,7 @@ const TopochainLeaderboard = {
       TopochainLeaderboard._drillEpoch = {
         loading: false,
         error: TopochainLeaderboard._isSeasonBoard()
-          ? 'The epoch breakdown is per event — pick a single event above to see it.'
+          ? 'The epoch breakdown is per event. Pick a single event above to see it.'
           : 'No wallet linked for this row.',
         data: null,
       };

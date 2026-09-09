@@ -1,8 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const ts = require('typescript');
 
 const nativeChromeSource = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'native-chrome.js'),
@@ -16,6 +18,36 @@ const waitingTsx = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'auth', 'waiting.tsx'),
   'utf8'
 );
+const authSharedSource = fs.readFileSync(
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'auth', 'shared.ts'),
+  'utf8'
+);
+
+function loadAuthShared(window, fetchImpl) {
+  const compiled = ts.transpileModule(authSharedSource, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2022,
+    },
+  }).outputText;
+  const module = { exports: {} };
+  const sandbox = {
+    module,
+    exports: module.exports,
+    window,
+    fetch: fetchImpl,
+    console: { warn() {} },
+    require(specifier) {
+      if (specifier === '../../lib/legacy-dom') {
+        return { useIsomorphicLayoutEffect() {} };
+      }
+      throw new Error(`unexpected auth shared import: ${specifier}`);
+    },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(compiled, sandbox);
+  return module.exports;
+}
 
 function deferred() {
   let resolve;
@@ -28,148 +60,155 @@ function deferred() {
 }
 
 function response(data, { ok = true, status = 200 } = {}) {
-  return {
-    ok,
-    status,
-    async json() { return data; },
-  };
+  return { ok, status, async json() { return data; } };
 }
 
-function plain(value) {
-  return JSON.parse(JSON.stringify(value));
+function establishResult(payload, participantId) {
+  return {
+    protocol: 2,
+    attemptId: payload.attemptId,
+    nativeRevision: '9',
+    identity: {
+      participantId,
+      accountId: `account-${participantId}`,
+      address: `ut1-${participantId}`,
+    },
+    runtimeStatus: { state: 'running' },
+    receiptStatus: 'committedReady',
+  };
 }
 
 function loadNativeChrome({
-  initialUser = null,
-  bridgeVersion = 4,
-  capabilities = [
-    'completeLogin',
-    'startNode',
-    'logout',
-    'beginSessionHandoff',
-    'enterAnonymousSession',
-    'sessionBoundAuthStatus',
-  ],
-  getBridgeInfoImpl,
+  isNative = true,
+  info = {
+    version: 5,
+    sessionLifecycleProtocol: 2,
+    capabilities: ['establishNativeSession', 'prepareForLogin', 'logout'],
+  },
   fetchImpl,
-  beginSessionHandoffImpl,
-  enterAnonymousSessionImpl,
-  completeLoginImpl,
-  startNodeImpl,
-  logoutImpl,
+  establishImpl,
+  prepareForLoginImpl,
+  restoreImpl,
+  sharedAttemptStorage,
 } = {}) {
   const calls = {
+    info: 0,
     fetch: [],
-    completeLogin: [],
-    startNode: [],
+    establish: [],
+    prepareForLogin: 0,
     logout: 0,
-    stopNode: 0,
-    beginSessionHandoff: 0,
-    enterAnonymousSession: 0,
-    walletRelayAdmission: [],
+    admission: [],
     events: [],
-    order: [],
+    eventDetails: [],
   };
   const windowListeners = {};
   const documentListeners = {};
-  const usernode = {
-    isNative: true,
-    _setSessionWalletRelayAdmission(admitted) {
-      calls.walletRelayAdmission.push(admitted === true);
-      return admitted === true;
-    },
-    async getBridgeInfo() {
-      return getBridgeInfoImpl
-        ? getBridgeInfoImpl()
-        : { version: bridgeVersion, capabilities };
-    },
-    async beginSessionHandoff() {
-      calls.beginSessionHandoff += 1;
-      calls.order.push('begin-session-handoff');
-      return beginSessionHandoffImpl
-        ? beginSessionHandoffImpl()
-        : { blocked: true };
-    },
-    async enterAnonymousSession() {
-      calls.enterAnonymousSession += 1;
-      calls.order.push('enter-anonymous-session');
-      return enterAnonymousSessionImpl
-        ? enterAnonymousSessionImpl()
-        : { admitted: true };
-    },
-    async completeLogin(payload) {
-      calls.completeLogin.push(payload);
-      calls.order.push('complete-login');
-      if (completeLoginImpl) return completeLoginImpl(payload);
-      return {
-        phase: 'ready',
-        address: `ut1-${payload.user.id}`,
-        participantId: payload.user.id,
-        epoch: 1,
-      };
-    },
-    async startNode(payload) {
-      calls.startNode.push(payload);
-      return startNodeImpl ? startNodeImpl(payload) : { started: true };
-    },
-    async logout() {
-      calls.logout += 1;
-      return logoutImpl ? logoutImpl() : true;
-    },
-    async stopNode() {
-      calls.stopNode += 1;
-      return { stopped: true };
-    },
+  const storage = sharedAttemptStorage || new Map();
+  const add = (target, type, listener) => {
+    if (!target[type]) target[type] = [];
+    target[type].push(listener);
   };
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
+    crypto: crypto.webcrypto,
+    btoa(value) { return Buffer.from(value, 'binary').toString('base64'); },
     CustomEvent: class CustomEvent {
       constructor(type, init) {
         this.type = type;
         this.detail = init && init.detail;
       }
     },
-    App: { user: initialUser },
-    usernode,
-    localStorage: { getItem() { return '1'; }, setItem() {} },
+    App: { user: null },
+    localStorage: {
+      getItem(key) {
+        if (storage.has(key)) return storage.get(key);
+        return key === 'sv:onboarding_permissions_done' ? '1' : null;
+      },
+      setItem(key, value) { storage.set(key, String(value)); },
+      removeItem(key) { storage.delete(key); },
+    },
+    sessionStorage: {
+      getItem() { throw new Error('native attempt must not use sessionStorage'); },
+      setItem() { throw new Error('native attempt must not use sessionStorage'); },
+      removeItem() { throw new Error('native attempt must not use sessionStorage'); },
+    },
+    WalletSheet: {
+      _setSessionWalletAdmission(value) { calls.admission.push(value); },
+    },
     document: {
       visibilityState: 'visible',
       getElementById() { return null; },
       createElement() { return {}; },
-      addEventListener(type, listener) { documentListeners[type] = listener; },
+      addEventListener(type, listener) {
+        add(documentListeners, type, listener);
+      },
     },
-    addEventListener(type, listener) { windowListeners[type] = listener; },
+    addEventListener(type, listener) { add(windowListeners, type, listener); },
     dispatchEvent(event) {
       calls.events.push(event.type);
-      if (windowListeners[event.type]) windowListeners[event.type](event);
+      calls.eventDetails.push({ type: event.type, detail: event.detail });
+      for (const listener of windowListeners[event.type] || []) listener(event);
     },
     setTimeout(fn, delay) {
-      const timer = setTimeout(fn, delay);
-      if (timer && typeof timer.unref === 'function') timer.unref();
-      return timer;
+      const handle = setTimeout(fn, delay);
+      if (handle && typeof handle.unref === 'function') handle.unref();
+      return handle;
     },
     clearTimeout,
-    async fetch(url, options) {
-      calls.fetch.push({ url, options });
-      calls.order.push('from-session');
-      if (fetchImpl) return fetchImpl(url, options, calls.fetch.length);
-      const id = sandbox.App.user.id;
-      return response({ success: true, token: `token-${id}`, user: { id } });
+    setInterval() { return 0; },
+  };
+  sandbox.usernode = {
+    isNative,
+    async getBridgeInfo() {
+      calls.info += 1;
+      return info;
     },
+    async establishNativeSession(payload) {
+      calls.establish.push(payload);
+      if (establishImpl) {
+        return establishImpl(payload, calls.establish.length);
+      }
+      return establishResult(payload, sandbox.App.user.id.toString());
+    },
+    async restoreWebSession() { return restoreImpl(); },
+    async prepareForLogin() {
+      calls.prepareForLogin += 1;
+      if (prepareForLoginImpl) return prepareForLoginImpl();
+      return true;
+    },
+    async logout() {
+      calls.logout += 1;
+      return true;
+    },
+  };
+  sandbox.fetch = async (url, options) => {
+    calls.fetch.push({ url, options });
+    if (fetchImpl) return fetchImpl(url, options, calls.fetch.length);
+    const request = JSON.parse(options.body);
+    return response({
+      success: true,
+      data: {
+        protocol: 2,
+        attemptId: request.attemptId,
+        desiredRuntime: 'running',
+      },
+    });
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(nativeChromeSource, sandbox);
+
   return {
     sandbox,
     calls,
+    storage,
     NativeChrome: sandbox.NativeChrome,
-    dispatchWindow(type, detail) {
-      if (windowListeners[type]) windowListeners[type]({ detail });
+    dispatchWindow(type) {
+      for (const listener of windowListeners[type] || []) listener({ type });
     },
     dispatchDocument(type) {
-      if (documentListeners[type]) documentListeners[type]();
+      for (const listener of documentListeners[type] || []) listener({ type });
     },
   };
 }
@@ -179,637 +218,543 @@ async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
-test('anonymous auth screens wait for native wallet admission', async () => {
-  const admission = deferred();
-  const order = [];
-  const sandbox = {
-    console: { log() {}, warn() {}, error() {} },
-    NativeChrome: {
-      enterAnonymous() {
-        order.push('native-admission');
-        return admission.promise;
-      },
-    },
-    AuthScreens: {
-      enter() {
-        order.push('auth-screens');
-        // Login routing synchronously starts the one-shot wallet probe.
-        order.push('wallet-detect');
-      },
-    },
-    document: { addEventListener() {} },
-    location: { search: '', hash: '' },
-    URLSearchParams,
-  };
-  sandbox.window = sandbox;
-  sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
-  vm.runInContext(appSource, sandbox);
-  sandbox.App.loadVersion = () => order.push('load-version');
-
-  const entering = sandbox.App.enterAnonymous();
-  await settle();
-  assert.deepEqual(order, ['native-admission']);
-
-  admission.resolve(true);
-  await entering;
-  assert.deepEqual(order, [
-    'native-admission',
-    'load-version',
-    'auth-screens',
-    'wallet-detect',
-  ]);
-});
-
-// The waiting room is a React screen since #1080 chunk C, so its release
-// poll can no longer be driven from a vm sandbox — the suite has no JSX
-// transform. The ordering that matters here is a three-step sequence in one
-// short function, which source pins can hold: clear the stale user BEFORE
-// admitting anonymous native state, await that admission, and only then
-// navigate to #login. Get it wrong and the native side re-enters anonymous
-// mode while still holding a dead session.
-test('waiting-session expiry admits anonymous native state before login', () => {
-  const body = waitingTsx.slice(
-    waitingTsx.indexOf('if (res.status === 401)'),
-    waitingTsx.indexOf('const data = await res.json()')
-  );
-  assert.ok(body, 'the waiting screen no longer handles a 401 from /api/auth/me');
-  // The poll dies with the session rather than hammering a dead one.
-  assert.match(body, /stopWaitingPoll\(\)/);
-  const nulled = body.indexOf('w.App.user = null');
-  const admitted = body.indexOf('w.App.enterAnonymous()');
-  const navigated = body.indexOf("location.hash = '#login'");
-  assert.ok(nulled > -1, 'the stale user is not cleared');
-  assert.ok(admitted > nulled, 'anonymous admission runs before the user is cleared');
-  assert.match(body, /await w\.App\.enterAnonymous\(\)/);
-  assert.ok(navigated > admitted, 'the login navigation runs before admission');
-});
-
-test('anonymous entry opens local admission only after native acknowledgement',
-  async () => {
-    const admission = deferred();
-    const loaded = loadNativeChrome({
-      enterAnonymousSessionImpl: () => admission.promise,
-    });
-
-    assert.deepEqual(loaded.calls.walletRelayAdmission, [false]);
-    const entering = loaded.NativeChrome.enterAnonymous();
-    await settle();
-    assert.equal(loaded.calls.enterAnonymousSession, 1);
-    assert.equal(loaded.calls.walletRelayAdmission.at(-1), false);
-
-    admission.resolve({ admitted: true });
-    assert.equal(await entering, true);
-    assert.equal(loaded.calls.walletRelayAdmission.at(-1), true);
-  });
-
-test('failed anonymous native admission stays closed', async () => {
-  const loaded = loadNativeChrome({
-    enterAnonymousSessionImpl: async () => { throw new Error('not admitted'); },
-  });
-
-  assert.equal(await loaded.NativeChrome.enterAnonymous(), false);
-  assert.equal(loaded.calls.walletRelayAdmission.at(-1), false);
-});
-
-test('page-finished auth status retries closed anonymous admission', async () => {
-  const loaded = loadNativeChrome();
-
-  loaded.dispatchWindow('usernode:auth-status', {
-    phase: 'unauthenticated', address: null, participantId: null, epoch: 0,
-  });
-  await settle();
-
-  assert.equal(loaded.calls.enterAnonymousSession, 1);
-  assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, true);
-});
-
-test('a newer login handoff prevents stale anonymous native admission',
-  async () => {
-    const info = deferred();
-    const loaded = loadNativeChrome({
-      getBridgeInfoImpl: () => info.promise,
-    });
-
-    const enteringAnonymous = loaded.NativeChrome.enterAnonymous();
-    loaded.sandbox.App.user = { id: 12 };
-    const loggingIn = loaded.NativeChrome.runLoginHandoff();
-    info.resolve({
-      version: 4,
-      capabilities: [
-        'completeLogin',
-        'startNode',
-        'beginSessionHandoff',
-        'enterAnonymousSession',
-        'sessionBoundAuthStatus',
-      ],
-    });
-
-    assert.equal(await enteringAnonymous, false);
-    await loggingIn;
-    assert.equal(loaded.calls.enterAnonymousSession, 0,
-      'stale anonymous work must not reopen native after login begins');
-    assert.equal(loaded.calls.beginSessionHandoff, 1);
-    assert.equal(loaded.calls.walletRelayAdmission.at(-1), true,
-      'only the verified participant handoff reopens local admission');
-  });
-
-test('pre-v4 anonymous entry preserves local wallet compatibility', async () => {
-  const loaded = loadNativeChrome({
-    bridgeVersion: 3,
-    capabilities: ['getWalletState'],
-  });
-
-  assert.equal(await loaded.NativeChrome.enterAnonymous(), true);
-  assert.equal(loaded.calls.enterAnonymousSession, 0);
-  assert.equal(loaded.calls.walletRelayAdmission.at(-1), true);
-});
-
-test('every handoff exchanges the web session and starts the bound identity', async () => {
-  const loaded = loadNativeChrome();
-  loaded.sandbox.App.user = { id: 7 };
-
-  const result = await loaded.NativeChrome.runLoginHandoff();
-
-  assert.equal(result.participantId, 7);
-  assert.equal(loaded.calls.fetch.length, 1);
-  assert.equal(loaded.calls.beginSessionHandoff, 1);
-  assert.deepEqual(loaded.calls.order.slice(0, 3), [
-    'begin-session-handoff', 'from-session', 'complete-login',
-  ]);
-  assert.equal(loaded.calls.fetch[0].url, '/api/v4/mobile/auth/from-session');
-  assert.equal(loaded.calls.fetch[0].options.credentials, 'same-origin');
-  assert.deepEqual(plain(loaded.calls.completeLogin), [
-    { token: 'token-7', user: { id: 7 } },
-  ]);
-  assert.deepEqual(plain(loaded.calls.startNode), [
-    { address: 'ut1-7', participantId: 7, epoch: 1 },
-  ]);
-  assert.deepEqual(loaded.calls.events, [
-    'usernode:native-session-admission',
-    'usernode:native-session-admission',
-  ]);
-
-  await loaded.NativeChrome.runLoginHandoff();
-  assert.equal(loaded.calls.fetch.length, 2,
-    'native ready state must not bypass a same-user token refresh');
-  assert.equal(loaded.calls.completeLogin.length, 2);
-  assert.equal(loaded.calls.startNode.length, 1,
-    'the already-started participant/epoch remains coalesced');
-});
-
-test('reconciling login admits Social push without opening the wallet',
-  async () => {
-    const loaded = loadNativeChrome({
-      completeLoginImpl: async () => ({
-        phase: 'reconciling', participantId: 7, epoch: 3,
-      }),
-    });
-    loaded.sandbox.App.user = { id: 7 };
-
-    const result = await loaded.NativeChrome.runLoginHandoff();
-
-    assert.equal(result.phase, 'reconciling');
-    assert.equal(loaded.NativeChrome.isSessionAdmitted(), true,
-      'the authenticated notification session is admitted');
-    assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, false,
-      'wallet relay remains closed until account reconciliation settles');
-    assert.equal(loaded.calls.startNode.length, 0);
-
-    loaded.dispatchWindow('online');
-    await settle();
-    assert.equal(loaded.calls.fetch.length, 1,
-      'wallet reconciliation does not repeat the authenticated handoff');
-  });
-
-test('a matching ready event opens the wallet after push admission', async () => {
-  const loaded = loadNativeChrome({
-    completeLoginImpl: async () => ({
-      phase: 'reconciling', participantId: 7, epoch: 3,
-    }),
-  });
-  loaded.sandbox.App.user = { id: 7 };
-  await loaded.NativeChrome.runLoginHandoff();
-
-  loaded.dispatchWindow('usernode:auth-status', {
-    phase: 'ready', address: 'ut1-7', participantId: 7, epoch: 3,
-  });
-  await settle();
-
-  assert.deepEqual(plain(loaded.calls.startNode), [{
-    address: 'ut1-7', participantId: 7, epoch: 3,
-  }]);
-  assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
-  assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, true);
-});
-
-test('a ready event for another native epoch cannot open the wallet',
-  async () => {
-    const loaded = loadNativeChrome({
-      completeLoginImpl: async () => ({
-        phase: 'reconciling', participantId: 7, epoch: 3,
-      }),
-    });
-    loaded.sandbox.App.user = { id: 7 };
-    await loaded.NativeChrome.runLoginHandoff();
-
-    loaded.dispatchWindow('usernode:auth-status', {
-      phase: 'ready', address: 'ut1-stale', participantId: 7, epoch: 4,
-    });
-    await settle();
-
-    assert.equal(loaded.calls.startNode.length, 0);
-    assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
-    assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, false);
-  });
-
-test('a mismatched from-session participant is never handed to native', async () => {
-  const loaded = loadNativeChrome({
-    fetchImpl: async () => response({
-      success: true,
-      token: 'token-8',
-      user: { id: 8 },
-    }),
-  });
-  loaded.sandbox.App.user = { id: 7 };
-
-  await loaded.NativeChrome.runLoginHandoff();
-
-  assert.equal(loaded.calls.completeLogin.length, 0);
-  assert.equal(loaded.calls.startNode.length, 0);
-});
-
-test('native handoff-latch failure stops before the session exchange',
-  async () => {
-    const loaded = loadNativeChrome({
-      beginSessionHandoffImpl: async () => { throw new Error('latch failed'); },
-    });
-    loaded.sandbox.App.user = { id: 7 };
-
-    await loaded.NativeChrome.runLoginHandoff();
-
-    assert.equal(loaded.calls.beginSessionHandoff, 1);
-    assert.equal(loaded.calls.fetch.length, 0);
-    assert.equal(loaded.calls.walletRelayAdmission.at(-1), false);
-  });
-
-test('online recovery retries a closed authenticated handoff', async () => {
-  let attempts = 0;
-  const loaded = loadNativeChrome({
-    fetchImpl: async () => {
-      attempts += 1;
-      if (attempts === 1) {
-        return response({ success: false, error: 'temporarily unavailable' }, {
-          ok: false,
-          status: 503,
-        });
-      }
-      return response({ success: true, token: 'token-7', user: { id: 7 } });
-    },
-  });
-  loaded.sandbox.App.user = { id: 7 };
-
-  await loaded.NativeChrome.runLoginHandoff();
-  assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
-
-  loaded.dispatchWindow('online');
-  await loaded.NativeChrome._handoffPromise;
-
-  assert.equal(loaded.calls.fetch.length, 2);
-  assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
-});
-
-test('foreground recovery ignores hidden and already-admitted pages',
+test('protocol 2 sends one exact native-only handoff transaction',
   async () => {
     const loaded = loadNativeChrome();
-    loaded.sandbox.App.user = { id: 8 };
-    loaded.sandbox.document.visibilityState = 'hidden';
+    loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+    loaded.sandbox.App.user = { id: 41 };
 
-    loaded.dispatchDocument('visibilitychange');
-    await settle();
-    assert.equal(loaded.calls.fetch.length, 0);
+    const result = await loaded.NativeChrome.establishCurrentSession();
 
-    loaded.sandbox.document.visibilityState = 'visible';
-    loaded.dispatchDocument('visibilitychange');
-    await loaded.NativeChrome._handoffPromise;
+    assert.equal(result.identity.participantId, '41');
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
     assert.equal(loaded.calls.fetch.length, 1);
+    const request = JSON.parse(loaded.calls.fetch[0].options.body);
+    assert.deepEqual(request, {
+      protocol: 2,
+      attemptId: request.attemptId,
+      desiredRuntime: 'running',
+    });
+    assert.match(request.attemptId, /^nsa_[A-Za-z0-9_-]{43}$/);
+    assert.deepEqual(JSON.parse(JSON.stringify(loaded.calls.establish[0])), {
+      attemptId: request.attemptId,
+      desiredRuntime: 'running',
+    });
+    assert.deepEqual(
+      JSON.parse(loaded.storage.get(loaded.NativeChrome._ATTEMPT_STORAGE_KEY)),
+      {
+        protocol: 2,
+        userId: '41',
+        attemptId: request.attemptId,
+        desiredRuntime: 'running',
+      },
+      'browser storage retains only the durable attempt, never ticket authority'
+    );
+  });
+
+test('handoff forwards existing app build metadata without widening native requests or attempt storage', async () => {
+  for (const metadata of [{ appVersion: '0.4.0', buildNumber: '1250' },
+    { appVersion: '0.4.0', buildNumber: '1252' },
+    { appVersion: '0.4.1', buildNumber: '1' },
+    { appVersion: '0.5.0', buildNumber: '1' },
+    { appVersion: '1.0.0', buildNumber: '1' }, {},
+    { appVersion: null, buildNumber: null },
+    { appVersion: '0.4.0\n', buildNumber: '1252\n' },
+    { appVersion: 'bad\r\nheader', buildNumber: 'bad\r\nheader' }]) {
+    const loaded = loadNativeChrome({ info: {
+      version: 5, sessionLifecycleProtocol: 2,
+      capabilities: ['establishNativeSession'], ...metadata,
+    } });
+    loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+    loaded.sandbox.App.user = { id: 41 };
+    await loaded.NativeChrome.establishCurrentSession();
+    const { headers, body } = loaded.calls.fetch[0].options;
+    assert.equal(headers['Usernode-Native-App-Version'],
+      ['0.4.0', '0.4.1', '0.5.0', '1.0.0'].includes(metadata.appVersion) ? metadata.appVersion : undefined);
+    assert.equal(headers['Usernode-Native-App-Build'],
+      ['0.4.0', '0.4.1', '0.5.0', '1.0.0'].includes(metadata.appVersion) ? metadata.buildNumber : undefined);
+    assert.deepEqual(Object.keys(JSON.parse(body)), ['protocol', 'attemptId', 'desiredRuntime']);
+    assert.deepEqual(Object.keys(loaded.calls.establish[0]), ['attemptId', 'desiredRuntime']);
+    assert.deepEqual(Object.keys(JSON.parse(loaded.storage.get(loaded.NativeChrome._ATTEMPT_STORAGE_KEY))),
+      ['protocol', 'userId', 'attemptId', 'desiredRuntime']);
+  }
+});
+
+test('1252 walletless establishment admits the authenticated participant', async () => {
+  const loaded = loadNativeChrome({
+    info: { version: 5, sessionLifecycleProtocol: 2,
+      capabilities: ['establishNativeSession'], appVersion: '0.4.0', buildNumber: '1252' },
+    establishImpl: async (payload) => ({
+      ...establishResult(payload, '41'),
+      identity: { participantId: '41', accountId: null, address: null },
+    }),
+  });
+  loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+  loaded.sandbox.App.user = { id: 41 };
+  const result = await loaded.NativeChrome.establishCurrentSession();
+  assert.equal(result.identity.accountId, null);
+  assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
+  assert.equal(loaded.sandbox.App.user.id, 41);
+});
+
+test('concurrent calls share one lease and a recreated WebView replays its attempt',
+  async () => {
+    const shared = new Map();
+    const native = deferred();
+    const loaded = loadNativeChrome({
+      sharedAttemptStorage: shared,
+      establishImpl: (payload, count) => count === 1
+        ? native.promise
+        : establishResult(payload, '41'),
+    });
+    loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+    loaded.sandbox.App.user = { id: 41 };
+    const first = loaded.NativeChrome.establishCurrentSession();
+    const duplicate = loaded.NativeChrome.establishCurrentSession();
+    await settle();
+    assert.equal(loaded.calls.fetch.length, 1);
+    assert.equal(loaded.calls.establish.length, 1);
+
+    native.resolve(establishResult(loaded.calls.establish[0], '41'));
+    assert.equal(await first, await duplicate);
+    const attemptId = loaded.calls.establish[0].attemptId;
+
+    const replacement = loadNativeChrome({ sharedAttemptStorage: shared });
+    replacement.NativeChrome.prepareIdentityPublication({ id: 41 });
+    replacement.sandbox.App.user = { id: 41 };
+    await replacement.NativeChrome.recoverSessionAdmission();
+    assert.equal(replacement.calls.fetch.length, 1,
+      'the server prepares a fresh native-only handoff for the exact attempt');
+    assert.equal(replacement.calls.establish[0].attemptId, attemptId);
+    assert.equal(replacement.NativeChrome.isSessionAdmitted(), true);
+  });
+
+for (const code of ['native_session_ticket_expired', 'native_session_wallet_required']) {
+  test(`a ${code} failure drops only attempt metadata for a later fresh recovery`,
+    async () => {
+      let expiredAttemptId = null;
+      const loaded = loadNativeChrome({
+        establishImpl: (payload, count) => {
+          if (count === 1) {
+            expiredAttemptId = payload.attemptId;
+            const error = new Error('The native session attempt cannot be replayed.');
+            error.usernodeCode = code;
+            return Promise.reject(error);
+          }
+          return establishResult(payload, '41');
+        },
+      });
+      loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+      loaded.sandbox.App.user = { id: 41 };
+
+      assert.equal(await loaded.NativeChrome.establishCurrentSession(), null);
+      assert.equal(loaded.calls.fetch.length, 1,
+        'the terminal failure does not create an internal retry loop');
+      assert.equal(loaded.calls.establish.length, 1);
+      assert.equal(loaded.sandbox.App.user.id, 41,
+        'the authenticated web session remains usable');
+      assert.equal(loaded.calls.logout, 0);
+      assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
+      assert.equal(loaded.storage.has(
+        loaded.NativeChrome._ATTEMPT_STORAGE_KEY), false);
+
+      const recovered = await loaded.NativeChrome.recoverSessionAdmission();
+      assert.equal(recovered.identity.participantId, '41');
+      assert.notEqual(loaded.calls.establish[1].attemptId, expiredAttemptId);
+    });
+}
+
+test('pool exhaustion records the failure WITHOUT prompting, and preserves the exact attempt for replay',
+  async () => {
+    let exhaustedAttemptId = null;
+    const loaded = loadNativeChrome({
+      establishImpl: (payload, count) => {
+        if (count === 1) {
+          exhaustedAttemptId = payload.attemptId;
+          const error = new Error('No seeded wallet is available.');
+          error.usernodeCode = 'native_session_wallet_pool_exhausted';
+          return Promise.reject(error);
+        }
+        return establishResult(payload, '41');
+      },
+    });
+    loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+    loaded.sandbox.App.user = { id: 41 };
+
+    assert.equal(await loaded.NativeChrome.establishCurrentSession(), null);
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
+    assert.equal(loaded.NativeChrome.lastSessionFailure().code,
+      'native_session_wallet_pool_exhausted');
+    assert.equal(JSON.parse(loaded.storage.get(
+      loaded.NativeChrome._ATTEMPT_STORAGE_KEY)).attemptId, exhaustedAttemptId,
+    'pool exhaustion is recoverable, so the exact attempt must survive');
+
+    // The recovery dialog used to open itself off a
+    // `usernode:wallet-recovery-required` event dispatched here — on every
+    // admission attempt, and admission retries on every online / pageshow /
+    // visibilitychange, so it kept popping up. It is offered from Settings →
+    // Usernode app → connection now, off lastSessionFailure(); nothing here
+    // may announce it.
+    const offers = loaded.calls.eventDetails.filter(
+      (event) => event.type === 'usernode:wallet-recovery-required');
+    assert.deepEqual(offers, [],
+      'pool exhaustion is recorded, never announced as a pop-up');
+    assert.ok(!nativeChromeSource.includes("'usernode:wallet-recovery-required'"),
+      'native-chrome.js no longer dispatches the auto-open event');
+
+    const recovered = await loaded.NativeChrome.recoverSessionAdmission();
+    assert.equal(recovered.identity.participantId, '41');
+    assert.equal(loaded.calls.establish[1].attemptId, exhaustedAttemptId);
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
+  });
+
+test('logout is terminal despite a throwing UI sink and late publication',
+  async () => {
+    const loaded = loadNativeChrome();
+    loaded.sandbox.WalletSheet._setSessionWalletAdmission = () => {
+      throw new Error('broken UI sink');
+    };
+    loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+    loaded.sandbox.App.user = { id: 41 };
+    assert.ok(await loaded.NativeChrome.establishCurrentSession(),
+      'a UI sink cannot abort successful core admission');
     assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
 
-    loaded.dispatchDocument('visibilitychange');
-    await settle();
-    assert.equal(loaded.calls.fetch.length, 1,
-      'an admitted page does not exchange its session again');
-  });
+    const fetches = loaded.calls.fetch.length;
+    const establishments = loaded.calls.establish.length;
+    const preflight = loaded.NativeChrome.prepareWebLogout();
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
+    assert.equal(loaded.storage.has(
+      loaded.NativeChrome._ATTEMPT_STORAGE_KEY), false);
+    assert.ok(loaded.calls.events.includes('sv:native-realm-close'),
+      'the private bridge closes before the throwing UI notification');
+    await preflight;
 
-test('an overlapping A to B login reruns once for the latest web session', async () => {
-  const firstFetch = deferred();
-  const loaded = loadNativeChrome({
-    fetchImpl: async (_url, _options, callNumber) => {
-      if (callNumber === 1) return firstFetch.promise;
-      return response({ success: true, token: 'token-B', user: { id: 2 } });
-    },
-  });
-  loaded.sandbox.App.user = { id: 1 };
-  const active = loaded.NativeChrome.runLoginHandoff();
-
-  loaded.sandbox.App.user = { id: 2 };
-  const overlapping = loaded.NativeChrome.runLoginHandoff();
-  assert.equal(active, overlapping, 'overlapping signals share one run');
-  firstFetch.resolve(response({
-    success: true,
-    token: 'token-A',
-    user: { id: 1 },
-  }));
-
-  const result = await active;
-
-  assert.equal(result.participantId, 2);
-  assert.equal(loaded.calls.fetch.length, 2);
-  assert.deepEqual(
-    loaded.calls.completeLogin.map((call) => call.token),
-    ['token-B']
-  );
-  assert.deepEqual(plain(loaded.calls.startNode), [
-    { address: 'ut1-2', participantId: 2, epoch: 1 },
-  ]);
-});
-
-test('a boot session still observes later SPA account changes', async () => {
-  const loaded = loadNativeChrome({ initialUser: { id: 1 } });
-  await loaded.NativeChrome._handoffPromise;
-
-  loaded.sandbox.App.user = { id: 2 };
-  loaded.dispatchDocument('sv:session');
-  await loaded.NativeChrome._handoffPromise;
-
-  assert.deepEqual(
-    loaded.calls.completeLogin.map((call) => call.token),
-    ['token-1', 'token-2']
-  );
-});
-
-test('A to B closes wallet admission synchronously and keeps old document closed',
-  async () => {
-    const replacement = deferred();
-    const loaded = loadNativeChrome({
-      initialUser: { id: 1 },
-      completeLoginImpl: async (payload) => {
-        if (payload.user.id === 2) return replacement.promise;
-        return {
-          phase: 'ready', address: 'ut1-1', participantId: 1, epoch: 1,
-        };
-      },
-    });
-    await loaded.NativeChrome._handoffPromise;
-    assert.equal(loaded.calls.walletRelayAdmission.at(-1), true,
-      'verified A handoff admits its wallet');
-
-    loaded.sandbox.App.user = { id: 2 };
+    loaded.NativeChrome.prepareIdentityPublication({ id: 42 });
+    loaded.sandbox.App.user = { id: 42 };
     loaded.dispatchDocument('sv:session');
-    assert.equal(loaded.calls.walletRelayAdmission.at(-1), false,
-      'the session event closes admission before any async exchange step');
-
     await settle();
-    assert.equal(loaded.calls.beginSessionHandoff, 2,
-      'the paired native latch closes before B reaches completeLogin');
-    replacement.resolve({ restarting: true });
-    await loaded.NativeChrome._handoffPromise;
-    assert.equal(loaded.calls.walletRelayAdmission.at(-1), false,
-      'a replacement makes the old document terminal; it never re-admits A');
+    assert.equal(await loaded.NativeChrome.recoverSessionAdmission(), null);
+    assert.equal(loaded.calls.fetch.length, fetches);
+    assert.equal(loaded.calls.establish.length, establishments);
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
   });
 
-test('stale native completion and restart responses cannot start a node', async () => {
-  const completion = deferred();
-  const loaded = loadNativeChrome({
-    completeLoginImpl: () => completion.promise,
-  });
-  loaded.sandbox.App.user = { id: 1 };
-  const active = loaded.NativeChrome.runLoginHandoff();
-  await settle();
-
-  loaded.sandbox.App.user = { id: 2 };
-  completion.resolve({
-    phase: 'ready', address: 'ut1-1', participantId: 1, epoch: 1,
-  });
-  await active;
-  assert.equal(loaded.calls.startNode.length, 0);
-
-  const restartCompletion = deferred();
-  const restarting = loadNativeChrome({
-    completeLoginImpl: () => restartCompletion.promise,
-  });
-  restarting.sandbox.App.user = { id: 3 };
-  const activeRestart = restarting.NativeChrome.runLoginHandoff();
-  await settle();
-  restarting.sandbox.App.user = { id: 4 };
-  const pendingSession = restarting.NativeChrome.runLoginHandoff();
-  assert.equal(activeRestart, pendingSession);
-  restartCompletion.resolve({ restarting: true });
-  const result = await activeRestart;
-  assert.equal(result.restarting, true);
-  assert.equal(restarting.calls.fetch.length, 1,
-    'restart is terminal even when a newer session signal is queued');
-  assert.equal(restarting.calls.completeLogin.length, 1);
-  assert.equal(restarting.calls.startNode.length, 0);
-});
-
-test('native failures do not start and logout invalidates an active handoff', async () => {
-  const rejected = loadNativeChrome({
-    completeLoginImpl: async () => { throw new Error('native 401'); },
-  });
-  rejected.sandbox.App.user = { id: 4 };
-  await rejected.NativeChrome.runLoginHandoff();
-  assert.equal(rejected.calls.startNode.length, 0);
-  assert.equal(rejected.calls.walletRelayAdmission.at(-1), false,
-    'failed handoffs remain fail-closed');
-
-  const exchange = deferred();
-  const loggingOut = loadNativeChrome({
-    fetchImpl: async () => exchange.promise,
-  });
-  loggingOut.sandbox.App.user = { id: 5 };
-  const active = loggingOut.NativeChrome.runLoginHandoff();
-  await settle();
-  assert.deepEqual(plain(await loggingOut.NativeChrome.prepareWebLogout()), {
-    nativeTerminal: true, latch: 'acknowledged', reason: null, code: null,
-  });
-  assert.equal(loggingOut.calls.logout, 0,
-    'preflight closes admission without tearing down the WebView');
-  assert.equal(await loggingOut.NativeChrome.commitNativeLogout(), true);
-  exchange.resolve(response({
-    success: true, token: 'stale-token', user: { id: 5 },
-  }));
-  await active;
-
-  assert.equal(loggingOut.calls.logout, 1);
-  assert.equal(loggingOut.calls.stopNode, 0,
-    'hard native logout owns node drain and cleanup');
-  assert.equal(loggingOut.calls.completeLogin.length, 0);
-  assert.equal(loggingOut.calls.startNode.length, 0);
-});
-
-test('an inconclusive native logout probe is re-probed in place, not deferred',
+test('anonymous login preflight closes retained A before allowing B',
   async () => {
-    let probes = 0;
+    const native = deferred();
     const loaded = loadNativeChrome({
-      getBridgeInfoImpl: async () => {
-        probes += 1;
-        return probes === 1
-          ? { version: 0, capabilities: [] }
-          : { version: 4, capabilities: ['logout'] };
-      },
+      prepareForLoginImpl: () => native.promise,
     });
+    loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+    loaded.sandbox.App.user = { id: 41 };
+    assert.ok(await loaded.NativeChrome.establishCurrentSession());
 
-    // One preflight, not two: making the user tap again is exactly what a
-    // stuck device cannot escape.
-    const report = await loaded.NativeChrome.prepareWebLogout();
-    assert.equal(probes, 2);
-    assert.equal(report.nativeTerminal, true);
-    assert.equal(report.latch, 'unsupported');
-  });
+    loaded.sandbox.App.user = null;
+    const first = loaded.NativeChrome.prepareForLogin();
+    const duplicate = loaded.NativeChrome.prepareForLogin();
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), false,
+      'page admission closes before awaiting native drain');
+    assert.equal(loaded.storage.has(
+      loaded.NativeChrome._ATTEMPT_STORAGE_KEY), false);
+    await settle();
+    assert.equal(loaded.calls.prepareForLogin, 1,
+      'concurrent credential submits share one terminal preflight');
 
-test('a persistently inconclusive probe reports instead of rejecting',
-  async () => {
-    let probes = 0;
-    const loaded = loadNativeChrome({
-      getBridgeInfoImpl: async () => {
-        probes += 1;
-        return { version: 0, capabilities: [] };
-      },
-    });
+    native.resolve(true);
+    assert.equal(await first, true);
+    assert.equal(await duplicate, true);
 
-    const report = await loaded.NativeChrome.prepareWebLogout();
-    assert.equal(probes, 2);
-    assert.equal(report.nativeTerminal, false);
-    assert.equal(report.latch, 'inconclusive');
-    assert.match(report.reason, /inconclusive/i);
-    assert.equal(loaded.NativeChrome._infoPromise, null,
-      'the useless cached probe is still discarded');
-    assert.equal(loaded.NativeChrome.lastSessionFailure().stage,
-      'logout-preflight');
-  });
-
-test('a refused session-handoff latch reports the refusal code and does not throw',
-  async () => {
-    const refusal = new Error(
-      'Privileged bridge is unavailable for this main frame'
+    loaded.NativeChrome.prepareIdentityPublication({ id: 42 });
+    loaded.sandbox.App.user = { id: 42 };
+    assert.equal(
+      (await loaded.NativeChrome.establishCurrentSession()).identity.participantId,
+      '42',
+      'preflight does not permanently retire the web realm',
     );
-    refusal.usernodeCode = 'privileged_frame_unauthorized';
-    refusal.usernodeKind = 'privileged-unavailable';
-    const loaded = loadNativeChrome({
-      getBridgeInfoImpl: async () => ({
-        version: 4, capabilities: ['logout', 'beginSessionHandoff'],
-      }),
-      beginSessionHandoffImpl: async () => { throw refusal; },
-    });
-
-    const report = await loaded.NativeChrome.prepareWebLogout();
-
-    assert.equal(report.nativeTerminal, false);
-    assert.equal(report.latch, 'unavailable');
-    assert.equal(report.code, 'privileged_frame_unauthorized');
-    assert.match(report.reason, /main frame/i);
-    // Admission is still closed even though the latch refused — the
-    // fallback loosens the exit, never the fail-closed wallet gate.
-    assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, false);
-    assert.equal(loaded.NativeChrome._authenticatedSessionAdmitted, false);
-    const failure = loaded.NativeChrome.lastSessionFailure();
-    assert.equal(failure.stage, 'logout-preflight');
-    assert.equal(failure.code, 'privileged_frame_unauthorized');
-    assert.equal(failure.kind, 'privileged-unavailable');
   });
 
-test('non-ready auth event recovers closed admission through login handoff',
+test('login preflight never preempts a live web session', async () => {
+  const loaded = loadNativeChrome();
+  loaded.sandbox.App.user = { id: 41 };
+
+  await assert.rejects(
+    loaded.NativeChrome.prepareForLogin(),
+    /Sign out before signing in again/,
+  );
+  assert.equal(loaded.calls.prepareForLogin, 0);
+});
+
+test('session mint reports native preparation separately from network failure',
   async () => {
-    const exchange = deferred();
-    const loaded = loadNativeChrome({
-      fetchImpl: () => exchange.promise,
+    let fetches = 0;
+    const nativeFailure = new Error('The native credential could not be validated yet.');
+    nativeFailure.usernodeCode = 'native_session_recovery_uncertain';
+    const native = loadAuthShared({
+      usernode: { isNative: true },
+      NativeChrome: {
+        async prepareForLogin() { throw nativeFailure; },
+        lastSessionFailure() {
+          return {
+            stage: 'prepare-login',
+            code: nativeFailure.usernodeCode,
+            kind: null,
+          };
+        },
+      },
+    }, async () => {
+      fetches += 1;
+      throw new Error('fetch must not run');
     });
-    loaded.sandbox.App.user = { id: 6 };
-    assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, false);
 
-    loaded.dispatchWindow('usernode:auth-status', {
-      phase: 'transitioning', address: null, participantId: 5, epoch: 9,
+    const preparationError = await native.fetchSessionMint('/api/auth/login')
+      .then(() => null, (error) => error);
+    assert.equal(fetches, 0, 'native preparation still gates the session mint');
+    assert.equal(
+      native.sessionMintFailureMessage(preparationError),
+      'Secure app session could not be prepared. Force-quit and reopen Usernode, ' +
+        'then try again. Diagnostic: native_session_recovery_uncertain'
+    );
+
+    const bridgeFailure = new Error(
+      'prepareForLogin was cancelled because the page changed'
+    );
+    const untypedNative = loadAuthShared({
+      usernode: { isNative: true },
+      NativeChrome: {
+        async prepareForLogin() { throw bridgeFailure; },
+        lastSessionFailure() {
+          return {
+            stage: 'prepare-login',
+            message: bridgeFailure.message,
+            code: null,
+            kind: null,
+          };
+        },
+      },
+    }, async () => { throw new Error('fetch must not run'); });
+    const untypedError = await untypedNative.fetchSessionMint('/api/auth/login')
+      .then(() => null, (error) => error);
+    assert.equal(
+      untypedNative.sessionMintFailureMessage(untypedError),
+      'Secure app session could not be prepared. Force-quit and reopen Usernode, ' +
+        'then try again. Reason: prepareForLogin was cancelled because the page changed'
+    );
+
+    const web = loadAuthShared({ usernode: { isNative: false } }, async () => {
+      throw new TypeError('Failed to fetch');
     });
-    await settle();
-
-    assert.equal(loaded.calls.fetch.length, 1);
-    assert.equal(loaded.calls.startNode.length, 0,
-      'the event alone cannot start/admit while the local gate is closed');
-    exchange.resolve(response({
-      success: true, token: 'token-6', user: { id: 6 },
-    }));
-    await loaded.NativeChrome._handoffPromise;
-
-    assert.deepEqual(plain(loaded.calls.startNode), [{
-      address: 'ut1-6', participantId: 6, epoch: 1,
-    }]);
-    assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, true);
+    const networkError = await web.fetchSessionMint('/api/auth/login')
+      .then(() => null, (error) => error);
+    assert.equal(web.sessionMintFailureMessage(networkError), 'Network error');
   });
 
-test('auth-status events and concurrent starts stay participant/epoch bound', async () => {
-  const start = deferred();
+test('a late A result cannot admit or overwrite successor B', async () => {
+  const a = deferred();
+  const b = deferred();
   const loaded = loadNativeChrome({
-    startNodeImpl: () => start.promise,
+    establishImpl: (_payload, count) => count === 1 ? a.promise : b.promise,
   });
-  loaded.sandbox.App.user = { id: 6 };
-  loaded.NativeChrome._handoffGeneration = 1;
-  loaded.NativeChrome._setAuthenticatedSessionAdmission(true, {
-    participantId: 6, epoch: 3,
-  });
-  loaded.NativeChrome._setSessionWalletRelayAdmission(true);
 
-  loaded.dispatchWindow('usernode:auth-status', {
-    phase: 'ready', address: 'ut1-wrong', participantId: 7, epoch: 1,
-  });
+  loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+  loaded.sandbox.App.user = { id: 41 };
+  const pendingA = loaded.NativeChrome.establishCurrentSession();
   await settle();
-  assert.equal(loaded.calls.startNode.length, 0);
 
-  const status = {
-    address: 'ut1-6', participantId: 6, epoch: 3,
-  };
-  const first = loaded.NativeChrome._ensureNodeStarted(status, 1);
-  const second = loaded.NativeChrome._ensureNodeStarted(status, 1);
+  loaded.NativeChrome.prepareIdentityPublication({ id: 42 });
+  loaded.sandbox.App.user = { id: 42 };
+  const pendingB = loaded.NativeChrome.establishCurrentSession();
   await settle();
-  assert.equal(loaded.calls.startNode.length, 1);
-  start.resolve({ started: true });
+  assert.notEqual(
+    loaded.calls.establish[0].attemptId,
+    loaded.calls.establish[1].attemptId
+  );
+
+  a.resolve(establishResult(loaded.calls.establish[0], '41'));
+  assert.equal(await pendingA, null);
+  assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
+
+  b.resolve(establishResult(loaded.calls.establish[1], '42'));
+  assert.equal((await pendingB).identity.participantId, '42');
+  assert.equal(loaded.NativeChrome.isSessionAdmitted(), true);
+});
+
+test('semantic protocol absence is update-required with no legacy fallback',
+  async () => {
+    const loaded = loadNativeChrome({
+      info: {
+        version: 5,
+        capabilities: ['legacyLifecycleCapability'],
+      },
+    });
+    loaded.NativeChrome.prepareIdentityPublication({ id: 41 });
+    loaded.sandbox.App.user = { id: 41 };
+
+    assert.equal(await loaded.NativeChrome.establishCurrentSession(), null);
+    assert.equal(loaded.NativeChrome.isSessionAdmitted(), false);
+    assert.equal(loaded.NativeChrome.lastSessionFailure().stage,
+      'update-required');
+    assert.equal(loaded.calls.fetch.length, 0);
+    assert.equal(
+      loaded.NativeChrome.prepareWebLogout().nativeTerminal,
+      true,
+    );
+    await assert.rejects(
+      loaded.NativeChrome.commitNativeLogout(),
+      /must be updated for secure sign-out/,
+    );
+  });
+
+test('App closes the realm synchronously before publishing either identity',
+  async () => {
+    const order = [];
+    const anonymous = deferred();
+    const sandbox = {
+      console: { log() {}, warn() {}, error() {} },
+      App: undefined,
+      NativeChrome: {
+        enterAnonymous() {
+          order.push(`close-anonymous:${sandbox.App.user.id}`);
+          return anonymous.promise;
+        },
+        prepareIdentityPublication(user) {
+          order.push(`close-authed:${user.id}:${sandbox.App.user}`);
+        },
+      },
+      AuthScreens: {
+        enter() { order.push('show-anonymous'); },
+        showWaiting() { order.push('show-waiting'); },
+      },
+      CustomEvent: class CustomEvent {
+        constructor(type, init) { this.type = type; this.detail = init.detail; }
+      },
+      document: {
+        visibilityState: 'visible',
+        body: { classList: { add() {}, remove() {} } },
+        getElementById() { return null; },
+        addEventListener() {},
+        dispatchEvent(event) {
+          order.push(`publish:${event.type}:${sandbox.App.user.id}`);
+        },
+      },
+      addEventListener() {},
+      localStorage: {
+        getItem() { return null; }, setItem() {}, removeItem() {},
+      },
+      navigator: {},
+      location: { search: '', hash: '' },
+      URLSearchParams,
+    };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(appSource, sandbox);
+    sandbox.App.loadVersion = () => order.push('load-version');
+
+    sandbox.App.user = { id: 40 };
+    const entering = sandbox.App.enterAnonymous();
+    assert.equal(sandbox.App.user, null,
+      'null publication does not wait on native work');
+    assert.deepEqual(order, ['close-anonymous:40']);
+    anonymous.resolve(false);
+    await entering;
+
+    order.length = 0;
+    sandbox.App.enterAuthed({ id: 41, hasPlatformAccess: false });
+    assert.deepEqual(order.slice(0, 2), [
+      'close-authed:41:null',
+      'publish:sv:session:41',
+    ]);
+  });
+
+test('waiting-session expiry delegates null publication to App.enterAnonymous',
+  () => {
+    const body = waitingTsx.slice(
+      waitingTsx.indexOf('if (res.status === 401)'),
+      waitingTsx.indexOf('const data = await res.json()')
+    );
+    assert.match(body, /await w\.App\.enterAnonymous\(\)/);
+    assert.doesNotMatch(body, /w\.App\.user\s*=\s*null/);
+    assert.ok(
+      body.indexOf('await w.App.enterAnonymous()') <
+      body.indexOf("location.hash = '#login'")
+    );
+  });
+
+const recoveryInfo = { version: 5, sessionLifecycleProtocol: 2, capabilities: ['restoreWebSession'] };
+const recoveredWebSession = { status: 'restored', protocol: 2, userId: '41',
+  attemptId: 'nsa_' + Buffer.alloc(32, 11).toString('base64url') };
+
+test('web recovery restores exact replay metadata after browser storage loss and coalesces renewal', async () => {
+  const gate = deferred();
+  let calls = 0;
+  const { NativeChrome } = loadNativeChrome({ info: recoveryInfo,
+    restoreImpl: () => { calls++; return gate.promise; } });
+  const first = NativeChrome.restoreWebSession();
+  assert.equal(NativeChrome.restoreWebSession(), first);
+  gate.resolve(recoveredWebSession);
   assert.equal(await first, true);
-  assert.equal(await second, true);
+  assert.equal(NativeChrome._readStoredAttempt().attemptId, recoveredWebSession.attemptId);
+  assert.equal(await NativeChrome.restoreWebSession(), false);
+  assert.equal(calls, 1);
+  assert.equal(await NativeChrome.restoreWebSession({ force: true }), true);
+  assert.equal(calls, 2);
 });
 
-test('old app builds retain the address-only node-start fallback', async () => {
-  const loaded = loadNativeChrome({
-    capabilities: ['completeLogin', 'startNode', 'logout'],
-    completeLoginImpl: async () => ({ phase: 'ready', address: 'ut1-legacy' }),
-  });
-  loaded.sandbox.App.user = { id: 9 };
-
-  await loaded.NativeChrome.runLoginHandoff();
-
-  assert.deepEqual(plain(loaded.calls.startNode), [{ address: 'ut1-legacy' }]);
+test('logout waits for admitted recovery but its late result cannot republish the old attempt', async () => {
+  const gate = deferred();
+  const { NativeChrome } = loadNativeChrome({ info: recoveryInfo, restoreImpl: () => gate.promise });
+  const recovery = NativeChrome.restoreWebSession();
+  const rejected = assert.rejects(recovery, /superseded/);
+  await settle();
+  const preflight = NativeChrome.prepareWebLogout();
+  let settled = false;
+  preflight.webRecoverySettled.then(() => { settled = true; });
+  await settle();
+  assert.equal(settled, false);
+  gate.resolve(recoveredWebSession);
+  await rejected;
+  await preflight.webRecoverySettled;
+  assert.equal(NativeChrome._readStoredAttempt(), null);
+  assert.equal(await NativeChrome.restoreWebSession(), false);
 });
 
-test('pre-v4 app builds reopen wallet admission after capability probing',
-  async () => {
-    const loaded = loadNativeChrome({
-      bridgeVersion: 3,
-      capabilities: ['getWalletState'],
-    });
-    loaded.sandbox.App.user = { id: 10 };
+test('transient native recovery failure preserves replay metadata and permits retry', async () => {
+  let fail = true;
+  const { NativeChrome } = loadNativeChrome({ info: recoveryInfo, restoreImpl: async () => {
+    if (fail) throw new Error('offline');
+    return recoveredWebSession;
+  } });
+  const prior = NativeChrome._attemptFor('41');
+  await assert.rejects(NativeChrome.restoreWebSession(), /offline/);
+  assert.equal(NativeChrome._readStoredAttempt().attemptId, prior.attemptId);
+  fail = false;
+  assert.equal(await NativeChrome.restoreWebSession(), true);
+});
 
-    await loaded.NativeChrome.runLoginHandoff();
+function recoveryReader(restore, responses) {
+  const sandbox = { NativeChrome: { restoreWebSession: restore }, App: {}, fetch: async () => responses.shift() };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  const start = appSource.indexOf('  async _fetchSession()');
+  const end = appSource.indexOf('  async _fetchWebSession()', start);
+  vm.runInContext(`Object.assign(App, {${appSource.slice(start, end)}});`, sandbox);
+  sandbox.App._fetchWebSession = sandbox.fetch;
+  return sandbox.App;
+}
 
-    assert.equal(loaded.calls.fetch.length, 0);
-    assert.deepEqual(loaded.calls.walletRelayAdmission, [false, false, true]);
-  });
+test('boot retries web authentication once after successful native restoration', async () => {
+  const ok = response({ user: { id: 41 } });
+  const calls = [];
+  const reader = recoveryReader(async (options) => { calls.push(options.force); return true; },
+    [response({}, { ok: false, status: 401 }), ok]);
+  assert.equal(await reader._fetchSession(), ok);
+  assert.deepEqual(calls, [true]);
+});
 
-test('an inconclusive bridge probe keeps wallet admission fail-closed',
-  async () => {
-    const loaded = loadNativeChrome({ bridgeVersion: 0, capabilities: [] });
-    loaded.sandbox.App.user = { id: 11 };
-
-    await loaded.NativeChrome.runLoginHandoff();
-
-    assert.equal(loaded.calls.fetch.length, 0);
-    assert.equal(loaded.calls.walletRelayAdmission.at(-1), false);
-  });
+test('boot preserves a valid web session on native failure, and treats failed recovery of an expired cookie as unknown', async () => {
+  const restore = async () => { throw new Error('native unreachable'); };
+  const ok = response({ user: { id: 41 } });
+  assert.equal(await recoveryReader(restore, [ok])._fetchSession(), ok);
+  await assert.rejects(recoveryReader(restore, [response({}, { ok: false, status: 401 })])._fetchSession(), /unreachable/);
+});

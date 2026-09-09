@@ -1,8 +1,9 @@
 // NavLink (#1036) — one rule for "a navigation control should behave like
 // a real link".
 //
-// The shell is a hash-routed SPA: every screen has an address
-// (#leaderboard, #app/<slug>/dev, #apps/<slug>, …) that
+// The shell is a client-routed SPA: apps use clean paths
+// (/app/<slug>, /app/<slug>/board, …) while the other platform screens keep
+// their established fragments (#leaderboard, #apps/<slug>, …), all of which
 // App.restoreFromHash can boot into cold. But most of the navigation
 // chrome was built as <button>/<div> with a click handler that assigns
 // location.hash, so cmd/ctrl-click, middle-click, shift-click and
@@ -90,13 +91,14 @@
 
     /** The href for "home".
 
-        Mirrors the home branch of App.updateHash(): drop the fragment
-        entirely, keep the query string. In staging previews the
+        Mirrors the home branch of App.updateHash(): return to the root,
+        drop the fragment, and keep the query string. In staging previews the
         shell-injected ?token= lives there, and ?demo= / ?shot= should
-        survive into the new tab so a demo-mode session stays in demo
-        mode. */
+        survive into the new tab so a demo-mode session stays in demo mode.
+        `path` is route-owned by chromeless app links and must not leak home. */
     homeHref() {
-      return window.location.pathname + window.location.search;
+      if (window.App?._rootUrl) return window.App._rootUrl();
+      return '/' + window.location.search;
     },
 
     /** Mechanism A. Point a real anchor at `href` and wire `onActivate`

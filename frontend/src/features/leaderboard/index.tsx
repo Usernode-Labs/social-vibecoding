@@ -69,6 +69,7 @@ import './topochain-event-context.js';
 // it. Importing any of them directly here would publish its global without a
 // store and leave that pane permanently blank.
 import './mount';
+import { EventBar } from './event-bar';
 import { KudosPane } from './kudos-pane';
 import { TopochainStandingsPane } from './topochain-standings';
 import { ChallengesPane } from './challenges-pane';
@@ -133,11 +134,21 @@ export function LeaderboardScreen() {
         </Tabs>
         {/*
             The shared event picker + hero for the two Topochain-domain
-            sections, owned by ./topochain-event-context.js. Ships VISIBLE,
-            with the standings pane below — the default section is an event
-            section — and _applySection hides it on Kudos.
+            sections. STATEFUL as of #1191: ./event-bar.tsx is the only writer
+            below this host, driven by what ./topochain-event-context.js pushes
+            into ./event-bar-store.js — that module still owns the two fetches,
+            the default pick and the subscriber list both panes register with.
+
+            The host ships VISIBLE, with the standings pane below (the default
+            section is an event section), and EMPTY — the bar's interior was
+            written on the screen's first open, so the store's initial
+            `mounted: false` renders nothing. `_applySection` hides the host on
+            Kudos by `classList`, which is safe for the reason the two pane
+            roots' comments give: this `className` is a constant React never
+            writes again.
         */}
         <div id="leaderboard-event-bar" className="w-full mb-4">
+          <EventBar />
         </div>
         {/*
             The Kudos pane. STATEFUL as of #1191 slice 6 conversion 6:

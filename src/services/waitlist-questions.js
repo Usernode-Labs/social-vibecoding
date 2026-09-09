@@ -7,36 +7,39 @@
 // One module is the source of truth for both rendering (served to the
 // SPA via GET /api/public/waitlist/options) and server-side validation
 // (validateStage1 / validateStage2 below), so the two can never drift.
+//
+// The country list is the one option set that does NOT live here: it is the
+// complete ISO 3166-1 table in src/services/countries.js, flat and sorted by
+// English name. It used to be ~50 codes nested under six region headings
+// with an "Elsewhere in <region>" pseudo-code closing five of them; see that
+// module's header for why the buckets and the pseudo-codes went.
 'use strict';
 
-const ANSWERS_VERSION = 2;
+const { ISO_COUNTRIES } = require('./countries');
+
+const ANSWERS_VERSION = 3;
 
 // ── Stage 1: "how did you find us?" ─────────────────────────────────────
+// The eight options Andrea settled on (doc comment, 27 Aug 2026). The list
+// used to run to ten and carry a free-text follow-up ("Which account?",
+// "Which subreddit?"); both are gone. The follow-up asked people to type a
+// second answer to a question they had already answered with a tap, and
+// nothing read it back.
+//
+// Five keys survive the change unaltered (`x`, `friend`, `reddit`, `event`,
+// `other`) and five are retired (`farcaster`, `chat`, `video`, `reading`,
+// `search`). Retired keys are NOT remapped: rows that stored one keep it,
+// the admin screen renders the stored key directly, and inventing a
+// migration would rewrite what somebody actually answered.
 const DISCOVERY_SOURCES = {
-  x: 'On X',
-  farcaster: 'On Farcaster',
-  friend: "A friend or someone in a group I'm in",
-  chat: 'A Discord or Telegram server',
-  video: 'A podcast or video',
-  reading: 'A newsletter, blog, or article',
+  x: 'X',
+  linkedin: 'LinkedIn',
+  instagram: 'Instagram',
   reddit: 'Reddit or a forum',
-  search: 'Search',
-  event: 'An event or meetup',
-  other: 'Somewhere else',
-};
-
-// Source-specific follow-up labels for the optional detail field.
-const DISCOVERY_DETAIL_LABELS = {
-  x: 'Which account?',
-  farcaster: 'Which cast or channel?',
-  friend: "Who? We'll thank them",
-  chat: 'Which server?',
-  video: 'Which show or channel?',
-  reading: 'Which one?',
-  reddit: 'Which subreddit or forum?',
-  search: 'What were you searching for?',
-  event: 'Which event?',
-  other: 'Where?',
+  friend: 'Friend or colleague',
+  podcast: 'Podcast',
+  event: 'Event',
+  other: 'Other',
 };
 
 // ── Stage 2: the group ──────────────────────────────────────────────────
@@ -65,7 +68,7 @@ const GROUP_TOOLS = {
   spreadsheet: 'A spreadsheet somebody maintains',
   docs: 'Notion or Google Docs',
   forum: 'A forum',
-  nothing: "Nothing — it's word of mouth",
+  nothing: "Nothing, it's word of mouth",
 };
 
 // ── Stage 2: the loss ───────────────────────────────────────────────────
@@ -87,91 +90,32 @@ const LOSS_KINDS = {
 };
 
 // ── Stage 1: "where are you?" ───────────────────────────────────────────
-// ISO-3166 alpha-2 codes grouped by the region buckets used for cohort
-// geo balancing. The "*-OTHER"-style pseudo-codes (EU, LA, AF, ME, AP)
-// let someone place themselves in a region without us maintaining all
-// 249 codes.
-const COUNTRIES = {
-  'North America': {
-    US: 'United States',
-    CA: 'Canada',
-    MX: 'Mexico',
-  },
-  Europe: {
-    GB: 'United Kingdom',
-    IE: 'Ireland',
-    FR: 'France',
-    DE: 'Germany',
-    NL: 'Netherlands',
-    BE: 'Belgium',
-    ES: 'Spain',
-    PT: 'Portugal',
-    IT: 'Italy',
-    CH: 'Switzerland',
-    AT: 'Austria',
-    SE: 'Sweden',
-    NO: 'Norway',
-    DK: 'Denmark',
-    FI: 'Finland',
-    PL: 'Poland',
-    CZ: 'Czechia',
-    RO: 'Romania',
-    UA: 'Ukraine',
-    GR: 'Greece',
-    TR: 'Türkiye',
-    EU: 'Elsewhere in Europe',
-  },
-  'Latin America': {
-    BR: 'Brazil',
-    AR: 'Argentina',
-    CO: 'Colombia',
-    CL: 'Chile',
-    PE: 'Peru',
-    VE: 'Venezuela',
-    LA: 'Elsewhere in Latin America',
-  },
-  Africa: {
-    NG: 'Nigeria',
-    GH: 'Ghana',
-    KE: 'Kenya',
-    ZA: 'South Africa',
-    EG: 'Egypt',
-    MA: 'Morocco',
-    DZ: 'Algeria',
-    TN: 'Tunisia',
-    AF: 'Elsewhere in Africa',
-  },
-  'Middle East': {
-    AE: 'United Arab Emirates',
-    SA: 'Saudi Arabia',
-    IL: 'Israel',
-    PK: 'Pakistan',
-    ME: 'Elsewhere in the Middle East',
-  },
-  'Asia Pacific': {
-    IN: 'India',
-    ID: 'Indonesia',
-    PH: 'Philippines',
-    VN: 'Vietnam',
-    TH: 'Thailand',
-    MY: 'Malaysia',
-    SG: 'Singapore',
-    JP: 'Japan',
-    KR: 'South Korea',
-    TW: 'Taiwan',
-    HK: 'Hong Kong',
-    CN: 'China',
-    AU: 'Australia',
-    NZ: 'New Zealand',
-    AP: 'Elsewhere in Asia-Pacific',
-  },
-};
+// The complete ISO 3166-1 list, flat and sorted by English name, from
+// src/services/countries.js. It used to be ~50 codes in six region buckets
+// with an "Elsewhere in <region>" pseudo-code closing five of them, which
+// two reports faulted for the same shape (GitHub issue #1527 and feedback
+// triage item #18): the buckets left ~200 countries unselectable, Uruguay
+// among them, and put the ones that were there where an alphabetical scan
+// does not look.
+//
+// The five pseudo-codes (EU, LA, AF, ME, AP) are RETIRED, not remapped, in
+// the same spirit as the retired discovery sources above: rows that stored
+// one keep it, migrated to a namespaced `X-*` form so it can never be read
+// as the real ISO code that shares those letters (LA is Laos, AF is
+// Afghanistan, ME is Montenegro). They are display-only from here on:
+// countries.js labels them for the admin screen, this module never offers
+// or accepts them, and the 2-character cap in validateStage1 makes the
+// namespaced values structurally unsubmittable.
+//
+// Nothing computed a region from a country: countryCodes() was the only
+// consumer of the nesting, and the geo balancing the form's help text
+// mentions is people reading the admin screen. So dropping the grouping
+// loses no behaviour.
+const COUNTRIES = ISO_COUNTRIES;
 
-const MAX_INVITES = 5;
-
-// Every country code offered by the form, flattened out of the regions.
+// Every country code offered by the form.
 function countryCodes() {
-  return Object.values(COUNTRIES).flatMap((region) => Object.keys(region));
+  return Object.keys(ISO_COUNTRIES);
 }
 
 // ── Validation ──────────────────────────────────────────────────────────
@@ -185,47 +129,81 @@ function str(v, max) {
   return s.length > max ? null : s;
 }
 
-// Stage 1: the four public-form questions (minus email, which the join
-// route validates separately). Mirrors topochain: made_url and
-// discovery_source required, everything else optional.
+// Match any explicit URI scheme, not just HTTP. An unsupported scheme should
+// keep flowing to the validator below and be rejected; only a genuinely bare
+// domain gets the helpful HTTPS default.
+const URI_SCHEME = /^[a-z][a-z\d+.-]*:/i;
+
+function normalizeMadeUrl(value) {
+  const madeUrl = str(value, 2000);
+  if (!madeUrl || URI_SCHEME.test(madeUrl)) return madeUrl;
+  return `https://${madeUrl}`;
+}
+
+// Stage 1: email plus a couple of optional context questions. NOTHING
+// here is required — the doc's "Simpler waitlist flow proposal" settled
+// on an email-only join, and Andrea and Evan agreed it in its comments
+// ("Just an email!"), so a bare POST carrying only an address is a valid
+// signup and yields an empty answers object.
+//
+// "Link something you've made" used to be required here. It moved to
+// stage 2, where it is one of the things that helps you move up rather
+// than a gate on joining at all.
+//
+// Two questions were dropped outright (doc comment, 27 Aug 2026): the
+// free-text city beside the country select, and "did someone refer
+// you?". Country stays because cohorts are balanced across regions;
+// city was never read by anything.
+//
+// Unknown enum values are still rejected rather than stored: optional
+// means "may be absent", never "may be anything".
 function validateStage1(body) {
-  const madeUrl = str(body?.made_url, 2000);
-  if (!madeUrl) return { ok: false, error: 'Please link something you have made.' };
-  if (!/^https?:\/\/\S+\.\S+/i.test(madeUrl)) {
-    return { ok: false, error: 'That does not look like a link — it should start with https://' };
-  }
-
-  const source = str(body?.discovery_source, 32);
-  if (!source || !Object.prototype.hasOwnProperty.call(DISCOVERY_SOURCES, source)) {
-    return { ok: false, error: 'Please tell us how you found us.' };
-  }
-
   const country = str(body?.country, 2);
   if (country && !countryCodes().includes(country.toUpperCase())) {
     return { ok: false, error: 'Unknown country.' };
   }
 
-  const madeNote = str(body?.made_note, 140);
-  const detail = str(body?.discovery_detail, 255);
-  const referrer = str(body?.referrer_handle, 255);
-  const city = str(body?.city, 120);
+  const source = str(body?.discovery_source, 32);
+  if (source && !Object.prototype.hasOwnProperty.call(DISCOVERY_SOURCES, source)) {
+    return { ok: false, error: 'Unknown discovery source.' };
+  }
 
-  const discovery = { source };
-  if (detail) discovery.detail = detail;
-
-  const value = { made_url: madeUrl, discovery };
-  if (madeNote) value.made_note = madeNote;
+  // `discovery_detail`, `city` and `referrer_handle` are deliberately NOT
+  // read any more. A stale client still sending one gets a normal signup
+  // with the key dropped, which is the same contract the retired stage-2
+  // `invites` array got.
+  //
+  // The referral question went for a reason rather than for brevity: a
+  // typed handle is a claim nobody can resolve, and the invite link on the
+  // stage-2 form already attributes the same relationship through
+  // `invite_code` / `invited_by`, where it is a row reference instead of a
+  // string.
+  const value = {};
+  if (source) value.discovery = { source };
   if (country) value.country = country.toUpperCase();
-  if (city) value.city = city;
-  if (referrer) value.referrer_handle = referrer;
   return { ok: true, value };
 }
 
 // Stage 2: everything optional; unknown enum keys are rejected rather
 // than silently stored. Produces the section shape stored in
-// answers.group / answers.loss / answers.handles / answers.invites.
+// answers.made_url / answers.group / answers.loss / answers.handles.
+// Who invited whom is NOT in here — it lives in the invite_code /
+// invited_by columns, because it is a relationship between rows rather
+// than an answer somebody typed.
 function validateStage2(body) {
   const value = {};
+
+  // Moved here from stage 1: "link something you've made" is one of the
+  // things that helps you move up, not a gate on joining.
+  const madeUrl = normalizeMadeUrl(body?.made_url);
+  if (madeUrl) {
+    if (!/^https?:\/\/\S+\.\S+/i.test(madeUrl)) {
+      return { ok: false, error: 'That does not look like a link. It should start with https://' };
+    }
+    value.made_url = madeUrl;
+    const madeNote = str(body?.made_note, 140);
+    if (madeNote) value.made_note = madeNote;
+  }
 
   const group = {};
   const groupName = str(body?.group_name, 255);
@@ -289,19 +267,29 @@ function validateStage2(body) {
   }
   if (Object.keys(handles).length) value.handles = handles;
 
-  if (body?.invites != null) {
-    if (!Array.isArray(body.invites)) return { ok: false, error: 'invites must be a list.' };
-    const invites = body.invites
-      .map((v) => str(v, 255))
-      .filter(Boolean)
-      .slice(0, MAX_INVITES);
-    if (invites.length) value.invites = invites;
-  }
+  // `invites` (five typed addresses) was retired for the share link:
+  // it sent nothing, attributed nothing and was never read back, so the
+  // key is deliberately dropped rather than validated. A stale client
+  // still sending it gets a normal save with the key ignored.
+  //
+  // `admit_together` ("only let me in when at least one person from my
+  // link gets in too") is retired the same way: no admission path ever
+  // read it, so the promise it made was never kept. Same contract as
+  // `invites` -- dropped on input, never rejected, and rows that already
+  // carry it keep it.
 
-  if (body?.admit_together != null) value.admit_together = !!body.admit_together;
-
-  const referrer = str(body?.referrer_handle, 255);
-  if (referrer) value.referrer_handle = referrer;
+  // "Follow along" (doc comment, 27 Aug 2026). This is a CLAIM, not a
+  // verification, and the name says so wherever it is read.
+  //
+  // None of the three networks will confirm a follow for us. LinkedIn's
+  // Follower Statistics returns aggregate counts and never an identity;
+  // Instagram's Graph API exposes `followers_count` and no relationship
+  // lookup at any tier; X retired the v1.1 `friendships/show` boolean and
+  // its v2 replacement means paginating a member's entire following list
+  // under metered per-resource pricing. So the honest thing to store is
+  // that somebody said they did it, kept separate from `answers.verified`,
+  // which OAuth actually proves.
+  if (body?.followed_claim != null) value.followed_claim = !!body.followed_claim;
 
   return { ok: true, value };
 }
@@ -311,29 +299,26 @@ function validateStage2(body) {
 function publicOptions() {
   return {
     discovery_sources: DISCOVERY_SOURCES,
-    discovery_detail_labels: DISCOVERY_DETAIL_LABELS,
     group_sizes: GROUP_SIZES,
     group_roles: GROUP_ROLES,
     group_tools: GROUP_TOOLS,
     loss_answers: LOSS_ANSWERS,
     loss_kinds: LOSS_KINDS,
     countries: COUNTRIES,
-    max_invites: MAX_INVITES,
   };
 }
 
 module.exports = {
   ANSWERS_VERSION,
   DISCOVERY_SOURCES,
-  DISCOVERY_DETAIL_LABELS,
   GROUP_SIZES,
   GROUP_ROLES,
   GROUP_TOOLS,
   LOSS_ANSWERS,
   LOSS_KINDS,
   COUNTRIES,
-  MAX_INVITES,
   countryCodes,
+  normalizeMadeUrl,
   validateStage1,
   validateStage2,
   publicOptions,

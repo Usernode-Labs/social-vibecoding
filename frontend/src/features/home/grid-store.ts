@@ -1,0 +1,130 @@
+/**
+ * The launcher grid's view model — what `#app-list` is about to hold.
+ *
+ * ── Why a store rather than props ──────────────────────────────────────
+ *
+ * `Home.render()` used to build the grid's `innerHTML` and hand it to the
+ * element. It now computes THIS — plain data, no markup — and pushes it here;
+ * `app-grid.tsx` is the only writer of the DOM below `#app-list`. That split
+ * is what makes the grid convertible at all: home.js keeps owning the data
+ * (the WS fan-out, the layout fetch, the favourite ordering, the card menus),
+ * and React owns the rendering, with nothing writing into the other's half.
+ *
+ * The store lives in its own module, imports nothing from React, and holds
+ * only serialisable values — so tests can drive `Home.render()` in Node and
+ * assert on the pushed model without a DOM. That is the same property
+ * lib/plain-store.js was written for (see its header) and the reason the
+ * placement maths stays in home-layout.js: this file is a shape, not a
+ * calculation.
+ *
+ * ── The initial value IS the pre-conversion markup ────────────────────
+ *
+ * `ready: false` with no items renders nothing, which is exactly the empty
+ * `<div id="app-list">` the hand-written shell shipped and the SSG pass in
+ * frontend/scripts/build-shell.mjs prerenders. Anything else here would be a
+ * hydration mismatch, and a console error on any route fails proposal checks.
+ * Nothing fetches from render — `Home.load()` is still called by app.js's
+ * router, exactly as before.
+ *
+ * ── `dragActive` is not in this store, on purpose ─────────────────────
+ *
+ * The kit's grid placement physically moves `#app-list`'s children during a
+ * lift, which is the one window where React must not reconcile. home.js
+ * already had that guard (`Home._dragActive`, set in the kit's `onLift` and
+ * cleared in `onSettle`, with `_rerenderPending` flushing afterwards), and it
+ * keeps it: `Home.render()` returns early while a drag is live, so no push
+ * ever reaches this store mid-gesture. Moving the flag in here would have made
+ * it look like React state that a render could depend on, when what it
+ * actually guards is the ABSENCE of a render.
+ */
+
+import { createStore } from '../../lib/plain-store.js';
+
+/** Where an item sits on the canvas. `null` = flow after it (overflow items). */
+export interface GridPlacement {
+  col: number;
+  row: number;
+  w: number;
+  h: number;
+}
+
+/** The icon choice, as data — from AppCard.iconViewFor, shared with browse. */
+export type IconView =
+  | { kind: 'image'; src: string }
+  | { kind: 'emoji'; emoji: string }
+  | { kind: 'letter'; letter: string };
+
+/**
+ * One app tile's rendered facts. Deliberately flat and pre-decided: every
+ * conditional the old template string evaluated inline (`statusLabel`,
+ * `showRetry`, the fork name, whether the tile is clickable) is resolved by
+ * home.js, where the `App.user` gates and the status vocabulary already live.
+ * The component renders; it does not decide.
+ */
+export interface HomeAppView {
+  slug: string;
+  name: string;
+  status: string;
+  icon: IconView;
+  locked: boolean;
+  demo: boolean;
+  /** '' for a running app; otherwise the words shown under the name. */
+  statusLabel: string;
+  isAwaiting: boolean;
+  isError: boolean;
+  /** Running and awaiting-secrets tiles open; every other status does not. */
+  clickable: boolean;
+  /** #416 — creator/collaborator/admin only; the server gates the field. */
+  failureReason: string | null;
+  showRetry: boolean;
+  /** Resolved live name of the app this was forked from, or null. */
+  forkName: string | null;
+}
+
+/**
+ * One placed tile. A single shape rather than a union: since the UI overhaul
+ * moved the three widgets out to fixed sections, every item on the launcher
+ * canvas is an app.
+ */
+export type GridItem = { kind: 'card'; placement: GridPlacement | null; app: HomeAppView };
+
+export interface HomeGridState {
+  /** False until the first `Home.render()` push — see the header. */
+  ready: boolean;
+  /** Drives `#app-list`'s `data-view`; app.css keys `grid-auto-rows` off it. */
+  view: 'grid' | 'search';
+  /** `grid-template-rows`, or '' for "let app.css size the rows". */
+  rowTemplate: string;
+  items: GridItem[];
+  /** Search view only: the "N results" line, or null. */
+  resultsHeading: string | null;
+  /** Search view only: the query that matched nothing, or null. */
+  emptyQuery: string | null;
+  /**
+   * A whole-grid message from the LOAD path — offline with an empty cache, or
+   * a failed fetch. It is in the model rather than written into `#app-list`
+   * because React owns that subtree: an imperative write here would be a
+   * second writer, and would be painted straight back over by the next push.
+   */
+  notice: { text: string; tone: 'muted' | 'error' } | null;
+}
+
+export const INITIAL_GRID: HomeGridState = {
+  ready: false,
+  view: 'grid',
+  rowTemplate: '',
+  items: [],
+  resultsHeading: null,
+  emptyQuery: null,
+  notice: null,
+};
+
+export const gridStore = createStore<HomeGridState>(INITIAL_GRID);
+
+if (typeof window !== 'undefined') {
+  // Published for the same reason every relocated module publishes its global:
+  // tests/home-card-menu.test.js and the declared checks reach the shell's
+  // pieces by name, and home.js itself is imported by index.tsx rather than
+  // importing it back.
+  (window as unknown as { HomeGridStore?: unknown }).HomeGridStore = gridStore;
+}

@@ -39,6 +39,13 @@ const nativeJs = fs.readFileSync(
 // Every screen root the shell can show, and the screens that swap between
 // them. Kept as literals so a new screen that forgets the discipline shows
 // up as a missing entry rather than passing vacuously.
+// Notifications and Messages left this list when they became SHEETS — each
+// presents over whatever screen is showing rather than replacing it, so
+// neither is a mutually exclusive root and neither has a navigate/exit pair.
+// #messages-screen is back in the set (#1443). #1431 made Messages a sheet
+// because the header's chat bubble was on every route, so a full-screen
+// Messages had no honest answer to "back to where?". The bubble is gone —
+// Messages is a row of the chip's menu — and a menu row goes to a page.
 const SCREEN_ROOTS = ['app-view', 'home-screen', 'browse-screen',
   'leaderboard-screen', 'profile-screen', 'admin-screen', 'settings-screen',
   'messages-screen'];
@@ -86,8 +93,8 @@ test('_showOnlyScreen hides every other root, reveals one, resets the chevron', 
   // React store for a React-owned root and falls back to the class otherwise.
   assert.match(body, /App\._setScreenVisible\(id, false\)/, 'the rest are hidden');
   assert.match(body, /App\._setScreenVisible\(revealId, true\)/, 'the target is revealed');
-  assert.match(body, /App\.setBackIcon\('home'\)/,
-    "the back chevron goes back to meaning 'home' on every swap");
+  assert.match(body, /App\.setBackIcon\(revealId === 'home-screen' \|\| revealId === 'browse-screen' \? 'none' : 'home'\)/,
+    'Home/Browse share their root header; secondary screens keep a Home button');
   // The comment is load-bearing: the ordering rule is invisible from the
   // call sites, so it must be stated where the primitive lives.
   const doc = appJs.slice(appJs.indexOf('  SCREEN_IDS:') - 1400,
@@ -139,7 +146,7 @@ test('navigateHome swaps and retitles inside its transition', () => {
   // `after` hook is what conceals it.
   assert.ok(callback.includes("App._showOnlyScreen('home-screen', ['app-view'])"),
     'home is revealed and every root but the shrinking app card is hidden');
-  assert.match(callback, /App\.setHeaderTitle\('dApps'\)/);
+  assert.match(callback, /App\.setHeaderTitle\('Social Vibecoding'\)/);
   assert.match(callback, /after: \(\) => \{[\s\S]*av\.classList\.add\('hidden'\)/,
     'the app view itself is concealed in the kit `after` hook');
 });
@@ -158,8 +165,12 @@ test('navigateToApp reveals in fn and conceals every other root in after', () =>
   const callback = zoom.slice(at);
   assert.match(callback, /App\._setScreenVisible\('app-view', true\)/,
     'fn reveals the app view (the departing screen stays visible beneath it)');
-  assert.match(callback, /getElementById\('back-btn'\)\.classList\.remove\('hidden'\)/,
-    'the back button is revealed inside the callback too');
+  // The blanket back-button reveal that lived in this callback is gone
+  // (Streamlined Concept, owner review): there is never a HOME button beside
+  // the hamburger, and setBackIcon is the anchor's single visibility owner
+  // (it shows the slot only in its level-2 arrow mode).
+  assert.ok(!callback.includes("getElementById('back-btn').classList.remove"),
+    'no blanket back-button reveal creeps back into the callback');
   assert.match(callback, /after: \(\) => \{ App\._showOnlyScreen\('app-view'\); \}/,
     'the conceal hook hides EVERY other root — the _exitX helpers no longer do');
   // The one deliberate exception, documented at the call site: the
@@ -197,7 +208,10 @@ test('every screen entry is guarded against a duplicate dispatch', () => {
     navigateToBrowse: /if \(App\._inBrowse && window\.Browse\?\.isOpen\?\.\(\)\)/,
     navigateToAdminConsole: /if \(App\._inAdmin && window\.AdminConsole\?\.isOpen\?\.\(\)\)/,
     navigateToSettings: /if \(App\._inSettings && window\.Settings\?\.isOpen\?\.\(\)\)/,
-    navigateToMessages: /if \(App\._inMessages && messages\?\.isOpen\?\.\(\)\)/,
+    // navigateToMessages was here. It is a sheet resolver now, and a sheet
+    // needs no duplicate-dispatch guard: presenting one that is already
+    // presented is a no-op in the controller, and there is no View Transition
+    // for a replay to land inside.
   };
   for (const [fn, guard] of Object.entries(guards)) {
     const body = methodBody(fn);

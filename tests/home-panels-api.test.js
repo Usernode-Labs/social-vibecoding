@@ -1,5 +1,5 @@
 // /api/home-panels — the home screen's Challenges card (#911) and the
-// per-user show/hide behind it.
+// fixed sections that remain visible for every signed-in account (#1801).
 //
 // Contracts guarded here:
 //
@@ -13,9 +13,8 @@
 //      snapshot, clamped to the target.
 //   4. points_remaining is withheld (null) unless EVERY open row's reward
 //      parses as a plain number — organiser prose is never guessed at.
-//   5. A hidden panel is dropped from `panels` but still described by
-//      `registry` + `hidden`, so Settings renders from the same response.
-//   6. The visibility write validates its key against the registry.
+//   5. Legacy hidden preferences cannot suppress any fixed section.
+//   6. The retired visibility endpoint cannot mutate preferences.
 //   7. ?demo=1 is a no-op outside staging.
 //
 // Pure-function tests plus HTTP tests against a throwaway express app and
@@ -46,10 +45,12 @@ function makeMockPool(state) {
   const pool = {
     async query(rawSql, params = []) {
       const sql = collapse(rawSql);
+      // These pre-onboarding fixtures contain no introductory definitions.
+      // Progression with a real catalog is exercised in challenge-onboarding.
+      if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
       calls.push({ sql, params });
 
-      // Placement moved to user_home_layout (src/routes/home-layout.js);
-      // this route reads only the per-user hidden set now.
+      // Model legacy stored preferences to catch accidental reads or writes.
       if (sql.includes('SELECT home_panels_hidden FROM users')) {
         return { rows: [{ home_panels_hidden: state.hidden ?? [] }] };
       }
@@ -62,17 +63,25 @@ function makeMockPool(state) {
       if (sql.includes('FROM seasons')) {
         return { rows: state.season ? [state.season] : [] };
       }
-      // The COUNT(*) totals query.
-      if (sql.includes('COUNT(*)::int AS total')) {
+      // The COUNT(*) totals query. It counts the EXPANDED scope and narrows
+      // to the collapsed one with a FILTER, which is how one statement
+      // produces both `total` (open) and `all_total` (what an expansion
+      // would draw) — see #1824.
+      if (sql.includes('AS all_total')) {
         // The totals query runs over the WHOLE open set, so the fixture
         // may declare `allRows` (what the season really has) separately
         // from `rows` (the capped page the row query returns). Defaults to
         // `rows` when a test doesn't care about the difference.
         const all = state.allRows || state.rows || [];
         const isDone = (r) => Number(r.my_activity_count) > 0;
+        const total = state.total != null ? state.total : all.length;
         return {
           rows: [{
-            total: state.total != null ? state.total : all.length,
+            total,
+            // A fixture that wants finished/out-of-window challenges behind
+            // the expansion says so; absent means the open set is all there
+            // is, which is what most of these tests are about.
+            all_total: state.allTotal != null ? state.allTotal : total,
             done: all.filter(isDone).length,
             // array_agg(COALESCE(c.reward, ct.reward)) FILTER (NOT done)
             open_rewards: all.filter((r) => !isDone(r))
@@ -386,9 +395,11 @@ test('the SQL done rule mirrors resolveProgress — "has a ledger row" is NOT do
     assert.match(q.sql, /= 'blocks_produced' THEN COALESCE\(\(SELECT ls\.event_total_produced_blocks/);
   }
   // The totals COUNT uses the same expression, so "N of M done" and the
-  // per-row chips cannot disagree.
-  const totals = queries.find((q) => q.sql.includes('COUNT(*)::int AS total'));
-  assert.match(totals.sql, /COUNT\(\*\) FILTER \(WHERE CASE/);
+  // per-row chips cannot disagree. It is a FILTER over the collapsed scope
+  // AND the done rule now, because the same statement also counts the
+  // expanded scope for `all_total` (#1824).
+  const totals = queries.find((q) => q.sql.includes('AS all_total'));
+  assert.match(totals.sql, /COUNT\(\*\) FILTER \( WHERE \(.*?\) AND \( CASE WHEN COALESCE\(c\.metric_type/);
 });
 
 test('GET /api/home-panels: the query\'s done verdict wins over recomputation', async () => {
@@ -469,9 +480,16 @@ test('GET /api/home-panels: prose in an OFF-page open reward still withholds the
 test('the totals query asks for the open rewards, and the row query is capped at 4', async () => {
   const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   await get(app, '/api/home-panels');
-  const totals = calls.find((c) => c.sql.includes('COUNT(*)::int AS total'));
-  assert.match(totals.sql, /array_agg\(COALESCE\(c\.reward, ct\.reward\)\) FILTER \(WHERE NOT \(/,
+  const totals = calls.find((c) => c.sql.includes('AS all_total'));
+  assert.match(totals.sql, /array_agg\(COALESCE\(c\.reward, ct\.reward\)\) FILTER \( WHERE \(.*?\) AND NOT \(/,
     'open rewards come from the full-predicate query, not the page');
+  // One statement, two counts: the collapsed scope for `total` and the
+  // expanded one for `all_total`, so the footer can tell "nothing to expand"
+  // from "finished challenges behind the toggle" (#1824) with no extra trip.
+  assert.match(totals.sql, /COUNT\(\*\)::int AS all_total/);
+  const outerWhere = totals.sql.slice(totals.sql.lastIndexOf('WHERE se.season_id'));
+  assert.doesNotMatch(outerWhere, /c\.completed = FALSE/,
+    'the outer WHERE is the expanded scope; open-only lives in the FILTERs');
   const rowQuery = calls.find((c) => c.sql.includes('LIMIT $3'));
   // Four 40px rows is what fits the DESKTOP tile under --home-panel-max-h;
   // the footer reads "See all N" when total exceeds it. The phone shape draws
@@ -483,25 +501,23 @@ test('the totals query asks for the open rewards, and the row query is capped at
   assert.match(route, /const CHALLENGE_ROW_LIMIT = 4;/);
 });
 
-test('GET /api/home-panels: a hidden panel is dropped from panels but still described', async () => {
-  const { app } = makeApp(
-    { season: SEASON, rows: [row()], hidden: ['challenges'] },
-    { user: USER }
-  );
-  const { body } = await get(app, '/api/home-panels');
-  // Only the hidden one drops out; the rest still build.
-  assert.deepEqual(body.panels.map((p) => p.key), ['discover', 'create']);
-  assert.deepEqual(body.hidden, ['challenges']);
-  assert.deepEqual(body.registry.map((r) => r.key), ['challenges', 'discover', 'create']);
-});
-
-test('GET /api/home-panels: unknown keys in the column are filtered out', async () => {
-  const { app } = makeApp(
-    { season: SEASON, rows: [row()], hidden: ['challenges', 'retired-panel'] },
-    { user: USER }
-  );
-  const { body } = await get(app, '/api/home-panels');
-  assert.deepEqual(body.hidden, ['challenges']);
+test('GET /api/home-panels: legacy hidden preferences never suppress fixed sections', async () => {
+  for (const hidden of [[], ['challenges'], ['challenges', 'create'], ['discover', 'retired-panel']]) {
+    const { app, calls, state } = makeApp(
+      { season: SEASON, rows: [row()], hidden }, { user: USER }
+    );
+    // A second read models reload/another device: no one-off preference reset.
+    for (let visit = 0; visit < 2; visit++) {
+      const { status, body } = await get(app, '/api/home-panels');
+      assert.equal(status, 200);
+      assert.deepEqual(body.panels.map((p) => p.key), ['challenges', 'discover', 'create']);
+      assert.equal(body.panels[0].challenges.length, 1, 'real challenge data is restored');
+      assert.deepEqual(body.hidden, [], 'cached clients also see every section');
+      assert.ok(body.registry.every((p) => p.removable === false));
+    }
+    assert.deepEqual(state.hidden, hidden, 'no preference migration is needed');
+    assert.ok(calls.every(({ sql }) => !sql.includes('home_panels_hidden')));
+  }
 });
 
 test('GET /api/home-panels: ?demo=1 is a no-op outside staging', async () => {
@@ -552,38 +568,18 @@ test('GET ?demo=1 in staging spends its four slots on both kinds of DONE', async
   assert.equal(p.done, 2, 'the header counter agrees with the glyphs');
 });
 
-// ─── POST /api/home-panels/:key/visibility ────────────────────────────
-
-test('POST visibility: 401 unauthenticated', async () => {
-  const { app } = makeApp({ season: SEASON, rows: [] });
-  const { status } = await post(app, '/api/home-panels/challenges/visibility', { hidden: true });
-  assert.equal(status, 401);
-});
-
-test('POST visibility: unknown key -> 400', async () => {
-  const { app } = makeApp({ season: SEASON, rows: [] }, { user: USER });
-  const { status } = await post(app, '/api/home-panels/nope/visibility', { hidden: true });
-  assert.equal(status, 400);
-});
-
-test('POST visibility: a non-boolean hidden -> 400', async () => {
-  const { app } = makeApp({ season: SEASON, rows: [] }, { user: USER });
-  for (const bad of [{ hidden: 'true' }, { hidden: 1 }, {}]) {
-    const { status } = await post(app, '/api/home-panels/challenges/visibility', bad);
-    assert.equal(status, 400, JSON.stringify(bad));
+// Old clients cannot save a preference that the current UI cannot restore.
+test('POST visibility is retired and never mutates saved preferences', async () => {
+  const hidden = ['challenges', 'create'];
+  const { app, calls, state } = makeApp({ season: SEASON, rows: [], hidden }, { user: USER });
+  for (const key of ['challenges', 'create', 'discover', 'nope']) {
+    for (const hide of [true, false]) {
+      const { status } = await post(app, `/api/home-panels/${key}/visibility`, { hidden: hide });
+      assert.equal(status, 404);
+    }
   }
-});
-
-test('POST visibility: hide then show round-trips, and hiding twice cannot duplicate', async () => {
-  const { app, state } = makeApp({ season: SEASON, rows: [], hidden: [] }, { user: USER });
-  let res = await post(app, '/api/home-panels/challenges/visibility', { hidden: true });
-  assert.equal(res.status, 200);
-  assert.deepEqual(res.body.hidden, ['challenges']);
-  res = await post(app, '/api/home-panels/challenges/visibility', { hidden: true });
-  assert.deepEqual(res.body.hidden, ['challenges'], 'array_remove-then-append, no dupes');
-  res = await post(app, '/api/home-panels/challenges/visibility', { hidden: false });
-  assert.deepEqual(res.body.hidden, []);
-  assert.deepEqual(state.hidden, []);
+  assert.deepEqual(state.hidden, hidden);
+  assert.equal(calls.length, 0);
 });
 
 // ─── Expand mode ──────────────────────────────────────────────────────
@@ -626,56 +622,35 @@ test('GET ?expand names ONE panel — an unknown name expands nothing', async ()
 
 // ─── Drag position ────────────────────────────────────────────────────
 
-// The registry is what Settings renders its checkboxes from and what the
-// grid places, so it has to describe EVERY widget — including the two
-// marker widgets that build no payload at all.
-test('the registry describes every widget, with its footprint and removability', async () => {
+// The registry is what says a block EXISTS at all — it is how the two marker
+// blocks, which build no payload, render. All are fixed sections.
+test('the registry describes every fixed block for current and cached clients', async () => {
   const { app } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
   const byKey = Object.fromEntries(body.registry.map((r) => [r.key, r]));
   assert.deepEqual(Object.keys(byKey), ['challenges', 'discover', 'create']);
-  // Footprints are per column count and live server-side, so the layout
-  // route's overlap check and the client lay out against the same numbers.
-  // Challenges is asymmetric (#968): one row on a phone, where the widget is
-  // full width and a two-row footprint reserved space its content-height
-  // block never drew; its original two on desktop, where it is a tile among
-  // app icons and the leftover goes to the leaderboard fill.
-  assert.deepEqual(byKey.challenges.sizes, { 4: [4, 1], 5: [2, 2] });
-  // Discover is asymmetric (#949): one row on a phone, where it is full
-  // width and its content is a single lane; its original two on desktop,
-  // where the second row carries the Popular lane.
-  assert.deepEqual(byKey.discover.sizes, { 4: [4, 1], 5: [2, 2] });
-  // Create app takes a whole phone row (4 wide, 1 tall) and one desktop cell.
-  assert.deepEqual(byKey.create.sizes, { 4: [4, 1], 5: [1, 1] });
   // Discover is the shell's only door to the app directory.
   assert.equal(byKey.discover.removable, false);
-  assert.equal(byKey.challenges.removable, true);
-  assert.equal(byKey.create.removable, true);
-  // Placement is no longer this route's business.
+  assert.equal(byKey.challenges.removable, false);
+  assert.equal(byKey.create.removable, false);
+
+  // FOOTPRINTS ARE GONE. Each entry used to carry a per-column-count `sizes`
+  // table — asymmetric for two of the three, so a phone got a full-width row
+  // where a desktop got a 2x2 tile — and the layout route's overlap check ran
+  // on the same numbers, so a patched client could not persist a
+  // self-overlapping arrangement. THE UI OVERHAUL made all three fixed
+  // sections of the home screen, so nothing is placed and there is no
+  // footprint to agree on.
+  for (const entry of body.registry) {
+    assert.equal(entry.sizes, undefined, `${entry.key} carries no footprint`);
+  }
+  // Placement was already not this route's business.
   assert.equal(body.positions, undefined);
 });
 
-test('POST …/visibility refuses to hide a non-removable widget', async () => {
-  const { app, state } = makeApp({ season: SEASON, rows: [], hidden: [] }, { user: USER });
-  const res = await post(app, '/api/home-panels/discover/visibility', { hidden: true });
-  assert.equal(res.status, 400);
-  assert.deepEqual(state.hidden, [], 'nothing was written');
-  // Un-hiding it is harmless and still allowed (it is already visible).
-  const show = await post(app, '/api/home-panels/discover/visibility', { hidden: false });
-  assert.equal(show.status, 200);
-});
-
-// The create widget is on every home screen regardless of app quota, so
-// hiding it must be equally available to everyone — the route must not
-// consult canCreateApps or app_quota on any path.
-test('the create widget hides for any account, quota or not', async () => {
-  const { app, state } = makeApp({ season: SEASON, rows: [], hidden: [] }, { user: USER });
-  const res = await post(app, '/api/home-panels/create/visibility', { hidden: true });
-  assert.equal(res.status, 200);
-  assert.deepEqual(state.hidden, ['create']);
+test('fixed sections are independent of app creation quota', () => {
   const route = read('src/routes/home-panels.js');
-  assert.doesNotMatch(route.replace(/^\s*\/\/.*$/gm, ''), /canCreateApps|app_quota/,
-    'no quota check anywhere in the registry or its routes');
+  assert.doesNotMatch(route.replace(/^\s*\/\/.*$/gm, ''), /canCreateApps|app_quota/);
 });
 
 // The placement endpoint is gone: a widget's home is a real (column, row)
@@ -687,39 +662,28 @@ test('the card-count position endpoint is retired', async () => {
   const route = read('src/routes/home-panels.js');
   assert.doesNotMatch(route, /router\.post\('\/api\/home-panels\/:key\/position'/);
   assert.doesNotMatch(route, /MAX_PANEL_POSITION =/);
-  // The column survives (this schema file is append-only) but nothing reads
+  // The separate legacy placement column survives, but nothing reads
   // it — a stale reader would silently resurrect the old placement model.
   const schema = read('src/db/schema.sql');
   assert.match(schema, /home_panel_positions JSONB NOT NULL DEFAULT '\{\}'/);
   assert.match(schema, /RETIRED — superseded by the `user_home_layout` table/);
   // Matched against code, not comments — the one remaining mention is the
-  // note in readPrefs explaining why it is gone.
+  // historical notes explaining why it is gone.
   assert.doesNotMatch(route.replace(/^\s*\/\/.*$/gm, ''), /home_panel_positions/);
 });
 
 // ─── Source pins ──────────────────────────────────────────────────────
 
-test('schema declares users.home_panels_hidden, defaulting to visible-for-all', () => {
+test('schema removes the retired visibility column on existing and fresh databases', () => {
   const schema = read('src/db/schema.sql');
-  assert.match(
-    schema,
-    /ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT\[\] NOT NULL DEFAULT '\{\}'/,
-    'absence of a key must mean visible, so the default is an empty array'
-  );
+  assert.match(schema, /ALTER TABLE users DROP COLUMN IF EXISTS home_panels_hidden;/);
+  assert.doesNotMatch(schema, /ADD COLUMN[^;]*home_panels_hidden/);
 });
 
 test('the route is mounted in server.js', () => {
   const server = read('server.js');
   assert.match(server, /require\('\.\/src\/routes\/home-panels'\)/);
   assert.match(server, /app\.use\(homePanelRoutes\(config\)\)/);
-});
-
-test('the visibility write is rate limited per user', () => {
-  const limits = read('src/middleware/rate-limits.js');
-  assert.match(limits, /homePanelPrefLimiter = makeLimiter\(\{[\s\S]*?keyByUser: true/);
-  assert.match(limits, /module\.exports = \{[^}]*homePanelPrefLimiter/);
-  const route = read('src/routes/home-panels.js');
-  assert.match(route, /visibility', homePanelPrefLimiter/);
 });
 
 test('staging seeds open challenges covering every card state', () => {
@@ -736,310 +700,23 @@ test('staging seeds open challenges covering every card state', () => {
   assert.match(migrate, /\$\{base \+ 5\}[\s\S]*?900512/);
 });
 
-// ── The desktop LEADERBOARD fill ─────────────────────────────────────
+// ── THE LEADERBOARD FILL IS REMOVED ──────────────────────────────────
 //
-// At five columns the widget is a fixed-height tile, so whatever the
-// challenge rows don't use is dead space. The panel therefore carries a
-// `leaderboard` block whenever the collapsed list leaves room; the client
-// decides how many of its rows fit (and draws none at all on a phone, where
-// the block shrinks instead).
+// The challenges panel used to carry a `leaderboard` block: the head of the
+// Topochain standings plus the viewer's own row, falling back to the kudos
+// board on a deployment with no public standings, memoised for 30s because
+// both boards are identical for every viewer. Twenty tests covered it, and
+// they are gone with it — the two board queries are not made any more, so
+// there is nothing left here to assert.
 //
-// The PRIMARY board is the Topochain standings — the same board the
-// Leaderboard screen's primary tab shows, so the widget and the screen can
-// never disagree about who is #1. The kudos board is the FALLBACK, for a
-// deployment with no public standings at all, and it says so (`kind`).
-
-// A ranked-users row as src/services/leaderboard-users.js returns it.
-const lbUser = (username, score) => ({
-  user_id: username.length, username, kudos_received_prs_merged: score,
-});
-
-const FILL_USERS = [
-  lbUser('ada', 41), lbUser('grace', 27), lbUser('linus', 18),
-  lbUser('kay', 9), lbUser('viewer', 6), lbUser('nobody', 0),
-];
-
-// The resolved event, and a stored-snapshot row as EVENT_LEADERBOARD_SQL
-// returns it (only the columns the board actually reads).
-const EVENT = { id: 77, name: 'Block Production Sprint', season_id: 5, type: 'regular' };
-const tcRow = (over = {}) => ({
-  user_id: 1, rank: 1, total_points: '100', exclude_podium: false,
-  email: null, telegram: null, discord: null, display_name: null, ...over,
-});
-
-// Points are NUMERIC in Postgres, so they arrive as strings — and as
-// decimals in production (59145.66). The board rounds them.
-const STANDINGS = [
-  tcRow({ user_id: 11, rank: 1, total_points: '59145.66', discord: 'validator' }),
-  tcRow({ user_id: 12, rank: 2, total_points: '41230.10', display_name: 'Grace' }),
-  tcRow({ user_id: 13, rank: 3, total_points: '27515', email: 'linus@example.invalid' }),
-  tcRow({ user_id: 7, rank: 9, total_points: '6480', discord: 'me' }),
-];
-
-test('the fill is the Topochain standings when a public event has them', async () => {
-  const { app } = makeApp({
-    season: SEASON, rows: [row(), row({ id: 2 })],
-    event: EVENT, standings: STANDINGS, fillUsers: FILL_USERS,
-  }, { user: USER });
-  const { body } = await get(app, '/api/home-panels');
-  const panel = body.panels.find((p) => p.key === 'challenges');
-  assert.equal(panel.challenges.length, 2);
-  const lb = panel.leaderboard;
-  assert.ok(lb, 'two challenges leave two slots to fill');
-  assert.equal(lb.kind, 'topochain', 'the standings board, not the kudos one');
-  assert.equal(lb.label, 'Leaderboard', 'and it is simply called that');
-  assert.deepEqual(lb.event, { id: 77, name: 'Block Production Sprint' });
-  // Names come from the SAME chain the standings table uses — discord,
-  // then display_name, then the masked identifier — so the widget can never
-  // unmask a row the screen masks.
-  assert.deepEqual(lb.top, [
-    { rank: 1, name: 'validator', score: 59146, you: false },
-    { rank: 2, name: 'Grace', score: 41230, you: false },
-    { rank: 3, name: 'lin***@***.invalid', score: 27515, you: false },
-  ]);
-  assert.equal(lb.total, 4);
-});
-
-// USER is { id: 7, … }: the platform users.id IS the topochain users.id, so
-// the viewer's own row needs no wallet and no username match.
-test('the viewer is matched by user_id, and flagged rather than name-matched', async () => {
-  const { app } = makeApp({
-    season: SEASON, rows: [row()], event: EVENT, standings: STANDINGS,
-  }, { user: USER });
-  const { body } = await get(app, '/api/home-panels');
-  const lb = body.panels.find((p) => p.key === 'challenges').leaderboard;
-  assert.deepEqual(lb.viewer, { rank: 9, name: 'me', score: 6480, you: true });
-  assert.ok(lb.top.every((r) => r.you === false), 'nobody in the top slice is them');
-});
-
-test('a viewer inside the top slice is flagged there instead of repeated', async () => {
-  const { app } = makeApp({
-    season: SEASON, rows: [row()], event: EVENT, standings: STANDINGS,
-  }, { user: { id: 12, username: 'grace' } });
-  const { body } = await get(app, '/api/home-panels');
-  const lb = body.panels.find((p) => p.key === 'challenges').leaderboard;
-  assert.deepEqual(lb.top.map((r) => r.you), [false, true, false]);
-  assert.equal(lb.viewer.you, true);
-});
-
-// Most platform accounts have no standings at all (they are earned by
-// participating in an event, not by having an account). That is NOT a reason
-// to serve them a different board — the slot just goes to one more
-// participant, which the client renders as a full top slice.
-test('a viewer with no standings row gets a full top slice and no "you" line', async () => {
-  const { app } = makeApp({
-    season: SEASON, rows: [row()], event: EVENT, standings: STANDINGS,
-    fillUsers: FILL_USERS,
-  }, { user: { id: 9999, username: 'ghost' } });
-  const { body } = await get(app, '/api/home-panels');
-  const lb = body.panels.find((p) => p.key === 'challenges').leaderboard;
-  assert.equal(lb.kind, 'topochain', 'still the standings — no per-viewer fallback');
-  assert.equal(lb.viewer, null);
-  assert.equal(lb.top.length, 3);
-});
-
-// exclude_podium rows are excluded from podium RANKING by definition, so
-// they can't take one of three podium slots — but the viewer still sees
-// their own line, rank-less (the screen's table draws those as "—").
-test('podium-excluded rows never take a top slot, but are still your row', async () => {
-  const excluded = [
-    tcRow({ user_id: 5, rank: 1, total_points: '99999', discord: 'houseAccount', exclude_podium: true }),
-    ...STANDINGS,
-  ];
-  const { app } = makeApp({
-    season: SEASON, rows: [row()], event: EVENT, standings: excluded,
-  }, { user: { id: 5, username: 'house' } });
-  const { body } = await get(app, '/api/home-panels');
-  const lb = body.panels.find((p) => p.key === 'challenges').leaderboard;
-  assert.deepEqual(lb.top.map((r) => r.name), ['validator', 'Grace', 'lin***@***.invalid']);
-  assert.deepEqual(lb.viewer, { rank: null, name: 'houseAccount', score: 99999, you: true });
-});
-
-// Production's newest public event with standings is a type='season' one,
-// whose rows come from the shared §4.10 aggregate rather than from stored
-// per-event snapshots. A board that only read snapshots would be EMPTY in
-// production while the screen beside it is full.
-test('a season-type event is served by the shared standings aggregate', async () => {
-  const { app, calls } = makeApp({
-    season: SEASON, rows: [row()],
-    event: { id: 7, name: 'Season 1', season_id: 1, type: 'season' },
-    seasonStandings: [
-      { user_id: 11, total_points: '5000', extra_points: '0', events_participated: 2,
-        total_produced_blocks: 10, total_produced_blocks_last_event: 4,
-        is_non_podium: false, email: null, telegram: null, discord: 'first', display_name: null },
-      { user_id: 12, total_points: '2500', extra_points: '0', events_participated: 1,
-        total_produced_blocks: 5, total_produced_blocks_last_event: 5,
-        is_non_podium: false, email: null, telegram: null, discord: 'second', display_name: null },
-    ],
-  }, { user: USER });
-  const { body } = await get(app, '/api/home-panels');
-  const lb = body.panels.find((p) => p.key === 'challenges').leaderboard;
-  assert.equal(lb.kind, 'topochain');
-  assert.deepEqual(lb.top.map((r) => [r.rank, r.name, r.score]),
-    [[1, 'first', 5000], [2, 'second', 2500]]);
-  assert.ok(!calls.some((c) => c.sql.includes('DISTINCT ON (ls.user_id) ls.*')),
-    'the per-event snapshot query is not even attempted for this type');
-});
-
-// #999 made the season-type event the DEFAULT board, so the podium-skip is
-// now exercised on the path production actually serves — not just on the
-// per-event one. A podium-excluded row leading on POINTS must be dropped
-// from `top` (it is excluded from podium ranking by definition) while still
-// resolving through `byUserId`, so an excluded viewer sees their own
-// rank-less line. Same contract as the per-event test above; different path.
-test('the season board skips a podium-excluded leader in its podium rows', async () => {
-  const { app } = makeApp({
-    season: SEASON, rows: [row()],
-    event: { id: 7, name: 'Season 1', season_id: 1, type: 'season' },
-    seasonStandings: [
-      // Leads on points, excluded from the podium — assignSharedRanks gives
-      // it the CURRENT counter value without consuming the slot, so the next
-      // real user is still rank 1.
-      { user_id: 90, total_points: '9999', extra_points: '0', events_participated: 3,
-        total_produced_blocks: 20, total_produced_blocks_last_event: 8,
-        is_non_podium: true, email: null, telegram: null, discord: 'houseAccount', display_name: null },
-      { user_id: 11, total_points: '5000', extra_points: '0', events_participated: 2,
-        total_produced_blocks: 10, total_produced_blocks_last_event: 4,
-        is_non_podium: false, email: null, telegram: null, discord: 'first', display_name: null },
-      { user_id: 12, total_points: '2500', extra_points: '0', events_participated: 1,
-        total_produced_blocks: 5, total_produced_blocks_last_event: 5,
-        is_non_podium: false, email: null, telegram: null, discord: 'second', display_name: null },
-    ],
-  }, { user: { id: 90, username: 'houseAccount' } });
-  const { body } = await get(app, '/api/home-panels');
-  const lb = body.panels.find((p) => p.key === 'challenges').leaderboard;
-  assert.deepEqual(lb.top.map((r) => [r.rank, r.name]), [[1, 'first'], [2, 'second']],
-    'the excluded leader must not occupy a podium row');
-  assert.deepEqual(lb.viewer, { rank: null, name: 'houseAccount', score: 9999, you: true },
-    'but the excluded viewer still sees their own rank-less line');
-});
-
-test('the fill is omitted when the tile is full, and when expanded', async () => {
-  // Four challenges fill the row budget: nothing left to fill.
-  const four = [row(), row({ id: 2 }), row({ id: 3 }), row({ id: 4 })];
-  const full = makeApp({ season: SEASON, rows: four, event: EVENT, standings: STANDINGS },
-    { user: USER });
-  const { body: fullBody } = await get(full.app, '/api/home-panels');
-  assert.equal(fullBody.panels.find((p) => p.key === 'challenges').leaderboard, undefined);
-
-  // Expanded is all challenges — the fill steps aside.
-  const exp = makeApp({ season: SEASON, rows: [row()], event: EVENT, standings: STANDINGS },
-    { user: USER });
-  const { body: expBody } = await get(exp.app, '/api/home-panels?expand=challenges');
-  assert.equal(expBody.panels.find((p) => p.key === 'challenges').leaderboard, undefined);
-});
-
-test('between seasons the panel is empty AND carries the fill', async () => {
-  const { app } = makeApp({ season: null, rows: [], event: EVENT, standings: STANDINGS },
-    { user: USER });
-  const { body } = await get(app, '/api/home-panels');
-  const panel = body.panels.find((p) => p.key === 'challenges');
-  assert.equal(panel.total, 0);
-  assert.deepEqual(panel.challenges, []);
-  // This is the state production is in right now, and the one the desktop
-  // tile has the most space to fill. Note the standings outlive the season:
-  // the event resolution deliberately falls back to the most recent event
-  // that HAS standings, exactly as the Leaderboard screen does.
-  assert.equal(panel.leaderboard.kind, 'topochain');
-  assert.equal(panel.leaderboard.top.length, 3);
-  assert.equal(panel.leaderboard.viewer.name, 'me');
-});
-
-// ── The kudos FALLBACK board ──────────────────────────────────────────
-
-test('no public standings at all falls back to the kudos board, labelled as such', async () => {
-  const { app } = makeApp({
-    season: SEASON, rows: [row()], event: null, fillUsers: FILL_USERS,
-  }, { user: USER });
-  const { body } = await get(app, '/api/home-panels');
-  const lb = body.panels.find((p) => p.key === 'challenges').leaderboard;
-  assert.equal(lb.kind, 'kudos');
-  assert.equal(lb.label, 'Kudos', 'it must not call itself the Leaderboard');
-  assert.equal(lb.event, null);
-  assert.deepEqual(lb.top, [
-    { rank: 1, name: 'ada', score: 41, you: false },
-    { rank: 2, name: 'grace', score: 27, you: false },
-    { rank: 3, name: 'linus', score: 18, you: false },
-  ]);
-  assert.deepEqual(lb.viewer, { rank: 5, name: 'viewer', score: 6, you: true });
-  assert.equal(lb.total, 6);
-});
-
-test('an event with no rows falls back too', async () => {
-  const { app } = makeApp({
-    season: SEASON, rows: [row()], event: EVENT, standings: [], fillUsers: FILL_USERS,
-  }, { user: USER });
-  const { body } = await get(app, '/api/home-panels');
-  assert.equal(body.panels.find((p) => p.key === 'challenges').leaderboard.kind, 'kudos');
-});
-
-test('kudos username matching is case-insensitive', async () => {
-  const { app } = makeApp({
-    season: SEASON, rows: [row()], event: null,
-    fillUsers: [lbUser('ada', 41), lbUser('Viewer', 3)],
-  }, { user: USER });
-  const { body } = await get(app, '/api/home-panels');
-  const lb = body.panels.find((p) => p.key === 'challenges').leaderboard;
-  assert.deepEqual(lb.viewer, { rank: 2, name: 'Viewer', score: 3, you: true });
-});
-
-// The panel must survive a broken board: the widget's whole job is to sit
-// quietly on the home screen, and one flaky aggregate must not cost the
-// viewer their challenges (the same rule the route already applies per-panel).
-test('a failing standings read degrades to the kudos board, not to nothing', async () => {
-  const { app } = makeApp({
-    season: SEASON, rows: [row()], event: EVENT, standingsThrows: true,
-    fillUsers: FILL_USERS,
-  }, { user: USER });
-  const { body } = await get(app, '/api/home-panels');
-  const panel = body.panels.find((p) => p.key === 'challenges');
-  assert.equal(panel.leaderboard.kind, 'kudos', 'the other board still works');
-  assert.equal(panel.challenges.length, 1, 'the challenges still render');
-});
-
-test('both boards failing omits the fill and keeps the challenges', async () => {
-  const { app } = makeApp({
-    season: SEASON, rows: [row()], eventThrows: true, fillThrows: true,
-  }, { user: USER });
-  const { body } = await get(app, '/api/home-panels');
-  const panel = body.panels.find((p) => p.key === 'challenges');
-  assert.equal(panel.leaderboard, undefined);
-  assert.equal(panel.challenges.length, 1, 'the challenges still render');
-});
-
-test('an empty board attaches nothing rather than an empty block', async () => {
-  const { app } = makeApp({ season: SEASON, rows: [row()], event: null, fillUsers: [] },
-    { user: USER });
-  const { body } = await get(app, '/api/home-panels');
-  assert.equal(body.panels.find((p) => p.key === 'challenges').leaderboard, undefined);
-});
-
-// Both boards are queried ONCE per TTL, not once per home-screen paint: each
-// is identical for every viewer, and only "which row is me" is per-request.
-test('the standings board is memoised across requests', async () => {
-  const { app, calls } = makeApp({
-    season: SEASON, rows: [row()], event: EVENT, standings: STANDINGS,
-  }, { user: USER });
-  await get(app, '/api/home-panels');
-  await get(app, '/api/home-panels');
-  const reads = calls.filter((c) => c.sql.includes('DISTINCT ON (ls.user_id) ls.*'));
-  assert.equal(reads.length, 1, 'second request served from the memo');
-});
-
-test('the ranked list is memoised across requests', async () => {
-  const { app, calls } = makeApp({
-    season: SEASON, rows: [row()], event: null, fillUsers: FILL_USERS,
-  }, { user: USER });
-  await get(app, '/api/home-panels');
-  await get(app, '/api/home-panels');
-  const ranked = calls.filter((c) => c.sql.includes('kudos_received_prs_merged'));
-  assert.equal(ranked.length, 1, 'second request served from the memo');
-  // And it asks for the SLIM projection — the three display-only LATERALs
-  // are not in the ORDER BY, so the widget shouldn't pay for them.
-  assert.ok(!ranked[0].sql.includes('active_apps'), 'no active_apps LATERAL');
-  assert.ok(!ranked[0].sql.includes('issues_created'), 'no issues LATERAL');
-  assert.ok(!ranked[0].sql.includes('kudos_given'), 'no kudos_given LATERAL');
-});
+// It went because of what it did to the CARD, not to the server: two labelled
+// lists with two different tap destinations inside one area called Challenges
+// made the reader work out which one they were looking at before they could
+// read either. The standings are a screen, and the section's heading links to
+// it in every branch. `buildTopochainFill`, `buildLeaderboardFill`,
+// `rankedUsersCached`, `standingsBoardCached`, `_resetFillCache`,
+// `FILL_TOP_ROWS` and both service imports went with them; the services
+// themselves are untouched and still serve the Leaderboard screen.
 
 // ── Staging demo variants (#947) ──────────────────────────────────────
 //
@@ -1047,41 +724,41 @@ test('the ranked list is memoised across requests', async () => {
 // clone can't otherwise show while its seeded season is live. Both are what
 // the dapp.json checks and the before/after screenshots navigate to.
 
-test('demoChallengesPanel: the few / none variants and their demo fill', () => {
+test('demoChallengesPanel: the few / none variants, and no standings preview', () => {
   const { demoChallengesPanel } = require('../src/routes/home-panels');
 
   const few = demoChallengesPanel({ variant: 'few', username: 'tester' });
   assert.equal(few.challenges.length, 2, 'two rows: the shrink state');
   assert.equal(few.total, 2, 'nothing past the cap to "see all" of');
+  // …and nothing behind an expansion either, which makes this route THE
+  // no-expand-toggle state of #1824. It stays that way when asked for the
+  // expanded scope: there is no finished row to reveal here on purpose.
+  assert.equal(few.all_total, 2, 'so the footer draws no expand toggle');
+  const fewExpanded = demoChallengesPanel({ variant: 'few', expanded: true, username: 'tester' });
+  assert.equal(fewExpanded.challenges.length, 2, 'expanding reveals nothing more');
+  assert.equal(fewExpanded.all_total, 2);
   // One metered and one binary, so the progress-bar lane is still exercised.
   assert.ok(few.challenges.some((c) => c.metric), 'a metered row');
   assert.ok(few.challenges.some((c) => !c.metric), 'a binary row');
-  assert.equal(few.leaderboard.top.length, 3);
-  assert.equal(few.leaderboard.kind, 'topochain', 'the demo shows the primary board');
-  assert.equal(few.leaderboard.viewer.name, 'tester', 'the viewer is whoever is signed in');
+  // NO `leaderboard` ON ANY DEMO PAYLOAD. The standings preview is removed, so
+  // the demo variants carry challenges and nothing else — and `?board=kudos`,
+  // which existed only to reach that preview's fallback board, is gone with it.
+  assert.equal(few.leaderboard, undefined, 'no standings preview to demo');
 
   const none = demoChallengesPanel({ variant: 'none', username: 'tester' });
   assert.equal(none.total, 0);
   assert.deepEqual(none.challenges, []);
   assert.equal(none.season, null);
-  assert.equal(none.leaderboard.top[0].name, 'staging-demo-validator', 'obviously fake');
-  assert.equal(none.leaderboard.kind, 'topochain');
-  assert.match(none.leaderboard.event.name, /^Staging Demo Event/, 'named like the real one');
+  assert.equal(none.leaderboard, undefined);
 
-  // ?board=kudos reaches the FALLBACK board — the one a seeded staging clone
-  // (which HAS standings) can never otherwise show, and which the
-  // before/after screenshots therefore have no other way to capture.
-  const kudos = demoChallengesPanel({ variant: 'none', board: 'kudos', username: 'tester' });
-  assert.equal(kudos.leaderboard.kind, 'kudos');
-  assert.equal(kudos.leaderboard.label, 'Kudos');
-  assert.equal(kudos.leaderboard.event, null);
-  assert.equal(kudos.leaderboard.viewer.name, 'tester');
-
-  // No variant → byte-for-byte the payload that shipped before, with no fill
-  // (four rows leave no room), so the existing ?demo=1 check is untouched.
-  const base = demoChallengesPanel({});
+  // No variant → the four-row default.
+  const base = demoChallengesPanel({ username: 'tester' });
   assert.equal(base.challenges.length, 4);
   assert.equal(base.total, 7);
+  // Four drawn of seven, so the default demo route KEEPS the toggle — the
+  // other half of the #1824 pair the checks navigate to.
+  assert.equal(base.all_total, 7);
+  assert.equal(demoChallengesPanel({ expanded: true, username: 'tester' }).all_total, 7);
   assert.equal(base.leaderboard, undefined);
 
   // An unknown value falls through to that default rather than erroring.
@@ -1091,15 +768,13 @@ test('demoChallengesPanel: the few / none variants and their demo fill', () => {
 test('the demo variants are staging-only, like ?demo=1 itself', async () => {
   // USERNODE_ENV is not 'staging' in the test process, so the query param
   // must be inert: the real builder runs and the season fixture wins.
-  const { app } = makeApp({ season: null, rows: [], fillUsers: FILL_USERS },
-    { user: USER });
+  const { app } = makeApp({ season: null, rows: [] }, { user: USER });
   const { body } = await get(app, '/api/home-panels?demo=1&challenges=few');
   const panel = body.panels.find((p) => p.key === 'challenges');
   assert.equal(panel.demo, undefined, 'no demo payload outside staging');
   assert.deepEqual(panel.challenges, []);
-  // The demo fill's obviously-fake names must never reach a real response.
-  assert.notEqual(panel.leaderboard.top[0].name, 'staging-demo-validator');
-  assert.notEqual(panel.leaderboard.top[0].name, 'staging-demo-lead');
+  // The demo payload's obviously-fake names must never reach a real response.
+  assert.doesNotMatch(JSON.stringify(panel), /staging-demo-/);
 });
 
 // Declared checks used to be a capped resource — the reader kept only the
@@ -1119,16 +794,29 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
   const kept = meta.tests;
   const none = kept.find((t) => t.path === '/?demo=1&challenges=none');
   assert.ok(none, 'the no-challenges check must survive the manifest reader');
-  // The checks run at the desktop frame, so it asserts the FILLED tile.
+  // ONE LIST, and between seasons one line of it. The check used to assert the
+  // standings preview underneath (`data-fill="3"`, `home-panel-lb-row`); that
+  // preview is removed, so what is left to assert is that the block says why
+  // it is quiet and shows nothing else.
   assert.match(none.expectSelector, /data-rows="0"/);
-  assert.match(none.expectSelector, /data-fill="3"/);
-  assert.match(none.expectSelector, /home-panel-lb-row/);
-  // The copy is identical at both breakpoints, so this holds whatever
-  // viewport the checker uses.
+  assert.doesNotMatch(none.expectSelector, /data-fill|home-panel-lb-row/);
   assert.equal(none.expectText, 'No challenges are running right now');
 
   // The #911 check must keep running unchanged: four challenges leave no room
   // to fill, so that payload's markup is untouched by this change.
   assert.ok(kept.some((t) => t.path === '/?demo=1' && /home-panel-bar-fill/.test(t.expectSelector)),
     'the existing challenges-widget check still runs');
+
+  // #1824, both directions. The `few` route shows every challenge it has, so
+  // its footer must carry the way out and NO expand toggle; the default route
+  // is truncated, so it must still carry one. A check on only the first would
+  // pass just as well if the toggle were deleted outright.
+  const allShown = kept.find((t) => t.path === '/?demo=1&challenges=few');
+  assert.ok(allShown, 'the all-shown check must survive the manifest reader');
+  assert.match(allShown.expectSelector, /home-panel-footer/);
+  assert.match(allShown.expectSelector, /:not\(:has\(\.home-panel-expand\)\)/,
+    'it asserts the ABSENCE of the toggle, which is the whole fix');
+  assert.ok(kept.some((t) => t.path === '/?demo=1'
+    && /home-panel-expand/.test(t.expectSelector)),
+    'and a truncated list still declares the toggle it keeps');
 });

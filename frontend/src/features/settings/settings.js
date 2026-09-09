@@ -38,6 +38,80 @@
 (function () {
   'use strict';
 
+  // ── Status lines ──────────────────────────────────────────────────────
+  //
+  // Seven sections report the result of the user's last action in a status
+  // line, and all seven paint it identically: reveal the node, write the
+  // text, swap in one of three colour pairs. This is that paint, and the
+  // palette below is the only place those classes are named.
+  //
+  // The pairs are TOKEN ARRAYS and they are SPREAD into classList, because a
+  // DOMTokenList token may not contain whitespace: `classList.add('a b')`
+  // throws InvalidCharacterError. Each of these was a SINGLE class when it
+  // was written (#1380); #1400's widget-library migration rewrote all seven
+  // into `dark:` pairs and left the single-argument `add(cls)` in place, so
+  // every status write in this file threw. It read as cosmetic because the
+  // text is written FIRST and still landed — what actually broke was the
+  // code AFTER the call. changeUsername() is the case that was reported: it
+  // painted "Saving…", threw before its fetch was ever issued, and left the
+  // button disabled under a message that could never resolve. Keep these
+  // arrays, and add a colour by adding a pair here rather than a string at a
+  // call site. _wireConnectorNameSpelling's link-status write already spread
+  // its pair, which is why that one line kept working.
+  const STATUS_PALETTE = {
+    error: ['text-red-700', 'dark:text-red-400'],
+    ok: ['text-emerald-700', 'dark:text-emerald-400'],
+    info: ['text-zinc-500', 'dark:text-zinc-400'],
+  };
+  const STATUS_PALETTE_CLASSES = [
+    'hidden',
+    ...STATUS_PALETTE.error, ...STATUS_PALETTE.ok, ...STATUS_PALETTE.info,
+  ];
+
+  /** Reveal `el`, write `text`, colour it for `kind` (anything else: info). */
+  function paintStatus(el, text, kind) {
+    el.textContent = text;
+    el.classList.remove(...STATUS_PALETTE_CLASSES);
+    el.classList.add(...(STATUS_PALETTE[kind] || STATUS_PALETTE.info));
+  }
+
+  // #1554 — which nav groups the viewer has EXPANDED, persisted per device.
+  //
+  // The set stores the EXPANDED names, which is the opposite of the admin
+  // console's NAV_COLLAPSED_KEY, and the inversion is deliberate on both
+  // sides. There, every group ships open and "absent means expanded" is what
+  // keeps a newly added section visible to someone whose store predates it.
+  // Here, exactly one group exists to ship SHUT — the whole point of moving
+  // the rarely used panes into it — so "absent means collapsed" is what makes
+  // an empty store, a cleared store and a first visit all agree with the
+  // declared check that says Advanced starts closed.
+  const NAV_EXPANDED_KEY = 'settings_nav_expanded_groups_v1';
+
+  // ── Post-logout landing (#1524) ───────────────────────────────────────
+  //
+  // Signing out always ends on the PUBLIC LANDING page, on every surface.
+  // `/` with no fragment is the only address that boots the anonymous shell
+  // there: App.restoreFromHash treats any other hash (or any `/app/<slug>`
+  // path) as a remembered deep link and answers with the bare sign-in form.
+  // A bare '/' rather than App._rootUrl() so a leftover `?shot=` / `?signup=`
+  // query cannot survive the sign-out either.
+  const LANDING_URL = '/';
+
+  // A native sign-out whose terminal step fails leaves this document alive
+  // with server authority already revoked, so it navigates to the landing
+  // page like every other surface. The advisory that used to be toasted here
+  // would be destroyed by that navigation, so it is handed to the anonymous
+  // boot instead: App.enterAnonymous reads this key once and toasts it.
+  const LOGOUT_NOTICE_KEY = 'sv:logout_notice';
+  const NATIVE_SHUTDOWN_NOTICE =
+    'Signed out. Close and reopen the app to finish shutting down Usernode.';
+
+  // A successful native logout replaces the WebView, so nothing below it in
+  // this document normally runs. This bounded net covers the case where the
+  // replacement does not arrive: rather than leave a signed-out user looking
+  // at the Settings screen forever, land them on the landing page.
+  const NATIVE_LOGOUT_SAFETY_MS = 5000;
+
   const Settings = {
     // Planted by ./mount.ts, never imported: this file is a classic IIFE that
     // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
@@ -53,7 +127,7 @@
     // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
     // says whether this deployment can offer the Claude Code / Codex
     // hand-off at all — the server decides, we only render what it reports.
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -75,8 +149,18 @@
 
     // ── Screen state ─────────────────────────────────────────────────────
     _open: false,
-    // Which section is showing (or would show on a viewport crossing).
-    _section: 'api-key',
+    // Which section is showing (or would show on a viewport crossing). It
+    // doubles as "last visited in this tab": open() keeps it when it is still
+    // a visible key, so returning to Settings lands where you left off.
+    //
+    // THAT IS WHY THE INITIAL VALUE MATTERS. It was 'api-key', hard-coded
+    // here before DEFAULT_SECTION existed, and a bare #settings on a fresh
+    // tab therefore resolved to it whatever the registry said — so THE UI
+    // OVERHAUL putting Theme first had no effect at all until this moved too.
+    // Kept as a literal because DEFAULT_SECTION is declared further down this
+    // same object literal; the two are pinned together by
+    // tests/theme-mode.test.js.
+    _section: 'theme',
     // Which level the phone layout is showing: 1 = the section menu,
     // 2 = one section. Kept in sync on desktop too (it is ignored there)
     // so a viewport crossing resolves without guessing.
@@ -118,35 +202,71 @@
     // and are read here, never duplicated. Sections with no `gate` are
     // always offered.
     SECTIONS: [
+      // THE UI OVERHAUL moved Theme here out of the hamburger drawer, where it
+      // was the drawer's first row. It leads the registry — and is therefore
+      // DEFAULT_SECTION below — because it is the setting most people arrive
+      // looking for and the only one that needs no explanation.
+      { key: 'theme', label: 'Theme', group: 'Preferences' },
+      // #1556: GATED, and the gate is "this user already picked a language".
+      // The value is app-facing only (the iframe JWT `locale` claim and
+      // usernode.getUserLocale) and the platform shell is English-only, so a
+      // "Language" row in Preferences reads as a UI language switch that does
+      // nothing — which is exactly what the feedback reported. Hiding it from
+      // everyone who never set one, while keeping it for anyone who did, is
+      // what stops a stored preference becoming unreachable. The read paths
+      // are untouched; to re-launch the picker, drop this `gate` and the two
+      // gate lines in _renderLanguageSection.
+      { key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' },
+      { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
+      // "Home screen widgets" sat here. THE UI OVERHAUL made Discover,
+      // Challenges and Create app FIXED SECTIONS of the home screen rather
+      // than draggable, hideable widgets, so there is nothing left for the
+      // section to configure.
+
+      { key: 'username', label: 'Username', group: 'Account' },
+      { key: 'password', label: 'Password', group: 'Account' },
+      { key: 'wallet', label: 'Usernode Wallet', group: 'Account', gate: 'wallet-section' },
+
+      { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
       // Own section (not folded into 'cli') so the out-of-credits card can
       // deep-link #settings/connectors as one of its three routes; see
       // public/js/credit-options.js.
       { key: 'connectors', label: 'Social accounts & connectors', group: 'AI & agents' },
-      { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
-      { key: 'app-ai', label: 'App AI permissions', group: 'AI & agents' },
-      { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & agents' },
 
-      { key: 'password', label: 'Password', group: 'Account' },
-      { key: 'wallet', label: 'Usernode Wallet', group: 'Account', gate: 'wallet-section' },
-
-      { key: 'language', label: 'Language', group: 'Preferences' },
-      { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
-      { key: 'home-panels', label: 'Home screen widgets', group: 'Preferences' },
-
-      { key: 'cli', label: 'CLI & coding-agent access', group: 'Developer' },
-      { key: 'dev-console', label: 'Developer console', group: 'Developer' },
-      { key: 'experimental', label: 'Experimental', group: 'Developer' },
-
-      { key: 'usernode', label: 'Usernode app', group: 'Usernode app', gate: 'settings-usernode-section' },
-
-      { key: 'admin-preview', label: 'Admin preview', group: 'Admin', gate: 'settings-admin-section' },
+      // ── Advanced ──────────────────────────────────────────────────────
+      //
+      // #1554: the four groups above were seven, and the tail of them were
+      // panes most people never open — per-app AI grants, agent instruction
+      // files, the CLI, the developer console, experimental toggles, the
+      // native-app diagnostics, the admin preview and the build readout.
+      // They are all still here and still deep-linkable; the group they sit
+      // in just ships COLLAPSED (see ADVANCED_GROUP below), so the menu opens
+      // at three short sections instead of seventeen rows.
+      //
+      // The order inside it runs configuration first, then reference: the
+      // two AI-adjacent panes that are rarely touched, the three developer
+      // ones, the two gated ones, and About last — it is the pane you come to
+      // Settings to READ, and the Improve panel is where the same facts turn
+      // into something to act on (a build in flight, a reload waiting). See
+      // sections/about.tsx.
+      { key: 'app-ai', label: 'App AI permissions', group: 'Advanced' },
+      { key: 'agent-files', label: 'Agent instructions & skills', group: 'Advanced' },
+      { key: 'cli', label: 'CLI & coding-agent access', group: 'Advanced' },
+      { key: 'dev-console', label: 'Developer console', group: 'Advanced' },
+      { key: 'experimental', label: 'Experimental', group: 'Advanced' },
+      { key: 'usernode', label: 'Usernode app', group: 'Advanced', gate: 'settings-usernode-section' },
+      { key: 'admin-preview', label: 'Admin preview', group: 'Advanced', gate: 'settings-admin-section' },
+      { key: 'about', label: 'About', group: 'Advanced' },
     ],
 
-    // The section a bare #settings resolves to on desktop (and the one
-    // _writeHash collapses back onto bare #settings). Must be an ungated
-    // key, so it is always reachable.
-    DEFAULT_SECTION: 'api-key',
+    // The one group that collapses (#1554). Every other group is short and
+    // always open, so this is a NAME rather than a per-entry flag: adding a
+    // rarely-used section means giving it `group: 'Advanced'` and nothing
+    // else. _isCollapsibleGroup is the single reader.
+    ADVANCED_GROUP: 'Advanced',
+
+    DEFAULT_SECTION: 'theme',
 
     init() {
       // The entry point is the drawer's Settings row, a real anchor to
@@ -154,6 +274,14 @@
       // Every control below is bound ONCE, here, by id: the section markup
       // is static in index.html and only ever hidden/shown, never rebuilt
       // (see the "MOVE, DON'T REWRITE" note on #settings-screen).
+
+      // The Usernode app → connection panel offers wallet recovery only while
+      // native admission is refused for want of a seeded wallet
+      // (_walletRecoveryAvailable). Admission flipping either way — the
+      // recovery dialog succeeding, a sign-out — must repaint that panel
+      // without a navigation, and this event is how NativeChrome says so.
+      window.addEventListener('usernode:native-session-admission',
+        () => this._publishUsernode());
       document.getElementById('settings-save').addEventListener('click', () => this.save());
       document.getElementById('settings-remove').addEventListener('click', () => this.remove());
 
@@ -167,11 +295,17 @@
       // existence so the section degrades cleanly if the feature flag is
       // off server-side (the section markup stays, the controls no-op).
       const orSave = document.getElementById('settings-openrouter-save');
+      const orClaim = document.getElementById('settings-openrouter-claim');
+      const orCopy = document.getElementById('settings-openrouter-copy');
+      const orDismissReveal = document.getElementById('settings-openrouter-dismiss-reveal');
       const orRemove = document.getElementById('settings-openrouter-remove');
       const orSetDefault = document.getElementById('settings-openrouter-set-default');
       const orModel = document.getElementById('settings-openrouter-model');
       const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
+      if (orClaim) orClaim.addEventListener('click', () => this._claimManagedOpenRouterKey());
+      if (orCopy) orCopy.addEventListener('click', () => this._copyManagedOpenRouterKey());
+      if (orDismissReveal) orDismissReveal.addEventListener('click', () => this._dismissManagedOpenRouterReveal());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
       if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
       if (orModel) orModel.addEventListener('change', () => this._syncOpenRouterModelDetails());
@@ -214,11 +348,11 @@
       // over it anyway.
       const RULE_BLOCKS = {
         'connector-allow-rules': {
-          success: 'Copied — paste it into ~/.claude/settings.json',
+          success: 'Copied. Paste it into ~/.claude/settings.json',
           failure: 'Could not copy the allow rules',
         },
         'connector-repo-allow-rules': {
-          success: 'Copied — commit it as .claude/settings.json in your app repo',
+          success: 'Copied. Commit it as .claude/settings.json in your app repo',
           failure: 'Could not copy the allow rules',
         },
       };
@@ -248,6 +382,19 @@
       this._wireConnectorNameSpelling();
 
       // Change password (issue #282) → POST /api/me/password.
+      const cuSave = document.getElementById('cu-save');
+      if (cuSave) cuSave.addEventListener('click', () => this.changeUsername());
+      // Enter in either field submits, like the password form's fields do
+      // not — this one is two fields and a button, and a rename typed on a
+      // phone should not require reaching for the button.
+      ['cu-new', 'cu-password'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); this.changeUsername(); }
+          });
+        }
+      });
       const cpSave = document.getElementById('cp-save');
       if (cpSave) cpSave.addEventListener('click', () => this.changePassword());
 
@@ -283,6 +430,14 @@
         estimateToggle.addEventListener('change', (e) => this._saveAiProgressEstimate(e.target.checked));
       }
 
+      // #1281: the session-bridge opt-in, same shape as the toggle above —
+      // POST on change so the venue appears (or stops appearing) on the next
+      // paint of any picker, without closing the modal.
+      const bridgeToggle = document.getElementById('session-bridge-enabled');
+      if (bridgeToggle) {
+        bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
+      }
+
       // Platform-level language preference (issue #757). Server-side
       // per-user BCP-47 tag (default unset = "Auto"); apps read it via
       // the iframe JWT claim and usernode.getUserLocale(). Fires the
@@ -310,36 +465,48 @@
         });
       }
 
-      // #138 "Send a test alert" — exercises the user's own setup. Fires a
-      // demo completion after a short delay so they can stay (hear the
-      // chime) or switch away (see the background notification).
+      // The server owns delayed push delivery; this countdown only explains
+      // when the optional live-page chime will run.
       const alertsTest = document.getElementById('devchat-alerts-test');
       if (alertsTest) {
-        alertsTest.addEventListener('click', () => {
-          if (!window.DevAlerts) return;
+        alertsTest.addEventListener('click', async () => {
+          if (!window.DevAlerts || alertsTest.disabled) return;
           const status = document.getElementById('devchat-alerts-test-status');
-          const ms = DevAlerts.testAlert();
-          if (!status) return;
-          // Visible countdown that ticks down each second (the previous
-          // version set the text once and it looked frozen). Guard against
-          // rapid re-clicks by clearing any in-flight countdown first; the
-          // same id is cleared on close().
           this._clearAlertsTestCountdown();
-          status.classList.remove('hidden');
-          let remaining = Math.ceil(ms / 1000);
-          const render = () => {
-            status.textContent = `Alert in ${remaining}s — stay here for the chime, or switch away / background the app for a notification.`;
-          };
-          render();
-          this._alertsTestTimer = setInterval(() => {
-            remaining -= 1;
-            if (remaining > 0) {
-              render();
-              return;
-            }
-            this._clearAlertsTestCountdown();
-            status.textContent = 'Sent — you should hear a chime now (or get a notification if you switched away).';
-          }, 1000);
+          alertsTest.disabled = true;
+          if (status) {
+            status.classList.remove('hidden');
+            status.textContent = 'Queueing test alert…';
+          }
+          try {
+            const result = await DevAlerts.testAlert();
+            if (!status) return;
+            const pushStatus = result.queued
+              ? 'Phone push queued. Background or close the mobile app to check for a notification.'
+              : result.reason === 'preference_disabled'
+                ? 'Phone push was not queued. Enable Developer sessions under Mobile push categories and try again.'
+                : 'Phone push was not queued. Sign in on your phone and enable Activity notifications and notification permission. Push delivery must also be available on the server.';
+            let remaining = Math.ceil(result.delayMs / 1000);
+            const render = () => {
+              status.textContent = `Alert in ${remaining}s. ${pushStatus} Stay here for the chime if sound is enabled.`;
+            };
+            render();
+            this._alertsTestTimer = setInterval(() => {
+              remaining -= 1;
+              if (remaining > 0) {
+                render();
+                return;
+              }
+              this._clearAlertsTestCountdown();
+              status.textContent = result.queued
+                ? 'The test push is queued for delivery. Check your phone; delivery may take a few more seconds.'
+                : pushStatus;
+            }, 1000);
+          } catch (err) {
+            if (status) status.textContent = err.message || 'Could not queue the test push. Please try again.';
+          } finally {
+            alertsTest.disabled = false;
+          }
         });
       }
 
@@ -383,10 +550,6 @@
       // a modal. Leaving it is a real hash navigation (the header back
       // button, the device back gesture) — see handleBack / _exitSettings.
 
-      // A sign-out the app never acknowledged left a note for the next
-      // document; this is that document.
-      this._showIncompleteNativeSignOutNotice();
-
       this.refresh();
     },
 
@@ -398,9 +561,8 @@
     async refresh() {
       try {
         const meDemoQ = this._cliTokensDemo() ? '?demo=1' : '';
-        const r = await fetch(`/api/auth/me${meDemoQ}`, { credentials: 'same-origin' });
-        if (!r.ok) return;
-        const j = await r.json();
+        const j = await this._readMe(meDemoQ);
+        if (!j) return;
         this.state.hasApiKey = !!j.user?.hasApiKey;
         // Staging only, and only under ?demo=1: the key reported above is a
         // fixture, not something anything can be billed to. Carried so the
@@ -411,6 +573,7 @@
         this.state.usernodePubkey = j.user?.usernodePubkey || null;
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
+        this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
         this.state.locale = j.user?.locale || null;
         this.state.devFlowPreference = j.user?.devFlowPreference || null;
         this.state.externalFlowsAvailable = !!j.user?.externalFlowsAvailable;
@@ -428,13 +591,50 @@
         // painted (a cold-boot deep link to #settings/connectors renders
         // before this resolves). Same reasoning as the wallet row above.
         this._renderDevFlowSection();
+        // #1556: `locale` decides whether the Language row is in the menu at
+        // all, and it lands here too — a cold-boot deep link paints before
+        // this resolves. Same reasoning as the two rows above.
+        this._renderLanguageSection();
         this._renderNavIfOpen();
       } catch {}
     },
 
+    /**
+     * The /api/auth/me payload, JOINING the boot read rather than repeating
+     * it. Returns the parsed body, or null when there is no usable answer.
+     *
+     * This runs from init(), which a React layout effect fires at document
+     * load on EVERY screen — the byok dot rides the Profile screen and
+     * DevChat's budget indicator, so the state is genuinely needed before
+     * #settings is ever opened. It just does not need its own request:
+     * every field read above is on the same `user` object App.init is
+     * fetching 16ms later, and the two were queueing behind each other for
+     * ~130ms on the first paint of every screen. See App.bootSession.
+     *
+     * `?demo=1` still reads for itself, and must: staging answers that
+     * request differently (the fixture key behind `demoKey`), so the boot's
+     * plain answer is the wrong one — not a stale copy of the right one.
+     */
+    async _readMe(meDemoQ) {
+      if (!meDemoQ && typeof window.App?.bootSession === 'function') {
+        const boot = await window.App.bootSession();
+        if (boot?.user) return { user: boot.user };
+        // Answered 401/403. A second ask gets the same answer.
+        if (boot?.signedOut) return null;
+        // `unknown` — the boot read never landed and the shell is on the
+        // snapshot, which carries none of these fields. Read for ourselves;
+        // offline the worker answers it from cache, as it always has.
+      }
+      const r = await fetch(`/api/auth/me${meDemoQ}`, { credentials: 'same-origin' });
+      if (!r.ok) return null;
+      return await r.json();
+    },
+
     _renderIndicator() {
-      const dot = document.getElementById('drawer-byok-dot');
-      if (dot) dot.classList.toggle('hidden', !this.state.hasApiKey);
+      // Published rather than written by id: the dot rides the Profile
+      // screen's account group, which React renders only once profile data
+      // lands. See App.renderAdminButton for the same move and why.
+      window.App?.Visibility?.publish?.('switcher-byok-dot', !!this.state.hasApiKey);
       // Let dev-chat swap its budget indicator for the BYOK badge
       // without having to observe us directly.
       if (window.DevChat && typeof DevChat.renderBudget === 'function') {
@@ -443,6 +643,21 @@
     },
 
     isOpen() { return Settings._open; },
+
+    // The sixteen panes are not in the prerendered document any more: the
+    // island mounts them on the screen's first reveal (lib/mount-on-reveal.ts,
+    // #settings-section-content ships empty like #admin-section-content).
+    // Everything below open() reads their ids on its next line — _renderBody
+    // dereferences #settings-key-display outright — so the interior has to
+    // exist BEFORE a single pane renders. The bridge mounts it inside
+    // flushSync and returns with the nodes in the document; init() runs in
+    // that same flush, so the id-bound listeners are live too. Reached by
+    // name, not import: a dozen tests run this file as a script in a `vm`.
+    _ensureMounted() {
+      try {
+        window.UsernodeReact?.mount?.ensure?.('settings-screen');
+      } catch (err) { /* an absent bridge is the prerender pass */ }
+    },
 
     // Repaint every section's body. Cheap (they're all local state or a
     // small fetch) and it keeps the ONE render path — a section is never
@@ -459,11 +674,11 @@
       this._renderAgentFilesSection();
       this._renderWalletSection();
       this._renderDevFlowSection();
+      this._renderChangeUsernameSection();
       this._renderChangePasswordSection();
       this._renderDevConsoleSection();
       this._renderLanguageSection();
       this._loadMobilePushPreferences();
-      this._renderHomePanelsSection();
       this._renderExperimentalSection();
       this._renderAdminSection();
       this._renderUsernodeSection();
@@ -484,6 +699,7 @@
     // snapshot of the page the user is leaving. The caller runs
     // Settings.syncChrome() inside the transition callback instead.
     open(section, opts) {
+      Settings._ensureMounted();
       Settings._open = true;
       Settings._pushedFromMenu = false;
       Settings._menuScrollTop = 0;
@@ -498,7 +714,7 @@
       const valid = !!section && visible.some((s) => s.key === section);
       const fallback = visible.some((s) => s.key === Settings._section)
         ? Settings._section
-        : (visible[0] ? visible[0].key : 'api-key');
+        : (visible[0] ? visible[0].key : Settings.DEFAULT_SECTION);
 
       // On mobile, a bare #settings means the MENU — never a last-visited
       // section resurrected from earlier in this tab. On desktop it keeps
@@ -506,13 +722,16 @@
       if (Settings._isMobile() && !valid) {
         Settings._level = 1;
         Settings._section = fallback;
+        Settings._ensureActiveGroupExpanded();
         Settings._renderNav();
         Settings._renderContent();
         Settings._syncChrome();
         return;
       }
       Settings._level = 2;
-      Settings.setSection(valid ? section : fallback, { writeHash: false });
+      Settings._section = valid ? section : fallback;
+      Settings._ensureActiveGroupExpanded();
+      Settings.setSection(Settings._section, { writeHash: false });
       // Runs after app.js's own setHeaderTitle, so on a mobile deep link the
       // header ends up showing the section's name rather than "Settings".
       Settings._syncChrome();
@@ -539,6 +758,7 @@
     // reason. A late capability change (a section appearing/disappearing)
     // repaints through refreshMenu(), not through here.
     route(section) {
+      Settings._ensureMounted();
       const visible = Settings._visibleSections();
       const valid = !!section && visible.some((s) => s.key === section);
       const mobile = Settings._isMobile();
@@ -547,13 +767,15 @@
       const targetLevel = (!mobile || valid) ? 2 : 1;
       const targetSection = valid
         ? section
-        : (mobile ? Settings._section : (visible[0] ? visible[0].key : 'api-key'));
+        : (mobile ? Settings._section : (visible[0] ? visible[0].key : Settings.DEFAULT_SECTION));
       if (targetLevel === Settings._level && targetSection === Settings._section) {
         Settings._markRoute('skipped');
         return;
       }
       Settings._markRoute('applied');
       if (!mobile) {
+        Settings._section = targetSection;
+        Settings._ensureActiveGroupExpanded();
         Settings.setSection(targetSection, { writeHash: false });
         Settings._level = 2;
         Settings._syncChrome();
@@ -573,6 +795,7 @@
         Settings._pushedFromMenu = false;
       }
       Settings._level = targetLevel;
+      Settings._ensureActiveGroupExpanded();
       Settings._transition(() => {
         Settings._renderNav();
         Settings._renderContent();
@@ -588,17 +811,28 @@
     handleBack() {
       if (!Settings._open) return false;
       if (!Settings._isMobile() || Settings._level !== 2) return false;
-      if (Settings._pushedFromMenu) {
-        // We pushed that entry ourselves, so the one below it IS our menu:
-        // popping routes back through popstate → restoreFromHash → route(),
-        // the same path the device back gesture takes.
+      if (Settings._pushedFromMenu || Settings._entryBelow()) {
+        // Something of ours is below this entry, so popping lands on it —
+        // routing back through popstate → restoreFromHash → route(), the
+        // same path the device back gesture takes.
+        //
+        // `_pushedFromMenu` is the case where we know exactly what that is:
+        // our own menu. It is not the only one (#1565). A link from
+        // ELSEWHERE in the app — the profile editor's "Settings → Username",
+        // which is where a viewer who wants to rename themselves is sent —
+        // pushes an entry too, and what sits below it is the screen the
+        // viewer actually came from.
+        // Replacing it with the menu stranded them a level deeper than they
+        // started: two presses to get back to Profile, the first of which
+        // went somewhere they had never been.
         history.back();
         return true;
       }
-      // Deep link (bookmark, a prose "Settings → Change password" link):
-      // nothing of ours below. REPLACE the entry with the menu rather than
-      // pushing one, so back can't bounce the viewer between the section
-      // and the menu forever.
+      // A COLD deep link — a bookmark, a push notification, a reload on the
+      // section — really does have nothing of ours below, and back would
+      // leave the app. REPLACE the entry with the menu rather than pushing
+      // one, so back can't bounce the viewer between the section and the
+      // menu forever.
       try { history.replaceState(null, '', '#settings'); } catch { /* non-fatal */ }
       Settings._level = 1;
       Settings._transition(() => {
@@ -608,6 +842,27 @@
         Settings._restoreScroll();
       }, 'pop');
       return true;
+    },
+
+    // Did this DOCUMENT put an address below the one on screen? The router
+    // is the only thing that can say (see App.previousRoute), and a shell
+    // that never answers — the vm harnesses, the prerender pass — is treated
+    // as a cold deep link, which is the conservative half: it keeps the
+    // viewer inside Settings rather than sending back somewhere that may not
+    // exist.
+    _entryBelow() {
+      try { return window.App?.previousRoute?.() != null; }
+      catch { return false; }
+    },
+
+    // Where the level-2 chevron POINTS. It has to name the same place
+    // handleBack goes, or a native/middle click lands somewhere the plain
+    // click does not — and the arrow's href is the platform's fallback
+    // answer for "back to where?" (app.js's back-btn handler follows it).
+    _upHref() {
+      if (Settings._pushedFromMenu || !Settings._entryBelow()) return '#settings';
+      // `''` is home; undefined lets setBackIcon fall back to the home href.
+      return window.App.previousRoute() || undefined;
     },
 
     // Below the sidebar breakpoint — i.e. the two-level layout is live.
@@ -669,8 +924,143 @@
       return groups;
     },
 
+    // ── Collapsible groups (#1554) ────────────────────────────────────────
+    //
+    // One group collapses, and it ships collapsed. The set below holds the
+    // groups the viewer has OPENED (see NAV_EXPANDED_KEY), never derives
+    // anything from the DOM, and is read by both surfaces through
+    // _navView/_menuView — so a toggle survives a section switch, a viewport
+    // crossing and a reload identically.
+    _expandedGroups: null,
+
+    // The group the ACTIVE section lives in, revealed for exactly as long as
+    // that section is active and never written to storage — see
+    // _ensureActiveGroupExpanded for why the arrival reveal is transient.
+    _revealedGroup: null,
+
+    _isCollapsibleGroup(name) {
+      return String(name) === Settings.ADVANCED_GROUP;
+    },
+
+    _expanded() {
+      if (!Settings._expandedGroups) Settings._loadExpandedGroups();
+      return Settings._expandedGroups;
+    },
+
+    // Corrupt, foreign or unavailable storage all resolve to "nothing
+    // expanded": this runs inside a render path, so it must never throw.
+    _loadExpandedGroups() {
+      Settings._expandedGroups = new Set();
+      // Only render/toggle paths reach here, but the guard sits next to the
+      // storage read regardless — the prerender pass and the vm harnesses
+      // evaluate this module in Node, where there is no localStorage.
+      if (typeof window === 'undefined') return;
+      try {
+        const raw = localStorage.getItem(NAV_EXPANDED_KEY);
+        const arr = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(arr)) return;
+        // Prune names that are no longer a collapsible group, so a renamed or
+        // un-collapsed group can't leave a stale entry behind. Pruning is the
+        // safe direction here: the worst a dropped name does is close a group
+        // the viewer had opened.
+        let changed = false;
+        for (const name of arr) {
+          const key = String(name);
+          if (Settings._isCollapsibleGroup(key)) Settings._expandedGroups.add(key);
+          else changed = true;
+        }
+        if (changed) Settings._saveExpandedGroups();
+      } catch {
+        Settings._expandedGroups = new Set();
+      }
+    },
+
+    _saveExpandedGroups() {
+      try {
+        localStorage.setItem(
+          NAV_EXPANDED_KEY,
+          JSON.stringify([...Settings._expanded()])
+        );
+      } catch { /* storage may be unavailable; non-fatal, in-memory for the session */ }
+    },
+
+    _isGroupExpanded(name) {
+      if (!Settings._isCollapsibleGroup(name)) return true;
+      const key = String(name);
+      return Settings._expanded().has(key) || Settings._revealedGroup === key;
+    },
+
+    _setGroupExpanded(name, expanded) {
+      const set = Settings._expanded();
+      const key = String(name);
+      if (expanded) set.add(key);
+      else set.delete(key);
+      Settings._saveExpandedGroups();
+    },
+
+    // A press is a MENU-ONLY action: it mutates the persisted set and
+    // repaints the nav, and never setSection, _renderContent, _writeHash or
+    // location.hash. The section on screen keeps rendering untouched, and a
+    // phone repaint of the CONTENT would tear the menu down mid-gesture.
+    _toggleGroup(name) {
+      if (!Settings._isCollapsibleGroup(name)) return;
+      const open = !Settings._isGroupExpanded(name);
+      // Closing has to drop the arrival reveal as well, or pressing the
+      // heading of the group you are standing in is a button that visibly
+      // does nothing.
+      if (!open) Settings._revealedGroup = null;
+      Settings._setGroupExpanded(name, open);
+      Settings._renderNav();
+    },
+
+    // "Never hide where I am": arriving at a section reveals its group, so a
+    // deep link into Advanced (#settings/cli from the out-of-credits card,
+    // #settings/api-key from the consent modal, a bookmark) can't leave the
+    // highlighted row invisible.
+    //
+    // The reveal is TRANSIENT — it sets _revealedGroup, and does not touch
+    // the persisted set. Persisting it would make one deep link into About
+    // or CLI the last time that viewer ever sees Advanced shut, which is the
+    // whole feature; it would also make "Advanced ships collapsed" depend on
+    // where the browser had been before, and the capture container walks the
+    // declared #settings routes as hash cohorts of ONE document, in
+    // declaration order (#settings/about lands before #settings). Deriving
+    // the reveal from the active section instead makes both surfaces answer
+    // the same way whatever route came first.
+    //
+    // Called on ARRIVAL only, and it CLEARS as readily as it sets: leaving
+    // Advanced for a Preferences pane closes it again, and the viewer's own
+    // toggle is the only thing that outlives the visit.
+    _ensureActiveGroupExpanded() {
+      const s = Settings._visibleSections().find((x) => x.key === Settings._section);
+      const name = s ? String(s.group || 'Other') : '';
+      Settings._revealedGroup =
+        name && Settings._isCollapsibleGroup(name) ? name : null;
+    },
+
     str(s) {
       return String(s == null ? '' : s);
+    },
+
+    // aria-controls targets have to be unique, and at phone width the hidden
+    // desktop sidebar and the level-1 menu are BOTH in the document — hence
+    // one id prefix per surface ('settings-nav-group', 'settings-menu-group'),
+    // exactly like AdminConsole._groupDomId.
+    _groupDomId(prefix, name) {
+      return `${prefix}-${String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
+    },
+
+    // The three disclosure fields both descriptors carry. A group that does
+    // not collapse gets `collapsible: false` and renders exactly the markup
+    // it always did — plain heading, no button, no wrapper id — so the only
+    // group that changes shape is Advanced.
+    _groupDisclosure(prefix, name) {
+      const collapsible = Settings._isCollapsibleGroup(name);
+      return {
+        collapsible,
+        expanded: collapsible ? Settings._isGroupExpanded(name) : true,
+        domId: collapsible ? Settings._groupDomId(prefix, name) : null,
+      };
     },
 
     // Desktop sidebar rows, grouped under headings.
@@ -694,12 +1084,13 @@
         active: s.key === active,
         className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
           + (s.key === active
-            ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
+            ? 'bg-violet-600/10 text-violet-700 dark:text-violet-400'
             : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
       });
       return Settings._groupedSections().map((g, i) => ({
         name: Settings.str(g.name),
         first: i === 0,
+        ...Settings._groupDisclosure('settings-nav-group', g.name),
         items: g.items.map(item),
       }));
     },
@@ -714,6 +1105,7 @@
     _menuView() {
       return Settings._groupedSections().map((g) => ({
         name: Settings.str(g.name),
+        ...Settings._groupDisclosure('settings-menu-group', g.name),
         items: g.items.map((s) => ({ key: s.key, label: Settings.str(s.label) })),
       }));
     },
@@ -761,7 +1153,7 @@
     setSection(key, opts) {
       const visible = Settings._visibleSections();
       if (!visible.some((s) => s.key === key)) {
-        key = visible[0] ? visible[0].key : 'api-key';
+        key = visible[0] ? visible[0].key : Settings.DEFAULT_SECTION;
       }
       Settings._section = key;
       if (!opts || opts.writeHash !== false) Settings._writeHash(key);
@@ -802,6 +1194,22 @@
         });
       }
       if (footer) Settings._syncFooter();
+      // The AI-credit figure in the Anthropic API key section renders from a
+      // me-scoped fetch and is throttled inside AiCredit, so refreshing it on
+      // every section change is cheap and keeps it honest. This is where the
+      // hamburger's open-time refresh went when the row moved here.
+      if (window.AiCredit?.refreshAll) window.AiCredit.refreshAll();
+      // Announce which section is showing. The one listener today is the
+      // Theme pane (features/settings/sections/theme.tsx), which re-reads
+      // Theme.get() so a mode changed in another tab — or an explicit value
+      // that happens to match the OS — is reflected when you come back to it.
+      // This replaces the drawer's `usernode:header-menu-open`, which did
+      // exactly the same job when the control lived there.
+      try {
+        window.dispatchEvent(new CustomEvent('usernode:settings-section', {
+          detail: { section: Settings._section },
+        }));
+      } catch (err) { /* ignore */ }
     },
 
     // Log out sits under the sidebar on desktop and under the level-1 menu
@@ -858,13 +1266,15 @@
     },
 
     _scrollTop() {
-      const el = document.getElementById('settings-screen');
+      const screen = document.getElementById('settings-screen');
+      const el = window.PlatformUI?.scrollElement?.(screen) || screen;
       return el ? el.scrollTop : 0;
     },
 
     // A pushed screen starts at the top; a pop restores where the menu was.
     _restoreScroll() {
-      const el = document.getElementById('settings-screen');
+      const screen = document.getElementById('settings-screen');
+      const el = window.PlatformUI?.scrollElement?.(screen) || screen;
       if (!el) return;
       el.scrollTop = (Settings._isMobile() && Settings._level === 1)
         ? Settings._menuScrollTop
@@ -887,9 +1297,21 @@
     _syncChrome() {
       if (!window.App || Settings._chromeSuspended) return;
       const inSection = Settings._isMobile() && Settings._level === 2;
-      // #1036: the header control is a real anchor — inside a section
-      // the chevron pops to the settings menu, so that is its href.
-      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? '#settings' : undefined);
+      // #1036: the header control is a real anchor — inside a section the
+      // chevron pops to whatever is below it, which is the settings menu
+      // unless the viewer arrived from elsewhere in the app (#1565, see
+      // _upHref), so that is its href.
+      //
+      // LEVEL 2 ONLY. The mobile drill-in keeps its chevron because that is
+      // not a way BACK to another screen, it is the only way up a level
+      // INSIDE this one — without it a phone viewer is stranded in a section.
+      // Level 1 no longer draws one: Settings is one of the three account
+      // screens the owner asked to lose the arrow (see the note beside
+      // App.navigateToProfile), reached from the Home account row and left
+      // through it, with the header's own title saying where you are. A
+      // second affordance pointing at the row you just came from was chrome.
+      // `'home'` means "hidden" to setBackIcon.
+      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? Settings._upHref() : undefined);
       if (!App.setHeaderTitle) return;
       if (inSection) {
         const s = Settings._visibleSections().find((x) => x.key === Settings._section);
@@ -906,6 +1328,7 @@
     // menu would be missing those rows until the next navigation.
     _renderNavIfOpen() {
       if (!Settings._open) return;
+      Settings._ensureActiveGroupExpanded();
       Settings._renderNav();
       // A section that just became unavailable must not stay on screen.
       if (!Settings._visibleSections().some((s) => s.key === Settings._section)) {
@@ -925,6 +1348,10 @@
       if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
       const status = document.getElementById('ai-progress-estimate-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      const bridge = document.getElementById('session-bridge-enabled');
+      if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
+      const bridgeStatus = document.getElementById('session-bridge-status');
+      if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
       this._renderLocalAgentsSection();
     },
 
@@ -954,59 +1381,54 @@
       } catch {}
 
       this._localAgents = agents;
+      // The SECTION's own `hidden` is a sibling concern and stays here: an
+      // empty "Local coding agent — none" panel would be noise on every
+      // account that has never used the CLI, which is nearly all of them.
       section.classList.toggle('hidden', agents.length === 0);
-      list.textContent = '';
-      for (const agent of agents) {
-        list.appendChild(this._localAgentCard(agent));
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsLocalAgents : null;
+      if (bridge) {
+        bridge.publish({
+          phase: 'ready',
+          agents: agents.map((agent) => this._localAgentView(agent)),
+        });
       }
       if (status && agents.some((a) => a.demo)) {
-        status.textContent = 'Demo data — changes are not saved.';
-        status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
+        status.textContent = 'Demo data: changes are not saved.';
+        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
       }
     },
 
-    // Built with DOM calls rather than innerHTML: the label is free text the
-    // user typed on their own machine and arrives here verbatim.
-    _localAgentCard(agent) {
-      const card = document.createElement('div');
-      card.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-
-      const top = document.createElement('div');
-      top.className = 'flex items-start justify-between gap-3';
-      const text = document.createElement('div');
-      text.className = 'min-w-0';
-
-      const title = document.createElement('div');
-      title.className = 'text-sm font-medium text-zinc-800 dark:text-zinc-200 truncate';
-      title.textContent = agent.label || 'Unnamed machine';
-
-      const where = document.createElement('div');
-      where.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1 truncate';
+    // One attached machine, as ./local-agents-list.tsx draws it.
+    //
+    // This was `_localAgentCard`, built with DOM calls rather than innerHTML
+    // for one reason: the label is free text the user typed on their own
+    // machine and arrives verbatim. React escapes it for the same reason, so
+    // the safety property survives the renderer swap — `leaseId` and `demo`
+    // collapse into the one fact the row needs, which is whether there is a
+    // lease to release at all.
+    _localAgentView(agent) {
       const app = agent.appName || agent.appSlug || 'an app';
-      where.textContent = agent.sessionTitle
-        ? `${app} · ${agent.sessionTitle}` : String(app);
-
-      const detail = document.createElement('div');
-      detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-0.5';
-      const seen = Number.isFinite(Date.parse(agent.lastSeenAt))
-        ? new Date(agent.lastSeenAt).toLocaleTimeString() : 'unknown';
-      detail.textContent = `${agent.runtime || 'claude-code'} · last seen ${seen}`;
-
-      text.append(title, where, detail);
-      top.appendChild(text);
-
-      // Demo rows (staging ?demo=1) are fabricated per request and own no
-      // lease, so there is nothing for a button to release.
-      if (!agent.demo && agent.leaseId) {
-        const detach = document.createElement('button');
-        detach.type = 'button';
-        detach.className = 'shrink-0 rounded border border-zinc-400 dark:border-zinc-600 px-2 py-1 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors';
-        detach.textContent = 'Detach';
-        detach.addEventListener('click', () => this._detachLocalAgent(agent, detach));
-        top.appendChild(detach);
-      }
-      card.appendChild(top);
-      return card;
+      return {
+        leaseId: agent.leaseId || null,
+        label: agent.label || null,
+        title: agent.label || 'Unnamed machine',
+        where: agent.sessionTitle ? `${app} · ${agent.sessionTitle}` : String(app),
+        runtime: agent.runtime || 'claude-code',
+        // #1808: the raw instant, NOT a formatted time. This was
+        // `toLocaleTimeString()`, so a machine last seen in March read
+        // "last seen 10:00" — the same words as one seen this morning, on a
+        // row whose entire job is to say whether the machine is still there.
+        // ./local-agents-list.tsx stamps it with the shared helper, which
+        // this module cannot import: four test harnesses run its real source
+        // through `vm.runInContext` as a classic script, where a top-level
+        // `import` is a syntax error. Formatting in the renderer is the
+        // arrangement that needs no second copy of the helper.
+        lastSeenAt: Number.isFinite(Date.parse(agent.lastSeenAt)) ? agent.lastSeenAt : null,
+        // Demo rows (staging ?demo=1) are fabricated per request and own no
+        // lease, so there is nothing for a button to release.
+        detachable: !agent.demo && !!agent.leaseId,
+      };
     },
 
     // Releasing from here must not need the machine to cooperate: the common
@@ -1030,94 +1452,26 @@
         button.disabled = false;
         if (status) {
           status.textContent = err.message || 'Could not detach that machine.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       }
     },
 
-    // #911: one checkbox per home-screen panel, built from
-    // GET /api/home-panels's `registry` + `hidden`. Absence from `hidden`
-    // means visible, so a fresh account renders every box ticked without
-    // any per-user rows existing. Rebuilt (not patched) on each render:
-    // the list is two lines of markup and the listeners go with it.
-    async _renderHomePanelsSection() {
-      const list = document.getElementById('settings-home-panels-list');
-      if (!list) return;
-      const status = document.getElementById('settings-home-panels-status');
-      if (status) { status.classList.add('hidden'); status.textContent = ''; }
-      let data = null;
-      try {
-        const r = await fetch('/api/home-panels', { credentials: 'same-origin' });
-        if (r.ok) data = await r.json();
-      } catch {}
-      const registry = (data && Array.isArray(data.registry)) ? data.registry : [];
-      const hidden = (data && Array.isArray(data.hidden)) ? data.hidden : [];
-      if (!registry.length) {
-        list.innerHTML = '<p class="text-xs text-zinc-500 dark:text-zinc-400">No home screen widgets are available.</p>';
-        return;
-      }
-      const esc = (s) => String(s == null ? '' : s)
-        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-      // `removable: false` (Discover) renders as a fixed-on, disabled switch
-      // with the reason beside it, rather than being hidden from the list:
-      // a widget that is silently absent from its own settings row reads as
-      // a bug, where a locked one reads as a decision. The server refuses
-      // the write too, so this is presentation, not the enforcement.
-      //
-      // Every other row is offered to EVERY account — notably "Create app",
-      // which appears whether or not the viewer currently has app quota,
-      // because the widget is on their home screen either way.
-      list.innerHTML = registry.map((p) => {
-        const fixed = p.removable === false;
-        return `
-        <label class="flex items-center gap-2 select-none ${fixed ? 'cursor-default' : 'cursor-pointer'}">
-          <input type="checkbox" class="un-switch settings-home-panel-toggle"
-                 data-panel-key="${esc(p.key)}" ${hidden.includes(p.key) ? '' : 'checked'}
-                 ${fixed ? 'disabled' : ''} />
-          <span class="text-sm text-zinc-800 dark:text-zinc-200">${esc(p.title || p.key)}</span>
-          ${fixed ? '<span class="text-xs text-zinc-500 dark:text-zinc-400">— how you find new apps</span>' : ''}
-        </label>`;
-      }).join('');
-      list.querySelectorAll('.settings-home-panel-toggle').forEach((el) => {
-        if (el.disabled) return;
-        el.addEventListener('change', () => {
-          Settings._saveHomePanelVisibility(el.dataset.panelKey, !el.checked, el);
-        });
-      });
-    },
-
-    async _saveHomePanelVisibility(key, hidden, toggle) {
-      const status = document.getElementById('settings-home-panels-status');
-      try {
-        const r = await fetch(`/api/home-panels/${encodeURIComponent(key)}/visibility`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ hidden: !!hidden }),
-        });
-        if (!r.ok) throw new Error('save failed');
-        // Repaint the home card straight away so returning to the home
-        // screen doesn't show the stale state for up to a TTL.
-        if (window.HomePanels) {
-          try { await HomePanels.ensureLoaded({ force: true }); } catch {}
-        }
-        if (status) { status.classList.add('hidden'); status.textContent = ''; }
-      } catch (err) {
-        if (toggle) toggle.checked = !hidden;
-        if (status) {
-          status.textContent = 'Failed to save — try again.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
-        }
-      }
-    },
+    // Home sections are permanent (#1801); the old widget visibility
+    // settings, menu and endpoint are retired together.
 
     _renderLanguageSection() {
       const select = document.getElementById('settings-locale');
       if (!select) return;
+      // #1556 capability gate, read back by _visibleSections(). Offered only
+      // to a user who already has a preference saved — see the SECTIONS note.
+      const section = document.getElementById('settings-language-section');
       const value = this.state.locale || '';
+      if (section) {
+        if (!value) { section.classList.add('hidden'); return; }
+        section.classList.remove('hidden');
+      }
       // A saved value outside the curated list (set via the API, or a
       // future wider picker) still needs to render truthfully — inject
       // an option for it so the select doesn't silently show "Auto".
@@ -1132,61 +1486,30 @@
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
     },
 
-    // "Preferred build flow" (#1049) — the escape hatch for the dev-chat
-    // picker's "remember my option" checkbox. Once a user ticks that box the
-    // picker stops rendering, so there has to be somewhere to change their
-    // mind; Connections is where the GitHub link and the connectors already
-    // live, which is exactly the machinery the external flows depend on.
+    // "Preferred build flow" (#1049). The BLOCK is markup now
+    // (sections/connectors.tsx) — it was injected here at runtime until
+    // #1191, because the shell's body was a hand-written document pinned
+    // id-for-id and a new settings control had nowhere else to go. What is
+    // left is what this module does for every other control on the screen:
+    // bind the change, reflect the stored value, and gate the two hand-off
+    // options on whether this deployment has the external flows at all.
     //
-    // The markup is BUILT HERE rather than in frontend/src/Shell.tsx: the
-    // shell's body is id-pinned against tests/baselines/shell-markup.json
-    // by tests/shell-id-inventory.test.js (no undeclared elements, no attribute
-    // changes), so a new settings control has to be injected at runtime.
-    // Idempotent — _renderAllSections and refresh() both call it.
+    // Idempotent — _renderAllSections and refresh() both call it, and the
+    // listener is attached once, to an element React keeps.
     _renderDevFlowSection() {
-      const host = document.querySelector('[data-settings-section="connectors"]');
-      if (!host) return;
-      let block = document.getElementById('dev-flow-pref-section');
-      if (!block) {
-        block = document.createElement('div');
-        block.id = 'dev-flow-pref-section';
-        block.className = 'mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800';
-        block.innerHTML = `
-          <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Preferred build flow</h3>
-          <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3 leading-relaxed">
-            When you start a proposal, Usernode can ask how you want to build it — here on the
-            platform with the Usernode agent, or by handing the work order to your own Claude Code
-            or Codex web session. Pick one here to skip the question; choose
-            <strong class="font-semibold text-zinc-600 dark:text-zinc-400">Ask me every time</strong>
-            to get the picker back.
-          </p>
-          <select id="settings-dev-flow"
-            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
-            <option value="">Ask me every time</option>
-            <option value="platform">Build on Usernode</option>
-            <option value="claude-code">Claude Code (claude.ai/code)</option>
-            <option value="codex">Codex (chatgpt.com/codex)</option>
-          </select>
-          <div id="settings-dev-flow-status" class="text-xs mt-2 hidden"></div>
-        `;
-        // Above the GitHub link block when it exists, so the preference reads
-        // as the question and the link below it as one of the answers.
-        const anchor = document.getElementById('github-link-section');
-        if (anchor) host.insertBefore(block, anchor);
-        else host.appendChild(block);
-      }
-      const select = block.querySelector('#settings-dev-flow');
-      if (select && !select.__devFlowWired) {
+      const select = document.getElementById('settings-dev-flow');
+      if (!select) return;
+      if (!select.__devFlowWired) {
         select.__devFlowWired = true;
         select.addEventListener('change', (e) => this._saveDevFlow(e.target.value));
       }
       // A deployment without the external flows can still express "always
       // build on Usernode" vs "ask me" — just not the two hand-offs.
-      block.querySelectorAll('option[value="claude-code"], option[value="codex"]').forEach((opt) => {
+      select.querySelectorAll('option[value="claude-code"], option[value="codex"]').forEach((opt) => {
         opt.disabled = !this.state.externalFlowsAvailable;
       });
-      if (select) select.value = this.state.devFlowPreference || '';
-      const status = block.querySelector('#settings-dev-flow-status');
+      select.value = this.state.devFlowPreference || '';
+      const status = document.getElementById('settings-dev-flow-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
     },
 
@@ -1221,12 +1544,19 @@
       return this._cliAuthPromise;
     },
 
-    // True when the page carries ?demo=1. The server only honours it in
-    // staging (see routes/cli-auth.js), so this is safe to send always.
-    _cliTokensDemo() {
+    // The two read-only CLI credential fixtures the staging server knows:
+    // rows for the everyday review route, or #1609's instruction-rich empty
+    // state. All boolean callers use _cliTokensDemo(); the credential fetch
+    // also needs the exact value so it can select the right fixture.
+    _cliTokensDemoValue() {
       try {
-        return new URLSearchParams(window.location.search).get('demo') === '1';
-      } catch { return false; }
+        const flag = new URLSearchParams(window.location.search).get('demo');
+        return flag === '1' || flag === 'cli-empty' ? flag : null;
+      } catch { return null; }
+    },
+
+    _cliTokensDemo() {
+      return this._cliTokensDemoValue() !== null;
     },
 
     // ── Claude & ChatGPT connectors ──────────────────────────────────────
@@ -1358,18 +1688,46 @@
 
     async _loadConnectors() {
       const section = document.getElementById('connectors-section');
-      const list = document.getElementById('connectors-list');
       const status = document.getElementById('connectors-status');
-      if (!section || !list || !status) return;
+      if (!section || !status) return;
 
       // The connector URL is derived from the origin the SPA is served
       // from, so a self-hosted fork shows its own.
       const urlField = document.getElementById('connector-url');
-      if (urlField) urlField.value = `${window.location.origin}/mcp`;
+      const connectorUrl = `${window.location.origin}/mcp`;
+      if (urlField) urlField.value = connectorUrl;
+
+      // #1607: the "set it up in <product>" links open a new chat pre-loaded
+      // with the job. Built HERE, from the same derived origin the field
+      // shows, so a fork or a config change cannot leave a hardcoded URL
+      // behind — the rule the written steps already follow by pointing back
+      // at #connector-url rather than naming a host.
+      //
+      // The prompt carries the two things people get wrong: that Usernode
+      // uses dynamic client registration (so there is no client ID or secret
+      // to go looking for), and the exact name `usernode`, which is what
+      // Claude Code builds its permission rules from (#1218) and which one
+      // account once mistyped, silently missing every rule the platform
+      // ships.
+      //
+      // Deliberately short. It is a query string, and nothing secret is in
+      // it: the connector URL is a public endpoint and the authorisation
+      // happens through OAuth inside the product, not in this link.
+      const chatPrompt = `I want to add a custom MCP connector. The server URL is ${connectorUrl}`
+        + ' and it uses dynamic client registration, so there is no client ID or secret to enter.'
+        + ' Name it exactly "usernode". Walk me through it one step at a time and tell me what to click.';
+      const chatLinks = [
+        ['connector-open-claude', 'https://claude.ai/new?q='],
+        ['connector-open-chatgpt', 'https://chatgpt.com/?q='],
+      ];
+      for (const [id, base] of chatLinks) {
+        const link = document.getElementById(id);
+        if (link) link.href = `${base}${encodeURIComponent(chatPrompt)}`;
+      }
 
       this._connectorLoadId = (this._connectorLoadId || 0) + 1;
       const loadId = this._connectorLoadId;
-      list.textContent = 'Loading connections…';
+      this._publishConnectors({ phase: 'loading', connectors: [] });
       status.classList.add('hidden');
 
       try {
@@ -1397,10 +1755,10 @@
         this._renderConnectors();
       } catch (err) {
         if (loadId !== this._connectorLoadId) return;
-        list.textContent = '';
+        this._publishConnectors({ phase: 'idle', connectors: [] });
         status.textContent = err.message || 'Could not load your connections.';
-        status.classList.remove('hidden', 'text-emerald-500');
-        status.classList.add('text-red-500');
+        status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+        status.classList.add('text-red-700', 'dark:text-red-400');
       }
     },
 
@@ -1483,8 +1841,17 @@
         if (cap && shown >= cap) {
           text += `That is the limit of ${cap} per connection per ${days} days; it will come back once the window rolls over.`;
         } else if (quietUntil > Date.now()) {
+          // #1808: a bare "12:20 AM" here can be TOMORROW's. The cooldown
+          // runs from the last tip, so one sent late in the evening puts the
+          // deadline past midnight, and a reader comparing it to the clock
+          // concludes the window has already passed. A day word settles it,
+          // and anything further out gets the whole stamp.
+          const end = new Date(quietUntil);
+          const deadline = end.toDateString() === new Date().toDateString()
+            ? `today at ${end.toLocaleTimeString()}`
+            : end.toLocaleString();
           text += `It stays quiet for ${cooldown} minutes after each one, so a conversation opened before `
-            + `${new Date(quietUntil).toLocaleTimeString()} will not carry it — one opened after that will.`;
+            + `${deadline} will not carry it. One opened after that will.`;
         } else {
           text += 'Open a new conversation to see it again.';
         }
@@ -1493,51 +1860,39 @@
       line.classList.remove('hidden');
     },
 
+    // Publish the connector cards. Was a `document.createElement` tree per
+    // connection — card, top row, title, metadata, Disconnect and its listener
+    // — and is ./connectors-list.tsx's markup now. The two date formats and
+    // the "never used" fallback are resolved here, where the payload is.
+    _publishConnectors(next) {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsConnectors : null;
+      if (bridge) bridge.publish(next);
+    },
+
     _renderConnectors() {
-      const list = document.getElementById('connectors-list');
-      if (!list) return;
-      list.textContent = '';
       const connectors = this._connectors || [];
+      // Two SIBLINGS of the list host, both still this module's: the static
+      // "stop the prompts" prose blocks, whose visibility follows which client
+      // families are connected, and the read-only tip status.
       this._renderConnectorCases(connectors);
       this._renderConnectorHint(connectors);
-      if (!connectors.length) {
-        const empty = document.createElement('p');
-        empty.className = 'text-xs text-zinc-500 dark:text-zinc-400';
-        empty.textContent = 'No chat products connected yet.';
-        list.appendChild(empty);
-        return;
-      }
-      for (const connector of connectors) {
-        const card = document.createElement('div');
-        card.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-
-        const top = document.createElement('div');
-        top.className = 'flex items-start justify-between gap-3';
-        const text = document.createElement('div');
-        text.className = 'min-w-0';
-        const title = document.createElement('div');
-        title.className = 'text-sm font-medium text-zinc-800 dark:text-zinc-200';
-        title.textContent = connector.client_name || 'Connected client';
-        const detail = document.createElement('div');
-        detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
-        const connected = Number.isFinite(Date.parse(connector.connected_at))
-          ? new Date(connector.connected_at).toLocaleString() : 'unknown date';
-        const used = connector.last_used_at && Number.isFinite(Date.parse(connector.last_used_at))
-          ? ` · last used ${new Date(connector.last_used_at).toLocaleString()}`
-          : ' · never used';
-        detail.textContent = `connected ${connected}${used}`;
-        text.append(title, detail);
-
-        const disconnect = document.createElement('button');
-        disconnect.type = 'button';
-        disconnect.className = 'shrink-0 rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors';
-        disconnect.textContent = 'Disconnect';
-        disconnect.addEventListener('click', () => this._disconnectConnector(connector.id, disconnect));
-
-        top.append(text, disconnect);
-        card.appendChild(top);
-        list.appendChild(card);
-      }
+      this._publishConnectors({
+        phase: 'ready',
+        connectors: connectors.map((connector) => {
+          const connected = Number.isFinite(Date.parse(connector.connected_at))
+            ? new Date(connector.connected_at).toLocaleString() : 'unknown date';
+          const used = connector.last_used_at
+            && Number.isFinite(Date.parse(connector.last_used_at))
+            ? ` · last used ${new Date(connector.last_used_at).toLocaleString()}`
+            : ' · never used';
+          return {
+            id: String(connector.id),
+            title: connector.client_name || 'Connected client',
+            detail: `connected ${connected}${used}`,
+          };
+        }),
+      });
     },
 
     async _disconnectConnector(id, button) {
@@ -1555,15 +1910,15 @@
         await this._loadConnectors();
         if (status) {
           status.textContent = 'Disconnected.';
-          status.classList.remove('hidden', 'text-red-500');
-          status.classList.add('text-emerald-500');
+          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400');
+          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
       } catch (err) {
         if (button) button.disabled = false;
         if (status) {
           status.textContent = err.message || 'Could not disconnect.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       }
     },
@@ -1584,9 +1939,10 @@
 
     async _loadGithubLink() {
       const section = document.getElementById('github-link-section');
-      const body = document.getElementById('github-link-body');
-      if (!section || !body) return;
-      body.textContent = 'Loading…';
+      if (!section) return;
+      this._publishSocialIdentity({
+        phase: 'loading', message: 'Loading…', tier: null, providers: [],
+      });
       try {
         const response = await fetch(`/api/me/social-identities${this._socialIdentityDemoQuery()}`, {
           credentials: 'same-origin',
@@ -1608,287 +1964,195 @@
         this._githubLink = data;
         this._renderGithubLink();
       } catch {
-        body.textContent = 'Could not load social accounts. Try again shortly.';
+        this._publishSocialIdentity({
+          phase: 'error',
+          message: 'Could not load social accounts. Try again shortly.',
+          tier: null,
+          providers: [],
+        });
         section.classList.remove('hidden');
       }
     },
 
+    _publishSocialIdentity(next) {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsSocialIdentity : null;
+      if (bridge) bridge.publish(next);
+    },
+
     _renderGithubLink() {
-      const body = document.getElementById('github-link-body');
       const status = document.getElementById('github-link-status');
-      if (!body) return;
-      body.textContent = '';
       if (status) status.classList.add('hidden');
       const payload = this._githubLink || { providers: {}, entitlement: {} };
-      body.appendChild(this._socialIdentityTierCard(payload.entitlement));
-      ['github', 'x'].forEach((provider) => {
-        body.appendChild(this._socialIdentityProviderRow(
+      const entitlement = payload.entitlement || {};
+      this._publishSocialIdentity({
+        phase: 'ready',
+        message: null,
+        tier: this._socialIdentityTierView(entitlement),
+        providers: ['github', 'x'].map((provider) => this._socialIdentityRowView(
           provider,
           payload.providers[provider] || { provider, linked: false, available: false },
-          payload.entitlement,
+          entitlement,
           !!payload.demo
-        ));
+        )),
       });
+      // A SIBLING of the block, and still this module's: it reports the OAuth
+      // result carried in the hash query, which is about the navigation that
+      // just happened rather than about the block's contents.
       this._socialIdentityCallbackStatus(status);
     },
 
-    _socialIdentityTierCard(entitlement) {
+    // The tier card's five states, as text plus a tone. Every one of them is
+    // a different answer to "how much can this account spend today, and why",
+    // so the wording is decided here, next to the entitlement it reads.
+    _socialIdentityTierView(entitlement) {
       const e = entitlement || {};
-      const card = document.createElement('div');
-      card.className = 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-3 py-2 mb-3';
-      const title = document.createElement('div');
-      title.className = 'text-sm font-semibold text-zinc-800 dark:text-zinc-200';
-      const detail = document.createElement('div');
-      detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
       const dollars = `$${(Math.max(0, Number(e.limitCents) || 0) / 100).toFixed(2)}/day`;
       if (e.entitlementAvailable === false) {
-        title.textContent = 'Daily credit tier temporarily unavailable';
-        detail.textContent = 'Usernode could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.';
-      } else if (e.policy === 'legacy') {
-        title.textContent = `Current daily allowance: ${dollars}`;
-        detail.textContent = 'Social account linking is available, but identity-based credit tiers are not active on this deployment yet.';
-      } else if (e.tier === 'override') {
-        title.textContent = `Administrator-set allowance: ${dollars}`;
-        detail.textContent = 'This account has an explicit administrator override, which takes precedence over identity tiers.';
-      } else if (e.verificationRequired) {
-        title.textContent = 'Layer 1 locked · $0/day';
-        detail.textContent = 'Connect either GitHub or X below to unlock $10.00/day. A second provider does not add another $10.';
-        card.className += ' border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20';
-      } else {
-        title.textContent = `Layer 1 unlocked · ${dollars}`;
-        detail.textContent = 'At least one social account ownership proof is current. Provider tokens are not stored.';
-        card.className += ' border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/20';
+        return {
+          tone: 'plain',
+          title: 'Daily credit tier temporarily unavailable',
+          detail: 'Usernode could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.',
+        };
       }
-      card.append(title, detail);
-      return card;
+      if (e.policy === 'legacy') {
+        return {
+          tone: 'plain',
+          title: `Current daily allowance: ${dollars}`,
+          detail: 'Social account linking is available, but identity-based credit tiers are not active on this deployment yet.',
+        };
+      }
+      if (e.tier === 'override') {
+        return {
+          tone: 'plain',
+          title: `Administrator-set allowance: ${dollars}`,
+          detail: 'This account has an explicit administrator override, which takes precedence over identity tiers.',
+        };
+      }
+      if (e.verificationRequired) {
+        return {
+          tone: 'warn',
+          title: 'Layer 1 locked · $0/day',
+          detail: 'Connect either GitHub or X below to unlock $10.00/day. A second provider does not add another $10.',
+        };
+      }
+      return {
+        tone: 'ok',
+        title: `Layer 1 unlocked · ${dollars}`,
+        detail: 'At least one social account ownership proof is current. Provider tokens are not stored.',
+      };
     },
 
-    _socialIdentityProviderRow(provider, link, entitlement, demo) {
+    // One provider row. Five mutually-exclusive states, and the two actions:
+    // a Connect anchor (or its inert ?demo= twin) and Disconnect.
+    _socialIdentityRowView(provider, link, entitlement, demo) {
       const name = provider === 'github' ? 'GitHub' : 'X';
-      const wrap = document.createElement('div');
-      wrap.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-      const row = document.createElement('div');
-      row.className = 'flex items-start justify-between gap-3';
-      const text = document.createElement('div');
-      text.className = 'min-w-0';
-      const heading = document.createElement('div');
-      heading.className = 'text-sm font-semibold text-zinc-800 dark:text-zinc-200';
-      heading.textContent = link.linked && link.handle ? `${name} · @${link.handle}` : name;
-      const state = document.createElement('div');
-      state.className = 'text-xs mt-1';
+      let state;
       if (link.reconnectRequired) {
-        state.className += ' text-amber-600 dark:text-amber-400';
-        state.textContent = 'Linked for GitHub attribution · reconnect once to make this identity credit-eligible.';
+        state = {
+          tone: 'amber',
+          text: 'Linked for GitHub attribution · reconnect once to make this identity credit-eligible.',
+        };
       } else if (link.linked && entitlement.policy === 'tiered') {
-        state.className += ' text-emerald-600 dark:text-emerald-400';
-        state.textContent = 'Ownership verified · counts toward the single $10/day social tier.';
+        state = {
+          tone: 'emerald',
+          text: 'Ownership verified · counts toward the single $10/day social tier.',
+        };
       } else if (link.linked) {
-        state.className += ' text-zinc-500 dark:text-zinc-400';
-        state.textContent = 'Ownership verified · identity credit tiers are not active yet.';
+        state = {
+          tone: 'muted',
+          text: 'Ownership verified · identity credit tiers are not active yet.',
+        };
       } else if (link.available === false) {
-        state.className += ' text-zinc-500 dark:text-zinc-400';
-        state.textContent = `${name} linking is not configured on this deployment.`;
+        state = { tone: 'muted', text: `${name} linking is not configured on this deployment.` };
       } else {
-        state.className += ' text-zinc-500 dark:text-zinc-400';
-        state.textContent = entitlement.verificationRequired
-          ? `Not connected · connect ${name} to unlock Layer 1.`
-          : 'Not connected.';
+        state = {
+          tone: 'muted',
+          text: entitlement.verificationRequired
+            ? `Not connected · connect ${name} to unlock Layer 1.`
+            : 'Not connected.',
+        };
       }
-      text.append(heading, state);
-      if (link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))) {
-        const when = document.createElement('div');
-        when.className = 'text-xs text-zinc-500 dark:text-zinc-500 mt-1';
-        when.textContent = `linked ${new Date(link.linkedAt).toLocaleString()}`;
-        text.appendChild(when);
-      }
-      if (link.linked && link.access === 'identity') {
-        const noToken = document.createElement('div');
-        if (provider === 'github') noToken.id = 'github-link-no-token';
-        noToken.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
-        noToken.textContent = provider === 'github'
-          ? 'Usernode holds no GitHub access token for your account.'
-          : 'Usernode stores no X access token for your account.';
-        text.appendChild(noToken);
-      }
-
-      const actions = document.createElement('div');
-      actions.className = 'shrink-0 flex flex-wrap justify-end gap-2';
-      if ((!link.linked || link.reconnectRequired) && link.available !== false) {
-        const label = link.reconnectRequired ? 'Reconnect' : `Connect ${name}`;
-        if (demo) {
-          const disabled = document.createElement('button');
-          disabled.type = 'button';
-          disabled.disabled = true;
-          disabled.className = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white opacity-50';
-          disabled.textContent = label;
-          actions.appendChild(disabled);
-        } else {
-          const connect = document.createElement('a');
-          connect.href = `/api/me/social-identities/${provider}/connect`;
-          connect.className = 'rounded-md bg-violet-600 hover:bg-violet-500 px-2 py-1 text-xs font-medium text-white transition-colors';
-          connect.textContent = label;
-          actions.appendChild(connect);
-        }
-      }
-      if (link.linked) {
-        const unlink = document.createElement('button');
-        unlink.type = 'button';
-        unlink.disabled = demo;
-        unlink.className = 'rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50 transition-colors';
-        unlink.textContent = 'Disconnect';
-        if (!demo) unlink.addEventListener('click', () => this._unlinkGithub(unlink, provider));
-        actions.appendChild(unlink);
-      }
-      row.append(text, actions);
-      wrap.append(row, this._socialIdentityAuditNote(provider));
-      // A provider that rejects our callback address errors on its own page
-      // and never redirects back, so the only trace of that failure is the
-      // stranded attempt the server spotted (#1291).
-      if (link.pendingAttemptAt) {
-        const stranded = document.createElement('p');
-        stranded.id = `${provider}-link-pending-note`;
-        stranded.className = 'text-xs text-amber-600 dark:text-amber-400 mt-2';
-        stranded.textContent = `Your last ${name} connection attempt didn't complete. `
-          + `If ${name} showed "Something went wrong — You weren't able to give access to the App", `
-          + `the platform's callback address isn't registered on the ${name} developer app — `
-          + 'an administrator needs to update that app’s settings.';
-        wrap.appendChild(stranded);
-      }
-      if (link.diagnostics) {
-        wrap.appendChild(this._socialIdentityDiagnostics(provider, link.diagnostics, demo));
-      }
-      return wrap;
+      const offersConnect = (!link.linked || link.reconnectRequired) && link.available !== false;
+      return {
+        provider,
+        name,
+        heading: link.linked && link.handle ? `${name} · @${link.handle}` : name,
+        // #1557: the durable half of "did that work?". The OAuth round trip
+        // already writes a one-line result into #github-link-status, but that
+        // line is transient, xs, and a sibling of this block — come back to
+        // Settings a minute later and the only thing distinguishing a
+        // connected account from an unconnected one was a sentence about
+        // credit tiers. The badge says the state itself, on the row it is
+        // about. A reconnect-required link is deliberately NOT "Connected":
+        // it is linked for attribution and not yet credit-eligible, which is
+        // the distinction the amber state text spells out.
+        badge: link.reconnectRequired
+          ? { text: 'Reconnect needed', tone: 'amber' }
+          : (link.linked ? { text: 'Connected', tone: 'emerald' } : null),
+        state,
+        linkedAt: link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
+          ? `linked ${new Date(link.linkedAt).toLocaleString()}`
+          : null,
+        noToken: link.linked && link.access === 'identity'
+          ? (provider === 'github'
+            ? 'Usernode holds no GitHub access token for your account.'
+            : 'Usernode stores no X access token for your account.')
+          : null,
+        connect: offersConnect
+          ? {
+            label: link.reconnectRequired ? 'Reconnect' : `Connect ${name}`,
+            // A demo fixture gets the control inert rather than absent: the
+            // real flow would navigate straight out of the fixture.
+            href: demo ? null : `/api/me/social-identities/${provider}/connect`,
+          }
+          : null,
+        unlink: link.linked ? { disabled: !!demo } : null,
+        strandedNote: link.pendingAttemptAt
+          ? `Your last ${name} connection attempt didn't complete. `
+            + 'Try Connect again. This can happen if the browser did not reach the sign-in page or the flow was cancelled. '
+            + `If ${name} reports a callback or redirect address error, ask an administrator to check its OAuth settings.`
+          : null,
+        diagnostics: link.diagnostics
+          ? this._socialIdentityDiagnosticsView(provider, link.diagnostics, demo)
+          : null,
+      };
     },
 
-    // Admin-only configuration panel for a provider whose OAuth setup can
-    // fail invisibly on the provider's own page (#1291): names the
-    // credential pair in use, the exact callback URL the developer app must
-    // register, and a live check of the pair against X's token endpoint.
-    _socialIdentityDiagnostics(provider, diagnostics, demo) {
+    // The admin-only configuration panel (#1291): the credential pair in use,
+    // the callback URL the developer app must register, and a live check of
+    // the pair. The transient halves — the Copy control's "Copied" flash and
+    // the check's in-flight/verdict line — are ./social-identity.tsx's own
+    // state: they were local variables closed over by a listener, and they
+    // never leave that subtree.
+    _socialIdentityDiagnosticsView(provider, diagnostics, demo) {
       const name = provider === 'github' ? 'GitHub' : 'X';
-      const panel = document.createElement('div');
-      panel.id = `${provider}-link-diagnostics`;
-      panel.className = 'mt-2 rounded-md border border-zinc-300 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900 px-2.5 py-2 text-xs';
-
-      const source = document.createElement('div');
-      source.className = 'font-medium text-zinc-700 dark:text-zinc-300';
+      let source;
       if (diagnostics.credentialSource === 'waitlist') {
-        source.textContent = `Reusing the waitlist ${name} app’s credentials.`;
+        source = `Reusing the waitlist ${name} app’s credentials.`;
       } else if (diagnostics.credentialSource === 'dedicated') {
-        source.textContent = diagnostics.sameAppAsWaitlist
-          ? `Dedicated ${name} credentials — same app as the waitlist pair.`
+        source = diagnostics.sameAppAsWaitlist
+          ? `Dedicated ${name} credentials, same app as the waitlist pair.`
           : `Dedicated ${name} app credentials.`;
       } else {
-        source.textContent = `No complete ${name} credential pair is configured.`;
+        source = `No complete ${name} credential pair is configured.`;
       }
-      panel.appendChild(source);
-
-      const cbRow = document.createElement('div');
-      cbRow.className = 'mt-1 flex items-center gap-2 min-w-0';
-      const cbLabel = document.createElement('span');
-      cbLabel.className = 'text-zinc-500 dark:text-zinc-400 shrink-0';
-      cbLabel.textContent = 'Callback URI:';
-      const cbCode = document.createElement('code');
-      cbCode.className = 'truncate text-zinc-700 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 rounded px-1 py-0.5';
-      cbCode.textContent = diagnostics.callbackUrl || '';
-      const cbCopy = document.createElement('button');
-      cbCopy.type = 'button';
-      cbCopy.className = 'shrink-0 rounded border border-zinc-300 dark:border-zinc-600 px-1.5 py-0.5 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
-      cbCopy.textContent = 'Copy';
-      cbCopy.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(diagnostics.callbackUrl || '');
-          cbCopy.textContent = 'Copied';
-          setTimeout(() => { cbCopy.textContent = 'Copy'; }, 1500);
-        } catch { /* clipboard unavailable — the address is still visible */ }
-      });
-      cbRow.append(cbLabel, cbCode, cbCopy);
-      panel.appendChild(cbRow);
-
-      const warning = document.createElement('p');
-      warning.className = 'mt-1 text-zinc-500 dark:text-zinc-400';
-      warning.textContent = `If this address isn’t registered as a callback URI on the ${name} developer app, `
-        + `${name} shows "Something went wrong" before sign-in and never redirects back here.`;
-      panel.appendChild(warning);
-
-      const checkRow = document.createElement('div');
-      checkRow.className = 'mt-2 flex items-start gap-2';
-      const checkButton = document.createElement('button');
-      checkButton.type = 'button';
-      checkButton.id = `${provider}-link-check`;
-      checkButton.className = 'shrink-0 rounded-md border border-violet-400 dark:border-violet-700 px-2 py-1 font-medium text-violet-700 dark:text-violet-300 hover:bg-violet-50 dark:hover:bg-violet-950 disabled:opacity-50 transition-colors';
-      checkButton.textContent = 'Run configuration check';
-      const checkResult = document.createElement('span');
-      checkResult.className = 'text-zinc-500 dark:text-zinc-400 pt-1';
-      checkButton.addEventListener('click', async () => {
-        checkButton.disabled = true;
-        checkResult.className = 'text-zinc-500 dark:text-zinc-400 pt-1';
-        checkResult.textContent = 'Checking…';
-        try {
-          let verdict;
-          if (demo) {
-            verdict = { clientAuth: 'ok' };
-          } else {
-            const response = await fetch('/api/me/social-identities/x/check', {
-              method: 'POST',
-              credentials: 'same-origin',
-              cache: 'no-store',
-            });
-            if (!response.ok) throw new Error(`Check failed (${response.status})`);
-            verdict = await response.json();
-          }
-          if (verdict.clientAuth === 'ok') {
-            checkResult.className = 'text-emerald-600 dark:text-emerald-400 pt-1';
-            checkResult.textContent = `${name} accepted the platform’s client credentials. `
-              + `If connecting still fails on ${name}’s own page, the callback address above `
-              + `is not registered on the ${name} app.`;
-          } else if (verdict.clientAuth === 'rejected') {
-            checkResult.className = 'text-red-600 dark:text-red-400 pt-1';
-            checkResult.textContent = `${name} rejected the platform’s client ID or secret — `
-              + 'the configured credential pair is wrong.';
-          } else {
-            checkResult.className = 'text-amber-600 dark:text-amber-400 pt-1';
-            checkResult.textContent = `Couldn’t reach ${name} to verify the credentials. Try again shortly.`;
-          }
-        } catch {
-          checkResult.className = 'text-red-600 dark:text-red-400 pt-1';
-          checkResult.textContent = 'The configuration check failed to run. Try again shortly.';
-        } finally {
-          checkButton.disabled = false;
-        }
-      });
-      checkRow.append(checkButton, checkResult);
-      panel.appendChild(checkRow);
-      return panel;
+      return {
+        provider,
+        name,
+        source,
+        callbackUrl: diagnostics.callbackUrl || '',
+        warning: `If this address isn’t registered as a callback URI on the ${name} developer app, `
+          + `${name} shows "Something went wrong" before sign-in and never redirects back here.`,
+        demo: !!demo,
+      };
     },
 
-    // "Don't take our word for it": GitHub's own page lists what every
-    // authorized OAuth app can reach, so the claim above is checkable in one
-    // click. Deliberately a top-level link (target=_blank + noopener) — the
-    // shell is framed, and github.com refuses to be framed.
-    _githubAuditNote() {
-      return this._socialIdentityAuditNote('github');
-    },
-
-    _socialIdentityAuditNote(provider) {
-      const note = document.createElement('p');
-      if (provider === 'github') note.id = 'github-link-audit-note';
-      note.className = 'text-xs text-zinc-500 dark:text-zinc-500 mt-2';
-      note.appendChild(document.createTextNode('Review or revoke this authorization at '));
-      const anchor = document.createElement('a');
-      anchor.href = provider === 'github'
-        ? 'https://github.com/settings/applications'
-        : 'https://x.com/settings/connected_apps';
-      anchor.target = '_blank';
-      anchor.rel = 'noopener noreferrer';
-      anchor.className = 'text-violet-600 dark:text-violet-400 hover:underline';
-      anchor.textContent = provider === 'github'
-        ? 'github.com/settings/applications'
-        : 'x.com/settings/connected_apps';
-      note.appendChild(anchor);
-      note.appendChild(document.createTextNode('.'));
-      return note;
-    },
+    // `_socialIdentityAuditNote` / `_githubAuditNote` lived here — the
+    // "don't take our word for it" line linking to the provider's own list of
+    // authorized apps. It is ./social-identity.tsx's `<AuditNote>` now, with
+    // the same top-level-link discipline (target=_blank + noopener), because
+    // the shell is framed and neither provider allows being framed.
 
     _socialIdentityCallbackStatus(status) {
       if (!status) return;
@@ -1908,11 +2172,14 @@
         conflict: `That ${name} account is already linked elsewhere, or a different account must be disconnected first.`,
         denied: `${name} connection was cancelled.`,
         error: `${name} could not be connected. Try again.`,
+        account_mismatch: 'This browser is signed into a different Usernode account than the app. Sign out here, then tap Connect again in the app and sign in with the same account.',
       };
       status.textContent = messages[result] || '';
       if (!status.textContent) return;
-      status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
-      status.classList.add(result === 'linked' ? 'text-emerald-500' : 'text-red-500');
+      status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
+      status.classList.add(...(result === 'linked'
+        ? ['text-emerald-700', 'dark:text-emerald-400']
+        : ['text-red-700', 'dark:text-red-400']));
     },
 
     async _unlinkGithub(button, provider = 'github') {
@@ -1930,30 +2197,35 @@
         if (button) button.disabled = false;
         if (status) {
           status.textContent = err.message || 'Could not disconnect this account.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       }
     },
 
+    // The list host's three states are ./cli-tokens-store.js's phases now, so
+    // this reaches the bridge rather than the element.
+    _publishCliTokens(next) {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsCliTokens : null;
+      if (bridge) bridge.publish(next);
+    },
+
     async _loadCliTokens(reset) {
       const section = document.getElementById('cli-tokens-section');
-      const list = document.getElementById('cli-tokens-list');
       const more = document.getElementById('cli-tokens-more');
       const status = document.getElementById('cli-tokens-status');
-      if (!section || !list || !more || !status) return;
+      if (!section || !more || !status) return;
 
       // Don't ask for a surface this deployment doesn't serve — the 404
       // would be a console error even though the code below handles it.
-      // Hiding the section is the same outcome the 404 branch produces,
-      // so staging and production differ only in whether the request is
-      // made at all.
       // Staging disables the real CLI surface, but ?demo=1 is a read-only
       // fixture endpoint specifically meant to make this section reviewable.
       // Let that mock path through while still suppressing every real token
-      // request when auth/me advertises cliAuthEnabled=false.
+      // request when auth/me advertises cliAuthEnabled=false. The surrounding
+      // section remains visible because its local-agent guide is useful even
+      // when this deployment cannot list or revoke credentials.
       if (!this._cliTokensDemo() && !(await this._cliAuthAvailable())) {
-        section.classList.add('hidden');
         return;
       }
 
@@ -1967,7 +2239,7 @@
         this._cliTokenLoadId += 1;
         this._cliTokens = [];
         this._cliTokenCursor = null;
-        list.textContent = 'Loading credentials…';
+        this._publishCliTokens({ phase: 'loading', tokens: [] });
         more.classList.add('hidden');
         status.classList.add('hidden');
       }
@@ -1982,14 +2254,14 @@
         const query = this._cliTokenCursor
           ? `?limit=50&cursor=${encodeURIComponent(this._cliTokenCursor)}`
           : '?limit=50';
-        const demoQ = this._cliTokensDemo() ? '&demo=1' : '';
+        const demo = this._cliTokensDemoValue();
+        const demoQ = demo ? `&demo=${encodeURIComponent(demo)}` : '';
         const response = await fetch(`/api/me/cli-tokens${query}${demoQ}`, {
           credentials: 'same-origin',
           cache: 'no-store',
         });
         if (loadId !== this._cliTokenLoadId) return;
         if (response.status === 404) {
-          section.classList.add('hidden');
           return;
         }
         if (!response.ok) throw new Error('Could not load CLI credentials.');
@@ -2004,10 +2276,10 @@
         this._renderCliTokens();
       } catch (err) {
         if (loadId !== this._cliTokenLoadId) return;
-        if (!this._cliTokens.length) list.textContent = '';
+        if (!this._cliTokens.length) this._publishCliTokens({ phase: 'idle', tokens: [] });
         status.textContent = err.message || 'Could not load CLI credentials.';
-        status.classList.remove('hidden', 'text-emerald-500');
-        status.classList.add('text-red-500');
+        status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+        status.classList.add('text-red-700', 'dark:text-red-400');
       } finally {
         if (loadId === this._cliTokenLoadId) {
           this._cliTokensLoading = false;
@@ -2017,58 +2289,38 @@
     },
 
     _renderCliTokens() {
-      const list = document.getElementById('cli-tokens-list');
       const more = document.getElementById('cli-tokens-more');
       const status = document.getElementById('cli-tokens-status');
-      if (!list || !more || !status) return;
-      list.textContent = '';
+      if (!more || !status) return;
       status.classList.add('hidden');
-      if (!this._cliTokens.length) {
-        const empty = document.createElement('p');
-        empty.className = 'text-xs text-zinc-500 dark:text-zinc-400';
-        empty.textContent = 'No CLI credentials.';
-        list.appendChild(empty);
-      }
-      for (const token of this._cliTokens) {
-        const card = document.createElement('div');
-        card.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
-
-        const top = document.createElement('div');
-        top.className = 'flex items-start justify-between gap-3';
-        const text = document.createElement('div');
-        text.className = 'min-w-0';
-        const title = document.createElement('div');
-        title.className = 'text-sm font-mono text-zinc-800 dark:text-zinc-200';
-        title.textContent = typeof token.token_hint === 'string'
-          ? token.token_hint : 'CLI credential';
-        const detail = document.createElement('div');
-        detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
-        const created = Number.isFinite(Date.parse(token.created_at))
-          ? new Date(token.created_at).toLocaleString() : 'unknown date';
-        const used = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
-          ? ` · last used ${new Date(token.last_used_at).toLocaleString()}` : '';
-        detail.textContent = `${token.status || 'unknown'} · created ${created}${used}`;
-        text.append(title, detail);
-        top.appendChild(text);
-
-        // Demo rows (staging ?demo=1) are fabricated server-side and have
-        // nothing to revoke — offer no button, same stance as the demo
-        // agent-files rows.
-        if (token.status === 'valid' && typeof token.id === 'string' && !token.demo) {
-          const revoke = document.createElement('button');
-          revoke.type = 'button';
-          revoke.className = 'shrink-0 rounded border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors';
-          revoke.textContent = 'Revoke';
-          revoke.addEventListener('click', () => this._revokeCliToken(token.id, revoke));
-          top.appendChild(revoke);
-        }
-        card.appendChild(top);
-        list.appendChild(card);
-      }
+      // The ROWS are ./cli-tokens-list.tsx's — a card each, built here with
+      // `document.createElement` until #1191. Every branch it evaluated is
+      // resolved here, where the payload and the demo flag live: the two date
+      // formats, the status line, and whether a row may be revoked at all (a
+      // staging demo row is fabricated server-side and has nothing to revoke).
+      this._publishCliTokens({
+        phase: 'ready',
+        tokens: this._cliTokens.map((token) => {
+          const created = Number.isFinite(Date.parse(token.created_at))
+            ? new Date(token.created_at).toLocaleString() : 'unknown date';
+          const used = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
+            ? ` · last used ${new Date(token.last_used_at).toLocaleString()}` : '';
+          return {
+            id: typeof token.id === 'string' ? token.id : null,
+            hint: typeof token.token_hint === 'string' ? token.token_hint : 'CLI credential',
+            detail: `${token.status || 'unknown'} · created ${created}${used}`,
+            revocable: token.status === 'valid'
+              && typeof token.id === 'string' && !token.demo,
+          };
+        }),
+      });
+      // Both SIBLINGS of that host, and both still this module's: the
+      // Load-more button follows the keyset cursor, and the status line has
+      // three writers (revoke succeeded, revoke failed, demo data).
       more.classList.toggle('hidden', !this._cliTokenCursor);
       if (this._cliTokensDemo() && this._cliTokens.some((t) => t.demo)) {
-        status.textContent = 'Demo data — changes are not saved.';
-        status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
+        status.textContent = 'Demo data: changes are not saved.';
+        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
       }
     },
 
@@ -2083,15 +2335,15 @@
         if (response.status !== 204) throw new Error('Could not revoke the credential.');
         if (status) {
           status.textContent = 'Credential revoked.';
-          status.classList.remove('hidden', 'text-red-500');
-          status.classList.add('text-emerald-500');
+          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400');
+          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
         await this._loadCliTokens(true);
       } catch (err) {
         if (status) {
           status.textContent = err.message || 'Could not revoke the credential.';
-          status.classList.remove('hidden', 'text-emerald-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
         button.disabled = false;
       }
@@ -2104,8 +2356,8 @@
         if (select) select.value = this.state.locale || '';
         if (status) {
           status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
       try {
@@ -2129,8 +2381,8 @@
         }
         if (status) {
           status.textContent = '✓ Saved';
-          status.classList.remove('hidden', 'text-red-500', 'text-zinc-500');
-          status.classList.add('text-emerald-500');
+          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
       } catch (err) {
         fail(`Network error: ${err.message}`);
@@ -2147,8 +2399,8 @@
         if (select) select.value = this.state.devFlowPreference || '';
         if (status) {
           status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
       try {
@@ -2164,8 +2416,8 @@
         if (typeof App !== 'undefined' && App.user) App.user.devFlowPreference = this.state.devFlowPreference;
         if (status) {
           status.textContent = '✓ Saved';
-          status.classList.remove('hidden', 'text-red-500', 'text-zinc-500');
-          status.classList.add('text-emerald-500');
+          status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-emerald-700', 'dark:text-emerald-400');
         }
       } catch (err) {
         fail(`Network error: ${err.message}`);
@@ -2179,8 +2431,8 @@
         if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
         if (status) {
           status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
-          status.classList.add('text-red-500');
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
         }
       };
       try {
@@ -2195,6 +2447,43 @@
           return fail(j.error || 'Failed to save.');
         }
         this.state.aiProgressEstimate = !!enabled;
+        if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      } catch (err) {
+        fail(`Network error: ${err.message}`);
+      }
+    },
+
+    // #1281: opt in to the session-CLI bridge. A failed save reverts the
+    // checkbox to the stored value rather than leaving it showing a
+    // preference the server never took — the venue list is painted from
+    // App.user, so a lying checkbox would be a venue that never appears.
+    async _saveSessionBridge(enabled) {
+      const toggle = document.getElementById('session-bridge-enabled');
+      const status = document.getElementById('session-bridge-status');
+      const fail = (msg) => {
+        if (toggle) toggle.checked = !!this.state.sessionBridgeEnabled;
+        if (status) {
+          status.textContent = msg;
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
+        }
+      };
+      try {
+        const r = await fetch('/api/me/session-bridge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ enabled: !!enabled }),
+        });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          return fail(j.error || 'Failed to save.');
+        }
+        this.state.sessionBridgeEnabled = !!enabled;
+        // The venue pickers read App.user, not Settings.state, so the live
+        // object has to move with it or the next sheet opened in this same
+        // page load would still be missing the row that was just enabled.
+        if (typeof App !== 'undefined' && App.user) App.user.sessionBridgeEnabled = !!enabled;
         if (status) { status.classList.add('hidden'); status.textContent = ''; }
       } catch (err) {
         fail(`Network error: ${err.message}`);
@@ -2303,7 +2592,7 @@
       if (!status) return;
       status.textContent = message || (disabled ? 'Loading mobile push preferences…' : 'Saved to your account.');
       status.className = 'text-xs mt-3 ' + (error
-        ? 'text-red-600 dark:text-red-400'
+        ? 'text-red-700 dark:text-red-400'
         : 'text-zinc-500 dark:text-zinc-400');
     },
 
@@ -2407,12 +2696,7 @@
 
     _setStatus(text, kind) {
       const el = document.getElementById('settings-status');
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500'
-                : kind === 'ok' ? 'text-emerald-500'
-                : 'text-zinc-500';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
     },
 
     _clearStatus() {
@@ -2476,7 +2760,7 @@
       const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
       if (heading) heading.textContent = 'OpenRouter';
       if (intro) {
-        intro.textContent = 'Use any compatible model exposed by your OpenRouter key for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your key is encrypted at rest, injected only for each turn, and removed completely when you delete it here.';
+        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. OpenRouter is preferred after you add or claim a key; GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
       }
       if (modelLabel) modelLabel.textContent = 'OpenRouter model';
       const betaGate = document.getElementById('settings-openrouter-beta-gated');
@@ -2512,7 +2796,7 @@
       const compatibility = model?.compatibility === 'verified'
         ? ' · verified'
         : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
-      return `${model?.name || model?.id || 'Unknown model'} — ${this._openRouterModelCostSummary(model)}${compatibility}`;
+      return `${model?.name || model?.id || 'Unknown model'}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
     },
 
     _syncOpenRouterModelDetails() {
@@ -2543,10 +2827,7 @@
     _setOrStatus(text, kind) {
       const el = document.getElementById('settings-openrouter-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
     },
 
     async _refreshOpenRouter() {
@@ -2558,6 +2839,10 @@
       const input = document.getElementById('settings-openrouter-key');
       const saveBtn = document.getElementById('settings-openrouter-save');
       const modelsWrap = document.getElementById('settings-openrouter-models-wrap');
+      const managedCard = document.getElementById('settings-openrouter-managed-card');
+      const managedMessage = document.getElementById('settings-openrouter-managed-message');
+      const claimBtn = document.getElementById('settings-openrouter-claim');
+      const personalControls = document.getElementById('settings-openrouter-personal-controls');
       try {
         const r = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
         const prefs = r.ok ? await r.json() : {};
@@ -2568,17 +2853,43 @@
       try {
         const r = await fetch('/api/me/credentials/openrouter', { credentials: 'same-origin' });
         const j = r.ok ? await r.json() : {};
+        const managed = j.managed || null;
+        const provisioning = j.managedProvisioning || {};
+        if (managedCard) managedCard.classList.toggle('hidden', !provisioning.available && !managed);
+        if (claimBtn) claimBtn.classList.toggle('hidden', !provisioning.canClaim);
+        if (managedMessage) {
+          if (managed?.status === 'active') {
+            managedMessage.textContent = `Your Usernode-managed key is active with a $${Number(managed.dailyLimitUsd || 0).toFixed(2)} daily limit. Admins can block or remove it; you may choose any available model.`;
+          } else if (managed?.status === 'disabled') {
+            managedMessage.textContent = 'An admin has blocked this company key. Contact the platform admins if it should be enabled again.';
+          } else if (managed?.status === 'deleted') {
+            managedMessage.textContent = 'Your included key was deleted by an admin. Included keys are issued once, but you may add a personal key below.';
+          } else if (managed?.status === 'needs_review' || managed?.status === 'provisioning') {
+            managedMessage.textContent = 'This key needs admin review. Usernode did not retry the provider request, which prevents accidental duplicate keys.';
+          } else if (provisioning.verificationRequired && !provisioning.verified) {
+            managedMessage.textContent = 'Connect and verify GitHub or X in Social accounts & connectors to claim one limited company key.';
+          } else if (!provisioning.available) {
+            managedMessage.textContent = 'Included keys are not configured by the platform administrator yet.';
+          } else if (provisioning.reason === 'personal_key_configured') {
+            managedMessage.textContent = 'Remove your personal key first if you want to claim the included company key.';
+          } else {
+            managedMessage.textContent = `You can create one included key with a $${Number(provisioning.dailyLimitUsd || 0).toFixed(2)} daily limit.`;
+          }
+        }
+        const managedOwnsCredential = !!managed && managed.status !== 'deleted';
+        if (personalControls) personalControls.classList.toggle('hidden', managedOwnsCredential);
         if (j.configured) {
           if (display) display.classList.remove('hidden');
           if (last4) last4.textContent = j.last4 || '••••';
-          if (removeBtn) removeBtn.classList.remove('hidden');
+          if (removeBtn) removeBtn.classList.toggle('hidden', managedOwnsCredential);
           if (input) { input.placeholder = 'Paste a new key to replace'; input.value = ''; }
           if (saveBtn) saveBtn.textContent = 'Replace';
-          if (info && j.keyInfo) {
+          if (info && (j.keyInfo || managed)) {
             info.classList.remove('hidden');
-            const lim = j.keyInfo.limit != null ? `$${j.keyInfo.limit}` : '';
-            const rem = j.keyInfo.limitRemaining != null ? `$${j.keyInfo.limitRemaining}` : '';
-            info.textContent = lim ? `Key limit: ${lim} · Remaining: ${rem}` : (j.keyInfo.label || '');
+            const lim = j.keyInfo?.limit != null ? `$${j.keyInfo.limit}` : '';
+            const rem = j.keyInfo?.limitRemaining != null ? `$${j.keyInfo.limitRemaining}` : '';
+            const owner = managedOwnsCredential ? 'Usernode-managed' : 'Personal key';
+            info.textContent = lim ? `${owner} · Daily limit: ${lim} · Remaining: ${rem}` : `${owner} · ${j.keyInfo?.label || ''}`;
           }
           await this._loadOpenRouterModels();
         } else {
@@ -2590,6 +2901,56 @@
           if (modelsWrap) modelsWrap.classList.add('hidden');
         }
       } catch {}
+    },
+
+    async _claimManagedOpenRouterKey() {
+      const btn = document.getElementById('settings-openrouter-claim');
+      if (btn) btn.disabled = true;
+      this._setOrStatus('Creating your limited OpenRouter key…', 'info');
+      try {
+        const r = await fetch('/api/me/credentials/openrouter/managed', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}',
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          this._setOrStatus(j.error || 'Could not create the key.', 'error');
+          await this._refreshOpenRouter();
+          return;
+        }
+        const reveal = document.getElementById('settings-openrouter-reveal');
+        const key = document.getElementById('settings-openrouter-revealed-key');
+        if (key) key.value = j.apiKey || '';
+        if (reveal) reveal.classList.remove('hidden');
+        if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
+        this._setOrStatus(`Created and selected OpenRouter${j.defaultModel ? ` with ${j.defaultModel}` : ''} as your default. Save the displayed key now.`, 'ok');
+        await this._refreshOpenRouter();
+      } catch (err) {
+        this._setOrStatus(`Network error: ${err.message}`, 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    },
+
+    async _copyManagedOpenRouterKey() {
+      const key = document.getElementById('settings-openrouter-revealed-key');
+      if (!key?.value) return;
+      try {
+        await navigator.clipboard.writeText(key.value);
+        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
+      } catch {
+        key.select();
+        document.execCommand('copy');
+        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
+      }
+    },
+
+    _dismissManagedOpenRouterReveal() {
+      const reveal = document.getElementById('settings-openrouter-reveal');
+      const key = document.getElementById('settings-openrouter-revealed-key');
+      if (key) key.value = '';
+      if (reveal) reveal.classList.add('hidden');
     },
 
     async _loadOpenRouterModels() {
@@ -2645,7 +3006,8 @@
         });
         const j = await r.json();
         if (!r.ok) { this._setOrStatus(j.error || 'Failed to save key.', 'error'); return; }
-        this._setOrStatus('Saved and encrypted. OpenRouter sessions bill to this key.', 'ok');
+        this._setOrStatus('Saved, encrypted, and selected as your default coding agent.', 'ok');
+        if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
         input.value = '';
         await this._refreshOpenRouter();
       } catch (err) {
@@ -2664,6 +3026,7 @@
         if (!r.ok) { this._setOrStatus(j.error || 'Failed to remove key.', 'error'); return; }
         const note = j.defaultReset ? ' Key removed; your default agent was reset to Claude Code.' : '';
         this._setOrStatus('Key removed.' + note, 'ok');
+        if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = false;
         this._openRouterModels = [];
         await this._refreshOpenRouter();
       } catch {
@@ -2714,10 +3077,7 @@
     _setCpStatus(text, kind) {
       const el = document.getElementById('cp-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
     },
 
     // Decide whether the wallet option is even offered, then default to
@@ -2812,6 +3172,83 @@
       }
     },
 
+    _setCuStatus(text, kind) {
+      const el = document.getElementById('cu-status');
+      if (!el) return;
+      paintStatus(el, text, kind);
+    },
+
+    // Paint the current handle. Called from _renderAllSections on every
+    // open, so the row is right even after a rename made somewhere else in
+    // this tab (or in another one, once /api/auth/me is re-read).
+    _renderChangeUsernameSection() {
+      const cur = document.getElementById('cu-current');
+      if (!cur) return;
+      const name = (typeof App !== 'undefined' && App.user && App.user.username) || '';
+      cur.textContent = name ? `@${name}` : '—';
+    },
+
+    // POST /api/me/username. The server is the authority on every rule
+    // here (charset, reserved names, availability against the retired
+    // ledger, the cooldown, the password); this only avoids a round-trip
+    // for the two states the form can see on its own.
+    async changeUsername() {
+      const nameEl = document.getElementById('cu-new');
+      const pwEl = document.getElementById('cu-password');
+      const btn = document.getElementById('cu-save');
+      if (!nameEl || !pwEl || !btn) return;
+
+      const username = nameEl.value.trim();
+      const currentPassword = pwEl.value;
+
+      if (!username) { this._setCuStatus('Enter a new username.', 'error'); return; }
+      if (!currentPassword) { this._setCuStatus('Enter your current password.', 'error'); return; }
+
+      // Everything that can throw goes INSIDE the try, so `finally` is the
+      // only exit and the button cannot be stranded disabled under a
+      // "Saving…" that never resolves — the shape of the reported bug, when
+      // painting that very line was what threw. `btn.disabled = true` is a
+      // property write and cannot.
+      btn.disabled = true;
+      try {
+        this._setCuStatus('Saving…', 'info');
+        const r = await fetch('/api/me/username', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ username, currentPassword }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { this._setCuStatus(j.error || 'Failed to change username.', 'error'); return; }
+
+        nameEl.value = '';
+        pwEl.value = '';
+
+        // The handle is on the drawer row, the identity card and every
+        // link this tab is about to build, so App.user has to move with
+        // it — a stale copy would keep deep-linking the OLD name, which
+        // now resolves through the retired ledger and would quietly
+        // redirect on every click.
+        if (typeof App !== 'undefined' && App.user) {
+          App.user.username = j.username;
+          if (typeof App.saveSessionSnapshot === 'function') App.saveSessionSnapshot(App.user);
+          try { App.resyncCurrentView(); } catch (_) { /* best effort */ }
+        }
+        this._renderChangeUsernameSection();
+
+        this._setCuStatus(
+          j.unchanged
+            ? 'That is already your username.'
+            : `You are now @${j.username}.`,
+          'ok',
+        );
+      } catch (err) {
+        this._setCuStatus(`Network error: ${err.message}`, 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    },
+
     async changePassword() {
       const currentEl = document.getElementById('cp-current');
       const newEl = document.getElementById('cp-new');
@@ -2863,49 +3300,21 @@
         return false;
       };
 
-      // Close wallet admission before the first asynchronous web cleanup.
-      // New native builds also acknowledge their process-wide latch here.
-      let preflight = {
-        nativeTerminal: false, latch: 'unsupported', reason: null, code: null,
-      };
+      // This call closes the private realm synchronously, before this function
+      // reaches its first await. Native capability probing deliberately waits
+      // until after the server has revoked the HttpOnly session, so a degraded
+      // bridge can never prevent the authoritative logout boundary.
+      let preflight = { nativeTerminal: false };
       try {
         if (window.NativeChrome && NativeChrome.prepareWebLogout) {
-          const result = await NativeChrome.prepareWebLogout();
-          preflight = (result && typeof result === 'object')
-            ? result
-            : {
-              nativeTerminal: result === true,
-              latch: 'unsupported',
-              reason: null,
-              code: null,
-            };
+          preflight = NativeChrome.prepareWebLogout() || preflight;
         }
       } catch (error) {
-        // prepareWebLogout resolves a report now, but a rejection must not
-        // be a dead end either — treat it exactly like a refused latch.
-        console.warn('[settings] native logout preflight failed:', error);
-        preflight = {
-          nativeTerminal: false,
-          latch: 'unavailable',
-          reason: (error && error.message) ? String(error.message) : null,
-          code: null,
-        };
-      }
-
-      // THE DEAD END THIS REMOVES: a refused privileged bridge used to
-      // abort here, BEFORE POST /api/auth/logout, so the web session
-      // survived and the user had no way out of the app at all. The
-      // admission latches are already closed; ask, then sign out of the
-      // web session regardless. The app's own session is attempted
-      // best-effort below and named on the landing screen if it survives.
-      const degraded = preflight.latch === 'unavailable' ||
-        preflight.latch === 'inconclusive';
-      if (degraded && !await this._confirmDegradedSignOut(preflight)) {
-        if (btn) btn.disabled = false;
-        return false;
+        return fail(error);
       }
 
       try {
+        if (preflight.webRecoverySettled) await preflight.webRecoverySettled;
         const response = await fetch('/api/auth/logout', {
           method: 'POST', credentials: 'same-origin',
         });
@@ -2923,114 +3332,75 @@
       // Same reasoning for the offline session snapshot (#1021): it is the
       // record that says "this device is signed in", so leaving it behind
       // would let the next offline boot paint the signed-in shell for an
-      // account that just logged out.
-      try { window.App?.clearSessionSnapshot?.(); } catch (_) {}
+      // account that just logged out. _dropCachedSession is the wider sweep
+      // (#1524): it also clears the shell snapshot and the remembered Improve
+      // target, which main.tsx re-applies UNCONDITIONALLY at boot, before the
+      // session is known — so leaving them behind paints the previous
+      // session's header title and Improve button on the landing page.
+      try { window.App?._dropCachedSession?.(); } catch (_) {}
 
-      // This must remain the final statement on the native path: successful
-      // native logout replaces the WebView, so the old document has no
-      // timeout or navigation continuation.
+      // Normalise the address BEFORE the terminal native call (#1524). A
+      // native sign-out replaces the WebView but the platform keeps whatever
+      // URL it was on, so a logout from `#settings` (or from `/app/<slug>`)
+      // leaves an address that restoreFromHash reads as a remembered deep
+      // link and answers with the sign-in form on the next restore. This runs
+      // after the revocation above on purpose: a logout that FAILED must
+      // leave the address still describing the screen the user is looking at.
+      //
+      // replaceState is safe on both counts that matter here. NATIVE-BRIDGE.md's
+      // trust model binds the privileged capability to the executing JS realm,
+      // and a same-document History API change retains it; and replaceState
+      // fires neither popstate nor hashchange, so no router runs off it.
+      try { window.history?.replaceState?.(null, '', LANDING_URL); } catch (_) {}
+
+      // Back into a signed-in document restored whole from the BFCache would
+      // otherwise repaint the signed-in shell from memory (#1524). One-shot:
+      // this document is on its way out either way.
+      try {
+        window.addEventListener('pageshow', (event) => {
+          if (event && event.persisted) window.location.replace(LANDING_URL);
+        }, { once: true });
+      } catch (_) {}
+
+      // This must remain the final call on the native path: successful native
+      // logout replaces the WebView, so the old document normally runs no
+      // continuation work at all. The ONE relaxation (#1524) is navigation to
+      // the landing page, on both outcomes below. It cannot re-admit anyone:
+      // App.user is gone, so NativeChrome._webParticipantId() is null and
+      // establishCurrentSession() returns without asking the bridge for
+      // anything. Nothing else may be added here.
       if (preflight.nativeTerminal) {
-        // FIXME: if this rejects after web cleanup, add a fail-closed retry UI
-        // without resuming normal work in this old document.
-        return NativeChrome.commitNativeLogout();
-      }
-
-      if (degraded && !await this._bestEffortNativeLogout()) {
-        // The app kept its session. Say so on the next screen rather than
-        // leaving the user to discover it, and point at the fix.
-        this._noteIncompleteNativeSignOut();
+        return NativeChrome.commitNativeLogout().then((result) => {
+          // The WebView should already be gone. If it is not, land this
+          // document on the public landing page rather than leave a
+          // signed-out user on the Settings screen.
+          const timer = setTimeout(() => {
+            window.location.replace(LANDING_URL);
+          }, NATIVE_LOGOUT_SAFETY_MS);
+          if (timer && typeof timer.unref === 'function') timer.unref();
+          return result;
+        }, (error) => {
+          // A rejection leaves the native realm closed and server authority
+          // revoked, but this document alive and signed out. Carry the
+          // advisory across the navigation (the toast itself would not
+          // survive it) and go to the landing page like every other surface.
+          try {
+            window.sessionStorage?.setItem?.(LOGOUT_NOTICE_KEY, NATIVE_SHUTDOWN_NOTICE);
+          } catch (_) {}
+          console.warn('[settings] local native shutdown failed:', error);
+          window.location.replace(LANDING_URL);
+          return false;
+        });
       }
 
       // Hard navigation on purpose: enterAuthed is one-shot per document
-      // in a regular browser or an old app without hard logout. `/` boots
+      // in a regular browser. `/` boots
       // the anonymous shell on the landing screen — the public app
       // directory a guest normally sees — instead of the bare sign-in
       // form (#1159); the landing header's Sign in CTA keeps re-login one
-      // tap away.
-      window.location.href = '/';
-    },
-
-    // The user's call, not ours: the web session is going either way, but
-    // they should know the app may stay signed in on this device.
-    _confirmDegradedSignOut(preflight) {
-      if (!window.PlatformUI || typeof PlatformUI.confirm !== 'function') {
-        // No dialog to ask with is not a reason to trap someone in a
-        // session — proceed, and the login-screen notice still fires.
-        return Promise.resolve(true);
-      }
-      const detail = preflight && preflight.reason
-        ? ` (${preflight.reason})`
-        : '';
-      return PlatformUI.confirm({
-        title: 'Sign out without the app?',
-        message: 'The Usernode app isn’t responding to this screen' +
-          detail + ', so it may stay signed in on this device. ' +
-          'You’ll be signed out of Social either way — force-close ' +
-          'and reopen the app to finish signing out there.',
-        confirmLabel: 'Sign out anyway',
-        cancelLabel: 'Cancel',
-        danger: true,
-      });
-    },
-
-    // The app may still accept a plain logout even though its privileged
-    // latch never answered. Try, briefly, and swallow the rejection: the
-    // web session is already gone, so nothing here may block the user from
-    // leaving. Resolves whether the app accepted it.
-    NATIVE_SIGNOUT_BUDGET_MS: 3000,
-
-    _bestEffortNativeLogout() {
-      const bridge = window.usernode;
-      if (!bridge || bridge.isNative !== true ||
-          typeof bridge.logout !== 'function') {
-        return Promise.resolve(false);
-      }
-      return new Promise((resolve) => {
-        let done = false;
-        const settle = (ok) => {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          resolve(ok);
-        };
-        const timer = setTimeout(() => settle(false),
-          this.NATIVE_SIGNOUT_BUDGET_MS);
-        try {
-          bridge.logout().then(() => settle(true), (err) => {
-            console.warn('[settings] best-effort native logout failed:', err);
-            settle(false);
-          });
-        } catch (err) {
-          console.warn('[settings] best-effort native logout threw:', err);
-          settle(false);
-        }
-      });
-    },
-
-    NATIVE_SIGNOUT_NOTICE_KEY: 'sv:native_signout_incomplete',
-
-    _noteIncompleteNativeSignOut() {
-      try {
-        sessionStorage.setItem(this.NATIVE_SIGNOUT_NOTICE_KEY, '1');
-      } catch (_) { /* private mode / disabled storage: nothing to note */ }
-    },
-
-    // One-shot, on the next document — which is the landing screen, since
-    // logout hard-navigates to `/`. Without it the user lands there with
-    // no idea the app may still hold its own session.
-    _showIncompleteNativeSignOutNotice() {
-      let flagged = false;
-      try {
-        flagged = sessionStorage.getItem(this.NATIVE_SIGNOUT_NOTICE_KEY) === '1';
-        if (flagged) sessionStorage.removeItem(this.NATIVE_SIGNOUT_NOTICE_KEY);
-      } catch (_) { return; }
-      if (!flagged) return;
-      if (!window.PlatformUI || typeof PlatformUI.toast !== 'function') return;
-      PlatformUI.toast(
-        'Signed out of Social. The Usernode app didn’t confirm — ' +
-        'force-close and reopen it to finish signing out there.',
-        { duration: 10000, priority: true }
-      );
+      // tap away. REPLACE, not assign (#1524): a pushed entry lets Back
+      // restore the signed-in document from the BFCache.
+      window.location.replace(LANDING_URL);
     },
 
     // Ask the active service worker to drop its API cache; resolves on ack
@@ -3087,9 +3457,11 @@
     // staging:private) grant tables still produce a reviewable list.
 
     async _renderLlmGrants() {
-      const list = document.getElementById('llm-grants-list');
-      if (!list) return;
-      list.innerHTML = '<p class="text-xs text-zinc-500">Loading…</p>';
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsGrants : null;
+      if (!bridge) return;
+      const publish = bridge.publish;
+      publish({ phase: 'loading', grants: [] });
       const demo = new URLSearchParams(window.location.search).get('demo') === '1';
       let grants = [];
       try {
@@ -3098,141 +3470,120 @@
         const j = await r.json();
         grants = j.grants || [];
       } catch {
-        list.innerHTML = '<p class="text-xs text-red-500">Failed to load app permissions.</p>';
+        publish({ phase: 'error', grants: [] });
         return;
       }
-      if (!grants.length) {
-        list.innerHTML = '<p class="text-xs text-zinc-500 dark:text-zinc-500">No apps have asked to use AI yet.</p>';
-        return;
-      }
-      list.innerHTML = '';
-      for (const g of grants) list.appendChild(this._llmGrantRow(g));
+      publish({ phase: 'ready', grants: grants.map((g) => this._grantView(g)) });
     },
 
-    _llmGrantRow(g) {
-      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-      }[c]));
-      const row = document.createElement('div');
-      row.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs';
-      const revoked = g.status !== 'active';
+    // One grant, as DATA. Every branch the row template used to evaluate
+    // inline is decided here, where `this.state.hasApiKey` and the demo flag
+    // already live — see the note in ./grants-store.js. The money is
+    // pre-formatted for the same reason: cents-to-dollars is this module's
+    // rule, not the component's.
+    _grantView(g) {
       const spent = ((g.spentTodayCents || 0) + (g.byokSpentTodayCents || 0)) / 100;
       const cap = (g.dailyCapCents || 0) / 100;
+      return {
+        appId: g.appId,
+        appName: String(g.appName ?? ''),
+        revoked: g.status !== 'active',
+        spent: spent.toFixed(2),
+        cap: cap.toFixed(2),
+        capValue: cap.toFixed(2),
+        showByok: !!(this.state.hasApiKey || g.allowByok),
+        allowByok: !!g.allowByok,
+      };
+    },
 
-      if (revoked) {
-        row.innerHTML = `
-          <div class="flex items-center justify-between gap-2">
-            <span class="font-medium text-zinc-500 dark:text-zinc-500 truncate">${esc(g.appName)}</span>
-            <span class="shrink-0 rounded px-1.5 py-0.5 bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400">Revoked</span>
-          </div>`;
-        return row;
+    // A fabricated staging row. The demo grant tables are staging:private and
+    // always empty, so ?demo=1 stands in for them — and those rows must never
+    // reach the API.
+    _isDemoGrant(appId) { return appId < 0; },
+
+    // ── The three row handlers ───────────────────────────────────
+    //
+    // These were closures inside the row builder, wired with addEventListener
+    // to nodes it had just created. They are methods now, called by name from
+    // ./grants-list.tsx, because the component owns the markup and this module
+    // owns the writes. Each still reports through _setLlmGrantsStatus and
+    // re-renders on success, exactly as before.
+
+    async _onGrantCapChange(appId, value) {
+      const status = (t, k) => this._setLlmGrantsStatus(t, k);
+      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      const cents = Math.round(parseFloat(value) * 100);
+      if (!Number.isFinite(cents) || cents <= 0) {
+        status('Enter a valid cap (at least $0.01).', 'error');
+        return;
       }
-
-      row.innerHTML = `
-        <div class="flex items-center justify-between gap-2">
-          <span class="font-medium text-zinc-700 dark:text-zinc-300 truncate">${esc(g.appName)}</span>
-          <span class="font-mono text-zinc-600 dark:text-zinc-400 shrink-0">$${spent.toFixed(2)} / $${cap.toFixed(2)} today</span>
-        </div>
-        <div class="flex items-center justify-between gap-2 mt-2 flex-wrap">
-          <label class="flex items-center gap-1 text-zinc-600 dark:text-zinc-400">
-            Cap $<input data-role="cap" type="number" min="0.01" step="0.01" value="${cap.toFixed(2)}"
-              class="w-20 rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-1.5 py-0.5 font-mono text-zinc-900 dark:text-zinc-100" />
-          </label>
-          ${this.state.hasApiKey || g.allowByok ? `
-          <label class="flex items-center gap-1 cursor-pointer select-none text-zinc-600 dark:text-zinc-400">
-            <input data-role="byok" type="checkbox" class="accent-violet-500 w-3.5 h-3.5" ${g.allowByok ? 'checked' : ''} />
-            Use my own key past the daily budget
-          </label>` : ''}
-          <button data-role="revoke"
-            class="rounded border border-red-400 dark:border-red-700 px-2 py-0.5 font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">Revoke</button>
-        </div>`;
-
-      const status = (text, kind) => this._setLlmGrantsStatus(text, kind);
-      const isDemo = g.appId < 0;
-
-      const capInput = row.querySelector('[data-role="cap"]');
-      capInput.addEventListener('change', async () => {
-        if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
-        const cents = Math.round(parseFloat(capInput.value) * 100);
-        if (!Number.isFinite(cents) || cents <= 0) {
-          status('Enter a valid cap (at least $0.01).', 'error');
-          return;
-        }
-        try {
-          const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({ dailyCapCents: cents }),
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) { status(j.error || 'Failed to update cap.', 'error'); return; }
-          status('Cap updated.', 'ok');
-          this._renderLlmGrants();
-        } catch (err) {
-          status('Network error: ' + err.message, 'error');
-        }
-      });
-
-      const byokInput = row.querySelector('[data-role="byok"]');
-      if (byokInput) {
-        byokInput.addEventListener('change', async () => {
-          if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
-          try {
-            const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              credentials: 'same-origin',
-              body: JSON.stringify({ allowByok: byokInput.checked }),
-            });
-            const j = await r.json().catch(() => ({}));
-            if (!r.ok) {
-              byokInput.checked = !byokInput.checked;
-              status(j.error || 'Failed to update.', 'error');
-              return;
-            }
-            status(byokInput.checked
-              ? 'This app may spill over onto your own key (still capped).'
-              : 'Spillover disabled.', 'ok');
-          } catch (err) {
-            byokInput.checked = !byokInput.checked;
-            status('Network error: ' + err.message, 'error');
-          }
+      try {
+        const r = await fetch(`/api/me/llm-grants/${appId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ dailyCapCents: cents }),
         });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to update cap.', 'error'); return; }
+        status('Cap updated.', 'ok');
+        this._renderLlmGrants();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
       }
+    },
 
-      row.querySelector('[data-role="revoke"]').addEventListener('click', async () => {
-        const ok = await ConfirmModal.show({
-          title: `Revoke AI access for "${g.appName}"?`,
-          message: 'Its next AI call will fail immediately. The app can ask for access again later.',
-          confirmLabel: 'Revoke',
-          danger: true,
+    async _onGrantByokChange(appId, checked) {
+      const status = (t, k) => this._setLlmGrantsStatus(t, k);
+      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      try {
+        const r = await fetch(`/api/me/llm-grants/${appId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ allowByok: checked }),
         });
-        if (!ok) return;
-        if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
-        try {
-          const r = await fetch(`/api/me/llm-grants/${g.appId}`, {
-            method: 'DELETE', credentials: 'same-origin',
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
-          status('Revoked.', 'ok');
-          this._renderLlmGrants();
-        } catch (err) {
-          status('Network error: ' + err.message, 'error');
-        }
-      });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to update.', 'error'); return; }
+        status(checked ? 'Spillover enabled.' : 'Spillover disabled.', 'ok');
+        // The checkbox is CONTROLLED by the store now, so the failure paths
+        // above leave it showing the old value on their own — where the DOM
+        // version had to flip `byokInput.checked` back by hand. On success the
+        // re-render is what makes the new value stick.
+        this._renderLlmGrants();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+        this._renderLlmGrants();
+      }
+    },
 
-      return row;
+    async _onGrantRevoke(appId, appName) {
+      const status = (t, k) => this._setLlmGrantsStatus(t, k);
+      const ok = await ConfirmModal.show({
+        title: `Revoke AI access for "${appName}"?`,
+        message: 'Its next AI call will fail immediately. The app can ask for access again later.',
+        confirmLabel: 'Revoke',
+        danger: true,
+      });
+      if (!ok) return;
+      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      try {
+        const r = await fetch(`/api/me/llm-grants/${appId}`, {
+          method: 'DELETE', credentials: 'same-origin',
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
+        status('Revoked.', 'ok');
+        this._renderLlmGrants();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
     },
 
     _setLlmGrantsStatus(text, kind) {
       const el = document.getElementById('llm-grants-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
 
@@ -3272,7 +3623,7 @@
         const file = input.files && input.files[0];
         if (!file) return;
         if (file.size > 48 * 1024) {
-          this._setAgentFilesStatus(`"${file.name}" is too large — the limit is 48 KB per file.`, 'error');
+          this._setAgentFilesStatus(`"${file.name}" is too large. The limit is 48 KB per file.`, 'error');
           return;
         }
         const reader = new FileReader();
@@ -3336,7 +3687,7 @@
       const pending = this._pendingAgentFile;
       if (!pending) return;
       if (this._agentFilesDemo()) {
-        this._setAgentFilesStatus('Demo data — changes are not saved.', 'info');
+        this._setAgentFilesStatus('Demo data: changes are not saved.', 'info');
         this._hideAgentFilesForm();
         return;
       }
@@ -3359,7 +3710,7 @@
           return;
         }
         this._hideAgentFilesForm();
-        this._setAgentFilesStatus(`Saved "${j.file?.name || name}" — it applies from your next run.`, 'ok');
+        this._setAgentFilesStatus(`Saved "${j.file?.name || name}". It applies from your next run.`, 'ok');
         this._loadAgentFiles();
       } catch (err) {
         this._setAgentFilesStatus('Network error: ' + err.message, 'error');
@@ -3367,12 +3718,11 @@
     },
 
     async _loadAgentFiles() {
-      const instrList = document.getElementById('agent-files-instructions-list');
-      const skillList = document.getElementById('agent-files-skills-list');
-      if (!instrList || !skillList) return;
-      instrList.innerHTML = '<p class="text-xs text-zinc-500">Loading…</p>';
-      skillList.innerHTML = '';
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsAgentFiles : null;
+      if (!bridge) return;
       const demo = this._agentFilesDemo();
+      bridge.publish({ phase: 'loading', files: [], demo });
       let files = [];
       try {
         const r = await fetch('/api/me/agent-files' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
@@ -3380,98 +3730,53 @@
         const j = await r.json();
         files = j.files || [];
       } catch {
-        instrList.innerHTML = '<p class="text-xs text-red-500">Failed to load your agent files.</p>';
+        bridge.publish({ phase: 'error', files: [], demo });
         return;
       }
-      const byKind = (kind) => files.filter((f) => f.kind === kind);
-      const renderList = (el, list, emptyText) => {
-        el.innerHTML = '';
-        if (!list.length) {
-          el.innerHTML = `<p class="text-xs text-zinc-500 dark:text-zinc-500">${emptyText}</p>`;
-          return;
-        }
-        for (const f of list) el.appendChild(this._agentFileRow(f, demo));
-      };
-      renderList(instrList, byKind('instruction'),
-        'No instruction files yet — upload a markdown file to guide the coding agent on every build you start.');
-      renderList(skillList, byKind('skill'),
-        'No skills yet — upload a skill file the agent can use while building for you.');
+      bridge.publish({ phase: 'ready', demo, files: files.map((f) => this._agentFileView(f)) });
     },
 
-    _agentFileRow(f, demo) {
-      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
-        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-      }[c]));
-      const row = document.createElement('div');
-      row.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs';
-      // Stable hook for the #settings/agent-files rendered check — a row
-      // that stops rendering should fail checks, not shrink silently.
-      row.dataset.agentFile = f.kind || '';
-      const kb = Math.max(1, Math.round((f.size_bytes || 0) / 1024));
-      row.innerHTML = `
-        <div class="flex items-center justify-between gap-2">
-          <span class="font-mono font-medium text-zinc-700 dark:text-zinc-300 truncate">${esc(f.name)}</span>
-          <span class="shrink-0 flex items-center gap-2">
-            <span class="text-zinc-500 dark:text-zinc-500">${kb} KB</span>
-            <button data-role="view" class="text-violet-500 hover:text-violet-400 font-medium">View</button>
-            <button data-role="delete" class="text-red-600 dark:text-red-400 hover:text-red-500 font-medium">Delete</button>
-          </span>
-        </div>
-        ${f.description ? `<div class="text-zinc-500 dark:text-zinc-500 mt-1 truncate">${esc(f.description)}</div>` : ''}
-        <pre data-role="content" class="hidden mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1.5 font-mono text-[11px] text-zinc-700 dark:text-zinc-300"></pre>`;
+    // One file, as DATA. The KB rounding is this module's rule — the same
+    // reason the grant rows arrive with their dollars already formatted.
+    _agentFileView(f) {
+      return {
+        kind: String(f.kind ?? ''),
+        name: String(f.name ?? ''),
+        description: String(f.description ?? ''),
+        kb: Math.max(1, Math.round((f.size_bytes || 0) / 1024)),
+      };
+    },
 
-      const viewBtn = row.querySelector('[data-role="view"]');
-      const pre = row.querySelector('[data-role="content"]');
-      viewBtn.addEventListener('click', async () => {
-        if (!pre.classList.contains('hidden')) {
-          pre.classList.add('hidden');
-          viewBtn.textContent = 'View';
-          return;
-        }
-        if (!pre.textContent) {
-          pre.textContent = 'Loading…';
-          pre.classList.remove('hidden');
-          try {
-            const qs = `kind=${encodeURIComponent(f.kind)}&name=${encodeURIComponent(f.name)}` + (demo ? '&demo=1' : '');
-            const r = await fetch(`/api/me/agent-files/content?${qs}`, { credentials: 'same-origin' });
-            const j = await r.json().catch(() => ({}));
-            if (!r.ok) throw new Error(j.error || 'fetch failed');
-            pre.textContent = j.file?.content || '(empty)';
-          } catch (err) {
-            pre.textContent = 'Failed to load: ' + err.message;
-          }
-        } else {
-          pre.classList.remove('hidden');
-        }
-        viewBtn.textContent = 'Hide';
+    // Delete was a closure inside the row builder, wired with
+    // addEventListener to a node it had just created. It is a method now,
+    // called by name from ./agent-files-list.tsx — the component owns the
+    // markup, this module owns the confirm dialog, the write and the reload.
+    async _onAgentFileDelete(kind, name) {
+      const ok = await ConfirmModal.show({
+        title: `Delete "${name}"?`,
+        message: 'The coding agent stops using it from your next run. This cannot be undone.',
+        confirmLabel: 'Delete',
+        danger: true,
       });
-
-      row.querySelector('[data-role="delete"]').addEventListener('click', async () => {
-        const ok = await ConfirmModal.show({
-          title: `Delete "${f.name}"?`,
-          message: 'The coding agent stops using it from your next run. This cannot be undone.',
-          confirmLabel: 'Delete',
-          danger: true,
+      if (!ok) return;
+      if (this._agentFilesDemo()) {
+        this._setAgentFilesStatus('Demo data: changes are not saved.', 'info');
+        return;
+      }
+      try {
+        const r = await fetch('/api/me/agent-files', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ kind, name }),
         });
-        if (!ok) return;
-        if (demo) { this._setAgentFilesStatus('Demo data — changes are not saved.', 'info'); return; }
-        try {
-          const r = await fetch('/api/me/agent-files', {
-            method: 'DELETE',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            body: JSON.stringify({ kind: f.kind, name: f.name }),
-          });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) { this._setAgentFilesStatus(j.error || 'Failed to delete.', 'error'); return; }
-          this._setAgentFilesStatus(`Deleted "${f.name}".`, 'ok');
-          this._loadAgentFiles();
-        } catch (err) {
-          this._setAgentFilesStatus('Network error: ' + err.message, 'error');
-        }
-      });
-
-      return row;
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { this._setAgentFilesStatus(j.error || 'Failed to delete.', 'error'); return; }
+        this._setAgentFilesStatus(`Deleted "${name}".`, 'ok');
+        this._loadAgentFiles();
+      } catch (err) {
+        this._setAgentFilesStatus('Network error: ' + err.message, 'error');
+      }
     },
 
     _setAgentFilesStatus(text, kind) {
@@ -3482,10 +3787,7 @@
         el.textContent = '';
         return;
       }
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
 
@@ -3625,10 +3927,7 @@
     _setWalletStatus(text, kind) {
       const el = document.getElementById('wallet-status');
       if (!el) return;
-      el.textContent = text;
-      el.classList.remove('hidden', 'text-red-500', 'text-emerald-500', 'text-zinc-500');
-      const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
-      el.classList.add(cls);
+      paintStatus(el, text, kind);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
     },
 
@@ -3687,7 +3986,7 @@
       'not-native': 'This screen can’t reach the Usernode app from here.',
       'page-changed': 'The request was cancelled because this page changed.',
       'privileged-unavailable': 'The Usernode app refused this screen’s ' +
-        'secure connection. See “Usernode app — connection” below.',
+        'secure connection. See “Usernode app: connection” below.',
     },
     USERNODE_READ_ERROR_FALLBACK: 'The Usernode app returned no settings.',
 
@@ -3709,14 +4008,14 @@
       'ready': 'This screen can manage the app’s settings.',
       'blocked-frame': 'The app is refusing this screen’s secure ' +
         'connection, so app settings and app sign-out can’t be ' +
-        'changed from here. Force-close the app and reopen it — that ' +
+        'changed from here. Force-close the app and reopen it, which ' +
         'usually re-establishes it. If it keeps happening, reinstalling ' +
         'the app clears the stuck state.',
       'unsupported': 'This app build predates the secure connection this ' +
         'screen uses. Update the Usernode app to manage its settings here.',
       'inconclusive': 'The app hasn’t answered yet, so we can’t ' +
         'tell whether the secure connection is up. It may still be ' +
-        'starting — try again in a moment.',
+        'starting, so try again in a moment.',
       'unattached': 'The app never answered this screen’s secure ' +
         'connection request. Force-close the app and reopen it; if that ' +
         'doesn’t help, reinstalling the app clears the stuck state.',
@@ -3735,7 +4034,7 @@
       usesIframeRelay: false,
       hasNativeChannel: true,
       origin: 'https://staging.demo.invalid',
-      bridgeVersion: 4,
+      bridgeVersion: 5,
       capabilities: ['getBridgeInfo', 'getSettingsState', 'logout'],
       appVersion: '0.0.0-demo',
       buildNumber: '0',
@@ -3743,7 +4042,7 @@
         state: 'blocked-frame',
         code: 'privileged_frame_unauthorized',
         kind: 'privileged-unavailable',
-        message: 'Staging demo — privileged bridge is unavailable for this main frame',
+        message: 'Staging demo: privileged bridge is unavailable for this main frame',
         at: 0,
         attempts: 3,
       },
@@ -3751,7 +4050,7 @@
         getSettingsState: {
           method: 'getSettingsState',
           kind: 'privileged-unavailable',
-          message: 'Staging demo — privileged bridge is unavailable for this main frame',
+          message: 'Staging demo: privileged bridge is unavailable for this main frame',
           at: 0,
         },
       },
@@ -3760,6 +4059,45 @@
 
     _bridgeDiagDemo() {
       return this._demoParam('bridgediag') === 'demo';
+    },
+
+    // ── `?bridgediag=wallet` ──────────────────────────────────────────
+    //
+    // Screenshot-state deep link for the connection panel's OTHER refusal:
+    // the secure connection is fine, but native admission reported
+    // `native_session_wallet_pool_exhausted` — no seeded wallet is left for
+    // this account. That state used to announce itself as a pop-up (the
+    // "Connect your existing wallet" dialog opened on every admission
+    // retry); it is a button on this panel now, and this link is how a
+    // browser can reach it. Same rules as `?bridgediag=demo`: a fixed
+    // snapshot, no bridge call, no writes, and the button renders disabled
+    // because there is no real session for it to recover.
+    _walletRecoveryDemo() {
+      return this._demoParam('bridgediag') === 'wallet';
+    },
+
+    DEMO_BRIDGE_DIAGNOSTICS_WALLET: {
+      isNative: true,
+      isTopFrame: true,
+      inIframe: false,
+      usesIframeRelay: false,
+      hasNativeChannel: true,
+      origin: 'https://staging.demo.invalid',
+      bridgeVersion: 5,
+      capabilities: ['getBridgeInfo', 'getSettingsState', 'logout',
+        'establishNativeSession'],
+      appVersion: '0.0.0-demo',
+      buildNumber: '0',
+      privileged: {
+        state: 'ready',
+        code: null,
+        kind: null,
+        message: 'Staging demo: no seeded wallet is available for this account',
+        at: 0,
+        attempts: 1,
+      },
+      lastErrors: {},
+      collectedAt: 0,
     },
 
     // ── `?widgeticons=demo` ───────────────────────────────────────────
@@ -3847,7 +4185,7 @@
       readError: {
         method: 'getBridgeInfo',
         kind: 'timeout',
-        message: 'Staging demo — the capability probe did not answer',
+        message: 'Staging demo: the capability probe did not answer',
         at: 0,
       },
       entries: [
@@ -3896,7 +4234,7 @@
       }
     },
 
-    // ── Settings → "Usernode app — widget icons" ──────────────────────
+    // ── Settings → "Usernode app: widget icons" ──────────────────────
     //
     // Gated on being in the app (or the demo link), NEVER on the
     // capability or the mechanism: this box exists to explain why the
@@ -3904,78 +4242,15 @@
     // part of that chain answered "no". Hiding it on a "no" would hide it
     // exactly when it is wanted — the same mistake the connection panel
     // above was written to undo.
-    _renderWidgetIconsSection(parent) {
-      const diag = this._widgetIconDiagnostics();
-      if (!diag) return;
-      const box = this._unSection(parent, 'Usernode app — widget icons',
-        'What the homescreen widget was told to show, and what it reports back.');
-      if (this._widgetIconsDemo()) {
-        box.appendChild(this._unEl('p',
-          'text-xs font-medium text-amber-600 dark:text-amber-400 mb-2',
-          'Staging demo — sample data'));
-      }
-      const isWidget = diag.mechanism === 'widget';
-      this._unStatusRow(box, 'Widget shortcuts', isWidget, 'Available',
-        diag.mechanism ? `Not this device (${diag.mechanism})` : 'Not available',
-        { id: 'settings-widget-mechanism-row' });
-      this._unStatusRow(box, 'Pinned registry', diag.registryLoaded === true,
-        `Loaded — ${diag.entries.length} pinned`, 'Could not be read',
-        { id: 'settings-widget-registry-row' });
-      // Tri-state, and the third state is the point: `has()` used to
-      // collapse "couldn't say" into "no", which is what latched the
-      // single-face path for a whole page load.
-      this._unStatusRow(box, 'Dark icon capability', diag.capability === true,
-        'Advertised by the app',
-        diag.capability === false ? 'Not advertised' : 'The app couldn’t say',
-        { id: 'settings-widget-capability-row' });
-      this._unStatusRow(box, 'Confirmed by the widget',
-        diag.verdict === 'supported', 'Stores both faces',
-        diag.verdict === 'unsupported' ? 'Single face only' : 'Not confirmed yet',
-        { id: 'settings-widget-verdict-row' });
-      const sending = diag.resolved === true
-        ? 'Light + dark pair'
-        : (diag.resolved === false
-          ? `Single face (${diag.scheme})`
-          : 'Undecided — single face for now');
-      this._unStatusRow(box, 'Sending', diag.resolved === true, sending, sending,
-        { id: 'settings-widget-sending-row' });
-      const build = diag.build
-        ? `${diag.build.appVersion} (${diag.build.buildNumber || '?'})`
-        : 'unknown — the verdict is re-confirmed each time';
-      box.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
-        `Verdict bound to app version: ${build}`));
-      const healedAt = diag.lastHealAt
-        ? this._widgetIconTime(diag.lastHealAt)
-        : 'never';
-      box.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-500',
-        `Last icon check: ${healedAt}` +
-        (diag.lastHealOutcome ? ` — ${diag.lastHealOutcome}` : '')));
-      if (diag.readError) {
-        const reason = this.USERNODE_READ_ERROR_REASONS[diag.readError.kind] ||
-          this.USERNODE_READ_ERROR_FALLBACK;
-        box.appendChild(this._unEl('p',
-          'text-xs text-amber-600 dark:text-amber-400 mt-2',
-          `${diag.readError.method}: ${reason}`));
-      }
-      this._renderWidgetIconEntries(box, diag);
-      if (!this._widgetIconsDemo()) {
-        this._unButton(box, 'Re-check icons', async () => {
-          const home = window.Home;
-          if (home && typeof home._refreshWidgetItems === 'function') {
-            // Clears the one-attempt-per-load cap so the pass this
-            // triggers actually re-sends anything it finds wrong.
-            home._iconHealTried = null;
-            await home._refreshWidgetItems();
-          }
-          this._renderUsernodeBody();
-        });
-      }
-    },
 
+    // #1808: the WHOLE instant, not a time of day. This stamps one
+    // diagnostics line ("Last icon check: …") whose only reader is somebody
+    // working out whether the widget's icon verdict is stale — and "02:41 PM"
+    // with no day cannot answer that. It is a plain `toLocaleString()` rather
+    // than the shared helper because a diagnostics line elides nothing and
+    // this module cannot import (see _localAgentView).
     _widgetIconTime(ms) {
-      try { return new Date(ms).toLocaleTimeString(); } catch (_) { return String(ms); }
+      try { return new Date(ms).toLocaleString(); } catch (_) { return String(ms); }
     },
 
     // One line per pinned entry: what the widget says it holds, and
@@ -3983,42 +4258,10 @@
     // is the difference between "SV never sent it" and "SV sent it and
     // the app didn't keep it" — which are different bugs in different
     // repositories, and were previously indistinguishable from outside.
-    _renderWidgetIconEntries(box, diag) {
-      if (!diag.entries.length) {
-        box.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
-          'No shortcuts are pinned to the widget.'));
-        return;
-      }
-      const list = this._unEl('div', 'mt-3 space-y-1');
-      list.id = 'settings-widget-icon-entries';
-      diag.entries.forEach((entry) => {
-        const flag = (v) => (v === true ? 'yes' : (v === false ? 'no' : '—'));
-        const row = this._unEl('div',
-          'flex items-center gap-2 text-xs ' +
-          'text-zinc-600 dark:text-zinc-400');
-        const healthy = entry.foreign
-          ? true
-          : entry.hasIcon !== false && entry.matches;
-        row.appendChild(this._unEl('span',
-          'w-1.5 h-1.5 rounded-full shrink-0 ' +
-          (healthy ? 'bg-emerald-500' : 'bg-amber-500')));
-        row.appendChild(this._unEl('span',
-          'text-zinc-700 dark:text-zinc-300', entry.name));
-        const note = entry.foreign
-          ? 'pinned by another app'
-          : (entry.unknownApp
-            ? 'app not loaded'
-            : `icon ${flag(entry.hasIcon)} · dark ${flag(entry.hasIconDark)} · ` +
-              `sent ${entry.matches ? 'current' : 'stale'}`);
-        row.appendChild(this._unEl('span', 'ml-auto', note));
-        list.appendChild(row);
-      });
-      box.appendChild(list);
-    },
 
     _bridgeDiagnostics() {
       if (this._bridgeDiagDemo()) return this.DEMO_BRIDGE_DIAGNOSTICS;
+      if (this._walletRecoveryDemo()) return this.DEMO_BRIDGE_DIAGNOSTICS_WALLET;
       const bridge = window.usernode;
       if (!bridge || typeof bridge.getBridgeDiagnostics !== 'function') {
         return null;
@@ -4029,6 +4272,12 @@
         console.warn('[settings] getBridgeDiagnostics failed:', err);
         return null;
       }
+    },
+
+    _hasNativeCapability(name) {
+      const diag = this._bridgeDiagnostics();
+      return !!diag && Array.isArray(diag.capabilities) &&
+        diag.capabilities.includes(name);
     },
 
     // The copyable report. Deliberately assembled from the diagnostics
@@ -4063,7 +4312,7 @@
         : 'last read errors: none');
       methods.forEach((method) => {
         const rec = diag.lastErrors[method];
-        lines.push(`  ${method}: ${rec.kind} — ${rec.message || 'no message'} ` +
+        lines.push(`  ${method}: ${rec.kind}, ${rec.message || 'no message'} ` +
           `(${at(rec.at)})`);
       });
       const readiness = (window.SocialPush &&
@@ -4080,7 +4329,7 @@
         ? NativeChrome.lastSessionFailure()
         : null;
       if (session) {
-        lines.push(`last session failure: ${session.stage} — ` +
+        lines.push(`last session failure: ${session.stage}, ` +
           `${session.message || 'no message'} (${at(session.at)})`);
       }
       return lines.join('\n');
@@ -4089,64 +4338,6 @@
     // Rendered FIRST inside the Usernode app section and independent of
     // the settings snapshot: when the handshake is refused there is no
     // snapshot, and this panel is the only thing that can say why.
-    _renderUsernodeConnection(section) {
-      const diag = this._bridgeDiagnostics();
-      if (!diag) return null;
-      const demo = this._bridgeDiagDemo();
-      const box = this._unSection(section, 'Usernode app — connection',
-        'What this screen can reach in the app, and what to do when it can’t.');
-      box.id = 'settings-usernode-connection';
-      if (demo) {
-        box.appendChild(this._unEl('p',
-          'text-xs font-medium text-amber-600 dark:text-amber-400 mb-2',
-          'Staging demo — sample data'));
-      }
-      const state = (diag.privileged && diag.privileged.state) || 'unknown';
-      this._unStatusRow(box, 'Secure app connection', state === 'ready',
-        this.PRIVILEGED_STATE_LABELS.ready,
-        this.PRIVILEGED_STATE_LABELS[state] || 'Unavailable');
-      box.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-400 mt-2',
-        this.PRIVILEGED_STATE_REASONS[state] ||
-          this.PRIVILEGED_STATE_REASONS.unknown));
-      const buildBits = [];
-      if (diag.appVersion) {
-        buildBits.push(`App ${diag.appVersion}` +
-          (diag.buildNumber ? ` (${diag.buildNumber})` : ''));
-      }
-      buildBits.push(`Bridge v${diag.bridgeVersion}`);
-      box.appendChild(this._unEl('p',
-        'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-2 break-words',
-        buildBits.join(' · ')));
-      if (diag.privileged && diag.privileged.message) {
-        box.appendChild(this._unEl('p',
-          'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words',
-          diag.privileged.message));
-      }
-      const actions = this._unEl('div');
-      const retry = this._unButton(actions, 'Try again',
-        () => this._retryUsernodeConnection());
-      retry.id = 'settings-usernode-connection-retry';
-      const copy = this._unButton(actions, 'Copy diagnostics', async () => {
-        const text = this._bridgeDiagnosticsText(diag);
-        const ok = window.PlatformUI && PlatformUI.copyText
-          ? await PlatformUI.copyText(text)
-          : false;
-        if (window.PlatformUI && PlatformUI.toast) {
-          PlatformUI.toast(ok ? 'Diagnostics copied' : 'Could not copy',
-            ok ? {} : { error: true });
-        }
-      });
-      copy.id = 'settings-usernode-connection-copy';
-      if (demo) {
-        // Read-only hook: the buttons are rendered so the screenshot shows
-        // the real panel, but they must not touch a bridge or a session.
-        retry.disabled = true;
-        copy.disabled = true;
-      }
-      box.appendChild(actions);
-      return box;
-    },
 
     // Everything a stuck device can retry from here, in one press: a fresh
     // capability probe, a fresh admission attempt, a fresh readiness
@@ -4174,8 +4365,6 @@
     },
 
     async _renderUsernodeSection() {
-      const section = document.getElementById('settings-usernode-section');
-      if (!section) return;
       // Gated on BEING IN THE APP, not on the getSettingsState capability.
       // That probe is itself a casualty of the failures this section now
       // diagnoses — a degraded getBridgeInfo answers "no capabilities", so
@@ -4184,16 +4373,19 @@
       // device whose privileged handshake is refused.
       const bridge = window.usernode;
       const demo = this._unDemoMode();
-      const gated = this._bridgeDiagDemo() || this._widgetIconsDemo() || !!demo ||
+      const gated = this._bridgeDiagDemo() || this._walletRecoveryDemo() ||
+        this._widgetIconsDemo() || !!demo ||
         (!!bridge && bridge.isNative === true);
       // The gate resolves asynchronously downstream, so the "Usernode app"
       // menu row is only settled here — re-render the nav either way.
       if (!gated) {
-        section.classList.add('hidden');
+        this._usernodeGated = false;
+        this._publishUsernode();
         this._renderNavIfOpen();
         return;
       }
-      section.classList.remove('hidden');
+      this._usernodeGated = true;
+      this._publishUsernode();
       this._renderNavIfOpen();
       const token = ++this._usernodeRenderToken;
       // A fresh mount re-probes the real notification permission (below)
@@ -4207,14 +4399,15 @@
         this._unPushStatus = demo === 'ios-denied' ? 'denied' : 'undetermined';
         this._unPushProbed = true;
         this._unCanOpenNotifSettings = true;
-        this._renderUsernodeBody();
+        this._usernodeLoading = false;
+      this._publishUsernode();
         return;
       }
       if (!this._usernodeState) {
-        section.textContent = '';
-        section.appendChild(this._unEl('div',
-          'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700 ' +
-          'text-xs text-zinc-500', 'Loading Usernode app settings…'));
+        // The in-place progress line, which a retry swaps in while leaving
+        // the rest of the section up.
+        this._usernodeLoading = true;
+        this._publishUsernode();
       }
       let state = null;
       try {
@@ -4234,11 +4427,18 @@
         // The app may simply still be booting; retry itself once it reports
         // a ready identity, so the section fills in without a tap.
         this._armUsernodeAuthStatusRetry();
-        this._renderUsernodeBody(this._usernodeReadError());
+        this._usernodeLoading = false;
+        this._publishUsernode();
         return;
       }
       this._clearUsernodeAuthStatusRetry();
-      this._renderUsernodeBody();
+      this._usernodeLoading = false;
+      this._publishUsernode();
+      // Both used to be renderers that fetched into their own host and
+      // repainted it through a local closure. They fill their slice of the
+      // model instead, so the rest of the body never waits on either.
+      this._initSocialPush();
+      this._initBlockProduction();
       this._probeUnNotifPermission(token);
     },
 
@@ -4280,7 +4480,8 @@
         canOpen !== this._unCanOpenNotifSettings;
       this._unCanOpenNotifSettings = canOpen;
       if (status != null) this._unPushStatus = status;
-      if (changed) this._renderUsernodeBody();
+      if (changed) this._usernodeLoading = false;
+      this._publishUsernode();
     },
 
     // Why the snapshot came back empty, straight from the bridge's
@@ -4321,83 +4522,9 @@
       this._usernodeAuthStatusListener = null;
     },
 
-    _unEl(tag, className, text) {
-      const el = document.createElement(tag);
-      if (className) el.className = className;
-      if (text != null) el.textContent = text;
-      return el;
-    },
 
-    _unSection(parent, title, description) {
-      const box = this._unEl('div',
-        'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700');
-      box.appendChild(this._unEl('h3',
-        'text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1', title));
-      if (description) {
-        box.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-500 mb-3', description));
-      }
-      parent.appendChild(box);
-      return box;
-    },
 
-    _unToggle(parent, label, checked, onChange, opts = {}) {
-      const wrap = this._unEl('label',
-        'flex items-center gap-2 cursor-pointer select-none mt-2');
-      const input = this._unEl('input', 'un-switch');
-      input.type = 'checkbox';
-      input.checked = !!checked;
-      input.addEventListener('change', async (e) => {
-        input.disabled = true;
-        try {
-          await onChange(e.target.checked);
-        } catch (err) {
-          console.warn('[settings] usernode toggle failed:', err);
-          input.checked = !e.target.checked;
-          if (window.PlatformUI) {
-            const detail = opts.includeErrorDetail && err && err.message
-              ? `: ${err.message}` : '';
-            PlatformUI.toast(this._nativeActionMessage(err,
-              `Could not save the setting${detail}`));
-          }
-        } finally {
-          input.disabled = false;
-        }
-      });
-      wrap.appendChild(input);
-      wrap.appendChild(this._unEl('span',
-        'text-sm text-zinc-800 dark:text-zinc-200', label));
-      parent.appendChild(wrap);
-      return input;
-    },
 
-    _unButton(parent, label, onClick, opts = {}) {
-      const btn = this._unEl('button',
-        'mt-3 mr-2 rounded-md border px-3 py-1.5 text-xs font-medium ' +
-        'transition-colors ' +
-        (opts.danger
-          ? 'border-red-400 dark:border-red-700 text-red-600 ' +
-            'dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950'
-          : 'border-zinc-300 dark:border-zinc-700 text-zinc-700 ' +
-            'dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
-        label);
-      btn.type = 'button';
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
-        try {
-          await onClick();
-        } catch (err) {
-          console.warn('[settings] usernode action failed:', err);
-          if (window.PlatformUI) {
-            PlatformUI.toast(this._nativeActionMessage(err, 'Action failed'));
-          }
-        } finally {
-          btn.disabled = false;
-        }
-      });
-      parent.appendChild(btn);
-      return btn;
-    },
 
     // `opts.onActivate` turns the row itself into a real control.
     //
@@ -4406,48 +4533,6 @@
     // rendered underneath, conditionally. On a phone the row is what a
     // thumb lands on, so the notifications row now carries the tap and the
     // chip is a second affordance rather than the only one.
-    _unStatusRow(parent, label, ok, okText, badText, opts = {}) {
-      const interactive = typeof opts.onActivate === 'function';
-      const row = this._unEl(interactive ? 'button' : 'div',
-        'flex items-center gap-2 mt-1 text-sm w-full text-left' +
-        (interactive
-          ? ' rounded-md -mx-1 px-1 py-1 transition-colors ' +
-            'hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          : ''));
-      if (opts.id) row.id = opts.id;
-      const dot = this._unEl('span',
-        'w-2 h-2 rounded-full shrink-0 ' +
-        (ok ? 'bg-emerald-500' : 'bg-amber-500'));
-      row.appendChild(dot);
-      row.appendChild(this._unEl('span',
-        'text-zinc-800 dark:text-zinc-200', label));
-      row.appendChild(this._unEl('span',
-        'ml-auto text-xs ' + (ok
-          ? 'text-emerald-600 dark:text-emerald-400'
-          : 'text-amber-600 dark:text-amber-400'),
-        ok ? okText : badText));
-      if (interactive) {
-        row.type = 'button';
-        if (opts.hint) row.setAttribute('aria-label', `${label} — ${opts.hint}`);
-        row.appendChild(this._unEl('span',
-          'text-xs text-zinc-400 dark:text-zinc-500 shrink-0', '›'));
-        row.addEventListener('click', async () => {
-          row.disabled = true;
-          try {
-            await opts.onActivate();
-          } catch (err) {
-            console.warn('[settings] usernode row action failed:', err);
-            if (window.PlatformUI) {
-              PlatformUI.toast(this._nativeActionMessage(err, 'Action failed'));
-            }
-          } finally {
-            row.disabled = false;
-          }
-        });
-      }
-      parent.appendChild(row);
-      return row;
-    },
 
     _openNativeScreen(screen, failMsg) {
       if (!window.usernode ||
@@ -4500,12 +4585,14 @@
           ? 'Opening the permission prompt…'
           : 'Opening the notification prompt…',
       };
-      this._renderUsernodeBody();
+      this._usernodeLoading = false;
+      this._publishUsernode();
       try {
         await this._runNotifPermissionTap(isAndroid);
       } finally {
         this._unRequestInFlight = false;
-        this._renderUsernodeBody();
+        this._usernodeLoading = false;
+      this._publishUsernode();
       }
     },
 
@@ -4525,7 +4612,7 @@
         // log the diagnostic error the real branches do.
         this._unNotifNotice = {
           tone: 'info',
-          text: 'This is a preview of the in-app row — the notification ' +
+          text: 'This is a preview of the in-app row. The notification ' +
             'permission itself lives in the Usernode app.',
         };
         return;
@@ -4620,7 +4707,8 @@
             ? 'Permission granted.'
             : 'Notifications are now allowed for Usernode.',
         };
-        this._renderUsernodeBody();
+        this._usernodeLoading = false;
+      this._publishUsernode();
         return;
       }
       this._unNotifDeadEnd(outcome.verdict, {
@@ -4628,7 +4716,8 @@
         settings: outcome.settings === true,
         reason: outcome.reason,
       });
-      this._renderUsernodeBody();
+      this._usernodeLoading = false;
+      this._publishUsernode();
     },
 
     // The bridge's own ceiling for requestPermissions is two minutes,
@@ -4717,27 +4806,6 @@
     // capability — a way out of a determined-denied permission. A button
     // that cannot work is worse than no button, so an inconclusive
     // capability probe (null) renders the manual instructions instead.
-    _renderNotifNotice(parent) {
-      const n = this._unNotifNotice;
-      if (!n) return;
-      const box = this._unEl('div',
-        'mt-2 rounded-md border px-3 py-2 text-xs ' +
-        (n.tone === 'warn'
-          ? 'border-amber-300 dark:border-amber-800 bg-amber-50 ' +
-            'dark:bg-amber-950/40 text-amber-800 dark:text-amber-300'
-          : n.tone === 'ok'
-            ? 'border-emerald-300 dark:border-emerald-800 bg-emerald-50 ' +
-              'dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'
-            : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 ' +
-              'dark:text-zinc-300'),
-        n.text);
-      box.id = 'settings-notif-notice';
-      parent.appendChild(box);
-      if (n.settings && this._unCanOpenNotifSettings === true) {
-        this._unButton(parent, 'Open notification settings', () =>
-          window.usernode.openNotificationSettings());
-      }
-    },
 
     // Awaits a bridge setter and re-renders the section from the refreshed
     // snapshot it resolves with.
@@ -4745,7 +4813,8 @@
       const state = await promise;
       if (state && typeof state === 'object') {
         this._usernodeState = state;
-        this._renderUsernodeBody();
+        this._usernodeLoading = false;
+      this._publishUsernode();
       }
     },
 
@@ -4766,12 +4835,33 @@
     //     accept from the profile notice still works). A backdrop
     //     dismissal / Close records nothing, so an unanswered prompt
     //     comes back on the next page load.
+    //   blocking — the native-app gate (#1328): present a NON-dismissible
+    //     centered modal instead of the sheet — no backdrop tap, no
+    //     Escape, no Close button. Accept and Decline are the only exits;
+    //     a failed POST re-enables them with the overlay still up. Falls
+    //     back to the dismissible sheet when the kit modal is unavailable
+    //     (better than presenting nothing), and is ignored when the
+    //     current version is already accepted (there would be no exit).
+    //   onAnswered(status) — fires after ANY successful consent POST
+    //     ('accepted' or 'refused'); the first-run trigger uses it to
+    //     stop re-checking this document.
+    //   onClosed — fires when the overlay is torn down (answered or
+    //     quietly dismissed); the trigger uses it to allow a later
+    //     re-offer.
     //   payload — a pre-fetched (or fixed) /terms/current data object;
     //     skips the fetch. The first-run trigger passes the payload it
-    //     already fetched, and the ?shot=terms-consent screenshot state
-    //     passes a fixed one so the shot does no fetch and no writes.
+    //     already fetched, and the ?shot=terms-consent /
+    //     ?shot=terms-consent-blocking screenshot states pass a fixed one
+    //     so the shots do no fetch and no writes.
+    _termsSheetOpen: false,
     async showTermsSheet(onAccepted, opts) {
       opts = opts || {};
+      // Reentrancy guard (#1361): never lift a second terms overlay over
+      // an open one. Return-early, not dismiss-and-replace, so a blocking
+      // native modal can never be displaced by a later plain open. The
+      // flag clears in the wrapped onClosed below — the kit fires
+      // onDismiss on every teardown, programmatic dismiss included.
+      if (this._termsSheetOpen) return;
       const firstRun = opts.firstRun === true;
       let payload = opts.payload || null;
       if (!payload) {
@@ -4796,15 +4886,23 @@
         }
       }
 
-      const el = (tag, cls, text) => this._unEl(tag, cls, text);
+      // A local element helper. This panel is handed to the kit
+      // (PlatformUI.sheet reparents it), so it stays imperative — it was
+      // borrowing the usernode section's `_unEl`, which converted with it.
+      const el = (tag, cls, text) => {
+        const node = document.createElement(tag);
+        if (cls) node.className = cls;
+        if (text != null) node.textContent = text;
+        return node;
+      };
       const panel = el('div', 'px-4 pb-5');
       panel.appendChild(el('div', 'text-lg font-bold py-3',
         payload.title || 'Terms'));
       if (firstRun) {
         panel.appendChild(el('p',
           'text-sm text-zinc-600 dark:text-zinc-400 mb-2',
-          'Reviewing the terms is part of joining the platform. Your ' +
-          'token allocation stays paused until you accept.'));
+          'Reviewing the terms is part of joining the platform. Please ' +
+          'read the full terms, then choose whether to accept.'));
       }
       const meta = [];
       if (payload.version) meta.push(`Version ${payload.version}`);
@@ -4820,7 +4918,7 @@
       }
       if (payload.terms_link) {
         const a = el('a',
-          'block text-sm text-violet-600 dark:text-violet-400 underline mb-3',
+          'block text-sm text-violet-700 dark:text-violet-400 underline mb-3',
           'Read the full terms');
         a.href = payload.terms_link;
         a.target = '_blank';
@@ -4829,8 +4927,11 @@
       }
 
       const accepted = !!(payload.consent && payload.consent.accepted);
+      // Blocking gate (#1328): meaningless once this version is accepted —
+      // a non-dismissible overlay with no consent buttons has no exit.
+      const blocking = opts.blocking === true && !accepted;
       const statusEl = el('p', 'text-sm mb-3 ' + (accepted
-        ? 'text-emerald-600 dark:text-emerald-400'
+        ? 'text-emerald-700 dark:text-emerald-400'
         : 'text-zinc-600 dark:text-zinc-400'),
       accepted
         ? 'You accepted this version' +
@@ -4865,6 +4966,7 @@
               throw new Error(body.error || `HTTP ${res.status}`);
             }
             if (sheet && sheet.dismiss) sheet.dismiss();
+            if (typeof opts.onAnswered === 'function') opts.onAnswered(status);
             onOk();
           } catch (err) {
             console.warn('[settings] terms consent failed:', err);
@@ -4896,25 +4998,53 @@
           declineBtn.addEventListener('click', () => postConsent('refused',
             () => {
               if (window.PlatformUI) {
-                PlatformUI.toast('Your token allocation stays paused — ' +
-                  'you can accept later from your profile');
+                PlatformUI.toast(
+                  'You can accept the terms later from your profile');
               }
             }));
           consentButtons.push(declineBtn);
           panel.appendChild(declineBtn);
         }
       }
-      const closeBtn = el('button',
-        'w-full px-4 py-2 mt-2 text-sm text-zinc-500 dark:text-zinc-400',
-      'Close');
-      closeBtn.addEventListener('click', () => {
-        if (sheet && sheet.dismiss) sheet.dismiss();
-      });
-      panel.appendChild(closeBtn);
+      if (!blocking) {
+        const closeBtn = el('button',
+          'w-full px-4 py-2 mt-2 text-sm text-zinc-500 dark:text-zinc-400',
+        'Close');
+        closeBtn.addEventListener('click', () => {
+          if (sheet && sheet.dismiss) sheet.dismiss();
+        });
+        panel.appendChild(closeBtn);
+      }
 
-      sheet = window.PlatformUI && PlatformUI.sheet
-        ? PlatformUI.sheet({ contentEl: panel })
-        : null;
+      // Re-check after the awaits above: a concurrent call could have
+      // presented while this one was still fetching /terms/current.
+      if (this._termsSheetOpen) return;
+      const onClosed = () => {
+        Settings._termsSheetOpen = false;
+        if (typeof opts.onClosed === 'function') opts.onClosed();
+      };
+      if (blocking && window.PlatformUI &&
+          typeof PlatformUI.modal === 'function') {
+        // Non-dismissible modal (#1328): no backdrop tap, no Escape, no
+        // Close — Accept/Decline are the only exits, and a failed POST
+        // re-enables them with the overlay still up. The programmatic
+        // dismiss() in postConsent (on success) is the one way out.
+        sheet = PlatformUI.modal({
+          contentEl: panel,
+          dismissible: false,
+          onDismiss: onClosed,
+        });
+      }
+      if (!sheet) {
+        // Web — and the degraded-kit fallback for a blocking ask, where
+        // the dismissible sheet still beats presenting nothing.
+        sheet = window.PlatformUI && PlatformUI.sheet
+          ? PlatformUI.sheet({ contentEl: panel, onDismiss: onClosed })
+          : null;
+      }
+      // Only an actually-presented overlay latches — a kit-less boot
+      // (sheet null) must keep later opens working.
+      this._termsSheetOpen = !!sheet;
     },
 
     // `readError` / `loading` only matter when there is NO snapshot: the
@@ -4923,178 +5053,522 @@
     // activity notifications, block production, Terms, the FAQ, the native
     // diagnostics screens — still renders. A failed read used to blank the
     // whole section, turning a transient app hiccup into a dead end.
-    _renderUsernodeBody(readError, loading) {
-      const section = document.getElementById('settings-usernode-section');
+    // ── Usernode app section: view builders ────────────────────────────
+    //
+    // #1079: `_renderUsernodeBody` and eight sibling renderers built ~800
+    // lines of `document.createElement` into #settings-usernode-section.
+    // They are sections/usernode.tsx now, and what is left here is the
+    // reading: every bridge call, every fetch, every retry ladder and every
+    // staleness token stays exactly where it was, and ends in a publish.
+
+    _publishUsernode() {
+      const react = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsUsernode : null;
+      if (!react || !react.publish) return;
+      react.publish(this._usernodeView());
+    },
+
+    /** The whole section, as one plain serialisable model. */
+    _usernodeView() {
       const s = this._usernodeState;
-      if (!section) return;
-      section.textContent = '';
       const perms = (s && s.permissions) || {};
       const isAndroid = perms.platform === 'android';
+      const demo = this._unDemoMode();
+      const canOpenZkIdentity = this._hasNativeCapability('zkIdentityFlow');
+      return {
+        gated: this._usernodeGated === true,
+        connection: this._usernodeConnectionView(),
+        body: this._usernodeBodyView(),
+        // The demo link renders the permission rows and stops: everything
+        // below reads the live bridge, which a browser does not have.
+        belowDemoCut: !demo,
+        socialPush: this._socialPushView(),
+        blockProduction: this._bpView(),
+        nodeSleep: s ? {
+          label: 'Node sleep on inactivity',
+          checked: s.nodeSleepEnabled !== false,
+          action: '_setNodeSleep',
+        } : null,
+        privacy: s ? {
+          facematch: {
+            label: 'Strict facematch',
+            checked: s.facematchStrict !== false,
+            action: '_setFacematchStrict',
+          },
+          open: canOpenZkIdentity ? {
+            id: 'settings-usernode-open-zk-identity',
+            label: 'Open ZK identity',
+            action: '_openZkIdentityScreen',
+          } : null,
+          reset: { label: 'Restart ZK challenge', action: '_resetZkChallenge', danger: true },
+        } : null,
+        widgetIcons: this._widgetIconsView(),
+        diagnostics: {
+          debugMode: s ? {
+            label: 'Debug mode', checked: s.debugMode === true, action: '_setDebugMode',
+          } : null,
+          actions: [
+            { label: 'Device benchmark', action: '_openBenchmarkScreen' },
+            { label: 'HTTP debug logs', action: '_openHttpLogsScreen' },
+          ],
+        },
+        about: { notes: this._usernodeBuildNotes(), actions: [{
+          label: (s && s.termsAccepted === false)
+            ? 'Review terms (not yet accepted)' : 'Terms',
+          action: '_openTermsFromUsernode',
+        }] },
+        account: (s && s.authStatus !== 'authenticated') ? { rows: [], actions: [] } : null,
+        isAndroid,
+      };
+    },
 
-      // First, so a refused handshake explains itself above the failures
-      // it causes rather than below them.
-      this._renderUsernodeConnection(section);
-
-      if (!s) {
-        this._renderUsernodeError(section, readError, loading);
-      } else {
-        // Device permissions — mirrors the native QuickSettingsPanel.
-        // iOS maps requestPermissions() to the notification prompt and has
-        // no block production since v4 — describe each platform's real ask.
-        const permBox = this._unSection(section, 'Usernode app — device permissions',
-          isAndroid
-            ? 'Block production needs the app to wake your device at exact slot times.'
-            : 'Notifications let Usernode alert you about node and account activity.');
-        if (this._unDemoMode()) {
-          permBox.appendChild(this._unEl('p',
-            'text-xs font-medium text-amber-600 dark:text-amber-400 mb-2',
-            'Staging demo — sample data'));
-        }
-        // iOS row truth: `exactAlarmGranted` is a lagging proxy for the
-        // notification permission (there are no exact alarms on iOS), so
-        // once a request has settled through NativeChrome.settleIosPushGrant
-        // that answer is the authority — the same rule the first-run sheet
-        // in public/js/native-chrome.js applies.
-        const notifOk = !isAndroid && this._unPushStatus != null
-          ? this._unPushStatus === 'granted'
-          : !!perms.exactAlarmGranted;
-        // The row IS the control. It used to be an inert div whose only
-        // affordance was the chip below, and that chip only rendered when
-        // the (iOS-meaningless) exactAlarmGranted boolean said "not
-        // granted" — so on a build reporting it `true` there was nothing
-        // to tap at all. The row now always carries the ask.
-        this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Notifications',
-          notifOk, 'Granted', 'Not granted', {
-            id: 'settings-notif-row',
-            hint: isAndroid ? 'request permissions' : 'allow notifications',
-            onActivate: () => this._unRequestPermissions(isAndroid),
-          });
-        if (!notifOk) {
-          this._unButton(permBox,
-            isAndroid ? 'Request permissions' : 'Allow notifications',
-            () => this._unRequestPermissions(isAndroid));
-        }
-        this._renderNotifNotice(permBox);
-        if (isAndroid) {
-          this._unStatusRow(permBox, 'Battery optimization',
-            perms.batteryOptDisabled === true, 'Unrestricted', 'Restricted');
-          if (perms.batteryOptDisabled !== true) {
-            this._unButton(permBox, 'Open battery settings', () =>
-              window.usernode.openBatterySettings());
-          }
-          if (perms.deviceManufacturer) {
-            permBox.appendChild(this._unEl('p',
-              'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
-              `Device: ${perms.deviceManufacturer}`));
-          }
-        }
-      }
-      // The demo link renders the permissions rows and stops: the sections
-      // below all read the live bridge, which a browser does not have.
-      if (this._unDemoMode()) return;
-      this._renderSocialPushSection(section);
-      // (The iOS keep-alive toggle is gone — thin-shell migration: block
-      // production is disabled on iOS and the keep-alive service was
-      // deleted from the app.)
-
-      // Node.
-      if (s) {
-        const nodeBox = this._unSection(section, 'Usernode app — node',
-          'The node pauses when the app has been inactive for a while and wakes on your next interaction.');
-        this._unToggle(nodeBox, 'Node sleep on inactivity',
-          s.nodeSleepEnabled !== false,
-          (v) => this._unApply(window.usernode.setNodeSleepEnabled(v)));
-      }
-
-      // Block production (onboarding flow alignment): producing blocks is
-      // a released capability. The wallet works for dapp transactions
-      // either way; this section is the "ask to produce blocks" queue.
-      this._renderBpSection(section);
-
-      // Privacy & identity.
-      if (s) {
-        const privBox = this._unSection(section, 'Usernode app — privacy & identity',
-          'Controls for the ZK passport identity flow.');
-        this._unToggle(privBox, 'Strict facematch',
-          s.facematchStrict !== false,
-          (v) => this._unApply(window.usernode.setFacematchStrict(v)));
-        this._unButton(privBox, 'Restart ZK challenge', async () => {
-          const ok = await PlatformUI.confirm({
-            title: 'Restart the ZK challenge?',
-            message: 'Your in-progress identity registration will be discarded.',
-            confirmLabel: 'Restart',
-            danger: true,
-          });
-          if (!ok) return;
-          await window.usernode.resetZkChallenge();
-          if (window.PlatformUI) PlatformUI.toast('Challenge state reset');
-        }, { danger: true });
-      }
-
-      // Widget icons. Above the general diagnostics box because it is the
-      // one someone arrives here for: "the widget tile is the wrong
-      // colour" is a user-visible symptom, not a debugging tool.
-      this._renderWidgetIconsSection(section);
-
-      // Diagnostics. The two native screens are reachable whether or not
-      // the snapshot loaded — they are exactly what someone debugging a
-      // failed read wants — so only the Debug mode toggle is gated.
-      const diagBox = this._unSection(section, 'Usernode app — diagnostics',
-        'Debugging tools for the app and its embedded node.');
-      if (s) {
-        this._unToggle(diagBox, 'Debug mode',
-          s.debugMode === true,
-          (v) => this._unApply(window.usernode.setDebugMode(v)));
-      }
-      const diagBtns = this._unEl('div');
-      this._unButton(diagBtns, 'Device benchmark', () =>
-        this._openNativeScreen('benchmark', 'Could not open the benchmark'));
-      this._unButton(diagBtns, 'HTTP debug logs', () =>
-        this._openNativeScreen('httpLogs', 'Could not open the logs'));
-      diagBox.appendChild(diagBtns);
-
-      // About & legal. The build line needs the snapshot; Terms and the FAQ
-      // do not (terms are session-authed web routes).
-      const aboutBox = this._unSection(section, 'Usernode app — about & legal');
-      const bi = (s && s.buildInfo) || {};
-      const buildBits = [];
+    _usernodeBuildNotes() {
+      const bi = (this._usernodeState && this._usernodeState.buildInfo) || {};
+      const bits = [];
       if (bi.appVersion) {
-        buildBits.push(`App ${bi.appVersion}` +
-          (bi.buildNumber ? ` (${bi.buildNumber})` : ''));
+        bits.push(`App ${bi.appVersion}` + (bi.buildNumber ? ` (${bi.buildNumber})` : ''));
       }
-      if (bi.nodeVersion) buildBits.push(`Node ${bi.nodeVersion}`);
-      if (bi.commitHash) buildBits.push(bi.commitHash);
-      if (buildBits.length) {
-        aboutBox.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-400 font-mono',
-          buildBits.join(' · ')));
-      }
-      const termsRow = this._unEl('div');
-      // Terms render in a web sheet now (session-authed /challenges-api
-      // twins) — the native terms screen is gone. On accept, refresh the
-      // usernode snapshot so the label flips without reopening Settings.
-      this._unButton(termsRow, (s && s.termsAccepted === false)
-        ? 'Review terms (not yet accepted)' : 'Terms', () =>
-        this.showTermsSheet(() => this._renderUsernodeSection()));
-      aboutBox.appendChild(termsRow);
-      this._renderUsernodeFaq(aboutBox, isAndroid, perms.deviceManufacturer);
+      if (bi.nodeVersion) bits.push(`Node ${bi.nodeVersion}`);
+      if (bi.commitHash) bits.push(bi.commitHash);
+      return bits.length ? [{ text: bits.join(' · '), tone: 'mono' }] : [];
+    },
 
-      // Account (thin-shell migration). Platform login is the only
-      // sign-in surface: the native app's credential is provisioned from
-      // the web session by the boot handoff (native-chrome.js), so there
-      // is no separate "log in to the app" path anymore. The redundant
-      // native-only "Log out of the Usernode app" row is gone too
-      // (onboarding flow alignment): it was a no-op in practice — the
-      // boot handoff would immediately re-authenticate the native side
-      // from the still-live web session — and the main "Log out" at the
-      // top of this modal already tears down both sides at once. Only
-      // the not-yet-authenticated hint remains.
-      if (s && s.authStatus !== 'authenticated') {
-        const acctBox = this._unSection(section, 'Usernode app — account');
-        acctBox.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-400',
-          'The app signs in automatically with your platform account. ' +
-          'If this message persists, try closing and reopening the app.'));
+    _usernodeConnectionView() {
+      const diag = this._bridgeDiagnostics();
+      if (!diag) return null;
+      const state = (diag.privileged && diag.privileged.state) || 'unknown';
+      const bits = [];
+      if (diag.appVersion) {
+        bits.push(`App ${diag.appVersion}` +
+          (diag.buildNumber ? ` (${diag.buildNumber})` : ''));
+      }
+      bits.push(`Bridge v${diag.bridgeVersion}`);
+      const demo = !!this._bridgeDiagDemo() || !!this._walletRecoveryDemo();
+      return {
+        demo: !!this._bridgeDiagDemo() || !!this._walletRecoveryDemo(),
+        row: {
+          label: 'Secure app connection',
+          ok: state === 'ready',
+          text: state === 'ready'
+            ? this.PRIVILEGED_STATE_LABELS.ready
+            : (this.PRIVILEGED_STATE_LABELS[state] || 'Unavailable'),
+        },
+        reason: this.PRIVILEGED_STATE_REASONS[state] ||
+          this.PRIVILEGED_STATE_REASONS.unknown,
+        build: bits.join(' · '),
+        message: (diag.privileged && diag.privileged.message) || null,
+        // Read-only hook: the buttons render so the screenshot shows the real
+        // panel, but they must not touch a bridge or a session.
+        retryDisabled: !!this._bridgeDiagDemo() || !!this._walletRecoveryDemo(),
+        // The pre-merge wallet recovery, offered HERE and nowhere else. It
+        // was a dialog that opened itself whenever admission failed with
+        // `native_session_wallet_pool_exhausted` — several times a session,
+        // since admission retries on every online / pageshow /
+        // visibilitychange — for what is a minor feature. Now the failure is
+        // only recorded (NativeChrome.lastSessionFailure) and this button is
+        // the one way in.
+        walletRecovery: this._walletRecoveryAvailable() ? {
+          id: 'settings-usernode-connect-wallet',
+          label: 'Connect existing wallet',
+          action: '_openWalletRecovery',
+          disabled: demo,
+        } : null,
+      };
+    },
+
+    WALLET_POOL_EXHAUSTED: 'native_session_wallet_pool_exhausted',
+
+    // True when the LAST native admission attempt was refused because no
+    // seeded wallet is left for this account and the session is still not
+    // admitted — the one state the recovery dialog can do anything about.
+    // Clears itself: a successful admission nulls _lastSessionFailure, and
+    // `usernode:native-session-admission` (bound in init) republishes the
+    // panel so the button goes away without a navigation.
+    _walletRecoveryAvailable() {
+      if (this._walletRecoveryDemo()) return true;
+      const nc = window.NativeChrome;
+      if (!nc || typeof nc.lastSessionFailure !== 'function' ||
+          typeof nc.isSessionAdmitted !== 'function') return false;
+      if (nc.isSessionAdmitted()) return false;
+      const failure = nc.lastSessionFailure();
+      if (!failure || failure.code !== this.WALLET_POOL_EXHAUSTED) return false;
+      const dialogs = window.UsernodeReact && window.UsernodeReact.dialogs;
+      return !!(dialogs && dialogs.walletRecovery &&
+        typeof dialogs.walletRecovery.open === 'function');
+    },
+
+    // The button's action. Opens features/dialogs/wallet-recovery.tsx for the
+    // signed-in user; the dialog replays the same admission attempt once the
+    // wallet is claimed, and the admission event above repaints this panel.
+    _openWalletRecovery() {
+      if (this._walletRecoveryDemo()) {
+        throw new Error('Staging demo: there is no session to recover here.');
+      }
+      const dialogs = window.UsernodeReact && window.UsernodeReact.dialogs;
+      const dialog = dialogs && dialogs.walletRecovery;
+      if (!dialog || typeof dialog.open !== 'function') {
+        throw new Error('Wallet recovery is not available on this screen.');
+      }
+      const raw = window.App && App.user ? App.user.id : null;
+      const userId = raw == null ? '' : String(raw);
+      if (!/^[1-9][0-9]*$/.test(userId)) {
+        throw new Error('Sign in before connecting a wallet.');
+      }
+      dialog.open({ userId });
+    },
+
+    _usernodeBodyView() {
+      const s = this._usernodeState;
+      if (!s) {
+        if (this._usernodeLoading) return { kind: 'loading' };
+        const readError = this._usernodeReadError();
+        const kind = readError && readError.kind;
+        return {
+          kind: 'error',
+          reason: this.USERNODE_READ_ERROR_REASONS[kind] ||
+            this.USERNODE_READ_ERROR_FALLBACK,
+          message: (readError && readError.message) || null,
+        };
+      }
+      const perms = s.permissions || {};
+      const isAndroid = perms.platform === 'android';
+      // iOS row truth: `exactAlarmGranted` is a lagging proxy for the
+      // notification permission (there are no exact alarms on iOS), so once a
+      // request has settled through NativeChrome.settleIosPushGrant that
+      // answer is the authority — the same rule the first-run sheet applies.
+      const notifOk = !isAndroid && this._unPushStatus != null
+        ? this._unPushStatus === 'granted'
+        : !!perms.exactAlarmGranted;
+      const n = this._unNotifNotice;
+      return {
+        kind: 'permissions',
+        demo: !!this._unDemoMode(),
+        heading: 'Usernode app: device permissions',
+        description: isAndroid
+          ? 'Block production needs the app to wake your device at exact slot times.'
+          : 'Notifications let Usernode alert you about node and account activity.',
+        // The row IS the control. It used to be an inert div whose only
+        // affordance was a chip below, rendered only when the (iOS-meaningless)
+        // exactAlarmGranted boolean said "not granted" — so on a build
+        // reporting it `true` there was nothing to tap at all.
+        row: {
+          id: 'settings-notif-row',
+          label: isAndroid ? 'Exact alarms' : 'Notifications',
+          ok: notifOk,
+          text: notifOk ? 'Granted' : 'Not granted',
+          hint: isAndroid ? 'request permissions' : 'allow notifications',
+          action: '_requestUsernodePermissions',
+        },
+        button: notifOk ? null : {
+          label: isAndroid ? 'Request permissions' : 'Allow notifications',
+          action: '_requestUsernodePermissions',
+        },
+        notice: n ? {
+          text: n.text,
+          tone: n.tone === 'warn' ? 'warn' : (n.tone === 'ok' ? 'ok' : 'plain'),
+          settings: !!(n.settings && this._unCanOpenNotifSettings === true),
+        } : null,
+        android: isAndroid ? {
+          row: {
+            label: 'Battery optimization',
+            ok: perms.batteryOptDisabled === true,
+            text: perms.batteryOptDisabled === true ? 'Unrestricted' : 'Restricted',
+          },
+          button: perms.batteryOptDisabled === true ? null : {
+            label: 'Open battery settings', action: '_openBatterySettings',
+          },
+          device: perms.deviceManufacturer ? `Device: ${perms.deviceManufacturer}` : null,
+        } : null,
+      };
+    },
+
+    _socialPushView() {
+      if (!window.SocialPush || this._socialPushSupported === false) {
+        return { kind: 'absent' };
+      }
+      const state = this._socialPushState;
+      if (state === undefined) return { kind: 'checking' };
+      if (!state) {
+        const admissionPending = window.NativeChrome &&
+          typeof NativeChrome.isSessionAdmitted === 'function' &&
+          !NativeChrome.isSessionAdmitted();
+        // "Finishing secure app sign-in…" is a lie once the handshake has been
+        // refused — nothing is finishing. Name the state and point at the
+        // panel that explains it.
+        const diag = this._bridgeDiagnostics();
+        const stuck = !!diag && diag.privileged &&
+          (diag.privileged.state === 'blocked-frame' ||
+           diag.privileged.state === 'unattached');
+        const failure = (window.NativeChrome &&
+          typeof NativeChrome.lastSessionFailure === 'function')
+          ? NativeChrome.lastSessionFailure() : null;
+        return {
+          kind: 'unavailable',
+          reason: stuck
+            ? 'The Usernode app isn’t accepting this screen’s secure ' +
+              'connection, so notifications can’t be set up. See “Usernode ' +
+              'app: connection” above.'
+            : (admissionPending
+              ? 'Finishing secure app sign-in before enabling notifications…'
+              : 'Notification settings are temporarily unavailable.'),
+          failure: (failure && failure.message) || null,
+          retry: !!(admissionPending && window.NativeChrome &&
+            typeof NativeChrome.recoverSessionAdmission === 'function'),
+        };
+      }
+      let status = 'Off on this device.';
+      if (state.deliveryActive) {
+        status = 'On. This device is registered for activity notifications.';
+      } else if (state.permissionStatus === 'denied') {
+        status = 'Notification permission is denied in the device settings.';
+      } else if (state.enabled && state.registrationStatus === 'registering') {
+        status = 'Enabling notifications…';
+      } else if (state.enabled) {
+        status = 'Enabled, but delivery is not active yet.';
+      }
+      return { kind: 'ready', enabled: !!state.enabled, status };
+    },
+
+    _bpView() {
+      const state = this._bpState;
+      if (state === undefined) return { kind: 'checking' };
+      if (!state) return { kind: 'note', text: 'Could not check block-production status right now.' };
+      if (state.bp_released) return { kind: 'note', text: 'Released. Your node produces blocks when it wins slots.' };
+      if (state.bp_requested) return { kind: 'note', text: 'Request pending. You’ll start producing automatically once an admin releases your keys.' };
+      if (!state.has_platform_access) return { kind: 'note', text: 'Available once your account has platform access.' };
+      return { kind: 'ask' };
+    },
+
+    _widgetIconsView() {
+      const diag = this._widgetIconDiagnostics();
+      if (!diag) return null;
+      const sending = diag.resolved === true
+        ? 'Light + dark pair'
+        : (diag.resolved === false
+          ? `Single face (${diag.scheme})`
+          : 'Undecided, single face for now');
+      const build = diag.build
+        ? `${diag.build.appVersion} (${diag.build.buildNumber || '?'})`
+        : 'unknown, the verdict is re-confirmed each time';
+      const healedAt = diag.lastHealAt ? this._widgetIconTime(diag.lastHealAt) : 'never';
+      const notes = [
+        { text: `Verdict bound to app version: ${build}`, tone: 'muted' },
+        { text: `Last icon check: ${healedAt}` +
+          (diag.lastHealOutcome ? `: ${diag.lastHealOutcome}` : ''), tone: 'muted' },
+      ];
+      if (diag.readError) {
+        notes.push({
+          text: `${diag.readError.method}: ` +
+            (this.USERNODE_READ_ERROR_REASONS[diag.readError.kind] ||
+              this.USERNODE_READ_ERROR_FALLBACK),
+          tone: 'warn',
+        });
+      }
+      return {
+        demo: !!this._widgetIconsDemo(),
+        rows: [
+          { id: 'settings-widget-mechanism-row', label: 'Widget shortcuts',
+            ok: diag.mechanism === 'widget',
+            text: diag.mechanism === 'widget' ? 'Available'
+              : (diag.mechanism ? `Not this device (${diag.mechanism})` : 'Not available') },
+          { id: 'settings-widget-registry-row', label: 'Pinned registry',
+            ok: diag.registryLoaded === true,
+            text: diag.registryLoaded === true
+              ? `Loaded: ${diag.entries.length} pinned` : 'Could not be read' },
+          // Tri-state, and the third state is the point: `has()` used to
+          // collapse "couldn't say" into "no".
+          { id: 'settings-widget-capability-row', label: 'Dark icon capability',
+            ok: diag.capability === true,
+            text: diag.capability === true ? 'Advertised by the app'
+              : (diag.capability === false ? 'Not advertised' : 'The app couldn’t say') },
+          { id: 'settings-widget-verdict-row', label: 'Confirmed by the widget',
+            ok: diag.verdict === 'supported',
+            text: diag.verdict === 'supported' ? 'Stores both faces'
+              : (diag.verdict === 'unsupported' ? 'Single face only' : 'Not confirmed yet') },
+          { id: 'settings-widget-sending-row', label: 'Sending',
+            ok: diag.resolved === true, text: sending },
+        ],
+        notes,
+        entries: this._widgetIconEntryViews(diag),
+        recheck: !this._widgetIconsDemo(),
+      };
+    },
+
+    /** Widget entry rows: dot + name + note, as data. */
+    _widgetIconEntryViews(diag) {
+      if (!diag.entries.length) {
+        return [{ key: 'none', ok: true, name: '', note: '',
+          empty: 'No shortcuts are pinned to the widget.' }];
+      }
+      const flag = (v) => (v === true ? 'yes' : (v === false ? 'no' : '—'));
+      return diag.entries.map((entry, i) => ({
+        key: String(entry.name || i),
+        ok: entry.foreign ? true : (entry.hasIcon !== false && entry.matches),
+        name: entry.name,
+        note: entry.foreign
+          ? 'pinned by another app'
+          : (entry.unknownApp
+            ? 'app not loaded'
+            : `icon ${flag(entry.hasIcon)} · dark ${flag(entry.hasIconDark)} · ` +
+              `sent ${entry.matches ? 'current' : 'stale'}`),
+        empty: null,
+      }));
+    },
+
+    // ── Usernode app section: the named actions the components dispatch ──
+    //
+    // Each was an inline closure passed to `_unButton` / `_unToggle` /
+    // `_unStatusRow`. They are named methods so the view model stays plain
+    // serialisable data — the components carry an action STRING, never a
+    // function. The disable/toast/re-enable wrapper each one used to repeat
+    // lives in sections/usernode-ui.tsx's `useAction`, once.
+
+    async _copyUsernodeDiagnostics() {
+      const diag = this._bridgeDiagnostics();
+      const text = this._bridgeDiagnosticsText(diag);
+      const ok = window.PlatformUI && PlatformUI.copyText
+        ? await PlatformUI.copyText(text) : false;
+      if (window.PlatformUI && PlatformUI.toast) {
+        PlatformUI.toast(ok ? 'Diagnostics copied' : 'Could not copy',
+          ok ? {} : { error: true });
+      }
+    },
+
+    /** Swap the failure box for the progress line and re-read. */
+    async _retryUsernodeRead() {
+      this._usernodeLoading = true;
+      this._publishUsernode();
+      await this._renderUsernodeSection();
+    },
+
+    _requestUsernodePermissions() {
+      const perms = (this._usernodeState && this._usernodeState.permissions) || {};
+      return this._unRequestPermissions(perms.platform === 'android');
+    },
+
+    _openBatterySettings() { return window.usernode.openBatterySettings(); },
+    _openNotifSettings() { return window.usernode.openNotificationSettings(); },
+    _setNodeSleep(v) { return this._unApply(window.usernode.setNodeSleepEnabled(v)); },
+    _setFacematchStrict(v) { return this._unApply(window.usernode.setFacematchStrict(v)); },
+    _setDebugMode(v) { return this._unApply(window.usernode.setDebugMode(v)); },
+    _openZkIdentityScreen() {
+      return this._openNativeScreen('zkIdentity', 'Could not open ZK identity');
+    },
+    _openBenchmarkScreen() {
+      return this._openNativeScreen('benchmark', 'Could not open the benchmark');
+    },
+    _openHttpLogsScreen() {
+      return this._openNativeScreen('httpLogs', 'Could not open the logs');
+    },
+    _openTermsFromUsernode() {
+      return this.showTermsSheet(() => this._renderUsernodeSection());
+    },
+
+    async _resetZkChallenge() {
+      const ok = await PlatformUI.confirm({
+        title: 'Restart the ZK challenge?',
+        message: 'Your in-progress identity registration will be discarded.',
+        confirmLabel: 'Restart',
+        danger: true,
+      });
+      if (!ok) return;
+      await window.usernode.resetZkChallenge();
+      if (window.PlatformUI) PlatformUI.toast('Challenge state reset');
+    },
+
+    async _recheckWidgetIcons() {
+      const home = window.Home;
+      if (home && typeof home._refreshWidgetItems === 'function') {
+        // Clears the one-attempt-per-load cap so the pass this triggers
+        // actually re-sends anything it finds wrong.
+        home._iconHealTried = null;
+        await home._refreshWidgetItems();
+      }
+      this._publishUsernode();
+    },
+
+    // ── activity notifications ─────────────────────────────────────────
+    //
+    // The listener and the support probe stay here. What went away is the
+    // `box.isConnected` guard on every event and the `box.remove()` on an
+    // unsupported build: a publish to an unmounted component is a no-op, and
+    // "unsupported" is a model state the rest of the screen can read.
+
+    _initSocialPush() {
+      if (this._socialPushStateListener) {
+        window.removeEventListener(
+          'usernode:social-push-state', this._socialPushStateListener);
+        this._socialPushStateListener = null;
+      }
+      if (!window.SocialPush) { this._socialPushSupported = false; return; }
+      const onState = (event) => {
+        this._socialPushState = (event && event.detail) || null;
+        this._publishUsernode();
+      };
+      this._socialPushStateListener = onState;
+      window.addEventListener('usernode:social-push-state', onState);
+      SocialPush.isSupported().then((supported) => {
+        this._socialPushSupported = !!supported;
+        if (!supported) {
+          window.removeEventListener('usernode:social-push-state', onState);
+          this._socialPushStateListener = null;
+          this._publishUsernode();
+          return null;
+        }
+        return SocialPush.getState();
+      }).then((state) => {
+        if (this._socialPushSupported) this._socialPushState = state || null;
+        this._publishUsernode();
+      }).catch((err) => {
+        console.warn('[settings] social push state failed:', err);
+        this._socialPushState = null;
+        this._publishUsernode();
+      });
+    },
+
+    async _retrySocialPush() {
+      await NativeChrome.recoverSessionAdmission();
+      if (window.SocialPush &&
+          typeof SocialPush.retryBridgeReadiness === 'function') {
+        try { SocialPush.retryBridgeReadiness(); } catch (_) {}
+      }
+      this._socialPushState = await SocialPush.getState();
+      this._publishUsernode();
+    },
+
+    async _setSocialPushEnabled(enabled) {
+      this._socialPushState = await SocialPush.setEnabled(enabled);
+      this._publishUsernode();
+    },
+
+    // ── block production queue ─────────────────────────────────────────
+    //
+    // State comes from the session-authed /challenges-api twins; the async
+    // load fills its slice in place so the rest of the body never waits on it.
+
+    _initBlockProduction() {
+      this._bpState = undefined;
+      fetch('/challenges-api/bp/state', { credentials: 'same-origin' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => { this._bpState = (data && data.success !== false) ? data.data : null; })
+        .catch(() => { this._bpState = null; })
+        .then(() => this._publishUsernode());
+    },
+
+    async _askForBlockProduction() {
+      try {
+        const res = await fetch('/challenges-api/bp/request', {
+          method: 'POST', credentials: 'same-origin',
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data || data.success === false) {
+          throw new Error((data && data.error) || 'Request failed');
+        }
+        if (window.PlatformUI) PlatformUI.toast('Request sent. An admin will release your keys');
+        this._bpState = Object.assign({}, this._bpState || {}, { bp_requested: true });
+        this._publishUsernode();
+      } catch (e) {
+        if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });
       }
     },
 
@@ -5102,283 +5576,14 @@
     // stay recognisable), the mapped reason, the app's own message, and a
     // retry that stays on this screen. `loading` renders the in-place
     // progress line a retry swaps in, leaving the rest of the section up.
-    _renderUsernodeError(parent, readError, loading) {
-      const box = this._unEl('div',
-        'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700');
-      box.id = 'settings-usernode-error';
-      if (loading) {
-        box.appendChild(this._unEl('p', 'text-xs text-zinc-500',
-          'Loading Usernode app settings…'));
-        parent.appendChild(box);
-        return box;
-      }
-      box.appendChild(this._unEl('p',
-        'text-sm font-bold text-red-600 dark:text-red-400',
-        'Could not load Usernode app settings.'));
-      const kind = readError && readError.kind;
-      box.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-400 mt-1',
-        this.USERNODE_READ_ERROR_REASONS[kind] ||
-          this.USERNODE_READ_ERROR_FALLBACK));
-      if (readError && readError.message) {
-        box.appendChild(this._unEl('p',
-          'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words',
-          readError.message));
-      }
-      const retry = this._unButton(box, 'Try again', async () => {
-        // Swap this box for the progress line and re-read; the rest of the
-        // section (notifications, block production, Terms, FAQ) stays put.
-        this._renderUsernodeBody(readError, true);
-        await this._renderUsernodeSection();
-      });
-      retry.id = 'settings-usernode-retry';
-      parent.appendChild(box);
-      return box;
-    },
 
-    _renderSocialPushSection(section) {
-      if (this._socialPushStateListener) {
-        window.removeEventListener(
-          'usernode:social-push-state', this._socialPushStateListener
-        );
-        this._socialPushStateListener = null;
-      }
-      if (!window.SocialPush) return;
-      const box = this._unSection(section, 'Usernode app — activity notifications',
-        'Get a device notification when a dev session or auto-solve run finishes. Notification content is loaded only after you open Social.');
-      const holder = this._unEl('div');
-      holder.appendChild(this._unEl('p',
-        'text-xs text-zinc-500 dark:text-zinc-400', 'Checking status…'));
-      box.appendChild(holder);
-
-      const render = (state) => {
-        holder.textContent = '';
-        if (!state) {
-          const admissionPending = window.NativeChrome &&
-            typeof NativeChrome.isSessionAdmitted === 'function' &&
-            !NativeChrome.isSessionAdmitted();
-          // "Finishing secure app sign-in…" is a lie once the handshake has
-          // been refused — nothing is finishing. Name the state and point
-          // at the panel that explains it.
-          const diag = this._bridgeDiagnostics();
-          const stuck = !!diag && diag.privileged &&
-            (diag.privileged.state === 'blocked-frame' ||
-             diag.privileged.state === 'unattached');
-          holder.appendChild(this._unEl('p',
-            'text-xs text-zinc-500 dark:text-zinc-400',
-            stuck
-              ? 'The Usernode app isn’t accepting this screen’s ' +
-                'secure connection, so notifications can’t be set up. ' +
-                'See “Usernode app — connection” above.'
-              : (admissionPending
-                ? 'Finishing secure app sign-in before enabling notifications…'
-                : 'Notification settings are temporarily unavailable.')));
-          const failure = (window.NativeChrome &&
-            typeof NativeChrome.lastSessionFailure === 'function')
-            ? NativeChrome.lastSessionFailure()
-            : null;
-          if (failure && failure.message) {
-            holder.appendChild(this._unEl('p',
-              'text-xs font-mono text-zinc-500 dark:text-zinc-500 mt-1 break-words',
-              failure.message));
-          }
-          if (admissionPending &&
-              typeof NativeChrome.recoverSessionAdmission === 'function') {
-            this._unButton(holder, 'Try again', async () => {
-              await NativeChrome.recoverSessionAdmission();
-              if (window.SocialPush &&
-                  typeof SocialPush.retryBridgeReadiness === 'function') {
-                try { SocialPush.retryBridgeReadiness(); } catch (_) {}
-              }
-              render(await SocialPush.getState());
-            });
-          }
-          return;
-        }
-        this._unToggle(holder, 'Activity notifications', state.enabled,
-          async (enabled) => render(await SocialPush.setEnabled(enabled)),
-          { includeErrorDetail: true });
-        let status = 'Off on this device.';
-        if (state.deliveryActive) {
-          status = 'On — this device is registered for activity notifications.';
-        } else if (state.permissionStatus === 'denied') {
-          status = 'Notification permission is denied in the device settings.';
-        } else if (state.enabled && state.registrationStatus === 'registering') {
-          status = 'Enabling notifications…';
-        } else if (state.enabled) {
-          status = 'Enabled, but delivery is not active yet.';
-        }
-        holder.appendChild(this._unEl('p',
-          'mt-2 text-xs text-zinc-500 dark:text-zinc-400', status));
-      };
-
-      const onState = (event) => {
-        if (!box.isConnected) return;
-        render(event && event.detail);
-      };
-      this._socialPushStateListener = onState;
-      window.addEventListener('usernode:social-push-state', onState);
-
-      SocialPush.isSupported().then((supported) => {
-        if (!supported) {
-          if (this._socialPushStateListener === onState) {
-            window.removeEventListener('usernode:social-push-state', onState);
-            this._socialPushStateListener = null;
-          }
-          box.remove();
-          return null;
-        }
-        return SocialPush.getState();
-      }).then((state) => {
-        if (box.isConnected) render(state);
-      }).catch((err) => {
-        console.warn('[settings] social push state failed:', err);
-        render(null);
-      });
-    },
 
     // Block production queue (onboarding flow alignment). State comes
     // from the session-authed /challenges-api twins; the async load
     // fills the section in place so the rest of the usernode body never
     // waits on it.
-    _renderBpSection(section) {
-      const box = this._unSection(section, 'Usernode app — block production',
-        'Producing blocks earns points. Access is released manually — ask below and an admin will release your keys in batches.');
-      const holder = this._unEl('div');
-      box.appendChild(holder);
-
-      const note = (text) => {
-        holder.appendChild(this._unEl('p',
-          'text-xs text-zinc-500 dark:text-zinc-400', text));
-      };
-
-      const render = (state) => {
-        holder.textContent = '';
-        if (!state) return note('Could not check block-production status right now.');
-        if (state.bp_released) return note('Released — your node produces blocks when it wins slots.');
-        if (state.bp_requested) return note('Request pending — you\u2019ll start producing automatically once an admin releases your keys.');
-        if (!state.has_platform_access) return note('Available once your account has platform access.');
-        this._unButton(holder, 'Ask to produce blocks', async () => {
-          try {
-            const res = await fetch('/challenges-api/bp/request', {
-              method: 'POST', credentials: 'same-origin',
-            });
-            const data = await res.json().catch(() => null);
-            if (!res.ok || !data || data.success === false) throw new Error((data && data.error) || 'Request failed');
-            if (window.PlatformUI) PlatformUI.toast('Request sent — an admin will release your keys');
-            render({ ...state, bp_requested: true });
-          } catch (e) {
-            if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });
-          }
-        });
-      };
-
-      note('Checking status\u2026');
-      fetch('/challenges-api/bp/state', { credentials: 'same-origin' })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((data) => render(data && data.success !== false ? data.data : null))
-        .catch(() => render(null));
-    },
 
     // Static port of the native FaqSection copy (Help & Info tiles).
-    _renderUsernodeFaq(parent, isAndroid, deviceManufacturer) {
-      const faq = this._unEl('div', 'mt-3');
-      faq.appendChild(this._unEl('div',
-        'text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1',
-        'Help & Info'));
-
-      const addTile = (title, paragraphs) => {
-        const d = this._unEl('details',
-          'rounded-lg border border-zinc-200 dark:border-zinc-800 ' +
-          'px-3 py-2 mb-2');
-        const sum = this._unEl('summary',
-          'text-sm font-medium cursor-pointer select-none', title);
-        d.appendChild(sum);
-        for (const p of paragraphs) {
-          d.appendChild(this._unEl('p',
-            'text-xs text-zinc-500 dark:text-zinc-400 mt-2 leading-relaxed',
-            p));
-        }
-        faq.appendChild(d);
-        return d;
-      };
-
-      addTile('About', [
-        'Your device is part of a new network. It verifies, executes, and ' +
-        'contributes compute directly to the network, passively in the ' +
-        'background - with no central servers, no hidden infra. As long as ' +
-        'users keep the app running, the network will continue to operate, ' +
-        'peer to peer, with no external dependencies.',
-        "We're doing this to enable networks that can be hosted end-to-end " +
-        'by their own communities - both for decentralization, and to ' +
-        'enable a natural coordination point around participation, where ' +
-        'users who help operate and contribute to systems directly realize ' +
-        'the benefits from it.',
-        'Right now we are in testnet as we validate the core layer: block ' +
-        "production, consensus behavior, and network reliability. As these " +
-        "stabilize, we'll build upon the unique features of the platform - " +
-        'its decentralization, zero knowledge proofs, and sybil-resistant ' +
-        'identity - to introduce new activities, coordination mechanisms, ' +
-        'and tools for self-hosted, sybil-resistant communities.',
-        'Thanks for helping test at this early stage. The app right now is ' +
-        'simple, but as we prove out the core functionality, we hope to ' +
-        'make possible a new kind of community-owned network, where users ' +
-        'can directly run and benefit from the networks they use.',
-      ]);
-
-      addTile('What is Block Production?', [
-        'This feature automatically wakes your device to produce ' +
-        "blockchain blocks when your node wins a slot. Here's how it works:",
-        '1. VRF Selection — Each epoch, the network randomly selects which ' +
-        'validators will produce blocks using Verifiable Random Function ' +
-        '(VRF).',
-        '2. Slot Scheduling — When you win slots, the app schedules alarms ' +
-        'to wake your device ~1 minute before each slot.',
-        '3. Block Production — At slot time, the app monitors your node ' +
-        'and ensures the block is produced.',
-        '4. Success Tracking — Results are recorded to track your ' +
-        'reliability over time.',
-      ]);
-
-      const platformParas = isAndroid
-        ? [
-            "Uses Android's exact alarm system (AlarmManager) to wake your " +
-            'device precisely when needed for block production.',
-            'Reliability by mode: Default (Event-Driven) 90-95% — ' +
-            'battery-efficient, wakes only during slot windows. Keep-Alive ' +
-            'Mode 100% — persistent service, higher battery (~5-10%/hr).',
-          ]
-        : [
-            'Uses a combination of background tasks and keep-alive mode to ' +
-            'wake your device for block production.',
-            'Reliability by mode: Keep-Alive Mode 99% — app stays awake in ' +
-            'foreground, requires charger. Background Only 40-60% — iOS ' +
-            'controls execution, not guaranteed.',
-          ];
-      if (isAndroid && deviceManufacturer) {
-        platformParas.push(`Device: ${deviceManufacturer}`);
-      }
-      addTile('Platform & Reliability', platformParas);
-
-      addTile('Understanding VRF & Slots', [
-        'VRF (Verifiable Random Function) is how the network fairly ' +
-        'selects block producers. At the start of each epoch, the network ' +
-        'runs VRF calculations to determine which validators will produce ' +
-        'blocks in upcoming slots.',
-        'Status meanings — Pending: waiting for epoch transition to start ' +
-        'calculations. Calculating: VRF evaluation in progress (takes a ' +
-        'few hours). Complete: slot assignments are finalized and ' +
-        'scheduled.',
-        'When VRF selects your node to produce a block at a specific time, ' +
-        'you\'ve "won" that slot. Your responsibility is to have your ' +
-        'device awake and connected so the block can be produced.',
-        "Why timing matters: each slot has a ~5-seconds window. If your " +
-        "device doesn't wake up in time or loses network connectivity, the " +
-        'slot is missed and counted as "failed."',
-      ]);
-
-      parent.appendChild(faq);
-    },
   };
 
   // Published at module scope, not from the island's effect: app.js,
@@ -5386,7 +5591,25 @@
   // unguarded, and the bundle's entry runs before any of their init()s. The
   // typeof guard is for the SSG prerender pass, which evaluates this whole
   // module graph in Node (#1081 chunk D).
-  if (typeof window !== 'undefined') window.Settings = Settings;
+  //
+  // Since the module became a lazy chunk, ./facade.js has been window.Settings
+  // from the shell's boot: it read /api/auth/me into its `state` and answered
+  // isOpen()/close() while this file was still on its way. Take over SHARING
+  // that state object — a read still in flight lands in it — and its primed
+  // CLI-auth answer, so nothing that consulted the façade observes a reset.
+  if (typeof window !== 'undefined') {
+    const facade = window.Settings;
+    if (facade && facade.__facade) {
+      Settings.state = facade.state;
+      Settings._cliAuthPromise = facade._cliAuthPromise || null;
+    }
+    window.Settings = Settings;
+  }
+
+  // The first-entry terms prompt lives in ./terms-first-run.js — the ONE
+  // boot trigger that auto-presents showTermsSheet (issue #1361 was two
+  // parallel implementations of #1297 both riding sv:authed, stacking two
+  // sheets at login; the settings.js copy was removed in its fix).
 
   // init() is called from SettingsScreen's layout effect (../index.tsx), not
   // from DOMContentLoaded. Same moment in practice — the React entry is a

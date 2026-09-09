@@ -342,7 +342,7 @@ function explainDrop(entry) {
   const label = entry && entry.entry ? entry.entry : '(empty)';
   if (entry && entry.reason === 'duplicate') return `${label} (already listed)`;
   if (entry && entry.reason === 'over_cap') return `${label} (over the ${CAPTURE_MAX_PATHS}-route cap)`;
-  return `${label} (not a usable in-app path — it must start with a single "/")`;
+  return `${label} (not a usable in-app path: it must start with a single "/")`;
 }
 
 function explainDrops(droppedEntries) {

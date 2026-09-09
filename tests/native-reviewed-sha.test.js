@@ -236,6 +236,34 @@ test('native head reconciliation clears stale votes and re-runs checks at the ne
   }
 });
 
+test('managed upload reconciliation clears votes now and defers only the check run', async () => {
+  const ctx = loadVotes({ liveHead: NEW });
+  const pool = recordingPool([
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
+      reviewed_head_sha: NEW, votes_deleted: 3,
+    }]],
+  ]);
+  const session = nativeSession({ source: 'cli_handoff' });
+  try {
+    const result = await ctx.subject.reconcileNativeReviewedHead({
+      config: {}, pool, session, fresh: true, deferChecks: true,
+    });
+    assert.equal(result.headSha, NEW);
+    assert.equal(result.votesDropped, 3);
+    assert.equal(result.checksDeferred, true);
+    const update = pool.queries.find((q) => /WITH claimed AS/.test(q.sql));
+    assert.match(update.sql, /DELETE FROM pr_votes/,
+      'the stale tally is still deleted atomically with the reviewed-head move');
+    assert.deepEqual(ctx.pendingCalls, [{ sessionId: session.id, sha: NEW }],
+      'the previous passing verdict is invalidated before upload returns');
+    assert.equal(ctx.rerunCalls.length, 0,
+      'proposal_submit_build owns the one final staging/check run');
+    assert.ok(ctx.messages.some((m) => /earlier votes were cleared/i.test(m)));
+  } finally {
+    ctx.restore();
+  }
+});
+
 // #955 --------------------------------------------------------------------
 // The platform resolves conflicts on a proposal branch by merging main into
 // it and pushing. That commit changes the branch without changing the patch

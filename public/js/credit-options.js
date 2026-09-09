@@ -14,6 +14,18 @@
  * three call sites pick it up for free — which is the whole reason this
  * module exists instead of three inlined strings.
  *
+ * #1281 added the one thing that is NOT shared: how the card DISCLOSES the
+ * list. `options()` still returns every route to every surface, but the two
+ * that need a terminal — the CLI lease and importing your own pull request
+ * — render inside an "Are you a developer?" expander rather than in the
+ * flat list, so the routes anyone can follow are the ones a normal user
+ * meets first. `partition()` is that split, and it is derived from the
+ * venue's mechanism rather than from a list of ids kept in step by hand.
+ * The compact banner is deliberately left flat: it is a one-line strip of
+ * affordances next to the refusal, not the screen where the choice is made,
+ * and a disclosure widget inside it would hide routes behind two clicks in
+ * the surface with the least room to explain itself.
+ *
  * Every destination is a real Settings hash route (Settings.SECTIONS in
  * public/js/settings.js declares the same keys), so clicking one is an
  * ordinary hash navigation and the device back gesture returns to the
@@ -104,7 +116,10 @@
     if (s.level === 'unavailable') {
       return 'Credit eligibility is temporarily unavailable.';
     }
-    var parts = 'Free credits reset at midnight UTC';
+    var resetLabel = s.resetLabel || 'midnight UTC';
+    var parts = s.capWindow === 'weekly'
+      ? 'Free credits reset ' + resetLabel
+      : 'Free credits reset at ' + resetLabel;
     var at = s.resetsAt ? new Date(s.resetsAt) : null;
     if (at && Number.isFinite(at.getTime())) {
       var local = null;
@@ -112,13 +127,13 @@
         // Only worth translating for a reader who is not already on UTC —
         // otherwise it prints "midnight UTC — 12:00 AM your time", which
         // is the same fact twice.
-        if (at.getTimezoneOffset() !== 0) {
+        if (at.getTimezoneOffset() !== 0 && s.capWindow !== 'weekly') {
           local = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
         }
       } catch (err) { /* no Intl — the UTC boundary still reads fine */ }
-      if (local) parts += ' — ' + local + ' your time';
+      if (local) parts += ' (' + local + ' your time)';
       var left = resetIn(s.resetsAt, nowMs);
-      if (left) parts += (local ? ', about ' : ' — about ') + left + ' from now';
+      if (left) parts += ', about ' + left + ' from now';
     }
     return parts + '.';
   }
@@ -150,6 +165,9 @@
         byokCents: 0, pctUsed: 0, hasByokKey: !!(s && s.hasByokKey),
         globalOut: false, resetsAt: (s && s.resetsAt) || null,
         lowPct: (s && Number(s.lowBalancePct)) || LOW_PCT,
+        capWindow: (s && s.capWindow) || 'daily',
+        windowLabel: (s && s.windowLabel) || 'Today',
+        resetLabel: (s && s.resetLabel) || 'midnight UTC',
       };
     }
     var verificationRequired = !!s.verificationRequired;
@@ -186,6 +204,13 @@
       hasByokKey: !!s.hasByokKey,
       globalOut: globalOut,
       resetsAt: s.resetsAt || null,
+      // #1788: the allowance is two windows now, and the server reports
+      // whichever one is BINDING in the legacy limit/spent/remaining
+      // fields. These three say which window that was, so every sentence
+      // below names the right boundary instead of assuming "daily".
+      capWindow: s.capWindow || 'daily',
+      windowLabel: s.windowLabel || 'Today',
+      resetLabel: s.resetLabel || 'midnight UTC',
       lowPct: lowPct,
       verificationRequired: verificationRequired,
       entitlementAvailable: entitlementAvailable,
@@ -243,8 +268,44 @@
   // it, rather than announcing a failure that hasn't happened.
   function lowLead(state) {
     var s = state || {};
-    return 'Running low on free AI credits — ' + money(s.remainingCents)
-      + ' of ' + money(s.limitCents) + ' left today.';
+    var when = s.capWindow === 'weekly' ? 'this week' : 'today';
+    return 'Running low on free AI credits: ' + money(s.remainingCents)
+      + ' of ' + money(s.limitCents) + ' left ' + when + '.';
+  }
+
+  // ── Who each route is for (#1281) ──────────────────────────────────
+  //
+  // Running out of credits is the moment the venue question finally has to
+  // be asked, and #1281's answer is to route by WHO YOU ARE rather than to
+  // list every mechanism at once. Two of the ways out need a terminal: the
+  // CLI lease (`local`) wants the Usernode CLI installed, and importing a
+  // pull request (`own-tools-pr`) wants a fork, a branch and git. Shown
+  // flat next to "use your Claude plan", they read as the price of
+  // continuing rather than as the specialist routes they are — which is
+  // the discovery problem this card had.
+  //
+  // So the list stays whole (`options()` is unchanged, and every surface
+  // still gets every route) and only the CARD's disclosure changes: the
+  // routes anyone can follow render first, and these two sit behind an
+  // "Are you a developer?" expander.
+  //
+  // Derived from the venue's mechanism, never a hand-kept id list — a
+  // seventh venue in public/js/build-venues.js lands on the correct side
+  // of the expander by declaring what it is, not by being remembered here.
+  //
+  //   lease  → session_agent_leases: the Usernode CLI on your machine
+  //   import → POST /api/apps/:slug/pr-import: your own tools, your own PR
+  var DEVELOPER_MECHANISMS = { lease: true, import: true };
+
+  // Split a route list into the two halves the card discloses separately.
+  // Order within each half is preserved, so the primary group still leads
+  // with whatever `options()` decided leads.
+  function partition(list) {
+    var all = list || [];
+    return {
+      primary: all.filter(function (opt) { return !opt.developer; }),
+      developer: all.filter(function (opt) { return !!opt.developer; }),
+    };
   }
 
   // The ways out. `hasApiKey` flips the API-key entry: limits.loadUserApiKey
@@ -265,20 +326,38 @@
   // `state.externalFlowsAvailable` comes from GET /api/auth/me — a deployment
   // with no GitHub-link support cannot offer them, and then this is exactly
   // the pre-#1049 list.
-  function options(state) {
-    var s = state || {};
-    var hasApiKey = !!s.hasApiKey;
-    var apiKey = {
+  // The two remedies that are NOT build venues, factored out because the
+  // banner (#1348) shows one of them and nothing else from this list.
+  function apiKeyOption(state) {
+    var hasApiKey = !!(state || {}).hasApiKey;
+    return {
       id: 'api-key',
       title: hasApiKey
         ? "Your saved key couldn't be used"
         : 'Use your own Anthropic API key',
       blurb: hasApiKey
-        ? 'Usernode has a key on file but could not use it for this turn. Open Settings → API key, check it and re-save it — the daily allowance is bypassed entirely while a working key is on file.'
+        ? 'Usernode has a key on file but could not use it for this turn. Open Settings → API key, check it and re-save it. The daily allowance is bypassed entirely while a working key is on file.'
         : 'Paste a key in Settings → API key and Usernode keeps working exactly as it does now, billed to your Anthropic account instead of your daily allowance.',
       cta: hasApiKey ? 'Check API key' : 'Add API key',
       hash: SETTINGS_HASHES.apiKey,
+      developer: false,
     };
+  }
+
+  function socialOption() {
+    return {
+      id: 'social-identity',
+      title: 'Unlock $10/day with a social account',
+      blurb: 'Connect GitHub or X to prove control of that account. Either one unlocks the same $10/day tier; they do not stack, and Usernode keeps no provider token.',
+      cta: 'Connect GitHub or X',
+      hash: SETTINGS_HASHES.connector,
+      developer: false,
+    };
+  }
+
+  function options(state) {
+    var s = state || {};
+    var apiKey = apiKeyOption(s);
     // Every route out of here except the API key IS a build venue, so the
     // list comes from public/js/build-venues.js in `blocked` mode rather
     // than being retyped here. That is what stopped "use a coding tool on
@@ -299,6 +378,11 @@
         mode: 'blocked',
         openrouterAvailable: s.openrouterAvailable,
         cliAuthEnabled: s.cliAuthEnabled !== false,
+        // #1281: the bridge is opt-in, so it is absent from the developer
+        // expander unless this user turned it on. Unlike the flags around
+        // it this one does NOT default true — an opt-in that defaults to
+        // on is not an opt-in.
+        sessionBridgeEnabled: !!s.sessionBridgeEnabled,
         externalFlowsAvailable: s.externalFlowsAvailable,
         canCollaborate: s.canCollaborate !== false,
         blockedReason: s.error || null,
@@ -312,6 +396,7 @@
         cta: row.cta,
         flow: row.mechanism.flow || null,
         hash: row.mechanism.hash || SETTINGS_HASHES.localTool,
+        developer: !!DEVELOPER_MECHANISMS[row.mechanism.kind],
       };
     };
     // Running out of credits is the moment someone is most willing to try
@@ -334,16 +419,11 @@
         blurb: 'Connect Usernode to Claude or ChatGPT and let Claude Code on the web or Codex do the work on the plan you already pay for.',
         cta: 'Connect Claude or ChatGPT',
         hash: SETTINGS_HASHES.connector,
+        developer: false,
       });
     }
     if (s.verificationRequired) {
-      out.unshift({
-        id: 'social-identity',
-        title: 'Unlock $10/day with a social account',
-        blurb: 'Connect GitHub or X to prove control of that account. Either one unlocks the same $10/day tier; they do not stack, and Usernode keeps no provider token.',
-        cta: 'Connect GitHub or X',
-        hash: SETTINGS_HASHES.connector,
-      });
+      out.unshift(socialOption());
     }
     return out;
   }
@@ -374,6 +454,47 @@
       : "You're out of today's free AI credits.";
   }
 
+  function optionRowHtml(opt) {
+    return ''
+      + '<div class="dc-credits-option">'
+      + '<div class="dc-credits-option-text">'
+      + '<div class="dc-credits-option-title">' + escapeHtml(opt.title) + '</div>'
+      + '<div class="dc-credits-option-blurb">' + escapeHtml(opt.blurb) + '</div>'
+      + '</div>'
+      + '<button type="button" class="dc-pr-btn dc-credits-go"'
+      + (opt.flow ? ' data-credits-flow="' + escapeHtml(opt.flow) + '"' : '')
+      + ' data-credits-hash="' + escapeHtml(opt.hash) + '">'
+      + escapeHtml(opt.cta) + '</button>'
+      + '</div>';
+  }
+
+  function optionsHtml(list) {
+    return '<div class="dc-credits-options">'
+      + (list || []).map(optionRowHtml).join('')
+      + '</div>';
+  }
+
+  // The "Are you a developer?" half (#1281). A plain <details>, so the
+  // disclosure costs no JavaScript and needs nothing from wire(): a click
+  // on the summary matches neither selector the delegated handler looks
+  // for, so it falls through and the browser toggles the element itself.
+  //
+  // The routes inside are REAL entries of the same list, with the same
+  // `data-credits-hash` / `data-credits-flow` attributes as the rows above
+  // — expanding is the only difference. That is what keeps every surface
+  // honest about offering the same ways out.
+  function developerHtml(list) {
+    if (!list || !list.length) return '';
+    return ''
+      + '<details class="dc-credits-dev" data-credits-dev="1">'
+      + '<summary class="dc-credits-dev-summary">Are you a developer?</summary>'
+      + '<div class="dc-credits-dev-hint">'
+      + 'Build it with the tools on your own computer instead.'
+      + '</div>'
+      + optionsHtml(list)
+      + '</details>';
+  }
+
   // The in-chat card. Rendered INSTEAD of an assistant markdown bubble by
   // DevChat.renderMessages when a message carries `creditsCard`.
   //
@@ -384,19 +505,11 @@
   function cardHtml(state) {
     var s = state || {};
     var list = options(s);
-    var rows = list.map(function (opt) {
-      return ''
-        + '<div class="dc-credits-option">'
-        + '<div class="dc-credits-option-text">'
-        + '<div class="dc-credits-option-title">' + escapeHtml(opt.title) + '</div>'
-        + '<div class="dc-credits-option-blurb">' + escapeHtml(opt.blurb) + '</div>'
-        + '</div>'
-        + '<button type="button" class="dc-pr-btn dc-credits-go"'
-        + (opt.flow ? ' data-credits-flow="' + escapeHtml(opt.flow) + '"' : '')
-        + ' data-credits-hash="' + escapeHtml(opt.hash) + '">'
-        + escapeHtml(opt.cta) + '</button>'
-        + '</div>';
-    }).join('');
+    // #1281: the count still spells the WHOLE list. Three rows and an
+    // expander over "Five ways to keep building right now" is a promise the
+    // card keeps; counting only the visible three would hide that the other
+    // two exist, which is the discovery failure this card was written for.
+    var split = partition(list);
     return ''
       + '<div class="dc-credits-card" data-credits-card="1">'
       + '<div class="dc-credits-card-lead">' + escapeHtml(lead(s)) + '</div>'
@@ -404,21 +517,52 @@
         ? '<div class="dc-credits-card-detail">' + escapeHtml(s.error) + '</div>'
         : '')
       + '<div class="dc-credits-card-intro">' + escapeHtml(introFor(list)) + '</div>'
-      + '<div class="dc-credits-options">' + rows + '</div>'
+      + optionsHtml(split.primary)
+      + developerHtml(split.developer)
       + '</div>';
   }
 
   // Compact button row for the existing red banner. The first button keeps
   // the historical `dc-credits-add-key` id so anything already selecting it
   // (and the banner's own wiring) keeps resolving.
+  // #1348: the banner offers exactly TWO routes, not one button per venue.
+  //
+  // It used to render all of options() — five or six buttons wrapping
+  // across a strip that is already carrying a sentence, where the venue
+  // ones were long ("Continue this session with Claude Code on the web")
+  // and the reader had to weigh a whole menu to get out of a refusal. The
+  // two are the only genuinely different answers: pay for it yourself, or
+  // build it somewhere else. Which somewhere is the venue sheet's
+  // question, and it is better at asking it — grouped, ticked, with a
+  // consequence per row, and it MARKS the venue that just refused the turn
+  // rather than silently dropping it.
+  //
+  // The full list has not gone anywhere: cardHtml() still renders every
+  // route with its blurb, and that card is posted into the transcript on
+  // the refusal itself. This is the bar; that is the page.
   function bannerActionsHtml(state) {
     var s = state || {};
+    var actions = [
+      // Whichever remedy leads in this state: an unverified account cannot
+      // spend credits at all, so connecting one comes before paying.
+      s.verificationRequired ? socialOption() : apiKeyOption(s),
+      {
+        id: 'venue',
+        cta: 'Change session type',
+        // No hash: this one opens the sheet in place. The fallback exists
+        // because wire() falls through to a hash for surfaces that handle
+        // nothing, and Settings is where a venue is otherwise changed.
+        hash: SETTINGS_HASHES.localTool,
+        venue: true,
+      },
+    ];
     return '<div class="dc-credits-banner-actions">'
-      + options(s).map(function (opt, index) {
+      + actions.map(function (opt, index) {
         return '<button type="button"'
           + (index === 0 ? ' id="dc-credits-add-key"' : '')
           + ' class="dc-credits-banner-btn' + (index === 0 ? ' dc-credits-banner-btn-primary' : '')
-          + '"' + (opt.flow ? ' data-credits-flow="' + escapeHtml(opt.flow) + '"' : '')
+          + '"' + (opt.venue ? ' data-credits-venue="1"' : '')
+          + (opt.flow ? ' data-credits-flow="' + escapeHtml(opt.flow) + '"' : '')
           + ' data-credits-hash="' + escapeHtml(opt.hash) + '">'
           + escapeHtml(opt.cta) + '</button>';
       }).join('')
@@ -441,9 +585,18 @@
     var h = handlers || {};
     root.addEventListener('click', function (event) {
       var target = event.target && event.target.closest
-        ? event.target.closest('[data-credits-flow],[data-credits-hash]')
+        ? event.target.closest('[data-credits-venue],[data-credits-flow],[data-credits-hash]')
         : null;
       if (!target || !root.contains(target)) return;
+      // #1348: "Change session type" opens the venue sheet on the surface
+      // that mounted us, anchored to the button it was clicked on. Falls
+      // through to the hash when a surface wires no handler, which is the
+      // same contract onFlow has.
+      if (target.getAttribute('data-credits-venue') && typeof h.onVenue === 'function') {
+        event.preventDefault();
+        h.onVenue(target);
+        return;
+      }
       var flow = target.getAttribute('data-credits-flow');
       if (flow && typeof h.onFlow === 'function') {
         event.preventDefault();
@@ -467,7 +620,10 @@
     meterParts: meterParts,
     meterTone: meterTone,
     lowLead: lowLead,
+    apiKeyOption: apiKeyOption,
+    socialOption: socialOption,
     options: options,
+    partition: partition,
     introFor: introFor,
     lead: lead,
     cardHtml: cardHtml,

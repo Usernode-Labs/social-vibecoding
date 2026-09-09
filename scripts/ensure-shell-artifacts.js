@@ -19,12 +19,15 @@ const {
   expectedStamp,
   readHtmlStamp,
   readJsStamp,
+  readBuildMeta,
+  normalizeBuildSha,
   HTML_OUTPUT,
   JS_OUTPUT,
 } = require('./shell-stamp');
 
 const htmlOnly = process.argv.includes('--html-only');
 const runtime = process.argv.includes('--runtime');
+const prebuilt = process.env.USERNODE_SHELL_ASSETS_PREBUILT === '1';
 
 function read(pathname) {
   try {
@@ -73,9 +76,28 @@ function runNode(script) {
 const { stamp } = expectedStamp();
 const htmlPath = path.join(ROOT, HTML_OUTPUT);
 const jsPath = path.join(ROOT, JS_OUTPUT);
-const htmlFresh = readHtmlStamp(read(htmlPath) || '') === stamp;
+const html = read(htmlPath) || '';
+// Fresh means sources unchanged AND generated for THIS build. A document
+// carries the GIT_SHA it was built with — its <meta name="platform-build">,
+// and since the build-scoped asset URLs every script src too — so one built
+// under a different id (the tests' `dev` document under a GIT_SHA'd `npm
+// start`, or the reverse) is stale here even though its stamp says the
+// sources match.
+const htmlFresh = readHtmlStamp(html) === stamp
+  && readBuildMeta(html) === normalizeBuildSha(process.env.GIT_SHA);
 const jsFresh = readJsStamp(read(jsPath) || '') === stamp;
 const needsShell = !htmlFresh || (!htmlOnly && !jsFresh);
+
+if (prebuilt) {
+  const cssPath = path.join(ROOT, 'public', 'css', 'tailwind.css');
+  if (needsShell || read(cssPath) === null) {
+    throw new Error(
+      '[ensure-shell] immutable image is missing build-time shell assets; rebuild the image'
+    );
+  }
+  console.log('[ensure-shell] using immutable build-time shell assets');
+  process.exit(0);
+}
 
 if (needsShell) {
   installFrontendDependencies();

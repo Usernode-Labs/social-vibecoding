@@ -1,40 +1,54 @@
 /**
- * The bell drawer's contents — the pinned invites section, the grouped list
- * and the empty hint (#1191 slice 6, conversion 2).
+ * The pinned Saved + Invites sections of the Notifications screen — what is
+ * left of the bell drawer's contents (#1191 slice 6, conversion 2) after the
+ * Streamlined Concept moved the notification list to its own screen. The
+ * history below is kept because the descriptor seam it explains still holds.
  *
  * ── What changed, and what deliberately did not ────────────────────────
  *
  * ./notifications.js used to build all three by `innerHTML` and then wire the
  * handlers back on with four `querySelectorAll` sweeps. It now computes a
- * descriptor tree (`rowView` / `groupView` / `inviteView`) and pushes it into
+ * descriptor tree (`rowView` / `savedView` / `inviteView`) and pushes it into
  * ./notifications-store.js; this file is the only writer of the DOM below
- * #notifications-invites and #notifications-list.
+ * #notifications-saved and #notifications-invites. (The rows themselves are
+ * ./notifications-screen.tsx's — see the header note above.)
  *
  * The markup is like-for-like: same class strings, same `data-notif-id` /
- * `data-invite-app` / `data-group-toggle` attributes, same between-apps
- * divider (between entries only — never before the first or after the last).
- * The attributes stay because they are how the rows were addressed.
+ * `data-invite-app` attributes. They stay because they are how the rows were
+ * addressed.
  *
- * `Row` is exported as `NotificationRow` because the cog drawer's pinned
- * "Needs attention" section renders these same four session kinds. Conversion
- * 4 converted that host too, and rather than a second renderer it now imports
- * this component and feeds it descriptors from `Notifications._rowView` — one
- * row, one implementation, for the first time since the two drawers split.
+ * ── The list is flat (#1385) ───────────────────────────────────────────
+ *
+ * `Group` and its `data-group-toggle` / `data-group-markread` /
+ * `data-group-showmore` chrome are gone, and so is the heavier between-apps
+ * divider that separated one app's entry from the next: with rows interleaved
+ * in arrival order there are no app runs left for it to sit between, and every
+ * row already carries its own `border-b`. `list` is now a flat array of row
+ * descriptors — see ./notifications-store.js.
+ *
+ * What replaced the per-group "Show more" is one pager at the FOOT of the list.
+ * It is not the same control moved: the group one revealed already-fetched
+ * leaves that the collapsed header was hiding, and only reached the network
+ * once it ran out. Nothing is hidden in a flat list, so this one is purely the
+ * network call.
+ *
+ * The `Row` component this file used to export as `NotificationRow` went to
+ * the screen with the list it drew; what is left here is the two PINNED
+ * sections, which have their own row shapes.
  *
  * ── stopPropagation, everywhere ────────────────────────────────────────
  *
- * Every handler here stops the click. That is not defensive habit: the drawer
- * dismisses on a document-level outside click, and each of these actions
- * re-renders the list. React unmounts the clicked node before the event
- * finishes bubbling, so the document handler would see a target that is no
- * longer inside #notifications-panel and close the drawer under the user.
- * This is the same reason the imperative version passed `e.stopPropagation()`
- * to all four sweeps.
+ * Every handler here stops the click. That is not defensive habit: each of
+ * these actions re-renders its section, React unmounts the clicked node
+ * before the event finishes bubbling, and any document-level outside-click
+ * handler would then see a target outside the surface and dismiss it under
+ * the user. This is the same reason the imperative version passed
+ * `e.stopPropagation()` to all four sweeps.
  *
  * ── Initial render ─────────────────────────────────────────────────────
  *
- * `invites: null` / `list: null` render nothing and the hint renders `hidden`,
- * which is exactly the markup the hand-written shell shipped. The SSG pass in
+ * `saved: null` / `invites: null` render nothing, which is exactly the markup
+ * the hand-written shell shipped. The SSG pass in
  * frontend/scripts/build-shell.mjs prerenders this island in Node, so anything
  * else here would be a hydration mismatch — and a console error on any route
  * fails proposal checks.
@@ -44,6 +58,8 @@ import { useEffect, useRef, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { BookmarkSolidIcon } from '@/components/ui/icons';
+
+import { swatchFor } from '../messages/format';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
@@ -59,29 +75,24 @@ export type NotificationRowView = {
   metaFlex: boolean;
   wrap: boolean;
   icon: string | null;
+  /** The kind line: "New proposal", "Session finished", a conversation. */
+  label: string;
+  /** The subject line. EMPTY when the label is the whole of the row's copy. */
   segments: Segment[];
-  body: { text: string; medium: boolean; mention: boolean } | null;
-};
-
-type GroupView = {
-  key: string;
-  appId: number | '';
-  conversationId: number | '';
-  expanded: boolean;
-  hasUnread: boolean;
-  accent: string;
-  chevron: string;
-  appName: string;
-  count: number;
-  preview: string;
-  leaves: NotificationRowView[];
-  more: { key: string; label: string } | null;
 };
 
 type SavedView = {
   messageId: number;
+  /** The app the message was posted in — '' for a conversation save. */
   slug: string;
+  /**
+   * The conversation it was posted in — 0 for an app-chat save. Exactly one
+   * of this and `slug` is set, and which one is what the controller routes
+   * and unsaves on; the row itself renders both kinds identically.
+   */
+  conversationId: number;
   who: string;
+  /** Where it was said: the app's name, or the conversation's. */
   appName: string;
   time: string;
   text: string;
@@ -98,8 +109,6 @@ type InviteView = {
   time: string;
 };
 
-type Entry = { type: 'row'; row: NotificationRowView } | { type: 'group'; group: GroupView };
-
 // The controller is a classic-script-shaped global; this island reads it the
 // same way app.js does rather than importing it, because ./notifications.js
 // must stay import-free (see ./notifications-store.js).
@@ -111,232 +120,6 @@ function kit(): any {
   return (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
 }
 
-const ROW_CLASS = 'w-full text-left px-3 py-2.5 border-b border-zinc-200 '
-  + 'dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors';
-
-// Unread indicator dot. When unread it's a solid violet dot carrying an
-// accessible "Unread" label; when read it's an equal-width invisible spacer so
-// read/unread rows stay horizontally aligned (no jitter when a row is marked
-// read live).
-function UnreadDot({ unread }: { unread: boolean }): ReactNode {
-  return unread ? (
-    <span
-      role="img"
-      aria-label="Unread"
-      className="inline-block w-1.5 h-1.5 rounded-full bg-violet-500 align-middle mr-1.5 shrink-0"
-    >
-    </span>
-  ) : (
-    <span
-      aria-hidden="true"
-      className="inline-block w-1.5 h-1.5 align-middle mr-1.5 shrink-0"
-    >
-    </span>
-  );
-}
-
-function metaClass(v: NotificationRowView): string {
-  return 'text-xs text-zinc-500 dark:text-zinc-400'
-    + (v.mb ? ' mb-1' : '')
-    + (v.metaFlex ? ' flex items-center gap-1' : '')
-    + (v.wrap ? ' flex-wrap' : '');
-}
-
-/**
- * A mention snippet, split on @tokens. The imperative version highlighted them
- * by regex-replacing into an escaped HTML string; splitting the raw text and
- * letting React place the pieces is the same output without the string step.
- */
-function mentionParts(text: string): Array<{ text: string; at: boolean }> {
-  const out: Array<{ text: string; at: boolean }> = [];
-  const re = /(^|[^\w])@([A-Za-z0-9_]{1,32})/g;
-  let last = 0;
-  let m: RegExpExecArray | null = re.exec(text);
-  while (m) {
-    out.push({ text: text.slice(last, m.index) + m[1], at: false });
-    out.push({ text: `@${m[2]}`, at: true });
-    last = m.index + m[0].length;
-    m = re.exec(text);
-  }
-  out.push({ text: text.slice(last), at: false });
-  return out.filter((p) => p.text !== '');
-}
-
-function Body({ body }: { body: NotificationRowView['body'] }): ReactNode {
-  if (!body) return null;
-  const cls = 'text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2'
-    + (body.medium ? ' font-medium' : '');
-  if (!body.mention) return <div className={cls}>{body.text}</div>;
-  return (
-    <div className={cls}>
-      {mentionParts(body.text).map((p, i) => (p.at
-        ? <span key={i} className="text-violet-400 font-medium">{p.text}</span>
-        : <span key={i}>{p.text}</span>))}
-    </div>
-  );
-}
-
-/**
- * The meta line: unread dot, optional icon, the per-kind segments, the time.
- *
- * Two spacing regimes, both inherited from the string version:
- *  - `metaFlex` rows are a flex row with `gap-1`, so the gap IS the spacing.
- *    The string version joined its pieces with a newline; a flex container
- *    drops whitespace-only text between items, so emitting no separator at all
- *    renders identically.
- *  - the mention/reply row is ordinary inline flow and needs real spaces. They
- *    ride INSIDE the neighbouring string rather than as a separate `{' '}`
- *    child: a whitespace-only expression between two text runs makes them two
- *    adjacent children, which cannot survive hydration (React #418) and is
- *    what tests/shell-build.test.js and the build's own probe both refuse.
- *    That is safe here because a non-flex row's segments always alternate —
- *    two text segments never touch.
- */
-function Meta({ view }: { view: NotificationRowView }): ReactNode {
-  const flex = view.metaFlex;
-  const nodes: ReactNode[] = [<UnreadDot key="dot" unread={view.unread} />];
-  if (view.icon) nodes.push(<span key="icon" aria-hidden="true">{view.icon}</span>);
-  view.segments.forEach((s, i) => {
-    if (s.t === 'who') {
-      nodes.push(
-        <span key={`s${i}`} className="font-medium text-zinc-800 dark:text-zinc-200">
-          {`@${s.v}`}
-        </span>,
-      );
-    } else if (s.t === 'strong') {
-      nodes.push(
-        <span key={`s${i}`} className="font-medium text-zinc-700 dark:text-zinc-300">{s.v}</span>,
-      );
-    } else if (flex) {
-      nodes.push(<span key={`s${i}`}>{s.v}</span>);
-    } else {
-      // Bare text, exactly as the string version left it on this one row.
-      nodes.push(` ${s.v} `);
-    }
-  });
-  nodes.push(
-    <span key="time" className="text-zinc-500">{flex ? `· ${view.time}` : ` · ${view.time}`}</span>,
-  );
-  return <div className={metaClass(view)}>{nodes}</div>;
-}
-
-/**
- * One leaf row. Clicking marks it read and routes (see
- * `Notifications._onItemClick`); on touch it also carries the kit's
- * swipe-to-mark-read tray, which only makes sense while it is unread.
- *
- * Exported as `NotificationRow` for the cog drawer, which renders the four
- * session kinds through this very component. It passes `touch={false}`: the
- * HTML flavour this replaced carried no swipe tray, and the drawer's rows sit
- * inside a kit bottom sheet on touch, where a second horizontal gesture would
- * fight the sheet's own.
- */
-function Row({ view, touch }: { view: NotificationRowView; touch: boolean }): ReactNode {
-  const ref = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    const el = ref.current;
-    const ui = kit();
-    if (!touch || !el || !ui?.swipeActions || !view.unread) return;
-    ui.swipeActions(el, {
-      actions: [{
-        label: 'Mark read',
-        handler: () => {
-          const N = controller();
-          N?._markOneRead(view.id);
-          N?._renderList();
-        },
-      }],
-    });
-  }, [touch, view.id, view.unread]);
-
-  return (
-    <button
-      ref={ref}
-      data-notif-id={view.id}
-      className={`${ROW_CLASS} ${view.unreadCls}`}
-      onClick={(e) => {
-        e.stopPropagation();
-        controller()?._onItemClick(view.id);
-      }}
-    >
-      <Meta view={view} />
-      <Body body={view.body} />
-    </button>
-  );
-}
-
-export { Row as NotificationRow };
-
-/** The collapsed/expanded app header, plus its leaves when expanded. */
-function Group({ view, touch }: { view: GroupView; touch: boolean }): ReactNode {
-  return (
-    <>
-      <div className={`flex items-stretch border-b border-zinc-200 dark:border-zinc-800 ${view.accent}`}>
-        <button
-          data-group-toggle={view.key}
-          aria-expanded={view.expanded}
-          className="flex-1 min-w-0 text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
-          onClick={(e) => {
-            e.stopPropagation();
-            controller()?._toggleGroup(view.key);
-          }}
-        >
-          <div className="flex items-center gap-1.5 mb-0.5">
-            <span aria-hidden="true" className="text-zinc-400 dark:text-zinc-500">{view.chevron}</span>
-            {view.hasUnread ? <UnreadDot unread={true} /> : null}
-            <span className="font-medium text-zinc-800 dark:text-zinc-200 truncate">{view.appName}</span>
-            {/*
-                Just the number, centered in a fixed-size pill (no "new"
-                wording). Unread groups show the unread count in the violet
-                accent pill; fully read groups show the total in a muted one.
-            */}
-            {view.hasUnread ? (
-              <span className="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 text-[0.65rem] font-bold leading-none text-white bg-violet-500 rounded-full">
-                {view.count}
-              </span>
-            ) : (
-              <span className="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 text-[0.65rem] font-medium leading-none text-zinc-500 dark:text-zinc-400 bg-zinc-200 dark:bg-zinc-800 rounded-full">
-                {view.count}
-              </span>
-            )}
-          </div>
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate pl-5">{view.preview}</div>
-        </button>
-        {view.hasUnread ? (
-          <button
-            data-group-markread={view.key}
-            data-app-id={view.appId}
-            data-conversation-id={view.conversationId}
-            className="shrink-0 text-[0.7rem] text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 px-1.5 py-1"
-            onClick={(e) => {
-              e.stopPropagation();
-              controller()?._markGroupRead(view.key, view.appId, view.conversationId);
-            }}
-          >
-            Mark read
-          </button>
-        ) : null}
-      </div>
-      {view.expanded ? (
-        <div className="pl-2 bg-zinc-50/50 dark:bg-zinc-950/30">
-          {view.leaves.map((leaf) => <Row key={leaf.id} view={leaf} touch={touch} />)}
-          {view.more ? (
-            <button
-              data-group-showmore={view.more.key}
-              className="w-full text-left px-3 py-2 text-xs text-violet-500 hover:text-violet-400 border-b border-zinc-200 dark:border-zinc-800"
-              onClick={(e) => {
-                e.stopPropagation();
-                controller()?._showMoreGroup(view.more!.key);
-              }}
-            >
-              {view.more.label}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-    </>
-  );
-}
 
 /**
  * One saved message (#1280). Clicking the body opens the message where it
@@ -366,10 +149,17 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
     <div
       ref={ref}
       data-saved-message={view.messageId}
-      className="flex items-stretch border-b border-zinc-200 dark:border-zinc-800 bg-violet-500/5 border-l-2 border-l-violet-500"
+      className="notifications-row flex items-center gap-3 px-4 py-3"
     >
+      <span
+        aria-hidden="true"
+        className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-xs font-semibold"
+        style={{ backgroundColor: swatchFor(view.who.replace(/^@/, '')) }}
+      >
+        {view.who.replace(/^@/, '').charAt(0).toUpperCase() || '?'}
+      </span>
       <button
-        className="flex-1 min-w-0 text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors"
+        className="flex-1 min-w-0 text-left"
         onClick={(e) => {
           e.stopPropagation();
           controller()?._onSavedClick(view.messageId);
@@ -379,22 +169,23 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
             The spaces ride inside the neighbouring strings rather than as
             whitespace-only children — see the note on <Meta> for why.
         */}
-        <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-1">
+        <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">
           {/* The same mark the message's own save button carries — solid
               here, because everything in this section is saved by
               definition — so the two ends of the gesture read as one
               feature. */}
-          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3 h-3 align-middle text-violet-500" />
-          <span className="font-medium text-zinc-800 dark:text-zinc-200">{` ${view.who}`}</span>
+          <BookmarkSolidIcon aria-hidden="true" className="inline-block w-3.5 h-3.5 align-[-2px] mr-1 text-violet-700 dark:text-violet-400" />
+          <span className="font-bold text-zinc-900 dark:text-zinc-100">{view.who}</span>
           {' in '}
-          <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>
-          <span className="text-zinc-500">{` · ${view.time}`}</span>
+          <span>{view.appName}</span>
+          {' · '}
+          <time title={view.timeTitle}>{view.time}</time>
         </div>
-        <div className="text-sm text-zinc-700 dark:text-zinc-300 line-clamp-2">{view.text}</div>
+        <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{view.text}</div>
       </button>
       <button
         data-saved-unsave={view.messageId}
-        className="shrink-0 text-[0.7rem] text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200 px-1.5 py-1"
+        className="shrink-0 h-8 px-3 rounded-full bg-zinc-100 text-xs font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
         onClick={(e) => {
           e.stopPropagation();
           controller()?._unsave(view.messageId);
@@ -435,27 +226,37 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
   return (
     <div
       ref={ref}
-      className="px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-violet-500/5 border-l-2 border-l-violet-500"
+      className="notifications-row flex items-start gap-3 px-4 py-3"
       data-invite-app={view.appId}
     >
+      <span
+        aria-hidden="true"
+        className="w-9 h-9 shrink-0 rounded-lg text-white flex items-center justify-center text-xs font-semibold"
+        style={{ backgroundColor: swatchFor(view.who.replace(/^@/, '')) }}
+      >
+        {view.who.replace(/^@/, '').charAt(0).toUpperCase() || '?'}
+      </span>
+      <div className="min-w-0 flex-1">
       {/*
           The spaces ride inside the neighbouring strings rather than as
           whitespace-only children — see the note on <Meta> for why.
       */}
-      <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-1.5">
-        <span aria-hidden="true">{view.icon}</span>
-        <span className="font-medium text-zinc-800 dark:text-zinc-200">{` ${view.who}`}</span>
+      <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100">
+        <span className="font-bold">{view.who}</span>
         {` ${view.verb} `}
-        <span className="font-medium text-zinc-700 dark:text-zinc-300">{view.appName}</span>
-        <span className="text-zinc-500">{` · ${view.time}`}</span>
+        <span className="font-bold">{view.appName}</span>
       </div>
-      <div className="flex gap-2">
+      <div className="text-xs text-zinc-500 dark:text-zinc-400">
+        <span aria-hidden="true">{`${view.icon} `}</span>
+        <time title={view.timeTitle}>{view.time}</time>
+      </div>
+      <div className="flex gap-2 mt-2">
         <Button
           data-invite-accept={view.appId}
           data-invite-slug={view.slug}
           data-invite-kind={view.kind}
-          variant="pill"
-          size="xsText"
+          variant="pillAccent"
+          size="pill"
           onClick={(e) => {
             e.stopPropagation();
             controller()?._acceptInvite(view.appId, view.slug, view.kind);
@@ -466,7 +267,7 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
         <button
           data-invite-decline={view.appId}
           data-invite-kind={view.kind}
-          className="rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+          className="rounded-full bg-zinc-100 px-5 py-2.5 text-sm font-semibold text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors"
           onClick={(e) => {
             e.stopPropagation();
             controller()?._declineInvite(view.appId, view.kind);
@@ -475,23 +276,33 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
           Decline
         </button>
       </div>
+      </div>
     </div>
   );
 }
 
-const DIVIDER = <div role="separator" className="border-t-2 border-zinc-200 dark:border-zinc-700"></div>;
 
-export function NotificationsBody(): ReactNode {
+/**
+ * The pinned Saved + Invites sections (Streamlined Concept).
+ *
+ * They rendered at the top of the drawer's notifications block while the
+ * list lived there; the list is the full-screen Notifications view now
+ * (./notifications-screen.tsx renders its own rows), and these two sections
+ * moved WITH the surface — same ids, same markup, new parent. The plain
+ * notification rows that used to follow them (`Row`, its meta/body
+ * renderers and the drawer's pager/caught-up/empty chrome) were deleted in
+ * the same change: the screen renders richer rows of its own from the same
+ * descriptors, and a second renderer with no consumer is exactly the
+ * duplication #1191 slice 6 existed to end.
+ */
+export function NotificationsPinnedSections(): ReactNode {
   const state = useStoreState(notificationsStore) as {
     saved: SavedView[] | null;
     invites: InviteView[] | null;
-    list: Entry[] | null;
-    empty: boolean;
     touch: boolean;
   };
   const saved = state.saved || [];
   const invites = state.invites || [];
-  const entries = state.list || [];
 
   return (
     <>
@@ -501,9 +312,9 @@ export function NotificationsBody(): ReactNode {
           the same reason the invites section below has one: a long list of
           saves must not push the notifications themselves off the screen.
       */}
-      <div id="notifications-saved" className="shrink-0 overflow-y-auto max-h-48">
+      <div id="notifications-saved" className="shrink-0 overflow-y-auto max-h-64">
         {saved.length ? (
-          <div className="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+          <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
             Saved
           </div>
         ) : null}
@@ -512,37 +323,19 @@ export function NotificationsBody(): ReactNode {
         ))}
       </div>
       {/*
-          Pinned collaborator-invites section: rendered above the grouped
-          notification list, driven by the authoritative pendingInvites
-          payload (see ./notifications.js _renderInvites).
+          Pinned collaborator-invites section: rendered above the notification
+          rows, driven by the authoritative pendingInvites payload (see
+          ./notifications.js _renderInvites).
       */}
       <div id="notifications-invites" className="shrink-0 overflow-y-auto max-h-48">
         {invites.length ? (
-          <div className="px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-800">
+          <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500">
             Invites
           </div>
         ) : null}
         {invites.map((inv) => (
           <Invite key={`${inv.kind}:${inv.appId}`} view={inv} touch={state.touch} />
         ))}
-      </div>
-      <div id="notifications-list" className="flex-1 overflow-y-auto">
-        {entries.map((entry, i) => (
-          <div key={entry.type === 'row' ? `r${entry.row.id}` : `g${entry.group.key}`}>
-            {i > 0 ? DIVIDER : null}
-            {entry.type === 'row'
-              ? <Row view={entry.row} touch={state.touch} />
-              : <Group view={entry.group} touch={state.touch} />}
-          </div>
-        ))}
-      </div>
-      <div
-        id="notifications-empty"
-        className={state.empty
-          ? 'px-4 py-6 text-sm text-zinc-500 text-center'
-          : 'hidden px-4 py-6 text-sm text-zinc-500 text-center'}
-      >
-        You'll get pinged here when someone proposes a change to an app you use.
       </div>
     </>
   );

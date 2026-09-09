@@ -6,8 +6,8 @@
  *   1. reads them from the QUERY STRING (they are not secrets — the code is
  *      minted later, and PKCE binds it to the client that asked),
  *   2. asks the server for display details, which requires a platform
- *      session (an anonymous visitor is redirected to sign in and comes
- *      straight back here),
+ *      session (an anonymous visitor is sent to sign in with this request
+ *      as `?return_to=`, and is brought straight back here),
  *   3. shows who is asking, the address they will be sent back to, and what
  *      is being allowed, and
  *   4. on an explicit Allow, posts the decision and follows the redirect
@@ -92,8 +92,42 @@
 
     if (resp.status === 401) {
       // Sign in, then come back to this exact request.
-      window.location.href = '/#login?next='
-        + encodeURIComponent(window.location.pathname + window.location.search);
+      //
+      // The return target goes in the QUERY STRING, and the '#login' that
+      // picks the screen goes in the fragment. It used to be the other way
+      // round — '/#login?next=<encoded>' — and nothing could act on that:
+      // a fragment never reaches the server, restoreFromHash splits the
+      // fragment's own query off and drops it for auth routes, and
+      // AuthScreens.finishLogin reads location.search. The value survived
+      // in the address bar, was read by nobody, and signing in landed on
+      // the feed with the request gone, so it had to be started again from
+      // the chat product.
+      //
+      // '?return_to=<path>#login' is the form the platform already honours
+      // (the CLI consent page uses it) and this page's path is on
+      // finishLogin's allowlist. replace() rather than an assignment so
+      // Back from the login screen leaves, instead of bouncing through a
+      // request that is answered the same way.
+      window.location.replace('/?return_to='
+        + encodeURIComponent(window.location.pathname + window.location.search)
+        + '#login');
+      return;
+    }
+    // Platform access is a SECOND gate, separate from having a session, and
+    // it is the ordinary state of a brand new account: `has_platform_access`
+    // defaults FALSE (src/db/schema.sql) until the waitlist releases it.
+    // Somebody who SIGNED UP from this page therefore comes back holding a
+    // real session and still cannot be shown the request. Answering with
+    // GENERIC_INVALID would blame the request, which is not what is wrong —
+    // the request is fine and the account is not ready — and would send them
+    // back to Claude or ChatGPT to retry something that cannot yet succeed.
+    if (resp.status === 403) {
+      showEntry(
+        'Your Usernode account has not been released off the waitlist yet, so it '
+        + 'cannot approve a connection. Once it is, start the connection again '
+        + 'from Claude or ChatGPT.',
+        true
+      );
       return;
     }
     if (!resp.ok) {

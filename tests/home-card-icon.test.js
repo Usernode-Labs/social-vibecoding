@@ -19,10 +19,37 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { installAppCard } = require('./helpers/app-card');
+const { installGridStore, installPanelsStore } = require('./helpers/home-grid-store');
 // The "Create app" tile moved out of home.js: it is a home-screen WIDGET now
 // (HomePanels.renderCreatePanel), so home-panels.js is loaded here too, to
 // keep it under the same shared-icon-treatment assertions the app tiles are.
-const { HOME_SRC: SRC, PANELS_SRC } = require('./helpers/home-modules');
+const { HOME_SRC: SRC, PANELS_SRC, LAYOUT_SRC } = require('./helpers/home-modules');
+// The widget strip is React as of #1191: `Home.renderWidgetTile` is
+// `Home.widgetTileView` (a view model) plus features/home/widget-strip.tsx's
+// `WidgetTile`. The shared-icon-treatment rules below span BOTH call sites, so
+// the tile is rendered here rather than dropped from the sweep — the same
+// choice tests/estimator-card-render.test.js made when its module converted.
+const { renderComponent } = require('./lib/render-tsx');
+
+const WIDGET_STRIP = 'frontend/src/features/home/widget-strip.tsx';
+
+/** `Home.renderWidgetTile(item)`, in its two halves. */
+function widgetTileHtml(Home, item) {
+  return renderComponent(WIDGET_STRIP, 'WidgetTile', { tile: Home.widgetTileView(item) });
+}
+
+// The Create app block, the same way: HomePanels.createView() decides and
+// features/home/panels/create.tsx draws. It is here for the shared TILE
+// TREATMENT — the block's plus sits in an `.app-icon-tile`, and the rule that
+// no tile carries its own violet colouring has to span every call site or it
+// is not a rule.
+const CREATE_PANEL = 'frontend/src/features/home/panels/create.tsx';
+
+function createPanelHtml(Home) {
+  return renderComponent(CREATE_PANEL, 'CreatePanel', {
+    view: Home.__HP.createView({ key: 'create' }),
+  });
+}
 
 // Minimal functional stand-in for the DOM bits home.js's escapeHtml
 // leans on (createElement + textContent/innerHTML round-trip).
@@ -65,9 +92,15 @@ function makeHome() {
   // builders (frontend/src/features/apps/app-card.js) since #1083 chunk F.
   // It imports them; this declares what the stripped import would have bound.
   installAppCard(sandbox);
-  vm.runInContext(`${SRC}\n${PANELS_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  // #1191: updateAppCardIcon publishes a render rather than writing into
+  // the tile, so the sandbox needs the store binding the stripped import
+  // would have made — and the geometry module render() lays out against.
+  const gridStore = installGridStore(sandbox);
+  installPanelsStore(sandbox);
+  vm.runInContext(`${LAYOUT_SRC}\n${SRC}\n${PANELS_SRC}\n;globalThis.__Home = Home;`, sandbox);
   const Home = sandbox.__Home;
   Home.__sandbox = sandbox;
+  Home.__gridStore = gridStore;
   Home.__HP = sandbox.HomePanels;
   return Home;
 }
@@ -118,8 +151,8 @@ test('every icon tile carries .app-icon-tile and no violet colouring', () => {
     Home.renderAppCard(baseApp()),
     Home.renderAppCard(baseApp({ icon_emoji: '🎮' })),
     Home.renderAppCard(baseApp({ icon_url: '/app-icons/' + 'a'.repeat(32) })),
-    Home.__HP.renderCreatePanel({ key: 'create' }),
-    Home.renderWidgetTile({ id: 'w1', name: 'Demo App', slug: 'demo' }),
+    createPanelHtml(Home),
+    widgetTileHtml(Home, { id: 'w1', name: 'Demo App', slug: 'demo' }),
   ];
   for (const html of variants) {
     const tile = html.match(/class="app-icon-tile[^"]*"/);
@@ -131,7 +164,7 @@ test('every icon tile carries .app-icon-tile and no violet colouring', () => {
     assert.doesNotMatch(tile[0], /text-violet/, 'no violet glyph colour');
   }
   // The create-tile placeholder keeps its "empty slot" variant.
-  assert.match(Home.__HP.renderCreatePanel({ key: 'create' }), /app-icon-tile app-icon-tile--empty/);
+  assert.match(createPanelHtml(Home), /app-icon-tile app-icon-tile--empty/);
 });
 
 // The fainter letter is CSS-side: the tile tags its kind with
@@ -145,16 +178,16 @@ test('letter tiles are tagged data-icon="letter" on every call site', () => {
   assert.match(Home.renderAppCard(baseApp()), /class="app-icon-tile[^"]*"[^>]*data-icon="letter"/);
   Home._apps = [baseApp()];
   assert.match(
-    Home.renderWidgetTile(widgetItem),
+    widgetTileHtml(Home, widgetItem),
     /class="app-icon-tile[^"]*"[^>]*data-icon="letter"/
   );
   // …and the other two kinds keep their own tags, so the letter rule
   // can never catch an emoji or image tile.
   assert.match(Home.renderAppCard(baseApp({ icon_emoji: '🎮' })), /data-icon="emoji"/);
   Home._apps = [baseApp({ icon_emoji: '🎮' })];
-  assert.match(Home.renderWidgetTile(widgetItem), /data-icon="emoji"/);
+  assert.match(widgetTileHtml(Home, widgetItem), /data-icon="emoji"/);
   Home._apps = [baseApp({ icon_url: '/app-icons/' + 'a'.repeat(32) })];
-  assert.match(Home.renderWidgetTile(widgetItem), /data-icon="image"/);
+  assert.match(widgetTileHtml(Home, widgetItem), /data-icon="image"/);
 });
 
 test('app.css steps the letter glyph down to the faint token', () => {
@@ -169,6 +202,19 @@ test('app.css steps the letter glyph down to the faint token', () => {
   );
   // The base tile colour stays where it is — only the letter steps down.
   assert.match(css, /\.app-icon-tile \{[^}]*color: var\(--text-secondary\);/);
+  // THE PER-APP TINT IS GONE, and this is the guard that keeps it gone: it
+  // was six slug-hashed pastels painting the tile face, and a launcher of six
+  // unrelated pastels reads as six unrelated things rather than as one shelf.
+  // Nothing may reintroduce the attribute or the variables it read.
+  //
+  // Comments are stripped first, deliberately: the block that records WHY the
+  // tint went names `[data-tint]` several times, and a guard that cannot tell
+  // a selector from the prose explaining its absence would fire on its own
+  // documentation.
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(rules, /\[data-tint[\]=]/, 'no rule selects on data-tint');
+  assert.doesNotMatch(rules, /--tile-(lime|sky|amber|rose|lilac|sand|ink)\s*:/,
+    'the tint variables are not declared');
 });
 
 // --border-light is inverted between the palettes (fainter than
@@ -464,36 +510,53 @@ test('icon_url is HTML-escaped', () => {
   assert.doesNotMatch(html, /<script>/);
 });
 
-test('updateAppCardIcon patches a mounted tile across states', () => {
+test('updateAppCardIcon republishes the tile across icon states', () => {
+  // #1191: the tile is React-owned, so this no longer patches the DOM. It
+  // updates the Home._apps cache and publishes a render; features/home/
+  // app-grid.tsx repaints the one tile whose icon moved. Asserting the
+  // PUBLISHED MODEL is asserting the same thing the old DOM check did, one
+  // layer earlier — and it is the layer home.js still owns.
   const Home = makeHome();
-  const tile = { dataset: { icon: 'letter' }, innerHTML: 'D' };
-  const card = {
-    querySelector: (sel) => (sel === '[data-icon]' ? tile : { textContent: 'Demo App' }),
+  // `is_favorited` matters: Home.presentIds() derives the placeable set from
+  // partitionApps(), and currentLayout() drops any item that is not present —
+  // so an app nobody has pinned is filtered out of the canvas before it can
+  // reach the model.
+  Home._apps = [baseApp({ is_favorited: true })];
+  const placed = [{ type: 'app', slug: 'demo', col: 0, row: 0 }];
+  Home._layouts = { 4: placed, 5: placed };
+  Home._layoutFetchedAt = Date.now();
+  const iconOf = () => {
+    const item = Home.__gridStore.get().items.find((i) => i.kind === 'card');
+    return item && item.app.icon;
   };
-  Home.__sandbox.document.querySelector = (sel) =>
-    sel === '.app-card[data-slug="demo"]' ? card : null;
-  Home._apps = [baseApp()];
 
   Home.updateAppCardIcon('demo', '🚀', null);
-  assert.equal(tile.dataset.icon, 'emoji');
-  assert.ok(tile.innerHTML.includes('🚀'));
+  // Field-wise, not deepEqual: these objects are built inside the vm context,
+  // so they carry that realm's prototypes and deepStrictEqual rejects them
+  // however identical their contents.
+  assert.equal(iconOf().kind, 'emoji');
+  assert.equal(iconOf().emoji, '🚀');
   assert.equal(Home._apps[0].icon_emoji, '🚀');
 
   Home.updateAppCardIcon('demo', null, '/app-icons/' + 'b'.repeat(32));
-  assert.equal(tile.dataset.icon, 'image');
-  assert.match(tile.innerHTML, /<img/);
+  assert.equal(iconOf().kind, 'image');
+  assert.match(iconOf().src, /^\/app-icons\//);
 
   // Cleared back to the letter fallback (derived from the cached name).
   Home.updateAppCardIcon('demo', null, null);
-  assert.equal(tile.dataset.icon, 'letter');
-  assert.equal(tile.innerHTML, 'D');
+  assert.equal(iconOf().kind, 'letter');
+  assert.equal(iconOf().letter, 'D');
   assert.equal(Home._apps[0].icon_url, null);
 });
 
-test('updateAppCardIcon is a safe no-op when the card is not mounted', () => {
+test('updateAppCardIcon is a safe no-op for an app it has never seen', () => {
+  // "Not mounted" is no longer the interesting case — publishing a model for
+  // an unmounted island is harmless, and React paints it when it mounts. What
+  // still has to be safe is a slug that is in no cache at all.
   const Home = makeHome();
   Home._apps = [];
   assert.doesNotThrow(() => Home.updateAppCardIcon('ghost', '🎮', null));
+  assert.equal(Home.__gridStore.get().items.length, 0, 'and it publishes no card for it');
 });
 
 // _desiredIconSrcFor calls _widgetScheme on every heal pass, so a throw

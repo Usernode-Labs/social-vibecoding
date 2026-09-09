@@ -10,6 +10,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const ROOT = path.join(__dirname, '..');
 const PUBLIC = path.join(ROOT, 'public');
@@ -61,6 +62,50 @@ test('theme.js defines the three modes', () => {
   }
 });
 
+test('the ground is painted before any stylesheet, and the chrome follows the theme', () => {
+  // THE BACKGROUND SHOWN BEFORE THE PAGE LOADS DID NOT MATCH THE PAGE.
+  //
+  // Two halves, both fixed here because both have to be true with NOTHING
+  // loaded yet:
+  //
+  //   * the page ground is a Tailwind utility on <body>, and the compiled
+  //     stylesheet is the LAST resource in this head — so every load painted
+  //     the browser's default white first, which a service-worker-served
+  //     shell makes more visible rather than less. An inline rule on <html>
+  //     states the same two colours with no stylesheet at all.
+  //   * `theme-color` was pinned to the dark ground for everybody, so a
+  //     light-mode viewer got a black band above a light page in the
+  //     address bar, the iOS status strip, the rubber-band area and a
+  //     standalone install's window ground.
+  //
+  // `color-scheme` joined these two rules afterwards, for the third thing
+  // that has to be true with nothing loaded: the USER AGENT's own palette —
+  // the canvas under the document, the scrollbars, the default form
+  // controls. Same rules, same two selectors, because it answers the same
+  // question. tests/native-appearance.test.js pins that half, including
+  // that it is keyed off `.dark` rather than delegated to the OS; these two
+  // assertions still own the ground colours themselves.
+  const src = themeSrc();
+  assert.match(src, /html \{ background-color: #f4f2e4; color-scheme: light; \}/,
+    'the light ground is painted with no stylesheet loaded');
+  assert.match(src, /html\.dark \{ background-color: #0b0d1b; color-scheme: dark; \}/,
+    'and the dark one, keyed off the class apply() has just written');
+  // Written from the RESOLVED theme, not left to a prefers-color-scheme meta
+  // pair: the shell's own Light/Dark override is a class on <html> that no
+  // media query can see, so a viewer who picks Light on a dark OS has to get
+  // the light chrome.
+  assert.match(src, /const GROUND = \{ light: '#f4f2e4', dark: '#0b0d1b' \};/);
+  const apply = src.slice(src.indexOf('function apply()'), src.indexOf('function set('));
+  assert.match(apply, /meta\[name="theme-color"\]/,
+    'apply() owns the chrome colour');
+  assert.match(apply, /wantDark \? GROUND\.dark : GROUND\.light/,
+    'and picks it from the same resolved boolean that writes the class');
+  // The meta has to be PARSED by the time apply() runs — it is head-blocking
+  // and runs during parse, so a tag further down the head would not be found.
+  assert.ok(src.indexOf('name="theme-color"') < src.indexOf('window.Theme'),
+    'the theme-color meta must precede the module that rewrites it');
+});
+
 test('theme.js registers prefers-color-scheme and storage listeners', () => {
   const src = themeSrc();
   assert.match(
@@ -103,39 +148,59 @@ for (const page of THEMED_PAGES) {
   });
 }
 
-// ── Drawer control markup (index.html) ───────────────────────────────────
+// ── Control markup (index.html) ──────────────────────────────────────────
 
-test('index.html has the theme drawer row inside the header menu panel', () => {
-  const src = read('index.html');
-  const panelIdx = src.indexOf('id="header-menu-panel"');
-  const rowIdx = src.indexOf('id="drawer-row-theme"');
-  assert.ok(panelIdx !== -1, 'header-menu-panel missing');
-  assert.ok(rowIdx !== -1, 'drawer-row-theme missing');
-  assert.ok(rowIdx > panelIdx, 'drawer-row-theme must live inside the header menu panel');
+// The theme selector has moved twice. It was the LAST row of the hamburger
+// drawer; the header slim-down promoted it to the FIRST thing in that drawer's
+// body; THE UI OVERHAUL took it out of the drawer entirely and made it the
+// first SETTING. A live control that changes how the whole product looks is
+// not navigation, and the drawer is navigation plus notifications now.
+//
+// Position is the whole point of each of those moves, so it stays pinned —
+// only to a different container.
+test('the theme control lives in its own Settings section', () => {
+  const src = shellMarkup();
+  const pane = src.indexOf('data-settings-section="theme"');
+  const track = src.indexOf('id="drawer-theme-track"');
+  assert.ok(pane !== -1, 'the theme settings pane is missing');
+  assert.ok(track !== -1, 'drawer-theme-track missing');
+  assert.ok(track > pane, 'the track lives inside the theme settings pane');
+  // …and there is only ONE of it. Two copies would be two owners of one
+  // `--theme-caret-index`, and of the highlight the caret follows. It used to
+  // be worth checking the hamburger drawer specifically; the drawer is
+  // retired, so the honest check is that the track appears once anywhere.
+  assert.equal(src.indexOf('id="drawer-theme-track"', track + 1), -1,
+    'exactly one theme track in the document');
+  assert.equal(src.indexOf('id="drawer-row-theme"'), -1,
+    'the drawer row that wrapped it is retired');
 });
 
-// The theme selector was the LAST row in the drawer until the header
-// slim-down promoted it to the first thing in the menu body — above the
-// build/kudos status pane and above every navigation row. Position is
-// the whole point of that change, so pin it here: a later edit that
-// appends a row above it (or drops the control back to the bottom)
-// fails this rather than silently regressing the layout.
-test('the theme control is the FIRST thing in the drawer body', () => {
-  const src = read('index.html');
-  const theme = src.indexOf('id="drawer-row-theme"');
-  const scroller = src.indexOf('id="header-menu-rows"');
-  const status = src.indexOf('id="drawer-status-pane"');
-  const node = src.indexOf('id="drawer-row-node"');
-  assert.ok(scroller !== -1, 'header-menu-rows scroller missing');
-  assert.ok(status !== -1, 'drawer-status-pane missing');
-  assert.ok(node !== -1, 'drawer-row-node missing');
-  assert.ok(theme > scroller, 'the theme control lives inside the drawer scroller');
-  assert.ok(theme < status, 'the theme control comes before the status pane');
-  assert.ok(theme < node, 'the theme control comes before every navigation row');
+// The ids did NOT change with the move: app.css keys the segmented track and
+// its sliding caret off exactly these, and renaming them would have been a
+// restyle of the one control this change is not restyling.
+test('the moved control keeps the ids app.css draws it with', () => {
+  const src = shellMarkup();
+  for (const id of ['drawer-theme-track', 'drawer-theme-caret-track', 'drawer-theme-caret']) {
+    assert.ok(src.includes(`id="${id}"`), `#${id} survived the move`);
+  }
+});
+
+// It is the FIRST setting, and therefore the section a bare #settings opens.
+test('theme leads the settings registry and is the default section', () => {
+  const settings = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
+    'utf8',
+  );
+  const list = settings.slice(settings.indexOf('SECTIONS: ['));
+  const first = list.slice(0, list.indexOf(']'));
+  assert.match(first.split('\n').find((l) => l.includes("key: '")) || '', /key: 'theme'/,
+    'theme is the first entry in SECTIONS');
+  assert.match(settings, /DEFAULT_SECTION: 'theme'/,
+    'a bare #settings resolves to it');
 });
 
 test('index.html exposes the three data-theme-mode buttons', () => {
-  const src = read('index.html');
+  const src = shellMarkup();
   for (const mode of ['light', 'dark', 'system']) {
     assert.ok(
       src.includes(`data-theme-mode="${mode}"`),
@@ -145,7 +210,7 @@ test('index.html exposes the three data-theme-mode buttons', () => {
 });
 
 test('the three modes render as a labelled radiogroup of segments', () => {
-  const src = read('index.html');
+  const src = shellMarkup();
   const track = src.match(/<div id="drawer-theme-track"[^>]*>/);
   assert.ok(track, 'drawer-theme-track missing');
   assert.match(track[0], /role="radiogroup"/, 'the segmented track is a radiogroup');
@@ -161,7 +226,7 @@ test('the three modes render as a labelled radiogroup of segments', () => {
 });
 
 test('the selection caret ships exactly once, inside the track', () => {
-  const src = read('index.html');
+  const src = shellMarkup();
   const carets = src.match(/id="drawer-theme-caret"/g) || [];
   assert.equal(carets.length, 1, 'exactly one #drawer-theme-caret');
   const track = src.indexOf('id="drawer-theme-track"');
@@ -178,7 +243,7 @@ test('the selection caret ships exactly once, inside the track', () => {
 // the control at all. Same three contracts, read from the component.
 
 const themeControlSrc = () => fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'header', 'header-menu.tsx'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'sections', 'theme.tsx'),
   'utf8',
 );
 
@@ -199,7 +264,7 @@ test('the control drives the caret through the CSS custom property', () => {
   const src = themeControlSrc();
   const at = src.indexOf('function ThemeControl()');
   assert.ok(at !== -1, 'ThemeControl located');
-  const body = src.slice(at, src.indexOf('export function HeaderMenu()', at));
+  const body = src.slice(at, src.indexOf('export function ThemeSection()', at));
   assert.match(body, /setProperty\(\s*\n?\s*'--theme-caret-index'/,
     'the caret is positioned by writing --theme-caret-index on the track');
   assert.match(body, /theme-seg-active/,
@@ -244,7 +309,7 @@ test('the theme button click handler does NOT close the drawer', () => {
   // The segments are <button>s, not anchors, so the panel's delegated
   // a[href] close handler can never see them either.
   const at = src.indexOf('function ThemeControl()');
-  const body = src.slice(at, src.indexOf('export function HeaderMenu()', at));
+  const body = src.slice(at, src.indexOf('export function ThemeSection()', at));
   assert.ok(!/<a\b/.test(body),
     'an anchor here would be closed by the drawer\'s delegated link handler');
 });

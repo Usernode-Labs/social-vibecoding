@@ -19,6 +19,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const llm = require('../src/services/llm.js');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
@@ -219,19 +220,24 @@ test('sessions route persists each estimate and backfills the actual outcome', (
 
 test('dev-chat renders a live count-down for the remaining-time guess (#359)', () => {
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
-  // The numeric guess is now an absolute target end-timestamp the shared 1s
-  // ticker counts down from, rendered as a data-countdown-to child span.
+  // #1078: the row is a React island. The MODEL still carries the absolute
+  // target — that is the half this guard is really about, since a guess that
+  // is not anchored counts down from nothing — and the row re-derives its own
+  // text from the 1s clock instead of being written to by a ticker pass.
+  const transcript = read('frontend/src/features/dev-chat/transcript.tsx');
   assert.match(devChat, /_countdownTo\s*=\s*DevChat\._countdownTarget/,
     'apply/hydrate/pending must anchor _countdownTo from remainingSeconds');
-  assert.match(devChat, /data-countdown-to="\$\{countdownTo\}"/,
+  assert.match(devChat, /countdownTo: msg\._countdownTo != null \? msg\._countdownTo : null/,
+    'the row model must carry the anchor to the row that owns the guess');
+  assert.match(transcript, /data-countdown-to=\{p\.countdownTo\}/,
     'the estimate span must render a data-countdown-to child span');
-  assert.match(devChat, /class="dc-cc-countdown"/,
+  assert.match(transcript, /className="dc-cc-countdown"/,
     'the count-down lives in its own .dc-cc-countdown span');
-  // Both ticker hooks must know about the count-down span so the single
-  // shared DevChat._elapsedTimer drives it.
+  // The heartbeat still gates itself on the anchor being in the DOM, which is
+  // why the attribute survived the conversion at all.
   assert.match(devChat, /\[data-countdown-to\]/,
     '_syncElapsedTicker / _tickElapsed must reference data-countdown-to');
-  assert.match(devChat, /formatCountdown/,
+  assert.match(transcript, /formatCountdown/,
     'the count-down text must come from formatCountdown');
   // #891 added a third `opts` argument (estimatedAt + cleared); the
   // remainingSeconds pass-through this guard exists for is unchanged.
@@ -271,7 +277,7 @@ test('cc_estimate SSE payload carries remainingSeconds', () => {
 });
 
 test('settings modal has the experimental toggle wired to the endpoint', () => {
-  const html = read('public/index.html');
+  const html = shellMarkup();
   assert.match(html, /id="ai-progress-estimate"/, 'settings modal must have the checkbox');
   const settings = read('frontend/src/features/settings/settings.js');
   assert.match(settings, /\/api\/me\/ai-progress-estimate/, 'settings.js must POST the toggle');
@@ -312,17 +318,28 @@ function narrowMediaBlock(css) {
   throw new Error('unbalanced braces in 640px media query');
 }
 
-test('mobile (#286): the 640px block no longer hides .dc-cc-estimate', () => {
-  const block = narrowMediaBlock(read('public/css/app.css'));
-  // The activity snippet stays hidden on narrow screens...
-  assert.match(block, /\.dc-cc-current\s*\{\s*display:\s*none/,
-    '.dc-cc-current must remain hidden on narrow viewports');
-  // ...but the AI progress estimate must NOT be display:none anymore.
-  assert.doesNotMatch(block, /\.dc-cc-estimate\s*\{\s*display:\s*none/,
-    '.dc-cc-estimate must not be hidden in the 640px block');
-  // And it should wrap onto its own full-width row instead.
-  assert.match(block, /\.dc-cc-estimate\s*\{[^}]*flex-basis:\s*100%/,
-    '.dc-cc-estimate must span its own full-width row on mobile');
+test('mobile (#286): NOTHING in the run summary is hidden by width any more', () => {
+  // #286 relaxed this block so the estimate survived a phone; the block
+  // itself is gone now, and that is the stronger version of the same rule.
+  //
+  // It existed because four muted spans could not share one inline line at
+  // 344px: `.dc-cc-current` (the answer to "what is it doing") and
+  // `.dc-cc-cohort` were `display: none`d outright, and the estimate was
+  // re-ordered onto a row of its own with `flex-basis: 100%`. All three were
+  // workarounds for the inline row. The facts are chips that wrap and the
+  // two sentences have their own row, so the narrow case costs a line of
+  // height instead of a fact — measured at 344px, where the chips take two
+  // rows and every value is still on screen.
+  const css = read('public/css/app.css');
+  assert.doesNotMatch(css, /\.dc-cc-current\s*\{\s*display:\s*none/,
+    'the activity snippet must never be hidden by viewport width again');
+  assert.doesNotMatch(css, /\.dc-cc-cohort\s*\{\s*display:\s*none/,
+    'nor the cohort hint');
+  assert.doesNotMatch(css, /\.dc-cc-estimate\s*\{[^}]*flex-basis:\s*100%/,
+    'and the estimate needs no re-ordering — it is on its own row at all widths');
+  // The chip row is what replaced all of it.
+  assert.match(css, /\.dc-cc-chips\s*\{[^}]*flex-wrap:\s*wrap/,
+    'the facts wrap rather than truncate or vanish');
 });
 
 test('mobile (#286): dev-chat hydrates _estimate from persisted metadata', () => {
@@ -412,8 +429,14 @@ test('#906: /status reports the cohort fixtures as busy in staging only', () => 
     'the fixture-busy lookup must be staging-gated');
   assert.match(sessions, /branch_name LIKE 'staging-fixture\/cc-cohort-%'/,
     'it must match only the seeded cohort fixture branches');
-  assert.match(sessions, /if \(fixtures && fixtures\.has\(sessionId\)\) busy = true;/,
+  // #1378 turned the lookup into a Map so a fixture can also declare
+  // whether it is stoppable — the seeded cohort still forces busy.
+  assert.match(sessions, /const fixture = fixtures && fixtures\.get\(sessionId\);/,
+    'a seeded fixture session must be looked up by id');
+  assert.match(sessions, /if \(fixture\) \{\s*\n\s*busy = true;/,
     'a seeded fixture session must report busy so the row renders live');
+  assert.match(sessions, /fixtureStoppable = fixture\.stoppable;/,
+    'and must carry its declared stoppability into the /status payload');
   // It must never be able to mask a genuinely idle non-fixture session.
   assert.match(sessions, /let busy = isSessionBusy\(sessionId\);/,
     'the shared worker/operation registry must still be the primary source');
@@ -552,9 +575,19 @@ test('#323: _applyEstimate stashes a pending estimate instead of dropping it', (
     '_applyEstimate must stash the estimate when no active line exists');
   // renderMessages drains the pending estimate onto the active line.
   assert.match(devChat, /DevChat\._pendingEstimate\)/, 'renderMessages must drain a pending estimate');
-  // Patch is scoped to THIS run's DOM node by persist-id, not the last span.
-  assert.match(devChat, /data-persist-id="\$\{pid\}"\]\s*\.dc-cc-estimate/,
-    'in-place patch must target the active run by persist-id');
+  // #1078: the guess reaches THIS run's row and no other. That used to be an
+  // in-place write scoped by persist-id — deliberately not "the last estimate
+  // span on the page", the fallback that painted a guess onto an
+  // already-finished card. It is structural now: the guess is set on the
+  // message object, and a publish can only paint the row that holds it.
+  const at = devChat.indexOf('_applyEstimate(text, remainingSeconds, opts)');
+  assert.ok(at > 0, '_applyEstimate must exist');
+  const body = devChat.slice(at, devChat.indexOf('\n  },', at));
+  assert.match(body, /target\._estimate = /, 'the guess is set on the row that owns it');
+  assert.match(body, /target\._countdownTo = nextTarget;/, 'and so is its anchor');
+  assert.match(body, /DevChat\._publishTranscript\(\);/, 'and the row is republished');
+  assert.doesNotMatch(devChat, /\.dc-cc-estimate['"]\)/,
+    'no path may resolve an estimate span by selector any more');
 });
 
 // ── 5. Terminal-state teardown (#891) ───────────────────────────────────

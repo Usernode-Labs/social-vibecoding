@@ -192,3 +192,91 @@ test('_renderTopicSubView falls back to the forum when the proposal is truly mis
   assert.equal(mounted, 0, 'thread never mounted');
   assert.deepEqual(switchTabCalls, [['dev']], 'fell back to the dev forum');
 });
+
+// ── The cache goes stale, and nothing refreshed it ─────────────────────
+//
+// _topicProposal is written once when the topic opens and cleared only by
+// openTopic. _loadDevData refreshes the LISTS, so a topic resolving from
+// _proposals or _merged repaints live on every WS event; one resolving from
+// this cache repainted a snapshot frozen at page-open, forever. The checks
+// badge, the vote tally and the merge state all sat still until reload.
+//
+// _refreshTopicOnDemandRow closes it, on the same trigger that refreshes the
+// lists — and only when the lists genuinely do not hold the row.
+
+test('_refreshTopicOnDemandRow re-fetches the row the lists cannot supply', async () => {
+  let fetches = 0;
+  const { AppView } = makeAppView({
+    fetchImpl: async (url) => {
+      fetches += 1;
+      assert.match(url, /\/api\/apps\/demo\/proposals\/9100024/);
+      return { ok: true, json: async () => ({ proposal: mergedRow({ check_state: 'pending' }) }) };
+    },
+  });
+  AppView._proposals = [];
+  AppView._merged = [];
+  AppView._topicProposal = mergedRow({ check_state: 'passing' });
+  AppView._devTopic = { kind: 'proposal', id: 9100024 };
+
+  await AppView._refreshTopicOnDemandRow();
+  assert.equal(fetches, 1, 'the stale row is re-fetched');
+  assert.equal(AppView._findTopicItem().check_state, 'pending',
+    'and the topic now resolves to the LIVE state, not the opening snapshot');
+});
+
+test('it costs nothing when a list already holds the row', async () => {
+  let fetches = 0;
+  const { AppView } = makeAppView({ fetchImpl: async () => { fetches += 1; return { ok: false }; } });
+  AppView._devTopic = { kind: 'proposal', id: 9100024 };
+  AppView._topicProposal = mergedRow();
+
+  // _proposals wins in _findTopicItem, so a refetch would be a wasted
+  // request for the row that is about to be ignored anyway.
+  AppView._proposals = [mergedRow()];
+  AppView._merged = [];
+  await AppView._refreshTopicOnDemandRow();
+  assert.equal(fetches, 0, 'no fetch while the open list holds it');
+
+  AppView._proposals = [];
+  AppView._merged = [mergedRow()];
+  await AppView._refreshTopicOnDemandRow();
+  assert.equal(fetches, 0, 'nor while the merged page holds it');
+});
+
+test('it does not fetch for kinds that have no on-demand cache', async () => {
+  let fetches = 0;
+  const { AppView } = makeAppView({ fetchImpl: async () => { fetches += 1; return { ok: false }; } });
+  AppView._proposals = [];
+  AppView._merged = [];
+  AppView._topicProposal = mergedRow();
+
+  for (const kind of ['issue', 'session']) {
+    AppView._devTopic = { kind, id: 9100024 };
+    await AppView._refreshTopicOnDemandRow();
+  }
+  assert.equal(fetches, 0, 'issues and sessions resolve from lists _loadDevData owns');
+});
+
+test('a mismatched cache is not refreshed on its own', async () => {
+  let fetches = 0;
+  const { AppView } = makeAppView({ fetchImpl: async () => { fetches += 1; return { ok: false }; } });
+  AppView._proposals = [];
+  AppView._merged = [];
+  AppView._topicProposal = mergedRow({ id: 777 });
+  AppView._devTopic = { kind: 'proposal', id: 9100024 };
+  await AppView._refreshTopicOnDemandRow();
+  assert.equal(fetches, 0,
+    'the cache belongs to another topic — _findTopicItem would reject it anyway');
+});
+
+test('the refresh is wired between the list load and the repaint', () => {
+  // The order is the whole fix: refresh the lists, THEN top up the row they
+  // could not supply, THEN paint. Painting first would show the stale row
+  // for one frame and painting without the top-up is the bug itself.
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
+  const branch = src.slice(src.indexOf("if (App.currentSubTab === 'topic')"));
+  const head = branch.slice(0, branch.indexOf('return;'));
+  assert.match(head, /_loadDevData\(\)[\s\S]*_refreshTopicOnDemandRow\(\)[\s\S]*_renderTopicHead\(\)/,
+    'load -> top up -> paint, in that order');
+});

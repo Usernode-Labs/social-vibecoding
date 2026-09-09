@@ -25,12 +25,36 @@ const dapp = JSON.parse(read('dapp.json'));
 
 test('Messages is a hidden React-owned top-level screen with global navigation', () => {
   assert.match(html, /<main id="messages-screen" class="hidden /);
-  assert.match(html, /id="drawer-row-messages" href="#messages"/);
-  assert.match(html, /id="drawer-messages-badge" class="hidden /);
+  assert.match(html, /id="switcher-row-messages" href="#messages"/);
+  // The row is a DESTINATION and carries no count. #1431 put an unread number
+  // on a header chat bubble and #1443 moved it onto this row; both made one
+  // incoming message light two badges in two colours, and the one it lit here
+  // sat two taps down inside the menu you open to choose where to go. Message
+  // notifications are counted on the bell and listed in the notifications
+  // sheet with the rest of them, so nothing paints #drawer-messages-badge and
+  // the element is gone rather than shipped hidden.
+  assert.doesNotMatch(html, /drawer-messages-badge/,
+    'the Messages row carries no unread tag');
+  // The nav order check. The menu reads platform-then-you: Home, Discover,
+  // Messages, then Profile, Settings, Admin. `~` rather than `+` because the
+  // section labels sit between the groups.
   assert.ok(dapp.tests.some((entry) => entry.expectSelector
-    === '#drawer-row-profile + #drawer-row-messages + #drawer-row-leaderboard + #drawer-row-settings + #drawer-row-admin'));
+    === '#switcher-nav #switcher-row-home ~ #switcher-row-discover ~ #switcher-row-messages'
+      + ' ~ #switcher-row-profile ~ #switcher-row-settings ~ #switcher-row-admin'),
+  'a declared check pins the menu order');
   assert.match(screen, /useVisibilityHiddenClass\(screenRef, 'messages-screen', false\)/);
-  assert.match(app, /REACT_SCREEN_IDS:[\s\S]*?'messages-screen'/);
+  // Membership INSIDE the array literal. The previous form,
+  // /REACT_SCREEN_IDS:[\s\S]*?'messages-screen'/, matched the id anywhere
+  // later in the file — SCREEN_IDS, getElementById('messages-screen'), the
+  // route table — and so passed for the whole time the id was missing from
+  // this list (#1431 took it out when Messages became a sheet; #1444 made
+  // Messages a screen again and put it back everywhere except here). Two
+  // owners of one `hidden` class was the result, and six declared checks
+  // failed by the timing of whichever visibility publish came last.
+  const reactOwned = /REACT_SCREEN_IDS:\s*\[([\s\S]*?)\]/.exec(app);
+  assert.ok(reactOwned, 'REACT_SCREEN_IDS is an array literal');
+  assert.match(reactOwned[1], /'messages-screen'/,
+    'the island owns #messages-screen\'s hidden class, so app.js must publish, not toggle');
   assert.match(app, /parts\[0\] === 'messages'[\s\S]{0,600}navigateToMessages/);
 });
 
@@ -49,11 +73,11 @@ test('deep links validate ids and route list/thread without a client events sock
     'the global event socket remains server-to-client only');
 });
 
-test('the global unread badge loads only after auth and reconciles on reconnect', () => {
+test('the conversation list loads only after auth and reconciles on reconnect', () => {
   const initialize = store.slice(store.indexOf('export function initializeMessagesStore()'),
     store.indexOf('\n}', store.indexOf('export function initializeMessagesStore()')) + 2);
   assert.match(initialize, /if \(window\.App\?\.user\) void loadConversations\(\)/,
-    'an already-authenticated shell seeds the always-mounted badge store');
+    'an already-authenticated shell seeds the always-mounted conversation store');
   assert.match(initialize, /else document\.addEventListener\('sv:authed', onAuthed, \{ once: true \}\)/,
     'an anonymous shell waits instead of issuing a session-gated request');
   assert.match(initialize, /document\.removeEventListener\('sv:authed', onAuthed\)/,
@@ -62,7 +86,7 @@ test('the global unread badge loads only after auth and reconciles on reconnect'
   const resync = app.slice(resyncStart, app.indexOf('// #1038:', resyncStart));
   assert.match(resync, /window\.UsernodeReact\?\.messages\?\.refresh\?\.\(\)/);
   assert.doesNotMatch(resync, /_inMessages[\s\S]*messages\?\.refresh/,
-    'reconnect refreshes the drawer badge even when the Messages screen is closed');
+    'reconnect refreshes the conversation list even when the Messages screen is closed');
 });
 
 test('an invitation resolves metadata before deciding whether history may be fetched', () => {

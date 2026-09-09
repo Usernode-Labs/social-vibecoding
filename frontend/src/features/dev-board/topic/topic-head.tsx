@@ -1,0 +1,545 @@
+/**
+ * `#gc-thread-head` — the opened topic's card and everything under it.
+ *
+ * `_renderTopicHead` used to build this whole region as one `innerHTML`
+ * string and then bind four handlers into it per paint. It publishes a
+ * `{ card, body }` view model now (../card/model.ts and ./model.ts) and
+ * mounts this once per paint; the handlers are closures.
+ *
+ * ── What stays another owner's ────────────────────────────────────────
+ *
+ * Three sinks, each rendered by React with `dangerouslySetInnerHTML` from a
+ * string the MODEL carries, because the markup is another renderer's and is
+ * already sanitised where it is built:
+ *
+ * - an issue's body and a proposal's summary — `DevChat.renderMarkdown`,
+ *   the same pipeline the dev chat and the group chat's transcript use.
+ * - the before/after tiles — `AppView.visualsTilesHtml`, which four other
+ *   surfaces still call (the admin gallery, the dev chat's "Changes ready"
+ *   card, and its own tests), so it stays a string builder.
+ *
+ * And two genuine controller hosts, rendered once, empty, with a constant
+ * className: `#dev-issue-comments` (features/dev-board/issue-comments.tsx
+ * mounts into it) and `[data-transcript-body]`, which
+ * public/js/session-transcript.js fills on expand.
+ */
+
+import { Fragment } from 'react';
+import type { MouseEvent, ReactNode } from 'react';
+
+import { useStoreState } from '../../../lib/use-store-state';
+import { DevCard, ActionButton } from '../card/dev-card';
+import { topicHeadStore } from './topic-store';
+import type {
+  ChecksVerdict,
+  CheckRow,
+  NoteBox,
+  NoteTone,
+  ProposalDetails,
+  RosterView,
+  TextRun,
+  TopicBody,
+  TranscriptSection,
+  LedgerProgress,
+  LedgerBuildStep,
+} from './model';
+
+function call(fn: string, ...args: unknown[]): void {
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  if (av && typeof av[fn] === 'function') av[fn](...args);
+}
+
+/**
+ * The four tints, as complete literals — Tailwind's extractor is a regex
+ * over source text, so a class assembled from a hue would compile to
+ * nothing.
+ */
+const TONE: Record<NoteTone, string> = {
+  neutral: 'border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 text-zinc-600 dark:text-zinc-400',
+  ok: 'border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-500',
+  warn: 'border-amber-500/30 bg-amber-500/5 text-amber-800 dark:text-amber-500',
+  error: 'border-red-500/30 bg-red-500/5 text-red-700 dark:text-red-400',
+};
+
+/** A prose run, with its `font-medium` spans. See ./model.ts's `TextRun`. */
+function Runs({ parts }: { parts: TextRun[] }): ReactNode {
+  return (
+    <>
+      {parts.map((r, i) => (typeof r === 'string'
+        ? <Fragment key={i}>{r}</Fragment>
+        : <span key={i} className="font-medium">{r.b}</span>))}
+    </>
+  );
+}
+
+function Spinner(): ReactNode {
+  return <span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>;
+}
+
+/** The shared bordered note — see ./model.ts's header for what it replaced. */
+export function NoteBoxView({ box }: { box: NoteBox }): ReactNode {
+  return (
+    <div className={`mt-2 rounded border px-2 py-1.5 ${TONE[box.tone]}`} data-note={box.key}>
+      <div className="font-medium">{box.spinner ? <Spinner /> : null}{box.heading}</div>
+      {box.rows.map((r, i) => (r.t === 'list'
+        ? (
+          <ul key={i} className={r.cls || 'mt-1 ml-4 list-disc space-y-0.5'}>
+            {r.items.map((it, j) => (
+              <li key={j} className={(it.kind || it.mono) ? 'font-mono text-[0.7rem] break-all' : undefined}>
+                {it.kind ? <span className="opacity-70">{`[${it.kind}] `}</span> : null}
+                {it.code ? <code className="font-mono">{it.code}</code> : null}
+                {it.text ? (it.code ? `: ${it.text}` : it.text) : null}
+                {it.source ? <span className="opacity-60">{` (${it.source})`}</span> : null}
+              </li>
+            ))}
+          </ul>
+        )
+        : (
+          <div key={i} className={r.weight === 'foot' ? 'mt-1 opacity-80' : 'mt-0.5 opacity-90'}>
+            <Runs parts={r.parts} />
+          </div>
+        )))}
+      {box.action ? <div className="mt-1"><ActionButton a={box.action} /></div> : null}
+    </div>
+  );
+}
+
+function CheckRowView({ r }: { r: CheckRow }): ReactNode {
+  return (
+    <>
+      <li className={r.advisory ? 'opacity-70' : undefined}>
+        <span className={`${r.pass ? 'text-emerald-700 dark:text-emerald-400' : (r.advisory ? 'text-zinc-500 dark:text-zinc-400' : 'text-red-700 dark:text-red-400')} font-medium`}>
+          {r.pass ? '✓' : '✗'}
+        </span>
+        {` ${r.name} `}
+        {r.path ? <span className="opacity-60 font-mono">{r.path}</span> : null}
+        {r.advisory ? <span className="rounded bg-zinc-500/10 px-1 text-[0.65rem] opacity-70">advisory</span> : null}
+        {r.flaky ? (
+          <span className="dev-check-flaky" title={`Failed about ${r.flaky}% of its recorded runs`}>
+            {`flaky · ${r.flaky}%`}
+          </span>
+        ) : null}
+      </li>
+      {/* A row that passed only after a retry is GREEN and still carries its
+          reason: the failure happened, it just did not reproduce, and the
+          person who owns that check is the one who needs to know. */}
+      {!r.pass || r.keepReason ? (
+        <>
+          <div className="ml-4 opacity-90">{r.reason || 'failed'}</div>
+          {r.errors && r.errors.length ? (
+            <ul className="ml-6 list-disc space-y-0.5">
+              {r.errors.map((e, i) => (
+                <li key={i} className="font-mono text-[0.7rem] break-all opacity-90">
+                  <span className="opacity-70">{`[${e.kind}] `}</span>
+                  {e.message}
+                  {e.source ? <span className="opacity-60">{` (${e.source})`}</span> : null}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </>
+      ) : null}
+    </>
+  );
+}
+
+/** The checks verdict: its rows nest, and its passes fold away. */
+export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
+  const passList = v.passes.length ? (
+    <ul className="mt-1 ml-1 space-y-0.5">
+      {v.passes.map((r) => <CheckRowView key={r.key} r={r} />)}
+    </ul>
+  ) : null;
+  return (
+    <div className={`mt-2 rounded border px-2 py-1.5 ${v.failing ? TONE.warn : TONE.ok}`}>
+      <div className="font-medium">{v.heading}</div>
+      <div className="mt-0.5 opacity-80">{v.summary}</div>
+      {v.failures.length ? (
+        <ul className="mt-1 ml-1 space-y-0.5">
+          {v.failures.map((r) => <CheckRowView key={r.key} r={r} />)}
+        </ul>
+      ) : null}
+      {v.foldPasses ? (
+        <details className="mt-1">
+          <summary className="cursor-pointer opacity-80">{`Show ${v.passes.length} passing checks`}</summary>
+          {passList}
+        </details>
+      ) : passList}
+      {v.advisoryNote ? <div className="mt-1 opacity-80">{v.advisoryNote}</div> : null}
+      {v.checkedNote ? <div className="mt-1 opacity-80">{v.checkedNote}</div> : null}
+      {v.baseNote ? <div className="mt-1 opacity-80" data-checks-base="superseded">{v.baseNote}</div> : null}
+      {v.fixNote ? <div className="mt-1 opacity-80">{v.fixNote}</div> : null}
+      {v.action ? <ActionButton a={v.action} /> : null}
+    </div>
+  );
+}
+
+/**
+ * The checks row's bar while a run is in flight. Three segments over one
+ * track — passed, failed, remaining — sized against the declared count when
+ * it is known and against `ran` when it is not. The numbers are also in the
+ * row's `sub`, so the bar carries no information a screen reader cannot get
+ * from the text; it is marked decorative for that reason.
+ */
+function Bar({ ran, passed, failed, expected, attr, value, indeterminate }: {
+  ran: number; passed: number; failed: number; expected: number | null;
+  attr: string; value: string; indeterminate?: boolean;
+}): ReactNode {
+  const total = expected && expected > 0 ? expected : Math.max(ran, 1);
+  const pct = (n: number) => `${Math.max(0, Math.min(100, (n / total) * 100))}%`;
+  const cls = `dev-ledger-progress${indeterminate ? ' dev-ledger-progress-busy' : ''}`;
+  return (
+    <span className={cls} aria-hidden="true" {...{ [attr]: value }}>
+      <span className="dev-ledger-progress-pass" style={{ width: pct(passed) }} />
+      <span className="dev-ledger-progress-fail" style={{ width: pct(failed) }} />
+    </span>
+  );
+}
+
+function BuildSteps({ steps }: { steps: LedgerBuildStep[] }): ReactNode {
+  const now = steps.find((s) => s.state === 'now');
+  const fmt = (ms: number) => {
+    const s = Math.max(0, Math.round(ms / 1000));
+    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+  };
+  const withPhases = steps.find((s) => s.phases && s.phases.length);
+  const nowPhase = withPhases ? withPhases.phases!.find((p) => p.state === 'now') : null;
+  const doneCount = steps.filter((s) => s.state === 'done').length;
+  return (
+    <span className="dev-ledger-progress-build" data-build-step={now ? now.key : 'done'}>
+      {/*
+          The pipeline as a bar: one segment per step, EQUAL width. It is a
+          position indicator, not a time prediction — the four steps are
+          nothing like equal (the image build is minutes, the others
+          seconds), so sizing the segments by duration would show a bar that
+          sat at 4% and then jumped. Where the time is going is the job of
+          the labels' own numbers and, inside the image step, of its bar.
+      */}
+      <span
+        className="dev-ledger-build-bar"
+        aria-hidden="true"
+        data-build-progress={`${doneCount}/${steps.length}`}
+      >
+        {steps.map((s) => (
+          <span key={s.key} className={`dev-ledger-build-seg is-${s.state}`} data-step={s.key} />
+        ))}
+      </span>
+      {/*
+          The separator is a real text node, not a flex gap. Gap is a
+          painting instruction: it separates these labels on screen and
+          nowhere else, so a copy, a screen reader, or a render that got
+          the markup before the stylesheet reads them as one word —
+          "fetchbranchbuildimageclonedatabase". The middle dot is the
+          same separator the checks sub line already uses.
+      */}
+      {steps.map((s, i) => (
+        <Fragment key={s.key}>
+          {i > 0 ? <span className="dev-ledger-build-sep"> · </span> : null}
+          <span className={`dev-ledger-build-step is-${s.state}`} data-step={s.key}>
+            {s.label}
+            {s.ms != null ? <small>{fmt(s.ms)}</small> : null}
+          </span>
+        </Fragment>
+      ))}
+      {withPhases ? (
+        <span className="dev-ledger-build-phases" data-image-phase={nowPhase ? nowPhase.name : 'done'}>
+          {withPhases.phases!.map((p, i) => (
+            <Fragment key={p.name}>
+              {i > 0 ? <span className="dev-ledger-build-sep"> · </span> : null}
+              <span className={`dev-ledger-build-phase is-${p.state}`} data-phase={p.name}>
+                {p.name}
+                {p.ms != null ? <small>{fmt(p.ms)}</small> : null}
+              </span>
+            </Fragment>
+          ))}
+          {withPhases.detail ? <span className="dev-ledger-build-detail">{withPhases.detail}</span> : null}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function Progress({ p }: { p: LedgerProgress }): ReactNode {
+  const hasChecks = p.ran > 0 || (p.expected != null && p.expected > 0);
+  const u = p.unit || null;
+  return (
+    <>
+      {p.build && p.build.length ? <BuildSteps steps={p.build} /> : null}
+      {hasChecks ? (
+        <Bar ran={p.ran} passed={p.passed} failed={p.failed} expected={p.expected}
+          attr="data-checks-progress" value={`${p.ran}/${p.expected ?? '?'}`} />
+      ) : null}
+      {u ? (
+        <span className="dev-ledger-progress-unit" data-unit-phase={u.phase}>
+          {/* Before the first TAP line there is nothing to size: the track
+              pulses instead of sitting empty. Without a last-run total the
+              bar sizes against `ran`, so it reads as "full so far". */}
+          <Bar ran={u.ran} passed={u.passed} failed={u.failed} expected={u.expected}
+            attr="data-unit-progress" value={`${u.ran}/${u.expected ?? '?'}`}
+            indeterminate={!u.done && u.ran === 0} />
+          <small className="dev-ledger-progress-unit-k">npm test</small>
+        </span>
+      ) : null}
+    </>
+  );
+}
+
+function Roster({ r }: { r: RosterView }): ReactNode {
+  if (r.phase === 'hidden') return null;
+  return (
+    <span className="dev-ledger-roster">
+      {r.phase === 'loading' ? 'Loading votes…' : (
+        <>
+          <span className="dev-ledger-yes">{`${r.yes!.label}:`}</span>
+          {` ${r.yes!.names} `}
+          <span className="dev-ledger-no">{`${r.no!.label}:`}</span>
+          {` ${r.no!.names}`}
+          <span className="dev-ledger-needs">{r.needs}</span>
+        </>
+      )}
+    </span>
+  );
+}
+
+/**
+ * The "Where it stands" sheet: one row per fact, in the bar's tones. Built
+ * by app-view.js (`_topicLedgerRows`) from the same reason, checks, roster
+ * and note builders the four boxes used to draw from — this only draws.
+ */
+export function LedgerView({ d }: { d: ProposalDetails }): ReactNode {
+  if (!d.ledger || !d.ledger.length) return null;
+  return (
+    <section className="dev-topic-sheet dev-topic-ledger" data-topic-sheet="ledger">
+      <h4 className="dev-topic-h">Where it stands</h4>
+      {d.pathSteps && d.pathSteps > 1 ? (
+        <p className="dev-ledger-path-note">
+          {`${NUMBER_WORD[d.pathSteps] || d.pathSteps} steps to a merge. `}
+          {d.pathLeft === d.pathSteps
+            ? 'All of them have to clear.'
+            : `${NUMBER_WORD[d.pathLeft || 0] || d.pathLeft} still to clear.`}
+        </p>
+      ) : null}
+      <div className="dev-ledger">
+        {d.ledger.map((r) => (
+          <div
+            key={r.key}
+            className={`dev-ledger-row dev-ledger-${r.tone}`}
+            data-note={r.key}
+            {...(r.step ? { 'data-step': String(r.step) } : {})}
+            {...(r.stepDone ? { 'data-step-done': '' } : {})}
+            {...(r.attrs || {})}
+          >
+            <span className="dev-ledger-dot" aria-hidden="true">
+              {r.spinner ? <Spinner />
+                : (r.step ? (r.stepDone ? '✓' : String(r.step)) : LEDGER_GLYPH[r.tone])}
+            </span>
+            <span className="dev-ledger-k">
+              {r.label}
+              {r.sub ? <small>{r.sub}</small> : null}
+            </span>
+            <span className="dev-ledger-v">
+              {r.text.length ? <span className="dev-ledger-text"><Runs parts={r.text} /></span> : null}
+              {r.progress ? <Progress p={r.progress} /> : null}
+              {r.roster ? <Roster r={r.roster} /> : null}
+              {/* One ordered sequence: a line, or the list its previous line
+                  introduced. Rendering every list after every line put the
+                  conflicting files three sentences below "Changed on both
+                  sides:" — see LedgerRow.foot in model.ts. */}
+              {(r.foot || []).map((f, i) => (Array.isArray(f) ? (
+                <span key={i} className="dev-ledger-foot"><Runs parts={f} /></span>
+              ) : (
+                <ul key={i} className="dev-ledger-list">
+                  {f.list.map((it, j) => (
+                    <li key={j} className={(it.kind || it.mono) ? 'font-mono' : undefined}>
+                      {it.kind ? <span className="opacity-70">{`[${it.kind}] `}</span> : null}
+                      {it.code ? <code className="font-mono">{it.code}</code> : null}
+                      {it.text ? (it.code ? `: ${it.text}` : it.text) : null}
+                      {it.source ? <span className="opacity-60">{` (${it.source})`}</span> : null}
+                    </li>
+                  ))}
+                </ul>
+              )))}
+              {(r.warnFoot || []).map((f, i) => (
+                <span key={`w${i}`} className="dev-ledger-foot dev-ledger-foot-warn text-amber-800 dark:text-amber-400"><Runs parts={f} /></span>
+              ))}
+              {r.fails && r.fails.length ? (
+                <ul className="dev-ledger-fails">
+                  {r.fails.map((c) => <CheckRowView key={c.key} r={c} />)}
+                </ul>
+              ) : null}
+              {(r.actions && r.actions.length) || (r.passes && r.passes.length) ? (
+                <span className="dev-ledger-ops">
+                  {(r.actions || []).map((a) => <ActionButton key={a.key} a={a} />)}
+                  {r.passes && r.passes.length ? (
+                    <details className="dev-ledger-passes">
+                      <summary className="gc-vote-btn dev-ledger-passes-btn">{`${r.passes.length} passing`}</summary>
+                      <ul className="dev-ledger-fails">
+                        {r.passes.map((c) => <CheckRowView key={c.key} r={c} />)}
+                      </ul>
+                    </details>
+                  ) : null}
+                </span>
+              ) : null}
+            </span>
+          </div>
+        ))}
+      </div>
+      {d.helpHint ? (
+        <div className="dev-ledger-help voting-help-hint">
+          {'Merges are decided by votes over time · '}
+          <button type="button" className="voting-help-link" data-voting-help="">How voting works</button>
+          {d.help ? (
+            <button
+              type="button"
+              className="voting-help-btn"
+              data-voting-help=""
+              aria-label="How voting and merges work"
+              title="How voting and merges work"
+            >?</button>
+          ) : null}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+/** Small counts read better as words in a sentence. */
+const NUMBER_WORD: Record<number, string> = { 1: 'One', 2: 'Two', 3: 'Three', 4: 'Four', 5: 'Five' };
+
+const LEDGER_GLYPH: Record<string, string> = {
+  bad: '✕', warn: '!', ok: '✓', vote: '✓', mute: '·', progress: '◐',
+};
+
+export function ProposalBody({ b }: { b: NonNullable<TopicBody['proposalBody']> }): ReactNode {
+  return (
+    <details
+      className="dev-topic-details"
+      open={b.open}
+      onToggle={(e) => {
+        if (b.id != null) call('_setProposalBodyOpen', b.id, e.currentTarget.open);
+      }}
+    >
+      <summary className="dev-topic-details-summary">
+        Technical details
+      </summary>
+      {/* DevChat.renderMarkdown's output — sanitised where it is built, and
+          the same pipeline the issue body above uses. */}
+      <div
+        className="dev-issue-body dev-topic-details-body"
+        dangerouslySetInnerHTML={{ __html: b.html }}
+      />
+    </details>
+  );
+}
+
+function Transcript({ t }: { t: TranscriptSection }): ReactNode {
+  // "Fork this chat" is painted INSIDE the body, after its fetch, by
+  // `_transcriptActionsHtml` — so it cannot be a child's onClick. The
+  // section delegates, which is what `_renderTopicHead` bound here per
+  // paint before.
+  const onClick = (e: MouseEvent<HTMLDivElement>) => {
+    const btn = (e.target as HTMLElement).closest?.('[data-fork-chat]') as HTMLButtonElement | null;
+    if (!btn || btn.disabled) return;
+    e.preventDefault();
+    call('forkSharedChat', parseInt(btn.dataset.forkChat || '', 10), btn);
+  };
+  return (
+    <div className="st-section" data-transcript-section={t.id} onClick={onClick}>
+      <button
+        type="button"
+        className="st-section-head"
+        data-transcript-toggle={t.id}
+        aria-expanded={t.expanded}
+        onClick={() => call('toggleTranscript', t.id)}
+      >
+        <span className="st-caret" aria-hidden="true"></span>
+        <span data-transcript-label="">{t.label}</span>
+        <span className="st-readonly-tag">read-only</span>
+      </button>
+      {/* The BODY is public/js/session-transcript.js's — a controller host,
+          rendered once with a constant className and never looked inside. */}
+      <div className="st-body" data-transcript-body={t.id} hidden={!t.expanded}></div>
+    </div>
+  );
+}
+
+export function TopicHead(): ReactNode {
+  const { card, body } = useStoreState(topicHeadStore);
+  if (!card || !body) return null;
+  return (
+    <div className="dev-topic">
+      <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
+        <DevCard model={card} />
+      </div>
+      <TopicBodySections body={body} />
+    </div>
+  );
+}
+
+/**
+ * Everything the topic screen draws BELOW its card: the ledger, the About
+ * sheet, the transcript, and the host the GitHub thread mounts into.
+ *
+ * Split out of `TopicHead` so the Workshop can render the same sections
+ * under a row it has unfolded (#1787 round four) — same components, same
+ * order, same view model, from `AppView._workshopCardBody`. It takes the
+ * body as a PROP rather than reading `topicHeadStore`, because that store
+ * holds the one topic the screen is on and an inline expansion is not
+ * navigation: two readers of one store would fight over it.
+ *
+ * The Workshop passes `comments: false`, so the singleton
+ * `#dev-issue-comments` host below is emitted on the topic screen only.
+ */
+export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
+  const a = body.actions;
+  // The About sheet: the words, the before/after tiles — open, they are the
+  // most useful thing on the page for a voter — the PR body as a disclosure
+  // line, and a session's note.
+  //
+  // The words are TWO different things wearing one slot. A proposal's
+  // `summaryHtml` is the user-facing half and gets a label, because the
+  // technical half below it has one too and an unlabelled block above a
+  // labelled one reads as a preamble rather than as the other section. An
+  // issue body is just the issue and keeps rendering bare — labelling it
+  // "what changes for you" would be a claim nobody made. Kept as two
+  // variables rather than one so the label can never end up over an issue.
+  const summaryHtml = body.summaryHtml || null;
+  const issueHtml = summaryHtml ? null : (body.issueBodyHtml || null);
+  const tiles = a && a.visuals ? a.visuals : null;
+  const hasAbout = !!(summaryHtml || issueHtml || tiles || body.proposalBody || body.note);
+  return (
+    <>
+      {body.details ? <LedgerView d={body.details} /> : null}
+      {hasAbout ? (
+        <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about">
+          <h4 className="dev-topic-h">{body.aboutTitle || 'About'}</h4>
+          {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
+          {summaryHtml ? (
+            <>
+              <h5 className="dev-topic-sub">What changes for you</h5>
+              <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: summaryHtml }} />
+            </>
+          ) : null}
+          {issueHtml ? <div className="dev-topic-about-body" dangerouslySetInnerHTML={{ __html: issueHtml }} /> : null}
+          {tiles ? (
+            <div className="dev-topic-visuals" data-visuals-scope="1">
+              {/* AppView.visualsTilesHtml's markup — four other surfaces
+                  still call it, so it stays a string builder. */}
+              <div className="usn-visuals-body" dangerouslySetInnerHTML={{ __html: tiles.tilesHtml }} />
+            </div>
+          ) : null}
+          {body.proposalBody ? <ProposalBody b={body.proposalBody} /> : null}
+          {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
+        </section>
+      ) : null}
+      {body.transcript ? (
+        <section className="dev-topic-sheet dev-topic-transcript" data-topic-sheet="transcript">
+          <Transcript t={body.transcript} />
+        </section>
+      ) : null}
+      {/* The GitHub thread's host (issue-comments.tsx mounts into it), last
+          so app.css can run it into the Discussion sheet below the head. */}
+      {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
+    </>
+  );
+}

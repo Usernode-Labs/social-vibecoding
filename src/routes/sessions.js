@@ -12,25 +12,135 @@ const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
 const staging = require('../services/staging');
+const topicAttrs = require('../services/topic-attributes');
 const { appIdentityEnv } = require('../services/app-identity-env');
 const visuals = require('../services/visuals');
 const docker = require('../services/docker');
+const applicationRuntime = require('../services/application-runtime');
 const caddy = require('../services/caddy');
 const worker = require('../services/worker');
+const branchNames = require('../services/branch-names');
 const agentTurn = require('../services/agent-turn');
 const registry = require('../agents/registry');
+const agentPreferences = require('../services/agent-preferences');
 const workerProgress = require('../services/worker-progress');
 const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
 const { getAppConventions, getSelfHostedRefuseList } = require('../services/prompts');
-const { IN_LOOP_BROWSER_GUIDANCE } = require('../services/in-loop-browser');
+const {
+  IN_LOOP_BROWSER_GUIDANCE,
+  HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE,
+} = require('../services/in-loop-browser');
 const models = require('../services/models');
 const limits = require('../services/limits');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const events = require('../services/events');
 const modelFallback = require('../services/model-fallback');
+
+// Imported pull requests are proposal-shaped work before they are promoted:
+// their GitHub description, testing notes, check run and community attributes
+// already exist, even though their lifecycle status is still active/paused.
+// The ordinary session list deliberately stays lightweight and private, so
+// enrich only imported Underway rows in a second, id-scoped read after the
+// owner/shared visibility query has selected which rows the viewer may see.
+async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId) {
+  const list = Array.isArray(sessions) ? sessions : [];
+  const ids = list
+    .filter((s) => s && s.source === 'imported'
+      && (s.status === 'active' || s.status === 'paused'))
+    .map((s) => Number(s.id))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  if (!ids.length) return list;
+
+  const { rows } = await pool.query(
+    `SELECT cs.id, cs.app_id, cs.pr_number, cs.pr_url, cs.pr_title,
+            cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body,
+            cs.staging_url, cs.testing_md, cs.testing_path, cs.testing_paths,
+            cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+            cs.source, cs.imported_pr_author, cs.imported_pr_head_repo,
+            cs.imported_pr_head_sha, cs.reviewed_head_sha, cs.external_agent,
+            cs.merge_conflict_state, cs.behind_main, cs.conflict_files,
+            cs.conflict_checked_at, cs.console_check_state, cs.console_errors,
+            cs.console_checked_at, cs.check_state, cs.test_results,
+            cs.checks_checked_at, cs.checks_commit_sha, cs.checks_base_sha,
+            cs.checks_base_verdict, cs.checks_base_behind_by,
+            cs.mergeability, cs.mergeability_files,
+            cs.mergeability_files_complete, cs.freshness_main_sha,
+            cs.freshness_merge_base_sha, cs.freshness_behind_by,
+            cs.freshness_ahead_by, cs.freshness_checked_at,
+            cs.freshness_error, cs.check_phase, cs.check_trigger, cs.checks_progress,
+            cs.platform_env_state, cs.platform_env_detail,
+            cs.check_error_detail, cs.requires_explicit_approval,
+            (SELECT jsonb_object_agg(
+                      sv.kind || '_' || sv.capture_index || '_' || sv.media,
+                      jsonb_build_object(
+                        'id', sv.id,
+                        'path', sv.captured_path,
+                        'viewport', sv.captured_viewport,
+                        'fellBack', sv.before_fell_back))
+               FROM session_visuals sv WHERE sv.session_id = cs.id) AS visuals_agg
+       FROM chat_sessions cs
+       JOIN users u ON u.id = cs.user_id
+      WHERE cs.id = ANY($1::int[])
+        AND cs.source = 'imported'
+        AND cs.status IN ('active', 'paused')`,
+    [ids]
+  );
+
+  const rowsByApp = new Map();
+  for (const row of rows) {
+    if (!rowsByApp.has(row.app_id)) rowsByApp.set(row.app_id, []);
+    rowsByApp.get(row.app_id).push(row);
+  }
+
+  const attrsById = new Map();
+  for (const [appId, appRows] of rowsByApp) {
+    const summaries = await topicAttrs.summarizeForProposals(
+      pool,
+      appId,
+      appRows.map((row) => ({ id: row.id, linked_issues: row.linked_issues })),
+      viewerUserId || null
+    );
+    for (const row of appRows) {
+      attrsById.set(row.id, summaries.get(row.id) || topicAttrs.emptySummary());
+    }
+  }
+
+  const detailsById = new Map();
+  for (const row of rows) {
+    const attrs = attrsById.get(row.id) || topicAttrs.emptySummary();
+    const detail = {
+      ...row,
+      visuals: visuals.shapeAgg(row.visuals_agg),
+      ...staging.previewDisplayState(row),
+      priority: attrs.priority,
+      assignee: attrs.assignee,
+      category: attrs.category,
+    };
+    delete detail.app_id;
+    delete detail.visuals_agg;
+    detailsById.set(row.id, detail);
+  }
+
+  return list.map((session) => {
+    const detail = detailsById.get(session.id);
+    return detail ? { ...session, ...detail } : session;
+  });
+}
+
+// The six build venues (#1281). The browser's copy is VENUES in
+// public/js/build-venues.js and it is the authoritative list; this is the
+// server-side domain for chat_sessions.build_venue, and
+// tests/build-venue-route.test.js scrapes that file to keep the two in
+// step, the same way tests/dev-flow-preference.test.js pins the three
+// dev_flow_preference values across their three homes. The CHECK
+// constraint in schema.sql is the third copy and the last line of defence.
+const BUILD_VENUES = [
+  'usernode-claude', 'usernode-openrouter', 'local',
+  'web-claude-code', 'web-codex', 'own-tools-pr',
+];
 const { getActiveUserStats } = require('../services/active-users');
 const { chatLimiter, attachmentUploadLimiter } = require('../middleware/rate-limits');
 const attachmentsSvc = require('../services/attachments');
@@ -47,6 +157,10 @@ const debugAccess = require('../services/debug-access');
 // staging, checks, visuals — is the same tail.
 const localAgent = require('../services/local-agent');
 const localAgentDemo = require('../services/local-agent-demo');
+// #1417: the viewer's open connector work orders, read for the Improve
+// panel alongside their sessions. Owns external_agent_tasks, so the query
+// lives there rather than being restated here.
+const { listOpenWorkOrders } = require('../services/external-agent-tasks');
 // #945: Usernode-side issue / proposal discussion threads as agent
 // context. Every loader here degrades to an empty result, so a failed
 // lookup drops the block rather than failing the turn.
@@ -270,27 +384,12 @@ const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via
 // for a turn that died with the old process.
 const PROCESS_BOOT_ID = String(Date.now());
 
-// Per-session stop handles, populated while a chat turn is in flight.
-// Shape: { abort: AbortController, workerName: string|null, phase: 'mayor1'|'cc'|'mayor2', stopped: boolean, stoppedBy: string|null, stopRequestedAt: number|null, confirming: boolean }
-// The POST /stop endpoint looks up this record to:
-//   1. Abort the in-flight Mayor Anthropic stream (phase 'mayor1').
-//   2. Kill the running Claude Code turn in its container, then CONFIRM
-//      it died and re-issue the kill while it hasn't (#937).
-//   3. Serve the stop's age to the client's escalation ladder, and gate
-//      the Force stop escape hatch on a stop already being pending.
-// Phase 'mayor2' is intentionally stop-proof — by then CC has already
-// pushed a commit + opened a PR and we just want the summary to finish.
-const stopRegistry = new Map();
-
-// #1038: the live session-state notifier reports `phase` / `stopping`
-// alongside `busy`, but stopRegistry is module-local here and importing
-// routes from a service would be a require cycle. Register a reader
-// instead — the same two values GET /api/sessions/:id/status serves.
-sessionState.setPhaseResolver((sessionId) => {
-  const handle = stopRegistry.get(Number(sessionId));
-  if (!handle) return { phase: null, stopping: false };
-  return { phase: handle.phase || null, stopping: !!handle.stopped };
-});
+// #1378: per-session stop handles now live in a shared leaf service so the
+// detached-turn recovery path in server.js can register one too. See
+// services/stop-registry.js for the handle shape and for the production
+// failure that moved it out of this module. It also owns the
+// sessionState.setPhaseResolver wiring that used to sit here.
+const stopRegistry = require('../services/stop-registry');
 
 // Per-session in-flight guard for on-demand staging rebuilds (the
 // ensure-staging route below). Repeated Preview clicks while a rebuild is
@@ -366,6 +465,72 @@ function stagingMockSpecVersion(version) {
     pr_number: 9301,
     shared_to_group_at: new Date(Date.now() - 40 * 60 * 1000).toISOString(),
   };
+}
+
+// Same #1012 convention, for the version-LIST endpoint (GET /spec): a
+// prod-cloned staging DB has zero chat_session_specs rows, so a reviewer
+// opening a session's spec panel would always hit the empty state. The
+// mock list is what a NON-OWNER would see after the shared-visibility
+// filter: two shared versions with a gap where an unshared v2 would sit,
+// so the non-contiguous dropdown (the filter's visible effect) is
+// exercised too. Request-time only, never persisted, and reached only
+// when the real lookup found nothing.
+function stagingMockSpecList() {
+  const meta = (v) => ({
+    version: v.version,
+    built_at: v.built_at,
+    commit_sha: v.commit_sha,
+    pr_number: v.pr_number,
+    shared_to_group_at: v.shared_to_group_at,
+    char_count: v.content.length,
+  });
+  const latest = stagingMockSpecVersion(3);
+  const older = stagingMockSpecVersion(1);
+  return { spec: latest.content, versions: [meta(latest), meta(older)] };
+}
+
+// The single source of truth for "is this frozen spec version visible to
+// a viewer who does not own the session?" — shared to the app's group
+// chat, privately shared with this exact viewer (#86), or shared into a
+// conversation the viewer is an active member of (excluding blocked
+// direct pairs). Interpolated (never parameterised) into both spec read
+// routes — GET /api/sessions/:id/spec and GET /api/sessions/:id/specs/
+// :version — so the list gate and the content gate cannot drift apart.
+// `specAlias` is the chat_session_specs alias in the caller's query and
+// `viewerParam` the $n placeholder carrying req.user.id.
+function specVersionSharedVisibilitySql(specAlias, viewerParam) {
+  return `(${specAlias}.shared_to_group_at IS NOT NULL
+                OR EXISTS (
+                  SELECT 1 FROM chat_session_spec_user_shares us
+                   WHERE us.session_id = ${specAlias}.session_id
+                     AND us.version = ${specAlias}.version
+                     AND us.recipient_id = ${viewerParam}
+                ) OR EXISTS (
+                  SELECT 1
+                    FROM chat_session_spec_conversation_shares scs
+                    JOIN conversations shared_conversation
+                      ON shared_conversation.id = scs.conversation_id
+                     AND shared_conversation.status = 'active'
+                    JOIN conversation_members cm
+                      ON cm.conversation_id = scs.conversation_id
+                   WHERE scs.session_id = ${specAlias}.session_id
+                     AND scs.version = ${specAlias}.version
+                     AND cm.user_id = ${viewerParam}
+                     AND cm.status = 'member'
+                     AND NOT EXISTS (
+                       SELECT 1
+                         FROM conversations direct_conversation
+                         JOIN conversation_direct_pairs direct_pair
+                           ON direct_pair.conversation_id = direct_conversation.id
+                         JOIN user_blocks direct_block
+                           ON (direct_block.blocker_id = direct_pair.user_low_id
+                               AND direct_block.blocked_user_id = direct_pair.user_high_id)
+                            OR (direct_block.blocker_id = direct_pair.user_high_id
+                               AND direct_block.blocked_user_id = direct_pair.user_low_id)
+                        WHERE direct_conversation.id = scs.conversation_id
+                          AND direct_conversation.kind = 'direct'
+                     )
+                ))`;
 }
 
 function stagingMockTranscript(sessionId) {
@@ -571,21 +736,45 @@ async function loadSessionCheckContext(pool, sessionId) {
   };
 }
 
-function buildFailingChecksBlock(checkState, testResults) {
-  if (checkState !== 'failing') return '';
+// The failing checks as DATA rather than prose, capped the same way.
+//
+// #1766: the coding agent has been told exactly which checks fail, with
+// names, paths and reasons, since buildFailingChecksBlock below started
+// injecting them into its prompt. The person watching the card got a number.
+// So the board renders these same rows now, and both callers derive from one
+// function — an agent and a human reading different answers about the same
+// run is the failure this shape prevents.
+function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MAX) {
+  if (checkState !== 'failing') return { total: 0, blocking: 0, rows: [] };
   const failing = (Array.isArray(testResults) ? testResults : [])
     .filter((r) => r && r.status !== 'pass');
-  if (!failing.length) return '';
+  return {
+    total: failing.length,
+    // Advisory rows report but do not block, so a reviewer counting them as
+    // reasons the merge is held up would be reading a blocker that is not
+    // one. Same distinction MergeStatus.lifecycle already draws for the pill.
+    blocking: failing.filter((r) => !r.advisory).length,
+    rows: failing.slice(0, max).map((r) => ({
+      name: String(r.name || 'unnamed check').slice(0, 160),
+      path: String(r.path || '').slice(0, 160) || null,
+      reason: String(r.failureReason || 'failed').slice(0, 300),
+      advisory: !!r.advisory,
+      consoleError: Array.isArray(r.consoleErrors) && r.consoleErrors[0]
+        ? String(r.consoleErrors[0].message || '').slice(0, 200)
+        : null,
+    })),
+  };
+}
 
-  const blocking = failing.filter((r) => !r.advisory);
-  const lines = failing.slice(0, FAILING_CHECKS_MAX).map((r) => {
-    const name = String(r.name || 'unnamed check').slice(0, 160);
-    const p = String(r.path || '').slice(0, 160);
-    const reason = String(r.failureReason || 'failed').slice(0, 300);
-    const firstConsole = Array.isArray(r.consoleErrors) && r.consoleErrors[0]
-      ? ` · first console error: ${String(r.consoleErrors[0].message || '').slice(0, 200)}`
-      : '';
-    return `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${name}"${p ? ` (path: ${p})` : ''} — ${reason}${firstConsole}`;
+function buildFailingChecksBlock(checkState, testResults) {
+  const summary = summarizeFailingChecks(checkState, testResults);
+  const failing = { length: summary.total };
+  if (!summary.total) return '';
+
+  const blocking = { length: summary.blocking };
+  const lines = summary.rows.map((r) => {
+    const firstConsole = r.consoleError ? ` · first console error: ${r.consoleError}` : '';
+    return `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${r.name}"${r.path ? ` (path: ${r.path})` : ''} — ${r.reason}${firstConsole}`;
   });
   const more = failing.length > FAILING_CHECKS_MAX
     ? `\n(+${failing.length - FAILING_CHECKS_MAX} more failing)` : '';
@@ -797,7 +986,7 @@ async function persistScoutPublication({
     ? `Scout revised the spec (now ${lineCount} lines).`
     : `Scout drafted a ${lineCount}-line spec from the codebase.`;
   const scoutText = localAgentLabel
-    ? `${baseScoutText} Drafted on ${localAgentLabel} — no Usernode credits used.`
+    ? `${baseScoutText} Drafted on ${localAgentLabel}, so no Usernode credits were used.`
     : baseScoutText;
   const persist = async (client, { requiredSnapshot }) => {
     await client.query(
@@ -855,7 +1044,10 @@ async function persistScoutPublication({
 // creation path — ordinary dev-chat, headless auto-session, and clone — so
 // "default coding agent" means the same thing regardless of how a session
 // was spawned. Falls back to the legacy claude_code schema default when the
-// user has never set a default. Best-effort: never throws.
+// user has never set a default but already owns a usable OpenRouter key,
+// OpenRouter is preferred; otherwise the safe fallback is Claude. Best-
+// effort provider fallbacks never throw, while a preference-query DB error
+// still propagates so it cannot be mistaken for "no preference".
 // Resolve the default coding-agent preference for a NEW session WITHOUT
 // mutating the session (plan 9.1). A Codex default is applied only when it
 // is actually usable (feature enabled, user in the beta allowlist, valid
@@ -881,8 +1073,8 @@ async function resolveDefaultAgentPreference(client, userId, config) {
     [userId],
   );
   const pref = prefRows[0];
-  if (!pref || pref.backend !== 'codex_openrouter') {
-    // No preference or a Claude default → Claude session (schema default).
+  if (pref && pref.backend !== 'codex_openrouter') {
+    // An explicit Claude preference always wins.
     return {
       backend: 'claude_code',
       provider: 'anthropic',
@@ -897,7 +1089,7 @@ async function resolveDefaultAgentPreference(client, userId, config) {
     provider: 'anthropic',
     model: null,
     reasoningEffort: null,
-    fallbackReason: reason,
+    ...(pref ? { fallbackReason: reason } : {}),
   });
 
   if (!config || !config.codexOpenrouterEnabled) {
@@ -910,7 +1102,7 @@ async function resolveDefaultAgentPreference(client, userId, config) {
     return claudeFallback('not_in_beta');
   }
 
-  let modelId = pref.model_id;
+  let modelId = pref?.model_id;
   if (!modelId) {
     modelId = (config && config.openrouterDefaultCodexModel) || null;
   }
@@ -928,6 +1120,24 @@ async function resolveDefaultAgentPreference(client, userId, config) {
       log.warn('sessions', 'Codex default not applied: missing/invalid credential', { userId });
       return claudeFallback('no_credential');
     }
+    // Accounts with a usable key but no preference predate the
+    // OpenRouter-default migration. Resolve their first new session against
+    // the live key-visible catalog so a configured future model can fall
+    // back safely until OpenRouter publishes it.
+    if (!pref) {
+      const apiKey = await credentialStore.readSecret({
+        pool: client, userId, provider: 'openrouter', purpose: 'coding_agent',
+        dataKey: config.dataEncryptionKey,
+      });
+      if (!apiKey) return claudeFallback('no_credential');
+      const agentModels = require('../services/agent-models');
+      const catalog = await agentModels.listOpenRouterModels({
+        pool: client, userId, credentialRevision: meta.revision,
+        apiKey, config, forceRefresh: false,
+      });
+      modelId = catalog.recommendedModelId || modelId;
+      if (!modelId) return claudeFallback('model_unavailable');
+    }
   } catch (err) {
     log.warn('sessions', 'Codex default not applied: credential check failed', { userId, err: err.message });
     return claudeFallback('no_credential');
@@ -937,7 +1147,7 @@ async function resolveDefaultAgentPreference(client, userId, config) {
     backend: 'codex_openrouter',
     provider: 'openrouter',
     model: modelId,
-    reasoningEffort: pref.reasoning_effort || null,
+    reasoningEffort: pref?.reasoning_effort || null,
   };
 }
 
@@ -1103,6 +1313,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // card list sorts session rows by this ("most recent activity"),
       // not by creation order.
       //
+      // The app's artwork rides along for the Improve panel's leading tile.
+      // NOT `a.icon_url` — no such column: the table stores `icon_image_id`
+      // and the server builds the path, as routes/apps.js does. And the note
+      // is here rather than a `--` comment in the query, which reaches
+      // scripts/check-sql.js as one flattened line that eats the statement.
+      //
       // `source` is carried so a caller can tell where a proposal's head lives
       // (#1054) — an imported pull request usually follows a branch in its
       // author's own fork, everything else a branch only the platform can
@@ -1112,15 +1328,19 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // is a branch in the APP repository, and only comparing the two repos
       // separates that from a genuine fork.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
+        `SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
                 cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
                 cs.transcript_shared_at, cs.created_at, cs.source,
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
                 cs.check_state, cs.check_phase, cs.check_error_detail,
+                cs.test_results,
                 cs.agent_backend, cs.agent_model,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
-                a.slug AS app_slug, a.name AS app_name
+                a.slug AS app_slug, a.name AS app_name,
+                a.icon_emoji AS app_icon_emoji,
+                CASE WHEN a.icon_image_id IS NOT NULL
+                     THEN '/app-icons/' || a.icon_image_id END AS app_icon_url
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          LEFT JOIN LATERAL (
@@ -1140,7 +1360,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const viewerLogin = rows.some((s) => s.source === 'imported')
         ? (await require('../services/github-link').linkStatus(pool, req.user.id)).login || null
         : null;
-      const sessions = rows.map((s) => {
+      let sessions = rows.map((s) => {
         const live = workerProgress.get(s.id);
         return {
           ...s,
@@ -1155,6 +1375,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             : {}),
         };
       });
+      sessions = await enrichImportedUnderwaySessions(pool, sessions, req.user.id);
       const totals = sessions.reduce(
         (acc, s) => {
           if (s.status === 'paused') acc.paused += 1;
@@ -1272,12 +1493,89 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
             app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+          },
+          // #1808: the row PAST the relative form's seven-day floor. Every
+          // other mock here is minutes or hours old, so the session rows'
+          // stamp read "5m ago" on all of them and the branch that prints a
+          // real date was unreachable in a preview. A session parked a
+          // fortnight ago is also the case the old code got worst: it
+          // bucketed at thirty days and then months, so this row read "0mo
+          // ago" once and "5mo ago" later, neither of which is a day.
+          {
+            id: 990108, branch_name: 'mock/my-session-stale', pr_number: null,
+            pr_url: null, pr_title: null,
+            session_title: '[Mock] Your session from a couple of weeks ago',
+            status: 'active', linked_issues: [], shared_at: null,
+            created_at: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString(),
+            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
           }
         );
       }
+      // #1417: the work the viewer has handed to a coding agent through the
+      // connector, which is NOT in chat_sessions and never will be until the
+      // agent shares or submits it. Carried on this endpoint rather than a
+      // new one because the Improve panel already makes exactly one call
+      // here, and a second round trip to say "and three of your own things
+      // are also in flight" is a round trip the panel does not need.
+      //
+      // Deliberately NOT folded into `sessions`, and NOT counted in
+      // `totals`: those numbers are the per-user session budget the caps
+      // above are the denominators for, and a work order costs the platform
+      // no worker, no container and no branch. Putting it there would report
+      // a slot as spent that nobody can free by pausing anything.
+      const externalTasks = await listOpenWorkOrders(pool, req.user.id);
+      // Staging-only demo row (?demo=1), same convention as the mock
+      // sessions above: external_agent_tasks is `staging:private`, so a
+      // staging clone has NO rows at all and this list is empty for every
+      // reviewer. Without a fixture the whole feature is unreviewable in a
+      // preview and undeclarable as a check. Read-only and obviously fake.
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        externalTasks.push({
+          id: 990201,
+          issue_number: 900002,
+          title: '[Mock] Work handed to a coding agent',
+          branch_name: 'usernode/mock-issue-900002',
+          agent: 'claude-code',
+          created_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
+          app_slug: config.selfAppSlug,
+          app_name: 'Usernode',
+          // The demo row carries an icon too, or the ONE work-order row a
+          // preview can show is the one row whose tile falls back to a letter
+          // — which is exactly the state a reviewer would read as the bug.
+          app_icon_emoji: '\u{1F6E0}\u{FE0F}',
+        });
+      }
       // Per-viewer denominators for the "(x/y)" header — full admins get
       // the raised caps. Cheap (pure function on req.user, no query).
-      res.json({ sessions, totals, caps: effectiveSessionCaps(config, req.user) });
+      // #1766: name the failing checks, and drop the raw results.
+      //
+      // The card could already say "Checks failing · 3"; it could not say
+      // WHICH three, so the owner's only route to that was reading
+      // test_results out of the API by hand. Meanwhile the coding agent has
+      // been handed the full list, with reasons, in its prompt.
+      //
+      // Bounded on purpose: test_results holds a row per declared check (500+
+      // today) and this endpoint is polled. summarizeFailingChecks caps the
+      // rows and carries the totals separately, so the card can say "3 of 528
+      // failing" and list the first few without the feed growing with the
+      // manifest.
+      //
+      // IMPORTED rows keep the raw column, because they already had it:
+      // enrichImportedUnderwaySessions has been sending it for them since
+      // they became proposal-shaped, and me-active-sessions.test.js pins it.
+      // Dropping it there would be a silent breaking change to an existing
+      // contract in the name of a new one. Everything else selected it only
+      // so this summary could be built, so it goes back off the wire.
+      for (const row of sessions) {
+        if (!row) continue;
+        const summary = summarizeFailingChecks(row.check_state, row.test_results);
+        if (row.source !== 'imported') delete row.test_results;
+        if (summary.total) row.failing_checks = summary;
+      }
+      res.json({
+        sessions, totals, externalTasks, caps: effectiveSessionCaps(config, req.user),
+      });
     } catch (err) {
       log.error('sessions', 'Failed to list active sessions', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -1447,7 +1745,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const { rows } = await pool.query(
         `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
                 created_from_issue_number, agent_backend, agent_model, source, external_agent,
-                (spec_md IS NOT NULL AND spec_md <> '') AS has_spec
+                (spec_md IS NOT NULL AND spec_md <> '') AS has_spec,
+                -- The same derivation the shared-session list uses, so the
+                -- owner's own card and everyone else's card agree about
+                -- whether a slept preview can be woken. Without it
+                -- _cardPreviewSpec fell back to pr_number, which is null for
+                -- a share-only session and left the owner with no affordance
+                -- at all once the idle GC nulled staging_url.
+                (pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL)
+                  AS can_preview
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
          ORDER BY created_at DESC`,
@@ -1486,16 +1792,39 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // GET /api/apps/:slug/shared-sessions
   //   Every user's explicitly-shared (shared_at IS NOT NULL) in-flight
   //   sessions on this app — the rows the Dev board renders at the
-  //   bottom of everyone's "In progress" area. Deliberately metadata
-  //   only: no pr_url / cc_session_id / anything enabling dev-chat
-  //   access — the dev-chat endpoints stay owner-scoped, so "no way to
-  //   open the owner's dev chat" is enforced by authorization, not just
-  //   missing UI. staging_url IS included (same exposure /promoted
-  //   already grants proposals) so viewers get a Preview affordance,
-  //   plus a derived can_preview boolean (#689: pr_number IS NOT NULL,
-  //   i.e. the branch has pushed changes) so the card can offer an
-  //   on-demand rebuild via ensure-staging even after the idle staging
-  //   GC has nulled staging_url. pr_number itself stays withheld.
+  //   bottom of everyone's "In progress" area. Ordinary sessions remain
+  //   deliberately metadata-only: no pr_url / cc_session_id / anything
+  //   enabling dev-chat access — the dev-chat endpoints stay owner-scoped,
+  //   so "no way to open the owner's dev chat" is enforced by authorization,
+  //   not just missing UI. Imported PR rows are enriched after this privacy
+  //   query with the proposal metadata that is already group-visible on
+  //   promotion; their GitHub description/checks/attributes exist while
+  //   Underway and should not disappear merely because voting has not begun.
+  //   staging_url IS included (same exposure /promoted already grants
+  //   proposals) so viewers get a Preview affordance,
+  //   plus a derived can_preview boolean — "the branch has pushed
+  //   changes" — so the card can offer an on-demand rebuild via
+  //   ensure-staging even after the idle staging GC has nulled staging_url.
+  //   pr_number itself stays withheld for ordinary sessions; imported rows
+  //   receive it only in the id-scoped proposal enrichment.
+  //
+  //   That boolean was `pr_number IS NOT NULL` (#689), which was a fine
+  //   proxy while every shared session was a proposal in waiting. It is
+  //   not one for a session shared with `share: true`: that lands in the
+  //   in-progress area with a preview and NO pull request, so pr_number
+  //   is null, can_preview was false, and the card offered nothing at all
+  //   the moment the preview went to sleep — to its own author as much as
+  //   to anyone else. Meanwhile POST /api/sessions/:id/ensure-staging has
+  //   authorized exactly this case all along ("Explicitly-shared sessions
+  //   … get the same member-wide access"): the server said yes and the
+  //   affordance never asked.
+  //
+  //   checks_commit_sha is the durable half of the answer. It records the
+  //   commit a checks run described, so it is only ever set once a real
+  //   commit on this branch has been built — and unlike staging_url,
+  //   staging_image_ref and staging_build_ref, teardownStaging does not
+  //   clear it. It survives exactly the event that used to strand the
+  //   card.
   //   chat_count / last_message_at mirror the /promoted subqueries: the
   //   discussion thread is the same chat_messages ('session', id) key
   //   the proposal card will inherit on promotion. linked_issues IS
@@ -1503,9 +1832,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   itself is view-level), and the card renders them as "#N" chips
   //   linking to each issue's in-app discussion.
   //   check_state / check_phase are the same review-state metadata the
-  //   promoted feed exposes. They let an explicitly shared Underway card
-  //   say that its preview is building, tests are running, or checks have
-  //   finished without exposing the test result payload or error detail.
+  //   promoted feed exposes. They let an ordinary explicitly shared
+  //   Underway card say that its preview is building, tests are running, or
+  //   checks have finished without exposing the test result payload or
+  //   error detail. Imported rows receive those full details in the scoped
+  //   enrichment described above.
   //
   //   `transcript_shared` (+ `message_count` for its label) is the ONE
   //   addition that widens what a viewer can reach: it says the owner took
@@ -1524,7 +1855,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       const { rows } = await pool.query(
         `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
-                cs.staging_url, (cs.pr_number IS NOT NULL) AS can_preview,
+                cs.staging_url,
+                (cs.pr_number IS NOT NULL OR cs.checks_commit_sha IS NOT NULL)
+                  AS can_preview,
                 cs.linked_issues, cs.source, cs.imported_pr_author,
                 cs.check_state, cs.check_phase,
                 (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
@@ -1549,10 +1882,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          ORDER BY cs.shared_at ASC`,
         [app.id]
       );
-      const sessions = rows.map((s) => ({
+      let sessions = rows.map((s) => ({
         ...s,
         busy: isSessionBusy(s.id),
       }));
+      sessions = await enrichImportedUnderwaySessions(pool, sessions, req.user?.id || null);
 
       // Staging-only demo rows (?demo=1): read-only visual states a boot
       // seed can't hold live (busy spinner, Preview pill). Fake ids in the
@@ -1595,6 +1929,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // branch has pushed changes — the pill still renders and routes
           // through ensure-staging. Clicking it in a demo 404s (fake id)
           // into the "could not be rebuilt" loader, same as 990002.
+          //
+          // Worth knowing: this row modelled a state a REAL share-only
+          // session could not be in. `can_preview: true` with no
+          // staging_url was reachable only for a session with a pull
+          // request, because the derivation above was `pr_number IS NOT
+          // NULL` — so the demo board showed a rebuild affordance that the
+          // thing it demonstrates never got. The fixture was right and the
+          // derivation was wrong; the derivation now also reads
+          // checks_commit_sha, and this row is honest.
           {
             id: 990003, session_title: '[Mock] Shared session, preview asleep (rebuild on click)',
             pr_title: null, branch_name: 'mock/shared-preview-asleep', status: 'paused',
@@ -1616,7 +1959,8 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
   });
 
-  // Create a new session (branch + PR)
+  // Create a new session. No branch and no PR yet (#1350): the branch is
+  // minted on the first chat turn, the PR after the first commit.
   router.post('/api/apps/:slug/sessions', drainGuard, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
@@ -1703,33 +2047,38 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const rawIssue = req.body && req.body.issueNumber;
       const issueNumber = Number.isInteger(rawIssue) && rawIssue > 0 ? rawIssue : null;
 
-      const branchName = `dev/${req.user.username}-${Date.now()}`;
-
-      // Create branch on GitHub (PR created later after first commit)
-      if (github.isEnabled() && app.repo_url) {
-        try {
-          const [, repoOwner, repoName] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-          if (repoOwner && repoName) {
-            await github.createBranch(repoOwner, repoName, branchName);
-          }
-        } catch (err) {
-          log.warn('sessions', 'GitHub branch creation failed (continuing)', { err: err.message });
-        }
-      }
-
+      // #1350: NO branch is minted here. The row is created with
+      // branch_name NULL and the branch appears the first time something
+      // actually needs it — the first chat turn, via
+      // sessionLifecycle.ensureSessionBranch(). Two reasons:
+      //
+      //   * Most created sessions never run a turn. The start screen, the
+      //     issue panel's "Create PR" and the "+ New chat" button all land
+      //     here, and an abandoned session used to leave an empty ref off
+      //     main behind it forever.
+      //   * A session handed to an off-platform venue (web-claude-code,
+      //     web-codex, own-tools-pr) runs no on-platform turn at all. Its
+      //     agent pushes to its own fork, so a platform branch for it was
+      //     never anything but litter.
+      //
+      // Everything downstream already tolerates the NULL: the venue sheet
+      // reads `hasBranch`, the staging/heal sweeps filter
+      // `branch_name IS NOT NULL`, and the four seams that genuinely
+      // require a ref call ensureSessionBranch() themselves.
+      //
       // Insert the session with its FINAL chosen/default backend and model
       // atomically — never insert-then-patch. An explicit choice was strictly
       // validated above; an omitted choice preserves the saved-default path.
       const { rows } = await pool.query(
         `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, created_from_issue_number,
             agent_backend, agent_provider, agent_model, agent_reasoning_effort)
-         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8)
+         VALUES ($1, $2, NULL, 'active', $3, $4, $5, $6, $7)
          RETURNING *`,
-        [app.id, req.user.id, branchName, issueNumber,
+        [app.id, req.user.id, issueNumber,
          pref.backend, pref.provider, pref.model, pref.reasoningEffort]
       );
 
-      log.info('sessions', 'Session created', { sessionId: rows[0].id, branch: branchName });
+      log.info('sessions', 'Session created (branch deferred to first turn)', { sessionId: rows[0].id });
       events.record(pool, {
         type: events.EVENT_TYPES.DEV_SESSION_STARTED,
         userId: req.user.id,
@@ -1820,7 +2169,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         return res.status(409).json({
           error: existingRows[0].headless_status === 'generating'
             ? 'An auto session is already being generated for this issue.'
-            : 'This issue already has a ready auto session — start a session from it instead.',
+            : 'This issue already has a ready auto session. Start a session from it instead.',
         });
       }
 
@@ -1874,7 +2223,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       let botUsername = null;
       try { botUsername = await github.getBotUsername(); } catch {}
 
-      const branchName = `dev/auto-issue-${issueNumber}-${Date.now()}`;
+      // #1350 carve-out: a headless run mints its branch here, up front,
+      // and deliberately does NOT defer. There is no "first message" to
+      // defer to — the route's whole job is to start one unattended turn
+      // immediately, and that turn may push. Deferring would only move the
+      // same mint a few lines down the same request.
+      const branchName = branchNames.devBranchName(`auto-issue-${issueNumber}`);
       try {
         await github.createBranch(repoOwner, repoName, branchName);
       } catch (err) {
@@ -1968,7 +2322,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (src.headless_status !== 'ready') {
         return res.status(409).json({
           error: src.headless_status === 'generating'
-            ? 'The auto session is still generating — try again when it finishes.'
+            ? 'The auto session is still generating. Try again when it finishes.'
             : 'This auto session is not in a cloneable state.',
         });
       }
@@ -2005,11 +2359,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // Fork the new branch off the auto session's branch so any commit it
       // pushed carries over. Fall back to main if that branch is missing
       // (e.g. the headless run never pushed and the branch was pruned).
-      const branchName = `dev/${req.user.username}-${Date.now()}`;
+      //
+      // #1350 carve-out: this mint is NOT deferred. The clone exists to
+      // inherit the headless run's commits, and that inheritance is the
+      // `fromBranch` argument below. Defer it and the first turn would
+      // branch off main instead, silently discarding the work the clone
+      // was created to continue.
+      const branchName = branchNames.devBranchName(req.user.username);
       const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (github.isEnabled() && repoOwner && repoName) {
         try {
-          await github.createBranch(repoOwner, repoName, branchName, src.branch_name);
+          await github.createBranch(repoOwner, repoName, branchName, src.branch_name || 'main');
         } catch (err) {
           log.warn('sessions', 'Branch fork off auto session failed — falling back to main', { err: err.message, from: src.branch_name });
           try {
@@ -2198,6 +2558,34 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
   });
 
+  // Check results are fetched on demand, separately from the private dev
+  // transcript and the lightweight board feed. The app view gate above still
+  // applies; sharing a session exposes these results, never its messages.
+  router.get('/api/sessions/:id/checks', async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.session_title, cs.pr_title,
+                cs.check_state, cs.check_phase, cs.check_trigger,
+                cs.check_error_detail, cs.checks_checked_at, cs.checks_commit_sha,
+                cs.checks_progress, cs.test_results, cs.checks_base_sha,
+                cs.checks_base_verdict, cs.checks_base_behind_by
+           FROM chat_sessions cs
+          WHERE cs.id = $1`,
+        [parseInt(req.params.id, 10)]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      const session = rows[0];
+      const visible = session.user_id === req.user.id || req.user.isAdmin
+        || (session.shared_at && ['active', 'paused'].includes(session.status))
+        || ['promoted', 'merging', 'merged'].includes(session.status);
+      if (!visible) return res.status(404).json({ error: 'Session not found' });
+      res.set('Cache-Control', 'no-store').json({ session });
+    } catch (err) {
+      log.error('sessions', 'Failed to read check results', { message: err.message });
+      res.status(500).json({ error: 'Could not load check results' });
+    }
+  });
+
   // Get session with message history
   //
   // Owner OR admin, the same rule `/api/sessions/:id/events` states a few
@@ -2376,6 +2764,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // live path delivers the same shape via the visuals_ready event).
       // Best-effort — a visuals hiccup must not break opening the session.
       const session = rows[0];
+      // #1650: a managed local handoff cannot be proposed merely because it
+      // is active. Its exact submitted head must have live staging and a
+      // terminal passing verdict, and the in-memory build/check/capture gates
+      // matter too. Publish the SAME state the CLI status endpoint and
+      // promotion preflight compute so the Changes ready card can disable its
+      // action before a doomed request. Ordinary Dev sessions deliberately do
+      // not get this field: their promote path may still build on demand.
+      if (session.source === 'cli_handoff') {
+        session.proposal_state = require('./proposal-handoff')
+          .publicSessionStatus(session).state;
+      }
       try {
         session.visuals = await visuals.getForSession(pool, session.id);
       } catch { session.visuals = null; }
@@ -2392,6 +2791,41 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       } catch (err) {
         log.warn('sessions', 'drafts load failed', { sessionId: session.id, err: err.message });
       }
+
+      // #1442: opening a promoted proposal is the one moment its freshness
+      // numbers are about to be READ by a person deciding how to vote, so
+      // this is where they are worth re-measuring. TTL-gated (60s) and
+      // single-flighted per session in the service, so the dev chat's
+      // frequent machine refetches and several voters opening the same
+      // proposal at once still cost at most one pair of GitHub calls a
+      // minute. Never throws, and the refreshed block is folded onto the row
+      // that is about to be serialized so the response carries the number it
+      // just measured rather than the one it read a moment earlier.
+      if (session.status === 'promoted' && session.repo_url) {
+        try {
+          const freshnessSvc = require('../services/proposal-freshness');
+          const written = await freshnessSvc.refreshFreshnessDeduped(
+            { gh: require('../services/github'), pool }, session
+          );
+          if (written && !written.skipped) {
+            session.freshness_checked_at = written.checkedAt;
+            session.freshness_main_sha = written.mainSha;
+            session.freshness_merge_base_sha = written.mergeBaseSha;
+            session.freshness_behind_by = written.behindBy;
+            session.freshness_ahead_by = written.aheadBy;
+            session.mergeability = written.mergeability;
+            session.mergeability_files = written.mergeabilityFiles;
+            session.mergeability_files_complete = written.mergeabilityFilesComplete;
+            session.checks_base_verdict = written.checksBaseVerdict;
+            session.checks_base_behind_by = written.checksBaseBehindBy;
+            session.freshness_error = written.error;
+            if (written.behindBy != null) session.behind_main = Math.max(0, written.behindBy);
+          }
+        } catch (err) {
+          log.warn('sessions', 'freshness refresh failed', { sessionId: session.id, err: err.message });
+        }
+      }
+      session.freshness = require('../services/proposal-freshness').readFreshness(session);
 
       res.json({ session, messages, drafts });
     } catch (err) {
@@ -2602,7 +3036,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           error: isAppTarget
             // Never silently reroute to the platform repo — the card said
             // where it would file. Surface the actionable hint instead.
-            ? "Couldn't file to this app's repo — the bot may not be installed on it"
+            ? "Couldn't file to this app's repo. The bot may not be installed on it"
             : 'GitHub unreachable',
         });
       }
@@ -2709,13 +3143,31 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // (plan 8.1). Backend resolution, feature/allowlist checks, and the
       // OpenRouter credential + model validation can call out over the
       // network (or decrypt); they must NOT run while holding a row lock.
+      //
+      // NO `backend` KEY MEANS "whichever on-platform agent I used last"
+      // (#1348). The venue sheet asks a coarse question now — one
+      // "On-Platform" row standing for both in-chat backends — so it sends
+      // no backend and the answer is resolved here, from the user's stored
+      // preference, exactly as creating a session does. Omitted, not
+      // nulled: a literal null is a value, and the same distinction POST
+      // /sessions already draws.
+      //
+      // The two resolvers are not interchangeable and the difference is the
+      // point. An EXPLICIT pick must get that backend or a 4xx explaining
+      // why not. A resolved one is lenient: a stored OpenRouter preference
+      // that no longer validates (flag off, beta access gone, no model, key
+      // revoked) falls back to Claude with a `fallbackReason` rather than
+      // refusing to switch, and the client says why above the composer.
+      const wantsStoredDefault = backend == null;
       let pref;
       try {
-        pref = await resolveExplicitAgentPreference(pool, req.user.id, config, {
-          backend: backend || registry.DEFAULT_BACKEND,
-          model,
-          reasoningEffort,
-        });
+        pref = wantsStoredDefault
+          ? await resolveDefaultAgentPreference(pool, req.user.id, config)
+          : await resolveExplicitAgentPreference(pool, req.user.id, config, {
+            backend,
+            model,
+            reasoningEffort,
+          });
       } catch (err) {
         if (err instanceof AgentSelectionError) {
           return res.status(err.statusCode).json({ error: err.message });
@@ -2826,9 +3278,97 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           log.warn('sessions', 'reset-agent-context eviction warning', { sessionId, err: evErr.message });
         });
       }
-      res.json({ ok: true, session: updatedRow, message: contextMessage });
+
+      // #1348: an EXPLICIT pick is also the answer to "which one did you
+      // use last", so it is remembered. This is the rule the venue sheet
+      // already applies to the other group — picking a web hand-off saves
+      // dev_flow_preference, because "asked once" means the answer counts
+      // for next time — extended to the in-chat pair now that one coarse
+      // row stands for both.
+      //
+      // AFTER the commit and best-effort: the switch has already happened,
+      // and a preference that failed to save must not turn a successful
+      // switch into a 500. A resolved switch writes nothing — it was read
+      // FROM the preference and has no new answer to record.
+      if (!wantsStoredDefault) {
+        try {
+          await agentPreferences.setDefaultBackend(pool, req.user.id, {
+            backend: pref.backend,
+            model: pref.model,
+            reasoningEffort: pref.reasoningEffort,
+          });
+        } catch (prefErr) {
+          log.warn('sessions', 'reset-agent-context: default not remembered', {
+            sessionId, userId: req.user.id, err: prefErr.message,
+          });
+        }
+      }
+
+      res.json({
+        ok: true,
+        session: updatedRow,
+        message: contextMessage,
+        // Present only when a stored OpenRouter preference could not be
+        // honoured. The client turns it into the sentence above the
+        // composer — the same surface a new session's fallback uses.
+        ...(pref.fallbackReason ? { agentFallbackReason: pref.fallbackReason } : {}),
+      });
     } catch (err) {
       log.error('sessions', 'reset-agent-context failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/sessions/:id/build-venue
+  //   Persist WHERE this session is being built (#1281).
+  //
+  //   The six venue ids were a presentation key until now — #1086 said so
+  //   deliberately, because every venue was already expressible through a
+  //   column that existed. #1281 asks for the one state none of them can
+  //   express: a session whose owner has decided to hand the work to Claude
+  //   Code, Codex or their own tools and has NOT done it yet. That decision
+  //   is what the launchpad renders from, and `external_agent` cannot serve
+  //   it — that column is stamped at submission, so it is null for exactly
+  //   the period the launchpad is on screen. See chat_sessions.build_venue
+  //   in schema.sql.
+  //
+  //   Deliberately NOT part of reset-agent-context: that route switches the
+  //   in-chat backend and, by design, throws away the agent thread and
+  //   evicts the warm worker. Choosing to build somewhere else must do
+  //   neither — the transcript, the branch and the proposal all stay exactly
+  //   as they are, which is the promise the venue sheet makes when it says
+  //   an in-chat venue "keeps this chat, this branch and this proposal".
+  router.post('/api/sessions/:id/build-venue', drainGuard, async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ error: 'Bad session id' });
+      }
+      const venue = typeof (req.body || {}).venue === 'string' ? req.body.venue : null;
+      // Clearing is legitimate: it returns the session to "nobody has
+      // chosen", where BuildVenues.currentVenue() derives from the columns
+      // exactly as it did before this route existed.
+      if (venue !== null && !BUILD_VENUES.includes(venue)) {
+        return res.status(400).json({ error: 'Unknown build venue' });
+      }
+      const { rows } = await pool.query(
+        `UPDATE chat_sessions
+            SET build_venue = $3
+          WHERE id = $1 AND user_id = $2
+            AND status NOT IN ('archived', 'merged')
+        RETURNING *`,
+        [sessionId, req.user.id, venue],
+      );
+      const updated = rows[0];
+      if (!updated) {
+        // Either it is not theirs, or it is closed. Both are a 404 here for
+        // the same reason the archive routes make them one: an owner who
+        // cannot see the session must not learn it exists.
+        return res.status(404).json({ error: 'Session not found' });
+      }
+      res.json({ ok: true, session: updated });
+    } catch (err) {
+      log.error('sessions', 'build-venue failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -3133,7 +3673,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const src = srcRows[0];
       if (src.user_id === req.user.id) {
         return res.status(400).json({
-          error: "That's your own chat — use “Start a new change” to branch off it.",
+          error: "That's your own chat. Use “Start a new change” to branch off it.",
         });
       }
 
@@ -3167,11 +3707,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
       // Fork the branch off the source's branch so any commit it pushed
       // carries over; fall back to main if that branch is gone.
-      const branchName = `dev/${req.user.username}-${Date.now()}`;
+      //
+      // #1350 carve-out: not deferred, for the same reason as the headless
+      // clone above — the point of a fork is to start from the source's
+      // commits, and `fromBranch` is where that happens. A source that has
+      // not run a turn yet has no branch at all now, so name main
+      // explicitly rather than asking GitHub for `heads/null`.
+      const branchName = branchNames.devBranchName(req.user.username);
       const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (github.isEnabled() && repoOwner && repoName) {
         try {
-          await github.createBranch(repoOwner, repoName, branchName, src.branch_name);
+          await github.createBranch(repoOwner, repoName, branchName, src.branch_name || 'main');
         } catch (err) {
           log.warn('sessions', 'Branch fork off shared session failed — falling back to main', { err: err.message, from: src.branch_name });
           try {
@@ -3519,7 +4065,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const session = rows[0];
       if (!['active', 'promoted'].includes(session.status)) {
         return res.status(409).json({
-          error: `Cannot sync a ${session.status} session — resume or unarchive first.`,
+          error: `Cannot sync a ${session.status} session. Resume or unarchive first.`,
         });
       }
 
@@ -3531,7 +4077,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       if (!syncMainSvc.getSyncState(sessionId)
           && isSessionBusy(sessionId)) {
         return res.status(409).json({
-          error: 'Claude is still working in this session — wait for the turn to finish before syncing.',
+          error: 'Claude is still working in this session. Wait for the turn to finish before syncing.',
           busy: true,
         });
       }
@@ -3686,7 +4232,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         );
         if (importedRows.length) {
           return res.status(409).json({
-            error: 'This proposal was imported from GitHub — it has no dev chat. Discuss it on the proposal page instead.',
+            error: 'This proposal was imported from GitHub, so it has no dev chat. Discuss it on the proposal page instead.',
           });
         }
         return res.status(404).json({ error: 'Active session not found' });
@@ -3741,6 +4287,46 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         }
         turnAttachments = attRows;
       }
+      // #1350: this is where a native session's branch comes from. Sessions
+      // are created branchless, so the first turn is the first thing that
+      // needs a ref, and ensureSessionBranch() is idempotent for every turn
+      // after it.
+      //
+      // Placement is deliberate, on both sides:
+      //
+      //   * AFTER every 4xx gate above (repo, status, billing path,
+      //     attachment ownership) and BEFORE the message insert, so a turn
+      //     that was going to be refused anyway mints nothing, and a mint
+      //     that fails leaves no orphan user message in the transcript.
+      //   * BEFORE res.writeHead() below. Once the SSE stream opens, a 4xx
+      //     reply is no longer possible, and "GitHub would not create your
+      //     branch" is exactly the kind of failure that has to arrive as a
+      //     status code rather than as a chat message.
+      //
+      // It covers the local-agent path too: runLocally turns still push
+      // through the platform, so they need the ref just as much.
+      //
+      // The helper is idempotent on its own, but skip it outright once the
+      // row already carries a name: every turn after the first would
+      // otherwise open a transaction and take a row lock to re-read a value
+      // this handler is already holding.
+      if (!String(session.branch_name || '').trim()) {
+        try {
+          const ensured = await sessionLifecycle.ensureSessionBranch({
+            pool, sessionId: session.id, username: req.user.username,
+          });
+          session.branch_name = ensured.branchName;
+        } catch (err) {
+          log.warn('sessions', 'Could not prepare session branch for first turn', {
+            sessionId: session.id, code: err.code || null, message: err.message,
+          });
+          return res.status(503).json({
+            error: err.userMessage
+              || 'Usernode could not prepare this session\'s branch. Send your message again in a moment.',
+          });
+        }
+      }
+
       const userMeta = turnAttachments.length
         ? {
             attachments: turnAttachments.map((a) => ({
@@ -4013,12 +4599,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             sessionId: session.id, appSlug: session.app_slug,
           });
           await sendStatus(
-            'This turn can’t run: the app has no GitHub repository (repo provisioning failed when the app was created). The platform repairs this automatically — try again in a few minutes.',
+            'This turn can’t run: the app has no GitHub repository (repo provisioning failed when the app was created). The platform repairs this automatically, so try again in a few minutes.',
             { turnError: true }
           );
           send('done', {});
           res.end();
-          if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+          stopRegistry.deleteIf(session.id, stopHandle);
           setTimeout(() => sessionBus.clearSession(session.id), 30000);
           return;
         }
@@ -4109,7 +4695,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             : (toolResult.commitSha ? 'build_done' : 'chat');
           const directText = toolResult.toolResultText
             || (toolResult.isError
-              ? '_The OpenRouter turn did not complete successfully — see the status messages above._'
+              ? '_The OpenRouter turn did not complete successfully. See the status messages above._'
               : '_Done._');
           const directPills = turnPills(directOutcome);
           const directKind = fallbackKindForTurn({
@@ -4558,7 +5144,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             send('stopped', { phase: 'mayor1', by: stopHandle.stoppedBy });
             send('done', {});
             res.end();
-            if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+            stopRegistry.deleteIf(session.id, stopHandle);
             setTimeout(() => sessionBus.clearSession(session.id), 30000);
             return;
           }
@@ -4615,7 +5201,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           const stripped = stripFakeCompletionMarker(mayorText1, { sessionId: session.id });
           if (stripped !== mayorText1) {
             mayorText1 = stripped
-              || '(I described what should change, but didn\'t actually run the coding agent — try sending again.)';
+              || '(I described what should change, but didn\'t actually run the coding agent. Try sending again.)';
           }
         }
 
@@ -4729,7 +5315,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
               send('stopped', { phase: 'mayor1', by: stopHandle.stoppedBy });
               send('done', {});
               res.end();
-              if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+              stopRegistry.deleteIf(session.id, stopHandle);
               setTimeout(() => sessionBus.clearSession(session.id), 30000);
               return;
             }
@@ -4773,7 +5359,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
               toolNames: mayor1.toolUses.map((t) => t.name),
             });
           } else if (needsEmptyReplyFallback(mayorText1, mayor1.toolUses)) {
-            mayorText1 = '_The assistant ended its turn without a reply — please send your message again._';
+            mayorText1 = '_The assistant ended its turn without a reply. Please send your message again._';
             send('token', { text: mayorText1 });
             log.warn('sessions', 'Mayor turn produced no visible output — substituting fallback text', {
               sessionId: session.id,
@@ -5049,7 +5635,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
             send('done', {});
             res.end();
-            if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+            stopRegistry.deleteIf(session.id, stopHandle);
             setTimeout(() => sessionBus.clearSession(session.id), 30000);
             return;
           }
@@ -5093,7 +5679,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             send('stopped', { phase: 'cc', by: stopHandle.stoppedBy });
             send('done', {});
             res.end();
-            if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+            stopRegistry.deleteIf(session.id, stopHandle);
             setTimeout(() => sessionBus.clearSession(session.id), 30000);
             return;
           }
@@ -5171,7 +5757,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             phase2ToolResults.push({
               type: 'tool_result',
               tool_use_id: tu.id,
-              content: 'Skipped — only one action runs per turn.',
+              content: 'Skipped: only one action runs per turn.',
               is_error: true,
             });
           }
@@ -5292,7 +5878,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             });
           }
           if (!mayorText2.trim()) {
-            mayorText2 = '_The wrap-up was declined by the model\'s safety classifiers — the dispatched work above still completed; see the status messages for the outcome._';
+            mayorText2 = '_The wrap-up was declined by the model\'s safety classifiers. The dispatched work above still completed; see the status messages for the outcome._';
             send('token', { text: mayorText2 });
           }
         } else if (!mayorText2.trim()) {
@@ -5300,12 +5886,12 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           // tool runs, even if the Mayor produces no wrap-up text.
           if (toolResult.isError) {
             mayorText2 = toolKind === 'scout'
-              ? "_The scout didn't finish successfully — see the status above._"
-              : "_The coding agent didn't complete successfully — see the status messages above._";
+              ? "_The scout didn't finish successfully. See the status above._"
+              : "_The coding agent didn't complete successfully. See the status messages above._";
           } else if (toolKind === 'scout') {
             // Spec/scout just planned something — make the build handoff
             // explicit so a finished spec doesn't read as a finished change.
-            mayorText2 = "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
+            mayorText2 = "_Spec updated: it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
           } else {
             mayorText2 = '_Done._';
           }
@@ -5460,9 +6046,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // Clear the stop handle for this session only if it's still the
         // one we registered (another turn may have replaced it if the
         // client somehow fired a second POST before this one finished).
-        if (stopRegistry.get(session.id) === stopHandle) {
-          stopRegistry.delete(session.id);
-        }
+        stopRegistry.deleteIf(session.id, stopHandle);
       }
 
       // #249: covers every turn that reached the main exit without a PR
@@ -5501,33 +6085,76 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // dispatch the coding agent in chat — there is no in-UI "Build from
   // spec" button.
   //
-  // Read-only fetch returning the latest spec content (spec_md, == the
-  // latest version) plus metadata for every past version so the dev-chat
-  // can populate its version selector without a second round-trip; full
-  // content of older versions comes from GET /specs/:version below.
+  // Read-only fetch returning the latest spec content plus metadata for
+  // every visible version so the dev-chat can populate its version
+  // selector without a second round-trip; full content of older versions
+  // comes from GET /specs/:version below.
+  //
+  // Access rule (mirrors GET /specs/:version, which this list feeds):
+  //   - Owner: the live draft (spec_md, == the latest version's content)
+  //     plus ALL frozen versions — drafts stay private until shared.
+  //   - Anyone else (admins included — sharing is the explicit act that
+  //     makes a spec visible, same rule as the single-version gate):
+  //     only versions matching specVersionSharedVisibilitySql, with
+  //     `spec` set to the newest VISIBLE version's content — never
+  //     spec_md, which can be ahead of the last shared version. Zero
+  //     visible versions keeps today's 404, so nothing new is revealed
+  //     about sessions whose specs were never shared.
   router.get('/api/sessions/:id/spec', async (req, res) => {
     try {
       const { rows: sessionRows } = await pool.query(
-        `SELECT cs.id, cs.spec_md
+        `SELECT cs.id, cs.user_id, cs.spec_md
          FROM chat_sessions cs
-         WHERE cs.id = $1 AND cs.user_id = $2`,
-        [req.params.id, req.user.id]
-      );
-      if (!sessionRows.length) return res.status(404).json({ error: 'Session not found' });
-
-      const { rows: versions } = await pool.query(
-        `SELECT version, built_at, commit_sha, pr_number, shared_to_group_at,
-                LENGTH(content) AS char_count
-         FROM chat_session_specs
-         WHERE session_id = $1
-         ORDER BY version DESC`,
+         WHERE cs.id = $1`,
         [req.params.id]
       );
 
-      res.json({
-        spec: sessionRows[0].spec_md || '',
-        versions,
-      });
+      if (sessionRows.length && sessionRows[0].user_id === req.user.id) {
+        const { rows: versions } = await pool.query(
+          `SELECT version, built_at, commit_sha, pr_number, shared_to_group_at,
+                  LENGTH(content) AS char_count
+           FROM chat_session_specs
+           WHERE session_id = $1
+           ORDER BY version DESC`,
+          [req.params.id]
+        );
+        return res.json({
+          spec: sessionRows[0].spec_md || '',
+          versions,
+        });
+      }
+
+      if (sessionRows.length) {
+        // Non-owner: shared versions only. `content` rides along so the
+        // newest visible version can serve as `spec` without a second
+        // query, then is stripped from the metadata rows.
+        const { rows } = await pool.query(
+          `SELECT version, built_at, commit_sha, pr_number, shared_to_group_at,
+                  LENGTH(content) AS char_count, content
+           FROM chat_session_specs s
+           WHERE s.session_id = $1
+             AND ${specVersionSharedVisibilitySql('s', '$2')}
+           ORDER BY version DESC`,
+          [req.params.id, req.user.id]
+        );
+        if (rows.length) {
+          return res.json({
+            spec: rows[0].content || '',
+            versions: rows.map(({ content, ...meta }) => meta),
+          });
+        }
+      }
+
+      // (#1012) Staging-only demo fallback (?demo=1): chat_session_specs
+      // is staging:private, so a non-owner's spec panel has nothing real
+      // to list in a preview. Read-path only, gated on staging + the
+      // explicit demo flag, and reached only when no real data matched —
+      // production and any real spec are untouched.
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        return res.json(stagingMockSpecList());
+      }
+
+      return res.status(404).json({ error: 'Session not found' });
     } catch (err) {
       log.error('sessions', 'Failed to get spec', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -5557,6 +6184,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //     via POST /specs/:version/share-user — the
   //     chat_session_spec_user_shares row is the authorization source
   //     of truth, scoped to (session, version, recipient).
+  // The non-owner arm lives in specVersionSharedVisibilitySql, shared
+  // verbatim with the version-list route (GET /spec) above so the two
+  // gates cannot drift.
   router.get('/api/sessions/:id/specs/:version', async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     const version = parseInt(req.params.version, 10);
@@ -5570,38 +6200,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
          JOIN chat_sessions cs ON cs.id = s.session_id
          WHERE s.session_id = $1
            AND s.version = $2
-           AND (cs.user_id = $3 OR s.shared_to_group_at IS NOT NULL
-                OR EXISTS (
-                  SELECT 1 FROM chat_session_spec_user_shares us
-                   WHERE us.session_id = s.session_id
-                     AND us.version = s.version
-                     AND us.recipient_id = $3
-                ) OR EXISTS (
-                  SELECT 1
-                    FROM chat_session_spec_conversation_shares scs
-                    JOIN conversations shared_conversation
-                      ON shared_conversation.id = scs.conversation_id
-                     AND shared_conversation.status = 'active'
-                    JOIN conversation_members cm
-                      ON cm.conversation_id = scs.conversation_id
-                   WHERE scs.session_id = s.session_id
-                     AND scs.version = s.version
-                     AND cm.user_id = $3
-                     AND cm.status = 'member'
-                     AND NOT EXISTS (
-                       SELECT 1
-                         FROM conversations direct_conversation
-                         JOIN conversation_direct_pairs direct_pair
-                           ON direct_pair.conversation_id = direct_conversation.id
-                         JOIN user_blocks direct_block
-                           ON (direct_block.blocker_id = direct_pair.user_low_id
-                               AND direct_block.blocked_user_id = direct_pair.user_high_id)
-                            OR (direct_block.blocker_id = direct_pair.user_high_id
-                               AND direct_block.blocked_user_id = direct_pair.user_low_id)
-                        WHERE direct_conversation.id = scs.conversation_id
-                          AND direct_conversation.kind = 'direct'
-                     )
-                ))`,
+           AND (cs.user_id = $3 OR ${specVersionSharedVisibilitySql('s', '$3')})`,
         [sessionId, version, req.user.id]
       );
       if (!rows.length) {
@@ -5819,17 +6418,29 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // shape and the whole client are identical, only the seeded rows' state
   // differs, and it is a strict no-op outside staging. The id set is resolved
   // once and cached, so the 3s status poll costs nothing.
+  //
+  // #1378: the set became a Map because `stoppable` is now part of the
+  // payload and the fixtures have to be able to show BOTH answers. A seeded
+  // fixture has no in-memory stop handle and no durable active_turn, so it
+  // would compute stoppable:false for all of them — regressing the two
+  // estimator fixtures to the "Finishing up…" spinner and breaking the
+  // checks that assert their cohort note. The '-unstoppable' fixture is the
+  // one that deliberately keeps the false answer.
   let stagingCohortFixtureIds = null;
   async function stagingCohortFixtureSessions() {
     if (process.env.USERNODE_ENV !== 'staging') return null;
     if (stagingCohortFixtureIds) return stagingCohortFixtureIds;
     try {
       const { rows } = await pool.query(
-        `SELECT id FROM chat_sessions WHERE branch_name LIKE 'staging-fixture/cc-cohort-%'`
+        `SELECT id, branch_name FROM chat_sessions
+          WHERE branch_name LIKE 'staging-fixture/cc-cohort-%'`
       );
-      stagingCohortFixtureIds = new Set(rows.map((r) => r.id));
+      stagingCohortFixtureIds = new Map(rows.map((r) => [
+        r.id,
+        { stoppable: !String(r.branch_name || '').endsWith('-unstoppable') },
+      ]));
     } catch {
-      stagingCohortFixtureIds = new Set();
+      stagingCohortFixtureIds = new Map();
     }
     return stagingCohortFixtureIds;
   }
@@ -5857,9 +6468,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // adding to activeWorkers and registering with the warm registry.
     let busy = isSessionBusy(sessionId);
     // #906 staging fixtures — see stagingCohortFixtureSessions above.
+    let fixtureStoppable = null;
     if (!busy) {
       const fixtures = await stagingCohortFixtureSessions();
-      if (fixtures && fixtures.has(sessionId)) busy = true;
+      const fixture = fixtures && fixtures.get(sessionId);
+      if (fixture) {
+        busy = true;
+        fixtureStoppable = fixture.stoppable;
+      }
     }
 
     let progress = [];
@@ -5892,19 +6508,50 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // Current turn phase (mayor1 / cc / mayor2). Lets the client pick
     // between the stop button and the finishing-up spinner on refresh
     // without guessing from container status alone.
-    const phase = stopRegistry.get(sessionId)?.phase || null;
+    const stopHandleNow = stopRegistry.get(sessionId);
+    const phase = stopHandleNow?.phase || null;
+
+    // #1378: whether POST /stop can actually do anything for this session.
+    //
+    // `busy` and "stoppable" are NOT the same fact, and conflating them is
+    // what produced the reported bug. `busy` is true for anything holding
+    // the session — an adopted turn, a handoff pipeline, a proposal
+    // handoff — while only a turn with a stop handle (or a durable
+    // active_turn still in a recoverable phase, which the recovery path
+    // will register a handle for) can be stopped. The client used to
+    // assume every busy session was stoppable and painted a live red Stop
+    // that answered { stopped: false }; it now paints the "Finishing up…"
+    // spinner instead when this is false, so the affordance matches what
+    // the server will do.
+    let durableTurn = null;
+    try {
+      durableTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    } catch {}
+    const durableRecoverable = !!durableTurn
+      && turnLifecycle.RECOVERABLE_PHASES.has(turnLifecycle.phaseOf(durableTurn));
+    const stoppable = fixtureStoppable === null
+      ? (!!stopHandleNow || durableRecoverable)
+      : fixtureStoppable;
 
     // #889: a stop has been requested for this turn but it hasn't unwound
     // yet. Lets a reloading client (and the 3s poll fallback) repaint the
     // "Stopping…" button instead of a live red Stop for a turn that is
     // already being killed.
-    const stopping = !!stopRegistry.get(sessionId)?.stopped;
+    //
+    // #1378: falls back to the durable stamp. A stop clicked just before a
+    // restart lives on the turn record, not in this process's memory, so
+    // without the fallback the client repaints a calm red Stop for a turn
+    // that is already ending.
+    const durableStop = turnLifecycle.stopRequestOf(durableTurn);
+    const stopping = stopHandleNow ? !!stopHandleNow.stopped : !!durableStop;
 
     // #937: WHEN the stop was requested, so a reloading client (or a second
     // tab joining mid-stop) rebuilds its escalation ladder at the right
     // rung instead of restarting a calm "Stopping…" that never escalates.
     // Null whenever no stop is pending.
-    const stopRequestedAt = stopRegistry.get(sessionId)?.stopRequestedAt || null;
+    const stopRequestedAt = stopHandleNow
+      ? (stopHandleNow.stopRequestedAt || null)
+      : (durableStop?.atMs || null);
 
     // Experimental AI progress estimate: latest in-memory Haiku guess for
     // the run, so the 3s polling fallback carries it when SSE/WS drop.
@@ -5973,13 +6620,15 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     // null) — the dev-chat sync banner's reload recovery and poll
     // fallback read this the same way the resolving banner reads
     // `resolving`.
-    // Keys: busy, progress, phase, stopping, stopRequestedAt, estimate
+    // Keys: busy, progress, phase, stopping, stopRequestedAt, stoppable,
+    // estimate
     // (+ resolving, sync, status). `estimate` is { text, remainingSeconds,
     // estimatedAt } | null — see workerProgress.setEstimate /
     // clearEstimate. `stopRequestedAt` is epoch ms | null (#937) and drives
     // the client's stop-escalation ladder across reloads.
     res.json({
-      busy, progress, phase, stopping, stopRequestedAt, estimate,
+      busy, progress, phase, stopping, stopRequestedAt, stoppable, estimate,
+      spend: busy ? workerProgress.get(sessionId)?.spend || null : null,
       agentBackend: progressAgentBackend,
       agentModel: progressAgentModel,
       resolving: isResolving(sessionId),
@@ -5998,12 +6647,31 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     const sessionId = parseInt(req.params.id, 10);
     if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Bad session id' });
 
+    // #1378: owner OR an admin who is allowed to WRITE. GET
+    // /api/sessions/:id is admin-readable and GET .../status has no
+    // ownership guard at all, so an admin could already watch someone
+    // else's runaway turn — but this route was owner-only, so their stop
+    // came back 404 and the client rendered "Couldn't stop the agent". An
+    // admin who can see a turn burning platform capacity must be able to
+    // end it.
+    //
+    // Deliberately `canAdminWrite` and not `isAdmin`: the latter includes
+    // view-only admins, and killing someone's in-flight turn is a
+    // privileged mutation (same gate middleware/admin.js uses). POST /chat
+    // stays owner-only — reading and stopping are not writing on someone
+    // else's behalf.
+    const stopAsAdmin = req.user?.canAdminWrite === true;
     try {
       const { rows } = await pool.query(
-        `SELECT id FROM chat_sessions WHERE id = $1 AND user_id = $2`,
-        [sessionId, req.user.id]
+        `SELECT id, user_id FROM chat_sessions WHERE id = $1 AND (user_id = $2 OR $3::boolean)`,
+        [sessionId, req.user.id, stopAsAdmin]
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      if (rows[0].user_id !== req.user.id) {
+        log.info('sessions', 'Admin stopping another user\'s turn', {
+          sessionId, by: req.user.username, ownerId: rows[0].user_id,
+        });
+      }
     } catch (err) {
       log.error('sessions', 'Stop session lookup failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
@@ -6022,7 +6690,26 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     const action = stopPolicy.classifyStopRequest({ handle, force: forceRequested });
 
     if (action === 'no_active_turn') {
-      return res.json({ ok: true, stopped: false, reason: 'no active turn' });
+      // #1378: this used to return silently, which is why the production
+      // report had nothing to go on — the click landed, the server said
+      // "nothing to stop", and the only trace was the user watching a turn
+      // keep running. Log the disagreement between what the client can see
+      // (`busy`) and what this process holds (`handle`), because that gap
+      // IS the bug class: a turn adopted by another process, or one whose
+      // handle was cleared while the tail is still unwinding.
+      let hasDurableTurn = false;
+      try {
+        hasDurableTurn = !!(await turnLifecycle.loadActiveTurn(pool, sessionId));
+      } catch {}
+      log.warn('sessions', 'Stop request had no active turn', {
+        sessionId,
+        busy: isSessionBusy(sessionId),
+        hasDurableTurn,
+        by: req.user.username,
+      });
+      return res.json({
+        ok: true, stopped: false, reason: 'no active turn', hasDurableTurn,
+      });
     }
     if (action === 'force_orphan') {
       // The turn already ended, but its bookkeeping may not have — this is
@@ -6078,6 +6765,41 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         stopRequestedAt: handle.stopRequestedAt,
       });
     } catch {}
+
+    // #1378: the same intent, recorded durably on the turn record.
+    //
+    // The in-memory stamp above is the fast path and is what ends the turn
+    // in every ordinary case. It cannot survive this process, though, and a
+    // blue-green cutover landing in the same second as the click would take
+    // it: the version that adopts the turn would resume it, narrate an
+    // interruption the user had already asked for, and — on an api-error
+    // tail — retry it. buildRecoveryStopHandle in server.js reads this stamp
+    // at adopt time and seeds the recovered turn's handle from it, which is
+    // what closes that window.
+    //
+    // It also leaves the only durable trace a pending stop has ever had:
+    // this incident was diagnosed with no record in the log OR the database
+    // that a stop had been asked for at all.
+    //
+    // Best-effort. The stamp is a compare-and-set against the turn identity
+    // and is a quiet no-op for a legacy row with neither a turnId nor a
+    // journal; none of that is a reason to refuse a stop the handle can
+    // already honour, so a failure here only warns.
+    try {
+      const durableTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+      if (durableTurn && (durableTurn.turnId || durableTurn.journal)) {
+        await turnLifecycle.markStopRequested(pool, {
+          sessionId,
+          turnId: durableTurn.turnId || null,
+          journal: durableTurn.journal || null,
+          by: req.user.username,
+        });
+      }
+    } catch (err) {
+      log.warn('sessions', 'Durable stop stamp failed', {
+        sessionId, err: err.message,
+      });
+    }
 
     // #161: clicking stop proves presence — disarm notify_on_done BEFORE
     // aborting so the turn's resulting send('done') doesn't create a
@@ -6263,6 +6985,58 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         aiEnabled: true,
         resetsAt: reset.toISOString(),
         lowBalancePct: 80,
+        // #1788: which window these three figures describe. The daily cap
+        // is the one that bound here, which is what ?demo=1 has always
+        // meant — stated explicitly now that it is not the only answer.
+        capWindow: 'daily',
+        windowLabel: 'Today',
+        resetLabel: 'midnight UTC',
+        dailyApplies: true,
+        dailyLimitCents: 2000,
+        dailySpentCents: 2000,
+        weeklyApplies: false,
+        weeklyLimitCents: 0,
+        weeklySpentCents: 0,
+        demo: true,
+      });
+    }
+    // #1788: the weekly sibling. A spent WEEKLY allowance is even less
+    // reachable on a preview than a spent daily one — it would take seven
+    // days of seeded spend — and its copy differs everywhere the boundary
+    // is named ("this week", "Resets Monday 00:00 UTC"), so it gets its own
+    // fixture rather than a flag on the one above. The daily cap still has
+    // headroom here, so the weekly cap is unambiguously the one binding.
+    if (process.env.USERNODE_ENV === 'staging' && req.query.demo === 'weekly-out') {
+      // Next Monday 00:00 UTC, inline for the same reason as above: this
+      // branch stays provably free of any service call.
+      const weekReset = new Date();
+      weekReset.setUTCDate(weekReset.getUTCDate() + (((8 - weekReset.getUTCDay()) % 7) || 7));
+      weekReset.setUTCHours(0, 0, 0, 0);
+      return res.json({
+        spentCents: 17500,
+        limitCents: 17500,
+        remainingCents: 0,
+        creditPolicy: 'legacy',
+        tier: 'legacy',
+        limitSource: 'default',
+        verificationRequired: false,
+        entitlementAvailable: true,
+        tierLimitCents: 1000,
+        globalSpentCents: 4000,
+        globalLimitCents: 100000,
+        byokSpentCents: 0,
+        aiEnabled: true,
+        resetsAt: weekReset.toISOString(),
+        lowBalancePct: 80,
+        capWindow: 'weekly',
+        windowLabel: 'This week',
+        resetLabel: 'Monday 00:00 UTC',
+        dailyApplies: true,
+        dailyLimitCents: 2000,
+        dailySpentCents: 900,
+        weeklyApplies: true,
+        weeklyLimitCents: 17500,
+        weeklySpentCents: 17500,
         demo: true,
       });
     }
@@ -6429,8 +7203,21 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // probeHealthOnce swallows its own failures; the .catch is belt and
         // braces so a docker-layer surprise can never turn "open the
         // preview" into a 500.
+        // #1381: this is the last platform code that runs before the browser
+        // is pointed at the preview URL, so it is the right place to make
+        // sure Caddy can actually resolve its upstream. The proxy's map row
+        // targets the short session alias, and a container built before
+        // aliases existed carries only its (possibly >63-byte, therefore
+        // unresolvable) name — which would 502 the preview with no way back
+        // short of a new commit. Attaching it here is idempotent, one
+        // `docker inspect` on the already-aliased path, and never throws.
+        const stagingName = `usernode-staging-${session.app_slug}--${sessionId}`;
+        await docker.ensureNetworkAlias(
+          stagingName,
+          applicationRuntime.dnsAlias({ environment: 'staging', sessionId })
+        ).catch(() => false);
         const verified = await docker.probeHealthOnce(
-          `usernode-staging-${session.app_slug}--${sessionId}`, 3000, '/health',
+          stagingName, 3000, '/health',
           { timeoutMs: 3000 }
         ).catch(() => false);
         if (!verified) {
@@ -6513,6 +7300,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
       const session = rows[0];
+
+      if (!['active', 'promoted'].includes(session.status)) {
+        return res.status(409).json({
+          error: 'proposal_closed',
+          message: `This proposal is ${session.status || 'no longer open'}, so its checks cannot be re-run.`,
+        });
+      }
 
       // Owner or admin only — re-running checks costs a staging build +
       // headless run, so it's not opened to every collaborator (deferred).
@@ -6603,17 +7397,17 @@ function buildHeadlessFollowUpMessage(src) {
   const issueRef = n ? `GitHub issue #${n}` : 'a GitHub issue';
   const intro =
     `This session was cloned from an auto session that ran unattended on ${issueRef}. `
-    + `You're on your own branch (forked from the auto session's, so its commits carry over) — `
+    + `You're on your own branch (forked from the auto session's, so its commits carry over). `
     + `other users can clone the same auto session independently without affecting yours.`;
   switch (src.headless_outcome) {
     case 'spec':
-      return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec — open the spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
+      return `${intro}\n\nWhere things stand: the auto session investigated the repo and drafted a spec. Open the spec viewer to review it. When you're happy with it, tell me to build it and I'll dispatch the coding agent (that turn also opens the PR and staging preview).`;
     case 'code':
-      return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch — see the "Changes ready" card above. A staging preview may be shown there ("Preview staging" / "Test this change") if one built; if it didn't, the card still lets you propose and the preview is rebuilt then. No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
+      return `${intro}\n\nWhere things stand: the code change is already committed and pushed on this branch. See the "Changes ready" card above. A staging preview may be shown there ("Preview staging" / "Test this change") if one built; if it didn't, the card still lets you propose and the preview is rebuilt then. No PR exists yet. Review the change, iterate if you want, and when you're ready hit "Propose to group" on the card, which opens the PR on this branch and starts the vote (or just ask me).`;
     case 'spec_code':
-      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it — the change is committed and pushed on this branch. See the "Changes ready" card above; a staging preview may be shown there if one built, and either way the card lets you propose (the preview is rebuilt at propose time if needed). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card — that opens the PR on this branch and starts the vote (or just ask me).`;
+      return `${intro}\n\nWhere things stand: the auto session drafted a spec (open the spec viewer to review it) AND implemented it: the change is committed and pushed on this branch. See the "Changes ready" card above; a staging preview may be shown there if one built, and either way the card lets you propose (the preview is rebuilt at propose time if needed). No PR exists yet. Review the spec and the change, iterate if you want, and when you're ready hit "Propose to group" on the card, which opens the PR on this branch and starts the vote (or just ask me).`;
     default:
-      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision — see its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a spec — open the spec viewer to review it alongside the questions.' : ''}`;
+      return `${intro}\n\nWhere things stand: the auto session ran into something that needs a human decision. See its last message above (the same questions were also posted as a comment on the GitHub issue). Answer here and we'll continue from where it left off.${(src.spec_md || '').trim() ? ' The auto session also drafted a spec, so open the spec viewer to review it alongside the questions.' : ''}`;
   }
 }
 
@@ -6811,14 +7605,14 @@ function questionsBodyHasContent(body) {
   return true;
 }
 
-const HEADLESS_QUESTION_FOOTER = '\n\n— Posted by this issue\'s proposal session. '
-  + 'Answer in a comment (or edit the issue body), then press **Generate proposal** on the issue again — the next run reads the answers.';
+const HEADLESS_QUESTION_FOOTER = '\n\nPosted by this issue\'s proposal session. '
+  + 'Answer in a comment (or edit the issue body), then press **Generate proposal** on the issue again: the next run reads the answers.';
 
 // #945: the same footer for the platform-side dual-post. Reading is now
 // symmetric (a run reads both the GitHub comments and this thread), so the
 // wording points at whichever surface the reader is already looking at.
-const HEADLESS_QUESTION_THREAD_FOOTER = '\n\n— Posted by this issue\'s proposal session. '
-  + 'Answer right here in this thread (or on the GitHub issue), then press **Generate proposal** on the issue again — the next run reads both.';
+const HEADLESS_QUESTION_THREAD_FOOTER = '\n\nPosted by this issue\'s proposal session. '
+  + 'Answer right here in this thread (or on the GitHub issue), then press **Generate proposal** on the issue again: the next run reads both.';
 
 // Best-effort: a failed post must never fail or change the run's outcome
 // (the parked session remains the fallback channel). Returns whether the
@@ -7190,8 +7984,8 @@ async function runHeadlessSession({
       }
       const directText = toolResult.toolResultText
         || (toolResult.isError
-          ? '_The OpenRouter run did not complete successfully — review the status above._'
-          : '_Change committed and pushed — start a session from this auto session to review it._');
+          ? '_The OpenRouter run did not complete successfully. Review the status above._'
+          : '_Change committed and pushed. Start a session from this auto session to review it._');
       if (!toolResult.isError && !toolResult.commitSha && directText.trim()) {
         questionTextToPost = directText;
       }
@@ -7356,7 +8150,7 @@ async function runHeadlessSession({
         // Nothing visible at all (no text, nothing salvageable, no
         // dispatch): persist an explicit note so the cloned session
         // doesn't open onto silence. Refusals already persisted a status.
-        await sendStatus('The auto session ended its planning turn without a reply — re-run "Generate proposal" to retry.', { turnError: true });
+        await sendStatus('The auto session ended its planning turn without a reply. Re-run "Generate proposal" to retry.', { turnError: true });
         log.warn('sessions', 'Headless Mayor turn produced no visible output — persisted fallback status', {
           sessionId: session.id,
           stopReason: mayor1.stopReason,
@@ -7441,7 +8235,7 @@ async function runHeadlessSession({
           phase2ToolResults.push({
             type: 'tool_result',
             tool_use_id: tu.id,
-            content: 'Skipped — only one action runs per turn.',
+            content: 'Skipped: only one action runs per turn.',
             is_error: true,
           });
         }
@@ -7467,8 +8261,8 @@ async function runHeadlessSession({
         const specHasQuestions = specHasBlockingQuestions(currentSpec);
         const decisionTurnId = headlessTurnId;
         const decisionFallback = specHasQuestions
-          ? '_The spec has open questions — review them before implementation._'
-          : '_Spec drafted — review it in the spec viewer after starting a session from this auto session._';
+          ? '_The spec has open questions. Review them before implementation._'
+          : '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._';
         const decisionEffect = await runHeadlessMayorEffect({
           pool,
           sessionId: session.id,
@@ -7508,8 +8302,8 @@ async function runHeadlessSession({
           const finalText = mayorText2.trim()
             ? mayorText2
             : (specHasQuestions
-              ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
-              : '_Spec drafted — review it in the spec viewer after starting a session from this auto session._');
+              ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
+              : '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._');
           const messageApplied = await persistHeadlessMayorRow({
             pool,
             sessionId: session.id,
@@ -7584,7 +8378,7 @@ async function runHeadlessSession({
             const buildBilling = await limits.resolveBillingPath(pool, config.dataEncryptionKey, user.id);
             let buildResult;
             if (buildBilling.error) {
-              await sendStatus('Spec drafted; implementation skipped — daily budget reached.');
+              await sendStatus('Spec drafted; implementation skipped, because the daily budget was reached.');
               buildResult = {
                 toolResultText: 'Implementation skipped — the daily LLM budget is exhausted. The spec remains the deliverable; a human will review and build it later.',
                 isError: true,
@@ -7594,7 +8388,7 @@ async function runHeadlessSession({
               // and its debits) must bill the re-resolved payer — the
               // turn-start resolution may differ now that the scout spent.
               userApiKey = buildBilling.apiKey;
-              await sendStatus('Auto session: spec looks straightforward — implementing it now...');
+              await sendStatus('Auto session: spec looks straightforward, so implementing it now...');
               const buildPromptArg = typeof buildCall.input?.prompt === 'string' && buildCall.input.prompt.trim()
                 ? buildCall.input.prompt.trim()
                 : seed;
@@ -7645,10 +8439,10 @@ async function runHeadlessSession({
             headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
           }
           const phase3Fallback = outcome === 'spec_code'
-            ? '_Spec drafted and change committed — start a session from this auto session to review it and propose it to the group._'
+            ? '_Spec drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
             : outcome === 'question'
-              ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
-              : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+              ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
+              : '_Spec drafted, but the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
           postDispatchBillingAvailable = await resolveHeadlessPayer('phase-3-wrapup');
           const phase3Effect = await runHeadlessMayorEffect({
             pool,
@@ -7688,10 +8482,10 @@ async function runHeadlessSession({
           if (outcome === 'question') questionTextToPost = mayorText3.trim();
           if (!mayorText3.trim()) {
             mayorText3 = outcome === 'spec_code'
-              ? '_Spec drafted and change committed — start a session from this auto session to review it and propose it to the group._'
+              ? '_Spec drafted and change committed. Start a session from this auto session to review it and propose it to the group._'
               : outcome === 'question'
-                ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
-                : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+                ? '_The spec has open questions. Review the Questions section in the spec viewer after starting a session from this auto session._'
+                : '_Spec drafted, but the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
           }
           const servedModel3 = mayor3.servedModel || selectedModel;
           const costCents3 = mayor3.usage
@@ -7724,8 +8518,8 @@ async function runHeadlessSession({
         // --- Phase 2: Mayor wrap-up (mirrors the chat handler) — scout
         // error, direct phase-1 build, or any other dispatch path. ---
         const directFallback = toolResult.isError
-          ? "_The auto session's dispatch didn't finish successfully — see the status above._"
-          : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
+          ? "_The auto session's dispatch didn't finish successfully. See the status above._"
+          : '_Change committed and pushed. Start a session from this auto session to review it and propose it to the group._';
         const directEffect = await runHeadlessMayorEffect({
           pool,
           sessionId: session.id,
@@ -7748,8 +8542,8 @@ async function runHeadlessSession({
         let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         if (!mayorText2.trim()) {
           mayorText2 = toolResult.isError
-            ? "_The auto session's dispatch didn't finish successfully — see the status above._"
-            : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
+            ? "_The auto session's dispatch didn't finish successfully. See the status above._"
+            : '_Change committed and pushed. Start a session from this auto session to review it and propose it to the group._';
         }
         const servedModelW = mayor2.servedModel || selectedModel;
         const costCents2 = mayor2.usage
@@ -7895,17 +8689,62 @@ function snapshotMayorResponse(response) {
   };
 }
 
+// #1378: the "…and here is what it had already committed" clause of a stop.
+//
+// Stopping a turn discards work in progress, but not necessarily ALL of it:
+// the agent may have committed and pushed before the stop landed. Saying
+// only "Stopped." there is actively misleading, because the user's branch
+// has moved and re-sending the same request buys them a duplicate run.
+//
+// Extracted so the RECOVERED path can say the same thing as the live one.
+// A recovered turn reaches this from the durable tail milestones
+// (active_turn.tail.sha / .pushOk, written by markTurnTail) rather than
+// from an in-memory exec result, and those carry no commit COUNT — hence
+// `ahead: null` meaning "a commit landed, quantity unknown". A NUMERIC
+// ahead is authoritative and 0 means nothing landed, which preserves the
+// live path's behaviour exactly (an absent `ahead` there has always read
+// as "nothing landed", so that caller passes `?? 0`, not null).
+function describeStoppedLanding({ sha = null, ahead = null, pushOk = false } = {}) {
+  if (!sha) return '';
+  if (ahead != null && !(ahead > 0)) return '';
+  const what = ahead != null
+    ? `${ahead} change${ahead === 1 ? '' : 's'}`
+    : 'changes';
+  return `, but it had already committed ${what} to the branch`
+    + ` (${String(sha).slice(0, 8)}${pushOk ? ', pushed' : ', not pushed'});`
+    + ' no pull request was opened';
+}
+
+// The SAME facts describeStoppedLanding renders as a clause, kept as data.
+// The sentence stays the record — a notification, a plain-text export and a
+// shared transcript all show prose — but the dev chat should not have to
+// parse its own prose back out to draw a commit count, and a stop that
+// landed commits is the one turn outcome the transcript most needs to state
+// precisely. `ahead: null` means "a commit landed, quantity unknown" here
+// exactly as it does above; it surfaces as a countless chip rather than as
+// a wrong number. `headline` is the sentence WITHOUT the landed clause, so
+// the row can put the facts in chips beside it instead of saying them twice.
+function stopLandingMeta({ headline, sha = null, ahead = null, pushOk = false } = {}) {
+  const landed = !!sha && (ahead == null || ahead > 0);
+  return {
+    headline,
+    commits: landed ? (ahead == null ? null : ahead) : 0,
+    sha: landed ? String(sha).slice(0, 8) : null,
+    pushOk: landed ? pushOk === true : false,
+  };
+}
+
 function staticWrapUpText(outcome, { toolKind = null } = {}) {
   if (outcome === 'push_failed' || outcome === 'failed') {
     return toolKind === 'scout'
-      ? "_The scout didn't finish successfully — see the status above._"
-      : "_The coding agent didn't complete successfully — see the status messages above._";
+      ? "_The scout didn't finish successfully. See the status above._"
+      : "_The coding agent didn't complete successfully. See the status messages above._";
   }
   if (outcome === 'spec' || outcome === 'spec_done') {
-    return "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
+    return "_Spec updated: it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
   }
   if (outcome === 'no_changes') {
-    return '_The coding agent finished without changing anything — see the status messages above._';
+    return '_The coding agent finished without changing anything. See the status messages above._';
   }
   return '_Done._';
 }
@@ -7916,7 +8755,7 @@ function staticWrapUpText(outcome, { toolKind = null } = {}) {
 // re-issued. Legacy rows without a turnId retain the old best-effort behavior.
 async function runRecoveredWrapUp({
   pool, config, session, sessionId, outcome, dispatchSummary,
-  fallbackPillKind, turnModel, turnId = null, emit = () => {},
+  fallbackPillKind, turnModel, turnId = null, emit = () => {}, signal = null,
 }) {
   const recoveryPills = require('../services/recovery-pills');
   const fallbackPills = recoveryPills.buildRecoveryQuickReplies(fallbackPillKind);
@@ -8093,6 +8932,13 @@ async function runRecoveredWrapUp({
       tools: [SUGGEST_REPLIES_TOOL],
       toolChoice: { type: 'auto' },
       apiKey: userApiKey,
+      // #1378: the recovered wrap-up runs under the adopted turn's stop
+      // handle like any other phase-2, so a stop that lands while it is
+      // streaming aborts the provider call instead of being ignored. The
+      // handle's phase is 'mayor2' by the time we get here, so POST /stop
+      // answers 'wrap_up_not_stoppable' and this only ever fires for a
+      // stop that landed EARLIER and is still unwinding.
+      signal: signal || undefined,
       telemetryContext: invocationTelemetry(pool, session, 'mayor_phase_2'),
     }))
       : fallbackMayor;
@@ -8751,7 +9597,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         outcome = 'question';
         dispatchSummary = apiFailure
           ? `${describeAgentApiFailure(apiFailure)}. No spec was produced.`
-          : 'The scout did not complete successfully — no spec was produced.';
+          : 'The scout did not complete successfully, so no spec was produced.';
       }
     } else {
       const testing = testingNotes.extract(result.lastResultText || '');
@@ -8833,7 +9679,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
             sessionId: session.id, errName, err: errMsg, missingKeys,
           });
           dispatchSummary = `Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}. `
-            + 'Headless mode: no PR was opened. The staging preview could not be built, but the commit is reviewable — the "Changes ready" card still appears on a clone.'
+            + 'Headless mode: no PR was opened. The staging preview could not be built, but the commit is reviewable: the "Changes ready" card still appears on a clone.'
             + (session.spec_md ? ' The change implements the spec drafted earlier this run (in the session spec doc).' : '')
             + (testing.cleanedText ? `\n\nWhat the agent did:\n${testing.cleanedText.slice(0, 2000)}` : '');
         }
@@ -8863,12 +9709,12 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     headlessTurnId = await checkpointHeadlessWrapUp(pool, session.id, outcome);
   }
   const fallbackMayorText = outcome === 'spec'
-    ? '_Spec drafted — review it in the spec viewer after starting a session from this auto session._'
+    ? '_Spec drafted. Review it in the spec viewer after starting a session from this auto session._'
     : outcome === 'spec_code'
-      ? '_Spec drafted and change committed — start a session from this auto session to open the PR._'
+      ? '_Spec drafted and change committed. Start a session from this auto session to open the PR._'
       : outcome === 'code'
-        ? '_Change committed and pushed — start a session from this auto session to open the PR._'
-        : "_The auto session's dispatch didn't finish successfully — see the status above._";
+        ? '_Change committed and pushed. Start a session from this auto session to open the PR._'
+        : "_The auto session's dispatch didn't finish successfully. See the status above._";
   let mayorText2;
   let servedModelR;
   let recoveredUsage = null;
@@ -9410,6 +10256,7 @@ const SUGGEST_REPLIES_TOOL = {
     + QUICK_REPLY_RULES_TEXT,
   input_schema: {
     type: 'object',
+    additionalProperties: false,
     properties: {
       replies: {
         type: 'array',
@@ -9763,7 +10610,7 @@ function salvageAssistantText(mayorText, suggestions, quickReplies) {
     // sanitizeSuggestedAnswers allows empty question labels when the
     // answers themselves survived — the chips still render, so anchor
     // them to a generic ask.
-    return 'I have a couple of clarifying questions — pick an answer below.';
+    return 'I have a couple of clarifying questions. Pick an answer below.';
   }
   if (Array.isArray(quickReplies) && quickReplies.length) {
     return 'What would you like to do next?';
@@ -9820,7 +10667,7 @@ function buildDataSummaryReprompt(rawContent, toolUses) {
 // Explicit fallback for a data-informed turn whose re-prompt ALSO
 // produced no text — the generic "What would you like to do next?"
 // would mask that findings were fetched and lost. Exported for tests.
-const DATA_SUMMARY_FALLBACK_TEXT = '_I fetched the data but failed to summarize it — please ask again._';
+const DATA_SUMMARY_FALLBACK_TEXT = '_I fetched the data but failed to summarize it. Please ask again._';
 
 // Would the turn end with nothing visible? True when no text survived
 // (after salvage) AND no dispatch tool ran — a dispatch produces its own
@@ -9850,7 +10697,7 @@ function describeTurnError(err) {
       : `The AI provider rate-limited this request: ${message}`;
   }
   if (status === 529 || /overloaded/i.test(message)) {
-    return 'The AI provider is overloaded right now — try again in a minute.';
+    return 'The AI provider is overloaded right now. Try again in a minute.';
   }
   // spawn E2BIG: the OS rejected a process launch because a single
   // argument crossed Linux's 128 KiB limit. Deterministic — a verbatim
@@ -9859,7 +10706,35 @@ function describeTurnError(err) {
   // that it travels as a file (worker.TURN_PROMPT_PATH), but other
   // spawns can still theoretically hit it.
   if (/\bE2BIG\b/.test(message)) {
-    return 'This request was too large to hand to the coding agent — trim the session spec or attachments before retrying';
+    return 'This request was too large to hand to the coding agent. Trim the session spec or attachments before retrying';
+  }
+  // Cold worker bootstrap failed: the container never reached warm-ready,
+  // so the coding agent was never launched and not one file was touched.
+  //
+  // These used to reach the user as the wrapper's raw string. "clone failed"
+  // with nothing after it reads like the agent tried and gave up, names no
+  // cause, and does not say the repo is untouched. Two separate sessions
+  // spent real budget chasing a GitHub authentication problem that never
+  // existed, because the words were all the evidence anyone had.
+  if (worker.isBootstrapError(err)) {
+    // Everything after the first colon is git's own stderr, forwarded by
+    // worker-run.sh's `die`. Absent on the timeout paths, and absent on a
+    // warm container still running an image from before that change.
+    const colon = message.indexOf(':');
+    const detail = colon === -1 ? '' : message.slice(colon + 1).trim();
+    const git = detail ? ` Git reported: ${detail}` : '';
+    if (message.startsWith('clone failed')) {
+      return 'Setting up the coding agent failed while cloning the repository, so the agent never started and no code was changed.'
+        + `${git} The platform already retried this a few times, so if it keeps happening the repository or the network is genuinely unreachable rather than briefly flaky.`;
+    }
+    if (message.startsWith('checkout failed')) {
+      return 'Setting up the coding agent failed while checking out this session\'s branch, so the agent never started and no code was changed.'
+        + `${git} Retrying will not help until the branch problem is resolved.`;
+    }
+    if (message.startsWith('warm-ready timeout')) {
+      return 'Setting up the coding agent timed out before it was ready, so the agent never started and no code was changed. Try again in a minute.';
+    }
+    return 'Setting up the coding agent stopped unexpectedly before it was ready, so the agent never started and no code was changed. Try again, and if it keeps happening the platform log for this session holds the container output.';
   }
   return message;
 }
@@ -10243,6 +11118,28 @@ async function finishToolTurnCleanup(sessionId, turnId, { required = false } = {
 // editing anything. Mirrors runClaudeCodeTool's stop / progress / cost-
 // tracking shape so the existing client SSE handlers don't have to
 // special-case scout vs. build.
+// #1350 backstop: no dispatch can run without a branch.
+//
+// The first-turn mint in POST /chat covers every interactive path and
+// headless runs mint their own up front, so by the time a dispatch reaches
+// this the branch is normally already on the row and this is one indexed
+// SELECT. It exists anyway because the consequence of dispatching without
+// one is not a poor error message: worker-run.sh hard-requires BRANCH, and
+// once a worker is warm on a bad value run-cc.sh dies on
+// "branch missing upstream: origin/$BRANCH" for every build and sync turn
+// after it, with no way back. Mint rather than dispatch into that.
+//
+// Deliberately unconditional on runLocally: a local agent commits on the
+// user's machine but pushes through the platform, so it needs the ref too.
+async function ensureBranchForDispatch(pool, session) {
+  if (session.branch_name) return session.branch_name;
+  const ensured = await sessionLifecycle.ensureSessionBranch({
+    pool, sessionId: session.id,
+  });
+  session.branch_name = ensured.branchName;
+  return ensured.branchName;
+}
+
 async function runScoutTool({
   pool, config, req, res, session, selectedModel,
   userMessage, toolPromptArg,
@@ -10302,6 +11199,10 @@ async function runScoutTool({
     await sendStatus(`Scout stopped${byStr}.`, {
       ...agentIdentity.metadata,
       durationMs: Date.now() - turnStartedMs,
+      // The scout writes the spec doc and commits nothing, so its landing is
+      // always empty — but it still carries the marker, because that is what
+      // moves the row off the pipeline's green ✓ and onto the stopped card.
+      stopLanding: stopLandingMeta({ headline: `Scout stopped${byStr}` }),
       quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }),
     });
     activeWorkers.delete(session.id);
@@ -10367,7 +11268,7 @@ async function runScoutTool({
     runLocally
       // No model label: the local runtime uses whatever model the user's own
       // Claude Code is configured for, and claiming ours would be a lie.
-      ? `Scouting on ${lease.label} — your machine, read-only${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
+      ? `Scouting on ${lease.label}: your machine, read-only${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
       : `Scouting the repo for context (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`,
     runLocally
       ? {
@@ -10470,18 +11371,37 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
   // the first dispatch of a session; subsequent ensures are sub-second.
   // Bootstrap progress (clone/checkout/warm-ready) flows through onProgress
   // to the dev-chat UI just like the legacy single-shot path used to.
-  const containerName = runLocally ? null : await worker.ensureWorker(session.id, {
-    repoOwner,
-    repoName,
-    branchName: session.branch_name,
-    onProgress: (text) => {
-      send('cc_progress', { text, ...agentIdentity.metadata });
-      workerProgress.set(session.id, text, {
-        model: turnModel,
-        backend: agentIdentity.backend,
+  await ensureBranchForDispatch(pool, session);
+  let containerName = null;
+  if (!runLocally) {
+    try {
+      containerName = await worker.ensureWorker(session.id, {
+        repoOwner,
+        repoName,
+        branchName: session.branch_name,
+        onProgress: (text) => {
+          send('cc_progress', { text, ...agentIdentity.metadata });
+          workerProgress.set(session.id, text, {
+            model: turnModel,
+            backend: agentIdentity.backend,
+          });
+        },
       });
-    },
-  });
+    } catch (err) {
+      // Nothing was dispatched, so there is no turn to terminalize and no
+      // work to summarize. Hand the reason back to the Mayor.
+      return await workerBootstrapFailureResult(err, {
+        session,
+        send,
+        sendStatus,
+        statusMeta: {
+          ...agentIdentity.metadata,
+          durationMs: Date.now() - turnStartedMs,
+        },
+        durableTurnId,
+      });
+    }
+  }
 
   // Surface the warm container name for diagnostics. The actual stop
   // signal travels through worker.stopTurn (in-container pkill) so the
@@ -10636,7 +11556,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         missing: 'The local turn record disappeared',
         aborted: `${lease.label} was interrupted`,
       }[outcome] || null;
-      const detail = finished?.error_detail ? ` — ${finished.error_detail}` : '';
+      const detail = finished?.error_detail ? `: ${finished.error_detail}` : '';
       return {
         exitCode: outcome === 'completed' ? 0 : 1,
         ccIsError: outcome !== 'completed',
@@ -10703,10 +11623,10 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       // each still names the reason it is retrying.
       const scoutRetryStatus = (r) => {
         if (headless && shouldRetryHeadlessTurn(r, stopHandle, !!(r?.lastResultText || '').trim())) {
-          return 'The coding step failed unexpectedly — retrying once…';
+          return 'The coding step failed unexpectedly, retrying once…';
         }
         if (shouldRetryApiErrorTurn(r, stopHandle)) {
-          return 'The coding agent lost its connection to the API — retrying once…';
+          return 'The coding agent lost its connection to the API, retrying once…';
         }
         return null;
       };
@@ -10870,7 +11790,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     if (result.fatalError) {
       isError = true;
       const msg = `Scout error: ${result.fatalError.substring(0, 200)}`;
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else if (apiFailure) {
       // #1204: the run "succeeded" — exit 0, result line written — but the
@@ -10879,8 +11799,8 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       // dropped connection, and freezing this as a spec version would put a
       // one-line error notice in the viewer's version history forever.
       isError = true;
-      const msg = `${describeAgentApiFailure(apiFailure)}. The spec doc was not updated — send your request again to retry.`;
-      await sendStatus(msg);
+      const msg = `${describeAgentApiFailure(apiFailure)}. The spec doc was not updated, so send your request again to retry.`;
+      await sendStatus(msg, turnFailure());
       summaryParts.push(msg);
     } else if (result.ccIsError) {
       // The runtime flagged the run as errored. A scout's final message IS
@@ -10892,7 +11812,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       // "unknown".
       isError = true;
       const msg = `Scout error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else if (!ccText) {
       isError = true;
@@ -10901,7 +11821,7 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       const msg = (result.exitCode === -1 || result.exitCode == null)
         ? `${describeMarkerlessExit(result.markerlessCause)} No spec text was produced.`
         : 'Scout finished but produced no spec text.';
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else {
       const publication = await persistScoutPublication({
@@ -11022,10 +11942,26 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
 // cause tag is set by worker.js's journal consumer; the bare
 // "exited with code -1" wording is deliberately gone (it read like a
 // Claude Code failure when the agent was usually healthy).
+// A status that describes a turn ENDING BADLY, rather than a step finishing.
+//
+// `turnError: true` is the only thing that tells the transcript to draw a
+// failure — without it the row falls through to the generic system status,
+// whose settled icon is the pipeline's green ✓ (see the `failure` row in
+// features/dev-chat/transcript-store.ts). The catch-all turn error has set
+// it since #894; the agent-run failures below did not, so "Scout finished but
+// produced no spec text" and "Worker error: …" were reported in green.
+//
+// Spreads rather than mutates: `executionAgentMeta` is one object shared by
+// every status the run emits, and marking it here would mark the run's
+// successes too.
+function turnFailure(meta) {
+  return { ...(meta || {}), turnError: true };
+}
+
 function describeMarkerlessExit(cause) {
   switch (cause) {
     case 'oom_killed':
-      return 'The coding agent was killed — most likely it ran out of memory.';
+      return 'The coding agent was killed, most likely because it ran out of memory.';
     case 'container_gone':
       return "The coding agent's worker container disappeared mid-run.";
     case 'probe_unobservable':
@@ -11173,8 +12109,8 @@ async function runCodexAttemptLoop({
     if (attemptNumber >= 2) break;
     if (typeof sendStatus === 'function') {
       const status = retryFresh
-        ? 'The saved OpenRouter model context is unavailable — retrying fresh once…'
-        : 'The coding step failed unexpectedly — retrying once…';
+        ? 'The saved OpenRouter model context is unavailable, retrying fresh once…'
+        : 'The coding step failed unexpectedly, retrying once…';
       try { await sendStatus(status); } catch {}
     }
     if (!retryFresh && typeof waitForStopped === 'function') {
@@ -11303,6 +12239,25 @@ async function confirmStopLanded(sessionId, handle) {
 async function forceStopSession(pool, sessionId, username, handle) {
   const containerName = handle?.workerName || worker.workerContainerName(sessionId);
 
+  // #1378: the force-orphan path arrives here with `handle === null` (a turn
+  // adopted after a restart never had one, and a handle that already cleared
+  // is the same story), and every announcement below used to be
+  // `handle?.send?.(...)` — a silent no-op precisely when the user most needs
+  // to be told the turn is over. Fall back to the two channels a live turn's
+  // own `send` fans out over, with the `_seq` sessionBus.publish requires.
+  const announce = handle?.send || (() => {
+    const { broadcastGlobal } = require('../services/ws');
+    const seqPrefix = `force-${sessionId}-${Date.now().toString(36)}`;
+    let seq = 0;
+    return (type, data) => {
+      const event = { type, _seq: `${seqPrefix}-${++seq}`, ...(data || {}) };
+      // Spread first, pin the envelope last — same reason as the live send:
+      // an inner `type` must not clobber `type: 'session_event'`.
+      try { broadcastGlobal({ ...event, sessionId, event: type, type: 'session_event' }); } catch {}
+      try { sessionBus.publish(sessionId, event); } catch {}
+    };
+  })();
+
   // The ordinary stop may be a beat from landing; don't destroy a
   // container that is already going quietly.
   let executing = await worker.isWorkerExecuting(containerName);
@@ -11393,7 +12348,7 @@ async function forceStopSession(pool, sessionId, username, handle) {
   });
 
   try {
-    handle?.send?.('status', { text, quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }) });
+    announce('status', { text, quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }) });
   } catch {}
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, metadata)
@@ -11402,11 +12357,11 @@ async function forceStopSession(pool, sessionId, username, handle) {
   ).catch(() => {});
 
   try {
-    handle?.send?.('stopped', { phase: handle?.phase || null, by: username, forced: true });
-    handle?.send?.('done', {});
+    announce('stopped', { phase: handle?.phase || null, by: username, forced: true });
+    announce('done', {});
   } catch {}
 
-  if (handle && stopRegistry.get(sessionId) === handle) stopRegistry.delete(sessionId);
+  stopRegistry.deleteIf(sessionId, handle);
 }
 
 // Pre-retry safety: kill any zombie turn process and wait (bounded) for
@@ -11442,6 +12397,39 @@ async function waitForTurnStopped(sessionId, containerName, { timeoutMs = 30000 
 // automated fix on the next turn. Shared by the interactive tail (where
 // the failure is fatal to the turn) and the headless tail (#183, where
 // it's non-fatal — the pushed commit is the deliverable).
+// Turn a failure to warm the worker container into a `tool_result` the
+// Mayor can act on, instead of letting it escape to the chat handler's
+// generic catch.
+//
+// Same reasoning as the staging-failure catch further down: without this
+// the Mayor never finds out anything went wrong, the user sees a bare
+// "Chat error" toast, and the next turn has no idea the dispatch never
+// happened. The difference from a staging failure is what it can promise —
+// nothing ran, so the branch is exactly as it was.
+async function workerBootstrapFailureResult(err, {
+  session, send, sendStatus, statusMeta = {}, durableTurnId = null,
+}) {
+  const friendly = describeTurnError(err);
+  log.error('sessions', 'Worker bootstrap failed', {
+    sessionId: session.id,
+    message: err && err.message,
+    phase: (err && err.bootstrapPhase) || null,
+    attempts: (err && err.bootstrapAttempts) || null,
+    containerName: (err && err.bootstrapContainerName) || null,
+    bootstrapLog: Array.isArray(err && err.bootstrapLog) ? err.bootstrapLog.join('\n') : null,
+  });
+  await sendStatus(friendly, statusMeta);
+  activeWorkers.delete(session.id);
+  workerProgress.clear(session.id);
+  if (typeof send === 'function') send('error', { error: friendly });
+  return {
+    toolResultText:
+      `The coding agent could not be started, so this dispatch never ran and the branch is unchanged.\n\n${friendly}`,
+    isError: true,
+    turnId: durableTurnId,
+  };
+}
+
 function describeStagingFailure(stagingErr) {
   let fix;
   let missingKeys = [];
@@ -11487,6 +12475,123 @@ function describeStagingFailure(stagingErr) {
   const errMsg = (stagingErr && stagingErr.message) || 'Unknown staging failure (no error thrown but no result returned)';
   const errName = (stagingErr && stagingErr.name) || 'Error';
   return { fix, missingKeys, errMsg, errName };
+}
+
+// Local Claude and Codex/OpenRouter do not have hosted Claude's independently
+// verified appended-system-prompt transport. Keep their existing browser and
+// testing guidance inline, byte-for-byte, so this optimization cannot change
+// those backends. Hosted Claude receives a compact pointer because every build
+// invocation is already required to carry the complete platform handbook as
+// system context.
+const INLINE_CODING_AGENT_TESTING_GUIDANCE = `- End your FINAL message with a testing block (optional, but strongly
+  encouraged whenever the change is user-visible) so reviewers can try the
+  change in the staging preview:
+
+==== TESTING ====
+path: /relative/path?demo=1
+path: /another/changed/view
+1. First step a tester should take.
+2. What they should see if the change works.
+==== END TESTING ====
+
+  Rules for the testing block:
+  - The "path:" line points the before/after screenshots (and the "Test
+    this change" button) at the route where the change is visible. Each
+    must be a RELATIVE path within the app (starts with "/", no scheme or
+    host).
+  - REQUIRED for user-visible changes: you MUST include at least one
+    "path:" line pointing at the SPECIFIC screen where the change is
+    actually VISIBLE — a deep route (with whatever query/hash params it
+    takes), not a reflexive "path: /". Omitting it makes the screenshots
+    default to the home page and show a screen your change never touched;
+    the platform records that default as a capture defect on the
+    proposal, so treat a missing "path:" as a bug in your reply, not a
+    shortcut. Omit "path:" only when the change genuinely renders on "/"
+    as the page loads.
+  - The screenshots and the button can only NAVIGATE — they never click,
+    play, or fill anything in. If no URL reaches the changed screen
+    (in-game state, a modal/sheet, a wizard step), ADD one: a
+    screenshot-state deep link — a query/hash param the app handles at
+    boot to enter that state deterministically (e.g.
+    "/?shot=settlement-sheet" starts a demo match on a fixed seed and
+    opens the settlement panel) — per "Make the changed screen URL-reachable"
+    in the supplied platform conventions. Point "path:" at it, add a
+    dapp.json test asserting it renders, and verify it in the in-loop
+    browser before committing. A "path: /" screenshot of an
+    interaction-gated change is as good as no testing block.
+  - Every "path:" is captured in BOTH frames automatically: the desktop
+    viewport (1280x800, still + animated recording) and a phone-sized
+    viewport (390x844, still image only). Mobile-only changes are
+    therefore covered without any annotation — just point "path:" at the
+    right route. The legacy "@mobile" annotation is still accepted but
+    is redundant now; never rely on the desktop frame alone for a
+    narrow-screen change.
+  - You may give MORE THAN ONE "path:" line (one per line, up to 3,
+    captured in the order written) when the change spans several views —
+    e.g. a new nav item plus the page it opens. Each becomes its own
+    labelled before/after row. The FIRST path is also the deep link the
+    "Test this change" button jumps to.
+  - SELF-APP (social-vibecoding) ONLY: this app is a hash-routed SPA — its
+    internal screens live in the URL fragment ("#app/<slug>/dev/...",
+    "#leaderboard"), NOT in the server pathname. Write the "path:" using
+    the in-app route segments exactly as they appear after the "#"
+    (e.g. "path: /app/<self-slug>/dev/proposals/<id>" or
+    "path: /leaderboard") — the platform moves it into the fragment when
+    capturing screenshots and when the "Test this change" button opens the
+    preview, so the shot lands on the changed screen instead of the home
+    feed. Standalone server pages ("/dashboard", "/admin", "/status",
+    "/node-status") stay as plain pathnames. (This only applies to the
+    self-app; ordinary apps are path-routed and need no special handling.)
+  - The steps are short markdown (numbered list preferred), written for a
+    non-technical tester looking at a staging preview seeded with a copy of
+    production data.
+  - DATA AVAILABILITY: before writing the steps, check what each step's
+    data actually looks like in staging — existing public tables carry a
+    copy of production data, but tables created by THIS change and
+    staging:private tables are EMPTY. If a step needs data that won't
+    exist, you MUST seed it in this same commit per the "Staging mock
+    data" convention above (IS_STAGING boot-time seed, or a
+    staging-gated ?demo=1 route — always a no-op in production), and
+    write the steps against the seeded entities by name ("Open the
+    thread 'Staging demo thread' and …"). Point "path:" at a view where
+    the seeded data is visible (or at the ?demo=1 route). Changes
+    testable purely against production-cloned data need no seeding.
+  - The block must be the LAST thing in your final message. Skip the block
+    entirely for changes with nothing user-visible to test.`;
+
+const HOSTED_CLAUDE_TESTING_GUIDANCE = `- End your FINAL message with a testing block (optional, but strongly
+  encouraged whenever the change is user-visible) so reviewers can try the
+  change in the staging preview:
+
+==== TESTING ====
+path: /relative/path?demo=1
+path: /another/changed/view
+1. First step a tester should take.
+2. What they should see if the change works.
+==== END TESTING ====
+
+  The authoritative system instructions contain the complete testing-path,
+  screenshot-state, self-app routing, mobile capture, staging-data, and seed
+  rules. Follow them. For this output block:
+  - Include one to three relative "path:" lines for the specific screen where
+    a user-visible change can be seen. The FIRST path drives the "Test this
+    change" button.
+  - Keep the steps short, numbered when practical, and understandable to a
+    non-technical tester.
+  - The block must be LAST in your final message. Skip it entirely for changes
+    with nothing user-visible to test.`;
+
+function buildCodingAgentBuildGuidance({ authoritativeSystemContext = false } = {}) {
+  if (!authoritativeSystemContext) {
+    return {
+      browserGuidance: IN_LOOP_BROWSER_GUIDANCE,
+      testingGuidance: INLINE_CODING_AGENT_TESTING_GUIDANCE,
+    };
+  }
+  return {
+    browserGuidance: HOSTED_CLAUDE_IN_LOOP_BROWSER_GUIDANCE,
+    testingGuidance: HOSTED_CLAUDE_TESTING_GUIDANCE,
+  };
 }
 
 // Hosted Claude build turns carry the platform handbook as appended system
@@ -11666,16 +12771,29 @@ async function runClaudeCodeTool({
     const byStr = stopHandle?.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
     const commits = result && result.sha && result.ahead > 0 ? result.ahead : 0;
     const shortSha = commits ? String(result.sha).slice(0, 8) : null;
-    const landed = commits
-      ? ` — it had already committed ${commits} change${commits === 1 ? '' : 's'}`
-        + ` to the branch (${shortSha}${result.pushOk ? ', pushed' : ', not pushed'});`
-        + ' no pull request was opened'
-      : '';
+    // #1378: shared with the recovered-turn stop path — see
+    // describeStoppedLanding. `?? 0` keeps an absent `ahead` reading as
+    // "nothing landed", which is what this call site has always done.
+    const landed = describeStoppedLanding({
+      sha: result?.sha || null,
+      ahead: result?.ahead ?? 0,
+      pushOk: result?.pushOk === true,
+    });
     // #894: no phase-2 wrap-up follows a stop, so this status row is the
     // turn's only pill carrier.
+    // #1378's `landed` clause is the SENTENCE; `stopped` is the same facts
+    // as data, so the transcript can render them as chips instead of asking
+    // the client to parse its own prose back out. The sentence stays: it is
+    // what a shared transcript, a notification and a plain-text export show.
     await sendStatus(`${executionAgentName} stopped${byStr}${landed}.`, {
       ...executionAgentMeta,
       durationMs: Date.now() - turnStartedMs,
+      stopLanding: stopLandingMeta({
+        headline: `${executionAgentName} stopped${byStr}`,
+        sha: result?.sha || null,
+        ahead: result?.ahead ?? 0,
+        pushOk: result?.pushOk === true,
+      }),
       quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }),
     });
     activeWorkers.delete(session.id);
@@ -11742,7 +12860,7 @@ async function runClaudeCodeTool({
   }
   await sendStatus(
     runLocally
-      ? `Handing this turn to ${lease.label} — your machine, your Claude subscription${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
+      ? `Handing this turn to ${lease.label}: your machine, your Claude subscription${discussionBlock ? ' · with issue & proposal discussion' : ''}...`
       : (isCodexSession
         ? `Starting OpenRouter (${modelLabel}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`
         : `Spinning up coding agent (${modelLabel}${prodDebug ? ' · prod debug' : ''}${discussionBlock ? ' · with issue & proposal discussion' : ''})...`),
@@ -11865,6 +12983,9 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
     runLocally,
     isCodexSession,
   });
+  const buildGuidance = buildCodingAgentBuildGuidance({
+    authoritativeSystemContext: Boolean(conventionsContext.systemPrompt),
+  });
   const renderClaudePrompt = (renderedSpecBlock) => `${taskBlock}
 
 ${conventionsContext.promptBlock}
@@ -11891,82 +13012,8 @@ ${debugAccess.promptBlock()}
 ` : ''}
 INSTRUCTIONS:
 ${turnInstructions}
-${IN_LOOP_BROWSER_GUIDANCE}
-- End your FINAL message with a testing block (optional, but strongly
-  encouraged whenever the change is user-visible) so reviewers can try the
-  change in the staging preview:
-
-==== TESTING ====
-path: /relative/path?demo=1
-path: /another/changed/view
-1. First step a tester should take.
-2. What they should see if the change works.
-==== END TESTING ====
-
-  Rules for the testing block:
-  - The "path:" line points the before/after screenshots (and the "Test
-    this change" button) at the route where the change is visible. Each
-    must be a RELATIVE path within the app (starts with "/", no scheme or
-    host).
-  - REQUIRED for user-visible changes: you MUST include at least one
-    "path:" line pointing at the SPECIFIC screen where the change is
-    actually VISIBLE — a deep route (with whatever query/hash params it
-    takes), not a reflexive "path: /". Omitting it makes the screenshots
-    default to the home page and show a screen your change never touched;
-    the platform records that default as a capture defect on the
-    proposal, so treat a missing "path:" as a bug in your reply, not a
-    shortcut. Omit "path:" only when the change genuinely renders on "/"
-    as the page loads.
-  - The screenshots and the button can only NAVIGATE — they never click,
-    play, or fill anything in. If no URL reaches the changed screen
-    (in-game state, a modal/sheet, a wizard step), ADD one: a
-    screenshot-state deep link — a query/hash param the app handles at
-    boot to enter that state deterministically (e.g.
-    "/?shot=settlement-sheet" starts a demo match on a fixed seed and
-    opens the settlement panel) — per "Make the changed screen URL-reachable"
-    in the supplied platform conventions. Point "path:" at it, add a
-    dapp.json test asserting it renders, and verify it in the in-loop
-    browser before committing. A "path: /" screenshot of an
-    interaction-gated change is as good as no testing block.
-  - Every "path:" is captured in BOTH frames automatically: the desktop
-    viewport (1280x800, still + animated recording) and a phone-sized
-    viewport (390x844, still image only). Mobile-only changes are
-    therefore covered without any annotation — just point "path:" at the
-    right route. The legacy "@mobile" annotation is still accepted but
-    is redundant now; never rely on the desktop frame alone for a
-    narrow-screen change.
-  - You may give MORE THAN ONE "path:" line (one per line, up to 3,
-    captured in the order written) when the change spans several views —
-    e.g. a new nav item plus the page it opens. Each becomes its own
-    labelled before/after row. The FIRST path is also the deep link the
-    "Test this change" button jumps to.
-  - SELF-APP (social-vibecoding) ONLY: this app is a hash-routed SPA — its
-    internal screens live in the URL fragment ("#app/<slug>/dev/...",
-    "#leaderboard"), NOT in the server pathname. Write the "path:" using
-    the in-app route segments exactly as they appear after the "#"
-    (e.g. "path: /app/<self-slug>/dev/proposals/<id>" or
-    "path: /leaderboard") — the platform moves it into the fragment when
-    capturing screenshots and when the "Test this change" button opens the
-    preview, so the shot lands on the changed screen instead of the home
-    feed. Standalone server pages ("/dashboard", "/admin", "/status",
-    "/node-status") stay as plain pathnames. (This only applies to the
-    self-app; ordinary apps are path-routed and need no special handling.)
-  - The steps are short markdown (numbered list preferred), written for a
-    non-technical tester looking at a staging preview seeded with a copy of
-    production data.
-  - DATA AVAILABILITY: before writing the steps, check what each step's
-    data actually looks like in staging — existing public tables carry a
-    copy of production data, but tables created by THIS change and
-    staging:private tables are EMPTY. If a step needs data that won't
-    exist, you MUST seed it in this same commit per the "Staging mock
-    data" convention above (IS_STAGING boot-time seed, or a
-    staging-gated ?demo=1 route — always a no-op in production), and
-    write the steps against the seeded entities by name ("Open the
-    thread 'Staging demo thread' and …"). Point "path:" at a view where
-    the seeded data is visible (or at the ?demo=1 route). Changes
-    testable purely against production-cloned data need no seeding.
-  - The block must be the LAST thing in your final message. Skip the block
-    entirely for changes with nothing user-visible to test.`;
+${buildGuidance.browserGuidance}
+${buildGuidance.testingGuidance}`;
 
   const fullClaudePrompt = renderClaudePrompt(specContext.fullBlock);
   const claudePrompt = reuseHostedScoutSpec
@@ -11991,18 +13038,38 @@ path: /another/changed/view
   // credential for it either — the user's own `claude` login on their own
   // machine does the work, so neither their BYOK key nor the platform's proxy
   // JWT is created, sent, or needed on this path.
-  const containerName = runLocally ? null : await worker.ensureWorker(session.id, {
-    repoOwner,
-    repoName,
-    branchName: session.branch_name,
-    onProgress: (text) => {
-      send('cc_progress', { text, ...agentIdentity.metadata });
-      workerProgress.set(session.id, text, {
-        model: turnModel,
-        backend: agentIdentity.backend,
+  await ensureBranchForDispatch(pool, session);
+  let containerName = null;
+  if (!runLocally) {
+    try {
+      containerName = await worker.ensureWorker(session.id, {
+        repoOwner,
+        repoName,
+        branchName: session.branch_name,
+        onProgress: (text) => {
+          send('cc_progress', { text, ...agentIdentity.metadata });
+          workerProgress.set(session.id, text, {
+            model: turnModel,
+            backend: agentIdentity.backend,
+          });
+        },
       });
-    },
-  });
+    } catch (err) {
+      // Same seam as the staging-failure catch below: the dispatch never
+      // happened, so report that as a tool_result rather than letting the
+      // throw surface as an anonymous "Chat error".
+      return await workerBootstrapFailureResult(err, {
+        session,
+        send,
+        sendStatus,
+        statusMeta: {
+          ...executionAgentMeta,
+          durationMs: Date.now() - turnStartedMs,
+        },
+        durableTurnId,
+      });
+    }
+  }
 
   // Surface the container name for diagnostics + admin tooling. The
   // actual stop signal flows through worker.stopTurn (in-container
@@ -12490,7 +13557,7 @@ path: /another/changed/view
         missing: 'The local turn record disappeared',
         aborted: `${lease.label} was interrupted`,
       }[outcome] || null;
-      const detail = finished?.error_detail ? ` — ${finished.error_detail}` : '';
+      const detail = finished?.error_detail ? `: ${finished.error_detail}` : '';
       return {
         sha: headSha,
         ahead: headSha ? 1 : 0,
@@ -12567,7 +13634,7 @@ path: /another/changed/view
         // retry must stay on the same attached machine.
         result = await dispatchLocalBuild();
         if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
-          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
+          await sendStatus('The coding step failed unexpectedly, retrying once…', executionAgentMeta);
           await waitForTurnStopped(session.id, containerName);
           result = await dispatchLocalBuild();
         }
@@ -12642,7 +13709,7 @@ path: /another/changed/view
         // Claude session — legacy combined path, keep the headless retry.
         result = await doBuild({});
         if (headless && shouldRetryHeadlessTurn(result, stopHandle, result.ahead > 0)) {
-          await sendStatus('The coding step failed unexpectedly — retrying once…', executionAgentMeta);
+          await sendStatus('The coding step failed unexpectedly, retrying once…', executionAgentMeta);
           await waitForTurnStopped(session.id, containerName);
           if (!result.turnId || !await worker.finishTurn(session.id, { turnId: result.turnId })) {
             throw new Error('Could not durably finish the first build attempt before retry');
@@ -12782,18 +13849,31 @@ path: /another/changed/view
     // re-push it from the platform side — the identical heal the restart
     // recovery path (finalizeRecoveredTurn in server.js) already uses —
     // before deciding the turn failed.
+    // #1376: the heal's rejection is the only place the REAL reason for a
+    // push failure exists (an invalid branch name, a missing bot token, a
+    // git error from GitHub). It used to be swallowed into a WARN line and
+    // replaced downstream with a fixed "retry your request" sentence, so a
+    // permanently unpushable session read as a transient hiccup and the
+    // user retried into the same wall. Keep it and describe it.
+    let pushFailure = null;
     const healPush = async () => {
       try {
         await worker.execPushFromWorker(session.id, session.branch_name);
         result.pushOk = true;
+        pushFailure = null;
         log.info('sessions', 'Push heal: re-pushed un-pushed branch', {
           sessionId: session.id, branch: session.branch_name,
         });
         await appendTurnProgressLine('[done]');
         return true;
       } catch (err) {
+        pushFailure = worker.describePushFailure(err);
         log.warn('sessions', 'Push heal failed', {
-          sessionId: session.id, branch: session.branch_name, err: err.message,
+          sessionId: session.id,
+          branch: session.branch_name,
+          code: pushFailure.code,
+          permanent: pushFailure.permanent,
+          err: err.message,
         });
         return false;
       }
@@ -12802,12 +13882,12 @@ path: /another/changed/view
     if (result.fatalError) {
       isError = true;
       const msg = `Worker error: ${result.fatalError.substring(0, 200)}`;
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else if (result.ccIsError && !hasChanges) {
       isError = true;
       const msg = `${executionAgentName} error: ${(ccText || 'unknown').substring(0, 200)}`;
-      await sendStatus(msg, executionAgentMeta);
+      await sendStatus(msg, turnFailure(executionAgentMeta));
       summaryParts.push(msg);
     } else if (!hasChanges) {
       const directReply = directSessionTurn && result.exitCode === 0 && !!ccText.trim();
@@ -12822,7 +13902,7 @@ path: /another/changed/view
         // "-1" (which also normalizes the old "code null" rendering).
         msg = `${describeMarkerlessExit(result.markerlessCause)} No changes were made.`;
       } else {
-        msg = `${executionAgentName} exited with code ${result.exitCode} — no changes were made.`;
+        msg = `${executionAgentName} exited with code ${result.exitCode}, so no changes were made.`;
       }
       if (msg) {
         await sendStatus(msg, executionAgentMeta);
@@ -12836,9 +13916,23 @@ path: /another/changed/view
       // keeps the only copy of the commit; the next turn (or a retry)
       // re-pushes it (#295), so nothing is lost.
       isError = true;
-      const msg = 'Push to GitHub failed — your changes are committed in the session\'s worker but not on GitHub. Retry your request to re-push and open the PR.';
-      await sendStatus(msg, { ...executionAgentMeta, error: msg });
+      const failure = pushFailure || worker.describePushFailure(null);
+      const msg = failure.text;
+      await sendStatus(msg, {
+        ...turnFailure(executionAgentMeta),
+        error: msg,
+        pushFailureCode: failure.code,
+        pushFailurePermanent: failure.permanent,
+      });
       summaryParts.push(msg);
+      if (failure.permanent) {
+        // The Mayor writes the wrap-up from summaryParts; without this it
+        // cheerfully offers "try again", which cannot work.
+        summaryParts.push(
+          'This push failure is permanent for this session — do NOT tell the user to retry. '
+          + 'Their committed work is still in the worker and can be recovered by an admin.'
+        );
+      }
     } else if (headless) {
       // Success path, headless variant (#155/#183): the commit was already
       // pushed by run-cc.sh inside the worker. Persist testing guidance so
@@ -12859,7 +13953,7 @@ path: /another/changed/view
         session.testing_path = testing.testingPath;
         session.testing_paths = testing.testingPaths || [];
       }
-      await sendStatus('Changes committed and pushed (headless) — building staging preview (no PR yet)...');
+      await sendStatus('Changes committed and pushed (headless). Building staging preview (no PR yet)...');
 
       const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
       let stagingResult = null;
@@ -12937,7 +14031,7 @@ path: /another/changed/view
           prNumber: null,
         });
         summaryParts.push(
-          `Staging preview failed to build (non-fatal — commit ${commitHash.substring(0, 8)} is pushed; `
+          `Staging preview failed to build (non-fatal: commit ${commitHash.substring(0, 8)} is pushed; `
           + `a preview can be built from a cloned session).\n\n${fix}`
         );
         // #461: record the failure as a terminal 'error' checks verdict
@@ -13029,7 +14123,7 @@ path: /another/changed/view
           ...github.describeGithubError(prErr),
         });
         if (prErr.code === 'github_unavailable') {
-          await sendStatus('GitHub is having trouble creating the pull request right now (their side, not this change) — it will be created when you propose, or on the next turn.');
+          await sendStatus('GitHub is having trouble creating the pull request right now (their side, not this change). It will be created when you propose, or on the next turn.');
           summaryParts.push('NOTE: GitHub\'s API is currently failing to create pull requests (GitHub-side outage). The commit is pushed and safe on the branch; the PR will be created automatically at propose time or on the next turn. Do NOT retry by dispatching extra commits — just tell the user to wait a few minutes.');
         }
       }
@@ -13200,7 +14294,7 @@ path: /another/changed/view
               appSlug: session.app_slug,
               merged: false,
             });
-            const resetMsg = `Votes reset on PR #${session.pr_number || session.id} — new commit ${commitHash.substring(0, 8)} pushed.`;
+            const resetMsg = `An update was pushed to PR #${session.pr_number || session.id} (commit ${commitHash.substring(0, 8)}). Earlier votes were on the old version, so take another look.`;
             await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
             // Dual-post into the proposal's thread (lifecycle in context).
             await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
@@ -13242,7 +14336,7 @@ path: /another/changed/view
           `Staging build failed.\n\n` +
           `What still happened: commit ${commitHash.substring(0, 8)} was pushed to ${session.branch_name}` +
           (session.pr_number ? ` and PR #${session.pr_number} was created/updated` : '') +
-          `. Only the staging preview container is missing — there is no preview URL for this commit.\n\n` +
+          `. Only the staging preview container is missing, so there is no preview URL for this commit.\n\n` +
           fix;
 
         // The commit (and PR, if any) already landed — `changesReady: true`
@@ -13334,7 +14428,7 @@ path: /another/changed/view
       // …"; the two together are how a reader of the transcript tells a local
       // spec turn from a local build turn months later.
       if (runLocally) {
-        statusText += ` Coding done on ${lease.label} — no Usernode credits used.`;
+        statusText += ` Coding done on ${lease.label}, so no Usernode credits were used.`;
       }
       const completionMeta = {
         ...executionAgentMeta,
@@ -13542,6 +14636,9 @@ If the user's next request is a DISTINCT, separate change — a new feature or f
 
 YOUR ROLE:
 You talk to the user in plain English and decide whether their latest message needs the session's selected coding agent to actually edit the repo, OR needs spec-stage planning before any code is written. You are NOT a developer — never write code, file contents, diffs, or implementation details. Keep replies to 1-4 sentences.
+
+WRITING STYLE:
+Do not use em dashes (—) in anything you write: chat replies, quick-reply pills, suggested answers, and the prompts you send to the scout and the coding agent. Readers read a dash-heavy line as machine-written, which is the opposite of the plain-English voice this chat is for. Use a full stop and a second sentence, a colon, parentheses, or a comma instead, whichever the sentence actually wants. Never swap in a plain hyphen; that reads as a typo and keeps the same texture. When you dispatch the coding agent to write copy the user will see, say the same thing in the prompt.
 
 THE SPEC DOC:
 Every session has a markdown SPEC DOC that the user can read in the dev-chat spec viewer (a side-panel they open via the spec preview cards in the chat). It is your collaborative working surface for planning before code is written. The current spec is included verbatim below in the CURRENT SPEC DOC block — refer to it whenever you discuss or summarize the spec. The viewer is read-only: the user cannot hand-edit the spec, so all revisions go through you — and YOU never edit the spec in-process either. ALL spec writing and revising, however small, is done by dispatching the scout (dispatch_scout), which reads the repo and rewrites the doc; you only relay what the user wants changed. When they're happy with the spec they'll ask you to dispatch the coding agent in chat — you don't need to call dispatch_claude_code just because the spec is done; the user owns that decision.
@@ -13765,4 +14862,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

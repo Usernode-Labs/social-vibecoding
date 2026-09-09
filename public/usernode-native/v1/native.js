@@ -20,9 +20,13 @@
  *                                        (element container OR the window
  *                                        scroller; the puck hangs BELOW the
  *                                        app header — opts.topEl / opts.top
- *                                        anchor it under a fixed one — and
- *                                        lingers briefly once onRefresh
- *                                        settles; never throws on bad input)
+ *                                        anchor it under a fixed one —
+ *                                        resting FULLY below that anchor
+ *                                        line with equal space above and
+ *                                        below, and lingers briefly once
+ *                                        onRefresh settles. Returns
+ *                                        { detach(), refresh() }; never
+ *                                        throws on bad input)
  *   unNative.attachGridPlacement(listEl, opts) — free-form placement on a
  *     fixed grid (drop anywhere, holes allowed — the homescreen model;
  *     cellFromPoint(x, y, info) gets the dragged tile's live rect/centre in
@@ -242,6 +246,52 @@
   function decidePtrRelease(input) {
     if (input.pull >= input.threshold) return true;
     return projectDisplacement(input.pull, input.v, input.horizonMs) >= input.threshold;
+  }
+
+  /* ── Pull-to-refresh geometry ─────────────────────────────────────────
+   * Above the Node cut on purpose: the puck's resting pose is arithmetic,
+   * and issue #1526 (a quarter of the spinner sliced off by the header's
+   * edge for two releases) went unnoticed precisely because these numbers
+   * lived down in the DOM half where no unit test could reach them.
+   *
+   * Tuning note (v1 in-place fix): the original COEFF 0.4 / THRESHOLD 70
+   * pair required ~330px of raw finger travel to arm — more than half a
+   * phone screen, so short lists were nearly impossible to refresh. The
+   * pair below arms at ~125px of travel (UIRefreshControl territory)
+   * while keeping the same asymptote, so a deep pull still saturates at
+   * the familiar rubber-band feel.
+   */
+  var PTR_THRESHOLD = 60; // px of displayed pull that arms a refresh
+  var PTR_LIMIT = 150; // rubber-band asymptote
+  var PTR_COEFF = 0.8; // initial resistance slope (~dy/1.25)
+  var PTR_MIN_HOLD_MS = 500; // spinner floor so instant refreshes still read
+  var PTR_SETTLE_HOLD_MS = 500; // linger AFTER onRefresh settles, then retract
+  var PTR_LAYER_H = 240; // clip window the puck travels inside
+
+  // The puck's box, mirroring .un-ptr-puck's width/height in native.css
+  // (cross-checked by a test — the pose math below is meaningless if the
+  // painted box drifts from the constant it is derived from).
+  var PTR_PUCK = 34;
+  // Breathing room above AND below the puck at rest. Everything else is
+  // derived from these two numbers, so the resting state stays balanced
+  // by construction rather than by a hand-tuned coefficient.
+  var PTR_PUCK_GAP = 14;
+  // Where the content holds while refreshing: gap, puck, gap. 62px, just
+  // past PTR_THRESHOLD, so the puck rests at full scale and full opacity
+  // and the content never springs BACKWARDS on commit.
+  var PTR_HOLD = PTR_PUCK + 2 * PTR_PUCK_GAP;
+  // Retracted pose: the whole puck sits above the anchor line, where the
+  // layer's overflow clip hides it.
+  var PTR_PUCK_PARKED = -(PTR_PUCK + 6);
+  // Travel per px of pull, solved so ptrPuckOffset(PTR_HOLD) === the gap.
+  var PTR_PUCK_TRAVEL = (PTR_PUCK_GAP - PTR_PUCK_PARKED) / PTR_HOLD;
+
+  // The puck's top edge, in px relative to the clip layer's top (= the
+  // anchor line). Negative means clipped behind the header — which is the
+  // emerge-from-under-the-bar idiom during the drag (the top crosses the
+  // line at ~43px of pull) and, at rest, the bug this helper fixed.
+  function ptrPuckOffset(pull) {
+    return PTR_PUCK_PARKED + pull * PTR_PUCK_TRAVEL;
   }
 
   // Bottom-sheet release decision. y is the sheet's downward displacement
@@ -570,6 +620,78 @@
     };
   }
 
+  /* ────────────────────────────────────────────────────────────────────
+   * Menu-row icons (additive, /v1).
+   *
+   * Rows in menu() / popover() / actionSheet() may carry `icon: '<name>'`
+   * naming one of these, or `iconEl: <Element>` for artwork the kit does
+   * not ship. A row with NEITHER renders exactly as it did before this
+   * existed — one text node, same class, same DOM — so every caller and
+   * every selector written against one is untouched.
+   *
+   * Stroke geometry on a 24 grid, drawn in `currentColor`: the row's own
+   * colour carries the icon, so a destructive row tints its icon red and
+   * a disabled row dims it without a single per-icon rule.
+   *
+   * Deliberately a SMALL set. A name that ships here is one every app on
+   * the platform can rely on and none of them can restyle, so the set
+   * grows by being needed, not by being anticipated — /v1 takes additive
+   * names in place.
+   * ──────────────────────────────────────────────────────────────────── */
+  var ICONS = {
+    home: [
+      'M3 10.4 12 3.2l9 7.2',
+      'M5.4 9.3V20.8h13.2V9.3',
+      'M9.6 20.8v-6.2h4.8v6.2',
+    ],
+    globe: [
+      'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z',
+      'M3 12h18',
+      'M12 3c2.4 2.7 3.6 5.7 3.6 9s-1.2 6.3-3.6 9c-2.4-2.7-3.6-5.7-3.6-9S9.6 5.7 12 3z',
+    ],
+    terminal: [
+      'M4 5.5h16A1.5 1.5 0 0 1 21.5 7v10a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 17V7A1.5 1.5 0 0 1 4 5.5z',
+      'M6.6 9.6 9.6 12l-3 2.4',
+      'M12.6 14.8h4.8',
+    ],
+    link: [
+      'M10.2 13.6a4 4 0 0 0 5.7 0l2.9-2.9a4 4 0 1 0-5.7-5.7l-1.6 1.7',
+      'M13.8 10.4a4 4 0 0 0-5.7 0l-2.9 2.9a4 4 0 1 0 5.7 5.7l1.6-1.7',
+    ],
+    laptop: [
+      'M5.2 6.4h13.6v9.2H5.2z',
+      'M2.6 18.6h18.8',
+    ],
+    cloud: [
+      'M7.2 18.4h9.4a4.1 4.1 0 0 0 .6-8.1 6.1 6.1 0 0 0-11.6-.6 3.8 3.8 0 0 0 1.6 8.7z',
+    ],
+    // The one icon here that is not about WHERE something runs: a
+    // destructive row is the most-iconed row in any app's menus, and it is
+    // what proves the glyph takes the row's colour rather than its own.
+    trash: [
+      'M4 6.8h16',
+      'M9.2 6.8V4.6h5.6v2.2',
+      'M6.4 6.8 7.3 20a1.2 1.2 0 0 0 1.2 1.1h7a1.2 1.2 0 0 0 1.2-1.1l.9-13.2',
+      'M10.3 10.6v6.6',
+      'M13.7 10.6v6.6',
+    ],
+  };
+
+  // hasOwnProperty, not a bare lookup: `name` is caller data, and a bare
+  // one answers `toString` / `constructor` with a prototype member that is
+  // not an icon.
+  function iconPaths(name) {
+    return Object.prototype.hasOwnProperty.call(ICONS, name) ? ICONS[name] : null;
+  }
+
+  // Does this row want the kit to draw something to the left of its label?
+  // One answer, so the sheet and the popover can never disagree about it.
+  function rowHasIcon(item) {
+    if (!item) return false;
+    if (item.iconEl && item.iconEl.nodeType === 1) return true;
+    return !!iconPaths(item.icon);
+  }
+
   var physics = {
     PRESETS: PRESETS,
     DECEL_RATE: DECEL_RATE,
@@ -588,6 +710,13 @@
     lockIntent: lockIntent,
     decideSwipeRelease: decideSwipeRelease,
     decidePtrRelease: decidePtrRelease,
+    PTR_PUCK: PTR_PUCK,
+    PTR_PUCK_GAP: PTR_PUCK_GAP,
+    PTR_HOLD: PTR_HOLD,
+    PTR_THRESHOLD: PTR_THRESHOLD,
+    PTR_LIMIT: PTR_LIMIT,
+    PTR_LAYER_H: PTR_LAYER_H,
+    ptrPuckOffset: ptrPuckOffset,
     decideSheetRelease: decideSheetRelease,
     GHOST_CLICK_MS: GHOST_CLICK_MS,
     decideBackdropDismiss: decideBackdropDismiss,
@@ -604,6 +733,9 @@
     createToastSlot: createToastSlot,
     zoomPose: zoomPose,
     zoomRectUsable: zoomRectUsable,
+    ICON_NAMES: Object.keys(ICONS),
+    iconPaths: iconPaths,
+    rowHasIcon: rowHasIcon,
   };
 
   // Node (unit tests): export the math and stop — no DOM below this line.
@@ -1066,22 +1198,10 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
-   * Pull-to-refresh
+   * Pull-to-refresh — the wiring. The travel geometry (PTR_PUCK,
+   * PTR_PUCK_GAP, PTR_HOLD, ptrPuckOffset, …) lives above the Node cut
+   * so it can be unit-tested; see the "Pull-to-refresh geometry" block.
    * ──────────────────────────────────────────────────────────────────── */
-
-  // Tuning note (v1 in-place fix): the original COEFF 0.4 / THRESHOLD 70
-  // pair required ~330px of raw finger travel to arm — more than half a
-  // phone screen, so short lists were nearly impossible to refresh. The
-  // pair below arms at ~125px of travel (UIRefreshControl territory)
-  // while keeping the same asymptote, so a deep pull still saturates at
-  // the familiar rubber-band feel.
-  var PTR_THRESHOLD = 60; // px of displayed pull that arms a refresh
-  var PTR_HOLD = 56; // px the content holds at while refreshing
-  var PTR_LIMIT = 150; // rubber-band asymptote
-  var PTR_COEFF = 0.8; // initial resistance slope (~dy/1.25)
-  var PTR_MIN_HOLD_MS = 500; // spinner floor so instant refreshes still read
-  var PTR_SETTLE_HOLD_MS = 500; // linger AFTER onRefresh settles, then retract
-  var PTR_LAYER_H = 240; // clip window the puck travels inside
 
   // First element child that is the app's own, skipping kit chrome.
   function firstContentChild(parent) {
@@ -1104,8 +1224,15 @@
   // reads as one. No-op on desktop. Invalid input NEVER throws: it warns
   // once and returns a no-op { detach() }.
   //
+  // Returns { detach(), refresh() }. refresh() starts a refresh without a
+  // gesture (the UIRefreshControl.beginRefreshing() equivalent) and is a
+  // no-op while one is already running.
+  //
   // The puck NEVER paints over the app's header. It lives in a clip layer
-  // whose top edge is the anchor, and it is stacked BENEATH the header:
+  // whose top edge is the anchor, and it is stacked BENEATH the header. At
+  // rest it sits ENTIRELY below that anchor line, with PTR_PUCK_GAP of
+  // space above and below it; during the drag it emerges from under the
+  // bar as the content slides away.
   //
   //   opts.topEl  — an Element (typically the fixed/sticky app header)
   //                 whose bottom edge the puck hangs from. Re-measured on
@@ -1113,11 +1240,13 @@
   //                 or conditionally-rendered header stays correct.
   //   opts.top    — a fixed anchor offset in px, when there is no element
   //                 to measure.
+  //   opts.getScrollTop — optional offset reader when the content's scroll
+  //                 owner can change without replacing its gesture target.
   //   (default)   — element mode: the scroller's own top edge within its
   //                 parent (i.e. below whatever chrome sits above it);
   //                 window mode: the safe-area top inset.
   function attachPullToRefresh(scrollEl, onRefresh, opts) {
-    var noop = { detach: function () {} };
+    var noop = { detach: function () {}, refresh: function () {} };
     if (platform === 'desktop') return noop;
 
     var windowMode = scrollEl === window || scrollEl === document ||
@@ -1221,6 +1350,9 @@
     var armed = false;
 
     function scrollTop() {
+      // A shell page may grow into the document in a browser while this
+      // recognizer stays attached to its content (and disappears with it).
+      if (opts && typeof opts.getScrollTop === 'function') return opts.getScrollTop();
       return windowMode ? (window.scrollY || 0) : scrollEl.scrollTop;
     }
 
@@ -1230,7 +1362,7 @@
       var progress = Math.min(1, y / PTR_THRESHOLD);
       puck.style.opacity = String(progress);
       puck.style.transform =
-        'translate(-50%, ' + (y * 0.55 - 40) + 'px) scale(' + (0.5 + 0.5 * progress) + ') ' +
+        'translate(-50%, ' + ptrPuckOffset(y) + 'px) scale(' + (0.5 + 0.5 * progress) + ') ' +
         'rotate(' + y * 2.2 + 'deg)';
       var nowArmed = !refreshing && y >= PTR_THRESHOLD;
       if (nowArmed !== armed) {
@@ -1348,6 +1480,13 @@
     listenEl.addEventListener('touchcancel', onTouchEnd, { passive: true });
 
     return {
+      // Programmatic refresh — the kit's beginRefreshing(). Used by the
+      // demo page's ?un-demo=ptr-hold screenshot state; a no-op while a
+      // refresh is already running.
+      refresh: function () {
+        if (refreshing) return;
+        startRefresh(0);
+      },
       detach: function () {
         listenEl.removeEventListener('touchstart', onTouchStart);
         listenEl.removeEventListener('touchmove', onTouchMove);
@@ -2550,7 +2689,8 @@
    * visible), pass `outEl` — the outgoing screen element, or a function
    * returning it: zoom-in hides it (inline display) for the synchronous
    * pre-paint destination measurement so `el` measures its SETTLED
-   * rect, then restores it before pinning; without it the zoom would
+   * rect, then restores it and the document's scroll offset before pinning;
+   * without it the zoom would
    * animate to the shared-layout rect and snap at the end. zoom-out
    * ignores `outEl`. When the zoom can't run (no usable source rect,
    * reduced motion, missing el) it falls back to opts.fallback ('push'
@@ -2664,9 +2804,20 @@
       var target;
       if (outEl && outEl !== el && outEl.style) {
         var savedOutDisplay = outEl.style.display;
-        outEl.style.display = 'none';
-        target = el.getBoundingClientRect();
-        outEl.style.display = savedOutDisplay;
+        // Hiding a document-scrolling page can temporarily shrink the root
+        // and clamp its offset to zero. Restore it before paint, too: this
+        // measurement must not move the outgoing page or erase its position.
+        var page = document.scrollingElement || document.documentElement;
+        var pageTop = page.scrollTop;
+        var pageLeft = page.scrollLeft;
+        try {
+          outEl.style.display = 'none';
+          target = el.getBoundingClientRect();
+        } finally {
+          outEl.style.display = savedOutDisplay;
+          page.scrollTop = pageTop;
+          page.scrollLeft = pageLeft;
+        }
       } else {
         target = el.getBoundingClientRect();
       }
@@ -3079,6 +3230,67 @@
 
   var modalStack = []; // Escape dismisses the TOPMOST dismissible modal only
 
+  // Modal/alert cards and the dim over the page are one fade (#1566).
+  // Explicitly commit BOTH starting opacities, including the separately
+  // composited backdrop, before a microtask-origin open can reach its rAF.
+  // Keep the two writes in one frame, and retire the pair only when both
+  // opacity transitions end — never on a child's transition or keyboard top.
+  function animateDialog(card, backdrop, onEntered) {
+    var layers = [card, backdrop];
+    layers.forEach(function (el) { void getComputedStyle(el).opacity; });
+    var closed = false;
+    var frame = requestAnimationFrame(function () {
+      frame = null;
+      if (closed) return;
+      backdrop.style.opacity = '1';
+      card.classList.add('un-in');
+      if (onEntered) onEntered();
+    });
+
+    return {
+      dismiss: function (onExited) {
+        if (closed) return;
+        closed = true;
+        if (frame !== null) cancelAnimationFrame(frame);
+        // A close before the entrance paints has nothing to fade. Reading
+        // both current styles also commits an interrupted entrance before
+        // reversing it, so the browser can shorten both exits consistently.
+        var ended = layers.map(function (el) { return getComputedStyle(el).opacity === '0'; });
+        var fired = false;
+        var timer = null;
+        var handlers = layers.map(function (el, index) {
+          return function (event) {
+            if (event.target !== el || event.propertyName !== 'opacity') return;
+            // An entrance transitionend can already be queued at close.
+            if (getComputedStyle(el).opacity !== '0') return;
+            ended[index] = true;
+            if (ended.every(Boolean)) finish();
+          };
+        });
+        function finish() {
+          if (fired) return;
+          fired = true;
+          if (timer !== null) clearTimeout(timer);
+          layers.forEach(function (el, index) {
+            el.removeEventListener('transitionend', handlers[index]);
+            if (el.parentNode) el.parentNode.removeChild(el);
+          });
+          if (onExited) onExited();
+        }
+        layers.forEach(function (el, index) {
+          el.style.pointerEvents = 'none';
+          el.addEventListener('transitionend', handlers[index]);
+        });
+        card.classList.remove('un-in');
+        backdrop.style.opacity = '0';
+        if (ended.every(Boolean)) finish();
+        // Safety for a hidden document, removed CSS, or a cancelled
+        // transition: longer than the shared 180ms fade, never its clock.
+        else timer = setTimeout(finish, 300);
+      },
+    };
+  }
+
   window.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape' || !modalStack.length) return;
     // A popover open above a modal owns Escape (its own handler
@@ -3114,49 +3326,25 @@
     var closed = false;
     var entry = { dismissible: dismissible, dismiss: dismiss };
     modalStack.push(entry);
+    var fade = animateDialog(card, backdrop, function () {
+      var auto = card.querySelector('[autofocus]');
+      try { (auto || card).focus(); } catch (e) { /* ignore */ }
+    });
 
     function dismiss() {
       if (closed) return;
       closed = true;
       var i = modalStack.indexOf(entry);
       if (i >= 0) modalStack.splice(i, 1);
-      card.classList.remove('un-in');
-      backdrop.style.opacity = '0';
-      // Nothing is clickable while fading out — not the card, not the
-      // dimmed area underneath it.
-      card.style.pointerEvents = 'none';
-      backdrop.style.pointerEvents = 'none';
-      var fired = false;
-      function finish() {
-        if (fired) return;
-        fired = true;
-        if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
-        if (card.parentNode) card.parentNode.removeChild(card);
+      fade.dismiss(function () {
         if (prevFocus && typeof prevFocus.focus === 'function') {
           try { prevFocus.focus(); } catch (e) { /* ignore */ }
         }
         if (opts.onDismiss) opts.onDismiss();
-      }
-      card.addEventListener('transitionend', finish, { once: true });
-      setTimeout(finish, 300); // safety if transitionend never fires
+      });
     }
 
     if (dismissible) onBackdropDismiss(backdrop, function () { dismiss(); });
-
-    // Commit the initial (hidden) style before the entrance class lands.
-    // Without this reflow the browser can coalesce append + class-add
-    // into one style pass and skip the fade entirely — reliably so when
-    // presentModal is called from a microtask (e.g. a MutationObserver
-    // callback), where no paint happens before the rAF below.
-    void card.offsetWidth;
-
-    // Next frame: engage the CSS entrance (scale 1.04 → 1, fade in).
-    requestAnimationFrame(function () {
-      backdrop.style.opacity = '1';
-      card.classList.add('un-in');
-      var auto = card.querySelector('[autofocus]');
-      try { (auto || card).focus(); } catch (e) { /* ignore */ }
-    });
 
     return { el: card, dismiss: dismiss };
   }
@@ -3287,12 +3475,90 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
+   * Menu-row content — the one place a row's label (and its optional
+   * icon) is put into a button, shared by the action sheet and the
+   * popover so the two idioms cannot drift.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  var SVG_NS = 'http://www.w3.org/2000/svg';
+
+  // A row's icon element, or null when it has none. `iconEl` wins over a
+  // named icon: a caller that supplied artwork meant it. The node is used
+  // as given, not cloned, so supply a fresh one per row — a menu is built
+  // from scratch on every open, which is where callers naturally do.
+  function buildRowIcon(item) {
+    if (item.iconEl && item.iconEl.nodeType === 1) {
+      item.iconEl.classList.add('un-item-icon');
+      return item.iconEl;
+    }
+    var paths = iconPaths(item.icon);
+    if (!paths) return null;
+    var svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('class', 'un-item-icon');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.7');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    // Decorative: the label beside it already names the row, so a screen
+    // reader that announced the icon too would say everything twice.
+    svg.setAttribute('aria-hidden', 'true');
+    paths.forEach(function (d) {
+      var path = document.createElementNS(SVG_NS, 'path');
+      path.setAttribute('d', d);
+      svg.appendChild(path);
+    });
+    return svg;
+  }
+
+  // Fill a row button. `aligned` is the menu-level answer to "does ANY row
+  // here carry an icon" — when one does, the rows that don't get an empty
+  // spacer so every label in the menu starts at the same x. Without it a
+  // mixed menu reads as a mistake.
+  //
+  // The no-icon, no-alignment path is a bare textContent assignment: the
+  // DOM a row had before icons existed, to the node.
+  function fillRowButton(btn, item, aligned) {
+    var icon = buildRowIcon(item);
+    if (!icon && !aligned) {
+      btn.textContent = item.label;
+      return;
+    }
+    btn.classList.add('un-has-icon');
+    if (icon) {
+      btn.appendChild(icon);
+    } else {
+      var spacer = document.createElement('span');
+      spacer.className = 'un-item-icon un-item-icon-empty';
+      spacer.setAttribute('aria-hidden', 'true');
+      btn.appendChild(spacer);
+    }
+    // A span, not a text node beside the icon: the label is the part that
+    // truncates, and `btn.textContent` still answers the label alone
+    // because an SVG contributes no text — so a caller asserting on a
+    // row's text keeps working.
+    var text = document.createElement('span');
+    text.className = 'un-item-label';
+    text.textContent = item.label;
+    btn.appendChild(text);
+  }
+
+  // Does this menu need its labels aligned to a common left edge?
+  function menuHasIcons(items) {
+    for (var i = 0; i < items.length; i += 1) {
+      if (rowHasIcon(items[i])) return true;
+    }
+    return false;
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
    * Action sheet — iOS stack of actions + separate Cancel card. Resolves
    * with the chosen action object, or null on cancel/backdrop.
    * ──────────────────────────────────────────────────────────────────── */
 
-  // actionSheet({ title?, actions: [{ label, destructive?, handler? }],
-  // cancelLabel? }) — returns a Promise.
+  // actionSheet({ title?, actions: [{ label, icon?, iconEl?, destructive?,
+  // handler? }], cancelLabel? }) — returns a Promise.
   function actionSheet(options) {
     var opts = options || {};
     var actions = opts.actions || [];
@@ -3310,11 +3576,26 @@
         title.textContent = opts.title;
         card.appendChild(title);
       }
+      var sheetAligned = menuHasIcons(actions);
       actions.forEach(function (action) {
+        // A SECTION HEADING, not an action. Callers whose menu is grouped —
+        // the dev board's "+" is the first — used to have nowhere to put a
+        // group label, so they passed it as an ordinary action with a no-op
+        // handler and dashes around the text to signal it was not tappable.
+        // It still looked and behaved like a row: same weight, same ink, and
+        // it took taps. This renders it as what it is, so the sheet can carry
+        // structure without every caller inventing its own punctuation.
+        if (action.heading) {
+          var head = document.createElement('div');
+          head.className = 'un-action-title un-action-section';
+          head.textContent = action.label || '';
+          card.appendChild(head);
+          return;
+        }
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'un-action-btn' + (action.destructive ? ' un-destructive' : '');
-        btn.textContent = action.label;
+        fillRowButton(btn, action, sheetAligned);
         btn.addEventListener('click', function () { settle(action); });
         card.appendChild(btn);
       });
@@ -3407,7 +3688,8 @@
   // title?, headerEl?, placement?, onDismiss? }).
   //
   // Items share the actionSheet shape plus popover extensions:
-  // { label, destructive?, disabled?, keepOpen?, title?, handler? } —
+  // { label, icon?, iconEl?, destructive?, disabled?, keepOpen?, title?,
+  //   handler? } —
   // disabled renders an inert row, keepOpen runs handler without
   // dismissing (in-place feedback flows), and handler receives the row's
   // <button> element. headerEl is adopted verbatim (it brings its own
@@ -3459,12 +3741,13 @@
 
     if (itemsMode) {
       el.setAttribute('role', 'menu');
+      var popoverAligned = menuHasIcons(opts.items);
       opts.items.forEach(function (item) {
         var btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'un-popover-item' + (item.destructive ? ' un-destructive' : '');
         btn.setAttribute('role', 'menuitem');
-        btn.textContent = item.label;
+        fillRowButton(btn, item, popoverAligned);
         if (item.title) btn.title = item.title;
         if (item.disabled) {
           btn.disabled = true;
@@ -3697,14 +3980,10 @@
           if (settled) return;
           settled = true;
           var value = field ? field.value : undefined;
-          card.classList.remove('un-in');
-          backdrop.style.opacity = '0';
-          setTimeout(function () {
-            if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
-            if (card.parentNode) card.parentNode.removeChild(card);
+          fade.dismiss(function () {
             if (button.handler) button.handler(value);
             resolve({ button: button, value: value });
-          }, 180);
+          });
         });
         row.appendChild(btn);
       });
@@ -3712,15 +3991,7 @@
 
       document.body.appendChild(backdrop);
       document.body.appendChild(card);
-      // Commit the initial (hidden) style before the entrance class lands —
-      // the same coalescing hazard presentModal guards against: without
-      // this reflow a microtask-origin call (e.g. a MutationObserver
-      // callback) can skip the fade + scale entrance entirely.
-      void card.offsetWidth;
-      // Next frame: engage the CSS entrance (scale 1.12 → 1, fade in).
-      requestAnimationFrame(function () {
-        backdrop.style.opacity = '1';
-        card.classList.add('un-in');
+      var fade = animateDialog(card, backdrop, function () {
         if (field) { try { field.focus(); } catch (e) { /* ignore */ } }
       });
     });

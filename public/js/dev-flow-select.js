@@ -13,8 +13,9 @@
  * the walkthrough behind it. The picker is gone. It was one of three
  * prompts asking the venue question before a word had been typed, and it
  * could only offer three of the six venues that exist. The question is
- * asked once now, by public/js/build-venues.js, from the venue line above
- * the composer. What is left here is the part that has no other home: once
+ * asked once now, by public/js/build-venues.js, from the venue selector in
+ * the session header. What is left here is the part that has no other
+ * home: once
  * a hand-off is chosen, five steps run in place in the transcript and
  * watch the user's progress through them.
  *
@@ -77,6 +78,52 @@
     return AGENT_URLS[agent] || '';
   }
 
+  // The chat product a hand-off's connector lives in. Claude Code on the web
+  // signs in as a Claude.ai account and Codex as a ChatGPT one, and the
+  // Usernode connector is added in THAT account's settings — not in Claude
+  // Code or Codex themselves.
+  function connectorProduct(agent) {
+    return agent === 'codex' ? 'ChatGPT' : 'Claude';
+  }
+
+  // ── The connector, named once, at the paste moment ───────────────────
+  //
+  // The walkthrough deliberately does not REQUIRE the MCP connector (#1049):
+  // the branch gets pushed without one and this tab's Submit button finishes
+  // the job. But the work order tells the agent to read the full platform
+  // rules through its connector and to submit the branch itself, and a
+  // Claude or ChatGPT account that never added the connector can do neither.
+  // It stalls at "I have no Usernode tools", and the person who pasted it was
+  // never told why, because nothing in these five steps mentioned it — the
+  // only place the connect steps live is Settings → Connectors, which the
+  // venue definition points at and nothing here navigated to.
+  //
+  // So the hand-off step says it once, where the paste happens, and links the
+  // page that already has the connector URL and the click-by-click steps.
+  // A connector belongs to the chat ACCOUNT it was added in, which is why the
+  // server's count cannot settle this for somebody pasting into a second
+  // account: with none it is a prerequisite worth stating; with some, the
+  // card-level hint below carries the per-account caveat instead.
+  //
+  // Null once the branch is pushed — the moment has passed — and null when
+  // the status carries no connector count at all, so a payload that predates
+  // the field renders exactly as before.
+  function connectorNote(connectors, agent, branch) {
+    if (branch && branch.pushed) return null;
+    if (!connectors || typeof connectors.count !== 'number') return null;
+    if (connectors.count > 0) return null;
+    var label = agentLabel(agent);
+    return {
+      before: 'Before you paste, connect Usernode in the ' + connectorProduct(agent)
+        + ' account ' + label + ' will run as. ',
+      linkLabel: 'Settings → Connectors',
+      href: '#settings/connectors',
+      after: ' has the connector URL and the steps. ' + label
+        + ' uses the connector to read the full platform rules and to submit the branch as a proposal itself.'
+        + ' Without it the branch still gets pushed, but you finish here: come back to this tab and press Submit.',
+    };
+  }
+
   // Why the external flows are not on offer, in the user's words. The
   // server sends the reason code; this is the only place it becomes copy.
   function unavailableNote(reason) {
@@ -118,7 +165,7 @@
         done: !!gh.linked,
         detail: gh.linked
           ? 'Linked as ' + (gh.login || 'your GitHub account') + '.'
-          : 'Identity only — Usernode asks for no access to your repositories and stores no token. It just needs to know which GitHub account is yours, so the work comes back under your name.',
+          : 'Identity only. Usernode asks for no access to your repositories and stores no token. It just needs to know which GitHub account is yours, so the work comes back under your name.',
         actions: gh.linked ? [] : [{ action: 'link-github', label: 'Link GitHub', primary: true }],
       },
       {
@@ -136,7 +183,12 @@
         done: !!task,
         detail: task
           ? prepareDetail(task, target, targetKind)
-          : 'Describe the change in the message box below, then Usernode writes the work order — the repository, the branch, the exact base commit and the platform rules your agent has to follow.',
+          : 'Usernode writes the work order: the repository, the fork, the branch, the exact base commit and the platform rules your agent has to follow. Say what to build and it mints one.',
+        // #1281: the field lives HERE rather than in the composer. In a
+        // launchpad venue the composer is hidden — no turn will run in this
+        // session — so a step that told you to type in it would be pointing
+        // at something that is not on the screen.
+        brief: !task,
         actions: task ? [] : [{ action: 'prepare', label: 'Prepare work order', primary: true }],
       },
       {
@@ -144,6 +196,7 @@
         title: 'Hand it to ' + label,
         done: !!(branch && branch.pushed),
         detail: handoffDetail(branch, task, label, targetKind),
+        note: connectorNote(st.connectors, agent || (task && task.agent), branch),
         actions: task ? handoffActions(agent || task.agent) : [],
       },
       {
@@ -175,6 +228,13 @@
         title: step.title,
         state: state,
         detail: step.detail,
+        // Unlike actions and the brief box, the note is not gated on
+        // 'current': it names a prerequisite for a step still ahead, and
+        // connecting first is precisely the point.
+        note: step.note || null,
+        // Only on the step you are ON, for the same reason its actions are:
+        // a brief box under a step nobody can act on is furniture.
+        brief: !!step.brief && state === 'current',
         // Only the step you are on offers buttons: three live "Check again"
         // buttons down the card is noise, and acting on a later step out of
         // order just produces an error the user did not need to see.
@@ -225,7 +285,7 @@
   // false.
   function submitDetail(targetKind) {
     if (targetKind === 'session') {
-      return 'Usernode moves this session onto the commit your agent pushed. No new proposal, no new pull request — the same session, further along.';
+      return 'Usernode moves this session onto the commit your agent pushed. No new proposal, no new pull request, just the same session further along.';
     }
     if (targetKind === 'proposal') {
       return 'Usernode moves this proposal onto the commit your agent pushed. Its existing votes are cleared and its checks re-run, because the group would otherwise be approving code it never saw.';
@@ -237,14 +297,14 @@
     if (!task) return 'Paste the work order into ' + label + ' and let it build.';
     if (branch && branch.pushed) return 'Branch ' + task.branch + ' is pushed and ready to submit.';
     if (branch && branch.unpushed) {
-      return 'Branch ' + task.branch + ' exists on your fork but is still on the base commit — it looks like the commits were made locally and never pushed.';
+      return 'Branch ' + task.branch + ' exists on your fork but is still on the base commit. It looks like the commits were made locally and never pushed.';
     }
     var base = 'Copy the work order, paste it into ' + label
       + ', and let it push branch ' + task.branch + ' to your fork. Usernode checks for the branch when you come back to this tab.';
     // The one thing that trips people up on a continuation: the agent gets
     // its own conversation over there, and this transcript will not grow.
     if (targetKind === 'session' || targetKind === 'proposal') {
-      base += ' The agent talks to you in ' + label + ', not here — this transcript stays where it is until the update lands.';
+      base += ' The agent talks to you in ' + label + ', not here. This transcript stays where it is until the update lands.';
     }
     return base;
   }
@@ -284,6 +344,37 @@
       + escapeHtml(action.label) + '</button>';
   }
 
+  // ── The vendor toggle (#1281) ───────────────────────────────────────
+  //
+  // The spec's type 2 wireframe puts Claude / ChatGPT at the TOP of the
+  // launchpad, with every step below adapting: "pick Claude or ChatGPT up
+  // top; every step below adapts". Until now the vendor was fixed the
+  // moment the flow was entered, and changing it meant backing out to the
+  // venue sheet and picking the other row — which discards nothing, but
+  // reads as leaving rather than as switching.
+  //
+  // Rendered as two buttons rather than a <select> so the current one is
+  // legible without opening anything, which is the whole point of a toggle
+  // on a phone. The inactive one carries the action; the active one is a
+  // statement and is inert.
+  function vendorToggleHtml(agent, busy) {
+    var vendors = [
+      { id: 'claude-code', label: 'Claude' },
+      { id: 'codex', label: 'ChatGPT' },
+    ];
+    return '<div class="dc-flow-vendors" role="group" aria-label="Which agent builds this">'
+      + vendors.map(function (v) {
+        var on = v.id === agent;
+        return '<button type="button" class="dc-flow-vendor'
+          + (on ? ' dc-flow-vendor-on' : '') + '"'
+          + (on ? ' aria-current="true"' : '')
+          + (on || busy ? ' disabled' : '')
+          + ' data-flow-action="vendor-' + escapeHtml(v.id) + '">'
+          + escapeHtml(v.label) + '</button>';
+      }).join('')
+      + '</div>';
+  }
+
   // The walkthrough card.
   //
   // `state`:
@@ -302,6 +393,7 @@
     if (!s.status) {
       return '<div class="dc-flow-card dc-flow-wizard" data-flow-wizard="1">'
         + '<div class="dc-flow-card-lead">Building with ' + escapeHtml(label) + '</div>'
+        + vendorToggleHtml(agent, true)
         + '<div class="dc-flow-card-detail">Checking where you are&hellip;</div>'
         + '</div>';
     }
@@ -309,6 +401,7 @@
     if (s.status.available === false) {
       return '<div class="dc-flow-card dc-flow-wizard" data-flow-wizard="1">'
         + '<div class="dc-flow-card-lead">Building with ' + escapeHtml(label) + '</div>'
+        + vendorToggleHtml(agent, true)
         + '<div class="dc-flow-card-detail">'
         + escapeHtml(unavailableNote(s.status.reason) || 'This flow is unavailable right now.')
         + '</div>'
@@ -326,6 +419,22 @@
           + step.actions.map(function (a) { return actionHtml(a, !!s.busy); }).join('')
           + '</div>'
         : '';
+      // A plain anchor, on purpose: it carries no data-flow-action, so
+      // wire() leaves it alone and the browser's own hash navigation opens
+      // Settings → Connectors in this tab, where the walkthrough resumes
+      // from the server's status when the person comes back.
+      var note = step.note
+        ? '<div class="dc-flow-step-note" data-flow-note="connector">'
+          + escapeHtml(step.note.before)
+          + '<a href="' + escapeHtml(step.note.href) + '">' + escapeHtml(step.note.linkLabel) + '</a>'
+          + escapeHtml(step.note.after)
+          + '</div>'
+        : '';
+      var brief = step.brief
+        ? '<textarea class="dc-flow-brief" data-flow-brief="1" rows="3"'
+          + (s.busy ? ' disabled' : '')
+          + ' placeholder="What should it build?">' + escapeHtml(s.brief || '') + '</textarea>'
+        : '';
       return ''
         + '<div class="dc-flow-step dc-flow-step-' + step.state + '" data-flow-step="'
         + escapeHtml(step.key) + '" data-flow-step-state="' + step.state + '">'
@@ -333,6 +442,8 @@
         + '<div class="dc-flow-step-body">'
         + '<div class="dc-flow-step-title">' + escapeHtml(step.title) + '</div>'
         + '<div class="dc-flow-step-detail">' + escapeHtml(step.detail) + '</div>'
+        + note
+        + brief
         + actions
         + '</div>'
         + '</div>';
@@ -345,15 +456,23 @@
         + '</details>'
       : '';
 
+    // The server counts the user's connectors across every Claude and
+    // ChatGPT account, so a non-zero count says nothing about the ONE account
+    // the paste is going to — hence the per-account caveat, with the same
+    // link the zero-connector note on the hand-off step carries.
     var connectors = s.status.connectors && s.status.connectors.count
       ? '<div class="dc-flow-card-hint">You already have ' + escapeHtml(String(s.status.connectors.count))
         + ' Claude / ChatGPT connector' + (s.status.connectors.count === 1 ? '' : 's')
-        + ' connected — you can also just ask it to pick this task up.</div>'
+        + ' connected. You can also just ask it to pick this task up.'
+        + ' A connector belongs to the ' + escapeHtml(connectorProduct(agent))
+        + ' account it was added in, so pasting into a different account needs its own:'
+        + ' <a href="#settings/connectors">Settings → Connectors</a> has the steps.</div>'
       : '';
 
     return ''
       + '<div class="dc-flow-card dc-flow-wizard" data-flow-wizard="1">'
       + '<div class="dc-flow-card-lead">Building with ' + escapeHtml(label) + '</div>'
+      + vendorToggleHtml(agent, !!s.busy)
       + (s.error ? '<div class="dc-flow-error">' + escapeHtml(s.error) + '</div>' : '')
       + (s.notice ? '<div class="dc-flow-notice">' + escapeHtml(s.notice) + '</div>' : '')
       + '<div class="dc-flow-steps">' + rows + '</div>'
@@ -410,8 +529,11 @@
     AGENT_URLS: AGENT_URLS,
     agentLabel: agentLabel,
     agentUrl: agentUrl,
+    connectorProduct: connectorProduct,
+    connectorNote: connectorNote,
     unavailableNote: unavailableNote,
     steps: steps,
+    vendorToggleHtml: vendorToggleHtml,
     wizardHtml: wizardHtml,
     wire: wire,
     escapeHtml: escapeHtml,

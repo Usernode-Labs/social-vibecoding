@@ -1,6 +1,12 @@
 // The home screen's launcher grid: loads the viewer's apps, lays them out on
-// the (column, row) canvas HomeLayout models, renders the tiles and the widget
-// slots, and owns the drag-to-rearrange gesture.
+// the (column, row) canvas HomeLayout models, renders the tiles, and owns the
+// drag-to-rearrange gesture.
+//
+// THE UI OVERHAUL narrowed what this canvas holds. Discover, Challenges and
+// Create app used to be draggable WIDGETS placed on it alongside the app
+// tiles; they are fixed sections below the grid now (see
+// features/home/index.tsx), so every item here is a 1x1 app tile, there is one
+// column count instead of two, and the drag applies to app tiles alone.
 //
 // Moved verbatim from public/js/home.js into the bundle by #1083 chunk F step 4
 // (see features/home/index.tsx). Two things changed and nothing else:
@@ -15,28 +21,41 @@
 // both are published by sibling modules the island imports BEFORE this one, and
 // every read happens at call time, long after the bundle has evaluated.
 import { AppCard } from '../apps/app-card.js';
+import { gridStore } from './grid-store';
+import { chromeStore } from './chrome-store';
+
+// Which discovery cards and add badges already carry their listeners.
+// `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
+// and React KEEPS the card nodes it can (they are keyed by slug), so a lane
+// whose only change is a badge flipping to "added" hands the same elements
+// back for a second binding — two listeners, and one tap toggling twice.
+// A WeakSet is the same idiom app-grid.tsx uses for its own once-per-card
+// attachments, and it holds no node alive past its removal.
+const wiredCards = new WeakSet();
+const wiredButtons = new WeakSet();
 
 const Home = {
   // Can this viewer create apps right now? Derived per request by
-  // /api/auth/me as `isAdmin || live app count < app_quota`, so it flips
-  // without any user action — creating your one allowed app, an admin
-  // editing your quota, an app erroring out.
+  // /api/auth/me as `canAdminWrite || live app count < app_quota`, so it
+  // flips without any user action — creating your one allowed app, an admin
+  // editing your quota, an app erroring out. View-only admins intentionally
+  // keep their ordinary quota because they cannot use the create route's
+  // full-admin bypass.
   //
   // It gates the create WIDGET's appearance only, never whether the widget
   // exists: the widget is on every home screen, in the layout, for every
   // account (see HomePanels.renderCreatePanel for why).
   //
-  // ?shot=create-disabled forces the locked rendering regardless. That is
-  // not a convenience: every capture identity is an admin, and the only
-  // zero-quota staging fixture carries a sentinel password and cannot be
-  // signed into — so without a URL the MAJORITY rendering (most accounts
-  // carry no quota) would be invisible to before/after screenshots and to
-  // every declared check. Pure UI state: it flips one boolean at render
-  // time, writes nothing, and is not env-gated, so it works in production
-  // the moment it ships.
+  // ?shot=create-enabled and ?shot=create-disabled pin the two treatments.
+  // Proposal checks run as a zero-quota, view-only admin, so neither state
+  // should depend on that fixture's privileges. Pure UI state: these flip one
+  // boolean at render time, write nothing, and are not env-gated, so they work
+  // in production the moment they ship.
   canCreate() {
     try {
-      if (new URLSearchParams(location.search).get('shot') === 'create-disabled') return false;
+      const shot = new URLSearchParams(location.search).get('shot');
+      if (shot === 'create-enabled') return true;
+      if (shot === 'create-disabled') return false;
     } catch (err) { /* ignore */ }
     return !!App.user?.canCreateApps;
   },
@@ -51,7 +70,16 @@ const Home = {
       Home._reloadPending = true;
       return;
     }
+    if (App.user && !App._sessionFromSnapshot) window.UsernodeReact?.appAllowance?.refresh?.();
     Home._probeShortcutSupport();
+    // The header's standing action, from the remembered row, BEFORE the
+    // fetch below rather than after it. render() is the call every path
+    // funnels through and stays the authority, but on a cold boot at `/` it
+    // does not run until /api/apps answers — which is exactly the window the
+    // Improve button was missing from. A no-op once anything real is
+    // published; see publishImproveTarget for what it does and does not do
+    // with the cache.
+    Home.publishImproveTarget();
     // Home-screen widgets (#911, ./home-panels.js) and the viewer's stored
     // grid layout (./home-layout.js). Both are TTL-guarded / de-duped
     // inside, so the dozen WS/event paths that call load() don't turn into a
@@ -72,25 +100,23 @@ const Home = {
       // apps, and persist the damaged repair before /api/apps arrived.
       // #app-list is also non-empty for the failure state, so the DOM cannot
       // answer this question either.
-      if (!Home._appsLoaded || !window.HomePanels?.hasLayoutRegistry?.()) return;
-      // An active search legitimately has no slots — the section below the
-      // grid is that view's host on purpose. Re-rendering would be a no-op
-      // at best and would rebuild the results grid for nothing.
+      if (!Home._appsLoaded) return;
+      // An active search rebuilds the results grid for nothing.
       if ((Home._query || '').trim()) return;
       Home.render();
     };
     window.HomePanels?.ensureLoaded()?.then(repaint);
     Home._ensureLayoutLoaded()?.then(repaint);
-    const listEl = document.getElementById('app-list');
 
     try {
       // The viewer's own proposals / active sessions used to ride along
       // here as two strips at the top of the grid; both moved into the
-      // header cog's drawer (frontend/src/features/work-drawer/work-drawer.js), which owns those
+      // hamburger's notifications list and the Improve panel, which own those
       // fetches now.
       // ?demo=1 rides on /api/apps: staging injects the icon-demo
       // tiles there (routes/apps.js demoIconApps). No-op in production.
-      const demoQS = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+      const params = new URLSearchParams(location.search);
+      const demoQS = params.get('demo') === '1' ? `?demo=1${params.get('curation') === '1' ? '&curation=1' : ''}` : '';
       const res = await fetch(`/api/apps${demoQS}`);
       if (!res.ok) throw new Error('Failed to load apps');
       const { apps } = await res.json();
@@ -120,14 +146,24 @@ const Home = {
         if (Home._apps.length) {
           Home.render();
         } else {
-          listEl.innerHTML = `<div class="col-span-full p-4 text-sm text-zinc-500 dark:text-zinc-400">`
-            + `You're offline — apps you've opened before will appear here once this device `
-            + `has loaded them.</div>`;
+          gridStore.set({
+            ready: true, view: 'grid', rowTemplate: '', items: [],
+            resultsHeading: null, emptyQuery: null,
+            notice: {
+              text: "You're offline. Apps you've opened before will appear here once this "
+                + 'device has loaded them.',
+              tone: 'muted',
+            },
+          });
         }
         try { Offline.nudge(); } catch (_) { /* ignore */ }
         return;
       }
-      listEl.innerHTML = `<div class="col-span-full p-4 text-red-400 text-sm">Failed to load apps</div>`;
+      gridStore.set({
+        ready: true, view: 'grid', rowTemplate: '', items: [],
+        resultsHeading: null, emptyQuery: null,
+        notice: { text: 'Failed to load apps', tone: 'error' },
+      });
     }
   },
 
@@ -144,6 +180,24 @@ const Home = {
   // value and a legitimate loaded result for an account with no apps.
   _appsLoaded: false,
   _query: '',
+
+  // Slugs the Discover rails keep showing even though they now count as
+  // "yours" (#1567). Adding an app from a rail repaints "Your apps"
+  // immediately, and the same paint would otherwise pull the card the finger
+  // is still on straight out of the row: the rails exclude apps you already
+  // have, so the row would reflow under the tap and the tick the viewer
+  // pressed for would never be seen. Keeping the slug holds the card in place
+  // with its badge ticked, which is also what makes the tap reversible
+  // without hunting for the app again. Per-visit and deliberately not
+  // persisted: the next load of the home screen starts from the honest list.
+  _discoverKeep: new Set(),
+
+  // Set by toggleAdded for the one render that follows an ADD, then cleared.
+  // The collapsed grid shows only the first couple of rows, so an app that
+  // lands past the bound would be added to a section that visibly does not
+  // change. render() expands the grid for that case rather than leaving the
+  // viewer to guess. One-shot, because it describes a single paint.
+  _revealSlug: null,
 
   // "Your apps" = apps the viewer is a member of (creator or accepted
   // invite — the server's is_collaborator flag, see app_collaborators
@@ -172,7 +226,41 @@ const Home = {
       if (y.favorite_order == null) return -1;
       return x.favorite_order - y.favorite_order;
     });
+    Home.hoistNewestOwned(yours);
     return { yours, rest };
+  },
+
+  // Move the app you most recently CREATED to the front of `list`, in
+  // place. Exactly one row moves and everything else keeps its relative
+  // order, so the favorite_order run above stays intact below it.
+  //
+  // Why it is needed at all: the server orders by 7-day chat messages +
+  // seconds-spent (routes/apps.js), and an app created a moment ago has
+  // neither — it sorts LAST, which is the opposite of where you want to
+  // look right after creating it.
+  //
+  // Scope: this reorders the array that feeds Home.presentIds →
+  // HomeLayout.deriveDefault, i.e. the DERIVED default grid. A user who
+  // has dragged their tiles has a stored arrangement that wins in
+  // Home.currentLayout, and we deliberately leave it alone rather than
+  // shoving their layout around; their new app still lands in the first
+  // free cell via HomeLayout.repair.
+  hoistNewestOwned(list) {
+    const me = window.App && App.user ? App.user.id : null;
+    if (me == null || !Array.isArray(list) || list.length < 2) return list;
+    let bestIndex = -1;
+    let bestAt = -Infinity;
+    for (let i = 0; i < list.length; i += 1) {
+      const app = list[i];
+      if (!app || app.created_by !== me) continue;
+      // A row with no parseable created_at cannot be "the newest"; skip
+      // it rather than letting NaN win a comparison.
+      const at = Date.parse(app.created_at);
+      if (!Number.isFinite(at)) continue;
+      if (at > bestAt) { bestAt = at; bestIndex = i; }
+    }
+    if (bestIndex > 0) list.unshift(list.splice(bestIndex, 1)[0]);
+    return list;
   },
 
   // Case-insensitive substring match on name and slug. An empty /
@@ -191,6 +279,13 @@ const Home = {
   // How many admin-featured tiles the "Featured apps" row shows.
   FEATURED_LIMIT: 6,
 
+  // The API derives this from an explicit review of the current deployment,
+  // not from active-user counts or the staging-only `demo` fixture flag.
+  isDiscoveryReady(app) {
+    return !!app && app.directory?.tier === 'ready' && app.status === 'running'
+      && !app.self_hosted && !!(app.icon_url || app.icon_emoji);
+  },
+
   // The featured row's contents for this viewer: admin-curated apps
   // (the `featured` flag served by GET /api/apps) that are NOT already
   // in "Your apps" — those are one screen-section up, so repeating
@@ -205,12 +300,14 @@ const Home = {
   // invisible to the before/after screenshots and to every declared check.
   // Pure UI state: it changes one derived list at render time, writes
   // nothing, and is not env-gated, so it works in production immediately.
+
   featuredApps(apps) {
     try {
       if (new URLSearchParams(location.search).get('shot') === 'discover-empty') return [];
     } catch (err) { /* ignore */ }
     return (apps || [])
-      .filter((a) => a && a.featured && !Home.isYours(a))
+      .filter((a) => a && a.featured && Home.isDiscoveryReady(a)
+        && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
       .sort((x, y) => {
         const xo = x.featured_order == null ? Infinity : x.featured_order;
         const yo = y.featured_order == null ? Infinity : y.featured_order;
@@ -230,26 +327,26 @@ const Home = {
   // with every row (see the au join in src/routes/apps.js), so this costs
   // no query.
   //
-  // The ranking mirrors Browse.sortApps' non-featured tail exactly (most
-  // users first, ties keeping the server's own order via a stable sort), so
-  // the widget and the Browse directory can't disagree about what is
-  // popular. parseInt because the count arrives as a STRING — it is a
+  // The ranking mirrors Browse.sortApps' 'users' order exactly (most users
+  // first, ties keeping the server's own order via a stable sort), so the
+  // widget and the Browse directory can't disagree about what is popular.
+  // (#1383 gave the directory five orders and made 'recommended' its default
+  // — this lane still tracks the users one, which is the question the word
+  // "Popular" asks.) parseInt because the count arrives as a STRING — it is a
   // Postgres bigint and, unlike open_prs, the serializer doesn't coerce it.
   //
-  // Four exclusions, each load-bearing:
+  // Only currently reviewed working apps with icons qualify. Also exclude:
   //   * `featured` — the lane above already offers those.
   //   * isYours — the whole point is apps you don't have yet.
-  //   * status 'error' — a broken app is not a discovery target.
-  //   * self_hosted — the platform app itself is visible only to admins, so
-  //     including it would make the lane read differently per viewer.
   // And a floor of one active user: an app nobody uses is not "popular",
   // and padding the lane out with zero-user rows would misrepresent it.
   // Pure — unit-tested in tests/home-find-more.test.js.
   popularApps(apps) {
     const users = (a) => (parseInt(a && a.active_users, 10) || 0);
     return (apps || [])
-      .filter((a) => a && !a.featured && !a.self_hosted
-        && a.status !== 'error' && !Home.isYours(a) && users(a) >= 1)
+      .filter((a) => a && !a.featured && Home.isDiscoveryReady(a)
+        && users(a) >= 1
+        && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
       .sort((x, y) => users(y) - users(x))
       .slice(0, Home.POPULAR_LIMIT);
   },
@@ -274,112 +371,152 @@ const Home = {
   // with a repaired copy of the fixture.
   _layoutIsDemo: false,
 
-  // The column count the grid is rendering at right now. Read from the
-  // viewport, NOT from the DOM: it has to be answerable before the first
-  // paint, and it must agree with the `grid-cols-4 sm:grid-cols-5` classes
-  // on #app-list — HomeLayout.BREAKPOINT_PX is the single source for that
-  // 640px boundary.
+  // The column count the grid is rendering at right now — four, at every
+  // width, since THE UI OVERHAUL. It must agree with the `grid-cols-4` class
+  // on #app-list, and HomeLayout.COLS is the single source for that.
+  //
+  // Kept as a call rather than inlined: every reader passes it around as a
+  // parameter and the model still takes it, so the constant-ness stays one
+  // fact in one place instead of a number sprinkled through two files.
   currentCols() {
-    const w = (typeof window !== 'undefined' && window.innerWidth) || 1280;
-    return HomeLayout.columnsForWidth(w);
+    return HomeLayout.columnsForWidth();
   },
 
-  // The column count the DOM currently HOLDS, as opposed to the one the
-  // viewport now implies. null while the search view is up (a flat list has
-  // no placement to go stale). The two diverge the instant a window crosses
-  // 640px, which is what _wireViewport watches for.
-  _renderedCols: null,
-
-  // ===== Live reflow across the 640px boundary =====
+  // ── How much of the screen the launcher may take ───────────────────
   //
-  // The CSS switches columns on its own — `grid-cols-4 sm:grid-cols-5` plus
-  // the media-queried --home-cell-h — but every item's cell comes from an
-  // INLINE grid-column/grid-row this module wrote at render time. Without
-  // this handler those inline placements survive the breakpoint: widen a
-  // narrowed window and the tiles keep the 4-column arrangement inside a
-  // 5-column grid — a dead trailing column, widgets spanning 4 of 5, and it
-  // stays that way until some unrelated event (a WS app_status, a poll)
-  // happens to re-render. Desktop windows are resizable, so this is a
-  // desktop bug even though the breakpoint reads as a phone/tablet one.
+  // The collapsed grid used to be two rows at every viewport, full stop. Two
+  // is the right FLOOR — a phone has three fixed sections under this grid and
+  // an eight-row canvas would push Discover, Challenges and Create app off the
+  // bottom, which is the failure the four-area design exists to prevent — but
+  // it was also the ceiling, so a tall desktop window drew two rows of tiles,
+  // a "Show all" button, and then a lot of nothing before the next section.
   //
-  // Two signals, one idempotent handler:
-  //   - matchMedia('(min-width: 640px)') change — fires exactly once, on the
-  //     crossing itself, and costs nothing in between;
-  //   - a debounced resize — the backstop for WebViews old enough to lack
-  //     MediaQueryList.addEventListener (the same caution Home._schemeQuery
-  //     takes over matchMedia itself), and the thing that catches a viewport
-  //     change that arrives without a media-query flip.
-  // Both funnel into _applyColumnCount, which no-ops unless the count
-  // actually moved, so double delivery is free.
-  _viewportWired: false,
-  _resizeDebounce: null,
-  RESIZE_DEBOUNCE_MS: 150,
+  // The rule now: the launcher may fill the first two-thirds of the screen,
+  // and never less than the two-row contract. The bottom third is what keeps
+  // the section under the grid visible without scrolling, which is the whole
+  // point of capping the launcher at all — so the cap is stated as the thing
+  // it is protecting rather than as a row count that only happened to protect
+  // it at one viewport.
+  APPS_VIEWPORT_FRACTION: 2 / 3,
 
-  _wireViewport() {
-    if (Home._viewportWired) return;
-    if (typeof window === 'undefined' || !window.addEventListener) return;
-    Home._viewportWired = true;
-
-    window.addEventListener('resize', () => {
-      clearTimeout(Home._resizeDebounce);
-      Home._resizeDebounce = setTimeout(
-        () => Home._applyColumnCount(), Home.RESIZE_DEBOUNCE_MS
-      );
-    });
-
+  // The row count that fraction buys, measured rather than assumed.
+  //
+  // Everything it needs is already on the page and already in pixels: the
+  // scroller's own visible height, the grid's offset inside that scroller's
+  // CONTENT (so the answer does not change as the viewer scrolls), and the
+  // computed `grid-auto-rows` / `row-gap` — which is how the phone's shorter
+  // --home-cell-h and the grid's `gap-1.5` / `sm:gap-3` are honoured without
+  // this file knowing either number.
+  //
+  // The measurement is deliberately of the ROW's own geometry rather than of
+  // what the grid currently draws: reading back the rendered height would make
+  // the budget a function of its own output, and a grid one row short would
+  // then stay one row short.
+  //
+  // Anything unmeasurable — the home screen is not the visible one, so
+  // clientHeight is 0; `grid-auto-rows` is `auto` in the search view; no
+  // layout has happened yet — answers with the LAST good budget rather than
+  // the floor, so navigating away and back does not collapse the grid to two
+  // rows for one paint.
+  visibleRowBudget() {
+    const floor = HomeLayout.DEFAULT_ROWS;
+    const last = Home._rowBudget || floor;
+    if (typeof document === 'undefined') return last;
+    // ONE try/catch around the whole measurement, not one per read. Every
+    // line below is a layout or style query, and the hosts that lack any of
+    // them lack most of them: the vm this module is unit-tested in, a
+    // detached node, a WebView mid-teardown. The answer in all of those is
+    // the same — keep the last good budget — so branching per call would be
+    // three ways of writing one fallback.
     try {
-      const mq = typeof window.matchMedia === 'function'
-        ? window.matchMedia(`(min-width: ${HomeLayout.BREAKPOINT_PX}px)`)
-        : null;
-      // addListener is the deprecated spelling; some WebViews have only it.
-      if (mq && mq.addEventListener) {
-        mq.addEventListener('change', () => Home._applyColumnCount());
-      } else if (mq && mq.addListener) {
-        mq.addListener(() => Home._applyColumnCount());
-      }
-    } catch (err) { /* resize alone still covers it */ }
+      const grid = document.getElementById('app-list');
+      const screen = document.getElementById('home-screen');
+      if (!grid || !screen) return last;
+      const scroller = window.PlatformUI?.scrollElement?.(screen) || screen;
+      const pageScroll = scroller !== screen;
+      const viewport = pageScroll
+        ? scroller.clientHeight - (screen.getBoundingClientRect().top + scroller.scrollTop)
+        : screen.clientHeight;
+      if (!viewport) return last;
+      const cs = getComputedStyle(grid);
+      const cell = parseFloat(cs.gridAutoRows) || 0;
+      const gap = parseFloat(cs.rowGap) || 0;
+      if (!cell) return last;
+      // The resting scroll position parks the hidden search bar out of sight
+      // (see _searchReveal), so the grid's top AT REST is its offset in the
+      // scroller's content minus that bar. Measuring the live rect alone
+      // would hand a viewer who has scrolled down a bigger budget than the
+      // one they see when they scroll back.
+      const bar = document.getElementById('home-search-bar');
+      const resting = (bar && bar.offsetHeight) || 0;
+      const top = grid.getBoundingClientRect().top
+        - screen.getBoundingClientRect().top
+        + (pageScroll ? 0 : screen.scrollTop)
+        - resting;
+      const room = (viewport * Home.APPS_VIEWPORT_FRACTION) - top;
+      // n rows occupy n cells and the n-1 gaps between them.
+      const rows = Math.floor((room + gap) / (cell + gap));
+      return Math.max(floor, Math.min(HomeLayout.MAX_ROWS, rows));
+    } catch (err) {
+      return last;
+    }
   },
 
-  // Re-render at the viewport's column count when — and only when — it
-  // changed. The layout itself comes from Home.currentLayout(cols), which
-  // already resolves "this width's stored arrangement, else the other
-  // width's reflowed, else flow order" and — crucially — only writes back a
-  // repair of a genuinely STORED layout. A derivation is never persisted, so
-  // dragging a window across 640px can never claim the other breakpoint on
-  // the viewer's behalf: they have to actually drag something at that width.
-  _applyColumnCount() {
-    // The search view is a flat, transient list with no placement and no
-    // drag, so nothing about it can go stale at a new width. The next grid
-    // render reads the live count (_renderedCols is null here, so the
-    // comparison below can't wrongly skip it).
-    if ((Home._query || '').trim()) return;
-    const cols = Home.currentCols();
-    if (cols === Home._renderedCols) return;
-    // A breakpoint crossing MID-GESTURE. The recognizer captured the old
-    // column count when it was attached, the overlay was built with the old
-    // number of cells, and the CSS grid underneath has already switched — so
-    // the tint, the hit-test and the drop would all be describing a grid
-    // that is no longer on screen. detach() is the kit's clean abort: it
-    // removes the ghost, releases the dashed slot, clears the hover preview
-    // and fires onSettle(false), which drops _dragActive and takes the
-    // overlay down. The item stays where it was; nothing is persisted. The
-    // re-render below then re-attaches against the new column count.
-    if (Home._dragActive && Home._placementHandle) {
-      try { Home._placementHandle.detach(); } catch (err) { /* ignore */ }
-      Home._placementHandle = null;
-      Home._dragActive = false;
-    }
-    Home.render();
+  // The budget the last render used, and the reason a resize is worth a
+  // re-render: a window that grew or shrank past a whole row changes what the
+  // collapsed grid should show. Anything smaller than that changes nothing, so
+  // it is compared rather than rendered through — a drag-resize would
+  // otherwise rebuild the grid on every frame.
+  _rowBudget: 0,
+  _rowBudgetWired: false,
+  _rowBudgetPending: 0,
+
+  _wireRowBudget() {
+    if (Home._rowBudgetWired) return;
+    // Not `typeof window === 'undefined'`: this module is unit-tested inside a
+    // vm whose `window` is a plain object with the handful of properties the
+    // tests need, and render() runs there. A host without listeners simply
+    // never gets a resize re-render — the budget it measured at render time is
+    // still correct for the layout it measured.
+    if (typeof window === 'undefined'
+      || typeof window.addEventListener !== 'function') return;
+    Home._rowBudgetWired = true;
+    const run = () => {
+      Home._rowBudgetPending = 0;
+      // Same deferral the other re-render paths take: never yank the grid out
+      // from under a live drag. The gesture's own end re-runs load().
+      if (Home._dragActive) return;
+      if (Home.visibleRowBudget() === Home._rowBudget) return;
+      Home.render();
+    };
+    window.addEventListener('resize', () => {
+      if (Home._rowBudgetPending) return;
+      Home._rowBudgetPending = typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame(run)
+        : setTimeout(run, 16);
+    }, { passive: true });
   },
+
+  // `_renderedCols`, `_wireViewport()` and `_applyColumnCount()` lived here:
+  // a resize + matchMedia watcher that re-rendered the grid whenever a window
+  // crossed 640px. Every item's cell is an INLINE grid-column/grid-row this
+  // module writes at render time, so a breakpoint crossing left those inline
+  // placements describing the OLD column count inside a grid the CSS had
+  // already switched — a dead trailing column, widgets spanning 4 of 5.
+  //
+  // THE UI OVERHAUL settled on four columns at every width, so there is no
+  // boundary to cross and nothing to go stale. The watcher, the mid-gesture
+  // abort it needed (a crossing during a drag left the recognizer describing a
+  // grid that was no longer on screen) and the second stored layout it existed
+  // to keep honest all went with it.
 
   // Every item that should be on the grid right now, as stable ids: the
-  // viewer's apps plus the widgets they haven't hidden. This is the input
-  // HomeLayout.repair reconciles a stored layout against.
+  // viewer's apps, and nothing else. This is the input HomeLayout.repair
+  // reconciles a stored layout against.
   //
-  // The `create` widget is in here for EVERY account — HomePanels.gridSlotKeys
-  // filters on hidden-ness alone and never on app quota. A quota change must
-  // never look like "this item disappeared", or losing quota would delete the
-  // widget from the layout and re-place it somewhere else on the way back.
+  // It used to include the widgets they had not hidden. THE UI OVERHAUL made
+  // those three fixed sections below the grid, so they are not items — and
+  // repair() drops any that a pre-overhaul stored layout still carries.
   presentIds() {
     const { yours } = Home.partitionApps(Home._apps || []);
     const ids = yours.map((a) => `app:${a.slug}`);
@@ -389,25 +526,27 @@ const Home = {
     // grid on purpose, and repair() drops any item that isn't present. The
     // result was a demo route whose whole point is showing the grid rendering
     // a grid with the demo tiles silently removed: for a viewer with no apps
-    // of their own that left nothing but the three widgets. They are placed
+    // of their own that left an empty grid. They are placed
     // like anything else (the spec's rule); only the DRAG excludes them,
     // which the recognizer's `:not([data-demo])` selector already handles.
     for (const app of Home._apps || []) {
       if (app && app.demo && !Home.isYours(app)) ids.push(`app:${app.slug}`);
     }
-    for (const key of (window.HomePanels?.gridSlotKeys?.() || [])) ids.push(`widget:${key}`);
     return ids;
   },
 
-  // The layout to render at this column count, always repaired against what
-  // actually exists. Resolution order:
-  //   1. this width's stored arrangement (the viewer dragged here);
-  //   2. the OTHER width's, reflowed (they dragged on their other device);
-  //   3. flow order from favorite_order — i.e. exactly today's home screen.
-  // Only (1) is authoritative; (2) and (3) are derivations and are NOT
-  // persisted until the viewer actually drags at this width. That is what
-  // makes this feature need no backfill and what keeps a phone visit from
-  // silently rewriting a desktop arrangement.
+  // The layout to render, always repaired against what actually exists.
+  // Resolution order:
+  //   1. the stored arrangement (the viewer has dragged);
+  //   2. flow order from favorite_order — i.e. the default home screen.
+  // Only (1) is authoritative; (2) is a derivation and is NOT persisted until
+  // the viewer actually drags. That is what makes this feature need no
+  // backfill.
+  //
+  // There used to be a step between the two: the OTHER width's arrangement,
+  // reflowed. THE UI OVERHAUL settled on four columns at every width, so there
+  // is one arrangement — and no lossy repack between two of them that could
+  // let a phone visit silently rewrite a desktop layout.
   currentLayout(cols) {
     const present = Home.presentIds();
     const stored = Home._layouts && Home._layouts[String(cols)];
@@ -415,17 +554,16 @@ const Home = {
     if (Array.isArray(stored) && stored.length) {
       base = stored;
     } else {
-      const other = cols === 4 ? 5 : 4;
-      const otherStored = Home._layouts && Home._layouts[String(other)];
-      if (Array.isArray(otherStored) && otherStored.length) {
-        base = HomeLayout.reflow(otherStored, other, cols);
+      // A pre-overhaul DESKTOP arrangement lives under '5'. Reading it here is
+      // what stops the change looking like "my home screen was reset";
+      // repair() pulls anything in the retired fifth column back onto the
+      // canvas rather than dropping those apps off the right-hand edge.
+      const legacy = Home._layouts && Home._layouts['5'];
+      if (Array.isArray(legacy) && legacy.length) {
+        base = legacy;
       } else {
         const { yours } = Home.partitionApps(Home._apps || []);
-        base = HomeLayout.deriveDefault({
-          apps: yours.map((a) => a.slug),
-          widgets: window.HomePanels?.gridSlotKeys?.() || [],
-          cols,
-        });
+        base = HomeLayout.deriveDefault({ apps: yours.map((a) => a.slug), cols });
       }
     }
     const { layout, changed } = HomeLayout.repair(base, cols, present);
@@ -435,17 +573,17 @@ const Home = {
     // find the item and vetoed the whole gesture.
     Home._layoutCache = layout;
     // A repair of a STORED layout is a real correction (an app was added or
-    // deleted, a widget was hidden, a size changed) and is worth persisting
-    // so the next load is clean. A repair of a derivation is not — writing it
-    // would turn a passive visit into a claim on this width.
-    // Widget membership is just as load-bearing as app membership. If the
-    // layout wins the network race against /api/home-panels, gridSlotKeys()
-    // is temporarily empty; persisting that partial repair would erase the
-    // viewer's Challenges/Discover/Create cells. Render the transient repair
-    // if needed, but leave server truth and the cached stored layout untouched
-    // until the authoritative widget registry has arrived.
-    const widgetsReady = !!window.HomePanels?.hasLayoutRegistry?.();
-    if (changed && widgetsReady && Array.isArray(stored) && stored.length) {
+    // deleted, a pre-overhaul widget cell reclaimed, a tile pulled back out of
+    // the retired fifth column) and is worth persisting so the next load is
+    // clean. A repair of a derivation is not — writing it would turn a passive
+    // visit into a claim.
+    //
+    // The `widgetsReady` gate that used to sit here is gone with the widgets.
+    // It existed because a layout load that beat /api/home-panels saw an empty
+    // widget list and would have persisted a repair that erased the viewer's
+    // Challenges/Discover/Create cells. Nothing on the canvas depends on a
+    // second endpoint any more, so a repair is always safe to keep.
+    if (changed && Array.isArray(stored) && stored.length) {
       Home._layouts[String(cols)] = layout;
       Home._persistLayout(cols, layout);
     }
@@ -470,9 +608,10 @@ const Home = {
       .then((res) => (res.ok ? res.json() : null))
       .then((json) => {
         if (!json || !json.layouts) return;
-        // The server's widget registry is the authority on footprints —
+        // The server's widget registry used to be adopted here as the
+        // authority on footprints. Every item is a 1x1 app tile now, so there
+        // is nothing to adopt.
         // adopt it before anything lays out against it.
-        HomeLayout.setRegistry(json.widgets);
         Home._layouts = json.layouts;
         Home._layoutIsDemo = !!json.demo;
         Home._layoutFetchedAt = Date.now();
@@ -524,121 +663,658 @@ const Home = {
       Home._reloadPending = true;
       return;
     }
-    const listEl = document.getElementById('app-list');
-    if (!listEl) return;
     const canCreate = Home.canCreate();
     const apps = Home._apps || [];
     Home._wireSearch();
-    // Idempotent, and armed from the same place as the search wiring so the
-    // grid starts watching the breakpoint on its very first paint.
-    Home._wireViewport();
+    Home._wireRowBudget();
 
     const query = (Home._query || '').trim();
     // Home is "Your apps" only now — every other app lives on the
     // #apps browse screen (public/js/browse.js), so the old All Apps
     // section and its drag-to-add gesture are gone.
     const { yours } = Home.partitionApps(apps);
-    let html = '';
-    let canDragYours = false;
-    // Non-null only in the un-queried view: the count of "Your apps"
-    // cards. null = drag fully disabled (search results are a flat,
-    // transient ordering that must not be persisted as a reorder).
-    let yoursCount = null;
-    // The phone grid's explicit row tracks (#968, #975). Empty string
-    // everywhere else, which clears any template a previous render left
-    // behind.
+    let items = [];
+    let view = 'grid';
+    let resultsHeading = null;
+    let emptyQuery = null;
+    // The grid's explicit row tracks (#975). Empty string in the search view,
+    // which clears any template a previous render left behind.
     let rowTemplate = '';
+    // Non-zero only when the collapsed grid is holding tiles back; the count
+    // is every app the viewer has, which is what the button offers to show.
+    let moreCount = 0;
 
     if (query) {
       // Active search over YOUR apps: one flat grid of matches. Section
       // header, widget strip and drag affordance all step aside until
       // the query clears — reorder is only meaningful against the
-      // canonical ordering.
+      // canonical ordering. The three fixed sections below the grid are
+      // untouched by a search: they are outside #app-list.
       //
-      // No placement here, so there is no column count to keep in step —
-      // and null can never equal currentCols(), so clearing the query and
-      // re-rendering always re-reads the live width.
-      Home._renderedCols = null;
+      view = 'search';
       const matches = Home.filterApps(yours, query);
       if (!matches.length) {
-        html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No apps match &ldquo;${escapeHtml(query)}&rdquo; — clear the search and try the <span class="text-violet-500">Discover</span> widget.</div>`;
+        emptyQuery = query;
       } else {
-        html = `<div class="home-section-header col-span-full">${matches.length} result${matches.length === 1 ? '' : 's'}</div>`;
-        html += matches.map((a) => Home.renderAppCard(a)).join('');
+        resultsHeading = `${matches.length} result${matches.length === 1 ? '' : 's'}`;
+        items = matches.map((a) => ({ kind: 'card', placement: null, app: Home.appView(a) }));
       }
     } else {
-      yoursCount = yours.length;
-      canDragYours = true;
-      // FREE-FORM PLACEMENT. Every app tile and every visible widget is a
-      // grid item at an explicit (column, row) cell the viewer chose —
-      // holes and all. There is no flow: an item's position comes from the
-      // layout model, never from its order in this array.
+      // FREE-FORM PLACEMENT. Every app tile is a grid item at an explicit
+      // (column, row) cell the viewer chose — holes and all. There is no
+      // flow: a tile's position comes from the layout model, never from its
+      // order in this array.
       const cols = Home.currentCols();
-      // What the DOM is about to hold. _applyColumnCount diffs the live
-      // viewport against this to decide whether a resize is a real
-      // breakpoint crossing or just a window getting a bit wider.
-      Home._renderedCols = cols;
       const layout = Home.currentLayout(cols);
+      // AS MANY ROWS AS THE FIRST TWO-THIRDS OF THE SCREEN HOLDS, AND NEVER
+      // FEWER THAN TWO (HomeLayout.DEFAULT_ROWS). The cap is on what is SHOWN,
+      // never on what a viewer may have or where they may put it: the canvas
+      // is still eight rows, a drag can still place a tile on any of them, and
+      // "Show all" below reveals the rest for the rest of the visit.
+      //
+      // A cap exists at all because the home screen has three fixed sections
+      // under this grid. An eight-row canvas would push Discover, Challenges
+      // and Create app off the bottom of a phone for anyone with a lot of apps
+      // — which is the failure the whole four-area design is meant to prevent.
+      // Reserving the bottom THIRD is what protects them; two flat rows both
+      // over-protected a tall window (two rows of tiles and then a gulf) and
+      // said nothing about a short one. See Home.visibleRowBudget.
       const canvas = HomeLayout.canvasItems(layout);
-      const overflow = HomeLayout.overflowItems(layout);
-      const parts = canvas.map((it) => Home.renderGridItem(it, cols));
+      const rowBudget = Home.visibleRowBudget();
+      Home._rowBudget = rowBudget;
+      // The bound is "N rows that actually hold apps", not "row index < N"
+      // — see HomeLayout.defaultRowBound. On a packed canvas the two are the
+      // same number; on one with a hole on row 1 the old form collapsed the
+      // two-row default down to a single visible row of tiles.
+      const rowBound = HomeLayout.defaultRowBound(layout, cols, rowBudget);
+      // AN ADD THAT LANDS BELOW THE FOLD OPENS THE GRID (#1567). The whole
+      // point of repainting on add is that the viewer SEES the app arrive;
+      // a collapsed grid that holds it back turns the tick into the only
+      // feedback, which is the reload complaint again in a smaller form.
+      // Same flag "Show all N apps" sets, so the rest of the visit behaves
+      // as if it had been pressed.
+      if (Home._revealSlug) {
+        const landed = canvas.find((it) => it && it.slug === Home._revealSlug);
+        if (landed && landed.row > rowBound) Home._appsExpanded = true;
+      }
+      const hiddenRows = !Home._appsExpanded
+        && canvas.some((it) => it.row > rowBound);
+      const shown = hiddenRows
+        ? canvas.filter((it) => it.row <= rowBound)
+        : canvas;
+      const overflow = hiddenRows ? [] : HomeLayout.overflowItems(layout);
+      const parts = shown.map((it) => Home.gridItemView(it, cols, false));
       // Items past the 8-row canvas render after it in plain flow, packed
       // densely. The row cap bounds free PLACEMENT, never how many apps a
       // viewer may have — stranding a tile would be far worse than an
       // extra row.
-      parts.push(...overflow.map((it) => Home.renderGridItem(it, cols, true)));
-      html += parts.join('');
-      rowTemplate = Home.rowTemplate(layout, cols);
+      parts.push(...overflow.map((it) => Home.gridItemView(it, cols, true)));
+      items = parts.filter(Boolean);
+      // The row tracks describe what is RENDERED, so a collapsed grid must not
+      // declare tracks for the rows it is holding back — an explicit track
+      // exists whether or not anything is in it, and naming row 2 while
+      // rendering rows 0-1 would pad the grid out with an empty tile row.
+      rowTemplate = Home.rowTemplate(hiddenRows ? shown : layout, cols);
+      moreCount = hiddenRows ? (canvas.length + HomeLayout.overflowItems(layout).length) : 0;
+      // One-shot: it described this paint.
+      Home._revealSlug = null;
     }
 
     // The search view is a flat, transient list — it must not inherit the
     // canvas's fixed row height (its "N results" header and empty-state
     // line would each claim a whole 100px tile row). app.css keys the
     // auto-rows off this attribute.
-    listEl.dataset.view = query ? 'search' : 'grid';
+
     // SHORT ROWS (#968 fit rows, #975 blank rows). '' clears it, which is what
     // desktop and the search view get — app.css's grid-auto-rows is then the
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
-    listEl.style.gridTemplateRows = rowTemplate;
-    listEl.innerHTML = html;
-    Home._wireCards(listEl, canDragYours, yoursCount);
-    // The iOS widget-editing strip renders ABOVE the grid, in its own
-    // section: a full-width flow item cannot coexist with explicit cell
-    // placement inside #app-list, which is where it used to live.
-    const stripSection = document.getElementById('home-widget-strip-section');
-    if (stripSection) {
-      const stripHtml = Home.renderWidgetSection();
-      stripSection.innerHTML = stripHtml;
-      stripSection.classList.toggle('hidden', !stripHtml);
-      if (stripHtml) Home._wireWidgetStrip(stripSection);
-    }
-    // Pure paint from the widgets cache (#911) — no network. Keeps each
-    // block present through the grid's wholesale innerHTML re-renders.
+    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null });
+    // ...and, in the same push, the two hosts outside it: "Show all N apps"
+    // and the iOS widget-editing strip. The strip renders ABOVE the grid, in
+    // its own section, because a full-width flow item cannot coexist with the
+    // explicit cell placement #app-list uses. Its reorder recognizer is
+    // attached by ./widget-strip.tsx's effect, which calls _wireWidgetStrip —
+    // that function attaches listeners, it writes no markup.
+    Home._renderAppsMore(moreCount);
+    // Discover / Challenges / Create app, painted from the widgets cache
+    // (#911) — no network. Their hosts are fixed sections OUTSIDE #app-list,
+    // so the grid's wholesale innerHTML re-render above cannot disturb them;
+    // this call is here so a first paint fills them at the same moment.
     window.HomePanels?.render();
-    Home._maybeOpenShotMenu(listEl);
-    Home._searchReveal.sync();
-    // Screenshot-state deep link: paint the drag overlay in its resting
-    // visible state so the gesture-only surface is capturable and testable.
-    Home._maybeShowShotGrid(listEl);
+    // The header's Improve button, pointed at the PLATFORM (#1367). Published
+    // from render() on purpose — see publishImproveTarget for why that is the
+    // one call that makes it consistent.
+    Home.publishImproveTarget();
+    // ?shot=discover-add, once the first real paint has happened.
+    Home._maybeDiscoverAddShot();
   },
 
-  // ── The phone grid's row tracks (#968, #975) ───────────────────────
+  // ===== ?shot=discover-add — the add round trip, as a URL (#1567) =====
   //
-  // Every row is one app-grid cell EXCEPT two kinds:
+  // Adding an app from a Discover rail is a TAP, so no URL rendered the
+  // result of one: the before/after screenshots and every declared check saw
+  // the home screen with nothing added, and the fix they exist to protect was
+  // invisible to both. This drives the flow the way a finger would — press
+  // the +, watch "Your apps" take the app WITHOUT a reload, press the ✓,
+  // watch it leave — and stamps how far it got on <body>.
   //
-  //   * a row a FIT widget owns outright sizes to what that widget actually
-  //     draws (HomeLayout.fitRows, #968);
-  //   * a row with NOTHING in it is half a cell (HomeLayout.blankRows, #975).
-  //     It is still exactly where the viewer left it and still a cell they can
-  //     drop into — it just stops reserving a whole tile to be empty.
+  // <body> rather than a node inside the grid: #app-list and
+  // #home-apps-section are React-owned, and an imperative write into either
+  // is a second writer that the next push paints over. `body.is-offline` is
+  // the same precedent, and six declared checks already select through it.
   //
-  // The two sets are disjoint by construction: a fit row needs content to size
-  // to, a blank row has none.
+  // Ungated and identical in both environments, like every other shot link
+  // here — the "before" side of a capture is shot against production, so an
+  // env-gated link would starve it forever. It writes only what the tap it
+  // imitates writes, and it ends by undoing that write, so a preview it ran
+  // in is left as it was found.
+  _discoverAddShotRan: false,
+  async _maybeDiscoverAddShot() {
+    if (Home._discoverAddShotRan) return;
+    try {
+      if (new URLSearchParams(location.search).get('shot') !== 'discover-add') return;
+    } catch (err) { return; }
+    Home._discoverAddShotRan = true;
+
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const until = async (pred, budgetMs) => {
+      const started = Date.now();
+      let out = pred();
+      while (!out && Date.now() - started < budgetMs) {
+        await wait(30);
+        out = pred();
+      }
+      return out;
+    };
+
+    // Every leg bails WITHOUT stamping. A half-finished round trip must not
+    // read as a passing one, and the check's selector is the final stamp.
+    const badge = await until(() => document.querySelector(
+      '#home-discover-section .app-card:not([data-demo]) .card-add-btn[data-added="false"]',
+    ), 8000);
+    if (!badge) return;
+    const slug = badge.dataset.slug;
+    if (!slug) return;
+    badge.click();
+
+    // The tile is in "Your apps" now, painted from the cached flags with no
+    // refetch — which is the whole claim this shot is here to make.
+    const tile = await until(
+      () => document.querySelector(`#app-list .app-card[data-slug="${slug}"]`),
+      8000,
+    );
+    if (!tile) return;
+    document.body.dataset.shotAdd = 'added';
+
+    // The card stayed put in the rail (that is _discoverKeep) with its badge
+    // ticked, so the same finger can undo it.
+    const ticked = await until(() => document.querySelector(
+      `#home-discover-section .card-add-btn[data-slug="${slug}"][data-added="true"]`,
+    ), 8000);
+    if (!ticked) return;
+    ticked.click();
+
+    const gone = await until(
+      () => !document.querySelector(`#app-list .app-card[data-slug="${slug}"]`),
+      8000,
+    );
+    if (!gone) return;
+    document.body.dataset.shotAdd = 'round-trip';
+  },
+
+
+  // One app -> the flat facts its tile renders. Every conditional the old
+  // template string evaluated inline is resolved HERE, where the `App.user`
+  // gates and the status vocabulary already live.
+  appView(app) {
+    const isAwaiting = app.status === 'awaiting_secrets';
+    const isError = app.status === 'error';
+    const isRunning = app.status === 'running';
+    // The status DOT and the active-users badge are gone from the tile face —
+    // a launcher icon should read as an app, not a dashboard row. Every
+    // non-running status still says so in words.
+    const statusLabel = isRunning ? ''
+      : app.status === 'creating' ? 'Spinning up...'
+      : isAwaiting ? 'Awaiting secrets'
+      : 'Error';
+    // Retry is the errored card's primary recovery action, gated to
+    // creator-or-full-admin (view-only admins excluded, issue #311).
+    const showRetry = isError
+      && !!(App.user?.canAdminWrite || App.user?.id === app.created_by);
+    // #416: `last_failure_reason` only rides the list payload for the app's
+    // creator / collaborators / admins, so it is simply absent for outsiders.
+    const forkName = app.forked_from && typeof app.forked_from === 'object'
+      ? (app.forked_from.name || '<deleted>') : null;
+    return {
+      slug: app.slug,
+      name: String(app.name || ''),
+      status: app.status,
+      icon: AppCard.iconViewFor(app),
+      locked: !!app.locked,
+      demo: !!app.demo,
+      statusLabel,
+      isAwaiting,
+      isError,
+      // Awaiting-secrets cards stay clickable so the viewer can open the app
+      // view + Secrets modal to fill values; other non-running statuses show
+      // no app surface.
+      clickable: isRunning || isAwaiting,
+      failureReason: isError && app.last_failure_reason ? String(app.last_failure_reason) : null,
+      showRetry,
+      forkName,
+    };
+  },
+
+  // One placed item -> its view-model entry. The string version spliced
+  // `data-yours` and the placement style INTO renderAppCard's output with two
+  // fragile `String.replace` calls (one of which silently unplaced the whole
+  // grid once by moving the anchor the other matched on). Placement is data
+  // now, so there is nothing to splice.
+  gridItemView(item, cols, overflow) {
+    const [w, h] = HomeLayout.sizeOf(item, cols);
+    const placement = overflow ? null : { col: item.col, row: item.row, w, h };
+    // The `item.type === 'widget'` branch that planted a `[data-panel-slot]`
+    // host is gone with the UI overhaul: Discover, Challenges and Create app
+    // are fixed sections below the grid now, so every item on this canvas is
+    // an app tile.
+    const app = (Home._apps || []).find((a) => a.slug === item.slug);
+    if (!app) return null;
+    return { kind: 'card', placement, app: Home.appView(app) };
+  },
+
+  // Attach / detach the kit's placement recognizer. Split out of _wireCards so
+  // app-grid.tsx can own WHEN it happens (a post-commit effect) while every
+  // callback below stays here, where the geometry lives.
   //
-  // Returns '' for "no template at all", which is the desktop and search-view
-  // answer: app.css's `grid-auto-rows: var(--home-cell-h)` is then the only
-  // row sizing, byte-for-byte as before.
+  // `enabled` is false in the search view: a flat, transient ordering must not
+  // be persisted as a reorder.
+  _attachGridPlacement(listEl, enabled) {
+    Home._detachGridPlacement();
+    if (!enabled || !window.unNative?.attachGridPlacement) return;
+    const cols = Home.currentCols();
+    Home._placementHandle = window.unNative.attachGridPlacement(listEl, {
+      itemSelector: '.app-card[data-yours]:not([data-demo])',
+      cellFromPoint: (x, y, info) => {
+        // The kit owns the touch sequence. A stationary lift is a context
+        // menu, not a layout write; movement turns that same lift into a drag.
+        if (Home._contextLift) {
+          if (!Home._contextLift.origin) Home._contextLift.origin = { x, y };
+          const start = Home._contextLift.origin;
+          if (Math.hypot(x - start.x, y - start.y) <= 10) return null;
+          Home.closeCardMenu();
+          Home._showGridOverlay(listEl, cols, Home._contextLift.item);
+          Home._contextLift = null;
+        }
+        return Home._targetCellFor(x, y, info, cols);
+      },
+      // canPlace runs first on every cell change and onHover right after, and
+      // both need the SAME displacement plan — so compute it once and memo it
+      // for the paint. Recomputing would risk the highlight describing a
+      // different outcome than the one that commits.
+      canPlace: (item, cell) => !!Home._planFor(item, cell, cols),
+      onLift: (item) => {
+        Home._dragActive = true;
+        if (Home._cardPointerType === 'touch') {
+          Home._contextLift = { item, origin: null };
+          Home.openCardMenu(item.dataset.slug, item);
+        } else {
+          Home.closeCardMenu();
+          Home._showGridOverlay(listEl, cols, item);
+        }
+      },
+      onHover: (item, cell, ok) => { Home._previewDrop(item, cell, ok, cols); },
+      // The release spring's destination. Same memoised plan again: the tile
+      // settles on the cell the tint promised, not the one it left.
+      rectForCell: (item, cell) => Home._rectForCell(item, cell, cols),
+      onPlace: (item, cell) => { Home._onGridPlace(item, cell, cols); },
+      onSettle: () => {
+        Home._contextLift = null;
+        Home._dragActive = false;
+        Home._hideGridOverlay();
+        if (Home._reloadPending) {
+          Home._reloadPending = false;
+          Home._rerenderPending = false;
+          Home.load();
+        } else if (Home._rerenderPending) {
+          Home._rerenderPending = false;
+          Home.render();
+        }
+      },
+    });
+  },
+
+  _detachGridPlacement() {
+    if (Home._placementHandle) {
+      try { Home._placementHandle.detach(); } catch {}
+      Home._placementHandle = null;
+    }
+    Home._contextLift = null;
+    Home.closeCardMenu();
+  },
+
+  // ── Dragging an app IN from Discover (#1763) ───────────────────────
+  //
+  // The launcher above is free placement, so the gesture a Discover card was
+  // missing is the obvious one: long-press it, drag it up onto the grid, drop
+  // it in the cell you want. Add and place in one go, where the ⊕ badge can
+  // only append the app to whatever cell happens to be free.
+  //
+  // This is THE SAME kit recognizer the grid itself uses, attached to a rail
+  // instead of to #app-list, and every callback below is the grid's own. The
+  // geometry (_targetCellFor), the drop plan (_planFor → HomeLayout.place),
+  // the displacement preview, the release spring and the edge auto-scroll
+  // that brings the grid into view are shared code, not a second
+  // implementation of any of it.
+  //
+  // WHAT IS ACTUALLY NEW is one fact: the item being dragged is not on the
+  // canvas yet. It is modelled as `_incoming` and parked in the OVERFLOW
+  // region (row === MAX_ROWS) for the span of the gesture, with one
+  // deliberate consequence — HomeLayout.place re-homes a displaced occupant
+  // into the dragged item's vacated rectangle first, and HomeLayout.fits
+  // rejects row >= MAX_ROWS, so that step finds nothing and the occupant
+  // takes the first free cell instead. That is the right answer here: a tile
+  // arriving from off-canvas has no cells to swap with.
+  //
+  // THE OVERLAY AND `un-reordering` BELONG TO #app-list, not to the rail. The
+  // kit puts its own class on ITS list element, and the CSS that makes the
+  // grid's tiles pointer-events:none — the thing that lets _cellFromPoint
+  // resolve an occupied cell as a target at all — is scoped to #app-list, so
+  // this reaches across and sets it there. Safe for exactly the reason
+  // _showGridOverlay is safe at all (see its header): _dragActive holds for
+  // the whole gesture, render() and load() both return early while it does,
+  // and React therefore cannot reconcile #app-list inside that window.
+  //
+  // Returns a detach function for the lane's own effect to call, rather than
+  // parking a handle on Home: there are TWO rails (Featured and Popular) and
+  // a single slot would silently drop one of them.
+
+  // The app a cross-surface drag is carrying, or null when the card being
+  // dragged already has a tile on the canvas.
+  _incoming: null,
+
+  // The slug a committed incoming drop still owes an "add to Your apps",
+  // handed from onPlace to onSettle so the membership write happens with the
+  // gesture over and the grid free to repaint.
+  _pendingAdd: null,
+
+  _attachDiscoverPlacement(railEl) {
+    if (!railEl || !window.unNative?.attachGridPlacement) return null;
+    const cols = Home.currentCols();
+    const gridEl = () => (typeof document !== 'undefined'
+      ? document.getElementById('app-list') : null);
+    const handle = window.unNative.attachGridPlacement(railEl, {
+      // Demo tiles stay drag-inert (#746) — they have no DB row to favourite
+      // and no cell to persist. A card with no slug is the empty-lane note.
+      itemSelector: '.app-card[data-slug]:not([data-demo])',
+      cellFromPoint: (x, y, info) => Home._targetCellFor(x, y, info, cols),
+      canPlace: (el, cell) => !!Home._planFor(el, cell, cols),
+      onLift: (el) => {
+        const slug = (el && el.dataset && el.dataset.slug) || '';
+        const onCanvas = (Home._layoutCache || [])
+          .some((it) => it.type === 'app' && it.slug === slug);
+        Home._incoming = onCanvas
+          ? null
+          : { type: 'app', slug, col: 0, row: HomeLayout.MAX_ROWS };
+        Home._dragActive = true;
+        const listEl = gridEl();
+        if (!listEl) return;
+        listEl.classList.add('un-reordering');
+        Home._showGridOverlay(listEl, cols, el);
+      },
+      onHover: (el, cell, ok) => { Home._previewDrop(el, cell, ok, cols); },
+      rectForCell: (el, cell) => Home._rectForCell(el, cell, cols),
+      onPlace: (el, cell) => {
+        const incoming = Home._incoming;
+        // The cell is written first and the membership second, which is safe
+        // in that order: PUT /api/home-layout stores a cell for any app the
+        // viewer can SEE (its header says so), and it is the add below that
+        // decides whether a tile renders there.
+        Home._onGridPlace(el, cell, cols);
+        if (incoming) Home._pendingAdd = incoming.slug;
+      },
+      onSettle: () => {
+        Home._dragActive = false;
+        Home._hideGridOverlay();
+        const listEl = gridEl();
+        if (listEl) listEl.classList.remove('un-reordering');
+        Home._incoming = null;
+        const add = Home._pendingAdd;
+        Home._pendingAdd = null;
+        if (add) {
+          // toggleAdded flips the cached flags, repaints — the model already
+          // holds the app at its cell — and POSTs. It is the TERMINAL repaint
+          // here, so anything deferred mid-gesture is dropped rather than
+          // flushed: a load() at this point would re-read /api/apps while
+          // that POST is still in flight and paint the app straight back out
+          // of Your apps.
+          Home._reloadPending = false;
+          Home._rerenderPending = false;
+          Home.toggleAdded(add, true);
+          return;
+        }
+        if (Home._reloadPending) {
+          Home._reloadPending = false;
+          Home._rerenderPending = false;
+          Home.load();
+        } else if (Home._rerenderPending) {
+          Home._rerenderPending = false;
+          Home.render();
+        }
+      },
+    });
+    return () => { try { handle.detach(); } catch { /* ignore */ } };
+  },
+
+  // The errored card's Retry, lifted out of the _wireCards sweep so the button
+  // can carry its own handler as a prop.
+  async _onRetry(slug, btn) {
+    if (btn) btn.textContent = '...';
+    await fetch(`/api/apps/${slug}/retry`, { method: 'POST' });
+    Home.load();
+  },
+
+  // ── The home screen's Improve button (#1367) ───────────────────────
+  //
+  // "Improve" on home means the PLATFORM: the same panel every app gets,
+  // scoped to Social Vibecoding's own self-hosted row. Feedback, its dev
+  // sessions, its kanban and feed, its repo — all of it already works on that
+  // row, which is why this is a target publish and not a second surface.
+  //
+  // ── Why this is called from render(), and why that matters ─────────
+  //
+  // THE UI OVERHAUL shipped this once and #1363 pulled it back out, and that
+  // bug is worth naming because it is the whole design constraint here: the old
+  // version re-targeted the platform row on the RETURN paths only —
+  // navigateHome() after backing out of an app. A cold boot at `/` never
+  // published anything, so the button appeared only after you had visited an
+  // app and vanished again on refresh, which read as a stale leftover of the
+  // app just closed rather than as a feature.
+  //
+  // render() is the fix because it is the one call every path already funnels
+  // through: the cold boot's first paint, the WS app events, a search
+  // keystroke, and the return from an app. Publishing the same target
+  // repeatedly is free — improveStore.set() is a no-op when nothing changed,
+  // and setTarget only re-buckets sessions when the slug actually moves.
+  //
+  // ── The two gates ──────────────────────────────────────────────────
+  //
+  // HOME HAS TO BE THE SCREEN ON SHOW. render() also runs while an app is
+  // open (a WS event repaints the grid behind the app view), and publishing
+  // then would overwrite the open app's own target with the platform's —
+  // the header button would silently start describing the wrong thing.
+  //
+  // THE ROW HAS TO BE VISIBLE TO THIS VIEWER. GET /api/apps hides
+  // `self_hosted` rows from non-admins unless SELF_APP_PUBLIC_VOTING is on,
+  // and answers 404 rather than 403 for the slug so the row's existence is
+  // not disclosed. Reading the target out of the list the viewer was actually
+  // served keeps that stance exactly: no row in the payload, no button, and
+  // nothing here has to know the flag or the slug. It also means the button
+  // appears for everyone the moment public voting is switched on, with no
+  // second change.
+  // Where the last-published platform target is remembered, so the next cold
+  // boot can put the button up before /api/apps answers. See
+  // publishImproveTarget's "the gap on a cold boot" note.
+  IMPROVE_TARGET_KEY: 'platform-improve-target',
+
+  /** The remembered target, or null. Shape-checked: a stale key is not a target. */
+  _cachedImproveTarget() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(Home.IMPROVE_TARGET_KEY));
+      if (!raw || typeof raw !== 'object' || typeof raw.slug !== 'string' || !raw.slug) {
+        return null;
+      }
+      return raw;
+    } catch (err) { return null; }
+  },
+
+  _rememberImproveTarget(target) {
+    try {
+      localStorage.setItem(Home.IMPROVE_TARGET_KEY, JSON.stringify(target));
+    } catch (err) { /* private mode / quota — the cache is an optimisation */ }
+  },
+
+  publishImproveTarget() {
+    if (!window.Improve) return;
+    // An app is open (or opening): its target is the one that belongs in the
+    // header. Both checks — app.js's own currentApp and the screen itself —
+    // because a repaint can land either side of the transition.
+    if (window.App?.currentApp) return;
+    // #1406: the gate is now "an app is not on screen", not "home is". It used
+    // to require home specifically, which is why the improve button and the
+    // view selector vanished on settings, profile and messages — those screens
+    // clear the app's target through _enterScreenChrome and nothing put the
+    // PLATFORM's back. They call this now, so the check has to let them
+    // through while still refusing to fire over an open app: the currentApp
+    // check above and this one are the two halves of that, because a repaint
+    // can land either side of the transition.
+    //
+    // ── AND WHY IT ASKS THE ROUTER TOO ─────────────────────────────
+    //
+    // #app-view being painted does NOT mean an app is on screen while the
+    // viewer is on their way off one. navigateHome hides every other root but
+    // deliberately keeps that one alive — `_showOnlyScreen('home-screen',
+    // ['app-view'])` — because the shrinking card of the zoom-out IS that
+    // element, and it has to keep showing the app's content until it lands.
+    // So for the length of that animation the DOM answers "the app view is on
+    // show" about a screen the router left, and this gate rejected the very
+    // re-publish navigateHome makes two lines later to swap home's target in
+    // the same frame. The later publish out of Home.render() lost the same
+    // race — /api/apps usually answers before a ~300ms transition ends — so
+    // the target stayed null and the header's standing action vanished for
+    // the rest of the visit. Only on a leave that ANIMATES: from the App tab
+    // the kit falls back to type 'none', which runs fn + after as one
+    // synchronous mutation, which is why this read as a Board-only bug.
+    //
+    // App._revealedScreen is the router's own answer, set by the same
+    // _showOnlyScreen call that starts the leave, so "painted, but no longer
+    // the revealed screen" is exactly that window and nothing else. Both
+    // halves still have to agree before this refuses to publish.
+    if (window.App && typeof App._isScreenVisible === 'function'
+        && App._isScreenVisible('app-view')
+        && App._revealedScreen === 'app-view') return;
+    const self = (Home._apps || []).find((a) => a && a.self_hosted);
+    // ── THE GAP ON A COLD BOOT ─────────────────────────────────────
+    //
+    // Everything below reads the self-hosted row out of GET /api/apps, and
+    // that request is the whole boot's slowest. Until it lands `_apps` is
+    // empty, this returns, and the header's standing action is simply MISSING
+    // — for as long as the fetch takes, on home and on every other platform
+    // screen (they all route through here via _enterScreenChrome). It then
+    // pops in, which is the "the Improve button shows up a few seconds late"
+    // report: not a stale button, an absent one.
+    //
+    // So publish the LAST ONE first. The row is the same object visit after
+    // visit — it is the platform's own app — so a remembered copy is right
+    // far more often than "nothing" is, and the real payload overwrites it a
+    // moment later either way (improveStore.set is a no-op when nothing
+    // changed, so the common case is invisible). Only while the payload is
+    // genuinely not here yet: once `_appsLoaded` is true the list is the
+    // truth, including the truth that this viewer is not served the row.
+    //
+    // It cannot leak the row's existence to someone who may not see it: the
+    // cache is written only from a successful publish below, i.e. only in a
+    // browser profile that was already served the row.
+    if (!self || !self.slug) {
+      if (Home._appsLoaded) return;
+      const cached = Home._cachedImproveTarget();
+      if (cached) window.Improve.setTarget(cached);
+      return;
+    }
+    const target = {
+      kind: 'platform',
+      slug: self.slug,
+      name: self.name || self.slug,
+      selfHosted: true,
+      repoUrl: self.repo_url || null,
+      iconUrl: self.icon_url || null,
+      iconEmoji: self.icon_emoji || null,
+      // The list payload's own version block, already shortened server-side.
+      version: self.version?.shortSha || null,
+      deploying: self.status === 'deploying',
+      // `can_collaborate` is the read affordance accessFlags() computes for
+      // this viewer on this row — the same bit that decides whether starting
+      // a session is offered anywhere else.
+      readOnly: !self.can_collaborate,
+      // Nothing to share: the platform row has no per-slug app URL, which is
+      // also why opening it lands on Dev rather than the App tab.
+      canShare: false,
+    };
+    window.Improve.setTarget(target);
+    Home._rememberImproveTarget(target);
+  },
+
+  // Per-visit only, like the widgets' own expand flag: a viewer who opened
+  // the full grid once should not have every later visit start scrolled past
+  // three sections, and a preference this cheap is not worth a write.
+  // Whether "Show all N apps" has been pressed this visit. Per-visit state,
+  // deliberately not persisted: the collapsed grid is the contract, and an
+  // expansion the viewer forgot about would quietly eat the fold forever —
+  // the same reasoning as HomePanels._expanded.
+  //
+  // `?shot=home-apps` pins it ON before the first paint. Every row past the
+  // budget is unreachable to a still frame and to a declared check otherwise,
+  // because the only way in is a tap; ungated and read-only, like every other
+  // shot link here, so the production "before" side works the moment it ships.
+  _appsExpanded: (() => {
+    try {
+      return new URLSearchParams(location.search).get('shot') === 'home-apps';
+    } catch (err) { return false; }
+  })(),
+
+  // "Show all N apps" and the widget strip, pushed together — they are the
+  // two hosts OUTSIDE #app-list that this same paint fills, and one store
+  // keeps them from being repainted at two different moments. The button
+  // stays outside the grid for the reason it always did: the grid's
+  // re-render must not take it away mid-click.
+  //
+  // Kept its name and its caller. It no longer touches the DOM, and the
+  // listener it used to re-attach on every paint is now attached once by
+  // ./apps-more.tsx to an element React keeps.
+  _renderAppsMore(count) {
+    chromeStore.set({
+      moreCount: count || 0,
+      strip: Home.widgetSectionView(),
+    });
+  },
+
+  // ── The grid's row tracks (#975) ───────────────────────────────────
+  //
+  // Every row is one app-grid cell EXCEPT one kind: a row with NOTHING in it
+  // is half a cell. It is still exactly where the viewer left it and still a
+  // cell they can drop into — it just stops reserving a whole tile to be
+  // empty, which is what keeps the three fixed sections below the grid from
+  // being pushed down by a viewer's deliberate gaps.
+  //
+  // A second kind used to qualify: a row a FIT widget owned outright sized to
+  // what that widget actually drew (#968). Widgets are not on this canvas any
+  // more, so that rule went with them — and the two sets were disjoint by
+  // construction anyway (a fit row needs content to size to, a blank row has
+  // none), so removing one leaves the other exactly as it was.
+  //
+  // Returns '' for "no template at all", which is the search-view answer:
+  // app.css's `grid-auto-rows: var(--home-cell-h)` is then the only row
+  // sizing, byte-for-byte as before.
   //
   // ONLY AS MANY ENTRIES AS THERE ARE OCCUPIED ROWS. Declaring all eight
   // would make them EXPLICIT tracks, and an explicit grid exists whether or
@@ -655,11 +1331,9 @@ const Home = {
   // draws, so it can never ADD space to a real state; its one job is to stop
   // a slot that rendered nothing from taking its row to zero and reading as
   // "the widget was deleted" rather than "the widget is short".
-  FIT_ROW_FLOOR: '4.25rem', // 68px — border 2 + title bar 25.5 + one row 40
   rowTemplate(layout, cols) {
-    const fit = HomeLayout.fitRows(layout, cols);
     const blank = HomeLayout.blankRows(layout, cols);
-    if (!fit.size && !blank.size) return '';
+    if (!blank.size) return '';
     const last = HomeLayout.lastOccupiedRow(layout, cols);
     if (last < 0) return '';
     const tracks = [];
@@ -669,38 +1343,10 @@ const Home = {
       // keeping each one a single token means the string can be split and
       // counted (here, in the overlay's mirror, and in the tests) without
       // parsing CSS.
-      if (fit.has(row)) tracks.push(`minmax(${Home.FIT_ROW_FLOOR},auto)`);
-      else if (blank.has(row)) tracks.push('var(--home-blank-row-h)');
+      if (blank.has(row)) tracks.push('var(--home-blank-row-h)');
       else tracks.push('var(--home-cell-h)');
     }
     return tracks.join(' ');
-  },
-
-  // One placed item → its grid markup, carrying its cell as an INLINE
-  // style. Inline and not Tailwind classes: Tailwind here is the CDN JIT
-  // (see index.html), so per-cell arbitrary classes would be generated at
-  // runtime — and a cell that paints a frame late is a tile visibly jumping
-  // into place. `overflow` items get no placement at all so they flow.
-  renderGridItem(item, cols, overflow) {
-    const [w, h] = HomeLayout.sizeOf(item, cols);
-    const style = overflow
-      ? ''
-      : ` style="grid-column:${item.col + 1}/span ${w};grid-row:${item.row + 1}/span ${h}"`;
-    if (item.type === 'widget') {
-      return `<div class="home-panel-slot app-card-draggable touch-pan-y" data-panel-slot="${escapeHtml(item.key)}"${style}></div>`;
-    }
-    const app = (Home._apps || []).find((a) => a.slug === item.slug);
-    if (!app) return '';
-    let card = Home.renderAppCard(app);
-    // ONE splice for both attributes, onto the card's root element. Two
-    // sequential replaces looked equivalent and was not: inserting
-    // `data-yours` ahead of `class=` moved the anchor the placement replace
-    // was matching on, so every app tile silently lost its cell and fell
-    // back to flowing — the grid looked plausible and was not placed at all.
-    card = card.replace('class="app-card ',
-      `data-yours="true"${style} class="app-card `);
-    card = card.replace('cursor-pointer', 'cursor-grab');
-    return card;
   },
 
   // ===== Hidden search bar (pull-to-reveal) =====
@@ -717,7 +1363,10 @@ const Home = {
     _scrollWired: false,
     _rafPending: false,
 
-    screenEl() { return document.getElementById('home-screen'); },
+    screenEl() {
+      const el = document.getElementById('home-screen');
+      return window.PlatformUI?.scrollElement?.(el) || el;
+    },
     barEl() { return document.getElementById('home-search-bar'); },
 
     // Screenshot-state deep link (?shot=home-search): the revealed bar
@@ -774,7 +1423,7 @@ const Home = {
     _wireScroll(screen) {
       if (Home._searchReveal._scrollWired) return;
       Home._searchReveal._scrollWired = true;
-      screen.addEventListener('scroll', () => {
+      const markOnScroll = () => {
         if (Home._searchReveal._rafPending) return;
         Home._searchReveal._rafPending = true;
         const run = () => {
@@ -783,7 +1432,11 @@ const Home = {
         };
         if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
         else setTimeout(run, 16);
-      }, { passive: true });
+      };
+      // Element scrolling does not bubble; document scrolling has a different
+      // target. Observe both because resizing can change the scrolling owner.
+      document.getElementById('home-screen').addEventListener('scroll', markOnScroll, { passive: true });
+      document.addEventListener('scroll', markOnScroll, { passive: true });
     },
   },
 
@@ -831,9 +1484,8 @@ const Home = {
     requestAnimationFrame(() => {
       Home._shotMenuPending = false;
       if (Home._shotMenuDone) return; // a render that raced us already won
-      // Prefer the grid's own "…" trigger: a real anchor element is what
-      // lets the desktop popover toggle closed on a re-click.
-      const btn = listEl.querySelector('.card-menu-btn');
+      // The tile itself is the menu anchor now; there is no launcher badge.
+      const btn = listEl.querySelector('.app-card[data-slug]');
       let slug = btn && btn.dataset.slug;
       let anchor = btn;
       // #929: a fresh checks database has an EMPTY "Your apps" grid, so
@@ -958,36 +1610,70 @@ const Home = {
   //
   // `onChange` (optional) is called after a successful toggle so the
   // host can re-render its own grid; home just reloads.
+  // Binding is IDEMPOTENT (#1567): a lane re-runs this whenever its tiles
+  // change identity, and a badge flipping to "added" is now such a change
+  // while React keeps the very same card elements. The two WeakSets above
+  // are what make the second sweep a no-op instead of a duplicate listener.
   _wireDiscoveryCards(listEl, onChange) {
     if (!listEl) return;
     listEl.querySelectorAll('.app-card').forEach((card) => {
+      if (wiredCards.has(card)) return;
+      wiredCards.add(card);
       // #1036: the card can't BE an anchor (it wraps its own Add and "…"
       // buttons), so cmd/middle-click is intercepted instead. hrefFor
       // repeats the plain click's guards exactly, so an inert card (demo
       // tile, an app that isn't running) stays inert under a modifier.
+      // #1562: a Discover tap opens the app's DETAIL PAGE, not the app. This
+      // is a shelf of apps you have not met, and launching one drops a
+      // stranger inside a thing they could not first read anything about.
+      // `noteDetailOrigin('home')` tells that page no browse list is behind
+      // it, so its back control is the house (browse.js `_syncChrome`). Every
+      // guard below is unchanged.
+      const detailHref = (slug) => `#apps/${encodeURIComponent(slug)}`;
       const hrefFor = (e) => {
         if (e.target.closest('.card-add-btn') || e.target.closest('.card-menu-btn')) return null;
         if (card.dataset.demo === 'true') return null;
         if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return null;
-        return card.dataset.slug ? `#app/${encodeURIComponent(card.dataset.slug)}/app` : null;
+        return card.dataset.slug ? detailHref(card.dataset.slug) : null;
       };
       const activate = (e) => {
         if (e.target.closest('.card-add-btn') || e.target.closest('.card-menu-btn')) return;
         if (card.dataset.demo === 'true') return;
         if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
-        App.navigateToApp(card.dataset.slug);
+        if (!card.dataset.slug) return;
+        window.Browse?.noteDetailOrigin?.('home');
+        location.hash = detailHref(card.dataset.slug);
       };
       if (window.NavLink) NavLink.wireModified(card, hrefFor, activate);
       else card.addEventListener('click', activate);
       Home._wirePrewarm(card);
     });
+    // A press on one of the card's own buttons must never arm the lane's drag
+    // (#1763). The kit's recognizer listens for pointerdown on the LANE and
+    // takes the first matching card that CONTAINS the target, so without this
+    // a press on ⊕ is a press on the card — and on desktop it arms after 6px
+    // of movement, which is inside the slop of an ordinary click, so a
+    // slightly shaky click on the badge would lift the card and swallow the
+    // click instead of adding the app. Same guard, and the same reason, as
+    // home-panels.js's on the panel headers' buttons.
+    //
+    // NATIVE, not a React `onPointerDown`: React attaches its listeners at
+    // the tree's root, so a synthetic handler's stopPropagation runs long
+    // after the event has already bubbled past the lane's own listener.
+    const stopDrag = (e) => { e.stopPropagation(); };
     listEl.querySelectorAll('.card-add-btn').forEach((btn) => {
+      if (wiredButtons.has(btn)) return;
+      wiredButtons.add(btn);
+      btn.addEventListener('pointerdown', stopDrag);
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         Home.toggleAdded(btn.dataset.slug, btn.dataset.added !== 'true', onChange);
       });
     });
     listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {
+      if (wiredButtons.has(btn)) return;
+      wiredButtons.add(btn);
+      btn.addEventListener('pointerdown', stopDrag);
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         // Pass the element so the kit popover can toggle closed on a
@@ -997,20 +1683,41 @@ const Home = {
     });
   },
 
-  // Add / remove one app from "Your apps" from a discovery grid.
-  // Same endpoint and same semantics as the card menu's entry
-  // (_menuToggleFavorite): for a member, favorited=false writes the
-  // per-user `hidden` opt-out rather than dropping membership.
+  // Add / remove one app from "Your apps", from anywhere: a discovery rail,
+  // the browse screen's rows and detail, and the card menu (which is this
+  // function now — see _menuToggleFavorite). For a member, favorited=false
+  // writes the per-user `hidden` opt-out rather than dropping membership.
   //
-  // Optimistic: flip the flags on the cached app object, let the caller
-  // re-render, and revert to server truth by reloading on failure.
+  // Optimistic: flip the flags on the cached app object and repaint, then
+  // revert to server truth by reloading on failure.
+  //
+  // THE REPAINT IS THE POINT (#1567). The flags on the cached object decide
+  // what "Your apps" holds, but only a render turns that into pixels, and
+  // this function used to leave it to `onChange` — which the home screen's
+  // Discover rail does not pass at all, so an add from the home screen
+  // changed nothing on screen until the next reload. Home.render() is the
+  // single call that covers every surface: it rebuilds the grid AND ends by
+  // re-rendering the panels, so the badge and the new tile land in the same
+  // frame. `onChange` still runs, because the browse screen's own list is
+  // outside Home's paint.
   async toggleAdded(slug, desired, onChange) {
     const app = (Home._apps || []).find((a) => a.slug === slug);
     // Staging ?demo=1 tiles have no DB row — a POST would 404.
     if (!app || app.demo) return;
     const prev = { is_favorited: app.is_favorited, your_apps_hidden: app.your_apps_hidden };
+    // Asked BEFORE the flip, while the answer still describes where the card
+    // is: an app currently in a rail stays in it for the rest of the visit.
+    if (!Home.isYours(app)) {
+      const inLane = Home.featuredApps(Home._apps || []).some((a) => a.slug === slug)
+        || Home.popularApps(Home._apps || []).some((a) => a.slug === slug);
+      if (inLane) Home._discoverKeep.add(slug);
+    }
     app.is_favorited = desired;
     if (app.is_collaborator) app.your_apps_hidden = !desired;
+    // Only an ADD needs the reveal: a removal takes a tile away, and a grid
+    // that expanded itself to show an absence would be nonsense.
+    if (desired) Home._revealSlug = slug;
+    Home.render();
     if (typeof onChange === 'function') onChange();
     try {
       const res = await fetch(`/api/apps/${slug}/favorite`, {
@@ -1026,6 +1733,10 @@ const Home = {
     } catch (err) {
       app.is_favorited = prev.is_favorited;
       app.your_apps_hidden = prev.your_apps_hidden;
+      // The add never happened, so nothing should be revealed for it. load()
+      // renders, and a stale slug would expand the grid for an app that is
+      // not there.
+      Home._revealSlug = null;
       PlatformUI.toast(`Update failed: ${err.message}`);
       await Home.load();
       if (typeof onChange === 'function') onChange();
@@ -1049,119 +1760,15 @@ const Home = {
     card.addEventListener('mouseenter', warm);
   },
 
-  // `yoursCount` is the "Your apps" section size in the sectioned view
-  // (0 included — adds must work with an empty section), or null when
-  // drag is off entirely (search view). Only the kit path consumes it;
-  // the legacy path still keys off canDragYours.
-  _wireCards(listEl, canDragYours, yoursCount = null) {
-    // Cards already in the widget aren't drag-into-widget candidates —
-    // computed once per render, not per card.
-    const widgetSlugs = Home._widgetUiActive() ? Home._widgetSlugs() : null;
-    listEl.querySelectorAll('.app-card').forEach((card) => {
-      card.addEventListener('click', (e) => {
-        // A completed drag (or a long-press that opened the menu) ends
-        // with the pointer still on the card, so the browser fires a
-        // click right after pointerup — eat it so the gesture doesn't
-        // also open the app.
-        if (Home._suppressClick) {
-          Home._suppressClick = false;
-          return;
-        }
-        if (
-          e.target.closest('.retry-btn') ||
-          e.target.closest('.card-menu-btn')
-        ) return;
-        // Disabled while spinning up / errored — there's no iframe or
-        // chat history to render and the WS `app_status` handler will
-        // re-bind the card as soon as the container goes live.
-        if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
-        App.navigateToApp(card.dataset.slug);
-      });
-      Home._wirePrewarm(card);
-      // The placement recognizer (below) owns long-press-lift-drag on every
-      // card it matches. The long-press actions menu survives only where it
-      // does NOT: the search view (a transient view with no layout to write)
-      // and inert staging demo tiles. All other cards reach the menu through
-      // their "…" button.
-      if (yoursCount == null || card.dataset.demo === 'true') {
-        Home._wireCardLongPressMenu(card);
-      }
-    });
+  // NOTE: _wireCards is gone (#1191). It existed because an innerHTML
+  // assignment destroys every listener under it, so all four sweeps — card
+  // click, prewarm, long-press menu, retry and the card-menu button — had to
+  // run again after each render. React keeps the card nodes across renders,
+  // so those handlers are ordinary props on the elements that own them
+  // (features/home/app-grid.tsx) and the two gesture attachments run once per
+  // card from its ref. What was the tail of this function — the kit's
+  // placement recognizer — is _attachGridPlacement above.
 
-    // FREE-FORM PLACEMENT on the whole grid: long-press (or a desktop drag
-    // past the slop) lifts a floating ghost that tracks the finger on both
-    // axes, the real item holds its cell as a dashed slot, the grid draws
-    // itself underneath, and the drop lands in whatever cell the pointer is
-    // over — including an empty one with nothing around it. Nothing
-    // re-packs; the holes the viewer leaves are the point.
-    //
-    // The kit owns the gesture, this owns the geometry: cellFromPoint hits
-    // the overlay's own cell elements, so the highlight the user sees and
-    // the cell the drop commits to come from one code path with no
-    // arithmetic over grid-template-columns. It answers from the dragged
-    // TILE's centroid rather than the finger (see _targetCellFor), so the
-    // block that tints is the block the tile is visibly covering however it
-    // was picked up.
-    //
-    // The item selector deliberately matches EVERY widget host, including a
-    // create widget rendered in its disabled state — being unable to create
-    // apps must not make the widget unmovable.
-    if (yoursCount != null && window.unNative?.attachGridPlacement) {
-      if (Home._placementHandle) { try { Home._placementHandle.detach(); } catch {} }
-      const cols = Home.currentCols();
-      Home._placementHandle = window.unNative.attachGridPlacement(listEl, {
-        itemSelector: '.app-card[data-yours]:not([data-demo]), .home-panel-slot',
-        cellFromPoint: (x, y, info) => Home._targetCellFor(x, y, info, cols),
-        // canPlace runs first on every cell change and onHover right after,
-        // and both need the SAME displacement plan — so compute it once here
-        // and memo it for the paint. Recomputing would risk the highlight
-        // describing a different outcome than the one that commits.
-        canPlace: (item, cell) => !!Home._planFor(item, cell, cols),
-        onLift: (item) => {
-          Home._dragActive = true;
-          Home._showGridOverlay(listEl, cols, item);
-        },
-        onHover: (item, cell, ok) => { Home._previewDrop(item, cell, ok, cols); },
-        // The release spring's destination. Same memoised plan again: the
-        // tile settles on the cell the tint promised, not on the cell it was
-        // picked up from.
-        rectForCell: (item, cell) => Home._rectForCell(item, cell, cols),
-        onPlace: (item, cell) => { Home._onGridPlace(item, cell, cols); },
-        onSettle: () => {
-          Home._dragActive = false;
-          Home._hideGridOverlay();
-          if (Home._reloadPending) {
-            Home._reloadPending = false;
-            Home._rerenderPending = false;
-            Home.load();
-          } else if (Home._rerenderPending) {
-            Home._rerenderPending = false;
-            Home.render();
-          }
-        },
-      });
-    }
-
-    // Retry stays visible on errored cards (it's the card's primary
-    // recovery action); it is also offered in the hamburger menu.
-    listEl.querySelectorAll('.retry-btn').forEach((btn) => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        btn.textContent = '...';
-        await fetch(`/api/apps/${btn.dataset.slug}/retry`, { method: 'POST' });
-        Home.load();
-      });
-    });
-
-    listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Pass the element itself so the kit popover can toggle closed
-        // on a re-click and manage aria-expanded.
-        Home.openCardMenu(btn.dataset.slug, btn);
-      });
-    });
-  },
 
   // Map structured drift-check result → a short, user-readable
   // message. Mirrors the status enum in main-drift-poller.js.
@@ -1188,7 +1795,7 @@ const Home = {
             if (!ok) return;
             fetch(`/api/apps/${data.slug}/redeploy`, { method: 'POST' })
               .then((r) => r.ok ? r.json() : r.json().then((j) => Promise.reject(new Error(j.error || `HTTP ${r.status}`))))
-              .then(() => PlatformUI.toast('Rebuild started — watch the version pill.'))
+              .then(() => PlatformUI.toast('Rebuild started. Watch the version pill.'))
               .catch((err) => PlatformUI.toast(`Rebuild kickoff failed: ${err.message}`));
           });
         }
@@ -1218,7 +1825,7 @@ const Home = {
 
   // The "Your proposals" / "Your active sessions" strips that used to
   // render here (#194) moved into the header cog's drawer — see
-  // frontend/src/features/work-drawer/work-drawer.js, which owns their
+  // the Improve panel (features/improve/), which owns their
   // fetches, rendering and busy-state polling now.
 
   // Pill builder for an app's status/activity flags, and the icon-tile
@@ -1274,7 +1881,7 @@ const Home = {
     // Awaiting-secrets cards stay clickable so the user can open the
     // app view + Secrets modal to fill values; other non-running
     // statuses show no app surface.
-    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed opacity-70';
+    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed grayscale-[0.75]';
 
     // Per-tile sections, computed up front so the template stays
     // readable. Anything that may be empty is collapsed to '' so the
@@ -1295,16 +1902,11 @@ const Home = {
       ? ` title="${escapeHtml(String(app.last_failure_reason)).replace(/"/g, '&quot;')}"`
       : '';
     const warningHtml = statusLabel
-      ? `<p class="app-card-status ${isAwaiting ? 'text-amber-500' : 'text-yellow-500'}"${failureTip}>${statusLabel}</p>`
+      ? `<p class="app-card-status ${isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}"${failureTip}>${statusLabel}</p>`
       : '';
 
-    // Hamburger actions-menu trigger, rendered as a round badge
-    // overlapping the icon's top-right corner — always in that spot
-    // (secondary actions live in the popover it opens; see
-    // openCardMenu). Retry on errored cards is the one inline
-    // exception: the card's primary recovery action pins to the
-    // card's top-right corner (creator-or-full-admin, same gate as
-    // before — view-only admins excluded, issue #311).
+    // Launcher actions open from the tile context menu. Retry remains an
+    // inline recovery action for creators/full admins on errored apps.
     const showRetry = !discovery && isError
       && (App.user?.canAdminWrite || App.user?.id === app.created_by);
     const isLocked = !!app.locked;
@@ -1317,9 +1919,9 @@ const Home = {
       <button class="card-add-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
         isAdded
           ? 'bg-emerald-500 border-emerald-500 text-white'
-          : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-600 dark:text-violet-400 hover:border-violet-400'
+          : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-700 dark:text-violet-400 hover:border-violet-400'
       }" data-slug="${app.slug}" data-added="${isAdded}" title="${
-        isAdded ? 'Added — tap to remove from Your apps' : 'Add to Your apps'
+        isAdded ? 'Added. Tap to remove from Your apps' : 'Add to Your apps'
       }" aria-label="${
         isAdded ? `Remove ${escapeHtml(app.name)} from Your apps` : `Add ${escapeHtml(app.name)} to Your apps`
       }" aria-pressed="${isAdded}">${
@@ -1327,11 +1929,8 @@ const Home = {
           ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
           : '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>'
       }</button>`;
-    // The "…" actions menu trigger. One markup, two corners: it owns the
-    // icon's top-RIGHT corner on the home grid (where it is the card's only
-    // badge), and moves to the top-LEFT on a discovery grid so the add
-    // badge keeps the primary right-hand spot and the two never overlap.
-    // (The fork tag sits bottom-left, so top-left is free.)
+    // Discovery keeps its explicit menu beside the add badge. Launcher
+    // tiles use long press / right click instead (#1616).
     const hamburgerHtml = (corner) => `
       <button class="card-menu-btn absolute -top-1.5 ${corner} w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
     // Discovery grids show BOTH: the add/remove badge as the primary
@@ -1344,9 +1943,9 @@ const Home = {
     const wantsMenu = !!(opts && opts.menu) && !app.demo;
     const menuBadgeHtml = discovery
       ? `${addBadgeHtml}${wantsMenu ? hamburgerHtml('-left-1.5') : ''}`
-      : hamburgerHtml('-right-1.5');
+      : '';
     const retryHtml = showRetry
-      ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
+      ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
       : '';
 
     // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
@@ -1365,7 +1964,7 @@ const Home = {
     // alone — same attribute-safe extra step the failure tooltip takes.
     const nameAttr = escapeHtml(String(app.name || '')).replace(/"/g, '&quot;');
 
-    // Layout: icon first at the top (hamburger badged on its corner),
+    // Layout: icon first at the top,
     // the name centered below it, then the status warning when present
     // (the status dot and the active-users badge that used to flank the
     // name are both gone — a launcher tile is an icon and a label).
@@ -1407,12 +2006,13 @@ const Home = {
     `;
   },
 
-  // NOTE: renderCreateTile() is gone. "Create an app" is a WIDGET in the
-  // grid now (HomePanels.renderCreatePanel), present on every home screen
-  // for every account — dimmed and self-explaining where the viewer has no
-  // app quota, rather than swapped for a hint paragraph in a trailing
-  // section. Home.wireCreateButtons() below still binds its button, and
-  // CREATE_DISABLED_HINT is still the one wording of the locked case.
+  // NOTE: renderCreateTile() is gone. "Create an app" is a fixed SECTION now
+  // (features/home/panels/create.tsx), present on every home screen for every
+  // account — dimmed and self-explaining where the viewer has no app quota,
+  // rather than swapped for a hint paragraph in a trailing section. Its button
+  // carries its own handler; CREATE_DISABLED_HINT below is still the one
+  // wording of the locked case, shared by the tooltip and the ⋮ menu's inert
+  // note. A tap opens the create dialog, where the exact quota is shown.
 
   // ── Usernode widget section (iOS in-app only) ──────────────────────
   //
@@ -1424,100 +2024,46 @@ const Home = {
   // within the session like _widgetSectionVisible.
   _widgetHelpVisible: false,
 
-  renderWidgetSection() {
-    if (!Home._widgetUiActive()) return '';
-    const items = Home._widgetItems;
-    const tiles = items.map((it) => Home.renderWidgetTile(it)).join('');
-    const hint = items.length
-      ? 'Drag tiles to reorder. Drag cards from Your apps here to add them.'
-      : 'Drag a card from Your apps here (or use its menu) to add it to the Usernode widget on your home screen.';
-    const helpPanel = Home._widgetHelpVisible
-      ? `
-      <div id="widget-help-panel" class="w-full text-[0.7rem] leading-relaxed text-zinc-600 dark:text-zinc-300 rounded-lg bg-violet-500/5 dark:bg-violet-500/10 border border-violet-500/20 px-3 py-2">
-        <span class="font-medium">Add the widget to your home screen:</span>
-        touch and hold an empty area of your iPhone home screen, tap
-        <span class="font-medium">Edit</span> → <span class="font-medium">Add Widget</span>
-        (or the <span class="font-medium">+</span>), search for
-        <span class="font-medium">Usernode</span>, pick a size and tap
-        <span class="font-medium">Add Widget</span>. The apps below appear on it automatically.
-      </div>`
-      : '';
-    return `
-      <div class="home-section-header flex items-center justify-between">
-        <span class="flex items-center gap-1.5">Usernode widget
-          <button id="widget-section-help" class="w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 dark:text-zinc-500 hover:text-violet-500 dark:hover:text-violet-400 transition-colors" title="How to add the widget to your home screen" aria-label="How to add the widget to your home screen" aria-expanded="${Home._widgetHelpVisible}">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-          </button>
-        </span>
-        <button id="widget-section-close" class="flex items-center gap-1 text-xs font-normal normal-case tracking-normal text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors" title="Close the widget section" aria-label="Close the widget section">Done
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
-        </button>
-      </div>
-      <div id="widget-strip" class="flex flex-wrap items-start gap-3 rounded-xl border border-dashed border-zinc-300 dark:border-zinc-600 p-3 transition-colors">
-        ${helpPanel}
-        ${tiles}
-        <div class="widget-strip-hint w-full text-[0.7rem] text-zinc-500 dark:text-zinc-400 ${items.length ? '' : 'py-3 text-center'}">${hint}</div>
-      </div>`;
+  // The strip's view model. Was `renderWidgetSection()`, an HTML string, and
+  // is the same decision as data (#1191 slice 7): ./widget-strip.tsx renders
+  // it. `active: false` is what `return ''` meant — the section is hidden and
+  // draws nothing, which is every platform but the iOS app.
+  widgetSectionView() {
+    if (!Home._widgetUiActive()) {
+      return { active: false, helpVisible: false, tiles: [] };
+    }
+    return {
+      active: true,
+      helpVisible: !!Home._widgetHelpVisible,
+      tiles: (Home._widgetItems || []).map((it) => Home.widgetTileView(it)),
+    };
   },
 
-  renderWidgetTile(item) {
+  // One pinned shortcut, as the strip draws it. Same three icon kinds as the
+  // home card, tagged with the same `kind` so the tile treatment (app.css)
+  // can single out the letter fallback for its fainter glyph colour — and
+  // resolved through AppCard.iconViewFor so the priority order has one home.
+  widgetTileView(item) {
     const slug = Home._widgetSlugFor(item);
     const app = slug ? (Home._apps || []).find((a) => a.slug === slug) : null;
     const name = (app && app.name) || item.name || '?';
-    // Same three kinds as the home card's iconTileFor, tagged with the
-    // same data-icon so the tile treatment (app.css) can single out the
-    // letter fallback for its fainter glyph colour.
-    let iconHtml;
-    let iconKind;
-    if (app && app.icon_url) {
-      iconKind = 'image';
-      iconHtml = `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-lg object-cover">`;
-    } else if (app && app.icon_emoji) {
-      iconKind = 'emoji';
-      iconHtml = `<span class="text-xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`;
-    } else {
-      iconKind = 'letter';
-      iconHtml = escapeHtml(String(name).charAt(0).toUpperCase());
-    }
-    // touch-pan-y + select-none for the same reason as app cards: keep
-    // vertical scroll native until the tile drag actually claims the
-    // gesture (see _onWidgetTilePointerDown).
-    return `
-      <div class="widget-tile app-card-draggable touch-pan-y relative flex flex-col items-center gap-1 w-16 cursor-grab" data-wid="${escapeHtml(item.id)}"${slug ? ` data-wslug="${escapeHtml(slug)}"` : ''}>
-        <div class="app-icon-tile w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center font-bold text-base" data-icon="${iconKind}">${iconHtml}</div>
-        <span class="text-[0.65rem] leading-tight truncate w-full text-center">${escapeHtml(name)}</span>
-        <button class="widget-remove-btn absolute -top-1.5 right-0 w-5 h-5 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-[0.6rem] text-zinc-500 dark:text-zinc-300 hover:text-red-500" data-wid="${escapeHtml(item.id)}" title="Remove from widget" aria-label="Remove ${escapeHtml(name)} from widget">✕</button>
-      </div>`;
+    // An entry another dapp pinned has no SV app behind it: fall back to the
+    // registry's own name for the letter, rather than iconViewFor's '?'.
+    const icon = app
+      ? AppCard.iconViewFor(app)
+      : { kind: 'letter', letter: String(name).charAt(0).toUpperCase() };
+    return { id: item.id, slug: slug || null, name, icon };
   },
 
+  // The strip's GESTURE, and only that. Done, the ⓘ help toggle and each
+  // tile's ✕ used to be wired here too, re-attached on every paint because
+  // the paint replaced the nodes they were on; they are props in
+  // ./widget-strip.tsx now, on elements React keeps. What is left attaches
+  // listeners to nodes and writes no markup, which is why the component may
+  // call it (same split app-grid.tsx makes for the canvas recognizer).
   _wireWidgetStrip(listEl) {
     const strip = listEl.querySelector('#widget-strip');
     if (!strip) return;
-    // "Done": hide the section again. State on the device is untouched —
-    // "Add/Edit in Usernode widget" brings it back.
-    const closeBtn = listEl.querySelector('#widget-section-close');
-    if (closeBtn) {
-      closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Home._widgetSectionVisible = false;
-        Home._widgetHelpVisible = false;
-        Home.render();
-      });
-    }
-    const helpBtn = listEl.querySelector('#widget-section-help');
-    if (helpBtn) {
-      helpBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Home._widgetHelpVisible = !Home._widgetHelpVisible;
-        Home.render();
-      });
-    }
-    strip.querySelectorAll('.widget-remove-btn').forEach((btn) => {
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Home._removeWidgetItem(btn.dataset.wid);
-      });
-    });
     if (window.unNative && typeof window.unNative.attachReorder === 'function') {
       // The strip keeps attachREORDER, not the grid's attachGridPlacement,
       // and that is the right call: the iOS widget's pinned shortcuts are a
@@ -1652,8 +2198,8 @@ const Home = {
       Object.assign(tile.style, {
         borderWidth: '1px',
         borderStyle: 'dashed',
-        borderColor: 'rgba(139, 92, 246, 0.55)',
-        backgroundColor: 'rgba(139, 92, 246, 0.07)',
+        borderColor: 'rgba(31, 134, 255, 0.55)',
+        backgroundColor: 'rgba(31, 134, 255, 0.07)',
         borderRadius: '0.75rem',
       });
       document.body.style.userSelect = 'none';
@@ -1750,8 +2296,11 @@ const Home = {
     if (!slug) return;
     const app = (Home._apps || []).find((a) => a.slug === slug);
     if (app) app.locked = !!isLocked;
-    const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
-    if (card) card.dataset.locked = String(!!isLocked);
+    // Same as updateAppCardIcon below: `data-locked` is rendered by
+    // features/home/app-grid.tsx now, so the cache write above is the change
+    // and this publishes it. Writing the attribute here would be overwritten
+    // by the next render.
+    Home.render();
   },
 
   // ── Native homescreen-shortcut support ─────────────────────────────
@@ -2262,12 +2811,12 @@ const Home = {
   _lastHealOutcome: null,
   async _healWidgetIconsPass() {
     if (Home._shortcutSupport?.mechanism !== 'widget') {
-      Home._lastHealOutcome = 'skipped — not the widget mechanism';
+      Home._lastHealOutcome = 'skipped, not the widget mechanism';
       return;
     }
     const bridge = window.usernode;
     if (!bridge || typeof bridge.addHomeScreenShortcut !== 'function') {
-      Home._lastHealOutcome = 'skipped — no shortcut bridge';
+      Home._lastHealOutcome = 'skipped, no shortcut bridge';
       return;
     }
     // Resolve the dual-icon capability BEFORE building any marker or
@@ -2357,14 +2906,18 @@ const Home = {
       && Array.isArray(Home._widgetItems);
   },
 
-  // Widget entries deep-link `origin/#app/<slug>`; anything else in the
-  // grid was pinned by a different dapp. Returns the SV slug or null.
+  // Widget entries deep-link `origin/app/<slug>`. The old hash form remains
+  // readable so an existing native widget heals in place the next time its
+  // entries are reconciled. Anything else was pinned by another dapp.
   _widgetSlugFor(item) {
     const url = String(item?.url || '');
-    const prefix = `${location.origin}/#app/`;
-    if (!url.startsWith(prefix)) return null;
     try {
-      return decodeURIComponent(url.slice(prefix.length));
+      const parsed = new URL(url, location.origin);
+      if (parsed.origin !== location.origin) return null;
+      const clean = parsed.pathname.match(/^\/app\/([^/]+)\/?$/);
+      if (clean) return decodeURIComponent(clean[1]);
+      const legacy = parsed.hash.match(/^#app\/([^/]+)(?:\/app)?$/);
+      return legacy ? decodeURIComponent(legacy[1]) : null;
     } catch (_) {
       return null;
     }
@@ -2394,13 +2947,19 @@ const Home = {
       app.icon_emoji = iconEmoji || null;
       app.icon_url = iconUrl || null;
     }
-    const card = document.querySelector(`.app-card[data-slug="${slug}"]`);
-    const tile = card?.querySelector('[data-icon]');
-    if (!tile) return;
-    const name = app?.name || card.querySelector('.font-medium')?.textContent || '?';
-    const icon = Home.iconTileFor({ icon_emoji: iconEmoji || null, icon_url: iconUrl || null, name });
-    tile.dataset.icon = icon.kind;
-    tile.innerHTML = icon.html;
+    // #1191: the tile is React-owned now, so this re-renders instead of
+    // writing into it. The cache update above IS the change; Home.render()
+    // publishes it and React repaints the one tile whose icon moved.
+    //
+    // Writing `tile.innerHTML` here would have made this a SECOND writer
+    // inside a subtree React reconciles — the exact hazard the stateful-island
+    // rule in AGENTS.md exists to prevent. It would also have been silently
+    // temporary: the next store push would paint the old icon straight back.
+    //
+    // The comment above still holds and is now free rather than hand-managed —
+    // a reconcile touches the changed tile and nothing else, so hover and
+    // scroll state on every other card survive without a special path.
+    Home.render();
   },
 
   // ===== "…" card actions menu =====
@@ -2458,13 +3017,32 @@ const Home = {
         },
       });
     }
+    // The app's source. This was a row in the hamburger drawer's reference
+    // footer, revealed by hand from App.navigateToApp when the OPEN app had a
+    // repo_url; the Streamlined Concept board draws no such footer, and a
+    // link to the code is a thing you do WITH an app, which is what this list
+    // is. As a menu item it reaches both places that render the list — the
+    // home card's "…" menu and the app's own page — instead of only being
+    // reachable while the app was open.
+    //
+    // ?demo=1 tiles carry no repository, so the gate never fires for them.
+    if (app.repo_url) {
+      items.push({
+        key: 'github',
+        label: 'View on GitHub',
+        title: 'Open this app’s repository',
+        // `noopener` explicitly: the target document must not get a handle on
+        // this window, and repo_url is app-supplied.
+        run: () => window.open(app.repo_url, '_blank', 'noopener'),
+      });
+    }
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',
         label: app.your_apps_hidden ? 'Add to Your apps' : 'Remove from Your apps',
         title: app.your_apps_hidden
           ? 'Show this app in Your apps again. You keep your builder access either way.'
-          : 'Hide this app from Your apps — it stays live and you keep your builder access.',
+          : 'Hide this app from Your apps. It stays live and you keep your builder access.',
         run: () => Home._menuToggleFavorite(app, !!app.your_apps_hidden),
       });
     } else {
@@ -2556,8 +3134,8 @@ const Home = {
         key: 'lock',
         label: app.locked ? 'Unlock app' : 'Lock app',
         title: app.locked
-          ? 'App locked — merges also need an admin yes vote. Click to unlock.'
-          : 'Lock this app — admin yes vote will also be required to merge changes.',
+          ? 'App locked: merges also need an admin yes vote. Click to unlock.'
+          : 'Lock this app. An admin yes vote will also be required to merge changes.',
         run: () => Home._menuToggleLock(app),
       });
       items.push({ key: 'delete', label: 'Delete app', danger: true, run: () => Home._menuDelete(app) });
@@ -2611,18 +3189,14 @@ const Home = {
     const items = Home.menuItemsFor(app);
     if (!items.length) return;
 
-    // Rich build-info header is a desktop-popover affordance; the
-    // touch action sheet falls back to the plain title. The kit menu
-    // owns positioning, dismissal and focus; disabled rows render
-    // inert in the popover and are omitted from the sheet; keepOpen
-    // items (Check for updates) flip their label in place via the row
-    // element the popover hands the handler (null on the sheet path —
-    // run() already copes).
+    // A tile's context stays anchored to the tile on every platform.
+    // The kit owns clamping/flipping, dismissal, focus and menu navigation;
+    // keeping the popover on touch also preserves metadata and disabled rows.
     const headerEl = document.createElement('div');
     headerEl.className = 'card-menu-header';
     headerEl.innerHTML = Home.renderMenuHeaderHtml(app);
     const anchorIsEl = !!(anchor && typeof anchor.getBoundingClientRect === 'function');
-    const menu = PlatformUI.menu({
+    const menu = PlatformUI.popover({
       anchorEl: anchorIsEl ? anchor : undefined,
       anchorRect: anchorIsEl ? undefined : anchor,
       title: app.name || app.slug,
@@ -2636,6 +3210,7 @@ const Home = {
         handler: (btn) => i.run(btn || null),
       })),
     });
+    if (!menu) return;
     Home._menu = menu;
     menu.then(() => {
       if (Home._menu === menu) Home._menu = null;
@@ -2862,7 +3437,7 @@ const Home = {
     const dual = variant ? variant === 'dual' : Home._widgetDarkIcons === true;
     const payload = {
       name: app.name,
-      url: `${location.origin}/#app/${encodeURIComponent(app.slug)}`,
+      url: `${location.origin}/app/${encodeURIComponent(app.slug)}`,
       icon_url: app.icon_url
         ? new URL(app.icon_url, location.origin).href
         : Home._widgetIconDataUrl(app, dual ? 'light' : Home._widgetScheme()),
@@ -2955,24 +3530,16 @@ const Home = {
   // caller working for non-member apps. For member apps the server
   // maps favorited=false to a hidden opt-out row rather than a delete
   // (#618), so the same endpoint drives both card menu states.
-  async _menuToggleFavorite(app, desired) {
+  //
+  // ONE IMPLEMENTATION (#1567). This used to POST first and repaint by
+  // reloading the whole list, which meant the menu and the rails disagreed
+  // about how fast the section updates and about whether a failure is
+  // announced. toggleAdded is the better of the two — it flips the cached
+  // flags, paints immediately, and reverts against the server if the write
+  // loses — so this is now the name the menu calls it by.
+  _menuToggleFavorite(app, desired) {
     const next = typeof desired === 'boolean' ? desired : !app.is_favorited;
-    try {
-      const res = await fetch(`/api/apps/${app.slug}/favorite`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ favorited: next }),
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `HTTP ${res.status}`);
-      }
-      app.is_favorited = next;
-      if (app.is_collaborator) app.your_apps_hidden = !next;
-      await Home.load();
-    } catch (err) {
-      PlatformUI.toast(`Update failed: ${err.message}`);
-    }
+    return Home.toggleAdded(app.slug, next);
   },
 
   async _menuRetry(app) {
@@ -3068,22 +3635,33 @@ const Home = {
   // The layout the drag is working against — the same array render() painted
   // from. Falls back to computing one if a drag somehow starts before a
   // render (it can't, but a null here would be a silent no-op drop).
+  // An INCOMING card is part of that layout for the span of its drag and no
+  // longer (#1763). HomeLayout.place refuses an item it cannot find, and
+  // canPlace, rectForCell and the displacement preview all resolve their plan
+  // through here, so appending it is what makes a card dragged in from
+  // Discover an ordinary drop rather than a special case in five callbacks.
   currentLayoutCached(cols) {
-    return Home._layoutCache || Home.currentLayout(cols);
+    const layout = Home._layoutCache || Home.currentLayout(cols);
+    return Home._incoming ? layout.concat([Home._incoming]) : layout;
   },
 
   // A dragged DOM element → its layout item. The element carries only its
-  // identity (data-slug / data-panel-slot); the cell comes from the model,
-  // so the DOM never becomes a second source of truth about position.
+  // identity (data-slug); the cell comes from the model, so the DOM never
+  // becomes a second source of truth about position.
+  //
+  // The `.home-panel-slot` branch that resolved a widget host is gone with the
+  // widgets: every draggable item on this canvas is an app tile now.
+  // THE LAYOUT IS ASKED FIRST, which is also the rule for a Discover card
+  // whose app is already yours: the lane keeps it for the rest of the visit
+  // after an add, and dragging it then moves the tile it already has rather
+  // than adding a second one. `_incoming` is only ever the fallback, and only
+  // ever set for a card with no tile on the canvas.
   _itemFor(el) {
     if (!el) return null;
     const layout = Home._layoutCache || [];
-    if (el.classList?.contains('home-panel-slot')) {
-      const key = el.dataset.panelSlot;
-      return layout.find((it) => it.type === 'widget' && it.key === key) || null;
-    }
     const slug = el.dataset?.slug;
-    return layout.find((it) => it.type === 'app' && it.slug === slug) || null;
+    return layout.find((it) => it.type === 'app' && it.slug === slug)
+      || (Home._incoming && Home._incoming.slug === slug ? Home._incoming : null);
   },
 
   // Which cell is this POINT over? Answered by hit-testing the OVERLAY's
@@ -3281,6 +3859,21 @@ const Home = {
     return tracks.join(' ');
   },
 
+  // ── This appends INTO a React-owned host, and that is deliberate ───
+  //
+  // `#app-list` is features/home/app-grid.tsx's subtree, so `#home-grid-overlay`
+  // is a second writer under an owned host. Moving it out would mean
+  // re-deriving geometry that is currently free: the overlay's inset mirrors
+  // #app-list's padding exactly at both breakpoints (app.css says so, twice)
+  // and _rectForCell measures these cell elements to land a committed drop.
+  //
+  // What makes it safe is a timing invariant, not a boundary. The overlay
+  // exists only between onLift and onSettle, and React cannot reconcile
+  // #app-list in that window: render() and load() are the only publishers of
+  // the grid model and both return early while _dragActive holds.
+  // tests/home-grid-placement.test.js pins both halves — the deferral and the
+  // absence of a third publisher — because the ownership audit never drags and
+  // therefore cannot see any of this.
   _showGridOverlay(listEl, cols, liftedEl) {
     Home._hideGridOverlay();
     if (!listEl) return;
@@ -3397,14 +3990,13 @@ const Home = {
   _elFor(item, listEl) {
     const root = listEl || document.getElementById('app-list');
     if (!root || !item) return null;
-    return item.type === 'widget'
-      ? root.querySelector(`[data-panel-slot="${item.key}"]`)
-      : root.querySelector(`.app-card[data-slug="${item.slug}"]`);
+    return root.querySelector(`.app-card[data-slug="${item.slug}"]`);
   },
 
-  // Tint the cells the drop would land in — the whole footprint for a widget,
-  // so the user sees the block they are about to occupy rather than just the
-  // cell under the finger — and move the items it would displace.
+  // Tint the cell the drop would land in, and move the item it would
+  // displace. (This used to tint a whole FOOTPRINT, so a viewer dragging a
+  // multi-cell widget saw the block they were about to occupy rather than
+  // just the cell under the finger; every item is 1x1 now.)
   //
   // Occupied targets tint too: a drop there DISPLACES the occupant rather
   // than being refused (HomeLayout.place), so refusing to highlight it would
@@ -3507,10 +4099,21 @@ const Home = {
     // of the link — the preview is the part a reviewer needs to see and the
     // part nothing can navigate to, and it makes the state assertable by a
     // declared check instead of only by a live gesture.
+    // THE LAST RENDERED ITEM, not the last item on the canvas. The canvas is
+    // eight rows deep and the grid shows two of them by default
+    // (HomeLayout.DEFAULT_ROWS, THE UI OVERHAUL), so on any real account the
+    // last canvas item is behind "Show all N apps" and has no element at all —
+    // which sent this straight to the no-subject branch below and left the
+    // shot with outlines and nothing being pushed.
     const layout = Home.currentLayoutCached(cols);
     const canvas = HomeLayout.canvasItems(layout);
-    const dragged = canvas.length > 1 ? canvas[canvas.length - 1] : null;
-    const el = dragged ? Home._elFor(dragged, listEl) : null;
+    let dragged = null;
+    let el = null;
+    for (let i = canvas.length - 1; i > 0 && !el; i--) {
+      const candidate = canvas[i];
+      const found = Home._elFor(candidate, listEl);
+      if (found) { dragged = candidate; el = found; }
+    }
     if (el) {
       // The same dashed, contents-hidden drop slot a real lift gives the
       // dragged item (native.css .un-reorder-slot). Without it the tile stays
@@ -3527,40 +4130,122 @@ const Home = {
     }
   },
 
-  // Kit-era long-press actions menu for cards the kit reorder does NOT
-  // own (non-"Your apps" cards). Joins the kit's gesture arbiter at
-  // fire time — if the touch is already claimed (swipe, PTR, a reorder
-  // lift), the menu backs off, so the two long-presses can't fight.
+  // Screenshot-state deep link (?shot=discover-drag, #1763): the sibling of
+  // the one above, for the drag that starts in a Discover rail. It exists
+  // only mid-gesture for the same reason, so no capture and no declared check
+  // could otherwise see it — and this is the state worth seeing, because it
+  // is the whole feature: a Discover card lifted, the launcher's overlay up
+  // underneath it, and the cell it would land in tinted.
+  //
+  // The preview is computed through THE SAME `_incoming` item the real
+  // gesture uses, so this link cannot drift into describing a drop the
+  // recognizer would not make. `_incoming` is cleared again as soon as the
+  // (synchronous) preview has read it: leaving it set would put a phantom
+  // item on every later currentLayoutCached() call.
+  //
+  // Pure UI state — no writes, no env gate — so the production "before" side
+  // of a capture pair works too, and, like ?shot=home-grid, it is deliberately
+  // repeatable rather than once-per-load: a repaint that drops the overlay
+  // should get it back.
+  _maybeShowShotIncoming() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'discover-drag') return;
+    if (Home._dragActive) return; // a real gesture owns the overlay
+    if (typeof document === 'undefined') return;
+    // ACROSS BOTH RAILS, and it takes no element on purpose. Featured leads
+    // with the staging demo rows on ?demo=1 and those are drag-inert by
+    // construction (#746), so a lane-local search finds nothing there and the
+    // state never paints; Popular ranks by active users, which no demo row
+    // has, so that is where the first real card usually is. The other caller
+    // — the grid's post-commit effect, which is what puts this state back
+    // after a repaint took `un-reordering` off #app-list — has no rail to
+    // hand over anyway.
+    // A non-demo card FIRST, because that is what a real lift looks like:
+    // the recognizer ignores demo rows (#746), so a state painted on one
+    // would be showing a drag the gesture would not make.
+    //
+    // But not ONLY a non-demo card. Which apps land in these two lanes is
+    // data, and it moved under this state twice: curation (#1753) put demos
+    // behind "Show more", and a staging clone can fill both rails with rows
+    // that are all demo. A screenshot state that paints or does not paint
+    // depending on which apps happen to exist is a check that fails for
+    // reasons that have nothing to do with the feature it guards — which is
+    // exactly what it did. The fallback is a card, any card: this state is
+    // synthetic, it writes classes and a preview and clears itself, and it
+    // never reaches the recognizer that has a reason to care.
+    const card = document.querySelector('.home-discover-rail .app-card[data-slug]:not([data-demo])')
+      || document.querySelector('.home-discover-rail .app-card[data-slug]');
+    if (!card || !card.dataset || !card.dataset.slug) return;
+    const listEl = document.getElementById('app-list');
+    if (!listEl || listEl.offsetParent === null) return; // not the visible grid
+    const cols = Home.currentCols();
+    Home._incoming = { type: 'app', slug: card.dataset.slug, col: 0, row: HomeLayout.MAX_ROWS };
+    Home._showGridOverlay(listEl, cols, card);
+    listEl.classList.add('un-reordering');
+    // The dashed, contents-hidden origin slot a real lift leaves behind
+    // (native.css .un-reorder-slot), on the card rather than on a tile.
+    card.classList.add('un-reorder-slot');
+    Home._previewDrop(card, { col: 0, row: 0 }, true, cols);
+    Home._incoming = null;
+  },
+
+  // Long-press actions for search/demo tiles and pen input. Placed touch
+  // tiles use the kit's own lift callback above, so only one recognizer
+  // claims a touch. Return teardown for React remounts and view changes.
   _wireCardLongPressMenu(card) {
-    card.addEventListener('pointerdown', (e) => {
-      if (e.pointerType !== 'touch' || e.button !== 0) return;
+    let cleanup = () => {};
+    const onDown = (e) => {
+      cleanup();
+      if ((e.pointerType !== 'touch' && e.pointerType !== 'pen') || e.button !== 0 || e.isPrimary === false) return;
       if (e.target.closest('.card-menu-btn') || e.target.closest('.retry-btn')) return;
+      // Placed touch tiles share the kit's lift/drag sequence above. Pen and
+      // search/demo tiles have no touch placement recognizer to do the hold.
+      if (e.pointerType === 'touch' && card.hasAttribute('data-yours')
+          && !card.hasAttribute('data-demo') && Home._placementHandle) return;
       const startX = e.clientX;
       const startY = e.clientY;
+      let opened = false;
       let timer = setTimeout(() => {
         timer = null;
         const g = PlatformUI.gestures();
-        if (g && !g.claim('touch', 'home-card-menu')) return;
+        if (g && !g.claim(e.pointerType === 'touch' ? 'touch' : e.pointerId, 'home-card-menu')) return;
         // Eat the synthetic click the browser fires on finger lift so
         // releasing the long-press doesn't also open the app.
         Home._suppressClick = true;
-        setTimeout(() => { Home._suppressClick = false; }, 700);
-        Home.openCardMenu(card.dataset.slug, card.getBoundingClientRect());
-      }, 350);
-      const cleanup = () => {
+        opened = true;
+        Home.openCardMenu(card.dataset.slug, card);
+      }, 400);
+      cleanup = () => {
         if (timer) { clearTimeout(timer); timer = null; }
-        card.removeEventListener('pointermove', onMove);
-        card.removeEventListener('pointerup', cleanup);
-        card.removeEventListener('pointercancel', cleanup);
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onEnd);
+        window.removeEventListener('pointercancel', onEnd);
+        // Arm expiry at RELEASE, so holding for several seconds cannot
+        // outlive the click guard. A quick tap on another tile still works.
+        if (opened) setTimeout(() => { Home._suppressClick = false; }, 0);
       };
       const onMove = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
         // Movement before the timer fires means scrolling — bail.
-        if (Math.abs(ev.clientX - startX) > 10 || Math.abs(ev.clientY - startY) > 10) cleanup();
+        if (Math.abs(ev.clientX - startX) > 10 || Math.abs(ev.clientY - startY) > 10) {
+          if (opened) {
+            Home.closeCardMenu();
+            window.removeEventListener('pointermove', onMove);
+          } else cleanup();
+        }
       };
-      card.addEventListener('pointermove', onMove);
-      card.addEventListener('pointerup', cleanup);
-      card.addEventListener('pointercancel', cleanup);
-    });
+      const onEnd = (ev) => {
+        if (ev.pointerId !== e.pointerId) return;
+        if (ev.type === 'pointercancel' && opened) Home.closeCardMenu();
+        cleanup();
+      };
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onEnd);
+      window.addEventListener('pointercancel', onEnd);
+    };
+    card.addEventListener('pointerdown', onDown);
+    return () => { cleanup(); card.removeEventListener('pointerdown', onDown); };
   },
 
   // NOTE: the legacy hand-rolled pointer drag (_onCardPointerDown, ~500
@@ -3582,34 +4267,21 @@ const Home = {
   // copy stays put.
   // The one wording of "you can't create apps right now". The create WIDGET
   // is on every home screen regardless of quota, so this string is what the
-  // disabled tile shows in three places at once: its tooltip, the toast a
-  // tap produces, and the inert note in its ⋮ menu. One constant so those
-  // three can never drift.
-  CREATE_DISABLED_HINT: 'Ask an admin to enable app creation for your account.',
+  // disabled tile shows in its tooltip and the inert note in its ⋮ menu. The
+  // dialog it opens carries the exact used-of-limit numbers.
+  CREATE_DISABLED_HINT: 'View your app allowance or request more slots.',
 
-  // Idempotent click-wiring for every `.home-create-btn` currently
-  // mounted (the empty-state CTA, the per-tile placeholder pill,
-  // etc.). Listeners are re-bound on every Home.load(); cloneNode
-  // swap clears any stale ones from a prior render so the modal
-  // doesn't open twice. The non-<button> branch is a defensive
-  // fallback — both current call sites use real <button> elements
-  // and get Enter/Space activation for free — but kept so future
-  // div-based variants don't silently lose keyboard support.
-  wireCreateButtons() {
-    document.querySelectorAll('.home-create-btn').forEach((btn) => {
-      const fresh = btn.cloneNode(true);
-      btn.parentNode.replaceChild(fresh, btn);
-      fresh.addEventListener('click', () => App.showCreateModal());
-      if (fresh.tagName !== 'BUTTON') {
-        fresh.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            App.showCreateModal();
-          }
-        });
-      }
-    });
-  },
+  // `wireCreateButtons()` lived here: `document.querySelectorAll('.home-create-btn')`,
+  // each button cloneNode'd and swapped for a fresh copy so a re-paint could
+  // not leave two listeners on it, then a click handler bound to the clone.
+  //
+  // Its one caller was `HomePanels._wire`, and its one matching element is now
+  // rendered by features/home/panels/create.tsx. Both halves of what it did
+  // stop applying there: React keeps the element across paints, so there are
+  // no stale listeners to clear, and the clone-and-replace is a structural DOM
+  // write inside a subtree React owns — the exact failure the ownership rule
+  // exists to prevent. Keeping it as an unused helper would leave that loaded
+  // gun pointed at the block, so it went with its caller.
 
   // Targeted deploy-state update for a single app. Called from the
   // `app_redeploy_status` WS handler (deploy END triggers a full

@@ -9,6 +9,7 @@ const limits = require('../services/limits');
 const socialIdentity = require('../services/social-identity');
 const githubLink = require('../services/github-link');
 const xLink = require('../services/x-link');
+const managedOpenRouter = require('../services/openrouter-managed-keys');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const PROVIDER_ADAPTERS = Object.freeze({ github: githubLink, x: xLink });
@@ -240,6 +241,12 @@ function socialIdentityRoutes(config) {
     if (!adapter || !adapter.isEnabled(config)) {
       return res.status(404).json({ error: 'not_found' });
     }
+    // An app-originated trip crosses into the system browser's cookie jar.
+    // The account parameter is only an expectation: authentication still
+    // comes from the cookie, and OAuth state remains bound to that user.
+    if (req.query.account !== undefined && req.query.account !== String(req.user.id)) {
+      return res.redirect(302, settingsUrl(config, 'account_mismatch', provider));
+    }
     try {
       const pending = await socialIdentity.createOauthState(pool, {
         userId: req.user.id,
@@ -364,6 +371,17 @@ function socialIdentityRoutes(config) {
     if (!providerAdapter(provider)) return res.status(404).json({ error: 'not_found' });
     try {
       await socialIdentity.clearIdentity(pool, req.user.id, provider);
+      // When managed-key verification is required, identity loss does not
+      // automatically revoke a paid child key. It creates a deduplicated
+      // admin review notification so a human can decide whether to block or
+      // delete it from the Users console. The default-open policy skips this.
+      await managedOpenRouter.notifyIdentityReview({
+        pool, userId: req.user.id, config,
+      }).catch((err) => {
+        log.warn('social-identity', 'managed OpenRouter review notification failed', {
+          provider, userId: req.user.id, message: err.message,
+        });
+      });
       log.info('social-identity', 'account unlinked', { provider, userId: req.user.id });
       return res.status(204).end();
     } catch (err) {

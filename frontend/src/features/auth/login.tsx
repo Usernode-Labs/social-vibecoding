@@ -51,18 +51,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { KeyIcon } from '@/components/ui/icons';
+import { ChevronLeftIcon, KeyIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 
+import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
+  fetchSessionMint,
   finishLogin,
   hiddenFirst,
   hiddenLast,
   isNative,
   legacy,
+  NativeLoginPreparationError,
+  sessionMintFailureMessage,
   useAuthScreensPatch,
 } from './shared';
 
@@ -81,7 +86,11 @@ type RecoveryPath = 'wallet' | 'email';
 // already covers every one of them.
 const P = 'text-sm text-zinc-500 dark:text-zinc-400';
 const LABEL = 'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
-const QUIET_BUTTON = 'w-full text-sm text-zinc-500 hover:text-zinc-300';
+const QUIET_BUTTON = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors';
+// The secondary routes under the primary button — forgot password, the
+// email code, register — as the language's neutral pills rather than text
+// links: on the wallpaper a link is a line of grey in a screen of pills.
+const PILL_LINK = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors';
 
 /**
  * What the retired `BUTTON` class constant is now: the same string, spelled as
@@ -93,7 +102,8 @@ const QUIET_BUTTON = 'w-full text-sm text-zinc-500 hover:text-zinc-300';
  * Spread rather than repeated so the nine call sites stay a single decision,
  * exactly as the class constant made them.
  */
-const SOLID = { layout: 'full', size: 'plain', ink: 'solidLate' } as const;
+// The screen's primary button: the filled accent pill at 48px.
+const SOLID = { layout: 'full', variant: 'pillAccent', size: 'pillLg', ink: 'solidLate' } as const;
 
 /**
  * And the retired `INPUT` class constant, likewise: `w-full rounded-lg
@@ -109,22 +119,182 @@ const FIELD = { box: 'auth', hint: 'dim' } as const;
  * spellings of one field, hand-authored apart; kept apart here for the same
  * reason input.tsx keeps `default` and `auth` apart.
  */
-const AUTHFIELD = { box: 'auth', hint: 'muted', ring: 'seamless' } as const;
+// A field is a ROW of the white card the form is; the card is the box.
+const AUTHFIELD = { box: 'card', hint: 'dim', ring: 'bare' } as const;
+const AUTH_CARD = 'rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden';
+const AUTH_ROW = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
+const AUTH_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const ERROR = 'text-red-400 text-sm';
-const STATUS = 'text-sm text-zinc-400';
+const STATUS = 'text-sm text-zinc-500 dark:text-zinc-400';
+
+/**
+ * ── Arriving from a waitlist-release email (#1548) ─────────────────────
+ *
+ * The release mail links to `#signup/<url-encoded address>`, and the router
+ * hands that segment to `loginOnShow`. The screen prefills the field and asks
+ * for a code straight away, because the old behaviour was a page that said "we
+ * emailed you a code" next to a button that had not been pressed yet.
+ *
+ * The server suppresses a second code to the same address inside
+ * `RULES.otp.minGapMs` (src/services/mail/rate-limit.js) and hands back the one
+ * it already sent, so asking again inside that window mails nothing. Hold the
+ * buttons for the same 60 seconds and say when they come back, rather than
+ * letting somebody press a button that provably does nothing.
+ */
+const RESEND_COOLDOWN_MS = 60 * 1000;
+
+/**
+ * Per-tab record of the automatic send, so a reload of the invite link (or a
+ * trip to #login and back) does not fire a second request. sessionStorage
+ * rather than a ref: the reload is the case that has a ref back to `false`.
+ * Shape: `{ email, sentAt }` — `sentAt` also restores the cooldown across the
+ * reload, since the server's own gap survived it.
+ */
+const AUTO_SEND_KEY = 'usernode.signup.otp.v1';
+
+/**
+ * The standing confirmation on the code step. It stays put (unlike the
+ * transient "Sending code..." status) because the whole point of arriving
+ * here is knowing a code is on its way. The 10-minute figure must match
+ * OTP_TTL_MS in src/services/email-signup.js.
+ */
+const CODE_SENT_MSG = 'We sent you a code. It expires in 10 minutes.';
+
+/** The resend button while it is held. Whole class literals, both arms. */
+const QUIET_BUTTON_WAITING =
+  'w-full text-sm text-zinc-400 dark:text-zinc-600 cursor-not-allowed';
+
+type AutoSendRecord = { email: string; sentAt: number };
+
+function readAutoSend(): AutoSendRecord | null {
+  try {
+    const raw = sessionStorage.getItem(AUTO_SEND_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as AutoSendRecord;
+    if (!parsed || typeof parsed.email !== 'string' || typeof parsed.sentAt !== 'number') {
+      return null;
+    }
+    return parsed;
+  } catch {
+    // Private mode, or a value some other tab wrote. Treat it as absent.
+    return null;
+  }
+}
+
+function writeAutoSend(email: string) {
+  try {
+    sessionStorage.setItem(AUTO_SEND_KEY, JSON.stringify({ email, sentAt: Date.now() }));
+  } catch {
+    // Storage refused: the send still happened, we just cannot remember it.
+  }
+}
+
+/** The `?shot=` screenshot state on this document, or null. */
+function currentShot(): string | null {
+  try {
+    return new URLSearchParams(location.search).get('shot');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `?t=` invite token from a waitlist-release link (#1548).
+ *
+ * The mail carries a TOKEN rather than the address. A fragment would be
+ * dropped by link rewriters — that is the bug #1545 fixed on this same mail —
+ * and the address in a query would put an email in server logs and referrers,
+ * which for a waitlist is the membership fact itself.
+ *
+ * `more_token` is already an unguessable capability delivered to that address,
+ * and `/api/public/waitlist/more/:token` already resolves it and already
+ * returns the email, so nothing new is minted or exposed.
+ */
+function inviteTokenFromQuery(): string | null {
+  try {
+    const t = new URLSearchParams(location.search).get('t');
+    return t && /^[A-Za-z0-9_-]{8,128}$/.test(t) ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve an invite token to its address. Null on anything unexpected: a
+ * prefill is a convenience, and the screen is perfectly usable without it.
+ */
+async function inviteEmailFromToken(token: string): Promise<string | null> {
+  try {
+    const res = await fetch(`/api/public/waitlist/more/${encodeURIComponent(token)}`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const email = typeof data?.email === 'string' ? data.email.trim().toLowerCase() : '';
+    return email.includes('@') && email.length <= 255 ? email : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The `#signup/<address>` segment, or null if it is not an address.
+ *
+ * Kept after #1548 moved the MAIL to a token, because the `signup-code-sent`
+ * screenshot state still uses it: a check URL cannot carry a live token, and
+ * the shot has to paint without a network round trip to stay deterministic.
+ * Harmless as a general entry point too — it prefills a field, and the code
+ * still only goes to the address that was typed.
+ */
+function inviteFromSegment(seg?: string | null): string | null {
+  if (!seg) return null;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(seg);
+  } catch {
+    // A stray '%' in the fragment. Nothing to prefill.
+    return null;
+  }
+  const email = decoded.trim().toLowerCase();
+  return email.includes('@') && email.length <= 255 ? email : null;
+}
 
 const EXPIRED_MSG =
   'This reset link is invalid or has expired. Go back to login and request a new one from "Forgot password?".';
+
+/**
+ * The emailed-reset confirmation is a success state, not ambient status text:
+ * a green-tinted rounded box (both palettes) so "the link was sent" is
+ * unmistakable. Whole class literals — the Tailwind extractor is a regex.
+ */
+const SENT_BOX =
+  'rounded-lg border border-green-300 bg-green-100 px-3 py-2 text-sm font-medium text-green-800 dark:border-green-800 dark:bg-green-950/60 dark:text-green-300';
+/** Anti-enumeration: the same copy whether or not the address matched. */
+const SENT_MSG =
+  'If that address matches an account, a reset link is on its way. It expires in 30 minutes.';
+
+/**
+ * The fallback for the two branches where a correct email code cannot sign you
+ * in (issue #1586), and the copy `?shot=email-code-password-account` paints.
+ * Kept in step with `PASSWORD_REQUIRED_MESSAGE` in
+ * `src/services/email-signup.js`, which is what a real refusal carries.
+ */
+const PASSWORD_ACCOUNT_MSG =
+  'This account signs in with a password. Enter it below to continue.';
 
 /** The pre-email copy the frozen markup shipped, and its replacement. */
 const ADMIN_LEAD_SHIPPED =
   "Accounts here have no email on file, so a password can't be reset automatically from the web.";
 const ADMIN_LEAD_WITH_EMAIL =
-  'No confirmed email on your account? The link above can only go to a confirmed address — but an admin can still get you back in.';
+  'No confirmed email on your account? The link above can only go to a confirmed address, but an admin can still get you back in.';
 
 export function LoginScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.login, false);
+  // The screen's interior mounts on its first reveal, not in the prerender —
+  // see lib/mount-on-reveal.ts. AuthScreens.show() asks for it (through
+  // window.UsernodeReact.mount) before it wires or reveals the screen, so the
+  // hooks this component patches onto AuthScreens are installed and the
+  // interior's nodes exist by the time the on-show hook runs.
+  const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.login);
 
   // Everything below starts at the value the prerendered markup shipped with:
   // the base view, no wallet, no errors, and the reset UI unbuilt.
@@ -139,6 +309,12 @@ export function LoginScreen() {
   const [otpError, setOtpError] = useState<string | null>(null);
   const [otpStatus, setOtpStatus] = useState<string | null>(null);
   const [otpEmailEcho, setOtpEmailEcho] = useState('');
+  // The address a waitlist-release link carried, and the moment the resend
+  // buttons come back. Both start empty, so the first render is still exactly
+  // the markup the hand-written shell shipped.
+  const [inviteEmail, setInviteEmail] = useState<string | null>(null);
+  const [cooldownUntil, setCooldownUntil] = useState(0);
+  const [cooldownNow, setCooldownNow] = useState(0);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [walletStatus, setWalletStatus] = useState('');
   const [recoveryError, setRecoveryError] = useState<string | null>(null);
@@ -157,8 +333,17 @@ export function LoginScreen() {
     walletDetectRan: false,
     resetToken: null as string | null,
     otpEmail: null as string | null,
-    otpSetPasswordToken: null as string | null,
   }).current;
+
+  /**
+   * Whole seconds left on the resend cooldown, 0 when there is none. Derived
+   * rather than stored so the two buttons and their labels cannot disagree,
+   * and 0 on the very first render, which is what keeps that render identical
+   * to the markup the hand-written shell shipped.
+   */
+  const cooldownLeft = cooldownUntil
+    ? Math.max(0, Math.ceil((cooldownUntil - cooldownNow) / 1000))
+    : 0;
 
   // The probe resolves long after its own render, and it needs the view that is
   // showing THEN. Assigned during render so it is never a frame stale.
@@ -292,7 +477,7 @@ export function LoginScreen() {
   }, [st]);
 
   const loginOnShow = useCallback(
-    (openSignup?: boolean) => {
+    (openSignup?: boolean, seg?: string | null) => {
       // Reset to the requested base view every time the route changes — login
       // ↔ signup share the screen element.
       if (openSignup) showOtpView();
@@ -302,15 +487,69 @@ export function LoginScreen() {
       // path so the shot is deterministic regardless of wallet state
       // (issue #1158). Same idiom as ?shot=waitlist-joined; display-only,
       // no writes, so it works in every environment.
-      let shot: string | null = null;
-      try {
-        shot = new URLSearchParams(location.search).get('shot');
-      } catch {
-        shot = null;
-      }
-      if (!openSignup && shot === 'password-recovery') {
+      const shot = currentShot();
+      if (!openSignup && (shot === 'password-recovery' || shot === 'password-recovery-sent')) {
         showRecovery();
         setRecoveryPath('email');
+        // `password-recovery-sent` also paints the post-submit confirmation
+        // so the green success box is URL-reachable for screenshots and
+        // checks. Display-only, no writes, works in every environment.
+        setEmailResetStatus(shot === 'password-recovery-sent' ? SENT_MSG : null);
+      }
+      // `?shot=email-code-password-account#login`: the state an email code
+      // hands you when the account can only sign in with its password
+      // (issue #1586) — the base form carrying the server's explanation.
+      // Reached by typing a code in production, so the link is display-only
+      // and writes nothing, which keeps it working in every environment.
+      if (!openSignup && shot === 'email-code-password-account') {
+        setLoginError(PASSWORD_ACCOUNT_MSG);
+      }
+      if (openSignup) {
+        // #signup/<address> from a waitlist-release email. Prefill by ref
+        // (the field is uncontrolled); the send itself is in the effect
+        // below, so it is not fired from inside a router callback.
+        // #1548: the address arrives either as the shot's hash segment or,
+        // in the real mail, as a token that has to be resolved. Everything
+        // downstream is identical, so the shared tail runs in both cases —
+        // once synchronously, once when the lookup lands.
+        const applyInvite = (invited: string | null) => {
+        if (invited && otpEmailInput.current) otpEmailInput.current.value = invited;
+        // Two ways to already be past the send, and both paint the code step
+        // HERE rather than from an effect: showOtpView() above has just reset
+        // this screen to the email step, and the router calls this hook again
+        // on a re-entry that leaves `inviteEmail` unchanged — so an effect
+        // keyed on the address would not run a second time to undo it.
+        //
+        //  - `signup-code-sent` (#1548), the screenshot state. Sends nothing:
+        //    the shot has to be deterministic, and staging mail is log-only,
+        //    so a real request would prove nothing anyway.
+        //  - a reload of the invite link, or a trip out to #login and back.
+        //    The code from the first visit is still the live one.
+        const prior = invited ? readAutoSend() : null;
+        const alreadySent = shot === 'signup-code-sent'
+          ? Date.now()
+          : (prior && prior.email === invited ? prior.sentAt : 0);
+        if (alreadySent) {
+          const shown = invited || '';
+          st.otpEmail = shown;
+          setOtpEmailEcho(shown);
+          otpShowStep('code');
+          setOtpStatus(CODE_SENT_MSG);
+          const until = alreadySent + RESEND_COOLDOWN_MS;
+          setCooldownUntil(until > Date.now() ? until : 0);
+        }
+        setInviteEmail(invited);
+        };
+        const segEmail = inviteFromSegment(seg);
+        const token = segEmail ? null : inviteTokenFromQuery();
+        if (token) {
+          // Asynchronous, and that is fine: the send is in an effect keyed on
+          // `inviteEmail`, so it fires when the address lands rather than
+          // needing to be known inside this router callback.
+          void inviteEmailFromToken(token).then(applyInvite);
+        } else {
+          applyInvite(segEmail);
+        }
       }
       // Wallet detection runs once, the first time the screen appears (needs
       // the native bridge; quietly does nothing on desktop web).
@@ -319,7 +558,7 @@ export function LoginScreen() {
         void walletDetect();
       }
     },
-    [showLoginBaseView, showOtpView, showRecovery, st, walletDetect],
+    [otpShowStep, showLoginBaseView, showOtpView, showRecovery, st, walletDetect],
   );
 
   // ── Password login ───────────────────────────────────────────────────
@@ -329,7 +568,7 @@ export function LoginScreen() {
     setLoginError(null);
     if (blockedOffline(setLoginError)) return;
     try {
-      const res = await fetch('/api/auth/login', {
+      const res = await fetchSessionMint('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -343,35 +582,64 @@ export function LoginScreen() {
         return;
       }
       finishLogin();
-    } catch {
-      setLoginError('Network error');
+    } catch (error) {
+      setLoginError(sessionMintFailureMessage(error));
     }
   }, []);
 
   // ── Email-code sign-in (the #signup route) ───────────────────────────
   //
-  // Steps: request a code (public v4 endpoint, also creates the account at
-  // verify time) → verify → choose a password → immediately log in with it for
-  // the web session.
+  // Steps: request a code → verify into a narrow HttpOnly signup cookie →
+  // choose a password. Password setup atomically creates the web session.
 
-  const otpRequestCode = useCallback(async () => {
+  /**
+   * `explicitEmail` is the invite address, for the automatic send and the
+   * resend: both know the address already, and the resend fires from a step
+   * where the email field is not the thing on screen.
+   */
+  const otpRequestCode = useCallback(async (explicitEmail?: string) => {
     setOtpError(null);
-    const email = (otpEmailInput.current?.value || '').trim().toLowerCase();
+    const email = (explicitEmail || otpEmailInput.current?.value || '').trim().toLowerCase();
     if (!email || !email.includes('@')) {
       setOtpError('Enter a valid email address');
       return;
     }
     if (blockedOffline(setOtpError)) return;
+    // Whichever step we end on, the email field should carry the address —
+    // a rejected send drops back here and retyping it would be busywork.
+    if (otpEmailInput.current) otpEmailInput.current.value = email;
     setOtpStatus('Sending code...');
     try {
-      const res = await fetch('/api/v4/mobile/auth/otp/request', {
+      const res = await fetch('/api/auth/otp/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ email }),
       });
       const data = await res.json();
       setOtpStatus(null);
-      if (!res.ok || !data.success) {
+      if (!res.ok || !data.ok) {
+        // Throttled. A code was sent recently and is still the live one, so
+        // the code step is where they should be; hold the resend for as long
+        // as the limiter says, and fall back to our own gap if it says
+        // nothing. Note otpShowStep clears the error, so it goes first.
+        if (res.status === 429) {
+          st.otpEmail = email;
+          setOtpEmailEcho(email);
+          otpShowStep('code');
+          setOtpError(data.error || 'Too many requests. Wait a moment and try again.');
+          const retryAfter = Number(res.headers.get('Retry-After'));
+          setCooldownUntil(
+            Date.now() +
+              (Number.isFinite(retryAfter) && retryAfter > 0
+                ? Math.min(retryAfter, 900) * 1000
+                : RESEND_COOLDOWN_MS),
+          );
+          return;
+        }
+        // Refused (an address the server will not accept, and anything else):
+        // the email step, with the address still in the field.
+        otpShowStep('email');
         setOtpError(data.error || 'Could not send a code');
         return;
       }
@@ -379,18 +647,27 @@ export function LoginScreen() {
       setOtpEmailEcho(email);
       if (otpCode.current) otpCode.current.value = '';
       otpShowStep('code');
+      // A standing confirmation, not a flash: somebody who arrived from an
+      // invite link never pressed anything, so the screen has to say what it
+      // just did on their behalf.
+      setOtpStatus(CODE_SENT_MSG);
+      setCooldownUntil(Date.now() + RESEND_COOLDOWN_MS);
     } catch {
       setOtpStatus(null);
+      otpShowStep('email');
       setOtpError('Network error');
     }
   }, [otpShowStep, st]);
 
   const onOtpResend = useCallback(async () => {
+    // Held for the server's own gap: inside it the request mails nothing and
+    // the button would just be lying. The label counts it down.
+    if (cooldownUntil > Date.now()) return;
     // Same request, from the code step — jump back visually so the user sees
     // the send happen, then land back on the code entry.
     if (otpEmailInput.current) otpEmailInput.current.value = st.otpEmail || '';
-    await otpRequestCode();
-  }, [otpRequestCode, st]);
+    await otpRequestCode(st.otpEmail || undefined);
+  }, [cooldownUntil, otpRequestCode, st]);
 
   const onOtpVerify = useCallback(async () => {
     setOtpError(null);
@@ -402,30 +679,51 @@ export function LoginScreen() {
     if (blockedOffline(setOtpError)) return;
     setOtpStatus('Verifying...');
     try {
-      const res = await fetch('/api/v4/mobile/auth/otp/verify', {
+      // Verification can now mint an ordinary session (an account that already
+      // has a password is signed straight in), so it crosses the session-mint
+      // boundary like /api/auth/login does — issue #1586.
+      const res = await fetchSessionMint('/api/auth/otp/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
         body: JSON.stringify({ email: st.otpEmail, code }),
       });
       const data = await res.json();
       setOtpStatus(null);
-      if (!res.ok || !data.success || !data.set_password_token) {
-        // The server's one generic message covers wrong/expired codes — and
-        // also accounts that already have a password (they must use the
-        // password form instead). Say both.
+      if (!res.ok || !data.ok) {
+        // A correct code the server will not sign in with (an admin account,
+        // or one whose email address was never confirmed) is not a mistyped
+        // code: carry the address over to the password form rather than
+        // leaving the person on a step that cannot succeed.
+        if (data.code === 'password_required' || data.code === 'admin_password_required') {
+          showLoginBaseView();
+          if (username.current) username.current.value = st.otpEmail || '';
+          setLoginError(data.error || PASSWORD_ACCOUNT_MSG);
+          return;
+        }
+        // NOT on a 429: the limiter's message already says exactly how long
+        // to wait.
         setOtpError(
-          (data.error || 'Invalid or expired code.') +
-            ' If your account already has a password, sign in with it instead.',
+          res.status === 429
+            ? data.error || 'Too many code attempts. Try again shortly.'
+            : data.error || 'Invalid or expired code.',
         );
         return;
       }
-      st.otpSetPasswordToken = data.set_password_token;
+      if (data.next === 'signed-in') {
+        setOtpStatus('Signed in!');
+        finishLogin();
+        return;
+      }
       otpShowStep('password');
-    } catch {
+      // Past the code: nothing left to resend, and setOtpStatus(null) above
+      // has already taken the "we sent you a code" confirmation down.
+      setCooldownUntil(0);
+    } catch (error) {
       setOtpStatus(null);
-      setOtpError('Network error');
+      setOtpError(sessionMintFailureMessage(error));
     }
-  }, [otpShowStep, st]);
+  }, [otpShowStep, showLoginBaseView, st]);
 
   const onOtpSetPassword = useCallback(async () => {
     setOtpError(null);
@@ -442,41 +740,23 @@ export function LoginScreen() {
     if (blockedOffline(setOtpError)) return;
     setOtpStatus('Setting password...');
     try {
-      const res = await fetch('/api/v4/mobile/auth/set-password', {
+      const res = await fetchSessionMint('/api/auth/otp/set-password', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer ' + st.otpSetPasswordToken,
-        },
-        body: JSON.stringify({ password: value, password_confirmation: confirm }),
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ password: value, passwordConfirmation: confirm }),
       });
       const data = await res.json();
-      if (!res.ok || !data.success) {
+      if (!res.ok || !data.user) {
         setOtpStatus(null);
         setOtpError(data.error || 'Could not set the password');
         return;
       }
-      st.otpSetPasswordToken = null;
-      // Password is set — now open the WEB session with it (the v4 token in
-      // `data.token` is a mobile bearer, not a cookie; the shell mints its own
-      // via /from-session after this login).
-      setOtpStatus('Signing you in...');
-      const loginRes = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: st.otpEmail, password: value }),
-      });
-      const loginData = await loginRes.json();
-      if (!loginRes.ok) {
-        setOtpStatus(null);
-        setOtpError(loginData.error || 'Sign-in failed — try the password form');
-        return;
-      }
       setOtpStatus('Signed in!');
       finishLogin();
-    } catch {
+    } catch (error) {
       setOtpStatus(null);
-      setOtpError('Network error');
+      setOtpError(sessionMintFailureMessage(error));
     }
   }, [st]);
 
@@ -511,7 +791,7 @@ export function LoginScreen() {
       }
 
       const sigResult = await legacy().signMessage!(st.cachedChallenge);
-      const verifyRes = await fetch('/api/auth/wallet-verify', {
+      const verifyRes = await fetchSessionMint('/api/auth/wallet-verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -532,6 +812,10 @@ export function LoginScreen() {
       fail(verifyData.error || 'Verification failed');
     } catch (e) {
       st.cachedChallenge = null;
+      if (e instanceof NativeLoginPreparationError) {
+        fail(e.message);
+        return;
+      }
       const message = e instanceof Error ? e.message : String(e);
       if (message && message.includes('denied')) fail('Signature request was denied.');
       else fail('Signature failed: ' + message);
@@ -570,7 +854,7 @@ export function LoginScreen() {
       }
 
       const sigResult = await legacy().signMessage!(challenge);
-      const res = await fetch('/api/auth/wallet-reset-verify', {
+      const res = await fetchSessionMint('/api/auth/wallet-reset-verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -591,6 +875,10 @@ export function LoginScreen() {
       finishLogin();
     } catch (e) {
       setRecoveryStatus(null);
+      if (e instanceof NativeLoginPreparationError) {
+        setRecoveryError(e.message);
+        return;
+      }
       const message = e instanceof Error ? e.message : String(e);
       if (message && message.includes('denied')) {
         setRecoveryError('Signature request was denied.');
@@ -620,14 +908,12 @@ export function LoginScreen() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setEmailResetError(data.error || 'Could not send the link — try again in a minute');
+        setEmailResetError(data.error || 'Could not send the link. Try again in a minute');
         return;
       }
       // Anti-enumeration: the server answers the same whether or not the
       // address matched, and so does this copy.
-      setEmailResetStatus(
-        'If that address matches an account, a reset link is on its way. It expires in 30 minutes.',
-      );
+      setEmailResetStatus(SENT_MSG);
     } catch {
       setEmailResetError('Network error');
     } finally {
@@ -658,7 +944,7 @@ export function LoginScreen() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setResetError(res.status === 401 ? EXPIRED_MSG : data.error || 'Reset failed — try again');
+        setResetError(res.status === 401 ? EXPIRED_MSG : data.error || 'Reset failed. Try again');
         return;
       }
       // The reset revoked every session on purpose; signing in with the new
@@ -671,6 +957,43 @@ export function LoginScreen() {
     }
   }, [st]);
 
+  // ── The invite link's automatic send (#1548) ─────────────────────────
+
+  /**
+   * One second of clock while a cooldown is running, and not a tick more —
+   * the interval only exists between `setCooldownUntil` and the moment it
+   * lapses, and unmounting clears it.
+   */
+  useEffect(() => {
+    if (!cooldownUntil) return undefined;
+    setCooldownNow(Date.now());
+    const id = window.setInterval(() => {
+      const now = Date.now();
+      setCooldownNow(now);
+      if (now >= cooldownUntil) setCooldownUntil(0);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [cooldownUntil]);
+
+  /**
+   * Arriving on `#signup/<address>` sends the code once. In an effect rather
+   * than in `loginOnShow` so the request is not fired from inside the
+   * router's callback, and keyed on the address so revisiting the same link
+   * in the same tab is a no-op.
+   */
+  useEffect(() => {
+    if (!inviteEmail) return;
+    // The screenshot state paints this screen instead of sending.
+    if (currentShot() === 'signup-code-sent') return;
+    // Already sent for this address in this tab. Deliberately re-read rather
+    // than remembered in a ref: a reload is exactly the case a ref forgets,
+    // and loginOnShow has already painted the code step from the same record.
+    const prior = readAutoSend();
+    if (prior && prior.email === inviteEmail) return;
+    writeAutoSend(inviteEmail);
+    void otpRequestCode(inviteEmail);
+  }, [inviteEmail, otpRequestCode]);
+
   // ── The seam back into public/js/** ──────────────────────────────────
   //
   // `AuthScreens.show()` looks these up by name at call time, so patching them
@@ -680,7 +1003,8 @@ export function LoginScreen() {
   live.current = { loginOnShow, resetOnShow, showLoginBaseView, showOtpView };
   useAuthScreensPatch({
     _wireLogin: () => {},
-    _loginOnShow: (openSignup?: boolean) => live.current.loginOnShow(openSignup),
+    _loginOnShow: (openSignup?: boolean, seg?: string | null) =>
+      live.current.loginOnShow(openSignup, seg),
     _resetOnShow: (token?: string) => live.current.resetOnShow(token),
     _showLoginBaseView: () => live.current.showLoginBaseView(),
     _showOtpView: () => live.current.showOtpView(),
@@ -716,10 +1040,12 @@ export function LoginScreen() {
     <main
       ref={rootRef}
       id="auth-login-screen"
-      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll bg-white dark:bg-zinc-950"
+      className="hidden fixed inset-0 z-40 overflow-y-auto platform-safe-scroll"
     >
+      {mounted ? (
+        <>
       {/*
-          The corner Back link. `location.hash` rather than the anchor's own
+          The corner Back disc. `location.hash` rather than the anchor's own
           href: the href is '#' so the link is inert without JS, exactly as
           shipped. auth-screens.js delegates the same click for the screens it
           still owns; both do the same thing, and this one outlives it.
@@ -727,21 +1053,22 @@ export function LoginScreen() {
       <a
         href="#"
         data-auth-back=""
-        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
-        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
+        className="fixed left-4 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+        aria-label="Back"
         onClick={(e) => {
           e.preventDefault();
           location.hash = '#landing';
         }}
       >
-        &larr; Back
+        <ChevronLeftIcon className="w-6 h-6" aria-hidden="true" />
       </a>
       <div className="min-h-full flex items-center justify-center">
         <div className="w-full max-w-sm px-6 py-16">
-          <h1 className="text-2xl font-bold text-center mb-1">
+          <h1 className="text-[28px] font-extrabold leading-tight tracking-tight text-center mb-1 text-zinc-900 dark:text-zinc-100">
             Usernode Social Vibecoding
           </h1>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">
+          <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">
             A place where users own and build apps together
           </p>
           {/*
@@ -754,25 +1081,25 @@ export function LoginScreen() {
               are the ones that can't work.
           */}
           <div className="offline-only mb-8 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
-            <h2 className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+            <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
               You're offline
             </h2>
             <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-              Signing in needs a connection — your username and password are checked on the server.
+              Signing in needs a connection. Your username and password are checked on the server.
             Reconnect and try again; if you were signed in on this device before, reloading once
             you're back online will take you straight in.
             </p>
             <button
               type="button"
               data-offline-retry=""
-              className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-700 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
+              className="mt-3 rounded-lg border border-amber-500/50 px-3 py-1.5 text-sm font-medium text-amber-800 dark:text-amber-300 hover:bg-amber-500/10 transition-colors"
             >
               Try again
             </button>
           </div>
           {/* Wallet auth status (shown when native bridge detected) */}
           <div id="wallet-auth" className={hiddenFirst(!(base && walletUi), 'space-y-4')}>
-            <div id="wallet-status" className="text-center text-sm text-zinc-400">
+            <div id="wallet-status" className="text-center text-sm text-zinc-500 dark:text-zinc-400">
               {walletStatus}
             </div>
             <div id="wallet-error" className={hiddenLast(!walletError, ERROR)}>
@@ -792,7 +1119,7 @@ export function LoginScreen() {
             </div>
             <div
               id="wallet-divider"
-              className={hiddenFirst(!walletControls, 'flex items-center gap-3 text-xs text-zinc-500')}
+              className={hiddenFirst(!walletControls, 'flex items-center gap-3 text-xs text-zinc-500 dark:text-zinc-400')}
             >
               <div className="flex-1 h-px bg-zinc-300 dark:bg-zinc-800">
               </div>
@@ -807,10 +1134,11 @@ export function LoginScreen() {
               wallet)
           */}
           <form id="login-form" className={hiddenLast(!base, 'space-y-4')} onSubmit={onLoginSubmit}>
-            <div>
+            <div className={AUTH_CARD}>
+            <div className={AUTH_ROW}>
               <label
                 htmlFor="login-username"
-                className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+                className={AUTH_LABEL}
               >
                 Username or email
               </label>
@@ -825,23 +1153,23 @@ export function LoginScreen() {
                 placeholder="username or email"
               />
             </div>
-            <div>
+            <div className={AUTH_ROW}>
               <label
                 htmlFor="login-password"
-                className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1"
+                className={AUTH_LABEL}
               >
                 Password
               </label>
-              <Input
+              <PasswordInput
                 ref={password}
                 id="login-password"
                 name="password"
-                type="password"
                 required={true}
                 autoComplete="current-password"
                 {...AUTHFIELD}
                 placeholder="password"
               />
+            </div>
             </div>
             <div id="login-error" className={hiddenLast(!loginError, ERROR)}>
               {loginError}
@@ -850,11 +1178,11 @@ export function LoginScreen() {
               Log in
             </Button>
           </form>
-          <p id="forgot-link-wrap" className={hiddenLast(!base, 'text-center text-sm mt-3')}>
+          <p id="forgot-link-wrap" className={hiddenLast(!base, 'mt-3')}>
             <a
               id="forgot-password-link"
               href="#"
-              className="text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
+              className={PILL_LINK}
               onClick={(e) => {
                 e.preventDefault();
                 showRecovery();
@@ -863,24 +1191,23 @@ export function LoginScreen() {
               Forgot password?
             </a>
           </p>
-          <p id="otp-link-wrap" className={hiddenLast(!base, 'text-center text-sm mt-1')}>
-            <a id="otp-link" href="#signup" className="text-zinc-500 dark:text-zinc-400 hover:text-violet-400">
+          <p id="otp-link-wrap" className={hiddenLast(!base, 'mt-2')}>
+            <a id="otp-link" href="#signup" className={PILL_LINK}>
               Sign in with an email code
             </a>
           </p>
           <p
             id="register-link"
-            className={hiddenLast(!base, 'text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6')}
+            className={hiddenLast(!base, 'mt-2')}
           >
-            {'Have an activation code? '}
-            <a href="#register" className="text-violet-400 hover:text-violet-300">
-              Register
+            <a href="#register" className={PILL_LINK}>
+              {'Have an activation code? '}
+              <span className="ml-1 text-violet-700 dark:text-violet-400">Register</span>
             </a>
           </p>
           {/*
               Email-code sign-in sub-view (thin-shell migration). The ONE
-              email-code path, backed by the public v4 endpoints
-              (otp/request, otp/verify, set-password). It serves both
+              email-code path, backed by the web-auth endpoints. It serves both
               first-time sign-ups (otp/verify creates the account — this is
               the #signup route) and migrated password-less participants.
           */}
@@ -890,10 +1217,11 @@ export function LoginScreen() {
             </h2>
             <div id="otp-step-email" className={hiddenFirst(otpStep !== 'email', 'space-y-3')}>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                We'll email you a 6-digit code. New here? This also creates your account.
+                We'll email you a 6-digit code to sign in. New here? This also
+                creates your account.
               </p>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Email
                 </label>
                 <Input
@@ -910,9 +1238,15 @@ export function LoginScreen() {
                 type="button"
                 data-offline-disabled=""
                 {...SOLID}
-                onClick={otpRequestCode}
+                disabledStyle={cooldownLeft ? 'dim' : 'off'}
+                disabled={cooldownLeft > 0}
+                onClick={() => {
+                  // Wrapped: otpRequestCode's first argument is an address
+                  // now, and a click handler would hand it a MouseEvent.
+                  void otpRequestCode();
+                }}
               >
-                Email me a code
+                {cooldownLeft ? `Email me a code in ${cooldownLeft}s` : 'Email me a code'}
               </Button>
             </div>
             <div id="otp-step-code" className={hiddenFirst(otpStep !== 'code', 'space-y-3')}>
@@ -924,7 +1258,7 @@ export function LoginScreen() {
                 .
               </p>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Code
                 </label>
                 <Input
@@ -952,37 +1286,36 @@ export function LoginScreen() {
                 id="btn-otp-resend"
                 type="button"
                 data-offline-disabled=""
-                className={QUIET_BUTTON}
+                className={cooldownLeft ? QUIET_BUTTON_WAITING : QUIET_BUTTON}
+                disabled={cooldownLeft > 0}
                 onClick={onOtpResend}
               >
-                Send a new code
+                {cooldownLeft ? `Send a new code in ${cooldownLeft}s` : 'Send a new code'}
               </button>
             </div>
             <div id="otp-step-password" className={hiddenFirst(otpStep !== 'password', 'space-y-3')}>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                Code verified — now choose a password for your account.
+                Code verified. Now choose a password for your account.
               </p>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   New password
                 </label>
-                <Input
+                <PasswordInput
                   ref={otpNewPassword}
                   id="otp-new-password"
-                  type="password"
                   autoComplete="new-password"
                   {...FIELD}
                   placeholder="at least 8 characters"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Confirm password
                 </label>
-                <Input
+                <PasswordInput
                   ref={otpConfirmPassword}
                   id="otp-confirm-password"
-                  type="password"
                   autoComplete="new-password"
                   {...FIELD}
                   placeholder="re-enter password"
@@ -1035,26 +1368,24 @@ export function LoginScreen() {
                 Your wallet is linked to this account. Approve a signature request, then choose a new password.
               </p>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   New password
                 </label>
-                <Input
+                <PasswordInput
                   ref={recoveryNewPassword}
                   id="recovery-new-password"
-                  type="password"
                   autoComplete="new-password"
                   {...FIELD}
                   placeholder="at least 8 characters"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   Confirm new password
                 </label>
-                <Input
+                <PasswordInput
                   ref={recoveryConfirmPassword}
                   id="recovery-confirm-password"
-                  type="password"
                   autoComplete="new-password"
                   {...FIELD}
                   placeholder="re-enter new password"
@@ -1080,7 +1411,13 @@ export function LoginScreen() {
                 id="recovery-email"
                 className={hiddenFirst(!(view === 'recovery' && recoveryPath === 'email'), 'space-y-3')}
               >
-                <p className={P}>
+                {/*
+                    The instruction line steps aside while the sent
+                    confirmation is up, so the message reads from exactly one
+                    place — the success box below the field (dev-chat request:
+                    it appeared to render twice).
+                */}
+                <p className={hiddenFirst(!!emailResetStatus, P)}>
                   Enter the email address on your account and we'll send you a link to choose a new password.
                 </p>
                 <div>
@@ -1097,7 +1434,7 @@ export function LoginScreen() {
                 <div id="recovery-email-error" className={hiddenLast(!emailResetError, ERROR)}>
                   {emailResetError}
                 </div>
-                <div id="recovery-email-status" className={hiddenLast(!emailResetStatus, STATUS)}>
+                <div id="recovery-email-status" className={hiddenLast(!emailResetStatus, SENT_BOX)}>
                   {emailResetStatus}
                 </div>
                 <Button
@@ -1140,7 +1477,7 @@ export function LoginScreen() {
                   temporary password
                 </span>
                 {". Once you're back in, set a password you choose from "}
-                <a href="#settings/password" className="text-violet-500 hover:text-violet-400 underline">
+                <a href="#settings/password" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">
                   Settings → Change password
                 </a>
                 .
@@ -1149,7 +1486,7 @@ export function LoginScreen() {
             <button
               id="btn-recovery-back"
               type="button"
-              className="w-full text-sm text-zinc-500 hover:text-zinc-300"
+              className="w-full text-sm text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-300"
               onClick={showLoginBaseView}
             >
               Back to login
@@ -1165,10 +1502,9 @@ export function LoginScreen() {
               <h2 className="text-lg font-bold text-center">Choose a new password</h2>
               <div>
                 <label className={LABEL} htmlFor="reset-new-password">New password</label>
-                <Input
+                <PasswordInput
                   ref={resetNewPassword}
                   id="reset-new-password"
-                  type="password"
                   autoComplete="new-password"
                   {...FIELD}
                   placeholder="at least 8 characters"
@@ -1176,10 +1512,9 @@ export function LoginScreen() {
               </div>
               <div>
                 <label className={LABEL} htmlFor="reset-confirm-password">Confirm new password</label>
-                <Input
+                <PasswordInput
                   ref={resetConfirmPassword}
                   id="reset-confirm-password"
-                  type="password"
                   autoComplete="new-password"
                   {...FIELD}
                   placeholder="re-enter new password"
@@ -1217,6 +1552,8 @@ export function LoginScreen() {
           ) : null}
         </div>
       </div>
+        </>
+      ) : null}
     </main>
   );
 }

@@ -24,7 +24,12 @@ poolMod.getPool = () => ({
   },
 });
 
-// No GitHub creds in the test env — skip the branch-create side effect.
+// No GitHub creds in the test env. Since #1350 the interactive create route
+// does not touch GitHub at all (the branch is minted on the first turn, by
+// sessionLifecycle.ensureSessionBranch), so this stub is belt-and-braces —
+// and the INSERT's params start one position earlier than they used to,
+// because branch_name is now a literal NULL in the VALUES list rather than
+// a bound parameter.
 const github = require('../src/services/github');
 github.isEnabled = () => false;
 
@@ -49,7 +54,7 @@ function installInsertCapture() {
     const s = String(sql);
     if (/INSERT INTO chat_sessions/.test(s)) {
       insert = { sql: s, params };
-      return { rows: [{ id: 99, status: 'active', created_from_issue_number: params[3] }] };
+      return { rows: [{ id: 99, status: 'active', created_from_issue_number: params[2] }] };
     }
     if (/COUNT\(\*\)/.test(s)) return { rows: [{ cnt: '0' }] };
     return { rows: [] };
@@ -82,7 +87,7 @@ test('issueNumber is persisted to created_from_issue_number', async () => {
     const insert = getInsert();
     assert.ok(insert, 'an INSERT was issued');
     assert.match(insert.sql, /created_from_issue_number/);
-    assert.strictEqual(insert.params[3], 287);
+    assert.strictEqual(insert.params[2], 287);
   } finally {
     poolQueryHandler = async () => ({ rows: [] });
     server.close();
@@ -99,7 +104,7 @@ test('no body → created_from_issue_number is NULL', async () => {
 
     const insert = getInsert();
     assert.ok(insert, 'an INSERT was issued');
-    assert.strictEqual(insert.params[3], null);
+    assert.strictEqual(insert.params[2], null);
   } finally {
     poolQueryHandler = async () => ({ rows: [] });
     server.close();
@@ -120,7 +125,7 @@ test('an explicit Claude choice is persisted instead of consulting a global prov
     });
     assert.strictEqual(res.status, 201);
     const insert = getInsert();
-    assert.deepStrictEqual(insert.params.slice(4, 8), [
+    assert.deepStrictEqual(insert.params.slice(3, 7), [
       'claude_code', 'anthropic', null, null,
     ]);
   } finally {
@@ -190,7 +195,7 @@ test('an explicit validated Codex choice is persisted exactly', async (t) => {
     }),
   });
   assert.strictEqual(res.status, 201);
-  assert.deepStrictEqual(getInsert().params.slice(4, 8), [
+  assert.deepStrictEqual(getInsert().params.slice(3, 7), [
     'codex_openrouter', 'openrouter', 'openai/gpt-5.3-codex', 'medium',
   ]);
 });
@@ -226,7 +231,7 @@ test('a non-positive / non-integer issueNumber is rejected to NULL', async () =>
         body: JSON.stringify({ issueNumber: bad }),
       });
       assert.strictEqual(res.status, 201);
-      assert.strictEqual(getInsert().params[3], null, `issueNumber=${bad} stores NULL`);
+      assert.strictEqual(getInsert().params[2], null, `issueNumber=${bad} stores NULL`);
     } finally {
       poolQueryHandler = async () => ({ rows: [] });
       server.close();

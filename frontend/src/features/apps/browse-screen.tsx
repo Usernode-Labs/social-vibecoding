@@ -17,6 +17,13 @@
 //   `empty`     — was classList + textContent on #browse-empty.
 //   `showClear` — was a classList.toggle on #browse-search-clear.
 //
+// #1383 added a fourth, `sort`: the directory's Sort control. It is the one
+// field the controller reads back out (#browse-sort-select is CONTROLLED off
+// it, unlike the search field), and 'recommended' is its prerender value — the
+// remembered choice and the ?sort= override are resolved on screen entry, not
+// during render, because neither localStorage nor location.search exists in
+// the SSG pass.
+//
 // The SEARCH FIELD stays uncontrolled: nothing re-renders its value, so the
 // caret cannot jump mid-word — the same property the old wire-once discipline
 // bought. Keystrokes go to Browse.setQuery, which still coalesces them on the
@@ -38,6 +45,8 @@
 
 import { useRef } from 'react';
 
+import { Label } from '@/components/ui/label';
+import { Select } from '@/components/ui/select';
 import { SearchIcon } from '@/components/ui/icons';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
@@ -46,12 +55,29 @@ import { BrowseRows } from './browse-list';
 import { browseStore } from './mount';
 
 const CLEAR_CLASS = 'absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center '
-  + 'justify-center rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 '
+  + 'justify-center rounded-full text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200  dark:text-zinc-400'
   + 'hover:bg-zinc-500/10 text-base leading-none';
 
 function browse(): any {
   return (typeof window !== 'undefined' ? (window as any).Browse : null) || null;
 }
+
+// The five orders of the Sort control (#1383), as the <option> list.
+//
+// A COPY of Browse.SORTS rather than a read of it, and deliberately so:
+// ./browse.js publishes itself on `window.Browse`, which does not exist in the
+// SSG prerender pass, so reading the controller here would prerender an empty
+// <select> and hydrate a full one — a mismatch, and therefore a console.error
+// on a route that has a declared check. The controller stays the authority on
+// what a key MEANS (resolveSort, the comparators); this is only the labelling.
+// tests/browse-screen.test.js asserts the two lists never drift apart.
+const SORT_OPTIONS: Array<{ key: string; label: string }> = [
+  { key: 'recommended', label: 'Recommended' },
+  { key: 'users', label: 'Most users' },
+  { key: 'active', label: 'Most active' },
+  { key: 'merged', label: 'Most changes merged' },
+  { key: 'new', label: 'Newest' },
+];
 
 export function BrowseScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
@@ -65,6 +91,9 @@ export function BrowseScreen() {
     error: boolean;
     detail: any;
     showClear?: boolean;
+    sort: string;
+    curated: boolean;
+    moreExpanded: boolean;
   };
   const onDetail = state.level === 'detail';
 
@@ -88,14 +117,21 @@ export function BrowseScreen() {
           The search bar rides the level: searching the directory is a level-1
           affordance, and on a detail page the field would filter a list
           nobody can see.
+
+          Its fill is the wallpaper's base (--home-ground, set by the body
+          rule that paints the wallpaper on this route — see "The home
+          ground" in app.css), not white: a sticky bar needs an opaque fill
+          for the rows to scroll under, and a white one read as a slab
+          across a cream page. Dark mode reads the same variable, which the
+          body's dark rule points at the inverted ground.
       */}
       <div
         id="browse-search-bar"
-        className={`${onDetail ? 'hidden ' : ''}sticky top-0 z-20 px-3 pt-3 pb-2 bg-white dark:bg-zinc-950`}
+        className={`${onDetail ? 'hidden ' : ''}sticky top-0 z-20 px-3 pt-3 pb-2 bg-[color:var(--home-ground)]`}
       >
         <div className="relative max-w-xl">
           <SearchIcon
-            className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none"
+            className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
             aria-hidden="true"
           />
           <input
@@ -124,6 +160,31 @@ export function BrowseScreen() {
             &times;
           </button>
         </div>
+        {/*
+            Sort (#1383). Rides the search bar rather than sitting in its own
+            strip: both narrow the same list, and one sticky row costs the
+            phone less of the fold than two would.
+
+            CONTROLLED, off the store — so a ?sort= deep link, the remembered
+            choice and a hand change all show the same value in the field, and
+            the field can never disagree with the rows below it. `w-auto`
+            overrides the cva's `w-full` through cn's twMerge (the control
+            should be as wide as its longest label, not as wide as the bar).
+        */}
+        <div id="browse-sort-bar" className="mt-2 flex items-center gap-2 max-w-xl">
+          <Label htmlFor="browse-sort-select" className="shrink-0">Sort</Label>
+          <Select
+            id="browse-sort-select"
+            className="w-auto py-1.5"
+            aria-label="Sort apps"
+            value={state.sort}
+            onChange={(e) => browse()?.setSort(e.currentTarget.value)}
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.key} value={o.key}>{o.label}</option>
+            ))}
+          </Select>
+        </div>
       </div>
       {/*
           Level 1: the app-store list. ONE row markup, two layouts, and the
@@ -138,10 +199,23 @@ export function BrowseScreen() {
             is .browse-row in app.css; a divide-* utility here would win the
             cascade against it and strip the boxes' top/bottom edges.
         */}
-        <div id="browse-list" className="md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3">
+        <div
+          id="browse-list"
+          // The rendering anchor for the declared ?sort= checks: it names the
+          // order the rows below were actually built with, which a screenshot
+          // of a <select> cannot be asserted on.
+          data-sort={state.sort}
+          // Phone: ONE white card holding hairline-separated rows — the
+          // language's grouped list, and the shape Settings and the home
+          // panels already draw. The rows used to run full-bleed on the grey
+          // page ground with no surface under them at all. At md+ nothing
+          // changes: every row is its own box in the grid (app.css), so the
+          // card classes are scoped to below that breakpoint.
+          className="max-md:mx-3 max-md:my-3 max-md:overflow-hidden max-md:rounded-2xl max-md:bg-white max-md:dark:bg-zinc-900 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3"
+        >
           {state.error
             ? <div className="p-4 text-red-400 text-sm">Failed to load apps</div>
-            : <BrowseRows rows={state.rows} />}
+            : <BrowseRows rows={state.rows} curated={state.curated} moreExpanded={state.moreExpanded} />}
         </div>
         <div
           id="browse-empty"

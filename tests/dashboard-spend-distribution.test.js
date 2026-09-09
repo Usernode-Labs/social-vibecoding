@@ -162,8 +162,9 @@ test('dapp.json: a proposal check targets #admin/analytics with #spend-distribut
 });
 
 test('client: admin-analytics.js renders the chart, registers its INFO, and loads the endpoint', () => {
-  const js = read('frontend/src/features/admin/admin-analytics.js');
-  assert.match(js, /function renderSpendDistribution\(\)/, 'renderer must exist');
+  const js = read('frontend/src/features/admin/admin-analytics.tsx');
+  // `.tsx` since #1120 slice 15 — a component rather than a string builder.
+  assert.match(js, /function SpendDistribution\(\{/, 'renderer must exist');
   assert.match(js, /'spend-distribution':/, 'INFO entry must exist');
   assert.match(js, /analytics\/spend-distribution/, 'loadAll must fetch the endpoint');
   // Seven segments b0..b6 with the capped/own-key labels.
@@ -175,28 +176,40 @@ test('client: admin-analytics.js renders the chart, registers its INFO, and load
 });
 
 test('markup: admin-analytics.js mounts the #spend-distribution container', () => {
-  const html = read('frontend/src/features/admin/admin-analytics.js');
+  const html = read('frontend/src/features/admin/admin-analytics.tsx');
   assert.match(html, /id="spend-distribution"/, 'mount point must exist');
-  assert.match(html, /data-info="spend-distribution"/, 'info icon must be wired');
+  // The icon is an <InfoIcon info="…"/>, which emits data-info="…" — see the
+  // component's `attrs`; the key is what ties it to its INFO entry.
+  assert.match(html, /<InfoIcon info="spend-distribution" \/>/, 'info icon must be wired');
+  assert.match(html, /'data-info': info/, "and must carry its key as the data attribute");
 });
 
 // ── 5. "Hide $0 / Show $0" toggle ────────────────────────────────────────
 
 test('html: the chart header carries a Hide/Show $0 toggle', () => {
-  const html = read('frontend/src/features/admin/admin-analytics.js');
+  const html = read('frontend/src/features/admin/admin-analytics.tsx');
   assert.match(html, /data-zero-toggle="spend-distribution"/, 'toggle group must exist');
-  assert.match(html, /data-zero="hide"[^>]*>Hide \$0/, 'a "Hide $0" button must exist');
-  assert.match(html, /data-zero="show"[^>]*>Show \$0/, 'a "Show $0" button must exist');
-  // Hide is the default-active button (indigo), Show is inactive (gray).
-  assert.match(
-    html,
-    /data-zero="hide" class="zero-btn[^"]*bg-indigo-600/,
-    'Hide $0 must be the default-active (indigo) button',
-  );
+  // The two buttons are a <ToggleGroup>, so the labels and the `data-zero`
+  // attribute they carry live in its options rather than in two hand-written
+  // <button> tags.
+  assert.match(html, /\['hide', 'Hide \$0'\]/, 'a "Hide $0" button must exist');
+  assert.match(html, /\['show', 'Show \$0'\]/, 'a "Show $0" button must exist');
+  assert.match(html, /attr="data-zero"/, 'each button must carry its value as data-zero');
+  // Hide is the default-active button (the accent), Show is inactive
+  // (neutral). The scale keys moved with the reskin — the admin console
+  // speaks the shell's zinc/violet now — and the active class is picked by
+  // state rather than written per button, but the CONTRACT is unchanged: the
+  // default is the filled accent one.
+  assert.match(html, /const TOGGLE_ON = 'px-2 py-1 rounded bg-violet-600 text-white'/,
+    'the active toggle must be the filled accent');
+  assert.match(html, /value=\{spendDistIncludeZero \? 'show' : 'hide'\}/,
+    'and the default state must be hide, so Hide $0 starts active');
+  assert.match(html, /const INITIAL_SPEND_DIST_ZERO = typeof window !== 'undefined'/,
+    'which defaults OFF unless localStorage says otherwise');
 });
 
 test('client: the renderer filters the $0 bucket unless the toggle is on', () => {
-  const js = read('frontend/src/features/admin/admin-analytics.js');
+  const js = read('frontend/src/features/admin/admin-analytics.tsx');
   // State var + persistence key, defaulting OFF (Hide $0).
   assert.match(js, /SPEND_DIST_ZERO_KEY\s*=\s*'dashSpendDistIncludeZero'/, 'localStorage key must be defined');
   // The `typeof window` guard is #1082 chunk E: the module is in the React
@@ -204,25 +217,30 @@ test('client: the renderer filters the $0 bucket unless the toggle is on', () =>
   // yields the same default the absent key always did.
   assert.match(
     js,
-    /let spendDistIncludeZero\s*=\s*typeof window !== 'undefined'\s*\n?\s*&&\s*localStorage\.getItem\(SPEND_DIST_ZERO_KEY\)\s*===\s*'true'/,
+    /const INITIAL_SPEND_DIST_ZERO = typeof window !== 'undefined'\s*\n?\s*&&\s*localStorage\.getItem\(SPEND_DIST_ZERO_KEY\)\s*===\s*'true'/,
     'state must default to false (Hide $0) and read from localStorage',
   );
   // The b0 segment is dropped when the toggle is off, keeping all paid buckets.
   assert.match(
     js,
-    /spendDistIncludeZero\s*\?\s*allSegs\s*:\s*allSegs\.filter\(\(s\)\s*=>\s*s\.key\s*!==\s*'b0'\)/,
+    /includeZero \? SPEND_DIST_SEGS : SPEND_DIST_SEGS\.filter\(\(s\) => s\.key !== 'b0'\)/,
     'segments must exclude b0 when Hide $0 is active',
   );
 });
 
 test('client: the toggle persists and re-renders without refetching', () => {
-  const js = read('frontend/src/features/admin/admin-analytics.js');
-  assert.match(js, /function wireZeroToggle\(\)/, 'the toggle wiring fn must exist');
-  assert.match(js, /wireZeroToggle\(\)/, 'the toggle must be wired in init()');
-  // On click it persists the choice and re-renders from the cached payload.
-  assert.match(js, /localStorage\.setItem\(SPEND_DIST_ZERO_KEY, String\(spendDistIncludeZero\)\)/, 'choice must persist');
-  // wireZeroToggle re-renders directly; it must NOT trigger a data reload.
-  const fn = js.slice(js.indexOf('function wireZeroToggle'), js.indexOf('function wireZeroToggle') + 1200);
-  assert.match(fn, /renderSpendDistribution\(\)/, 'must re-render the chart');
-  assert.ok(!/loadAll\(\)/.test(fn), 'must not refetch (no loadAll) on toggle');
+  const js = read('frontend/src/features/admin/admin-analytics.tsx');
+  // The handler persists the choice and sets state; the chart re-renders
+  // because it reads that state, and it must NOT trigger a data reload.
+  const at = js.indexOf('attr="data-zero"');
+  assert.ok(at > 0, 'the $0 toggle must exist');
+  const handler = js.slice(at, at + 600);
+  assert.match(handler, /localStorage\.setItem\(SPEND_DIST_ZERO_KEY, String\(v === 'show'\)\)/,
+    'choice must persist');
+  assert.match(handler, /setSpendDistIncludeZero\(v === 'show'\)/, 'must re-render the chart');
+  // The refetch effect keys on `authed` and `includeAdmins` only, so the $0
+  // toggle cannot cause one — the strongest form of "no refetch" available.
+  assert.match(js, /\}, \[authed, includeAdmins\]\);/,
+    'the data effect must not depend on the $0 toggle');
+  assert.ok(!/getJSON/.test(handler), 'must not refetch on toggle');
 });

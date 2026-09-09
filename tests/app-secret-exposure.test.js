@@ -44,7 +44,15 @@ stub(ids.docker, { getHostPort: async () => null });
 stub(ids.github, { parseGithubUrl: () => null, isEnabled: () => false });
 stub(ids.driftPoller, { checkAndRedeployOne: async () => ({}) });
 stub(ids.appSecrets, {});
-stub(ids.appManifest, { MAX_APP_NAME_LENGTH: 64 });
+// The create/fork routes derive the app slug through the manifest module, so
+// the stub carries the real slug builder rather than a second copy of its
+// length budget (see appManifest.MAX_APP_SLUG_LENGTH).
+const realAppManifest = require('../src/services/app-manifest');
+stub(ids.appManifest, {
+  MAX_APP_NAME_LENGTH: 64,
+  MAX_APP_SLUG_LENGTH: realAppManifest.MAX_APP_SLUG_LENGTH,
+  buildAppSlug: realAppManifest.buildAppSlug,
+});
 stub(ids.renamePr, {});
 stub(ids.staging, { rebuildProduction: async () => ({}), MissingSecretsError: class extends Error {} });
 
@@ -153,6 +161,24 @@ const ROLES = [
   { label: 'creator of a private app', user: { id: 100, username: 'creator' }, visibility: 'private', collaborators: [100] },
   { label: 'admin viewing a private app', user: { id: 300, username: 'admin', isAdmin: true }, visibility: 'private', collaborators: [] },
 ];
+
+test('#1523: list and detail publish the same deployment-aware directory classification', async () => {
+  appRow = makeAppRow({ icon_emoji: '🧩', main_sha: 'a'.repeat(40),
+    directory_review_status: 'working', directory_reviewed_sha: 'a'.repeat(40),
+    directory_reviewed_at: '2026-09-01T13:00:00.000Z', last_deploy_at: '2026-09-01T12:00:00.000Z' });
+  collaboratorIds = new Set(); currentUser = { id: 999, username: 'viewer' };
+  const server = await startServer();
+  try {
+    for (const [status, tier] of [['working', 'ready'], ['demo', 'more'], ['broken', 'more'], ['unreviewed', 'unreviewed']]) {
+      appRow.directory_review_status = status;
+      const list = await fetch(`http://127.0.0.1:${server.address().port}/api/apps`).then((r) => r.json());
+      const detail = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/private-notes`).then((r) => r.json());
+      const listed = list.apps.find((a) => a.slug === appRow.slug);
+      assert.equal(listed.directory.tier, tier);
+      assert.deepEqual(listed.directory, detail.app.directory);
+    }
+  } finally { server.close(); }
+});
 
 for (const role of ROLES) {
   test(`GET /api/apps list never exposes secrets to ${role.label}`, async () => {

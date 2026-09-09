@@ -129,7 +129,7 @@ export function CloseIssueDialog() {
           </span>
           ?
         </h2>
-        <p className="text-xs text-zinc-500 mb-4">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
           This opens a group vote. If it passes, the issue is closed here and on GitHub.
         </p>
         <form id="close-issue-form" className="space-y-4" onSubmit={submit}>
@@ -155,7 +155,7 @@ export function CloseIssueDialog() {
               onKeyDown={onReasonKeyDown}
             >
             </Textarea>
-            <p className="text-xs text-zinc-500 mt-1">
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
               Posted publicly on the GitHub issue when the vote passes.
             </p>
           </div>
@@ -166,7 +166,7 @@ export function CloseIssueDialog() {
             <button
               type="button"
               id="close-issue-cancel"
-              className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+              className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
               onClick={() => dialog.close()}
             >
               Cancel

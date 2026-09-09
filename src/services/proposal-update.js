@@ -63,11 +63,11 @@ const SHA_RE = /^[0-9a-f]{40}$/i;
 //
 // This used to read `source === 'imported' ? 'user_fork' : 'app_repo'`, on the
 // reasoning that the source column had always said which. It does not, and
-// #1196 is what that cost: a connector submission whose cross-fork pull
-// request GitHub refuses falls to the MIRROR rung in
-// services/external-agent-head.js, which copies the agent's verified fork
-// branch into a `usernode/from-…` branch in the APP repository, opens a
-// same-repo pull request from the bot, and imports THAT. The row is
+// #1196 is what that cost: a connector submission runs the MIRROR rung in
+// services/external-agent-head.js (the last rung then, the first one since
+// task 153), which copies the agent's verified fork branch into a
+// `usernode/from-…` branch in the APP repository, opens a same-repo pull
+// request from the bot, and imports THAT. The row is
 // `source='imported'` and its head is a branch the author cannot push to.
 // get_proposal told the agent to push to a fork branch that does not exist,
 // and submit_work — reading the same helper — dispatched to `advanceForkHead`,
@@ -170,14 +170,14 @@ function renameHeadFailure(result, branch) {
     return fail(
       'not_your_fork',
       `${branch} was not found in a repository owned by the GitHub account linked to your Usernode profile. `
-      + 'A proposal is only advanced from its author\'s own fork — push the branch to your fork and try again.',
+      + 'A proposal is only advanced from its author\'s own fork. Push the branch to your fork and try again.',
       { retryable: false }
     );
   }
   if (result.code === 'branch_not_found') {
     return fail(
       'fork_branch_not_found',
-      `Your fork has no branch called ${branch}. Push it first — GitHub creates branches on push, and Usernode `
+      `Your fork has no branch called ${branch}. Push it first: GitHub creates branches on push, and Usernode `
       + 'reads it from your fork rather than from your machine.',
       { retryable: true }
     );
@@ -325,7 +325,7 @@ async function updateProposalFromForkBranch(deps, params) {
     return fail(
       'github_link_unavailable',
       'This Usernode deployment has no GitHub OAuth app configured, so it cannot verify which GitHub account is '
-      + 'yours — and a proposal is only advanced from its author\'s verified fork. Ask an admin to set '
+      + 'yours, and a proposal is only advanced from its author\'s verified fork. Ask an admin to set '
       + 'GITHUB_LINK_CLIENT_ID and GITHUB_LINK_CLIENT_SECRET in the platform variables panel.',
       { retryable: false }
     );
@@ -362,7 +362,7 @@ async function updateProposalFromForkBranch(deps, params) {
     if (busy(session)) {
       return fail(
         'session_busy',
-        'This proposal is in the middle of a build right now. Retry in a minute — pushing onto it mid-build '
+        'This proposal is in the middle of a build right now. Retry in a minute. Pushing onto it mid-build '
         + 'would leave its preview and its checks describing two different commits.',
         { retryable: true }
       );
@@ -401,6 +401,42 @@ async function updateProposalFromForkBranch(deps, params) {
       releaseOperation();
     }
   }));
+}
+
+// A managed local upload has already advanced the bot-owned PR branch. Apply
+// the same reviewed-head reconciliation as update-from-fork, including the
+// atomic stale-vote deletion, but defer the expensive check run until
+// proposal_submit_build. That preserves the oldest-first multi-commit upload
+// contract without leaving any approval attached to the earlier SHA.
+async function reconcileManagedCommitUpload(deps, params) {
+  const votes = deps.votes || require('../routes/votes');
+  const expectedHeadSha = String(params.expectedHeadSha || '').toLowerCase();
+  const revision = await votes.reconcileNativeReviewedHead({
+    config: deps.config,
+    pool: deps.pool,
+    session: params.session,
+    fresh: true,
+    notify: true,
+    deferChecks: true,
+  });
+  if (revision.blocked) {
+    return fail(
+      revision.transient ? 'platform_unavailable' : 'proposal_closed',
+      revision.reason || 'Usernode could not reconcile the proposal revision.',
+      { retryable: !!revision.transient }
+    );
+  }
+  const reconciledHead = String(revision.headSha || '').toLowerCase();
+  if (!SHA_RE.test(expectedHeadSha) || reconciledHead !== expectedHeadSha) {
+    return fail(
+      'branch_moved',
+      reconciledHead
+        ? `The proposal branch moved again to commit ${reconciledHead.slice(0, 8)} while this upload was being reconciled.`
+        : 'Usernode could not pin the promoted proposal to the uploaded commit.',
+      { retryable: false, ...(reconciledHead ? { headSha: reconciledHead } : {}) }
+    );
+  }
+  return { ok: true, ...revision };
 }
 
 // ── The revision's testing metadata (#1199) ────────────────────────────
@@ -928,7 +964,7 @@ function ownershipGate(session, user) {
   if (!session || !user || Number(session.user_id) !== Number(user.id)) {
     return fail(
       'not_your_proposal',
-      'That proposal was not opened by you. Only its author advances it — anyone else contributes by opening '
+      'That proposal was not opened by you. Only its author advances it; anyone else contributes by opening '
       + 'their own proposal, which the group votes on separately.',
       { retryable: false }
     );
@@ -938,7 +974,7 @@ function ownershipGate(session, user) {
       'proposal_closed',
       session.status === 'merging' || session.status === 'merged'
         ? 'That proposal has already passed its vote and is merging, so its code is frozen. Anything further is a '
-          + 'new proposal — call prepare_work again.'
+          + 'new proposal. Call prepare_work again.'
         : `That proposal is ${session.status || 'no longer open'}, so it cannot take a new revision. Open a new `
           + 'proposal with prepare_work.',
       { retryable: false }
@@ -994,21 +1030,64 @@ async function advanceAppRepoBranch(ctx) {
   // The head as GITHUB has it, read now. Both the ancestry base and the
   // push's lease come from this one value: a lease pinned to anything the
   // caller supplied would be a lease against the caller's own belief.
+  //
+  // ── …unless there is no head yet ────────────────────────────────────
+  //
+  // A 404 here is not an unreadable head. It is a branch NOBODY HAS CREATED,
+  // and the row it belongs to is the one #1347's share route writes: a session
+  // whose commits are still only in the author's fork, recorded ahead of the
+  // landing that puts them in the app's repository. Read as a failure — which
+  // it was until this branch existed — no first share could ever succeed, and
+  // the route deleted the card it had just made.
+  //
+  // Both of the things this function does before a push exist to protect a
+  // head that is already there:
+  //
+  //   * the LEASE stops two agents silently overwriting each other's
+  //     revision, and
+  //   * the ANCESTRY check stops a branch that does not build on the reviewed
+  //     commit from dropping commits the group has read.
+  //
+  // Neither has anything to guard when the branch does not exist, which is why
+  // external-agent-head's mirror rung — the platform's own "copy a verified
+  // fork branch into a NEW app-repo branch", used by pr-import — takes no
+  // lease either. So a first landing skips exactly those two and nothing else:
+  // the attribution gate below still runs, twice, as it does on every push.
+  //
+  // Narrowed to the platform's OWN branch namespace, which is the one the
+  // share route mints into. A `dev/…` head missing from the app repository is
+  // a different story with a different cause (routes/sessions.js creates that
+  // branch best-effort, and a session whose creation failed has a pull request
+  // and possibly a tally pinned to it), so it keeps the answer it has always
+  // had rather than being quietly re-created underneath a proposal.
   let liveHead;
+  let firstLanding = false;
   try {
     liveHead = await gh.getBranchSha(owner, repo, targetBranch);
   } catch (err) {
-    log.warn('proposal-update', 'could not read the proposal branch head', {
-      sessionId, targetBranch, err: err.message,
-    });
-    return fail('platform_unavailable', 'Usernode could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
+    if (err && err.status === 404 && platformOwnedBranch(targetBranch)) {
+      firstLanding = true;
+    } else {
+      log.warn('proposal-update', 'could not read the proposal branch head', {
+        sessionId, targetBranch, err: err.message,
+      });
+      return fail('platform_unavailable', 'Usernode could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
+    }
   }
-  if (!liveHead || !SHA_RE.test(String(liveHead).trim())) {
-    return fail('platform_unavailable', 'Usernode could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
-  }
-  liveHead = String(liveHead).trim().toLowerCase();
-  if (expectedHeadSha && expectedHeadSha !== liveHead) {
-    return movedError(liveHead);
+  if (!firstLanding) {
+    if (!liveHead || !SHA_RE.test(String(liveHead).trim())) {
+      return fail('platform_unavailable', 'Usernode could not read this proposal\'s current commit. Try again shortly.', { retryable: true });
+    }
+    liveHead = String(liveHead).trim().toLowerCase();
+    if (expectedHeadSha && expectedHeadSha !== liveHead) {
+      return movedError(liveHead);
+    }
+  } else {
+    // `expectedHeadSha` names the commit the caller believes this proposal is
+    // at. There is no such commit, so there is nothing for it to disagree
+    // with — and refusing a first share for naming one would be refusing it
+    // for the caller's optimism rather than for a conflict.
+    liveHead = null;
   }
 
   // THE ATTRIBUTION GATE. Run here for the ancestry comparison, and again
@@ -1020,12 +1099,14 @@ async function advanceAppRepoBranch(ctx) {
   });
   if (!verified.ok) return renameHeadFailure(verified, branch);
 
-  // Nothing to push — but a resubmit may still be correcting the capture
-  // routes, which is the one thing that used to have no way through (#1199).
-  if (verified.headSha === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_branch');
+  if (!firstLanding) {
+    // Nothing to push — but a resubmit may still be correcting the capture
+    // routes, which is the one thing that used to have no way through (#1199).
+    if (verified.headSha === liveHead) return resubmitUnchanged(ctx, liveHead, 'update_branch');
 
-  const ancestry = await checkAncestry({ gh, owner, repo, base: liveHead, head: verified.headSha, branch });
-  if (ancestry) return ancestry;
+    const ancestry = await checkAncestry({ gh, owner, repo, base: liveHead, head: verified.headSha, branch });
+    if (ancestry) return ancestry;
+  }
 
   // Which of the three tails this push takes, decided from the row read UNDER
   // the lock — `params.session` is the caller's snapshot and may be minutes
@@ -1039,10 +1120,19 @@ async function advanceAppRepoBranch(ctx) {
   // has nothing to count and nothing to clear.
   const votesCleared = promoted ? await countVotes(pool, sessionId) : 0;
 
-  const pushed = await head.pushForkBranchToAppBranch({
-    githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
-    targetBranch, expectedRemoteSha: liveHead, sessionId,
-  });
+  // The lease-less create and the lease-checked advance are the same push with
+  // the same gate in front of it; `mirrorForkBranch` is not a second
+  // implementation of anything, it is the one the mirror rung already uses,
+  // pointed at the name this row recorded instead of one it mints.
+  const pushed = firstLanding
+    ? await head.mirrorForkBranch({
+      gh, githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+      targetBranch,
+    })
+    : await head.pushForkBranchToAppBranch({
+      githubPublic, owner, repo, forkOwner, forkRepo, branch, expectedLogin,
+      targetBranch, expectedRemoteSha: liveHead, sessionId,
+    });
   if (!pushed.ok) return renameHeadFailure(pushed, branch);
 
   // BEFORE the tails, every one of which ends in a capture that reads the
@@ -1125,10 +1215,17 @@ async function advanceAppRepoBranch(ctx) {
     log.info('proposal-update', 'advanced an imported proposal on its app-repo branch', {
       sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
       headSha: verified.headSha, votesCleared: applied ? votesCleared : 0, synced,
+      votesClearing: applied ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'), votesAtRisk: votesCleared,
     });
     return {
       ...landed,
       votesCleared: applied ? votesCleared : 0,
+      // `votesCleared` is what THIS call cleared. On the mirror path the head
+      // is advanced by the next pr-import sweep, which is when the tally
+      // resets — so a 0 here with votesClearing 'on_sync' means "not yet",
+      // not "never". votesAtRisk is the count that will go.
+      votesClearing: applied ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'),
+      votesAtRisk: votesCleared,
       checksRerun: applied,
       previewRebuilding: applied,
     };
@@ -1212,6 +1309,7 @@ async function advanceAppRepoBranch(ctx) {
   log.info('proposal-update', 'advanced a proposal from its author\'s fork', {
     sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
     headSha: verified.headSha, votesCleared: settled ? votesCleared : 0,
+    votesClearing: settled ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'), votesAtRisk: votesCleared,
   });
 
   return {
@@ -1220,6 +1318,8 @@ async function advanceAppRepoBranch(ctx) {
     // write and are only reported cleared when the reconciliation that
     // clears them ran.
     votesCleared: settled ? votesCleared : 0,
+    votesClearing: settled ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'),
+    votesAtRisk: votesCleared,
     checksRerun: settled,
     previewRebuilding: settled,
   };
@@ -1380,8 +1480,8 @@ async function recordChangesReadyCard({ pool, session, sessionId, headSha }) {
      VALUES ($1, 'system', $2, $3)`,
     [sessionId,
       sha8
-        ? `Changes ready — commit ${sha8} arrived from your coding agent.`
-        : 'Changes ready — an update arrived from your coding agent.',
+        ? `Changes ready: commit ${sha8} arrived from your coding agent.`
+        : 'Changes ready: an update arrived from your coding agent.',
       JSON.stringify({
         changesReady: true,
         externalUpdate: true,
@@ -1459,7 +1559,7 @@ async function advanceForkHead(ctx) {
     return fail(
       'invalid_request',
       `This proposal follows ${prBranch || 'the pull request\'s own branch'} in your fork, not ${branch}. Push your `
-      + 'new commits to that branch — an open pull request cannot be repointed at a different one — or open a new '
+      + 'new commits to that branch (an open pull request cannot be repointed at a different one), or open a new '
       + 'proposal from this branch with prepare_work.',
       { retryable: false }
     );
@@ -1476,7 +1576,7 @@ async function advanceForkHead(ctx) {
     // second or two after a push. Nothing is written on a disagreement.
     return fail(
       'platform_unavailable',
-      'GitHub is still catching up with your push — its pull request and its branch report different commits. '
+      'GitHub is still catching up with your push: its pull request and its branch report different commits. '
       + 'Try again in a few seconds.',
       { retryable: true }
     );
@@ -1533,7 +1633,7 @@ async function advanceForkHead(ctx) {
     log.error('proposal-update', 'imported head change failed', { sessionId, err: err.message });
     return fail(
       'platform_unavailable',
-      'Usernode could not record your new commit against this proposal. Your push is on GitHub either way — try '
+      'Usernode could not record your new commit against this proposal. Your push is on GitHub either way, so try '
       + 'again shortly.',
       { retryable: true }
     );
@@ -1605,7 +1705,7 @@ async function checkAncestry({ gh, owner, repo, base, head: newHead, branch }) {
   if (cmp.status !== 'ahead' && cmp.status !== 'identical') {
     return fail(
       'base_mismatch',
-      `${branch} is not built on this proposal's current commit — it is ${cmp.status} relative to it, so pushing it `
+      `${branch} is not built on this proposal's current commit: it is ${cmp.status} relative to it, so pushing it `
       + 'would drop commits that are already under review. Fetch the proposal\'s head, rebase your branch onto it '
       + 'and submit again.',
       { retryable: false, expectedBase: base }
@@ -1617,7 +1717,7 @@ async function checkAncestry({ gh, owner, repo, base, head: newHead, branch }) {
 function movedError(headSha) {
   return fail(
     'branch_moved',
-    `This proposal is now at commit ${headSha.slice(0, 8)}, not the one your update was built against — somebody `
+    `This proposal is now at commit ${headSha.slice(0, 8)}, not the one your update was built against. Somebody `
     + 'advanced it in the meantime. Re-read the proposal, rebase onto its current head and submit again.',
     { retryable: false, headSha }
   );
@@ -1654,6 +1754,7 @@ module.exports = {
   isContinuableStatus,
   withProposalLock,
   updateProposalFromForkBranch,
+  reconcileManagedCommitUpload,
   // The request-linking half of an update (#1310), unit-tested directly.
   applyLinkedIssues,
 };

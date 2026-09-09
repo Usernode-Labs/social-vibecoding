@@ -104,7 +104,7 @@ function loadVotes({ prRows, closeRows, prTotal, closeTotal }) {
     orig[k] = require.cache[id];
   }
 
-  const captured = { calls: [] };
+  const captured = { calls: [], attrCalls: [] };
 
   const _origLoad = Module._load;
   Module._load = function (request, ...rest) {
@@ -149,9 +149,23 @@ function loadVotes({ prRows, closeRows, prTotal, closeTotal }) {
     ACCESS_COLUMNS: '',
   });
   stub(ids.topicAttrs, {
-    summarizeForTargets: async () => new Map(),
+    // Records each call and answers a fixed tally per ref, so the suite can
+    // assert close rows carry the CLOSED ISSUE's own attribute summary
+    // (moving a task to Done keeps its priority/assignee/category).
+    summarizeForTargets: async (_pool, _appId, targetType, refs) => {
+      captured.attrCalls.push({ targetType, refs: refs.slice() });
+      const m = new Map();
+      for (const ref of refs) {
+        m.set(ref, {
+          priority: { top: 'high', count: 2, myValue: null },
+          assignee: { top: 'maya-builder', count: 1, myValue: null },
+          category: { top: 'bug', count: 1, myValue: null },
+        });
+      }
+      return m;
+    },
     summarizeForProposals: async () => new Map(),
-    emptySummary: () => ({ priority: null, assignee: null }),
+    emptySummary: () => ({ priority: null, assignee: null, category: null }),
   });
   stub(ids.visuals, { shapeAgg: () => null });
 
@@ -284,4 +298,33 @@ test('no cursor → neither source carries a keyset predicate', async () => {
   assert.ok(!/cs\.created_at < \$3/.test(prCall.sql));
   const closeCall = findCall(captured, /i\.kind = 'close_issue'/);
   assert.ok(!/i\.created_at <=/.test(closeCall.sql));
+});
+
+test("close rows carry the closed issue's own priority/assignee/category tally", async () => {
+  // A task moved to Done keeps its chips: the route asks summarizeForTargets
+  // for the TARGET issue number (payload.issueNumber) and attaches the
+  // summary to the close row, exactly as PR rows get theirs.
+  const { routes, captured } = loadVotes({ prRows: makePrRows(1), closeRows: [makeCloseRow()] });
+  const payload = await callMerged(routes, {});
+  assert.deepEqual(
+    captured.attrCalls,
+    [{ targetType: 'issue', refs: [12] }],
+    'one issue-keyed summary call, keyed by payload.issueNumber'
+  );
+  const row = payload.merged.find((r) => r.row_type === 'close_issue');
+  assert.equal(row.priority.top, 'high');
+  assert.equal(row.assignee.top, 'maya-builder');
+  assert.equal(row.category.top, 'bug');
+});
+
+test('a close row with no resolvable issue number degrades to the empty summary', async () => {
+  const noRef = makeCloseRow({ id: 78, payload: {
+    issueTitle: 'Orphan', appliedAt: '2026-01-15T00:00:00.000Z', appliedBy: 'group-vote',
+  } });
+  const { routes } = loadVotes({ prRows: [], closeRows: [noRef] });
+  const payload = await callMerged(routes, {});
+  const row = payload.merged.find((r) => r.row_type === 'close_issue');
+  assert.equal(row.priority, null, 'empty summary, not a crash');
+  assert.equal(row.assignee, null);
+  assert.equal(row.category, null);
 });

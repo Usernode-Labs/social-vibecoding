@@ -28,14 +28,14 @@ function label(modelId) {
 // (successful fallbacks usually don't carry one).
 function noticeText(requested, served, category) {
   const cat = category ? ` (safety classifier: ${category})` : ' (safety classifier)';
-  return `${label(requested)} declined part of this request${cat} — it was completed by ${label(served)}.`;
+  return `${label(requested)} declined part of this request${cat}. It was completed by ${label(served)}.`;
 }
 
 // In-chat notice for a whole-chain refusal (the fallback also declined,
 // or couldn't run and the direct retry declined too).
 function refusalText(requested, category) {
   const cat = category ? ` (safety classifier: ${category})` : '';
-  return `${label(requested)}'s safety classifiers declined this request${cat} and the fallback couldn't complete it — try rephrasing or switching models.`;
+  return `${label(requested)}'s safety classifiers declined this request${cat} and the fallback couldn't complete it. Try rephrasing or switching models.`;
 }
 
 // Durable admin record: one log.warn (visible in container logs and the

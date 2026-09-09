@@ -62,7 +62,7 @@ const MAX_VALUE_LEN = 8192;
 // eslint-disable-next-line no-control-regex
 const UNSAFE_VALUE_RE = /['\r\u0000]/;
 const UNSAFE_VALUE_MESSAGE =
-  "Values can't contain a single quote or a carriage return — they wouldn't survive being written to the platform's .env file.";
+  "Values can't contain a single quote or a carriage return, because they wouldn't survive being written to the platform's .env file.";
 
 // Surrounding whitespace on a pasted value is invisible in the panel (a
 // private value shows only "set"; a non-private one renders as plain

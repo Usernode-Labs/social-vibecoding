@@ -25,11 +25,17 @@
  *
  * ── The two rules that carry over ──────────────────────────────────────
  *
- * 1. **Unmount BEFORE the `innerHTML` assignment that discards the host.** Every
- *    Dev surface swap replaces `#app-content.innerHTML`, which detaches the host
- *    without telling React. The legacy owner still calls `unmount` /
- *    `unmountAll` first (see `AppView._teardownDevRoots`) so the effects inside
- *    stop when the node they wrote into goes away.
+ * 1. **Unmount BEFORE the assignment that discards the host.** A legacy owner
+ *    that replaces a host's contents detaches it without telling React, and an
+ *    entry pointing at a detached node keeps its subtree — and its store
+ *    subscriptions — alive for the life of the page. Callers still do this
+ *    where they know about it (`AppView._teardownDevRoots`,
+ *    `GroupChat.mountThread` dropping the transcript before re-rendering the
+ *    shell). `pruneDetachedLegacyPortals` below is the backstop for the hosts
+ *    nobody is in a position to know about: a Dev sub-view swap re-renders
+ *    `#app-content`'s portal, and React discards `#dev-chat-body`,
+ *    `#dev-topic-thread` and everything beneath them without telling any of
+ *    their owners either.
  * 2. **Synchronous mount.** Callers read the DOM on their next line —
  *    `document.getElementById('dev-chat-card').addEventListener(…)`,
  *    `PlatformUI.pullToRefresh(devScroll, …)`, `AppView._repaintDevBody()` —
@@ -43,6 +49,8 @@
 
 import { Fragment, createElement, useSyncExternalStore, type ReactNode } from 'react';
 import { createPortal, flushSync } from 'react-dom';
+
+import { Island } from './island-boundary';
 
 interface PortalEntry {
   host: Element;
@@ -85,20 +93,53 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
+/**
+ * Drop every entry whose host has left the document.
+ *
+ * A detached host can never render anything a reader sees, but its entry keeps
+ * the subtree — and every store subscription and effect inside it — alive for
+ * the life of the page. Rule 1 above is the caller's obligation to unmount
+ * BEFORE discarding a host; this is the backstop for the hosts a caller does
+ * not know about, which on the Dev screen is most of them: swapping sub-views
+ * re-renders `#app-content`'s portal, and React discards `#dev-chat-body`,
+ * `#dev-topic-thread` and everything under them without any of their owners
+ * being told.
+ *
+ * Safe as a sweep rather than a decision, because it is not a heuristic: an
+ * entry whose `host.isConnected` is false is unreachable by definition. A host
+ * that is detached and later re-attached simply re-mounts, with a new `seq` —
+ * which is the conservative outcome anyway (reconciling over DOM the legacy
+ * owner may have replaced is the thing `seq` exists to prevent).
+ *
+ * `keep` is the host currently being mounted, which a caller may legitimately
+ * hand over before attaching it.
+ */
+export function pruneDetachedLegacyPortals(keep?: Element | null): boolean {
+  let dropped = false;
+  for (const host of [...entries.keys()]) {
+    if (host === keep || host.isConnected) continue;
+    entries.delete(host);
+    dropped = true;
+  }
+  return dropped;
+}
+
 /** Render `node` into `host` from the main tree, creating the entry on first call. */
 export function mountLegacyPortal(host: Element | null, node: ReactNode): void {
   if (!host) return;
+  // Every mount is a surface swap, which is exactly when the previous
+  // surface's inner hosts have just been discarded. Sweeping here means no
+  // caller has to enumerate them.
+  pruneDetachedLegacyPortals(host);
   const existing = entries.get(host);
   // First mount into this host: replace whatever the previous surface left in
   // it. Chunk G's interim `createRoot(host).render()` did this implicitly —
   // React documents that a root's first render replaces the container's
-  // existing content — and the Dev surface swaps rely on it: the topic
-  // sub-view is still a hand-written innerHTML template, so its markup is
-  // what occupies #app-content when the user navigates Back to the board. A
-  // portal only APPENDS to its container, so without this clear the new
-  // surface mounts BELOW the stale one and the navigation looks dead. On a
-  // re-mount (live entry) the children are React-owned — leave them to the
-  // reconciler.
+  // existing content — and it is still what a host filled by a legacy
+  // template needs, because a portal only APPENDS to its container: without
+  // the clear the new surface mounts BELOW the stale markup and the
+  // navigation looks dead. On a re-mount (live entry) the children are
+  // React-owned — leave them to the reconciler.
   if (!existing) host.replaceChildren();
   entries.set(host, { host, node, seq: existing ? existing.seq : ++seqCounter });
   commit();
@@ -139,6 +180,14 @@ export function LegacyPortals(): ReactNode {
   return createElement(
     Fragment,
     null,
-    ...live.map((entry) => createPortal(entry.node, entry.host, `legacy-portal-${entry.seq}`)),
+    ...live.map((entry) => createPortal(
+      // Per ENTRY, not around the whole map: without it one portalled region
+      // throwing takes every other portal down with it, and then the root —
+      // see ./island-boundary.tsx for what "and then the root" costs when the
+      // root is `document.body`.
+      createElement(Island, { name: `portal:${entry.host.id || 'anonymous'}` }, entry.node),
+      entry.host,
+      `legacy-portal-${entry.seq}`,
+    )),
   );
 }

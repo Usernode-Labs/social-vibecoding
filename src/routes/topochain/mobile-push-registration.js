@@ -16,6 +16,16 @@ const REVISION_RE = /^[1-9][0-9]*$/;
 const MAX_REVISION = 9223372036854775807n;
 const PLATFORMS = new Set(['android', 'ios']);
 const PERMISSIONS = new Set(['authorized', 'provisional', 'denied', 'not_determined']);
+const CLIENT_UNREGISTRATION_REASONS = new Set([
+  'client_request',
+  'notifications_disabled',
+  'permission_denied',
+  'signed_out',
+  'account_changed',
+  'identity_boundary',
+  'terminal_reset',
+  'configuration_unavailable',
+]);
 const MAX_REGISTRATION_LENGTH = 4096;
 
 class MutationConflict extends Error {
@@ -100,11 +110,18 @@ function validatePut(body) {
 
 function validateDelete(body) {
   const details = {};
+  const unregistrationReason = body?.reason === undefined
+    ? 'client_request' : body.reason;
+  if (typeof unregistrationReason !== 'string'
+      || !CLIENT_UNREGISTRATION_REASONS.has(unregistrationReason)) {
+    details.reason = ['The reason field is invalid.'];
+  }
   return {
     details,
     value: {
       installationId: installationId(body, details),
       mutationRevision: revision(body, details),
+      unregistrationReason,
     },
   };
 }
@@ -119,6 +136,34 @@ function validateGet(query) {
 
 function hash(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+async function recordRegistrationEvent(client, {
+  userId,
+  registrationId,
+  environment,
+  installationId: id,
+  platform,
+  permissionStatus,
+  eventKind,
+  reasonCode = null,
+}) {
+  await client.query(
+    `INSERT INTO mobile_push_registration_events (
+       user_id, registration_id, environment, installation_id, platform,
+       permission_status, event_kind, reason_code
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      userId,
+      registrationId ?? null,
+      environment,
+      id,
+      platform,
+      permissionStatus,
+      eventKind,
+      reasonCode,
+    ]
+  );
 }
 
 async function transaction(pool, fn) {
@@ -136,12 +181,19 @@ async function transaction(pool, fn) {
   }
 }
 
-async function lockSession(client, userId, tokenId) {
+async function lockSession(client, userId, tokenId, credentialReference) {
   const { rows } = await client.query(
-    `SELECT id, expires_at FROM mobile_auth_tokens
-      WHERE id = $1 AND user_id = $2 AND ability = 'session' AND expires_at > NOW()
-      FOR UPDATE`,
-    [tokenId, userId]
+    `SELECT t.id, t.expires_at
+       FROM mobile_auth_tokens t
+       JOIN native_session_credentials c
+         ON c.mobile_auth_token_id = t.id AND c.user_id = t.user_id
+      WHERE t.id = $1 AND t.user_id = $2
+        AND c.credential_reference = $3
+        AND t.ability = 'session' AND t.expires_at > NOW()
+        AND c.state = 'valid' AND c.expires_at > NOW()
+        AND c.expires_at = t.expires_at
+      FOR SHARE OF c`,
+    [tokenId, userId, credentialReference]
   );
   if (!rows[0]) throw new SessionInactive();
   return rows[0].expires_at;
@@ -240,9 +292,17 @@ async function writeFence(client, environment, id, revisionValue, kind) {
   );
 }
 
-function exactPut(row, userId, environment, input, registrationHash) {
+function exactPut(
+  row,
+  userId,
+  credentialReference,
+  environment,
+  input,
+  registrationHash
+) {
   return row
     && String(row.user_id) === String(userId)
+    && row.native_session_credential_reference === credentialReference
     && row.environment === environment
     && String(row.installation_id).toLowerCase() === input.installationId
     && row.provider === input.provider
@@ -252,14 +312,20 @@ function exactPut(row, userId, environment, input, registrationHash) {
 }
 
 async function putRegistration(client, {
-  userId, tokenId, environment, firebaseProjectId: expectedProjectId,
+  userId, tokenId, credentialReference, environment,
+  firebaseProjectId: expectedProjectId,
   input, registrationHash, registrationEnc,
 }) {
   // Deployment state is always locked before session/registration rows. The
   // project-change synchronizer uses the same order before deleting old-
   // project registrations, avoiding a state <-> registration deadlock.
   const deploymentState = await lockDeploymentState(client, environment, expectedProjectId);
-  const sessionExpiresAt = await lockSession(client, userId, tokenId);
+  const sessionExpiresAt = await lockSession(
+    client,
+    userId,
+    tokenId,
+    credentialReference
+  );
   const keys = [
     `mobile-push:installation:${environment}:${input.installationId}`,
     `mobile-push:registration:${environment}:${registrationHash}`,
@@ -268,7 +334,8 @@ async function putRegistration(client, {
 
   const fence = await lockFence(client, environment, input.installationId);
   const { rows } = await client.query(
-    `SELECT id, user_id, environment, installation_id, provider,
+    `SELECT id, user_id, native_session_credential_reference,
+            environment, installation_id, provider,
             registration_hash, platform, permission_status, session_expires_at
        FROM mobile_push_registrations
       WHERE (environment = $1 AND installation_id = $2)
@@ -283,7 +350,14 @@ async function putRegistration(client, {
 
   if (compareRevision(input.mutationRevision, fence) === 0) {
     if (fence.latest_mutation_kind !== 'put'
-        || !exactPut(installation, userId, environment, input, registrationHash)) {
+        || !exactPut(
+          installation,
+          userId,
+          credentialReference,
+          environment,
+          input,
+          registrationHash
+        )) {
       throw new MutationConflict('push_mutation_conflict', fence.latest_mutation_revision);
     }
     await client.query(
@@ -305,14 +379,34 @@ async function putRegistration(client, {
   const incumbent = installation
     && String(installation.user_id) === String(userId)
     ? installation : null;
-  const ids = rows
-    .filter((row) => !incumbent || String(row.id) !== String(incumbent.id))
-    .map((row) => row.id);
-  if (ids.length) {
-    await client.query('DELETE FROM mobile_push_registrations WHERE id = ANY($1::bigint[])', [ids]);
+  const reassigned = rows.filter((row) => (
+    !incumbent || String(row.id) !== String(incumbent.id)
+  ));
+  if (reassigned.length) {
+    for (const row of reassigned) {
+      const sameInstallation = String(row.installation_id).toLowerCase()
+        === input.installationId;
+      await recordRegistrationEvent(client, {
+        userId: row.user_id,
+        registrationId: row.id,
+        environment: row.environment,
+        installationId: row.installation_id,
+        platform: row.platform,
+        permissionStatus: row.permission_status,
+        eventKind: 'registration_reassigned',
+        reasonCode: sameInstallation
+          ? 'installation_reassigned' : 'token_reassigned',
+      });
+    }
+    await client.query(
+      'DELETE FROM mobile_push_registrations WHERE id = ANY($1::bigint[])',
+      [reassigned.map((row) => row.id)]
+    );
   }
   await writeFence(client, environment, input.installationId, input.mutationRevision, 'put');
   if (incumbent) {
+    const eventKind = incumbent.registration_hash === registrationHash
+      ? 'registration_updated' : 'token_replaced';
     await client.query(
       `UPDATE mobile_push_registrations
           SET provider = $2,
@@ -321,36 +415,61 @@ async function putRegistration(client, {
               platform = $5,
               permission_status = $6,
               session_expires_at = $7,
+              native_session_credential_reference = $8,
               last_seen_at = NOW(),
               updated_at = NOW()
         WHERE id = $1`,
       [
         incumbent.id, input.provider, registrationHash, registrationEnc,
         input.platform, input.permissionStatus, sessionExpiresAt,
+        credentialReference,
       ]
     );
+    await recordRegistrationEvent(client, {
+      userId,
+      registrationId: incumbent.id,
+      environment,
+      installationId: input.installationId,
+      platform: input.platform,
+      permissionStatus: input.permissionStatus,
+      eventKind,
+    });
   } else {
-    await client.query(
+    const inserted = await client.query(
       `INSERT INTO mobile_push_registrations (
          user_id, environment, installation_id, provider, registration_hash,
-         registration_enc, platform, permission_status, session_expires_at, last_seen_at
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+         registration_enc, platform, permission_status, session_expires_at,
+         native_session_credential_reference, last_seen_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+       RETURNING id`,
       [
         userId, environment, input.installationId, input.provider, registrationHash,
         registrationEnc, input.platform, input.permissionStatus, sessionExpiresAt,
+        credentialReference,
       ]
     );
+    await recordRegistrationEvent(client, {
+      userId,
+      registrationId: inserted.rows[0].id,
+      environment,
+      installationId: input.installationId,
+      platform: input.platform,
+      permissionStatus: input.permissionStatus,
+      eventKind: 'registration_created',
+    });
   }
   return { ...deploymentState, session_expires_at: sessionExpiresAt };
 }
 
-async function deleteRegistration(client, { userId, tokenId, environment, input }) {
+async function deleteRegistration(client, {
+  userId, tokenId, credentialReference, environment, input,
+}) {
   const deploymentState = await lockDeploymentState(client, environment);
-  await lockSession(client, userId, tokenId);
+  await lockSession(client, userId, tokenId, credentialReference);
   await lockIdentity(client, `mobile-push:installation:${environment}:${input.installationId}`);
   const fence = await lockFence(client, environment, input.installationId);
   const { rows } = await client.query(
-    `SELECT id, user_id
+    `SELECT id, user_id, environment, installation_id, platform, permission_status
        FROM mobile_push_registrations
       WHERE environment = $1 AND installation_id = $2
       FOR UPDATE`,
@@ -373,6 +492,16 @@ async function deleteRegistration(client, { userId, tokenId, environment, input 
 
   await writeFence(client, environment, input.installationId, input.mutationRevision, 'delete');
   if (current) {
+    await recordRegistrationEvent(client, {
+      userId: current.user_id,
+      registrationId: current.id,
+      environment: current.environment,
+      installationId: current.installation_id,
+      platform: current.platform,
+      permissionStatus: current.permission_status,
+      eventKind: 'client_unregistered',
+      reasonCode: input.unregistrationReason || 'client_request',
+    });
     await client.query('DELETE FROM mobile_push_registrations WHERE id = $1', [current.id]);
   }
   return deploymentState;
@@ -480,6 +609,7 @@ function mobilePushRegistrationRoutes(config) {
       const state = await transaction(pool, (client) => putRegistration(client, {
         userId: req.user.id,
         tokenId: req.mobileAuth.tokenId,
+        credentialReference: req.mobileAuth.credentialReference,
         environment,
         firebaseProjectId: firebaseProjectId(config),
         input: value,
@@ -511,6 +641,7 @@ function mobilePushRegistrationRoutes(config) {
       const state = await transaction(pool, (client) => deleteRegistration(client, {
         userId: req.user.id,
         tokenId: req.mobileAuth.tokenId,
+        credentialReference: req.mobileAuth.credentialReference,
         environment,
         input: value,
       }));

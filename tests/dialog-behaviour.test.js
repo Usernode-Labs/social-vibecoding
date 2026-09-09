@@ -104,8 +104,13 @@ test('the lift is reversible: the card goes home before the root re-hides', () =
   // kit anything, which is what separates it from dismiss().
   assert.match(KIT_SURFACE, /if \(undone\) return;/);
   assert.match(KIT_SURFACE, /restore: undo/);
-  assert.match(STATIC_MODAL, /adoption\.restore\(\);\n\s*adoption\.dismiss\(\);/,
-    'the card comes home BEFORE the kit is told, or the exit animation runs over an empty shell');
+  // On UNMOUNT the card comes home before the kit is told, because there is no
+  // longer a component to animate an exit for and React is about to remove the
+  // subtree the placeholder sits in. An ordinary close does the opposite now —
+  // see 'the card rides the kit exit' below, which is the close flicker fix.
+  const unmount = STATIC_MODAL.slice(STATIC_MODAL.indexOf('() => () => {'));
+  assert.match(unmount, /adoption\.restore\(\);\n\s*adoption\.dismiss\(\);/,
+    'an unmount re-homes the card synchronously, exit animation or not');
 });
 
 test('the guard window is the one app-view.js used, and is read by useDialog', () => {
@@ -153,7 +158,23 @@ test('presentation is gated on kit presence, never on isTouch()', () => {
 
 test('open/close run the island’s populate and reset halves', () => {
   assert.match(USE_DIALOG, /if \(isOpen\) opts\.current\.onOpen\?\.\(payloadRef\.current\);/);
-  assert.match(USE_DIALOG, /else opts\.current\.onClose\?\.\(\);/);
+  // The reset half moved OUT of this effect and onto the exit.
+  //
+  // It used to be the `else` of the same layout effect, which was invisible
+  // only because the card was yanked out of sight on that same tick. The card
+  // rides the kit's exit animation now, so emptying it there would blank the
+  // dialog's contents in front of the viewer mid-close — the same flicker,
+  // moved. It runs from onExited instead: after the animation, once the
+  // surface is actually gone.
+  assert.doesNotMatch(USE_DIALOG, /else opts\.current\.onClose\?\.\(\);/,
+    'the reset is no longer the close tick’s');
+  assert.match(USE_DIALOG, /onExited: \(\) => \{[\s\S]*?opts\.current\.onClose\?\.\(\);/,
+    'it runs once the exit animation has finished');
+  // Two ways a pending exit's teardown must NOT run: the dialog is open again
+  // (a reopen inside the exit window already repopulated it), or the close was
+  // a suspend()'s bookkeeping and the draft is coming back.
+  assert.match(USE_DIALOG, /if \(openRef\.current\) return;/);
+  assert.match(USE_DIALOG, /if \(suspended\.current\) return;/);
   // Not on mount: the prerendered document is already hidden, so a mount-time
   // onClose would reset fields the user could not have filled yet — and, for
   // the controller-backed dialogs, would call into a module that has not run
@@ -163,13 +184,106 @@ test('open/close run the island’s populate and reset halves', () => {
   assert.match(USE_DIALOG, /useIsomorphicLayoutEffect\(\(\) => \{\n\s*if \(!mounted\.current\)/);
 });
 
+test('the MOUNT pass is not an exit', () => {
+  // This shipped broken to a staging preview and failed 435 of 459 checks with
+  // "1 console error on load" on essentially every route, so it is pinned hard.
+  //
+  // `open` starts false, so the layout effect runs its CLOSE branch once on
+  // mount, for a dialog that has never been on screen. Firing onExited there
+  // ran the dialogs' teardown — Feedback._reset() and friends — against
+  // controller modules whose init() had not run yet, and the resulting
+  // TypeError came from the dialogs island, which every route mounts.
+  //
+  // The old arrangement was immune BY ACCIDENT: the teardown sat behind
+  // use-dialog's own mount guard. Moving it onto the exit (so the card could
+  // stay visible through the animation) moved it out from behind that guard,
+  // and nothing in the local suite renders React, so only the declared checks
+  // saw it.
+  assert.match(STATIC_MODAL, /const everOpenRef = useRef\(false\)/,
+    'the hook tracks whether it has ever presented');
+  assert.match(STATIC_MODAL, /everOpenRef\.current = true;/,
+    'set when it opens');
+  // The no-kit exit lives in the `else if`, so the gate cannot be skipped by
+  // rearranging the branch: read that branch and assert the call is inside it.
+  const gated = STATIC_MODAL.slice(STATIC_MODAL.indexOf('} else if (everOpenRef.current) {'));
+  assert.ok(gated.startsWith('} else if (everOpenRef.current) {'),
+    'the no-kit exit branch is gated on having been open');
+  assert.match(gated.slice(0, 500), /opts\.current\.onExited\?\.\(\);/,
+    'and that is where onExited is called from on the no-kit path');
+  // The kit path needs no gate: it only fires from the dismissal callback of
+  // an adoption, and an adoption only exists once the surface was presented.
+  const dismissFromKitAt = STATIC_MODAL.indexOf('const dismissFromKit');
+  const dismissFromKit = STATIC_MODAL.slice(
+    dismissFromKitAt,
+    // Searched FROM the callback, not from the top: the first
+    // `useIsomorphicLayoutEffect` in this file is its own import.
+    STATIC_MODAL.indexOf('useIsomorphicLayoutEffect(', dismissFromKitAt),
+  );
+  assert.ok(dismissFromKit.length > 0, 'the kit dismissal callback is findable');
+  assert.match(dismissFromKit, /opts\.current\.onExited\?\.\(\);/);
+});
+
+test('the card rides the kit exit rather than being pulled out before it', () => {
+  // The close flicker: restore() before dismiss() put the card back in its
+  // (immediately hidden) root and left the kit animating an empty shell —
+  // which is not nothing on screen, it is the shell collapsed to its own
+  // padding, a small blank rounded box fading out where the dialog was.
+  const closeBranch = STATIC_MODAL.slice(
+    STATIC_MODAL.indexOf('} else {'),
+    STATIC_MODAL.indexOf('// Legacy-compatibility bridge'),
+  );
+  assert.match(closeBranch, /pendingExitRef\.current = adoption;\s*\n\s*adoption\.dismiss\(\);/,
+    'the close asks the kit to animate and holds the adoption');
+  assert.doesNotMatch(closeBranch, /adoption\.restore\(\);/,
+    'and does not re-home the card before that animation runs');
+  // The re-home happens in the kit's own callback, at the end of the exit.
+  assert.match(STATIC_MODAL, /if \(adoption\) adoption\.restore\(\);\s*\n\s*opts\.current\.onExited\?\.\(\);/);
+});
+
+test('the exit lets go of the keyboard instead of waiting for the card to die', () => {
+  // THE SECOND HALF OF THE CLOSE FLICKER, and the one the exit-riding fix
+  // above could not reach. A dialog that focuses a field on open — create-app,
+  // rename, fork, close-issue — raises the on-screen keyboard, and that field
+  // KEPT FOCUS for the whole exit: the kit removes its shell only after the
+  // animation finishes, so the blur that finally retracts the keyboard landed
+  // when the node was destroyed, i.e. after the dialog had visually gone. The
+  // viewer then watched the page behind it resize for the keyboard's own
+  // duration — `--un-kb-inset` unwinding `.un-modal`'s `top`, `html.un-kb`
+  // releasing `.un-kb-avoid`'s padding, the scroller re-clamping. Give
+  // feedback, the one dialog that does NOT autofocus, never had it.
+  //
+  // Blurring at the START of the exit overlaps the two motions instead.
+  assert.match(KIT_SURFACE,
+    /dismiss: \(\) => \{[\s\S]{0,80}releaseFocus\(contentEl, handle\.el\);[\s\S]{0,80}handle\.dismiss\(\);/,
+    'the adoption releases focus before it asks the kit to animate');
+  const fn = KIT_SURFACE.slice(KIT_SURFACE.indexOf('function releaseFocus('));
+  assert.match(fn, /contentEl\.contains\(active\) \|\| !!shellEl\?\.contains\(active\)/,
+    'the card AND the kit shell — the kit focuses its own container on present');
+  assert.match(fn, /active === document\.body/,
+    'nothing focused is nothing to release');
+  // In kit-surface, not the dialogs' hook: sheets and panels adopt through the
+  // same seam and carry composers of their own.
+  assert.doesNotMatch(STATIC_MODAL, /releaseFocus/);
+});
+
 test('suspend/resume move the dialog without running the lifecycle', () => {
   // The feedback screenshot capture's round trip. If this regressed to
   // close()/open(), taking a screenshot would wipe the draft it is being
   // attached to — the bug the flag exists to prevent.
   assert.match(USE_DIALOG, /const bookkeeping = useRef\(false\)/);
-  assert.match(USE_DIALOG, /const suspend = useCallback\(\(\) => \{\n\s*bookkeeping\.current = true;\n\s*setIsOpen\(false\);/);
-  assert.match(USE_DIALOG, /const resume = useCallback\(\(\) => \{\n\s*bookkeeping\.current = true;\n\s*setIsOpen\(true\);/);
+  assert.match(USE_DIALOG, /const suspend = useCallback\(\(\) => \{\n\s*bookkeeping\.current = true;\n\s*suspended\.current = true;\n\s*setIsOpen\(false\);/);
+  assert.match(USE_DIALOG, /const resume = useCallback\(\(\) => \{\n\s*bookkeeping\.current = true;\n\s*suspended\.current = false;\n\s*setIsOpen\(true\);/);
+  // A SECOND flag, and it has to be a second one.
+  //
+  // `bookkeeping` is consumed by the one layout-effect pass the setIsOpen
+  // schedules, which was the whole of the story while the teardown ran on that
+  // same tick. The teardown waits for the kit's exit animation now, and a
+  // capture round trip outlasts it comfortably — so by the time the exit lands,
+  // `bookkeeping` is long since spent and the close would look ordinary. This
+  // one is held until resume() (or an ordinary open()) clears it.
+  assert.match(USE_DIALOG, /const suspended = useRef\(false\)/);
+  assert.match(USE_DIALOG, /if \(suspended\.current\) return;/,
+    'a suspended close runs no teardown when its exit finally lands');
   // Consumed by exactly one effect pass, so an ordinary open or close on
   // either side of the round trip still runs its half.
   assert.match(USE_DIALOG, /if \(bookkeeping\.current\) \{\n\s*bookkeeping\.current = false;\n\s*return;\n\s*\}/);
@@ -193,14 +307,28 @@ test('a late kit dismissal cannot tear down a newer presentation (#1284)', () =>
   assert.match(STATIC_MODAL, /const generation = \(generationRef\.current \+= 1\);/);
   assert.match(STATIC_MODAL, /stillOwns,/, 'and hands the guard to the shared lift');
   assert.match(STATIC_MODAL, /const stillOwns = \(\) => generationRef\.current === generation;/);
-  // ...and the close branch retires it, which is what makes the callback a
-  // no-op when a reopen has already installed a newer one.
-  const closeBranch = STATIC_MODAL.slice(
+  // ...and the REOPEN retires it, which is what makes the old callback a
+  // no-op once a newer presentation is installed.
+  //
+  // This assertion used to look in the close branch, because the close branch
+  // was where the card came out of the kit shell. It is not any more: the card
+  // now rides the kit's exit animation and is re-homed by the callback at the
+  // end of it (the close flicker fix), so retiring the generation at close
+  // time would have made every ordinary close's callback a no-op and stranded
+  // the card in a torn-down shell. The reopen is the event that actually means
+  // "a newer presentation owns this node", so that is where the bump belongs —
+  // and the scenario below is unchanged, because a reopen is exactly what
+  // suspend()/resume() does inside the exit window.
+  const openBranch = STATIC_MODAL.slice(
+    STATIC_MODAL.indexOf('if (open) {'),
     STATIC_MODAL.indexOf('} else {'),
-    STATIC_MODAL.indexOf("root.classList.add('hidden')"),
   );
-  assert.match(closeBranch, /generationRef\.current \+= 1;/,
-    'the generation must be retired where the dismissal is requested');
+  assert.match(openBranch, /const generation = \(generationRef\.current \+= 1\);/,
+    'the generation is retired by the reopen that supersedes it');
+  // And the superseded exit is completed rather than abandoned, so its
+  // placeholder cannot be stranded in the root by the new lift.
+  assert.match(openBranch, /pendingExitRef\.current = null;\s*\n\s*pending\.restore\(\);/,
+    'a reopen finishes the outgoing presentation before presenting over it');
   // adoptKitSurface checks it after onDismissStart and before undo(), so a
   // stale teardown leaves the DOM completely alone — the hamburger drawer's
   // guard from #977, now the dialogs' too.
@@ -235,6 +363,25 @@ test('create: mode, import check and POST /api/apps all moved', () => {
   assert.match(src, /applyMode\('new'\)/);
   assert.match(src, /\/api\/github\/verify-access\?url=/, 'the import URL check moved with it');
   assert.match(src, /fetch\('\/api\/apps', \{/, 'the create POST moved with it');
+  // A successful create/import no longer closes the dialog. #1418 covered
+  // the async build with a toast over a CLOSED dialog, because the tile's
+  // small "Spinning up…" was easy to miss; the dialog now stays open and
+  // reports the phases app-creator broadcasts (features/dialogs/
+  // create-progress.tsx, tests/create-progress-view.test.js). The toast
+  // survives only on the path that has nothing to report on — a 201 with
+  // no slug to follow.
+  assert.match(src, /watchCreation\(slug\)/, 'the success path starts following the build');
+  assert.match(src, /setCreated\(\{ slug/, 'and swaps the card to the progress view');
+  assert.match(src, /if \(!slug\) \{/, 'a 201 we cannot follow falls back to the old close+toast');
+  assert.match(src, /window\.PlatformUI\?\.toast\?\.\(/, 'that fallback still raises the toast');
+  assert.match(src, /being imported/, 'import mode gets the imported wording');
+  assert.match(src, /being created/, 'new mode gets the created wording');
+  // The progress subtree must never reach the prerendered document — its
+  // ids are not in tests/baselines/shell-markup.json and its markup is
+  // not in the 338 declared dapp.json selectors. `created` starting null
+  // is what guarantees that.
+  assert.match(src, /useState<\{ slug: string; name: string \} \| null>\(null\)/,
+    'the progress view is gated on state that starts null');
   // Close resets the form, so a half-finished import is never inherited.
   assert.match(src, /formRef\.current\?\.reset\(\)/);
   // The home screen's "+" still opens it by name.
@@ -256,6 +403,14 @@ test('fork: takes its source from the open payload, POSTs to /fork', () => {
   assert.match(src, /useDialog<ForkSource>\('fork'/);
   assert.match(src, /\(fork\)`/, 'the "<name> (fork)" default is still suggested');
   assert.match(src, /\/fork`/);
+  // #1549: the 201 only starts the asynchronous copy. Keep the dialog open
+  // on the same progress report as create/import so a real failure reason is
+  // visible and a successful fork can be opened directly.
+  assert.match(src, /watchCreation\(slug\)/, 'the fork starts following its own slug');
+  assert.match(src, /setForked\(\{ slug/, 'the form swaps to the progress view');
+  assert.match(src, /mode="fork"/, 'the shared view uses fork-specific wording');
+  assert.match(src, /fetchCreationProgress\(creatingSlug/, 'a dropped websocket is recovered by polling');
+  assert.match(src, /if \(!slug\) \{/, 'only a malformed 201 falls back to close+toast');
   // _forkSource was a field on AppView; the payload replaces it. (The name
   // survives in app-view.js only in the comment that records the move.)
   assert.ok(!/^\s*_forkSource:/m.test(APP_VIEW),

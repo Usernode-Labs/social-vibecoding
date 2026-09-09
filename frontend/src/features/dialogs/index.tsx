@@ -31,6 +31,8 @@ import { MembersDialog } from './members';
 import { FeedbackDialog } from './feedback';
 import { ShareDialog } from './share';
 import { AppSecretsDialog } from './app-secrets';
+import { BoardFiltersDialog } from './board-filters';
+import { WalletRecoveryDialog } from './wallet-recovery';
 
 export function Dialogs() {
   return (
@@ -44,6 +46,18 @@ export function Dialogs() {
       <FeedbackDialog />
       <ShareDialog />
       <AppSecretsDialog />
+      {/*
+          Streamlined Concept: the Board's filter selects + "Waiting on you"
+          toggle, moved off the filter bar into a dialog. New markup (no
+          legacy baseline) appended LAST so the nine originals keep their
+          byte positions in the prerendered document.
+      */}
+      <BoardFiltersDialog />
+      {/*
+          Native-only migration recovery. New markup appended last so every
+          existing dialog keeps its byte position in the built document.
+      */}
+      <WalletRecoveryDialog />
     </>
   );
 }
@@ -58,4 +72,6 @@ export {
   FeedbackDialog,
   ShareDialog,
   AppSecretsDialog,
+  BoardFiltersDialog,
+  WalletRecoveryDialog,
 };

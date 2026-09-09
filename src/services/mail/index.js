@@ -2,7 +2,7 @@
 //
 // THE CONTRACT, which predates this module and must not change: a send
 // never throws and never returns a value the caller must check.
-// POST /api/v4/mobile/auth/otp/request is always-200 by contract (SPEC
+// POST /api/auth/otp/request is always-200 by contract (SPEC
 // 1667) precisely so it can't be used to enumerate accounts, and the
 // waitlist join has the same shape. So a provider outage, a missing
 // credential, a throttled recipient and a successful delivery must all
@@ -379,14 +379,50 @@ async function sendOtpMail(config, email, code) {
 // survey, and the bare survey link, which stays the durable "Want in
 // sooner?" home for anyone who stopped at the join. An idempotent re-join
 // mints no token and so carries neither.
-async function sendWaitlistJoinMail(config, email, { moreToken = null } = {}) {
+async function sendWaitlistJoinMail(config, email, { moreToken = null, code = null } = {}) {
   await send(config, {
     kind: 'waitlist_joined',
     to: email,
+    code,
     url: moreToken ? `${PRODUCTION_ORIGIN}/#more/${moreToken}` : null,
     confirmUrl: moreToken
       ? `${PRODUCTION_ORIGIN}/api/public/waitlist/confirm/${moreToken}`
       : null,
+  });
+}
+
+// A confirmation code the recipient asked for again: the resend endpoint,
+// and the re-join branch of the join endpoint. Its own kind, so the join
+// mail's one-per-day rule cannot swallow it and so the words are the ones
+// somebody chasing a code needs rather than a second welcome.
+//
+// `confirmed: true` is the check-my-status shape (#1538): the address
+// already has a confirmed_at, so the code proves the mailbox rather than
+// confirming it, and the mail's one button goes to the code-entry screen
+// carrying NO token. `code: null` is the degradation for that same
+// address when minting failed — the template's "nothing left to do"
+// shape, which is still true. The mail is the ONLY channel that discloses
+// confirmation state: the HTTP response is identical either way.
+//
+// The status URL is a QUERY, not a fragment. Link rewriters drop
+// fragments (#1545), and AuthScreens.enter() turns `?status=1` back into
+// the code-entry route on arrival.
+async function sendWaitlistCodeMail(
+  config,
+  email,
+  { code = null, moreToken = null, confirmed = false } = {}
+) {
+  await send(config, {
+    kind: 'waitlist_code',
+    to: email,
+    code,
+    confirmed,
+    confirmUrl: code && moreToken && !confirmed
+      ? `${PRODUCTION_ORIGIN}/api/public/waitlist/confirm/${moreToken}`
+      : null,
+    statusUrl: confirmed
+      ? `${PRODUCTION_ORIGIN}/?status=1`
+      : (!code && moreToken ? `${PRODUCTION_ORIGIN}/#more/${moreToken}` : null),
   });
 }
 
@@ -403,11 +439,51 @@ async function sendPasswordResetMail(config, email, token) {
   });
 }
 
-async function sendWaitlistReleaseMail(config, email, { hasAccount = false } = {}) {
+/**
+ * "Your Usernode access is ready" — the one mail whose whole job is a link.
+ *
+ * #1545: the destination is a QUERY, not a fragment. It was
+ * `/#signup`, and the report was that following it from a desktop mail client
+ * landed on the home page while the same mail worked from a phone. That is
+ * the signature of a link rewriter: a fragment is client-side only, so a
+ * scanner or tracker that rebuilds the URL has nothing to lose by dropping
+ * `#signup`, and what arrives is a bare `/`. Query strings survive that,
+ * because a rewriter has to carry them to reconstruct the address at all.
+ *
+ * `AuthScreens.enter()` already honoured `?signup=1` as "a pre-SPA link
+ * form"; it now honours `?login=1` the same way, and rewrites either to its
+ * hash route on arrival, so the address bar ends up exactly where the old
+ * link pointed. The fragment spelling still works for anything that already
+ * has one.
+ */
+async function sendWaitlistReleaseMail(config, email, { hasAccount = false, moreToken = null } = {}) {
   await send(config, {
     kind: 'waitlist_released',
     to: email,
-    url: `${PRODUCTION_ORIGIN}/#${hasAccount ? 'login' : 'signup'}`,
+    // #1548: carry a TOKEN so the signup screen can prefill the address and
+    // send the code without a second step.
+    //
+    // Not the address itself, and not a fragment, which were the two obvious
+    // options and are both wrong here:
+    //
+    //   A FRAGMENT is client-side only, so a link rewriter reconstructing the
+    //   URL drops it. That is exactly the bug #1545 fixed on this same mail:
+    //   it landed on the home page from a desktop client and worked from a
+    //   phone. A prefill carried in `#signup/<address>` would silently vanish
+    //   for the very people that fix was for.
+    //
+    //   THE ADDRESS IN A QUERY survives rewriters but puts an email in a URL,
+    //   which means server logs and referrers. For a waitlist, membership is
+    //   the fact people would least want landing there.
+    //
+    // `more_token` is already an unguessable capability delivered to this
+    // address, and GET /api/public/waitlist/more/:token already resolves it
+    // (rate-limited, scan-limited) and already returns the email. So this
+    // needs no new endpoint and no new secret: the query survives the
+    // rewriter, and what travels is a token the recipient already holds.
+    url: hasAccount
+      ? `${PRODUCTION_ORIGIN}/?login=1`
+      : `${PRODUCTION_ORIGIN}/?signup=1${moreToken ? `&t=${encodeURIComponent(moreToken)}` : ''}`,
     hasAccount,
   });
 }
@@ -418,6 +494,7 @@ module.exports = {
   sendOtpMail,
   sendPasswordResetMail,
   sendWaitlistJoinMail,
+  sendWaitlistCodeMail,
   sendWaitlistReleaseMail,
   pruneDeliveries,
   buildMessage,

@@ -1,6 +1,7 @@
 'use strict';
 
 const sharedObjects = require('./shared-objects');
+const messageBookmarks = require('./message-bookmarks');
 
 const MAX_ID = 2147483647;
 const MAX_MESSAGE_LENGTH = 8000;
@@ -257,7 +258,7 @@ function attachmentGroups(rows, conversationId) {
 async function hydrateMessages(db, user, rows) {
   if (!rows.length) return [];
   const ids = rows.map((row) => row.id);
-  const [reactionResult, attachmentResult, objects] = await Promise.all([
+  const [reactionResult, attachmentResult, objects, savedIds] = await Promise.all([
     db.query(
       `SELECT r.message_id, r.user_id, r.emoji, u.username
          FROM conversation_message_reactions r
@@ -274,6 +275,12 @@ async function hydrateMessages(db, user, rows) {
       [ids]
     ),
     sharedObjects.hydrateForMessages(db, user, ids),
+    // Which of these the viewer has saved, so the row's bookmark renders
+    // already filled rather than flashing empty and correcting itself. It
+    // rides this Promise.all for the same reason the other three do — one
+    // round of latency for the whole page — and returns an empty Set for an
+    // anonymous viewer, so no branch is needed below.
+    messageBookmarks.savedConversationMessageIdsFor(db, user && user.id, ids),
   ]);
   const reactions = reactionGroups(reactionResult.rows, user.id);
   const attachments = attachmentGroups(attachmentResult.rows, rows[0].conversation_id);
@@ -300,6 +307,7 @@ async function hydrateMessages(db, user, rows) {
     reactions: reactions.get(row.id) || [],
     attachments: attachments.get(row.id) || [],
     objects: objects.get(row.id) || [],
+    saved: savedIds.has(row.id),
   }));
 }
 

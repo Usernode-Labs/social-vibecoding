@@ -3,19 +3,38 @@
 //
 // The two authored top bars — #platform-header (signed-in shell: home, app
 // view, leaderboard, profile, settings, admin console) and #landing-header
-// (anonymous shell) — are `py-3` + a 1px hairline around a 28px CONTENT ROW,
-// i.e. 53px + env(safe-area-inset-top), everywhere.
+// (anonymous shell) — are `pt-3 pb-5` around a 28px CONTENT ROW, i.e.
+// 60px + env(safe-area-inset-top), everywhere.
+//
+// It was `py-3` (52px) until the bottom padding grew. #platform-header also
+// carries `-mb-2`, which pulls the screen below it 8px UP into the bar to cut
+// the `rounded-b-2xl` notch — so the controls had 12px of padding minus an
+// 8px overlap, i.e. four pixels, between them and whatever came next. On the
+// routes where that next thing is a raised sheet with a 28px radius and a
+// shadow reaching up (inside an app, inside a proposal session) the chip, the
+// bell and Improve sat on its lip. `pb-5` restores the 12px the notch spends.
+//
+// It was 53px until the reskin, when both bars lost the 1px `border-b`
+// hairline they had carried: the widget language draws no rule under a top
+// bar — the page ground runs to the top of the screen and the controls float
+// on it. What this file pins is PARITY and the 28px row, not the constant, so
+// the hairline assertion below inverted rather than disappeared: it now
+// asserts NEITHER bar has one, which is what catches a rule re-added to one
+// shell and not the other.
 //
 // Neither header declares a height: they're flex rows, so the row is
 // max(child heights) and the height silently followed whichever children
 // happened to be present on that screen:
 //
-//   home                 53px  (#header-title's text-lg = 28px line box)
+//   home                 53px  (#header-title's text-lg = 28px line box, +
+//                               the hairline both bars carried back then)
 //   inside an app        55px  (#app-mode-switch was 30px: py-1 segments
 //                               = 24px + p-0.5 = 4px + 1px border × 2)
 //   landing, >= 640px    61px  (CTAs were sm:py-2 sm:text-sm = 36px)
-//   home, native WebView 45px  (html.in-native-webview hides the title, and
-//                               the 20px icon buttons were all that was left)
+//   home, native WebView 45px  (html.in-native-webview USED to hide the
+//                               title, leaving only 20px icon buttons; the
+//                               title is drawn there now, and the 28px
+//                               content-row floor is what holds the height)
 //
 // So the row is pinned from BOTH directions and this file is what keeps it
 // pinned — a "tidy up the header" edit that re-adds vertical padding to a
@@ -43,9 +62,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { shellMarkup } = require('./lib/shell-markup');
 
 const root = path.join(__dirname, '..');
-const html = fs.readFileSync(path.join(root, 'public/index.html'), 'utf8');
+const html = shellMarkup();
 const css = fs.readFileSync(path.join(root, 'public/css/app.css'), 'utf8');
 
 // The markup of one <header> element, opening tag through </header>.
@@ -74,15 +94,32 @@ const BARS = [
   { id: 'landing-header', slice: headerSlice('landing-header') },
 ];
 
-test('both top bars carry the identical shape: py-3, 1px hairline, safe-area', () => {
+test('both top bars carry the identical shape: pt-3/pb-5, no hairline, safe-area', () => {
   for (const bar of BARS) {
     const tag = openingTag(bar.slice);
-    // 12px top+bottom padding around the content row.
-    assert.match(tag, /\bpy-3\b/,
-      `#${bar.id} keeps py-3 — the 12px half of the 53px total`);
-    // The hairline is part of the height (border-box), so it's part of parity.
-    assert.match(tag, /\bborder-b\b/,
-      `#${bar.id} keeps its 1px bottom hairline`);
+    // 12px above and 20px below the content row. NOT symmetric, and not by
+    // accident: `-mb-2` on #platform-header pulls the screen below it 8px up
+    // to cut the notch every platform surface reads as its rounded top, and
+    // that 8px comes out of the bottom padding. At py-3 the controls had four
+    // pixels of clearance, which nobody could see until the thing below was a
+    // raised sheet (an app, a proposal session) instead of a transparent
+    // screen root. pb-5 buys it back.
+    //
+    // PARITY, NOT SYMMETRY, is what this file is for: both bars carry the
+    // same pair, so both are 60px and the bar does not jump as you sign in.
+    assert.match(tag, /\bpt-3\b/,
+      `#${bar.id} keeps pt-3 — 12px above the row`);
+    assert.match(tag, /\bpb-5\b/,
+      `#${bar.id} keeps pb-5 — 20px below it, 8px of which the notch spends`);
+    assert.doesNotMatch(tag, /\bpy-\d/,
+      `#${bar.id} states its vertical padding once, as the pt/pb pair`);
+    // A bottom border is part of the height (border-box), so it is part of
+    // parity — which is why this is asserted at all rather than left alone.
+    // The reskin removed the hairline from BOTH bars; re-adding it to one
+    // makes that shell a pixel taller than the other, and the bar visibly
+    // jumps as you sign in.
+    assert.doesNotMatch(tag, /\bborder-b\b/,
+      `#${bar.id} draws no rule under it — the page ground runs to the top`);
     // Adds env(safe-area-inset-top) to padding-top (native.css). Both bars
     // must opt in, or the phone status bar overlaps one shell and not the
     // other.
@@ -95,51 +132,64 @@ test('both top bars carry the identical shape: py-3, 1px hairline, safe-area', (
   }
 });
 
-test('FLOOR: the lead back-button wrapper is 28px tall (and still 20px wide)', () => {
+test('FLOOR: each bar holds its 28px content row open', () => {
   for (const bar of BARS) {
-    // First element inside the header: the fixed-size wrapper holding the
-    // back button. `h-7` is what holds the row open when #header-title is
-    // hidden (native WebView); `flex items-center` centres the 20px icon
-    // inside those 28px.
-    const wrapper = withoutComments(bar.slice).match(/<div class="([^"]*\bw-5\b[^"]*)"/);
-    assert.ok(wrapper, `#${bar.id} still has its w-5 back-button wrapper`);
-    const classes = wrapper[1].split(/\s+/);
-    assert.ok(classes.includes('h-7'),
-      `#${bar.id}'s back-btn wrapper carries h-7 — the header's 28px content-row floor`);
+    // `h-7` on the bar's LEAD GROUP is what holds the row open when
+    // #header-title is hidden (native WebView), and `flex items-center`
+    // centres whatever is in it inside those 28px. That is the floor, and it
+    // is the whole of what parity requires.
+    //
+    // WIDTH IS NO LONGER PART OF IT, and only on the platform bar. The fixed
+    // `w-7` box existed to (a) keep a CENTRED title from shifting as the back
+    // anchor came and went and (b) hold either the arrow or the app glyph,
+    // which never drew together. #1443 retired the app glyph and made the
+    // chip the header's flush-left label, so the box had one occupant and no
+    // centring to protect — all it did was reserve an inch of dead space at
+    // the top-left of every root screen.
+    //
+    // The landing bar still has its w-7 box: its title IS centred and its
+    // back button still comes and goes, so the reason survives there. Two
+    // bars, one floor, and the width rule kept exactly where it still buys
+    // something.
+    const lead = withoutComments(bar.slice).match(/<div[^>]*class="([^"]*\bh-7\b[^"]*)"/);
+    assert.ok(lead, `#${bar.id} still has a lead group carrying the 28px floor`);
+    const classes = lead[1].split(/\s+/);
     assert.ok(classes.includes('flex') && classes.includes('items-center'),
-      `#${bar.id}'s back-btn wrapper centres its icon in those 28px`);
-    // features/header/use-header-layout.ts measures this element as the
-    // title's left side group (leftGroup.offsetWidth) — the WIDTH must stay
-    // fixed at 20px or the centering measurement drifts.
-    assert.ok(classes.includes('w-5') && classes.includes('shrink-0'),
-      `#${bar.id}'s back-btn wrapper stays w-5 shrink-0 (the header-layout hook measures it)`);
+      `#${bar.id}'s lead group centres its content in those 28px`);
+    assert.ok(classes.includes('shrink-0'),
+      `#${bar.id}'s lead group never compresses below the floor`);
+    if (bar.id === 'landing-header') {
+      assert.ok(classes.includes('w-7'),
+        '#landing-header keeps its fixed 28px box — its title is centred');
+    }
   }
 });
 
-test('CEILING: the App/Dev switch is exactly the 28px row, segments stretch to fill', () => {
-  const tag = html.match(/<div id="app-mode-switch"[\s\S]*?>/)[0];
-  // Was 30px (24px segments + 4px p-0.5 + 2px border) — the whole of #909.
+test('CEILING: the Improve button is exactly the 28px row', () => {
+  // THE UI OVERHAUL replaced #app-mode-switch with #improve-btn, and the
+  // invariant transferred WITH it: this is the one child that appears in the
+  // bar when an app opens, so its height IS the in-app header height. The
+  // switch it replaced was 30px for a while (24px segments + 4px p-0.5 + 2px
+  // border), which quietly made the in-app header 2px taller than every other
+  // screen's — the whole of #909. Pinning the replacement to h-7 is what stops
+  // that recurring with a differently-shaped control.
+  const tag = html.match(/<button id="improve-btn"[\s\S]*?>/)[0];
   assert.match(tag, /\bh-7\b/,
-    'the App/Dev switch is pinned to the header\'s 28px content row');
-  assert.match(tag, /\bitems-stretch\b/,
-    'segments stretch to the track height instead of being sized by their own padding');
-  assert.doesNotMatch(tag, /\bitems-center\b/,
-    'items-center would let the segments size the control again');
-  // The switch is the only child that appears when an app opens, so its
-  // height IS the in-app header height. Vertical padding on the segments
-  // is exactly what made the bar 2px taller than every other screen.
-  const segs = html.match(/class="app-mode-seg[^"]*"/g) || [];
-  assert.equal(segs.length, 2, 'two App/Dev segments');
-  for (const seg of segs) {
-    assert.doesNotMatch(seg, /\b(?:sm:)?py-\d/,
-      'App/Dev segments carry no vertical padding — the h-7 track owns the height');
-    assert.doesNotMatch(seg, /\b(?:sm:)?h-\d/,
-      'App/Dev segments take their height from the stretched track, not their own h-*');
-    // They still have to be tappable across the full track and keep their
-    // labels centred, which is what flex items-center buys.
-    assert.match(seg, /\bflex\b/, 'App/Dev segment is a flex box');
-    assert.match(seg, /\bitems-center\b/, 'App/Dev segment centres its label vertically');
-  }
+    "the Improve button is pinned to the header's 28px content row");
+  assert.doesNotMatch(tag, /\b(?:sm:)?py-\d/,
+    'the Improve button carries no vertical padding — h-7 owns the height');
+  // It has a text label as well as a glyph, so it must centre its content
+  // vertically rather than letting the two children set their own baseline.
+  assert.match(tag, /\bitems-center\b/,
+    'the Improve button centres its glyph and label vertically');
+  assert.match(tag, /\binline-flex\b/, 'the Improve button is a flex box');
+  // …and SPACES them. There was no gap at all, so the glyph and the "I" of
+  // Improve met — one smudged mark rather than a state cue in front of a
+  // label, worst on the spinner (whose arc carries no bounding whitespace)
+  // and on the arrow-path (whose head reaches the glyph box's edge). A gap
+  // is a horizontal cost only, so the 28px ceiling above is untouched.
+  assert.match(tag, /\bgap-1\.5\b/,
+    'the glyph and the label are spaced like the header group they sit in');
 });
 
 test('CEILING: the landing CTAs stay 28px at every width', () => {
@@ -200,8 +250,9 @@ test('badges still overflow the row rather than being clipped', () => {
   const platform = BARS.find((b) => b.id === 'platform-header').slice;
   assert.match(platform, /id="notifications-badge"[^>]*-top-1/,
     'the bell badge still hangs off the top-right corner');
-  assert.match(platform, /id="notifications-badge-ai"[^>]*-top-1/,
-    'the work-cog badge is positioned identically to the bell badge');
+  assert.match(platform, /id="improve-working-dot"[^>]*-top-1/,
+    'and the Improve button\'s working dot hangs off the same corner (#1610 '
+    + 'retired the green count that used to sit there)');
 });
 
 test('the invariant is documented where the next editor will look', () => {
@@ -214,15 +265,15 @@ test('the invariant is documented where the next editor will look', () => {
   assert.match(head, /28px/, 'the block states the content-row height');
   assert.match(head, /header-layout/,
     'the block warns that the w-5 width is measured by the header-layout code');
-  // The stale "Kept at 28px tall" claim on #app-mode-switch was wrong for as
-  // long as it existed (it omitted the border) — the shell comment must now
-  // describe the pinned height instead of asserting an arithmetic result.
-  const switchComment = html.slice(
-    html.lastIndexOf('<!--', html.indexOf('<div id="app-mode-switch"')),
-    html.indexOf('<div id="app-mode-switch"'),
-  );
-  assert.match(switchComment, /h-7/,
-    'the App/Dev switch comment points at the class that pins its height');
+  // The stale "Kept at 28px tall" claim on the retired #app-mode-switch was
+  // wrong for as long as it existed (it omitted the border), so the rule is
+  // that the source comment names the CLASS that pins the height rather than
+  // asserting an arithmetic result. #improve-btn inherited both the slot and
+  // the rule — see features/improve/improve-button.tsx.
+  const buttonSrc = fs.readFileSync(
+    path.join(root, 'frontend/src/features/improve/improve-button.tsx'), 'utf8');
+  assert.match(buttonSrc, /h-7` matches the header's 28px content-row ceiling|h-7`? matches the header/,
+    'the Improve button comment points at the class that pins its height');
 });
 
 test('no JS sets a header height — the contract lives entirely in markup + CSS', () => {
@@ -237,4 +288,55 @@ test('no JS sets a header height — the contract lives entirely in markup + CSS
   const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
   assert.doesNotMatch(appJs, /getElementById\('platform-header'\)\.style/,
     'app.js never writes #platform-header inline styles');
+});
+
+// ── The native WebView shows the in-page title ────────────────────────
+//
+// It was hidden under `html.in-native-webview` because the Flutter shell puts
+// the screen name in its own AppBar — a real arrangement, not a guess:
+// App.setHeaderTitle posts `titleChanged` to it. On a device that read as a
+// screen with no title at all, so the in-page one is drawn there too.
+//
+// Pinned because the obvious "tidy up" is to restore the hide: the CSS rule
+// reads like dead weight next to the AppBar message, and the two halves live
+// in different files.
+
+test('no rule hides the header title in the native WebView', () => {
+  const css = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const rules = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.doesNotMatch(rules, /in-native-webview[^{]*#header-title[^{]*\{[^}]*display:\s*none/,
+    'the native WebView must not hide #header-title');
+  // The class itself stays — it still gates the safe-area and native
+  // performance rules, so this is not "delete the detection".
+  assert.match(rules, /html\.un-ios\.in-native-webview/,
+    'the native marker class is still load-bearing elsewhere');
+});
+
+test('the title is left-aligned on a phone by an explicit rule, not by a native branch', () => {
+  // The request was "left justified, leaving space for the home icon, since
+  // there wouldn't be room to centre".
+  //
+  // This test used to assert that the EXISTING measurement already produced
+  // that, on the reasoning that a 390px viewport carrying #improve-btn and
+  // the hamburger could never satisfy
+  //   titleNaturalW <= headerW - 2 * (max(sideGroup) + gap)
+  // for a real title. That was wrong twice over, and the preview showed it:
+  // "Settings" DID satisfy it, and the formula was over-reporting the room by
+  // the header's own `px-4` on each side, so the centred title overlapped the
+  // Improve button. Both halves are fixed in use-header-layout.ts and pinned
+  // in tests/header-title-centering.test.js, which drives the arithmetic
+  // directly on the measurements that failed.
+  //
+  // What belongs HERE is the part that is about this file's subject — that
+  // alignment stays ONE rule for every surface, with no native-webview branch
+  // to drift out of sync with the browser one.
+  const hook = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src',
+    'features', 'header', 'use-header-layout.ts'), 'utf8');
+  assert.match(hook, /const CENTER_MIN_WIDTH_PX = 640;/,
+    'a phone is left-aligned by a stated breakpoint, not by hoping the maths says so');
+  assert.match(hook, /const canCenter = canCenterTitle\(\{/,
+    'and the decision goes through the one exported, tested function');
+  assert.doesNotMatch(hook, /in-native-webview|isNative/,
+    'alignment is one geometric rule for every surface');
 });

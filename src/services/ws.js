@@ -1,3 +1,4 @@
+const { nativeWebSessionIsLive } = require('./web-session-auth');
 const http = require('http');
 const { WebSocketServer } = require('ws');
 const { getPool } = require('../db/pool');
@@ -7,6 +8,7 @@ const notifications = require('./notifications');
 const events = require('./events');
 const appAccess = require('./app-access');
 const attachmentsSvc = require('./attachments');
+const wsBus = require('./ws-bus');
 
 // #328: server-side cap on a single chat message body. Must match the
 // composer `maxlength` (GC_MAX_MESSAGE_LEN in public/js/group-chat.js) — both
@@ -25,9 +27,55 @@ let _pool = null;
 const rooms = new Map(); // appId -> Set<{ ws, user }>
 const globalClients = new Set(); // Set<{ ws, user }> for /ws/events
 
+// A message from ANOTHER instance. Route it through the same local delivery
+// the emitting pod already ran, so one code path decides who may see what.
+//
+// `oversize` means the payload did not fit in a NOTIFY (8000 bytes) and was
+// not sent. The audience still needs to know something moved, so they get the
+// nudge their own reconnect path already handles — `resyncCurrentView` in
+// public/js/app.js — rather than a truncated event.
+function _onBusMessage({ kind, routing, data, oversize }) {
+  const r = routing || {};
+  const payload = oversize ? { type: 'resync_hint' } : data;
+  if (payload == null) return;
+  switch (kind) {
+    case 'global':
+      deliverGlobal(payload);
+      return;
+    case 'room':
+      if (r.appId != null) deliverToRoom(r.appId, payload);
+      return;
+    case 'scoped':
+      // An oversize scoped event degrades to a GLOBAL nudge rather than a
+      // scoped one: "re-pull what you are looking at" leaks nothing, and
+      // running the visibility lookup to decide who may receive a content-free
+      // hint would cost a query per instance to protect nothing.
+      if (oversize) deliverGlobal(payload);
+      else deliverGlobalScoped(payload, { appId: r.appId ?? null, appSlug: r.appSlug ?? null });
+      return;
+    case 'admins':
+      deliverToAdmins(payload);
+      return;
+    case 'user':
+      if (r.userId != null) deliverToUser(r.userId, payload);
+      return;
+    default:
+      log.warn('ws', 'unknown bus kind', { kind });
+  }
+}
+
 function attach(server, config) {
   const pool = getPool(config);
   _pool = pool;
+
+  // Cross-instance fan-out. A single-pod deployment (the shipped default)
+  // behaves exactly as before: every event is still delivered locally first,
+  // and its own echo is dropped by instance id.
+  wsBus.start({
+    pool,
+    connectionString: config.databaseUrl,
+    onMessage: _onBusMessage,
+  });
 
   wss = new WebSocketServer({ noServer: true });
 
@@ -160,7 +208,7 @@ async function authenticateWsCookie(req, pool) {
     const { rows } = await pool.query(
       `SELECT s.user_id, s.expires_at, u.username, u.is_admin
        FROM sessions s JOIN users u ON s.user_id = u.id
-       WHERE s.token = $1`,
+       WHERE s.token = $1 AND ${nativeWebSessionIsLive('s')}`,
       [token]
     );
 
@@ -246,7 +294,11 @@ function leaveRoom(appId, client) {
   }
 }
 
-function broadcast(appId, data, excludeWs = null) {
+// LOCAL delivery. Every `deliver*` below sends to this process's sockets and
+// nothing else; the `broadcast*` wrappers do that AND fan out to the other
+// instances. Splitting them is what lets a bus message replay the identical
+// local half on a remote pod without re-publishing it into a loop.
+function deliverToRoom(appId, data, excludeWs = null) {
   const room = rooms.get(appId);
   if (!room) return;
   const payload = JSON.stringify(data);
@@ -257,8 +309,15 @@ function broadcast(appId, data, excludeWs = null) {
   }
 }
 
+// `excludeWs` is deliberately NOT published: it identifies a socket object in
+// THIS process, and the sender it excludes cannot be connected to another one.
+function broadcast(appId, data, excludeWs = null) {
+  deliverToRoom(appId, data, excludeWs);
+  wsBus.publish('room', { appId }, data);
+}
+
 // Broadcast to all connected clients (global events like app status changes)
-function broadcastGlobal(data) {
+function deliverGlobal(data) {
   const payload = JSON.stringify(data);
   let sent = 0;
   for (const client of globalClients) {
@@ -270,6 +329,11 @@ function broadcastGlobal(data) {
   if (data.event === 'cc_progress' && sent === 0 && globalClients.size === 0) {
     log.debug('ws', 'broadcastGlobal: no clients connected');
   }
+}
+
+function broadcastGlobal(data) {
+  deliverGlobal(data);
+  wsBus.publish('global', null, data);
 }
 
 // #194: validate an inbound thread reference { type, ref } for an app.
@@ -886,16 +950,20 @@ function getOnlineUsers(appId) {
 // Membership comes from appAccess.getWsVisibility's 10s TTL cache, so
 // this is at most one query per app per window. Fail-closed: if the
 // lookup errors we drop the event (a stale UI beats a privacy leak).
-function broadcastGlobalScoped(payload, { appId = null, appSlug = null } = {}) {
+// The visibility lookup runs on EVERY instance rather than being resolved once
+// and shipped: membership decides who may see this, each pod holds its own
+// sockets and its own 10s cache, and a fail-closed rule has to be able to fail
+// closed locally. So the bus carries the routing, not the answer.
+function deliverGlobalScoped(payload, { appId = null, appSlug = null } = {}) {
   if (!_pool || (appId == null && !appSlug)) {
-    broadcastGlobal(payload);
+    deliverGlobal(payload);
     return;
   }
   appAccess.getWsVisibility(_pool, { appId, appSlug })
     .then((info) => {
       if (!info) return; // app gone — nothing to broadcast
       if (!info.viewPrivate) {
-        broadcastGlobal(payload);
+        deliverGlobal(payload);
         return;
       }
       const json = JSON.stringify(payload);
@@ -909,6 +977,11 @@ function broadcastGlobalScoped(payload, { appId = null, appSlug = null } = {}) {
     .catch((err) => {
       log.warn('ws', 'scoped broadcast dropped', { type: payload.type, err: err.message });
     });
+}
+
+function broadcastGlobalScoped(payload, opts = {}) {
+  deliverGlobalScoped(payload, opts);
+  wsBus.publish('scoped', { appId: opts.appId ?? null, appSlug: opts.appSlug ?? null }, payload);
 }
 
 // Push an app status update to all connected clients (filtered for
@@ -926,9 +999,55 @@ function pushAppStatusUpdate(app) {
   }, { appId: app.id, appSlug: app.slug });
 }
 
+// Push one creation-phase update for an app that is still 'creating'.
+//
+// Rides the SAME `app_status` message the terminal transitions above
+// use — clients already receive and dispatch it — with `phase` as the
+// only new field. Scoped identically to pushAppStatusUpdate, which is
+// the whole reason this does not live in app-deploy-status.js: that
+// module broadcasts unscoped, and a brand-new app may be view-private.
+//
+// `status` is pinned to 'creating' rather than read off the row: the
+// caller is inside createApp, where that is the only status the row can
+// have, and a stale read here would race the terminal update.
+function pushAppCreationPhase(app) {
+  broadcastGlobalScoped({
+    type: 'app_status',
+    appId: app.id,
+    slug: app.slug,
+    status: 'creating',
+    url: null,
+    errorReason: null,
+    phase: app.phase,
+  }, { appId: app.id, appSlug: app.slug });
+}
+
+// Board-change listeners (services/workshop-themes.js registers one from
+// server.js). A card arriving on, or leaving, an app's board is what the
+// Workshop's placement stage waits for, and every such change already
+// passes through pushSessionUpdate or pushIssueUpdate — so the hook lives
+// here rather than at the thirty call sites. Listeners are told only which
+// app; they read the board themselves. A listener that throws is logged
+// and never breaks the broadcast.
+const boardChangeListeners = [];
+function onBoardChange(fn) {
+  if (typeof fn === 'function') boardChangeListeners.push(fn);
+}
+function noteBoardChange(data) {
+  if (!data || (data.appId == null && !data.appSlug)) return;
+  for (const fn of boardChangeListeners) {
+    try {
+      fn({ appId: data.appId ?? null, appSlug: data.appSlug ?? null });
+    } catch (err) {
+      log.warn('ws', 'board change listener failed', { message: err.message });
+    }
+  }
+}
+
 function pushSessionUpdate(data) {
   broadcastGlobalScoped({ type: 'session_update', ...data },
     { appId: data.appId, appSlug: data.appSlug });
+  noteBoardChange(data);
 }
 
 // #1038: live working-state for one session (services/session-state.js).
@@ -996,6 +1115,18 @@ function pushAppUpdate(data) {
 function pushIssueUpdate(data) {
   broadcastGlobalScoped({ type: 'issue_update', ...data },
     { appId: data.appId, appSlug: data.appSlug });
+  noteBoardChange(data);
+}
+
+// The Workshop's grouping for an app moved — cards were placed into
+// themes, or the themes were re-drafted (`stage`) — so every open Workshop
+// re-fetches GET /api/apps/:slug/workshop-themes. Same scoping as the
+// board's other fan-outs: the grouping is built from shared-visibility
+// data, so a member of a view-private app may hear about it and nobody
+// else.
+function pushWorkshopUpdate(data) {
+  broadcastGlobalScoped({ type: 'workshop_update', ...data },
+    { appId: data.appId, appSlug: data.appSlug });
 }
 
 // #613: the manual card order in a Dev-board column changed — fan out so
@@ -1015,7 +1146,7 @@ function pushBoardOrderUpdate(data) {
 // operational inventory of every app on the box, so it must not go out over
 // broadcastGlobal, which reaches every connected client. View-only admins
 // are included deliberately — they can watch, they just can't start one.
-function broadcastToAdmins(payload) {
+function deliverToAdmins(payload) {
   const json = JSON.stringify(payload);
   let sent = 0;
   for (const client of globalClients) {
@@ -1027,12 +1158,21 @@ function broadcastToAdmins(payload) {
   return sent;
 }
 
+// The return value counts THIS instance's admins, which is what every caller
+// uses it for (a debug tally). It is not a cluster-wide count and does not
+// claim to be.
+function broadcastToAdmins(payload) {
+  const sent = deliverToAdmins(payload);
+  wsBus.publish('admins', null, payload);
+  return sent;
+}
+
 // Send a payload to every /ws/events socket belonging to `userId`. Used for
 // @mention delivery — a single user may have multiple tabs open — and, since
 // #1038, for the owner-only fan-out of a private session's working state.
 // `pushNotificationToUser` is kept as an alias so the notification call sites
 // above (and any external caller) read naturally and don't have to churn.
-function pushToUser(userId, payload) {
+function deliverToUser(userId, payload) {
   const json = JSON.stringify(payload);
   let sent = 0;
   for (const client of globalClients) {
@@ -1041,6 +1181,15 @@ function pushToUser(userId, payload) {
       sent++;
     }
   }
+  return sent;
+}
+
+// One person's tabs are not guaranteed to land on one instance, so an
+// @mention delivered only locally reaches whichever half of their sessions
+// happens to share a pod with the emitter.
+function pushToUser(userId, payload) {
+  const sent = deliverToUser(userId, payload);
+  wsBus.publish('user', { userId }, payload);
   return sent;
 }
 
@@ -1085,4 +1234,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null } 
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushToUser, pushConversationEvent, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
+module.exports = { attach, broadcast, _onBusMessage, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };

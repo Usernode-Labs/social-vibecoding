@@ -94,8 +94,96 @@ export function init() {
     // Feedback
     const feedbackTitle = document.getElementById('feedback-title');
     const feedbackText = document.getElementById('feedback-text');
+
+    /**
+     * Lock the composer after a send, WITHOUT taking focus off it (#1492).
+     *
+     * This used to set `disabled`, and a disabled element cannot hold focus.
+     * On a phone that blurs the textarea the moment Submit succeeds, which
+     * tears the on-screen keyboard down — and the keyboard is what the visual
+     * viewport is measured against. `html, body { height: 100dvh }` (app.css)
+     * means the whole fixed column then reflows, the modal resizes under the
+     * "Submitted" label, and 1.5s later the close reflows it a second time.
+     * Two full relayouts around one tap is the stutter that was reported, and
+     * it is a mobile-only symptom because only a phone has a keyboard taking
+     * half the viewport.
+     *
+     * `readOnly` refuses typing exactly as #32 needs, and keeps focus, so the
+     * keyboard comes down ONCE — when the dialog actually closes. It also
+     * leaves the text selectable, so somebody whose send failed can still copy
+     * what they wrote.
+     *
+     * The submit BUTTON stays `disabled`: it holds no caret and dismisses no
+     * keyboard, and disabled is the honest state for a control that must not
+     * fire.
+     */
+    const setComposerLocked = (locked) => {
+      feedbackText.readOnly = locked;
+      feedbackTitle.readOnly = locked;
+    };
     const feedbackBtn = document.getElementById('feedback-submit');
     const feedbackStatus = document.getElementById('feedback-status');
+    const feedbackForm = document.getElementById('feedback-form');
+    const firstSuccess = document.getElementById('feedback-first-success');
+    const firstNotice = document.getElementById('feedback-first-notice');
+    const firstFix = document.getElementById('feedback-first-fix');
+    const firstFixNote = document.getElementById('feedback-first-fix-note');
+    const firstBoard = document.getElementById('feedback-first-board');
+    let firstFeedback = null;
+    let pendingFirstFeedback = null;
+    let closeTimer = null;
+    let presentation = 0;
+
+    const showFirstFeedback = (moment, notice) => {
+      if (!moment || Number(moment.userId) !== Number(App.user?.id)) return false;
+      clearTimeout(closeTimer);
+      firstFeedback = moment;
+      pendingFirstFeedback = null;
+      // readOnly, not disabled: disabling these two drops focus and takes
+      // the keyboard down with it, which is the bug #1757 fixed on the send
+      // paths. This path was added separately and kept the old writes, so
+      // the two changes were green apart and red together.
+      setComposerLocked(true);
+      feedbackBtn.disabled = true;
+      const hasBoard = typeof moment.appSlug === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(moment.appSlug);
+      firstFix.disabled = !hasBoard || !moment.canFix || !Number.isSafeInteger(moment.issueNumber) || moment.issueNumber <= 0;
+      firstBoard.disabled = !hasBoard;
+      firstFixNote.textContent = firstFix.disabled
+        ? (hasBoard ? 'You need collaborator access to try a fix. You can still explore the board.' : 'This repository does not have an app board you can access here.')
+        : 'Start with a draft you can edit before sending it to the coding agent.';
+      firstNotice.textContent = notice || 'Your feedback has been sent.';
+      feedbackForm.classList.add('hidden');
+      firstSuccess.classList.remove('hidden');
+      firstSuccess.focus();
+      return true;
+    };
+
+    const closeFeedback = () => document.getElementById('feedback-cancel').click();
+    document.getElementById('feedback-first-done')?.addEventListener('click', closeFeedback);
+    firstBoard?.addEventListener('click', () => {
+      const moment = firstFeedback;
+      if (!moment || firstBoard.disabled || Number(moment.userId) !== Number(App.user?.id)) return;
+      closeFeedback();
+      location.hash = `#app/${encodeURIComponent(moment.appSlug)}/board`;
+    });
+    firstFix?.addEventListener('click', async () => {
+      const moment = firstFeedback;
+      if (!moment || firstFix.disabled || Number(moment.userId) !== Number(App.user?.id)) return;
+      firstFix.disabled = true;
+      closeFeedback();
+      try {
+        await App.navigateToApp(moment.appSlug, 'dev', moment.issueNumber, 'issues');
+        if (App.currentApp === moment.appSlug && AppView.appData?.slug === moment.appSlug
+            && Number(moment.userId) === Number(App.user?.id)) {
+          await AppView.createPrForIssue(moment.issueNumber);
+        }
+      } catch (err) {
+        PlatformUI.toast('Could not open a fix just now. You can try again from the issue on the board.');
+      }
+    });
+    // #1603: the inline refusal under the description. Rendered empty and
+    // hidden by ./feedback.tsx; this module owns its text and its `hidden`.
+    const feedbackTextError = document.getElementById('feedback-text-error');
     const feedbackTargetApp = document.getElementById('feedback-target-app');
     const feedbackTargetPlatform = document.getElementById('feedback-target-platform');
     const feedbackCaretApp = document.getElementById('feedback-caret-app');
@@ -130,9 +218,13 @@ export function init() {
       const exhausted = remaining === 0;
       bountyCheckbox.disabled = exhausted;
       bountyRow.classList.toggle('opacity-60', exhausted);
-      if (remaining === null) bountyNote.textContent = '';
-      else if (exhausted) bountyNote.textContent = `You've used all ${limit} kudos this week — resets Monday 00:00 UTC.`;
-      else bountyNote.textContent = `${remaining} of ${limit} kudos left this week`;
+      // #1582: the row's own line says what a bounty DOES, so the price of
+      // ticking the box is stated here, beside the live figure. It is on
+      // screen in every state the box can be ticked in — including the one
+      // where the budget fetch failed and there is no figure to show.
+      if (remaining === null) bountyNote.textContent = 'Costs 1 kudos';
+      else if (exhausted) bountyNote.textContent = `You've used all ${limit} kudos this week. Resets Monday 00:00 UTC.`;
+      else bountyNote.textContent = `Costs 1 kudos. ${remaining} of ${limit} left this week`;
       bountyRow.classList.remove('hidden');
     };
     // The selected option uses a darker violet on hover so it keeps its
@@ -250,7 +342,11 @@ export function init() {
         generateTitlePreview();
       }, TITLE_GEN_DEBOUNCE_MS);
     };
-    feedbackText.addEventListener('input', scheduleTitlePreview);
+    feedbackText.addEventListener('input', () => {
+      // #1603: typing is the fix, so the refusal goes as soon as it starts.
+      clearDescriptionError();
+      scheduleTitlePreview();
+    });
     // Leaving the description flushes the pending debounce immediately —
     // the "type body → title appears → submit" happy path.
     feedbackText.addEventListener('blur', () => {
@@ -346,8 +442,31 @@ export function init() {
 
     const showFeedbackNotice = (text, isError) => {
       feedbackStatus.textContent = text;
-      feedbackStatus.className = `text-sm mt-2 ${isError ? 'text-red-400' : 'text-zinc-400'}`;
+      feedbackStatus.className = `text-sm mt-2 ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
       feedbackStatus.classList.remove('hidden');
+    };
+
+    // #1603: the empty-description refusal. Deliberately NOT routed through
+    // showFeedbackNotice: #feedback-status has four writers with a "newer and
+    // more specific wins" rule (see paintQueueState), so a validation message
+    // there would either be suppressed by the offline hint or erase it. This
+    // one lives on the field it is about, which is also where the fix is.
+    const showDescriptionError = () => {
+      if (!feedbackTextError) return;
+      feedbackTextError.textContent = 'Please add a description.';
+      feedbackTextError.classList.remove('hidden');
+      feedbackText.setAttribute('aria-invalid', 'true');
+      feedbackText.setAttribute('aria-describedby', 'feedback-text-error');
+      // The field is the thing to fix, so put the caret in it.
+      try { feedbackText.focus(); } catch { /* detached in tests */ }
+    };
+
+    const clearDescriptionError = () => {
+      if (!feedbackTextError) return;
+      feedbackTextError.classList.add('hidden');
+      feedbackTextError.textContent = '';
+      feedbackText.removeAttribute('aria-invalid');
+      feedbackText.removeAttribute('aria-describedby');
     };
 
     const paintScreenshotActions = () => {
@@ -405,8 +524,8 @@ export function init() {
       } catch {
         // #1054: keep the bytes when the network fails. The outbox uploads
         // them at flush time, and an online submit retries first.
-        screenshotState.textContent = "Saved with your feedback — it'll upload when you're back online";
-        showFeedbackNotice("Couldn't upload the screenshot yet — it'll be sent along with your feedback.", false);
+        screenshotState.textContent = "Saved with your feedback. It'll upload when you're back online";
+        showFeedbackNotice("Couldn't upload the screenshot yet. It'll be sent along with your feedback.", false);
       } finally {
         screenshotUploading = false;
       }
@@ -459,7 +578,7 @@ export function init() {
       // than once. Re-focusing an element that already has focus is a no-op,
       // so the extra passes cost nothing when there is no kit to lose to.
       const restoreCaret = (framesLeft) => {
-        if (feedbackText.disabled) return;
+        if (feedbackText.readOnly) return;
         try {
           feedbackText.focus();
           feedbackText.setSelectionRange(caretStart, caretEnd);
@@ -502,15 +621,15 @@ export function init() {
         // says the words are still there, because the words are what a user
         // is afraid of losing — the screenshot they can retake (#1284).
         if (err && err.code === 'denied') {
-          showFeedbackNotice('Screen capture was declined — nothing was attached, and your feedback is safe.', false);
+          showFeedbackNotice('Screen capture was declined. Nothing was attached, and your feedback is safe.', false);
         } else if (err && err.code === 'register_failed') {
-          showFeedbackNotice("Couldn't locate this page in the shared window — keep it fully visible and try again. Your feedback is safe.", true);
+          showFeedbackNotice("Couldn't locate this page in the shared window. Keep it fully visible and try again. Your feedback is safe.", true);
         } else if (err && err.code === 'too-large') {
-          showFeedbackNotice('That screenshot is larger than 4 MB — your feedback is safe, attach a smaller one.', true);
+          showFeedbackNotice('That screenshot is larger than 4 MB. Your feedback is safe, attach a smaller one.', true);
         } else if (nativeAttempt) {
-          showFeedbackNotice("Couldn't take a screenshot — but your feedback is safe. Choose one from Photos, or just send it as it is.", true);
+          showFeedbackNotice("Couldn't take a screenshot, but your feedback is safe. Choose one from Photos, or just send it as it is.", true);
         } else if (err && err.code !== 'cancelled') {
-          showFeedbackNotice('Screenshot capture failed — but your feedback is safe. Try again, or send it without one.', true);
+          showFeedbackNotice('Screenshot capture failed, but your feedback is safe. Try again, or send it without one.', true);
         }
       } finally {
         // The round trip is over: the page survived it, so the stash has
@@ -557,7 +676,7 @@ export function init() {
         } else if (err && err.code === 'too-large') {
           showFeedbackNotice('That image is larger than 4 MB.', true);
         } else {
-          showFeedbackNotice("Couldn't attach that image — please try another.", true);
+          showFeedbackNotice("Couldn't attach that image. Please try another.", true);
         }
       } finally {
         clearCaptureDraft();
@@ -591,9 +710,9 @@ export function init() {
     // A refused save is always explained — an invisible outbox that silently
     // drops things is worse than the bug this replaces.
     const queueRefusal = (code) => {
-      if (code === 'duplicate') return "You've already saved this message — it'll send once you're back online.";
+      if (code === 'duplicate') return "You've already saved this message. It'll send once you're back online.";
       if (code === 'full') return `Only ${window.FeedbackQueue?.MAX_ENTRIES || 10} messages can wait offline at once. The earlier ones send first.`;
-      if (code === 'too-large') return "There isn't room to keep another screenshot offline — remove it and save the text.";
+      if (code === 'too-large') return "There isn't room to keep another screenshot offline. Remove it and save the text.";
       return "Couldn't save this message on this device.";
     };
 
@@ -611,17 +730,17 @@ export function init() {
       // tests/feedback-offline-ui.test.js verifies they exist verbatim here.
       if (offline && n > 0) {
         return n === 1
-          ? "You're offline — 1 message saved on this device is waiting to send. This one will be saved too."
-          : `You're offline — ${n} messages saved on this device are waiting to send. This one will be saved too.`;
+          ? "You're offline. 1 message saved on this device is waiting to send. This one will be saved too."
+          : `You're offline. ${n} messages saved on this device are waiting to send. This one will be saved too.`;
       }
       if (offline) {
-        return "You're offline — your message will be saved on this device and sent automatically "
+        return "You're offline. Your message will be saved on this device and sent automatically "
           + "when you're back online.";
       }
       if (n > 0) {
         return n === 1
-          ? '1 message saved on this device — sending now.'
-          : `${n} messages saved on this device — sending now.`;
+          ? '1 message saved on this device, sending now.'
+          : `${n} messages saved on this device, sending now.`;
       }
       return '';
     };
@@ -642,7 +761,7 @@ export function init() {
         return;
       }
       feedbackStatus.textContent = line;
-      feedbackStatus.className = 'text-sm mt-2 text-zinc-400';
+      feedbackStatus.className = 'text-sm mt-2 text-zinc-500 dark:text-zinc-400';
       feedbackStatus.classList.remove('hidden');
       queueLineText = line;
     };
@@ -712,18 +831,18 @@ export function init() {
         showFeedbackNotice(queueRefusal(err && err.code), true);
         return false;
       }
-      feedbackStatus.textContent = "Saved on this device — we'll send it as soon as you're back online.";
-      feedbackStatus.className = 'text-sm mt-2 text-emerald-400';
+      feedbackStatus.textContent = "Saved on this device. We'll send it as soon as you're back online.";
+      feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
       feedbackStatus.classList.remove('hidden');
       queueLineText = '';
       feedbackText.value = '';
       feedbackTitle.value = '';
+      clearDescriptionError();
       // #1284: safe in the outbox now — the capture stash has nothing to add.
       clearCaptureDraft();
       resetTitleGenState();
       resetScreenshotState();
-      feedbackText.disabled = true;
-      feedbackTitle.disabled = true;
+      setComposerLocked(true);
       feedbackBtn.disabled = true;
       feedbackBtn.textContent = 'Saved';
       // This count is the freshest thing anyone knows — invalidate any read
@@ -734,7 +853,7 @@ export function init() {
       // A probe now means a connection that quietly came back sends this
       // within seconds instead of at the next 60 s tick.
       try { window.Offline?.nudge?.(); } catch (err) { /* ignore */ }
-      setTimeout(() => document.getElementById('feedback-cancel').click(), 1500);
+      closeTimer = setTimeout(() => document.getElementById('feedback-cancel').click(), 1500);
       return true;
     };
 
@@ -766,13 +885,28 @@ export function init() {
                 || (filedPlatform && AppView?.appData?.self_hosted))) {
             AppView.refreshDevData('issue');
           }
+          const moment = res.filed.find((f) => f.firstFeedback)?.firstFeedback;
+          if (moment && Number(moment.userId) === Number(App.user?.id)) {
+            const open = !document.getElementById('feedback-modal').classList.contains('hidden');
+            if (!open) App.openFeedbackModal({ firstFeedback: moment });
+            // `readOnly`, because that is what the lock is made of now.
+            // This read still probed `disabled` after #1757 stopped setting
+            // it, so it was permanently false: a flush that landed on an
+            // already-sent composer took the "someone is typing" branch and
+            // the confirmation never appeared.
+            else if (feedbackText.readOnly) showFirstFeedback(moment, 'Your saved feedback has been sent.');
+            else pendingFirstFeedback = moment; // Keep the draft being typed intact.
+          }
         },
       });
     }
 
     const submitFeedback = async () => {
       const text = feedbackText.value.trim();
-      if (!text) return;
+      // #1603: this used to be a bare `return` — the one submit path that
+      // refused and said nothing. It stays FIRST (ahead of the offline
+      // branch below, which would otherwise queue an empty description).
+      if (!text) { showDescriptionError(); return; }
       // Guard against double-submit while the request is in flight, and
       // also against submits after success (the textarea is disabled
       // then, but a stale cmd+enter on a focused button could still
@@ -781,7 +915,7 @@ export function init() {
       // #683: a screenshot upload is still in flight — the id isn't known
       // yet, so filing now would silently drop the attachment.
       if (screenshotUploading) {
-        showFeedbackNotice('Screenshot is still uploading — one moment…', false);
+        showFeedbackNotice('Screenshot is still uploading, one moment…', false);
         return;
       }
       // #732: freeze the title snapshot for this submit — cancel the
@@ -794,6 +928,8 @@ export function init() {
       titleGenSeq++;
       feedbackTitle.placeholder = titleIdlePlaceholder;
       feedbackBtn.disabled = true; feedbackBtn.textContent = 'Submitting...';
+      const submittedPresentation = presentation;
+      const submittedBy = App.user?.id;
       try {
         // Capture the target + slug at submit time so navigating away
         // while the modal is open can't retarget an in-flight request.
@@ -853,8 +989,8 @@ export function init() {
             body.pageState = pageState.json;
             if (pageState.truncated) body.pageStateTruncated = true;
           } else {
-            stateNotice = " Couldn't collect app state — filed without it.";
-            showFeedbackNotice("Couldn't collect app state — filing without it…", false);
+            stateNotice = " Couldn't collect app state, so it was filed without it.";
+            showFeedbackNotice("Couldn't collect app state, filing without it…", false);
           }
         }
         // #1054: we already know the network is down (the /health probe said
@@ -886,6 +1022,9 @@ export function init() {
           return;
         }
         const data = await res.json();
+        // An old response must not replace a reopened draft or another
+        // account's dialog after sign-out/sign-in.
+        if (submittedPresentation !== presentation || submittedBy !== App.user?.id) return;
         if (res.ok) {
           // #964: report both outcomes on one line. A declined bounty
           // (allowance ran out between opening and submitting, repo isn't
@@ -895,7 +1034,7 @@ export function init() {
           let bountyNotice = '';
           if (data.bounty) {
             if (data.bounty.placed) {
-              bountyNotice = ` — and pledged 1 kudos as a bounty. ${data.bounty.remaining} left this week.`;
+              bountyNotice = ` Pledged 1 kudos as a bounty. ${data.bounty.remaining} left this week.`;
               // The drawer's Kudos meter must show the number the user
               // just spent down to, not the one they saw before.
               window.Kudos?.Budget?.refresh?.();
@@ -906,15 +1045,14 @@ export function init() {
           const filedAgainst = (target === 'app'
             ? `Thanks! Filed against ${AppView?.appData?.name || 'this app'}`
             : 'Thanks! Filed against Social Vibecoding');
-          // The success variant continues the sentence ("… — and pledged");
-          // every other variant ends it before appending.
-          feedbackStatus.textContent = (data.bounty?.placed
-            ? filedAgainst + bountyNotice
-            : `${filedAgainst}.${bountyNotice}`) + stateNotice;
-          feedbackStatus.className = 'text-sm mt-2 text-emerald-400';
+          // Both variants end the first sentence before appending, so the
+          // bounty outcome reads as its own sentence either way.
+          feedbackStatus.textContent = `${filedAgainst}.${bountyNotice}${stateNotice}`;
+          feedbackStatus.className = 'text-sm mt-2 text-emerald-700 dark:text-emerald-400';
           feedbackStatus.classList.remove('hidden');
           feedbackText.value = '';
           feedbackTitle.value = '';
+          clearDescriptionError();
           // #1284: filed — there is nothing left to rescue.
           clearCaptureDraft();
           // Discard any in-flight title preview so it can't repopulate
@@ -927,8 +1065,7 @@ export function init() {
           // typing (or re-fire cmd+enter) after their feedback has
           // already been filed — fixes #32. Both controls are
           // re-enabled when the modal is reopened below.
-          feedbackText.disabled = true;
-          feedbackTitle.disabled = true;
+          setComposerLocked(true);
           feedbackBtn.textContent = 'Submitted';
           // #125: make the new issue show up in this app's "Open Issues"
           // panel without a reload. The server seeds its issues cache and
@@ -942,7 +1079,9 @@ export function init() {
                 || (target === 'platform' && AppView?.appData?.self_hosted))) {
             AppView.refreshDevData('issue');
           }
-          setTimeout(() => document.getElementById('feedback-cancel').click(), 1500);
+          if (!showFirstFeedback(data.firstFeedback, feedbackStatus.textContent)) {
+            closeTimer = setTimeout(() => document.getElementById('feedback-cancel').click(), 1500);
+          }
           return;
         }
         feedbackStatus.textContent = data.error || 'Failed to submit';
@@ -968,12 +1107,20 @@ export function init() {
     // now: by the time this runs the island has already revealed the root
     // and lifted the card into the kit shell.
     Feedback._open = (opts = {}) => {
-      // Reset any "Submitted" lock from a prior session so a returning
-      // user can file another piece of feedback without reloading.
-      feedbackText.disabled = false;
-      feedbackTitle.disabled = false;
+      presentation += 1;
+      clearTimeout(closeTimer);
+      firstFeedback = null;
+      // Every open hands back an editable composer (showFirstFeedback re-locks).
+      setComposerLocked(false);
+      firstSuccess?.classList.add('hidden');
+      feedbackForm?.classList.remove('hidden');
+      // Opening a queued success must not consume a failed outbox draft or
+      // start screenshot/title probes behind the confirmation.
+      if (opts.firstFeedback && showFirstFeedback(opts.firstFeedback, 'Your saved feedback has been sent.')) return;
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
+      // #1603: a refusal from a previous open never greets the next one.
+      clearDescriptionError();
       resetTitleGenState();
       // #683/#824: each open starts screenshot-less. Photos is immediately
       // available; native capture appears after a fresh capability probe.
@@ -1058,13 +1205,13 @@ export function init() {
           if (!failed || modal.classList.contains('hidden')) return;
           // Live text always wins — a returned draft must never overwrite
           // what someone is typing right now.
-          if (feedbackText.disabled || feedbackText.value.trim()) return;
+          if (feedbackText.readOnly || feedbackText.value.trim()) return;
           const p = failed.payload || {};
           feedbackText.value = p.description || '';
           if (p.title) { feedbackTitle.value = p.title; titleDirty = true; }
           if (p.target === 'app' && !feedbackTargetApp.disabled) setFeedbackTarget('app');
           feedbackStatus.textContent = `This message couldn't be sent: ${failed.lastError || 'the server rejected it'}.`
-            + ' Your text is back — edit it and try again.';
+            + ' Your text is back, so edit it and try again.';
           feedbackStatus.className = 'text-sm mt-2 text-red-400';
           feedbackStatus.classList.remove('hidden');
           queueLineText = '';
@@ -1079,21 +1226,33 @@ export function init() {
       const rescued = readCaptureDraft();
       if (rescued) {
         clearCaptureDraft();
-        if (!feedbackText.disabled && !feedbackText.value.trim()) {
+        if (!feedbackText.readOnly && !feedbackText.value.trim()) {
           feedbackText.value = rescued.description;
           if (rescued.title && !feedbackTitle.value.trim()) {
             feedbackTitle.value = rescued.title;
             titleDirty = rescued.titleDirty !== false;
           }
           if (rescued.target === 'app' && !feedbackTargetApp.disabled) setFeedbackTarget('app');
-          showFeedbackNotice("The screenshot didn't make it, but your feedback is safe — here it is again.", false);
+          showFeedbackNotice("The screenshot didn't make it, but your feedback is safe. Here it is again.", false);
           queueLineText = '';
         }
       }
 
       feedbackText.focus();
     };
-    document.getElementById('feedback-btn').addEventListener('click', () => App.openFeedbackModal());
+    // The header's #feedback-btn used to be wired here. THE UI OVERHAUL
+    // retired it: the dialog's entry point is the Improve panel's "Give
+    // feedback" row now (features/improve/improve-controller.js's
+    // giveFeedback(), which opens it with `fromDev: true` so the panel's own
+    // app is preselected as the target). `App.openFeedbackModal` is unchanged
+    // and still published below, so every other caller — the Dev "+" menu's
+    // "New issue", App._applyFeedbackShot, the rescued-draft notice — is
+    // untouched.
+    //
+    // The button's outbox dot moved rather than went: #feedback-queue-dot
+    // keeps its id and its writer (paintQueueDot) and now renders on
+    // #improve-btn, which is the only way to reach this dialog from the
+    // header.
     // Admin/moderation console (#588) is a drawer row now, not a header
     // button — its click handler is wired in HeaderMenu.init() (close the
     // drawer; the anchor's #admin href does the navigating). The row is
@@ -1107,6 +1266,11 @@ export function init() {
     // classList.add('hidden') that used to be this handler's first line
     // belongs to useStaticModal.
     Feedback._reset = () => {
+      presentation += 1;
+      clearTimeout(closeTimer);
+      firstFeedback = null;
+      firstSuccess?.classList.add('hidden');
+      feedbackForm?.classList.remove('hidden');
       // #1284: a dismissal that lands mid-capture is the stale teardown of
       // the presentation `suspendDialog()` closed, not the user closing the
       // dialog — so the draft, the title and the notice stay. (The screenshot
@@ -1115,11 +1279,11 @@ export function init() {
         feedbackText.value = '';
         feedbackTitle.value = '';
         feedbackStatus.classList.add('hidden');
+        clearDescriptionError();
         resetTitleGenState();
         clearCaptureDraft();
       }
-      feedbackText.disabled = false;
-      feedbackTitle.disabled = false;
+      setComposerLocked(false);
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       // #683: cancelling discards the attachment client-side; an already
       // uploaded (now orphaned) row is GC'd server-side after 24h.
@@ -1128,6 +1292,11 @@ export function init() {
       resetScreenshotState();
       // #964: drop any pledge intent with the rest of the draft.
       bountyCheckbox.checked = false;
+      const pending = pendingFirstFeedback;
+      pendingFirstFeedback = null;
+      if (pending) setTimeout(() => {
+        if (Number(pending.userId) === Number(App.user?.id)) App.openFeedbackModal({ firstFeedback: pending });
+      }, 0);
     };
     feedbackBtn.addEventListener('click', submitFeedback);
     // cmd+enter / ctrl+enter inside the textarea submits — fixes #34.
@@ -1175,7 +1344,7 @@ export function init() {
     if (!readCaptureDraft()) return;
     bootDraftAnnounced = true;
     try {
-      PlatformUI?.toast?.('Your feedback draft was saved — reopen Send feedback to finish it.');
+      PlatformUI?.toast?.('Your feedback draft was saved. Reopen Send feedback to finish it.');
     } catch { /* the draft is in the stash either way */ }
   };
   App.noticeRescuedFeedbackDraft();
@@ -1189,4 +1358,17 @@ export function init() {
     async () => { const err = new Error('capture failed'); err.code = 'capture_failed'; throw err; },
     { nativeAttempt: true },
   );
+
+  // #1603: the ?shot=feedback-required reviewable state — the dialog after a
+  // submit with an empty description. Same arrangement, and for the same
+  // reason: it calls the REAL submitFeedback, so what gets photographed is
+  // the shipped refusal rather than a mock of it. That path returns before
+  // any fetch on an empty description, so this files nothing either.
+  App._simulateEmptyFeedbackSubmit = () => { void submitFeedback(); };
+
+  // Display-only review state: no feedback, session, or milestone is written.
+  App._simulateFirstFeedback = () => showFirstFeedback({
+    userId: App.user?.id, appSlug: App.currentApp || 'usernode-2d5619',
+    issueNumber: 900008, canFix: true,
+  }, 'Your feedback has been sent.');
 }

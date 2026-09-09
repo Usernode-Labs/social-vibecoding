@@ -27,6 +27,12 @@ const {
   lockIntent,
   decideSwipeRelease,
   decidePtrRelease,
+  ptrPuckOffset,
+  PTR_PUCK,
+  PTR_HOLD,
+  PTR_THRESHOLD,
+  PTR_LIMIT,
+  PTR_LAYER_H,
   decideSheetRelease,
   remeasuredSheetY,
   keyboardInset,
@@ -457,6 +463,67 @@ test('native.css: the puck itself carries no stacking of its own', () => {
     'the old z-index:2 on the puck is what lifted it over the header — layering belongs to .un-ptr-layer now');
   assert.match(block, /position:\s*absolute/,
     'the puck positions inside the layer, even in window mode (the LAYER is the fixed one)');
+});
+
+// ── Where the puck comes to REST (issue #1526) ─────────────────────────
+// #885 fixed the anchoring; the per-frame pose it left behind dated from
+// the kit's first commit, when the puck was free-standing and unclipped.
+// At the hold it parked at -9.2px — a quarter of the circle sliced off by
+// the header's edge, with 31.8px of dead space underneath. The pose is
+// derived from the puck's own box now (PTR_PUCK + PTR_PUCK_GAP), and it
+// lives above the Node cut so these numbers are actually checkable.
+
+test('ptrPuckOffset: the puck rests FULLY below the anchor line', () => {
+  assert.ok(ptrPuckOffset(PTR_HOLD) >= 0,
+    `#1526 regression guard: at the ${PTR_HOLD}px hold the puck's top sits at ` +
+    `${ptrPuckOffset(PTR_HOLD)}px — anything negative is clipped by the header's edge`);
+});
+
+test('ptrPuckOffset: equal space above and below the resting puck', () => {
+  const above = ptrPuckOffset(PTR_HOLD);
+  const below = PTR_HOLD - ptrPuckOffset(PTR_HOLD) - PTR_PUCK;
+  assert.ok(Math.abs(above - below) <= 1,
+    `resting spacing is lopsided: ${above}px above vs ${below}px below (was 1:3.7)`);
+});
+
+test('ptrPuckOffset: parked entirely above the anchor when idle', () => {
+  assert.ok(ptrPuckOffset(0) + PTR_PUCK <= 0,
+    `at rest the whole puck must sit above the anchor line (bottom at ` +
+    `${ptrPuckOffset(0) + PTR_PUCK}px) so nothing peeks over the header`);
+});
+
+test('the puck rests at full scale and full opacity while spinning', () => {
+  // render() drives both from progress = min(1, y / PTR_THRESHOLD), so a
+  // hold shorter than the arm threshold spins at 0.97 scale / 0.93 opacity
+  // AND springs the content backwards on commit. One inequality pins both.
+  assert.ok(PTR_HOLD >= PTR_THRESHOLD,
+    `hold ${PTR_HOLD} < arm threshold ${PTR_THRESHOLD}: the puck would rest dimmed ` +
+    'and undersized, and the content would spring backwards on release');
+});
+
+test('ptrPuckOffset: travel is strictly monotonic across the pull range', () => {
+  let prev = -Infinity;
+  for (let pull = 0; pull <= PTR_LIMIT; pull += 1) {
+    const offset = ptrPuckOffset(pull);
+    assert.ok(offset > prev,
+      `the puck must never move backwards as the pull grows (${pull}px)`);
+    prev = offset;
+  }
+});
+
+test('ptrPuckOffset: a max-depth pull never escapes the clip window', () => {
+  assert.ok(ptrPuckOffset(PTR_LIMIT) + PTR_PUCK <= PTR_LAYER_H,
+    `at the ${PTR_LIMIT}px rubber-band asymptote the puck's bottom reaches ` +
+    `${ptrPuckOffset(PTR_LIMIT) + PTR_PUCK}px, outside the ${PTR_LAYER_H}px layer`);
+});
+
+test('native.css: the painted puck box matches PTR_PUCK in native.js', () => {
+  const block = cssBlock('.un-ptr-puck');
+  const width = Number(/width:\s*(\d+)px/.exec(block)[1]);
+  const height = Number(/height:\s*(\d+)px/.exec(block)[1]);
+  assert.equal(width, PTR_PUCK,
+    'the pose math is derived from PTR_PUCK — a painted box that drifts from it makes the balance meaningless');
+  assert.equal(height, PTR_PUCK, 'the puck is a circle: width and height both mirror PTR_PUCK');
 });
 
 const NATIVE_JS = fs.readFileSync(
@@ -1528,4 +1595,115 @@ test('native.js: only pointerdown/touchstart count as a real backdrop press', ()
   // A swallowed ghost must not bubble on to re-fire whatever opened us.
   assert.match(fn, /stopPropagation\(\)/);
   assert.match(fn, /preventDefault\(\)/);
+});
+
+// ── Menu-row icons (additive /v1) ───────────────────────────────────
+//
+// The kit's menus grew an optional icon. Two things have to stay true or
+// the addition is not additive: a row that asks for no icon must render
+// the DOM it rendered before this existed, and a menu where only SOME
+// rows carry one must still line its labels up.
+
+test('the icon registry answers only its own names', () => {
+  assert.ok(physics.ICON_NAMES.length > 0, 'the set is not empty');
+  for (const name of physics.ICON_NAMES) {
+    const paths = physics.iconPaths(name);
+    assert.ok(Array.isArray(paths) && paths.length > 0, `${name} has no geometry`);
+    for (const d of paths) {
+      assert.equal(typeof d, 'string');
+      // A path that does not start with a move-to is a path the browser
+      // silently drops — the icon would be an invisible hole in the row.
+      assert.match(d, /^M/, `${name}: path does not open with a move-to`);
+    }
+  }
+});
+
+test('an unknown icon name is nothing, including a prototype member', () => {
+  // `icon` is caller data. A bare property lookup would answer `toString`
+  // with a function, and `constructor` with a constructor — neither is an
+  // icon, and both would throw inside the renderer.
+  for (const bogus of ['', null, undefined, 'nope', 'toString', 'constructor', '__proto__']) {
+    assert.equal(physics.iconPaths(bogus), null, `iconPaths(${JSON.stringify(bogus)})`);
+  }
+});
+
+test('rowHasIcon is the single answer both idioms ask', () => {
+  // The action sheet and the popover must never disagree about whether a
+  // menu is an icon menu — one of them aligning and the other not is the
+  // failure this shared predicate exists to prevent.
+  assert.equal(physics.rowHasIcon({ label: 'x' }), false);
+  assert.equal(physics.rowHasIcon({ label: 'x', icon: 'nope' }), false);
+  assert.equal(physics.rowHasIcon({ label: 'x', icon: 'home' }), true);
+  // A caller-supplied node counts, but only a real element.
+  assert.equal(physics.rowHasIcon({ label: 'x', iconEl: { nodeType: 1 } }), true);
+  assert.equal(physics.rowHasIcon({ label: 'x', iconEl: 'not a node' }), false);
+  assert.equal(physics.rowHasIcon({ label: 'x', iconEl: null }), false);
+  assert.equal(physics.rowHasIcon(null), false);
+  assert.equal(physics.rowHasIcon(undefined), false);
+});
+
+test('native.js: a row with no icon renders exactly what it always did', () => {
+  // The whole additive claim rests on this line. Every app on the platform
+  // has menus built before icons existed, and some of their checks select
+  // on a row's text — so the no-icon path stays a bare textContent
+  // assignment producing a single text node, not a wrapped span.
+  const at = NATIVE_JS.indexOf('function fillRowButton(');
+  assert.ok(at !== -1, 'fillRowButton must exist');
+  const fn = NATIVE_JS.slice(at, NATIVE_JS.indexOf('\n  // Does this menu', at));
+  assert.match(fn, /if \(!icon && !aligned\) \{\s*\n\s*btn\.textContent = item\.label;/,
+    'the no-icon, no-alignment path must assign textContent directly');
+  // …and with an icon, the label still has to be readable as the button's
+  // own text, which is only true while the icon contributes none.
+  assert.match(fn, /createElement\('span'\)/, 'the label is wrapped for truncation');
+  assert.match(NATIVE_JS.slice(NATIVE_JS.indexOf('function buildRowIcon(')),
+    /createElementNS\(SVG_NS, 'svg'\)/,
+    'the kit icon is an SVG, which contributes no text to textContent');
+});
+
+test('native.js: both menu idioms fill their rows through the shared builder', () => {
+  // Two call sites, one builder. A copy in either would be a second place
+  // for the icon contract to be forgotten.
+  const calls = (NATIVE_JS.match(/(?<!function )fillRowButton\(btn, (?:action|item), \w+\)/g) || []);
+  assert.equal(calls.length, 2,
+    `the action sheet and the popover both fill through it (got ${calls.length})`);
+  assert.match(NATIVE_JS, /var sheetAligned = menuHasIcons\(actions\)/);
+  assert.match(NATIVE_JS, /var popoverAligned = menuHasIcons\(opts\.items\)/);
+});
+
+test('the conventions document names exactly the icons the kit ships', () => {
+  // Apps pick an icon by reading the handbook, and an unknown name draws
+  // nothing rather than throwing — so a doc that lags the registry costs
+  // an app a silent blank row, and a doc that runs ahead of it costs the
+  // same. This is the only place the two lists meet.
+  const doc = fs.readFileSync(
+    path.join(__dirname, '..', 'src/prompts/app-conventions.md'), 'utf8'
+  );
+  const at = doc.indexOf('- **Menu-row icons.**');
+  assert.ok(at !== -1, 'the conventions must document menu-row icons');
+  const entry = doc.slice(at, doc.indexOf('\n- **', at + 4));
+  const documented = (entry.match(/`([a-z]+)`/g) || [])
+    .map((m) => m.slice(1, -1))
+    .filter((name) => physics.ICON_NAMES.includes(name));
+  assert.deepEqual(
+    [...new Set(documented)].sort(),
+    [...physics.ICON_NAMES].sort(),
+    'the documented icon names and the kit registry have drifted',
+  );
+});
+
+test('an icon row lets its label wrap, exactly as a bare label always did', () => {
+  // A menu row before icons existed was a text node in a block button, so a
+  // long label ran to a second line. Wrapping the label in a span to sit
+  // beside an icon is the moment that could silently become an ellipsis —
+  // and it would hide the end of every long row on the platform, on the
+  // rows that need reading most. `min-width: 0` is what lets a flex child
+  // wrap rather than push the icon out.
+  const at = NATIVE_CSS.indexOf('.un-item-label {');
+  assert.ok(at !== -1, '.un-item-label must be styled');
+  const rule = NATIVE_CSS.slice(at, NATIVE_CSS.indexOf('}', at));
+  assert.match(rule, /min-width:\s*0/);
+  assert.doesNotMatch(rule, /white-space:\s*nowrap/,
+    'a menu label must keep wrapping');
+  assert.doesNotMatch(rule, /text-overflow:\s*ellipsis/,
+    'a menu label must not be truncated');
 });

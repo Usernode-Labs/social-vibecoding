@@ -6,7 +6,7 @@
 // explicit terminal verdict:
 //
 //   - unparseable repo_url / missing GITHUB_BOT_TOKEN → 'skipped'
-//     ("checks unavailable — GitHub is not configured"), gate-passing;
+//     ("checks unavailable: GitHub is not configured"), gate-passing;
 //   - branch not ahead of main → 'skipped' ("nothing to test");
 //   - compareCommits throw → 'error' (retryable via the existing
 //     storeChecks backoff bookkeeping).
@@ -111,6 +111,77 @@ const SESSION = {
   checks_commit_sha: 'cafe1234',
 };
 
+test('stuck-check recovery includes submitted active CLI handoffs without widening to drafts or ordinary sessions', async () => {
+  const { subject, restore } = loadRecovery();
+  const submitted = {
+    id: 2,
+    status: 'active',
+    source: 'cli_handoff',
+    checks_commit_sha: 'head-2',
+    handoff_head_sha: 'head-2',
+    handoff_uploaded_sha: 'head-2',
+    handoff_upload_checked_sha: null,
+  };
+  const candidates = [
+    { id: 1, status: 'promoted', source: 'native' },
+    submitted,
+    { id: 3, status: 'active', source: 'native', checks_commit_sha: 'head-3' },
+    { id: 4, status: 'active', source: 'cli_handoff', checks_commit_sha: null },
+    {
+      id: 5,
+      status: 'active',
+      source: 'cli_handoff',
+      checks_commit_sha: 'old-head',
+      handoff_head_sha: 'old-head',
+      handoff_uploaded_sha: 'new-upload',
+      handoff_upload_checked_sha: 'old-head',
+    },
+  ];
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql: String(sql), params });
+      return { rows: candidates };
+    },
+  };
+  try {
+    assert.equal(subject.isStuckCheckRecoveryScope(submitted), true);
+    const { rows } = await subject.findStuckCheckSessions({
+      pool, staleMs: 600000, maxAutoRetries: 6,
+    });
+    assert.deepEqual(rows.map((row) => row.id), [1, 2]);
+    assert.equal(queries.length, 1);
+    assert.match(queries[0].sql,
+      /cs\.status = 'active'[\s\S]*cs\.source = 'cli_handoff'/,
+      'submitted pre-vote handoffs are selected alongside promoted proposals');
+    assert.match(queries[0].sql, /COALESCE\(cs\.checks_commit_sha, cs\.handoff_head_sha\) IS NOT NULL/,
+      'a fresh proposal draft is not mistaken for a lost check run');
+    assert.match(queries[0].sql, /handoff_upload_checked_sha/,
+      'an upload awaiting proposal_submit_build stays out of recovery');
+    assert.match(queries[0].sql,
+      /cs\.check_state = 'pending'[\s\S]*cs\.checks_checked_at IS NULL/,
+      'legacy pending rows with no timestamp are recoverable');
+    assert.deepEqual(queries[0].params, [600000, 6, 50]);
+  } finally { restore(); }
+});
+
+test('checkRunOverdue requires a submitted head and treats a missing timestamp as stalled', () => {
+  const { subject, restore } = loadRecovery();
+  try {
+    const now = Date.now();
+    assert.equal(subject.checkRunOverdue({
+      check_state: 'pending', checks_commit_sha: 'head', checks_checked_at: null,
+    }, { now, staleMs: 600000 }), true);
+    assert.equal(subject.checkRunOverdue({
+      check_state: 'pending', checks_commit_sha: 'head',
+      checks_checked_at: new Date(now - 1000),
+    }, { now, staleMs: 600000 }), false);
+    assert.equal(subject.checkRunOverdue({ check_state: null }, {
+      now, staleMs: 600000,
+    }), false, 'a draft with no submitted head has no check run to recover');
+  } finally { restore(); }
+});
+
 test("rebuildSessionStaging: unparseable repo_url records a 'skipped' verdict (GitHub not configured)", async () => {
   const { subject, skippedCalls, restore } = loadRecovery();
   try {
@@ -152,7 +223,7 @@ test('recordChecksSkipped: writes the verdict, broadcasts checks_ready, re-drive
     await subject.recordChecksSkipped({
       config: {}, pool: makeRecordingPool(), session: { ...SESSION },
       commitSha: 'beef5678', expectedCommitSha: 'cafe1234',
-      reason: 'branch has no commits beyond main — nothing to test',
+      reason: 'branch has no commits beyond main, so there is nothing to test',
     });
     assert.equal(skippedCalls.length, 1);
     assert.equal(skippedCalls[0].commitSha, 'beef5678');
@@ -205,7 +276,7 @@ test("storeChecksSkipped: writes 'skipped' + reason and clears the failure strea
   const { subject, restore } = loadVisuals();
   const pool = makeRecordingPool();
   try {
-    await subject.storeChecksSkipped(pool, 42, 'cafe1234', 'branch has no commits beyond main — nothing to test');
+    await subject.storeChecksSkipped(pool, 42, 'cafe1234', 'branch has no commits beyond main, so there is nothing to test');
     assert.equal(pool.queries.length, 1);
     const q = pool.queries[0];
     assert.match(q.sql, /check_state = 'skipped'/);
@@ -218,7 +289,7 @@ test("storeChecksSkipped: writes 'skipped' + reason and clears the failure strea
       'an archived or merged session cannot regain a terminal checks verdict');
     assert.match(q.sql, /checks_commit_sha IS NOT DISTINCT FROM \$4::text/);
     assert.deepEqual(q.params, [
-      'cafe1234', 'branch has no commits beyond main — nothing to test', 42, 'cafe1234',
+      'cafe1234', 'branch has no commits beyond main, so there is nothing to test', 42, 'cafe1234',
     ]);
   } finally { restore(); }
 });
@@ -403,7 +474,7 @@ test('the heal claims the resolved commit before staging can fail', () => {
 });
 
 test('an imported row with no recorded head sha records a terminal skip', () => {
-  assert.match(RECOVERY_SRC, /if \(imported && !importedHead\) \{[\s\S]*?reason: 'imported PR has no recorded head commit — nothing to preview'/,
+  assert.match(RECOVERY_SRC, /if \(imported && !importedHead\) \{[\s\S]*?reason: 'imported PR has no recorded head commit, so there is nothing to preview'/,
     'nothing to pin → an explicit gate-passing verdict, not a NULL that the sweeper re-picks forever');
 });
 

@@ -68,6 +68,7 @@ const buildScript = fs.readFileSync(path.join(ROOT, 'frontend', 'scripts', 'buil
 const prerenderSrc = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'prerender.tsx'), 'utf8');
 const viteConfig = fs.readFileSync(path.join(ROOT, 'frontend', 'vite.config.ts'), 'utf8');
 const dockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile'), 'utf8');
+const kubernetesDockerfile = fs.readFileSync(path.join(ROOT, 'Dockerfile.kubernetes'), 'utf8');
 
 test('the build still gates on adjacent text children', () => {
   assert.match(
@@ -149,7 +150,7 @@ test('Docker builds the shell before Tailwind and copies both outputs into the r
     'COPY --from=shell /build/public/index.html ./public/index.html',
   );
   const runtimeJsCopy = dockerfile.indexOf(
-    'COPY --from=shell /build/public/shell/assets/shell.js ./public/shell/assets/shell.js',
+    'COPY --from=shell /build/public/shell/assets/ ./public/shell/assets/',
   );
   assert.ok(runtimeStage > -1 && sourceCopy > runtimeStage,
     'the production-only runtime stage must still copy the application sources');
@@ -159,18 +160,91 @@ test('Docker builds the shell before Tailwind and copies both outputs into the r
   assert.match(dockerfile,
     /COPY --from=shell \/build\/public\/index\.html \/opt\/usernode-shell-assets\/index\.html/,
     'the image must preserve generated HTML outside the dev public bind mount');
+  // The DIRECTORY, not the entry file. The React build emits lazy route
+  // chunks beside shell.js now, and naming one file is how a new chunk 404s
+  // in the image while every local test passes — locally the build output is
+  // simply on disk, so nothing notices what the image failed to copy.
   assert.match(dockerfile,
-    /COPY --from=shell \/build\/public\/shell\/assets\/shell\.js \/opt\/usernode-shell-assets\/shell\/assets\/shell\.js/,
-    'the image must preserve the generated bundle outside the dev public bind mount');
+    /COPY --from=shell \/build\/public\/shell\/assets\/ \/opt\/usernode-shell-assets\/shell\/assets\//,
+    'the image must preserve every generated chunk outside the dev public bind mount');
 });
 
-test('the untracked shell keeps its fixed single-chunk, no-CSS build contract', () => {
+test('every file the shell bundle imports from outside frontend/ is copied into each image stage', () => {
+  // WHY THIS EXISTS. The shell stage's build context is `frontend/` plus a
+  // named file or two — nothing else. An import that climbs out of it
+  // (`../../../../../src/services/countries.json`) resolves in EVERY local
+  // run, because the whole repo is on disk, and in NO image build. Nothing
+  // else in this suite models that context, so the first sign was a staging
+  // preview that never booted: `node frontend/scripts/build-shell.mjs`
+  // returned 1 on fifteen consecutive builds of one proposal while its unit
+  // suite stayed green.
+  //
+  // So the rule is not "never import out of frontend/" — one shared table
+  // beats two copies of 249 country names — it is that anything imported out
+  // of it must be COPIED INTO EVERY SHELL STAGE. This reads the imports and
+  // asks both production Dockerfiles about each one.
+  const escapes = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+        walk(full);
+        continue;
+      }
+      if (!/\.(ts|tsx|js|jsx|mjs)$/.test(entry.name)) continue;
+      const src = fs.readFileSync(full, 'utf8');
+      for (const m of src.matchAll(/(?:from|import)\s*\(?\s*['"]((?:\.\.\/)+[^'"]+)['"]/g)) {
+        const resolved = path.relative(ROOT, path.resolve(path.dirname(full), m[1]));
+        if (!resolved.startsWith('frontend' + path.sep)) {
+          escapes.push({ file: path.relative(ROOT, full), spec: m[1], resolved });
+        }
+      }
+    }
+  };
+  walk(path.join(ROOT, 'frontend'));
+
+  for (const [name, source] of [
+    ['Dockerfile', dockerfile],
+    ['Dockerfile.kubernetes', kubernetesDockerfile],
+  ]) {
+    const shellStart = source.indexOf('FROM node:22-alpine AS shell');
+    const shellEnd = source.indexOf('FROM node:22-alpine AS css', shellStart);
+    assert.ok(shellStart > -1 && shellEnd > shellStart, `${name} must keep its shell builder stage`);
+    const shellStage = source.slice(shellStart, shellEnd);
+
+    for (const e of escapes) {
+      // The path as the stage would have to name it, with either COPY spelling.
+      const copied = new RegExp(
+        `COPY\\s+${e.resolved.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s`,
+      ).test(shellStage);
+      assert.ok(copied,
+        `${e.file} imports '${e.spec}', which resolves to ${e.resolved} — outside ${name}'s `
+        + 'shell stage. Add `COPY ' + e.resolved + ' ./' + e.resolved
+        + '` to that stage, or move the file under frontend/. Without it the image build '
+        + 'fails with "Could not resolve" while every local test passes.');
+    }
+  }
+});
+
+test('the untracked shell keeps its fixed-name, no-CSS build contract', () => {
   assert.match(viteConfig, /emptyOutDir:\s*true/,
     'each image build must clear old shell outputs before emitting the bundle');
   assert.match(viteConfig, /entryFileNames:\s*'assets\/shell\.js'/,
     'the service worker depends on the fixed /shell/assets/shell.js URL');
-  assert.match(viteConfig, /inlineDynamicImports:\s*true/,
-    'the shell must remain one bundle so SHELL_ASSETS never misses a chunk');
+  // NOT one bundle any more. inlineDynamicImports folded every dynamic import
+  // back into the entry, which made a lazy route impossible — the admin
+  // console's twenty section modules were 421KB of the 1.75MB bundle that
+  // every visitor downloaded so an admin could open a console behind an
+  // isAdmin gate. What has to hold instead is that the names stay
+  // DETERMINISTIC, because SHELL_ASSETS is hand-maintained and a hashed name
+  // would churn it on every build.
+  assert.match(viteConfig, /inlineDynamicImports:\s*false/,
+    'lazy route chunks must be able to exist');
+  assert.match(viteConfig, /chunkFileNames:\s*'assets\/shell-\[name\]\.js'/,
+    'chunk names must stay unhashed and readable, like the entry');
+  assert.doesNotMatch(viteConfig, /\[hash\]/,
+    'a content hash anywhere here would churn SHELL_ASSETS on every build');
   assert.match(buildScript, /strayCss\.length/,
     'the build must reject CSS imports that would violate the stylesheet cascade');
 
@@ -178,12 +252,13 @@ test('the untracked shell keeps its fixed single-chunk, no-CSS build contract', 
   const dockerignore = fs.readFileSync(path.join(ROOT, '.dockerignore'), 'utf8').split(/\r?\n/);
   assert.ok(gitignore.includes('/public/index.html'),
     'the generated HTML must not be committed');
-  assert.ok(gitignore.includes('/public/shell/assets/shell.js'),
-    'the generated bundle must not be committed');
+  // The directory: every emitted chunk is generated, not just the entry.
+  assert.ok(gitignore.includes('/public/shell/assets/'),
+    'no generated chunk may be committed');
   assert.ok(dockerignore.includes('public/index.html'),
     'an ignored local HTML artifact must not enter the Docker build context');
-  assert.ok(dockerignore.includes('public/shell/assets/shell.js'),
-    'an ignored local bundle must not enter the Docker build context');
+  assert.ok(dockerignore.includes('public/shell/assets/'),
+    'no ignored local chunk may enter the Docker build context');
   assert.ok(dockerignore.includes('**/node_modules'),
     'the local frontend install used by tests must not enter the Docker build context');
 });
@@ -206,4 +281,11 @@ test('test and native-local entrypoints materialize ignored shell artifacts', ()
     'the local ensure step must be able to install the separate frontend workspace');
   assert.match(compose, /node scripts\/restore-image-assets\.js/,
     'dev Compose must restore image-built artifacts hidden by its public bind mount');
+});
+
+test('kpack excludes dependency trees from the platform source', () => {
+  const project = fs.readFileSync(path.join(ROOT, 'project.toml'), 'utf8');
+  assert.match(project, /schema-version = "0\.2"/);
+  assert.match(project, /exclude = \[[\s\S]*"node_modules\/"[\s\S]*\]/,
+    'a committed dependency tree must not switch Paketo from npm ci to npm rebuild');
 });

@@ -21,9 +21,16 @@
  *    components render them. Both hosts still ship EMPTY, which is what keeps
  *    the prerendered markup identical.
  *  - #settings-section-content's children are static components (see
- *    ./sections). The router only toggles `hidden` on the wrappers — no pane is
- *    ever rebuilt, because settings.js binds every control inside them by id
- *    ONCE and a rebuilt pane is a pane whose controls silently stop working.
+ *    ./sections), and they MOUNT ON FIRST REVEAL rather than shipping in the
+ *    prerender (lib/mount-on-reveal.ts): the host is empty in
+ *    public/index.html, exactly as #admin-section-content is. Their CODE
+ *    arrives the same way: the panes and ./settings.js are one lazy chunk
+ *    (./settings-chunk.ts) that ./facade.js loads on the first open or at
+ *    idle, so a load that never opens this screen never downloads them.
+ *    Once mounted, the router only toggles `hidden` on the wrappers — no
+ *    pane is ever rebuilt, because settings.js binds every control inside
+ *    them by id ONCE and a rebuilt pane is a pane whose controls silently
+ *    stop working.
  *  - #settings-footer is physically RE-PARENTED between the two columns by
  *    Settings._syncFooter() (sidebar on desktop, under the level-1 menu on
  *    mobile). React must therefore never re-render it either: this subtree is
@@ -38,36 +45,87 @@
  * column, none is a wide chart grid.
  *
  * ./settings.js is the retired public/js/settings.js, moved into this bundle
- * unchanged apart from its two bootstrap lines: it still publishes
- * window.Settings at module scope (app.js, app-view.js, dev-chat.js and
- * credit-options.js all call it unguarded), and its DOMContentLoaded handler
- * is replaced by the init() below.
+ * unchanged apart from its bootstrap lines: it still publishes window.Settings
+ * at module scope (app.js, app-view.js, dev-chat.js and credit-options.js all
+ * call it unguarded) — taking over from ./facade.js, which published the
+ * boot-time surface first — and its DOMContentLoaded handler is replaced by
+ * the init() the panes call once they exist.
  */
 
+import type { ComponentType } from 'react';
+
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
-import { SettingsSections } from './sections';
-// ./mount imports ./settings.js and plants both seams on it. Importing that
-// module directly here would publish window.Settings without a store and
-// leave the two nav hosts permanently empty.
-import './mount';
+import { useMountedOnReveal } from '../../lib/mount-on-reveal';
+import { useStoreState } from '../../lib/use-store-state';
+// The EAGER half of the module: publishes window.Settings with the boot-time
+// surface (refresh() and the per-navigation no-ops) and loads the rest —
+// ./settings.js via ./mount, and the sixteen panes — as one lazy chunk on the
+// first open, or at idle for a signed-in viewer. See ./facade.js.
+import { ensureSettings, prefetchSettings, settingsChunkStore } from './facade.js';
+// The first-run terms prompt rides the SHELL, not the chunk: it listens for
+// the once-per-document sv:authed boot signal and presents through
+// window.Settings.showTermsSheet, which the façade answers by loading the
+// module and forwarding. It used to be imported from ./mount, which is now
+// inside the chunk — and a boot listener that only exists once the screen has
+// been opened would never fire.
+import './terms-first-run.js';
 import { SettingsMobileMenu, SettingsNavDesktop } from './settings-nav';
 
+interface SettingsChunkState {
+  Sections: ComponentType | null;
+  failed: boolean;
+}
+
 export function SettingsScreen() {
-  // A LAYOUT effect, like the other islands: init() binds every control on
-  // this screen by id, and it has to have run before app.js's DOMContentLoaded
-  // handler routes an initial #settings/<section> hash at it. The React entry
-  // is a deferred module, so this still lands in the same window the classic
-  // <script> tag's own DOMContentLoaded handler used to.
+  // The sixteen panes mount on the screen's FIRST REVEAL, not in the
+  // prerender (see lib/mount-on-reveal.ts). They were 437 of the document's
+  // 1,485 elements, parsed, styled and hydrated on every load for a screen
+  // most loads never open. The chassis below — the column, the sidebar, the
+  // two nav hosts, the footer and the empty #settings-section-content — is
+  // still in the document, because app.js reads the root by id and the
+  // declared checks select through it.
+  //
+  // Settings.open() asks for the interior itself (`_ensureMounted`, through
+  // window.UsernodeReact.mount) before it renders a single pane, and gets it
+  // synchronously; the visibility path below is the belt to that brace.
+  const mounted = useMountedOnReveal('settings-screen');
+  // The panes' component, once the chunk is in. Committed with flushSync from
+  // the chunk's own resolution (facade.js), so a Settings.open() that arrives
+  // after it finds the panes already in the document.
+  const { Sections, failed } = useStoreState(settingsChunkStore) as SettingsChunkState;
+
+  // refresh() reads /api/auth/me (joining the boot read) into Settings.state,
+  // which dev-chat and app-view consult for `hasApiKey` before this screen is
+  // ever opened — so it runs at hydration, on every route, as before. At boot
+  // window.Settings is the façade, whose refresh() is exactly that read and
+  // nothing else; and this is also where the idle prefetch is armed.
   useIsomorphicLayoutEffect(() => {
-    window.Settings?.init();
+    window.Settings?.refresh?.();
+    prefetchSettings();
   }, []);
+
+  // The reveal asks for the module. Settings.open() already does (it goes
+  // through the façade, which loads and forwards); this is the belt for the
+  // visibility path, so a screen revealed without open() is not left blank.
+  // init() — binding every control by id, ONCE — no longer lives here: it is
+  // a layout effect inside ./sections, which is the one place that runs
+  // exactly when the panes exist. `mounted` is one-way, so neither re-fires.
+  useIsomorphicLayoutEffect(() => {
+    if (mounted) ensureSettings();
+  }, [mounted]);
 
   return (
     <main
       id="settings-screen"
-      className="hidden flex-1 overflow-y-auto platform-safe-scroll"
+      className="hidden flex-1 overflow-y-auto platform-safe-scroll dc-lift dc-lift-strip"
       style={{ position: "relative" }}
     >
+      {/*
+          THE SCREEN IS THE STRIP and the open section is the SHEET, the dev
+          session's ladder (`.dc-lift` in app.css): the section list — the
+          level-1 menu on a phone, the sidebar from md up — sits on the strip,
+          and #settings-section-content rises on it with the section inside.
+      */}
       <div id="settings-root" className="max-w-5xl mx-auto p-4 w-full">
         <div className="md:flex md:items-start md:gap-6">
           {/*
@@ -84,10 +142,10 @@ export function SettingsScreen() {
                 rebuilt, so the click handler settings.js binds in init()
                 survives the trip.
             */}
-            <div id="settings-footer" className="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
+            <div id="settings-footer" className="mt-6 pt-2">
               <button
                 id="settings-logout"
-                className="w-full rounded-lg border border-red-400 dark:border-red-700 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
+                className="w-full rounded-full bg-red-500/10 px-4 py-2.5 text-[17px] font-semibold text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"
               >
                 Log out
               </button>
@@ -105,8 +163,13 @@ export function SettingsScreen() {
                 level 1). max-w-xl keeps form controls from stretching the
                 full width of the wide shell.
             */}
-            <div id="settings-section-content" className="pb-8 max-w-xl">
-              <SettingsSections />
+            <div id="settings-section-content" className="settings-sheet dc-lift dc-lift-session">
+              {mounted && Sections ? <Sections /> : null}
+              {mounted && !Sections && failed ? (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400 p-4">
+                  Settings could not be loaded. Check your connection and try again.
+                </p>
+              ) : null}
             </div>
           </div>
         </div>

@@ -3,6 +3,7 @@
 const { decrypt } = require('./secrets');
 const { ALLOWED_KINDS, buildMessage } = require('./mobile-push-policy');
 const { classifyError } = require('./mobile-push-provider');
+const { countUnread } = require('./notifications');
 const log = require('./logger');
 
 const CONVERSATION_NOTIFICATION_KINDS = new Set([
@@ -130,10 +131,20 @@ class MobilePushWorker {
              FROM mobile_push_registrations r
             WHERE r.session_expires_at <= NOW()
             ORDER BY r.id LIMIT $1
+         ), removed AS (
+           DELETE FROM mobile_push_registrations r USING doomed
+            WHERE r.id = doomed.id
+              AND r.session_expires_at <= NOW()
+          RETURNING r.id, r.user_id, r.environment, r.installation_id,
+                    r.platform, r.permission_status
          )
-         DELETE FROM mobile_push_registrations r USING doomed
-          WHERE r.id = doomed.id
-            AND r.session_expires_at <= NOW()`,
+         INSERT INTO mobile_push_registration_events (
+           user_id, registration_id, environment, installation_id, platform,
+           permission_status, event_kind, reason_code
+         )
+         SELECT user_id, id, environment, installation_id, platform,
+                permission_status, 'session_expired', 'mobile_session_expired'
+           FROM removed`,
         [this.options.retentionBatchSize]
       );
       await this.pool.query(
@@ -165,6 +176,18 @@ class MobilePushWorker {
           WHERE m.environment = doomed.environment
             AND m.installation_id = doomed.installation_id
             AND m.latest_mutation_revision = doomed.latest_mutation_revision`,
+        [this.options.retentionDays, this.options.retentionBatchSize]
+      );
+      await this.pool.query(
+        `WITH doomed AS (
+           SELECT id
+             FROM mobile_push_registration_events
+            WHERE created_at < NOW() - make_interval(days => $1::integer)
+            ORDER BY created_at, id
+            LIMIT $2
+         )
+         DELETE FROM mobile_push_registration_events event USING doomed
+          WHERE event.id = doomed.id`,
         [this.options.retentionDays, this.options.retentionBatchSize]
       );
       this.lastRetentionAt = now;
@@ -247,6 +270,7 @@ class MobilePushWorker {
               state.send_not_before AS deployment_send_not_before,
               state.firebase_project_id AS deployment_firebase_project_id,
               r.id AS registration_id, r.installation_id, r.environment AS registration_environment,
+              r.platform AS registration_platform,
               r.registration_hash, r.registration_enc, r.permission_status,
               r.user_id AS registration_user_id,
               r.session_expires_at AS registration_session_expires_at
@@ -349,24 +373,78 @@ class MobilePushWorker {
     await this.finish(job, 'pending', code, new Date(Date.now() + delayMs));
   }
 
-  async deleteLoadedRegistration(row) {
+  async deleteLoadedRegistration(row, code) {
+    const eventKind = code === 'registration_decrypt_failed'
+      ? 'registration_corrupt' : 'provider_invalidated';
     const result = await this.pool.query(
-      `DELETE FROM mobile_push_registrations
-        WHERE id = $1 AND registration_hash = $2 AND registration_enc = $3`,
-      [row.registration_id, row.registration_hash, row.registration_enc]
+      `WITH removed AS (
+         DELETE FROM mobile_push_registrations
+          WHERE id = $1 AND registration_hash = $2 AND registration_enc = $3
+        RETURNING id, user_id, environment, installation_id, platform,
+                  permission_status
+       )
+       INSERT INTO mobile_push_registration_events (
+         user_id, registration_id, environment, installation_id, platform,
+         permission_status, event_kind, reason_code
+       )
+       SELECT user_id, id, environment, installation_id, platform,
+              permission_status, $4, $5
+         FROM removed`,
+      [
+        row.registration_id,
+        row.registration_hash,
+        row.registration_enc,
+        eventKind,
+        code,
+      ]
     );
     return result.rowCount === 1;
   }
 
+  async registrationStillExists(id) {
+    const { rows } = await this.pool.query(
+      'SELECT 1 FROM mobile_push_registrations WHERE id = $1',
+      [id]
+    );
+    return Boolean(rows[0]);
+  }
+
   async invalidateLoadedRegistration(job, row, code) {
-    if (await this.deleteLoadedRegistration(row)) {
+    if (await this.deleteLoadedRegistration(row, code)) {
       await this.finish(job, 'dead', code);
       return;
     }
-    // A newer PUT refreshed this same row after loadDelivery. Keep
-    // the FK and retry against the new encrypted registration instead of
-    // deleting or condemning the replacement based on the stale provider call.
-    await this.retry(job, 'registration_refreshed');
+    if (await this.registrationStillExists(row.registration_id)) {
+      // A newer PUT refreshed this same row after loadDelivery. Keep
+      // the FK and retry against the new encrypted registration instead of
+      // deleting or condemning the replacement based on the stale provider call.
+      await this.retry(job, 'registration_refreshed');
+      return;
+    }
+    // Another delivery can observe the same permanent provider result and
+    // remove the shared registration first. Preserve this delivery's provider
+    // outcome instead of pretending the now-absent registration was refreshed.
+    await this.finish(job, 'dead', code);
+  }
+
+  // #1445: the recipient's unread total, for the homescreen icon badge.
+  // Reuses countUnread (the one place the unread predicate lives) rather
+  // than duplicating CONVERSATION_ACCESS_SQL in the delivery join. Clamped
+  // to at least 1 — the notification being delivered is itself unread (a
+  // read row was cancelled by invalidReason), so an alert push claiming
+  // badge 0 would be lying if a mid-send read races the count. Returns
+  // null on failure: the badge is display-only and must never kill a
+  // delivery, so a count problem just sends the pre-badge payload.
+  async unreadBadgeCount(row) {
+    try {
+      const count = await countUnread(this.pool, row.notification_user_id);
+      return Math.max(1, count);
+    } catch (err) {
+      log.warn('mobile-push', 'unread badge count failed', {
+        code: typeof err?.code === 'string' ? err.code : 'unknown',
+      });
+      return null;
+    }
   }
 
   async processDelivery(job) {
@@ -386,6 +464,8 @@ class MobilePushWorker {
       return;
     }
 
+    const unreadCount = await this.unreadBadgeCount(row);
+
     let message;
     try {
       message = buildMessage({
@@ -396,6 +476,7 @@ class MobilePushWorker {
         installationId: row.installation_id,
         userId: row.notification_user_id,
         expiresAt: row.expires_at,
+        unreadCount,
         // Send-time display context (#3289). Every field is optional: the
         // policy degrades to the generic copy rather than failing a delivery.
         context: {

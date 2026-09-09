@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const log = require('../services/logger');
 const { clientIp } = require('../services/client-ip');
@@ -21,16 +22,30 @@ function retryPhrase(seconds) {
 // skips the limiter entirely for FULL admins — gated on canAdminWrite,
 // not isAdmin, so view-only admins stay limited like regular users (same
 // gate as the app-quota bypass, issue #311).
-function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, exemptAdmins = false }) {
+// `skipSuccessfulRequests` is the mirror of skipFailedRequests: it refunds
+// anything that finishes < 400, so the bucket counts only FAILURES. Right
+// where the abuse being bounded is itself a stream of failures (guessing an
+// unguessable token) and honest traffic essentially never produces one.
+//
+// `key` overrides how a request is bucketed — return a string to use it, or
+// a falsy value to fall through to the keyByUser / IP default below. That
+// fallthrough is load-bearing: the waitlist token bucket keys on the path
+// token, and one route in the same family carries no token.
+function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, key = null }) {
   const options = {
     windowMs,
     max,
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     skipFailedRequests,
+    skipSuccessfulRequests,
     // `ipKeyGenerator` collapses IPv6 to a subnet prefix so a single client
     // can't bypass the limit by rotating addresses within its /56.
-    keyGenerator: (req) => {
+    keyGenerator: (req, res) => {
+      if (key) {
+        const custom = key(req, res);
+        if (custom) return String(custom);
+      }
       if (keyByUser && req.user?.id) return `user:${req.user.id}`;
       return ipKeyGenerator(clientIp(req));
     },
@@ -59,23 +74,211 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFail
   return rateLimit(options);
 }
 
-// Auth: 10 attempts / 15 min / IP. Tight because it's the primary brute-
-// force surface (password POSTs + signed-challenge submission).
-const authLimiter = makeLimiter({
-  windowMs: 15 * 60 * 1000,
+// ── The auth family ────────────────────────────────────────────────────
+//
+// This used to be ONE bucket — `authLimiter`, 10 requests / 15 min / IP —
+// mounted on twelve endpoints spanning password login, email-code signup,
+// password recovery, wallet auth and the mobile wallet claim. Three things
+// were wrong with that shape, and they are the same three #1668 fixed for
+// the waitlist (#1296):
+//
+//   - It counted SUCCESSES. A sign-in that worked burned a slot, so one
+//     office NAT or carrier CGNAT got ten sign-ins per 15 minutes for
+//     everyone behind it.
+//   - The remedy shared the bucket with the failure: password-reset could
+//     be throttled by the very login failures that made it necessary, and
+//     the three-step OTP signup competed with login for the same ten.
+//   - It was keyed on the address only. Nothing anywhere bounded guessing
+//     against ONE account (there is no lockout table and no edge limiter),
+//     so vertical brute force from rotating addresses was unbounded.
+//
+// So: one limiter per family, failures-only wherever the abuse being
+// bounded is itself a stream of failures, and a per-identifier bucket on
+// login. The mail-sending routes are the exception that still counts
+// successes — a delivered email is the cost being bounded, not a failure.
+const AUTH_WINDOW_MS = 15 * 60 * 1000;
+
+// A submitted identifier (a username, an email) as a limiter key. Hashed
+// for the same reason waitlistCodeConfirmLimiter hashes its address: keys
+// live in memory as plain strings, and a digest buckets exactly without
+// holding the address itself. Normalized first, or `Alice` and `alice`
+// would be two buckets and the split would be the bypass.
+function identifierKey(prefix, value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!normalized) return null;
+  return `${prefix}:${crypto.createHash('sha256').update(normalized).digest('hex')}`;
+}
+
+// Login, part 1 of 3: the burst. `windowMs` fuses two independent knobs —
+// how patiently failures are counted, and how long a human waits after
+// tripping — and the old single 15-minute window set both at once, so
+// mistyping your own password cost a quarter of an hour. Splitting them
+// lets the penalty be short where the counting stays long: five wrong
+// passwords in a minute is answered in about a minute, not fifteen.
+const loginBurstLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 5,
+  name: 'login-burst',
+  skipSuccessfulRequests: true,
+  message: (s) => `Too many sign-in attempts. Try again ${retryPhrase(s)}.`,
+});
+
+// Login, part 2 of 3: the sustained rate, which is what actually bounds a
+// patient attacker. 30 failures/hour is TIGHTER than the 40/hour the old
+// 10-per-15-minutes bucket allowed, and honest traffic no longer competes
+// for it at all because successes are refunded.
+const loginSustainedLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 30,
+  name: 'login-sustained',
+  skipSuccessfulRequests: true,
+  message: (s) => `Too many sign-in attempts from this address. Try again ${retryPhrase(s)}.`,
+});
+
+// Login, part 3 of 3: per-identifier. The two buckets above bound one
+// SOURCE; this one bounds one TARGET, which is the case neither the old
+// limiter nor anything else in the stack covered — an attacker rotating
+// addresses got a fresh budget with every address.
+//
+// It counts unknown identifiers exactly like known ones. That is
+// deliberate: bucketing only real accounts would make the 429 an
+// account-existence oracle, and the whole point of the shared `handler` in
+// makeLimiter is that the refusal is byte-identical whichever key fired.
+//
+// The cost is the standard one, and it is real: somebody who knows a
+// username can spend failures to keep that account throttled. Three things
+// bound it rather than remove it — the window is 15 minutes and not a
+// lockout, an attacker's own address is capped at 30 failures/hour by the
+// limiter above (so one address cannot even sustain the grief), and a
+// signed-in user cannot reach here at all, because the SESSION_MINT_PATHS
+// boundary in routes/auth.js answers a request carrying a live session
+// with 409 before any limiter runs.
+//
+// One honest limit: the key is the identifier as SUBMITTED, not the account
+// it resolves to. /api/auth/login accepts a username OR an email for the
+// same account (#1269), so somebody holding both spellings gets two buckets
+// against one target rather than one. Keying on the resolved account would
+// mean running the lookup — two queries and a bcrypt compare — BEFORE the
+// throttle, which hands an attacker the work the limiter exists to bound.
+// The per-address buckets above still cap the total either way.
+const loginIdentityLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
   max: 10,
-  name: 'auth',
-  message: 'Too many login attempts, try again in a few minutes',
+  name: 'login-identity',
+  skipSuccessfulRequests: true,
+  key: (req) => identifierKey('login', req.body?.username),
+  message: (s) => `Too many sign-in attempts for that account. Try again ${retryPhrase(s)}.`,
+});
+
+// Activation-code redemption. Codes are admin-minted rather than random
+// per request, so this bounds working through a list of them.
+const registerLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 10,
+  name: 'register',
+  skipSuccessfulRequests: true,
+  message: (s) => `Too many registration attempts. Try again ${retryPhrase(s)}.`,
+});
+
+// Requesting an email code SENDS MAIL, so this is the one auth family
+// where a success is the cost and refunding it would be the bug. Two
+// buckets, mounted together, in the shape waitlistJoin uses: per address
+// so one person cannot work through a list of victims, per recipient so
+// one mailbox cannot be flooded from many addresses.
+const otpRequestLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 10,
+  name: 'otp-request',
+  message: (s) => `Too many code requests. Try again ${retryPhrase(s)}.`,
+});
+
+const otpRequestEmailLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 5,
+  name: 'otp-request-email',
+  key: (req) => identifierKey('otp', req.body?.email),
+  message: (s) => `A code was just sent to that address. Try again ${retryPhrase(s)}.`,
+});
+
+// Verifying a code, and consuming the narrow signup cookie it mints.
+// services/email-signup.js already caps attempts at MAX_OTP_ATTEMPTS per
+// code in the database, so this only has to bound working through codes;
+// 15 leaves an honest fumbler (a mistyped code, a resend, another try)
+// far from the ceiling.
+const otpVerifyLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 15,
+  name: 'otp-verify',
+  skipSuccessfulRequests: true,
+  message: (s) => `Too many code attempts. Try again ${retryPhrase(s)}.`,
+});
+
+// Password recovery, split from login for the reason the split exists at
+// all: the remedy must never be throttled by the failures that caused it.
+// Requesting sends mail, so it counts successes and gets the same
+// address/recipient pair as the OTP request above.
+const passwordResetRequestLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 10,
+  name: 'password-reset-request',
+  message: (s) => `Too many reset requests. Try again ${retryPhrase(s)}.`,
+});
+
+const passwordResetRequestEmailLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 5,
+  name: 'password-reset-request-email',
+  key: (req) => identifierKey('reset', req.body?.email),
+  message: (s) => `A reset link was just sent to that address. Try again ${retryPhrase(s)}.`,
+});
+
+// Redeeming a reset token. The token is 32 random bytes, so this bounds
+// scanning rather than guessing; failures-only keeps a real recipient's
+// redemption from ever approaching it.
+const passwordResetConfirmLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 20,
+  name: 'password-reset-confirm',
+  skipSuccessfulRequests: true,
+  message: (s) => `Too many reset attempts. Try again ${retryPhrase(s)}.`,
+});
+
+// The wallet family: verify, reset-verify, register and link-login all
+// submit a signature over a server-issued ECDSA challenge, so there is
+// nothing here to guess and the budget only has to bound the verification
+// work. Its own bucket so a wallet user's retries cannot throttle a
+// password user behind the same address.
+const walletAuthLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 20,
+  name: 'wallet-auth',
+  skipSuccessfulRequests: true,
+  message: (s) => `Too many wallet attempts. Try again ${retryPhrase(s)}.`,
+});
+
+// POST /api/v4/mobile/wallet/claim proves ownership of a legacy account
+// with a SIX-DIGIT code, which is the one genuinely guessable secret in
+// this family, so it stays tight. The route already requires a live web
+// session, so it is keyed per user rather than per address — mounted
+// AFTER optionalSessionAuth in routes/topochain/mobile.js so req.user is
+// populated by the time the key is computed.
+const mobileWalletClaimLimiter = makeLimiter({
+  windowMs: AUTH_WINDOW_MS,
+  max: 10,
+  name: 'mobile-wallet-claim',
+  keyByUser: true,
+  skipSuccessfulRequests: true,
+  message: (s) => `Too many claim attempts. Try again ${retryPhrase(s)}.`,
 });
 
 // Wallet pre-check: 60 / min / IP. /api/auth/wallet-check is a read-only
 // lookup that fires on every login-page load to decide whether to show
-// "Sign in with wallet" vs "Link / register". Reusing authLimiter here
-// caused legitimate users (esp. mobile webview refreshes) to bounce off
-// after 10 page loads in 15 min and see a misleading "not linked" UI.
-// The endpoint can't be used to brute-force credentials — verification
-// still goes through wallet-verify with a server-issued ECDSA challenge,
-// which IS gated by authLimiter.
+// "Sign in with wallet" vs "Link / register". Reusing the shared auth
+// bucket here caused legitimate users (esp. mobile webview refreshes) to
+// bounce off after 10 page loads in 15 min and see a misleading "not
+// linked" UI. The endpoint can't be used to brute-force credentials —
+// verification still goes through wallet-verify with a server-issued
+// ECDSA challenge, which IS gated by walletAuthLimiter.
 const walletCheckLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 60,
@@ -90,7 +293,16 @@ const appCreateLimiter = makeLimiter({
   max: 5,
   name: 'app-create',
   keyByUser: true,
-  message: 'You\'ve created a lot of apps recently — try again in a bit',
+  message: 'You\'ve created a lot of apps recently. Try again in a bit',
+});
+
+// Separate from provisioning so asking for slots never consumes a create attempt.
+const appAllowanceRequestLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  name: 'app-allowance-request',
+  keyByUser: true,
+  message: 'Too many allowance requests. Please try again later.',
 });
 
 // Issue / rename / visibility proposals: 20 / hour / user. Loose enough
@@ -155,7 +367,7 @@ const chatLimiter = makeLimiter({
   max: 30,
   name: 'chat',
   keyByUser: true,
-  message: 'Too many chat messages — slow down for a minute.',
+  message: 'Too many chat messages. Slow down for a minute.',
 });
 
 // Native app/group-chat JSON writes: 60 / minute / user. Browser clients
@@ -168,7 +380,7 @@ const groupChatWriteLimiter = makeLimiter({
   max: 60,
   name: 'group-chat-write',
   keyByUser: true,
-  message: 'Too many discussion messages — slow down for a minute.',
+  message: 'Too many discussion messages. Slow down for a minute.',
 });
 
 // Platform Messages has separate safety buckets from app group chat. Failed
@@ -179,7 +391,7 @@ const conversationMessageLimiter = makeLimiter({
   max: 60,
   name: 'conversation-message',
   keyByUser: true,
-  message: 'Too many messages — slow down for a minute.',
+  message: 'Too many messages. Slow down for a minute.',
 });
 
 const conversationActionLimiter = makeLimiter({
@@ -187,7 +399,7 @@ const conversationActionLimiter = makeLimiter({
   max: 20,
   name: 'conversation-action',
   keyByUser: true,
-  message: 'Too many conversation or invitation changes — try again later.',
+  message: 'Too many conversation or invitation changes. Try again later.',
 });
 
 // Consent exits must never share a bucket with invitation churn: a user who
@@ -198,7 +410,7 @@ const conversationSafetyLimiter = makeLimiter({
   max: 120,
   name: 'conversation-safety',
   keyByUser: true,
-  message: 'Too many consent changes — slow down and try again.',
+  message: 'Too many consent changes. Slow down and try again.',
 });
 
 // express-rate-limit increments once per request. Group APIs batch recipients,
@@ -222,7 +434,7 @@ function conversationInviteLimiter(req, res, next) {
     });
     res.set('Retry-After', String(retryAfterSeconds));
     return res.status(429).json({
-      error: 'Too many conversation invitations — try again later.',
+      error: 'Too many conversation invitations. Try again later.',
       retryAfterSeconds,
     });
   }
@@ -235,7 +447,7 @@ const conversationReactionLimiter = makeLimiter({
   max: 120,
   name: 'conversation-reaction',
   keyByUser: true,
-  message: 'Too many reactions — slow down for a minute.',
+  message: 'Too many reactions. Slow down for a minute.',
 });
 
 // #1280: saving/unsaving a group-chat message. Sized like the reaction
@@ -248,7 +460,7 @@ const messageBookmarkLimiter = makeLimiter({
   max: 120,
   name: 'message-bookmark',
   keyByUser: true,
-  message: 'Too many saves — slow down for a minute.',
+  message: 'Too many saves. Slow down for a minute.',
 });
 
 const conversationReportLimiter = makeLimiter({
@@ -256,7 +468,7 @@ const conversationReportLimiter = makeLimiter({
   max: 10,
   name: 'conversation-report',
   keyByUser: true,
-  message: 'Too many reports — try again later.',
+  message: 'Too many reports. Try again later.',
 });
 
 // #556: live title previews for the feedback modal (POST /api/feedback/
@@ -270,7 +482,7 @@ const feedbackTitleLimiter = makeLimiter({
   max: 20,
   name: 'feedback-title',
   keyByUser: true,
-  message: 'Too many title previews — slow down for a minute.',
+  message: 'Too many title previews. Slow down for a minute.',
 });
 
 // Dev-chat attachment uploads (#450): 30 / minute / user. Each upload is
@@ -283,7 +495,7 @@ const attachmentUploadLimiter = makeLimiter({
   max: 30,
   name: 'attachment-upload',
   keyByUser: true,
-  message: 'Too many file uploads — slow down for a minute.',
+  message: 'Too many file uploads. Slow down for a minute.',
 });
 
 // App file-storage uploads via the shell relay (#752): 20 / minute /
@@ -297,7 +509,7 @@ const appFileUploadLimiter = makeLimiter({
   max: 20,
   name: 'app-file-upload',
   keyByUser: true,
-  message: 'Too many file uploads — slow down for a minute.',
+  message: 'Too many file uploads. Slow down for a minute.',
 });
 
 // #683: feedback-modal screenshot uploads. Each is a ≤4 MB bytea INSERT;
@@ -309,7 +521,7 @@ const issueScreenshotLimiter = makeLimiter({
   max: 10,
   name: 'issue-screenshot-upload',
   keyByUser: true,
-  message: 'Too many screenshot uploads — slow down for a few minutes.',
+  message: 'Too many screenshot uploads. Slow down for a few minutes.',
 });
 
 // Profile customization writes (issue #982): PATCH /api/me/profile plus
@@ -325,7 +537,21 @@ const profileWriteLimiter = makeLimiter({
   max: 20,
   name: 'profile-write',
   keyByUser: true,
-  message: 'Too many profile updates — slow down for a minute.',
+  message: 'Too many profile updates. Slow down for a minute.',
+});
+
+// Username changes: 5 / hour / user. The 30-day cooldown in
+// src/services/usernames.js is the real policy — this bucket exists for the
+// REJECTED attempts the cooldown never reaches. Every call bcrypt-compares
+// the current password, so an unthrottled endpoint is both a password
+// oracle and 5 rejected-name probes worth of KDF per request. Per-user
+// keyed: the caller is always authenticated here.
+const usernameChangeLimiter = makeLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  name: 'username-change',
+  keyByUser: true,
+  message: 'Too many username attempts. Try again in a little while.',
 });
 
 // Priority / assignee attribute votes: 60 / minute / user. Loose enough
@@ -336,7 +562,7 @@ const attributeVoteLimiter = makeLimiter({
   max: 60,
   name: 'attribute-vote',
   keyByUser: true,
-  message: 'Too many updates — slow down for a minute.',
+  message: 'Too many updates. Slow down for a minute.',
 });
 
 // #613: drag-and-drop reorder of Dev-board cards. Dragging is bursty (a
@@ -348,23 +574,11 @@ const boardOrderLimiter = makeLimiter({
   max: 60,
   name: 'board-order',
   keyByUser: true,
-  message: 'Too many reorder updates — slow down for a minute.',
-});
-
-// #911: per-user show/hide of a home-screen panel. A checkbox flip is a
-// single small write and nobody legitimately toggles one more than a few
-// times a minute; per-user keyed, mirroring boardOrderLimiter.
-const homePanelPrefLimiter = makeLimiter({
-  windowMs: 60 * 1000,
-  max: 30,
-  name: 'home-panel-pref',
-  keyByUser: true,
-  message: 'Too many changes — slow down for a minute.',
+  message: 'Too many reorder updates. Slow down for a minute.',
 });
 
 // Free-form home-grid placement: one PUT per completed drag, and a drag is a
-// deliberate gesture rather than a keystroke. The ceiling is much higher than
-// the panel-pref limiter above because rearranging a home screen is genuinely
+// deliberate gesture rather than a keystroke. Rearranging a home screen is
 // bursty — someone tidying their grid can easily land twenty drops in a
 // minute, and each also has to survive a breakpoint switch re-persisting.
 // Per-user keyed; the layout is per-user by definition.
@@ -373,7 +587,7 @@ const homeLayoutLimiter = makeLimiter({
   max: 120,
   name: 'home-layout',
   keyByUser: true,
-  message: 'Too many layout changes — slow down for a minute.',
+  message: 'Too many layout changes. Slow down for a minute.',
 });
 
 // #940: saved dev-chat drafts, now server-backed. One write per deliberate
@@ -387,7 +601,7 @@ const draftWriteLimiter = makeLimiter({
   max: 60,
   name: 'chat-drafts',
   keyByUser: true,
-  message: 'Too many draft updates — slow down for a minute.',
+  message: 'Too many draft updates. Slow down for a minute.',
 });
 
 // Platform database export tickets: 3 / 24h / full admin. Each ticket
@@ -414,31 +628,6 @@ const dbExportLimiter = makeLimiter({
   message: (s) => `Rate limit reached: up to 3 database exports per day. You can try again ${retryPhrase(s)}.`,
 });
 
-// Topochain mobile auth (plan Task 3; SPEC 1588-1599): the four PUBLIC
-// mobile-auth endpoints (`check-email`, `login`, `otp/request`,
-// `otp/verify`) share ONE bucket, 10 requests / minute / client IP — the
-// route path is not part of the key, matching SPEC 1597 exactly ("the
-// four public auth endpoints share one bucket of 10 requests per minute
-// per client IP"). Route modules apply this same limiter instance to all
-// four paths rather than building four separate limiters.
-//
-// DEVIATION from SPEC 1597/1599: the source throttle responds with
-// `429` + `Retry-After`/`X-RateLimit-*` headers and no particular JSON
-// body; the v4 contract otherwise unifies every error into the single
-// `{success, error, ...}` envelope (SPEC §4.8). This limiter is built on
-// `makeLimiter`, whose `handler` (above) owns the 429 response shape for
-// EVERY limiter in this file — it replies with the platform's standard
-// `{error, retryAfterSeconds}` body, not the v4 envelope. Reimplementing
-// just this one limiter's handler to match §4.8 would fork the shared
-// wrapper for one route group; left as-is and documented rather than
-// special-cased.
-const topochainMobileAuthLimiter = makeLimiter({
-  windowMs: 60 * 1000,
-  max: 10,
-  name: 'topochain-mobile-auth',
-  message: 'Too many requests — slow down for a minute.',
-});
-
 // Authenticated device-state synchronization. Normal lifecycle traffic is a
 // handful of writes; this prevents a stolen bearer from churning encrypted
 // registrations and delivery FKs in a tight loop.
@@ -447,30 +636,162 @@ const topochainMobilePushRegistrationLimiter = makeLimiter({
   max: 60,
   name: 'topochain-mobile-push-registration',
   keyByUser: true,
-  message: 'Too many push registration updates — slow down for a minute.',
+  message: 'Too many push registration updates. Slow down for a minute.',
 });
 
-// Public waitlist join: 5 / 15 min / IP. Anonymous write endpoint on the
-// landing page — tight enough to stop bulk email harvesting/spam, loose
-// enough that a genuine visitor retrying a typo never hits it.
-const waitlistJoinLimiter = makeLimiter({
-  windowMs: 15 * 60 * 1000,
+const WAITLIST_WINDOW_MS = 15 * 60 * 1000;
+const MORE_TOKEN_RE = /^[a-f0-9]{48}$/;
+
+// Public waitlist join, no integration key: 5 / 15 min / IP. Anonymous write
+// endpoint on the landing page — tight enough to stop bulk email harvesting
+// and spam, loose enough that a genuine visitor retrying a typo never hits
+// it. This is the bucket every unkeyed caller lands in, unchanged.
+const waitlistJoinAnonLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
   max: 5,
   name: 'waitlist-join',
-  message: 'Too many signups from this address — try again in a few minutes.',
+  message: 'Too many signups from this address. Try again in a few minutes.',
 });
 
+// A trusted integrator (see services/waitlist-integrator) proxies many
+// distinct people through one server address, so the IP bucket above would
+// cap an entire agency at five signups per window. Two buckets replace it,
+// and BOTH are charged:
+//
+//   * per end user, when the integrator forwards a usable visitor address —
+//     the same 5 / 15 min a direct visitor gets, so a keyed request is never
+//     LOOSER for the person making it;
+//   * per client, always — a 200 / 15 min ceiling so a leaked key is a
+//     bounded faucet rather than an open one.
+//
+// With no forwarded address there is nothing finer to key on, so the client
+// ceiling is the only bound; that is the cost of not forwarding one.
+const waitlistJoinClientLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 200,
+  name: 'waitlist-join-client',
+  key: (req) => `wl:${req.waitlistIntegrator?.label || 'unknown'}`,
+  message: 'Too many signups from this integration. Try again in a few minutes.',
+});
+
+const waitlistJoinClientUserLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 5,
+  name: 'waitlist-join-client-user',
+  key: (req) => (req.waitlistEndUserIp
+    ? `wl:${req.waitlistIntegrator?.label || 'unknown'}:${req.waitlistEndUserIp}`
+    : null),
+  message: 'Too many signups from this address. Try again in a few minutes.',
+});
+
+// Dispatch on trusted-integrator status, same shape as issueKindLimiter.
+// waitlistIntegratorAuth runs earlier in the chain and only ever ATTACHES
+// req.waitlistIntegrator, so an absent/expired/wrong key simply falls back
+// to the anonymous bucket instead of erroring.
+function waitlistJoinLimiter(req, res, next) {
+  if (!req.waitlistIntegrator) return waitlistJoinAnonLimiter(req, res, next);
+  return waitlistJoinClientLimiter(req, res, (err) => {
+    if (err) return next(err);
+    if (!req.waitlistEndUserIp) return next();
+    return waitlistJoinClientUserLimiter(req, res, next);
+  });
+}
+
 // Waitlist token routes (confirm link, stage-2 survey read/save): these are
-// authenticated by an unguessable 48-hex token, so the IP bucket only has to
+// authenticated by an unguessable 48-hex token, so the bucket only has to
 // bound token scanning, not stop a genuine visitor. Kept separate from
 // waitlist-join on purpose — one real journey (join, survey save, emailed
 // confirm click, survey reload) makes 5+ requests, which used to exhaust the
 // 5/15-min join bucket and bounce the user's own confirm link (#1296).
+//
+// Keyed on the TOKEN, not the address: a shared exit address (an office, a
+// carrier NAT, a corporate proxy) put every stage-2 visitor in one 60-request
+// bucket, and the #more screen polls while it waits for a confirmation. One
+// person's poll could throttle a stranger's. Falls back to the IP key when
+// there is no path token, which is how POST /confirm (email + code, no token)
+// stays covered by this same limiter.
 const waitlistTokenLimiter = makeLimiter({
-  windowMs: 15 * 60 * 1000,
-  max: 60,
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 240,
   name: 'waitlist-token',
-  message: 'Too many waitlist requests from this address — try again in a few minutes.',
+  key: (req) => (MORE_TOKEN_RE.test(req.params?.token || '') ? `token:${req.params.token}` : null),
+  message: 'Too many requests for this link. Try again in a few minutes.',
+});
+
+// Per-token keying is not by itself an enumeration defence: a scanner
+// presents a DIFFERENT token every request, so it would get a fresh bucket
+// each time. This is the half that bounds scanning, and it is the reason the
+// two are mounted together on every token route.
+//
+// skipSuccessfulRequests is what makes 40 a safe number: a scan necessarily
+// 404s, while an honest visitor holding a real token essentially never fails,
+// so their reads and saves are refunded and never approach the ceiling.
+const waitlistTokenScanLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 40,
+  name: 'waitlist-token-scan',
+  skipSuccessfulRequests: true,
+  message: 'Too many waitlist requests from this address. Try again in a few minutes.',
+});
+
+// POST /api/public/waitlist/confirm carries an email and a six-digit code
+// and no token, so the scan limiter above is its only per-address bound —
+// and 40 failures is far too much room for a 6-digit code against one known
+// address. Bucket per address instead: 10 attempts / 15 min.
+//
+// The key is a SHA-256 of the normalized email, never the address itself:
+// limiter keys live in memory keyed by string and show up in nothing that is
+// logged, and a hash keeps it that way while still bucketing exactly.
+const waitlistCodeConfirmLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 10,
+  name: 'waitlist-code-confirm',
+  key: (req) => {
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (!email) return null;
+    return `email:${crypto.createHash('sha256').update(email).digest('hex')}`;
+  },
+  message: 'Too many code attempts for that address. Try again in a few minutes.',
+});
+
+// POST /api/public/waitlist/resend mints a code and mails it, so its bucket
+// is guarding an outbound send rather than a guess. Two of them, because the
+// two abuses are different shapes:
+//
+//   * per ADDRESS (5 / 15 min) — the mail-bomb: a distributed caller aiming
+//     an unbounded stream of mail at one inbox. Keyed on the address, so it
+//     holds no matter where the requests come from. It sits just under the
+//     mail throttle's own 5-per-day-per-recipient rule, so the ceiling a
+//     determined caller actually meets is the one that bounds the sending.
+//   * per IP (10 / 15 min) — the sweep: one caller walking a list of
+//     addresses, each of which is under its own limit.
+//
+// Both are silent as far as the caller can tell: a 429 here is the standard
+// limiter body, and it is reached by REQUEST COUNT, never by anything about
+// whether the address is on the list. The endpoint itself answers the same
+// 200 to every branch.
+//
+// The key is a SHA-256 of the normalized address, matching
+// waitlistCodeConfirmLimiter above — limiter keys live in memory as plain
+// strings, and hashing keeps a raw address out of that while still bucketing
+// exactly.
+const waitlistResendLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 5,
+  name: 'waitlist-resend',
+  key: (req) => {
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (!email) return null;
+    return `email:${crypto.createHash('sha256').update(email).digest('hex')}`;
+  },
+  message: 'Too many code requests for that address. Try again in a few minutes.',
+});
+
+const waitlistResendIpLimiter = makeLimiter({
+  windowMs: WAITLIST_WINDOW_MS,
+  max: 10,
+  name: 'waitlist-resend-ip',
+  message: 'Too many code requests from this address. Try again in a few minutes.',
 });
 
 // Exact public-profile reads deliberately have no directory/search endpoint;
@@ -479,7 +800,7 @@ const publicProfileReadLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 120,
   name: 'public-profile-read',
-  message: 'Too many profile lookups — slow down for a minute.',
+  message: 'Too many profile lookups. Slow down for a minute.',
 });
 
 const profileReportLimiter = makeLimiter({
@@ -488,7 +809,7 @@ const profileReportLimiter = makeLimiter({
   name: 'profile-report',
   keyByUser: true,
   skipFailedRequests: true,
-  message: 'Too many profile reports — try again later.',
+  message: 'Too many profile reports. Try again later.',
 });
 
 // Admin "send a test email": 10 / hour / full admin. This is the one
@@ -547,7 +868,7 @@ const userDirectoryLimiter = makeLimiter({
   max: 120,
   name: 'user-directory',
   keyByUser: true,
-  message: 'Too many directory lookups — please slow down.',
+  message: 'Too many directory lookups. Please slow down.',
 });
 
-module.exports = { userDirectoryLimiter, dbExportLimiter, authLimiter, homePanelPrefLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobileAuthLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistTokenLimiter, mailTestLimiter };
+module.exports = { appAllowanceRequestLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, messageBookmarkLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, profileWriteLimiter, usernameChangeLimiter, publicProfileReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, mailTestLimiter };

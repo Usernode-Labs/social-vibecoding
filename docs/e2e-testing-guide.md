@@ -190,8 +190,6 @@ watch:
   stage-2 survey with no "confirmed" state.
 - A spec re-share shows the same **"sent" success state** even when the
   server said `alreadyShared` and sent nothing.
-- `/api/v4/mobile/logs` looks **effectively unused** (a handful of rows,
-  all months old) despite `accept_logs` being true.
 - `POST /api/apps/:slug/fork` immediately after creating the parent can
   fail with `lastFailure: null` — a race on repo provisioning, with no
   diagnostic recorded. A retry recovers it.

@@ -16,6 +16,12 @@
 //   - re-run the proposal checks against the new head via the SHA-pinned
 //     staging build from Slice 1.
 //
+// It is also the only pass that can correct a STALE conflict snapshot
+// (#1365). The drift refresh above runs only on a head change, and GitHub
+// answers `mergeable: null` for the first read after a push — the very read
+// that head change triggers — so a snapshot could be stranded claiming a
+// conflict the author had already resolved. See refreshStrandedConflictState.
+//
 // Purely additive to the native proposal/vote/merge path.
 
 const log = require('./logger');
@@ -38,7 +44,7 @@ function activeGithub() {
 // Human label for the proposal in thread notes ("PR #123 — Fix the footer").
 function prLabel(session) {
   return session.pr_title
-    ? `PR #${session.pr_number} — ${session.pr_title}`
+    ? `PR #${session.pr_number}: ${session.pr_title}`
     : `PR #${session.pr_number}`;
 }
 
@@ -73,8 +79,12 @@ async function postProposalNote(pool, session, text, metadata) {
 // Returns one of:
 //   'skipped'   — not an imported row, GitHub not configured, or
 //                 the getPR fetch failed (transient — retried next sweep).
-//   'unchanged' — the head SHA matches the stored one (the common case);
-//                 exactly one getPR call and nothing else.
+//   'unchanged' — the head SHA matches the stored one (the common case).
+//                 One getPR call, and no head machinery. It may still heal
+//                 two things the same fetch has the answer to: a drifted
+//                 description mirror, and (#1365) a conflict snapshot left
+//                 claiming the proposal is blocked after GitHub decided it
+//                 is not. Both are no-ops unless there is something wrong.
 //   'updated'   — the head moved: tally cleared, note posted, drift +
 //                 checks refreshed against the new head.
 //
@@ -121,7 +131,12 @@ async function syncImportedProposal({ config, pool, session }) {
     const newHead = pr.head && pr.head.sha ? pr.head.sha : null;
     if (!newHead) return 'skipped';
     const oldHead = session.imported_pr_head_sha || null;
-    if (newHead === oldHead) return 'unchanged';
+    if (newHead === oldHead) {
+      // #1365. The head is where we left it — but the CONFLICT SNAPSHOT may
+      // not be, and this is the only pass that can put it right.
+      await refreshStrandedConflictState({ pool, session, pr, repo });
+      return 'unchanged';
+    }
 
     await applyHeadChange({ config, pool, session, pr, repo, newHead, oldHead });
     return 'updated';
@@ -159,7 +174,7 @@ async function applyHeadChange({ config, pool, session, pr, repo, newHead, oldHe
     ).catch(() => {});
     await sendSystemMessage(
       pool, session.app_id,
-      `${label} was updated on GitHub — earlier votes were cleared, please re-review the new changes. `
+      `${label} was updated on GitHub. Earlier votes were cleared, so please re-review the new changes. `
         + 'The staging preview and automated checks are being rebuilt against the new commit.',
       'system',
       { headChanged: true, prNumber: session.pr_number, headSha: newHead },
@@ -194,6 +209,52 @@ async function applyHeadChange({ config, pool, session, pr, repo, newHead, oldHe
   log.info('pr-import-sync', 'Imported PR head changed — refreshed preview and checks', {
     sessionId: session.id, prNumber: session.pr_number, oldHead, newHead, upForVote,
   });
+}
+
+// The snapshot states that say a proposal is BLOCKED. Only these are worth
+// re-reading on an unchanged head: 'clean' and 'behind' are settled answers,
+// and re-deriving them every sweep would spend a compareCommits per open
+// imported proposal per tick to learn nothing. A null snapshot is excluded
+// too — it renders no banner and the merge-candidate ordering already reads
+// it as clean, so there is no stale claim to correct.
+//
+// 'resolving' is deliberately absent: the conflict-resolver owns that state
+// for as long as its attempt is in flight and transitions out of it itself,
+// and overwriting it from here would race the resolver rather than help it.
+const STRANDED_CONFLICT_STATES = new Set(['conflict', 'failed']);
+
+// #1365 — the missing half of refreshDriftState's "the next sweep re-checks".
+//
+// That comment was never true for an imported row. refreshDriftState only
+// ever runs from applyHeadChange, which only runs when the head MOVES, and
+// it declines to write anything when GitHub answers `mergeable: null`.
+// GitHub computes mergeability asynchronously and returns null for the first
+// read after a push — which is exactly the read applyHeadChange makes,
+// BECAUSE it fires when the head just moved. So the snapshot was written at
+// the one moment GitHub was least likely to have an answer, and every later
+// sweep returned at the unchanged-head check before reaching the re-check.
+//
+// The visible cost: an author who did what the card told them to do — resolve
+// the conflict and push — kept being told "the last automatic conflict
+// resolution failed" on a pull request that was by then a clean fast-forward,
+// with no way out but pushing another commit and hoping the timing landed
+// better (which clears the vote tally again, for nothing).
+//
+// So: on an unchanged head, if the stored snapshot still claims the proposal
+// is blocked and GitHub has since made its mind up, re-derive it. Cheap by
+// construction — a settled snapshot returns before any API call, and an
+// undecided `mergeable` returns before the compareCommits, leaving the next
+// sweep to try again.
+async function refreshStrandedConflictState({ pool, session, pr, repo }) {
+  if (!STRANDED_CONFLICT_STATES.has(session.merge_conflict_state || null)) return false;
+  // Still computing. Nothing to write, and no reason to pay for drift here.
+  if (pr.mergeable !== true && pr.mergeable !== false) return false;
+  await refreshDriftState({ pool, session, pr, repo });
+  log.info('pr-import-sync', 'Re-derived a stranded conflict snapshot on an unchanged head', {
+    sessionId: session.id, prNumber: session.pr_number,
+    was: session.merge_conflict_state, mergeable: pr.mergeable,
+  });
+  return true;
 }
 
 // Refresh the proposal card's behind_main + merge-conflict snapshot from
@@ -262,7 +323,7 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
   // instead of building staging, so the head-change flow stays clickable.
   if (usesMockGithubForImports()) {
     await visuals.storeChecksSkipped(pool, session.id, newHead,
-      'mock GitHub preview — automated checks not run')
+      'mock GitHub preview: automated checks not run')
       .catch((err) => log.warn('pr-import-sync', 'mock storeChecksSkipped failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       }));
@@ -409,7 +470,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
     // the whole preview flow (import → vote → merge) is exercisable.
     if (usesMockGithubForImports()) {
       await visuals.storeChecksSkipped(pool, session.id, headSha || null,
-        'mock GitHub preview — automated checks not run')
+        'mock GitHub preview: automated checks not run')
         .catch((err) => log.warn('pr-import-sync', 'import mock storeChecksSkipped failed (non-fatal)', {
           sessionId: session.id, err: err.message,
         }));
@@ -423,7 +484,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
     // later or was looking at the discussion rather than the card.
     await postProposalNote(
       pool, session,
-      `Building a staging preview for ${prLabel(session)} — this usually takes a few minutes. `
+      `Building a staging preview for ${prLabel(session)} is being built. This usually takes a few minutes. `
         + 'The automated checks run against it, and a Preview button appears on this proposal when it\'s ready.',
       { stagingBuild: 'started', headSha: headSha || null }
     );
@@ -464,7 +525,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
     // while the Preview button on the card is the durable way in.
     await postProposalNote(
       pool, session,
-      `The staging preview for ${prLabel(session)} is ready — use the Preview button on this proposal to try the change. Automated checks are running against it now.`,
+      `The staging preview for ${prLabel(session)} is ready. Use the Preview button on this proposal to try the change. Automated checks are running against it now.`,
       { stagingBuild: 'ready', headSha: headSha || null, stagingUrl: result.stagingUrl }
     );
 
@@ -499,6 +560,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
 
 module.exports = {
   syncImportedProposal,
+  refreshStrandedConflictState,
   applyHeadChange,
   refreshDriftState,
   rerunChecksForNewHead,

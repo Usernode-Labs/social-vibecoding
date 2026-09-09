@@ -9,27 +9,29 @@ const settingsSource = fs.readFileSync(
   'utf8'
 );
 
-function loadSettings({
-  nativeTerminal = true,
-  prepare = 'ok',
-  webLogout = 'ok',
-  commitImpl,
-  confirmResult = true,
-  withConfirm = true,
-  nativeLogout = null,
-} = {}) {
-  const events = [];
+// Sign-out is the one flow where ORDER is the whole contract: the private
+// native realm closes before the first await, the server revokes authority
+// before any native teardown is attempted, and every surface ends on the
+// public landing page (#1524) — including the native path, whose old document
+// is otherwise forbidden continuation work.
+function loadSettings({ nativeTerminal = true, nativeFailure, webOk = true } = {}) {
+  const order = [];
   const logoutButton = { disabled: false };
-  const store = new Map();
   let href = 'https://social.example/#settings';
   const location = {};
   Object.defineProperty(location, 'href', {
     get() { return href; },
-    set(value) {
-      events.push('navigate');
-      href = value;
-    },
+    set(value) { order.push('assign-href'); href = value; },
   });
+  location.replace = (value) => { order.push('navigate'); href = value; };
+
+  // Every listener the flow registers on the window, so a test can fire one.
+  const listeners = [];
+  // Every pending timer, so a test can decide whether this document survived
+  // the native replacement it asked for.
+  const timers = [];
+  const stored = new Map();
+
   const sandbox = {
     console: { log() {}, warn() {}, error() {} },
     document: {
@@ -40,332 +42,198 @@ function loadSettings({
     },
     navigator: {},
     location,
-    sessionStorage: {
-      getItem(key) { return store.has(key) ? store.get(key) : null; },
-      setItem(key, value) {
-        events.push('note-incomplete');
-        store.set(key, String(value));
+    history: {
+      replaceState(state, title, url) {
+        order.push('normalise-address');
+        href = url;
       },
-      removeItem(key) { store.delete(key); },
+    },
+    sessionStorage: {
+      getItem(key) { return stored.has(key) ? stored.get(key) : null; },
+      setItem(key, value) { order.push('notice'); stored.set(key, String(value)); },
+      removeItem(key) { stored.delete(key); },
+    },
+    addEventListener(type, handler, options) {
+      listeners.push({ type, handler, options });
+    },
+    setTimeout(fn, ms) {
+      timers.push({ fn, ms });
+      return timers.length;
+    },
+    clearTimeout() {},
+    App: {
+      _dropCachedSession() { order.push('drop-cached-session'); },
     },
     NativeChrome: {
-      async prepareWebLogout() {
-        events.push('prepare-native-latch');
-        if (prepare === 'throw') throw new Error('native latch failed');
-        // A pre-#1161 build resolved a bare boolean; still supported.
-        if (prepare === 'legacy') return nativeTerminal;
-        if (prepare === 'unavailable') {
-          return {
-            nativeTerminal: false,
-            latch: 'unavailable',
-            reason: 'Privileged bridge is unavailable for this main frame',
-            code: 'privileged_frame_unauthorized',
-          };
-        }
-        if (prepare === 'inconclusive') {
-          return {
-            nativeTerminal: false,
-            latch: 'inconclusive',
-            reason: 'Native bridge probe was inconclusive',
-            code: null,
-          };
-        }
-        return {
-          nativeTerminal,
-          latch: 'acknowledged',
-          reason: null,
-          code: null,
-        };
+      prepareWebLogout() {
+        order.push('close-native-realm');
+        return { nativeTerminal };
       },
       commitNativeLogout() {
-        assert.deepEqual(events, [
-          'prepare-native-latch',
-          'web-session',
-          'sw-cache',
-        ],
-          'all web-owned cleanup must precede native teardown');
-        events.push('native-hard-logout');
-        return commitImpl ? commitImpl() : true;
+        order.push('native-terminal');
+        return nativeFailure ? Promise.reject(nativeFailure) : Promise.resolve(true);
       },
     },
     PlatformUI: {
       toast(message, options) {
-        events.push('logout-error');
-        assert.match(message, /could not sign out/i);
+        order.push(/signed out/i.test(message)
+          ? 'local-shutdown-error' : 'logout-error');
         assert.equal(options.error, true);
       },
     },
-    usernode: nativeLogout ? {
-      isNative: true,
-      logout() {
-        events.push('native-best-effort-logout');
-        if (nativeLogout === 'throw') {
-          return Promise.reject(new Error('refused'));
-        }
-        if (nativeLogout === 'hang') return new Promise(() => {});
-        return Promise.resolve(true);
-      },
-    } : undefined,
     async fetch(url, options) {
       assert.equal(url, '/api/auth/logout');
       assert.equal(options.method, 'POST');
-      events.push('web-session');
-      if (webLogout === 'throw') throw new Error('offline');
-      return { ok: webLogout === 'ok', status: 503 };
+      order.push('web-session');
+      return { ok: webOk, status: webOk ? 200 : 503 };
     },
-    setTimeout,
-    clearTimeout,
   };
-  if (withConfirm) {
-    sandbox.PlatformUI.confirm = async (opts) => {
-      events.push('confirm');
-      assert.match(opts.title, /sign out without the app/i);
-      assert.equal(opts.danger, true);
-      return confirmResult;
-    };
-  }
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   vm.runInContext(settingsSource, sandbox);
-  sandbox.Settings._clearSwApiCache = async () => {
-    events.push('sw-cache');
-  };
-  sandbox.Settings.NATIVE_SIGNOUT_BUDGET_MS = 20;
+  sandbox.Settings._clearSwApiCache = async () => { order.push('sw-cache'); };
   return {
-    sandbox, events, logoutButton, store,
+    sandbox, order, logoutButton, listeners, timers, stored,
     get href() { return href; },
   };
 }
 
-test('web logout and cache cleanup commit before terminal native logout', async () => {
-  const loaded = loadSettings();
+test('realm closes synchronously before the first logout await', async () => {
+  const loaded = loadSettings({ nativeTerminal: false });
 
-  await loaded.sandbox.Settings.logout();
-
-  assert.deepEqual(loaded.events, [
-    'prepare-native-latch',
-    'web-session',
-    'sw-cache',
-    'native-hard-logout',
+  const logout = loaded.sandbox.Settings.logout();
+  assert.deepEqual(loaded.order, ['close-native-realm', 'web-session']);
+  await logout;
+  assert.deepEqual(loaded.order, [
+    'close-native-realm', 'web-session', 'sw-cache', 'drop-cached-session',
+    'normalise-address', 'navigate',
   ]);
-  assert.equal(loaded.href, 'https://social.example/#settings',
-    'successful native logout owns runtime replacement; old JS does not navigate');
-  assert.equal(loaded.logoutButton.disabled, true);
 });
 
-test('browser navigation remains the fallback when native logout is not admitted',
+test('web logout and cache cleanup precede terminal protocol-2 logout',
+  async () => {
+    const loaded = loadSettings({ nativeTerminal: true });
+
+    await loaded.sandbox.Settings.logout();
+
+    assert.deepEqual(loaded.order, [
+      'close-native-realm', 'web-session', 'sw-cache', 'drop-cached-session',
+      'normalise-address', 'native-terminal',
+    ]);
+    // No navigation runs before the terminal call — the address is normalised
+    // in place, which is what a restored WebView reads back.
+    assert.equal(loaded.href, '/',
+      'the surviving address boots the anonymous landing screen, not sign-in');
+  });
+
+test('native success normalises the address before handing over the WebView',
+  async () => {
+    const loaded = loadSettings({ nativeTerminal: true });
+
+    await loaded.sandbox.Settings.logout();
+
+    // A same-document History change keeps the executing realm's privileged
+    // capability (NATIVE-BRIDGE.md, Trust model), so this is safe to do while
+    // the terminal call is still ahead of us.
+    assert.equal(loaded.href, '/');
+    assert.equal(loaded.order.indexOf('normalise-address') <
+      loaded.order.indexOf('native-terminal'), true);
+  });
+
+test('native success arms a bounded net in case the WebView is not replaced',
+  async () => {
+    const loaded = loadSettings({ nativeTerminal: true });
+
+    await loaded.sandbox.Settings.logout();
+
+    // Replacement normally destroys this document, so nothing above fired.
+    assert.equal(loaded.order.includes('navigate'), false);
+    const net = loaded.timers.find((t) => t.ms === 5000);
+    assert.ok(net, 'a safety-net timer is armed after the terminal call');
+
+    net.fn();
+    assert.equal(loaded.href, '/',
+      'a document that outlives its replacement still lands on the landing page');
+  });
+
+test('web-only logout replaces the entry after clearing the web session',
   async () => {
     const loaded = loadSettings({ nativeTerminal: false });
 
     await loaded.sandbox.Settings.logout();
 
-    assert.deepEqual(loaded.events, [
-      'prepare-native-latch',
-      'web-session',
-      'sw-cache',
-      'navigate',
+    assert.deepEqual(loaded.order, [
+      'close-native-realm', 'web-session', 'sw-cache', 'drop-cached-session',
+      'normalise-address', 'navigate',
     ]);
+    assert.equal(loaded.href, '/');
+    // location.replace, never an href assignment: a pushed entry lets Back
+    // restore the signed-in document.
+    assert.equal(loaded.order.includes('assign-href'), false);
+  });
+
+test('a signed-out document restored from the BFCache navigates away again',
+  async () => {
+    const loaded = loadSettings({ nativeTerminal: false });
+
+    await loaded.sandbox.Settings.logout();
+
+    const guard = loaded.listeners.filter((l) => l.type === 'pageshow');
+    assert.equal(guard.length, 1);
+    assert.equal(guard[0].options.once, true);
+
+    // A fresh load is not a restore, and must not be navigated.
+    loaded.order.length = 0;
+    guard[0].handler({ persisted: false });
+    assert.deepEqual(loaded.order, []);
+
+    guard[0].handler({ persisted: true });
+    assert.deepEqual(loaded.order, ['navigate']);
     assert.equal(loaded.href, '/');
   });
 
-test('failed web logout keeps native identity and the current document alive',
-  async () => {
-    const loaded = loadSettings({ webLogout: 'non-ok' });
-
-    const result = await loaded.sandbox.Settings.logout();
-
-    assert.equal(result, false);
-    assert.deepEqual(loaded.events, [
-      'prepare-native-latch',
-      'web-session',
-      'logout-error',
-    ]);
-    assert.equal(loaded.logoutButton.disabled, false);
-    assert.equal(loaded.href, 'https://social.example/#settings');
+test('native terminal failure lands on the landing page with an advisory', async () => {
+  const loaded = loadSettings({
+    nativeFailure: new Error('app update required'),
   });
 
-test('offline web logout also stops before cache and native teardown', async () => {
-  const loaded = loadSettings({ webLogout: 'throw' });
-
-  const result = await loaded.sandbox.Settings.logout();
-
-  assert.equal(result, false);
-  assert.deepEqual(loaded.events, [
-    'prepare-native-latch',
-    'web-session',
-    'logout-error',
+  assert.equal(await loaded.sandbox.Settings.logout(), false);
+  assert.deepEqual(loaded.order, [
+    'close-native-realm', 'web-session', 'sw-cache', 'drop-cached-session',
+    'normalise-address', 'native-terminal', 'notice', 'navigate',
   ]);
-  assert.equal(loaded.logoutButton.disabled, false);
+  // The button stays disabled: server authority is revoked and this document
+  // is on its way out.
+  assert.equal(loaded.logoutButton.disabled, true);
+  assert.equal(loaded.href, '/');
+  // The toast would not survive the navigation, so the advisory is handed to
+  // the anonymous boot instead (App._drainLogoutNotice reads it once).
+  assert.equal(loaded.stored.get('sv:logout_notice'),
+    'Signed out. Close and reopen the app to finish shutting down Usernode.');
 });
 
-// The dead end this replaced: a refused privileged bridge used to abort the
-// whole sign-out before POST /api/auth/logout, so the web session survived
-// and the user had no way out of the app at all.
-test('a refused native latch confirms, then still clears the web session',
+test('a successful sign-out leaves no advisory for the anonymous boot',
   async () => {
-    const loaded = loadSettings({ prepare: 'unavailable' });
+    const loaded = loadSettings({ nativeTerminal: true });
 
     await loaded.sandbox.Settings.logout();
 
-    assert.deepEqual(loaded.events, [
-      'prepare-native-latch',
-      'confirm',
-      'web-session',
-      'sw-cache',
-      'note-incomplete',
-      'navigate',
-    ]);
-    assert.equal(loaded.href, '/');
+    assert.equal(loaded.stored.has('sv:logout_notice'), false);
+    assert.equal(loaded.order.includes('notice'), false);
   });
 
-test('an inconclusive native probe takes the same confirmed fallback',
+test('failed web logout leaves native terminal untouched and the page in place',
   async () => {
-    const loaded = loadSettings({ prepare: 'inconclusive' });
+    const loaded = loadSettings({ webOk: false });
 
-    await loaded.sandbox.Settings.logout();
-
-    assert.deepEqual(loaded.events, [
-      'prepare-native-latch',
-      'confirm',
-      'web-session',
-      'sw-cache',
-      'note-incomplete',
-      'navigate',
+    assert.equal(await loaded.sandbox.Settings.logout(), false);
+    assert.deepEqual(loaded.order, [
+      'close-native-realm', 'web-session', 'logout-error',
     ]);
-  });
-
-test('a rejecting preflight is treated as a refused latch, not a dead end',
-  async () => {
-    const loaded = loadSettings({ prepare: 'throw' });
-
-    await loaded.sandbox.Settings.logout();
-
-    assert.deepEqual(loaded.events, [
-      'prepare-native-latch',
-      'confirm',
-      'web-session',
-      'sw-cache',
-      'note-incomplete',
-      'navigate',
-    ]);
-  });
-
-test('declining the confirm leaves the session and the button alone',
-  async () => {
-    const loaded = loadSettings({
-      prepare: 'unavailable', confirmResult: false,
-    });
-
-    const result = await loaded.sandbox.Settings.logout();
-
-    assert.equal(result, false);
-    assert.deepEqual(loaded.events, ['prepare-native-latch', 'confirm']);
     assert.equal(loaded.logoutButton.disabled, false);
+    // Nothing was revoked, so the address still describes the screen the user
+    // is looking at.
     assert.equal(loaded.href, 'https://social.example/#settings');
-  });
-
-test('no confirm dialog available still signs out rather than trapping the user',
-  async () => {
-    const loaded = loadSettings({ prepare: 'unavailable', withConfirm: false });
-
-    await loaded.sandbox.Settings.logout();
-
-    assert.deepEqual(loaded.events, [
-      'prepare-native-latch',
-      'web-session',
-      'sw-cache',
-      'note-incomplete',
-      'navigate',
-    ]);
-  });
-
-test('a best-effort native logout that succeeds suppresses the login notice',
-  async () => {
-    const loaded = loadSettings({
-      prepare: 'unavailable', nativeLogout: 'ok',
-    });
-
-    await loaded.sandbox.Settings.logout();
-
-    assert.deepEqual(loaded.events, [
-      'prepare-native-latch',
-      'confirm',
-      'web-session',
-      'sw-cache',
-      'native-best-effort-logout',
-      'navigate',
-    ]);
-    assert.equal(loaded.store.size, 0, 'nothing to warn about on login');
-  });
-
-test('a hung best-effort native logout cannot block leaving the app',
-  async () => {
-    const loaded = loadSettings({
-      prepare: 'unavailable', nativeLogout: 'hang',
-    });
-
-    await loaded.sandbox.Settings.logout();
-
-    assert.equal(loaded.href, '/');
-    assert.equal(loaded.store.get('sv:native_signout_incomplete'), '1');
-  });
-
-test('a rejecting best-effort native logout is swallowed and noted',
-  async () => {
-    const loaded = loadSettings({
-      prepare: 'unavailable', nativeLogout: 'throw',
-    });
-
-    await loaded.sandbox.Settings.logout();
-
-    assert.equal(loaded.href, '/');
-    assert.equal(loaded.store.get('sv:native_signout_incomplete'), '1');
-  });
-
-test('an acknowledged latch never asks and never notes anything', async () => {
-  const loaded = loadSettings({ nativeTerminal: false, nativeLogout: 'ok' });
-
-  await loaded.sandbox.Settings.logout();
-
-  assert.deepEqual(loaded.events, [
-    'prepare-native-latch',
-    'web-session',
-    'sw-cache',
-    'navigate',
-  ]);
-  assert.equal(loaded.store.size, 0);
-});
-
-test('a legacy boolean preflight still drives the terminal native path',
-  async () => {
-    const loaded = loadSettings({ prepare: 'legacy', nativeTerminal: true });
-
-    await loaded.sandbox.Settings.logout();
-
-    assert.deepEqual(loaded.events, [
-      'prepare-native-latch',
-      'web-session',
-      'sw-cache',
-      'native-hard-logout',
-    ]);
-  });
-
-test('terminal native logout has no timeout or old-document continuation',
-  async () => {
-    const never = new Promise(() => {});
-    const loaded = loadSettings({ commitImpl: () => never });
-
-    const pending = loaded.sandbox.Settings.logout();
-    await new Promise((resolve) => setImmediate(resolve));
-
-    assert.deepEqual(loaded.events, [
-      'prepare-native-latch',
-      'web-session',
-      'sw-cache',
-      'native-hard-logout',
-    ]);
-    assert.equal(loaded.href, 'https://social.example/#settings');
-    assert.equal(loaded.logoutButton.disabled, true);
-    void pending;
+    assert.equal(loaded.stored.has('sv:logout_notice'), false);
   });

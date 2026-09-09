@@ -10,6 +10,8 @@ const {
 } = require('../src/routes/topochain/mobile-push-registration');
 
 const INSTALLATION = '123e4567-e89b-12d3-a456-426614174000';
+const CREDENTIAL_ONE = `nsc_${'A'.repeat(43)}`;
+const CREDENTIAL_TWO = `nsc_${'B'.repeat(43)}`;
 const hash = (value) => crypto.createHash('sha256').update(value).digest('hex');
 const collapse = (sql) => sql.replace(/\s+/g, ' ').trim();
 
@@ -28,9 +30,18 @@ function input(revision, overrides = {}) {
 function fakeClient() {
   const state = {
     tokens: new Map([
-      ['10', { id: 10, userId: 1, active: true, expiresAt: new Date(Date.now() + 60_000) }],
-      ['11', { id: 11, userId: 1, active: true, expiresAt: new Date(Date.now() + 120_000) }],
-      ['20', { id: 20, userId: 2, active: true, expiresAt: new Date(Date.now() + 60_000) }],
+      ['10', {
+        id: 10, userId: 1, credentialReference: CREDENTIAL_ONE,
+        active: true, expiresAt: new Date(Date.now() + 60_000),
+      }],
+      ['11', {
+        id: 11, userId: 1, credentialReference: CREDENTIAL_ONE,
+        active: true, expiresAt: new Date(Date.now() + 120_000),
+      }],
+      ['20', {
+        id: 20, userId: 2, credentialReference: CREDENTIAL_TWO,
+        active: true, expiresAt: new Date(Date.now() + 60_000),
+      }],
     ]),
     fence: null,
     deployment: {
@@ -40,6 +51,7 @@ function fakeClient() {
       send_not_before: new Date(Date.now() - 1000),
     },
     registrations: [],
+    events: [],
     nextId: 1,
     queries: [],
   };
@@ -68,23 +80,26 @@ function fakeClient() {
         session_expires_at: registration?.session_expires_at || null,
       }] };
     }
-    if (sql.startsWith('SELECT id, expires_at FROM mobile_auth_tokens')) {
+    if (sql.startsWith('SELECT t.id, t.expires_at FROM mobile_auth_tokens t')) {
       const token = state.tokens.get(String(params[0]));
-      return { rows: token && token.active && String(token.userId) === String(params[1])
+      return { rows: token && token.active
+        && String(token.userId) === String(params[1])
+        && token.credentialReference === params[2]
         ? [{ id: token.id, expires_at: token.expiresAt }] : [] };
     }
     if (sql.startsWith('SELECT pg_advisory_xact_lock')) return { rows: [{}] };
     if (sql.includes('FROM mobile_push_installation_mutations')) {
       return { rows: state.fence ? [{ ...state.fence }] : [] };
     }
-    if (sql.startsWith('SELECT id, user_id, environment')) {
+    if (sql.startsWith('SELECT id, user_id, native_session_credential_reference')
+        && sql.includes('registration_hash = $3')) {
       const [environment, installationId, registrationHash] = params;
       return { rows: state.registrations.filter((row) => (
         (row.environment === environment && row.installation_id === installationId)
         || (row.environment === environment && row.registration_hash === registrationHash)
       )).map((row) => ({ ...row })) };
     }
-    if (sql.startsWith('SELECT id, user_id FROM mobile_push_registrations')) {
+    if (sql.startsWith('SELECT id, user_id, environment, installation_id')) {
       return { rows: state.registrations.filter((row) => (
         row.environment === params[0] && row.installation_id === params[1]
       )).map((row) => ({ ...row })) };
@@ -105,10 +120,25 @@ function fakeClient() {
       };
       return { rows: [] };
     }
-    if (sql.startsWith('INSERT INTO mobile_push_registrations')) {
-      state.registrations.push({
-        id: state.nextId++,
+    if (sql.startsWith('INSERT INTO mobile_push_registration_events')) {
+      state.events.push({
         user_id: params[0],
+        registration_id: params[1],
+        environment: params[2],
+        installation_id: params[3],
+        platform: params[4],
+        permission_status: params[5],
+        event_kind: params[6],
+        reason_code: params[7],
+      });
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql.startsWith('INSERT INTO mobile_push_registrations')) {
+      const id = state.nextId++;
+      state.registrations.push({
+        id,
+        user_id: params[0],
+        native_session_credential_reference: params[9],
         environment: params[1],
         installation_id: params[2],
         provider: params[3],
@@ -117,7 +147,7 @@ function fakeClient() {
         permission_status: params[7],
         session_expires_at: params[8],
       });
-      return { rows: [] };
+      return { rows: [{ id }] };
     }
     if (sql.startsWith('UPDATE mobile_push_registrations')) {
       const row = state.registrations.find((candidate) => (
@@ -134,6 +164,7 @@ function fakeClient() {
           row.platform = params[4];
           row.permission_status = params[5];
           row.session_expires_at = params[6];
+          row.native_session_credential_reference = params[7];
         }
       }
       return { rows: [] };
@@ -144,9 +175,11 @@ function fakeClient() {
 }
 
 function put(client, tokenId, userId, value) {
+  const credentialReference = client.state.tokens.get(String(tokenId))?.credentialReference;
   return putRegistration(client, {
     userId,
     tokenId,
+    credentialReference,
     environment: 'production',
     firebaseProjectId: 'social-prod',
     input: value,
@@ -156,8 +189,9 @@ function put(client, tokenId, userId, value) {
 }
 
 function del(client, tokenId, userId, value) {
+  const credentialReference = client.state.tokens.get(String(tokenId))?.credentialReference;
   return deleteRegistration(client, {
-    userId, tokenId, environment: 'production', input: value,
+    userId, tokenId, credentialReference, environment: 'production', input: value,
   });
 }
 
@@ -173,6 +207,29 @@ test('registration validation accepts the Flutter wire contract and rejects loos
   assert.deepEqual(valid.details, {});
   assert.equal(valid.value.installationId, INSTALLATION);
   assert.equal(valid.value.mutationRevision, '1');
+
+  const legacyDelete = validateDelete({
+    installation_id: INSTALLATION,
+    mutation_revision: '2',
+  });
+  assert.deepEqual(legacyDelete.details, {});
+  assert.equal(legacyDelete.value.unregistrationReason, 'client_request');
+  for (const reason of [
+    'notifications_disabled', 'permission_denied', 'signed_out',
+    'account_changed', 'identity_boundary', 'terminal_reset',
+    'configuration_unavailable',
+  ]) {
+    assert.equal(validateDelete({
+      installation_id: INSTALLATION,
+      mutation_revision: '2',
+      reason,
+    }).value.unregistrationReason, reason);
+  }
+  assert.ok(validateDelete({
+    installation_id: INSTALLATION,
+    mutation_revision: '2',
+    reason: 'device said anything',
+  }).details.reason);
 
   for (const bad of [1, '0', '01', '-1', '9223372036854775808']) {
     assert.ok(validateDelete({
@@ -247,10 +304,13 @@ test('registration mutations lock deployment identity before session and registr
     sql.includes('FROM mobile_push_deployment_state') && sql.includes('FOR KEY SHARE')
   ));
   const sessionLock = client.state.queries.findIndex((sql) => (
-    sql.startsWith('SELECT id, expires_at FROM mobile_auth_tokens')
+    sql.startsWith('SELECT t.id, t.expires_at FROM mobile_auth_tokens t')
+      && sql.includes('JOIN native_session_credentials c')
+      && sql.includes("c.state = 'valid'")
+      && sql.includes('FOR SHARE OF c')
   ));
   const registrationLock = client.state.queries.findIndex((sql) => (
-    sql.startsWith('SELECT id, user_id, environment')
+    sql.startsWith('SELECT id, user_id, native_session_credential_reference')
   ));
   assert.ok(deploymentLock >= 0);
   assert.ok(deploymentLock < sessionLock);
@@ -266,7 +326,7 @@ test('a mismatched Firebase project cannot create a registration', async () => {
   );
   assert.equal(client.state.registrations.length, 0);
   assert.equal(client.state.queries.some((sql) => (
-    sql.startsWith('SELECT id, expires_at FROM mobile_auth_tokens')
+    sql.startsWith('SELECT t.id, t.expires_at FROM mobile_auth_tokens t')
   )), false, 'deployment mismatch fails before session/registration locks');
 });
 
@@ -314,12 +374,16 @@ test('PUT is monotonic, exact-replay idempotent, and payload-conflicting at one 
     permission_status: 'authorized',
   }), true);
   const incumbentId = client.state.registrations[0].id;
+  assert.deepEqual(client.state.events.map((event) => event.event_kind), [
+    'registration_created',
+  ]);
 
   await put(client, 11, 1, input(1));
   assert.equal(client.state.registrations.length, 1, 'exact replay does not rotate the row');
   assert.equal(client.state.registrations[0].session_expires_at,
     client.state.tokens.get('11').expiresAt,
     'exact replay can extend the same user registration lifetime');
+  assert.equal(client.state.events.length, 1, 'exact replay emits no duplicate event');
 
   await assert.rejects(
     put(client, 10, 1, input(1, { permissionStatus: 'provisional' })),
@@ -335,10 +399,13 @@ test('PUT is monotonic, exact-replay idempotent, and payload-conflicting at one 
     'registration adopts the renewed bearer expiry bound'
   );
   assert.equal(client.state.registrations[0].permission_status, 'provisional');
+  assert.equal(client.state.events.at(-1).event_kind, 'registration_updated');
+  assert.equal(client.state.events.at(-1).permission_status, 'provisional');
   await put(client, 11, 1, input(3, { registration: 'token-two' }));
   assert.equal(client.state.registrations[0].id, incumbentId,
     'same-user FCM token refresh updates the incumbent row');
   assert.equal(client.state.registrations[0].registration_hash, hash('token-two'));
+  assert.equal(client.state.events.at(-1).event_kind, 'token_replaced');
   await assert.rejects(
     put(client, 10, 1, input(1)),
     (err) => err.code === 'stale_mutation_revision' && err.latestRevision === '3'
@@ -350,14 +417,21 @@ test('DELETE retains its tombstone and cannot remove another user registration',
   await put(client, 10, 1, input(1));
   await del(client, 10, 1, {
     installationId: INSTALLATION, mutationRevision: '2',
+    unregistrationReason: 'notifications_disabled',
   });
   assert.equal(client.state.registrations.length, 0);
+  assert.equal(client.state.events.at(-1).event_kind, 'client_unregistered');
+  assert.equal(client.state.events.at(-1).reason_code, 'notifications_disabled');
   assert.deepEqual(client.state.fence, {
     latest_mutation_revision: '2', latest_mutation_kind: 'delete',
   });
   await del(client, 10, 1, {
     installationId: INSTALLATION, mutationRevision: '2',
+    unregistrationReason: 'notifications_disabled',
   });
+  assert.equal(client.state.events.filter((event) => (
+    event.event_kind === 'client_unregistered'
+  )).length, 1, 'exact DELETE replay emits no duplicate event');
 
   await put(client, 20, 2, input(3, { registration: 'token-two' }));
   await assert.rejects(
@@ -366,6 +440,26 @@ test('DELETE retains its tombstone and cannot remove another user registration',
   );
   assert.equal(String(client.state.registrations[0].user_id), '2');
   assert.equal(client.state.fence.latest_mutation_revision, '3');
+});
+
+test('reassigning an installation records why the previous registration disappeared', async () => {
+  const client = fakeClient();
+  await put(client, 10, 1, input(1));
+  await put(client, 20, 2, input(2, { registration: 'token-two' }));
+
+  assert.equal(client.state.registrations.length, 1);
+  assert.equal(String(client.state.registrations[0].user_id), '2');
+  const reassigned = client.state.events.find((event) => (
+    event.event_kind === 'registration_reassigned'
+  ));
+  assert.ok(reassigned);
+  assert.equal(String(reassigned.user_id), '1');
+  assert.equal(reassigned.reason_code, 'installation_reassigned');
+  assert.deepEqual(client.state.events.map((event) => event.event_kind), [
+    'registration_created',
+    'registration_reassigned',
+    'registration_created',
+  ]);
 });
 
 test('a bearer revoked between middleware and mutation cannot commit', async () => {

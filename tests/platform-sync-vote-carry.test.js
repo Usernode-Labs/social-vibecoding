@@ -111,6 +111,68 @@ function nativeSession(extra = {}) {
   };
 }
 
+// Task 153: an IMPORTED row whose head is the connector's MIRROR — a
+// `usernode/from-…` branch the platform wrote into the app repository. The
+// platform can sync it, so the sync commit is carried exactly as for a native
+// row; the pin that moves is `imported_pr_head_sha`, which is what the votes
+// and the pr-import sweeper read for an imported row.
+function mirrorSession(extra = {}) {
+  return nativeSession({
+    source: 'imported',
+    branch_name: 'usernode/from-someuser-t31-cafe',
+    imported_pr_head_repo: 'acme/demo',
+    imported_pr_head_sha: REVIEWED,
+    reviewed_head_sha: null,
+    ...extra,
+  });
+}
+
+test('an imported proposal on a platform-written mirror branch advances its IMPORT pin and carries its votes', async () => {
+  const ctx = loadSyncMain({ parents: { [PUSHED]: [REVIEWED, 'd'.repeat(40)] } });
+  const pool = recordingPool({ imported_pr_head_sha: PUSHED, votes_moved: 2 });
+  const session = mirrorSession();
+  try {
+    const advanced = await ctx.subject.advanceReviewAfterPlatformSync(pool, session, {
+      syncResult: 'clean', pushOk: true, sha: PUSHED,
+    });
+    assert.equal(advanced, true);
+    assert.equal(session.imported_pr_head_sha, PUSHED, 'the import pin moved');
+    assert.equal(session.reviewed_head_sha, null, 'the native pin is not touched');
+
+    const update = pool.queries.find((q) => /WITH advanced AS/.test(q.sql));
+    assert.match(update.sql, /imported_pr_head_sha = CASE WHEN \$6::boolean THEN \$1/);
+    assert.match(update.sql, /COALESCE\(source, ''\) <> 'imported' OR \$6::boolean/,
+      'an imported row is advanced only under the mirror licence');
+    assert.deepEqual(update.params, [PUSHED, 41, REVIEWED, REVIEWED, true, true],
+      'the prior pin compared against is the import head, and $6 is the licence');
+    assert.ok(ctx.voteUpdates.some((u) => u.votesKept === true && u.headMoved === true));
+    assert.ok(ctx.messages.some((m) => /votes were kept/i.test(m.content)));
+  } finally {
+    ctx.restore();
+  }
+});
+
+test('an imported proposal whose head is in the author’s own fork is left alone', async () => {
+  // The platform never writes there, so nothing it did can have moved the
+  // head — the sweeper's reading of any new head as an author push is right.
+  const ctx = loadSyncMain({ parents: { [PUSHED]: [REVIEWED] } });
+  const pool = recordingPool();
+  const session = mirrorSession({
+    branch_name: 'feature/dark-mode',
+    imported_pr_head_repo: 'someuser/demo',
+  });
+  try {
+    const advanced = await ctx.subject.advanceReviewAfterPlatformSync(pool, session, {
+      syncResult: 'clean', pushOk: true, sha: PUSHED,
+    });
+    assert.equal(advanced, false);
+    assert.equal(session.imported_pr_head_sha, REVIEWED);
+    assert.equal(pool.queries.length, 0, 'no write of any kind');
+  } finally {
+    ctx.restore();
+  }
+});
+
 test('an ordinary web-native proposal advances its pin and carries its votes', async () => {
   const ctx = loadSyncMain({ parents: { [PUSHED]: [REVIEWED, 'd'.repeat(40)] } });
   const pool = recordingPool();

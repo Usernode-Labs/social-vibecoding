@@ -42,9 +42,15 @@ function setPlatformKeys(overrides = {}) {
     IFRAME_JWT_PUBLIC_KEY: publicKey,
     WORKER_JWT_SECRET: 'test-worker-jwt-secret-0123456789abcdef0',
     EDGE_JWT_SECRET: 'test-edge-jwt-secret-0123456789abcdef012',
+    NODE_RPC_URL: 'http://127.0.0.1:3000',
+    TOPOCHAIN_PARTNER_API_KEY: 'test-topochain-partner-key',
+    NATIVE_SESSION_V2_TESTNET_CHAIN_ID:
+      'utc1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqkmzk3k',
     // Keep boot tests deterministic when a developer's .env enables local
-    // mode after this helper runs. dotenv will not overwrite this value.
+    // mode or sets a different self-hosted domain after this helper runs.
+    // dotenv will not overwrite these values.
     USERNODE_LOCAL_DEV: '0',
+    USERNODE_DOMAIN: 'social-vibecoding.usernodelabs.org',
     CLI_CANONICAL_ORIGIN: 'https://social-vibecoding.usernodelabs.org',
   };
   const out = {};

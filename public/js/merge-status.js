@@ -23,6 +23,33 @@
     return Number.isFinite(n) ? n : 0;
   }
 
+  // #1442 — the freshness measurement, read out of whichever shape the
+  // caller's row carries: the flat columns /promoted sends, or the nested
+  // camelCase block the API clients get. Kept local rather than borrowing
+  // AppView._freshnessOf because this module loads BEFORE app-view.js and is
+  // unit-tested on its own under Node.
+  function freshOf(p) {
+    var f = (p && p.freshness && typeof p.freshness === 'object') ? p.freshness : {};
+    var mergeability = (p && p.mergeability) || f.mergeability || null;
+    // The measured count beats the column frozen at submission. That column
+    // reading 0 while a proposal was eight commits behind is the failure
+    // #1442 reported.
+    var behind = null;
+    var cands = [p && p.freshness_behind_by, f.behindBy, p && p.behind_main];
+    for (var i = 0; i < cands.length; i++) {
+      var v = cands[i];
+      if (v === null || v === undefined || v === '') continue;
+      var n = parseInt(v, 10);
+      if (Number.isFinite(n)) { behind = n; break; }
+    }
+    return {
+      mergeability: mergeability,
+      behind: behind || 0,
+      files: Array.isArray(f.mergeabilityFiles) ? f.mergeabilityFiles
+        : (Array.isArray(p && p.mergeability_files) ? p.mergeability_files : []),
+    };
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -58,7 +85,8 @@
 
     var status = p.status;
     var mcs = p.merge_conflict_state;
-    var behind = num(p.behind_main);
+    var fresh = freshOf(p);
+    var behind = fresh.behind;
     var check = p.check_state;
 
     // #695: the per-row votes_required — the governed gate's
@@ -109,7 +137,7 @@
     if (mcs === 'failed') {
       return descriptor('conflict_failed', 'Conflict resolution failed', 'red', false, {
         glyph: '⚠', votes: votes,
-        title: 'The last automatic conflict resolution failed — the owner needs to resolve manually.',
+        title: 'The last automatic conflict resolution failed. The owner needs to resolve manually.',
       });
     }
     // 4b — a real merge attempt hit a GitHub conflict ('conflict' is written
@@ -120,11 +148,28 @@
     // badge forever. Red: the reliable way out is the proposal's creator
     // finishing the merge from their session.
     if (mcs === 'conflict') {
-      return descriptor('merge_conflict', 'Merge failed — conflict', 'red', false, {
+      return descriptor('merge_conflict', 'Merge failed: conflict', 'red', false, {
         glyph: '⚠', votes: votes,
         title: 'A merge was attempted but this proposal conflicts with main. '
           + 'The proposal\u2019s creator needs to finish the merge from their dev session ("Sync with main").',
       });
+    }
+    // 4c (#1442) — GitHub predicts the NEXT merge will conflict. States 4/4b
+    // above are both records of an attempt that already happened, and a
+    // proposal collecting votes has had no attempt yet: proposal 3590 sat
+    // here for its whole life reading "In vote · checks passing" while it
+    // conflicted with main in seven files. Ranked under the attempted states
+    // (an attempt is a fact, this is a prediction) and over the checks
+    // states, because green checks on a proposal that cannot merge are
+    // exactly the reassurance the issue was about.
+    if (fresh.mergeability === 'conflict') {
+      var nf = fresh.files.length;
+      return descriptor('mergeability_conflict',
+        nf ? 'Conflicts with main · ' + nf : 'Conflicts with main', 'red', false, {
+          glyph: '⚠', votes: votes,
+          title: 'Main has moved on and this proposal no longer merges on its own. '
+            + 'The proposal\u2019s creator needs to bring it up to date from their dev session ("Sync with main").',
+        });
     }
     // 5a — the staging preview itself couldn't boot, so checks never ran
     // (#237). Distinct from a test failure: nothing was even exercised. Red,
@@ -134,8 +179,8 @@
       return descriptor('preview_failed', "Preview won't boot", 'red', false, {
         glyph: '⚠', votes: votes,
         title: p.check_error_detail
-          ? ('The staging preview failed to start, so automated checks can\u2019t run — merge is blocked. Reason: ' + p.check_error_detail)
-          : 'The staging preview failed to start, so automated checks couldn\u2019t run — merge is blocked until it boots cleanly.',
+          ? ('The staging preview failed to start, so automated checks can\u2019t run. Merge is blocked. Reason: ' + p.check_error_detail)
+          : 'The staging preview failed to start, so automated checks couldn\u2019t run. Merge is blocked until it boots cleanly.',
       });
     }
     // 5b — checks blocked the merge (a test broke).
@@ -151,7 +196,7 @@
       var label = n ? 'Checks failing · ' + n : 'Checks failing';
       return descriptor('checks_failing', label, 'amber', false, {
         glyph: '⚠', votes: votes,
-        title: 'Automated tests are not passing on the staging build — merge is blocked until they pass.',
+        title: 'Automated tests are not passing on the staging build. Merge is blocked until they pass.',
       });
     }
     // 6 — checks still running (not yet a verdict). Grey, not amber: it's
@@ -159,7 +204,7 @@
     if (check === 'pending') {
       return descriptor('checks_running', 'Checks running…', 'neutral', true, {
         votes: votes,
-        title: 'Automated tests are still running on the staging build — merge is blocked until they pass.',
+        title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
       });
     }
     // 6a (#607) — a promoted proposal with NO verdict recorded at all: the
@@ -170,7 +215,7 @@
     if (!check && status === 'promoted' && !p.console_check_state) {
       return descriptor('checks_running', 'Checks starting…', 'neutral', true, {
         votes: votes,
-        title: 'The staging preview is being prepared and automated tests are about to run — merge is blocked until they pass.',
+        title: 'The staging preview is being prepared and automated tests are about to run. Merge is blocked until they pass.',
       });
     }
     // 6b — checks explicitly skipped (#461): there was genuinely nothing to
@@ -181,8 +226,8 @@
       return descriptor('checks_skipped', 'Checks skipped', 'neutral', false, {
         votes: votes,
         title: p.check_error_detail
-          ? ('Automated checks were skipped — ' + p.check_error_detail + '. This does not block the merge.')
-          : 'Automated checks were skipped — there was nothing to test. This does not block the merge.',
+          ? ('Automated checks were skipped: ' + p.check_error_detail + '. This does not block the merge.')
+          : 'Automated checks were skipped: there was nothing to test. This does not block the merge.',
       });
     }
     // 7 — behind main. ('conflict' no longer falls through here — it has its
@@ -191,7 +236,7 @@
     if (behind > 0 || mcs === 'behind') {
       return descriptor('behind', behind ? 'Behind main · ' + behind : 'Behind main', 'amber', false, {
         votes: votes,
-        title: 'This proposal is behind main — syncing automatically, then it will retry the merge.',
+        title: 'This proposal is behind main. Syncing automatically, then it will retry the merge.',
       });
     }
     // 8 — locked app: majority reached but still needs an admin yes. (Only
@@ -200,15 +245,15 @@
     if (status === 'promoted' && reached && locked) {
       return descriptor('awaiting_admin', 'Awaiting admin approval', 'amber', false, {
         votes: votes,
-        title: 'App is locked — this also needs at least one admin yes before it merges.',
+        title: 'App is locked, so it also needs at least one admin yes before it merges.',
       });
     }
     // 9 — passed the vote, checks green, not behind: eligible and queued to
     // merge (one proposal per app merges at a time). The new explicit state.
     if (status === 'promoted' && reached && check === 'passing') {
-      return descriptor('ready', 'Passed — merging shortly', 'green', false, {
+      return descriptor('ready', 'Passed, merging shortly', 'green', false, {
         votes: votes,
-        title: 'Votes passed and checks are green — this is queued to merge.',
+        title: 'Votes passed and checks are green. This is queued to merge.',
       });
     }
     // 10 — proposed, still collecting votes. #788: a proposal that
@@ -219,7 +264,7 @@
       return descriptor('in_vote', 'In vote', 'violet', false, {
         votes: votes,
         title: p.requires_explicit_approval
-          ? 'This changes who can administer the app, so it won’t merge on a timer — it needs real Yes votes to reach the app’s normal threshold.'
+          ? 'This changes who can administer the app, so it won’t merge on a timer. It needs real Yes votes to reach the app’s normal threshold.'
           : undefined,
         explicitApproval: !!p.requires_explicit_approval,
       });
@@ -258,7 +303,7 @@
       if (life.votes.advisory > 0) {
         advisory = ' <span class="ms-advisory" title="'
           + life.votes.advisory + ' advisory vote' + (life.votes.advisory === 1 ? '' : 's')
-          + ' from non-approvers — they don’t count toward merging">+'
+          + ' from non-approvers. They don’t count toward merging">+'
           + life.votes.advisory + '</span>';
       }
     }

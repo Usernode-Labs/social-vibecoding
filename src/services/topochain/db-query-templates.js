@@ -103,7 +103,7 @@ SELECT ls.season_event_id, ls.user_id, ls.rank, ls.total_points, ls.snapshot_at
     // instead of fanning one period out into N rows (the same resolution
     // the admin Delegations screen's LATERAL performs).
     name: 'Delegation periods with current claimant',
-    description: 'Every account_delegation_periods row (open and closed), each resolved to the claiming user where one exists — the raw history behind the admin Delegations screen.',
+    description: 'Every account_delegation_periods row (open and closed), each resolved to the claiming user where one exists: the raw history behind the admin Delegations screen.',
     query: `SELECT DISTINCT ON (adp.id)
        adp.account, adp.started_at, adp.ended_at,
        (adp.ended_at IS NULL) AS delegated,

@@ -57,7 +57,7 @@ fakeModule('../src/services/staging', {
   buildAndDeployStaging: async () => ({ containerId: 'c', stagingUrl: 'u', hostname: 'h' }),
   verifyStagingEdge: async () => {},
 });
-fakeModule('../src/services/sync-main', {
+const fakeSyncMain = fakeModule('../src/services/sync-main', {
   // Mirror the real persistBehindMain's DB write so the recording pool
   // captures it (the test asserts drift is refreshed).
   persistBehindMain: async (pool, session, n) => {
@@ -236,6 +236,97 @@ test('syncImportedProposal: unchanged head no-ops (one getPR, no writes)', async
     assert.equal(getPrCalls, 1);
     assert.equal(pool.calls.length, 0, 'unchanged head performs no writes');
   });
+});
+
+// ── #1365: a stranded conflict snapshot is re-derived on an unchanged head ──
+//
+// refreshDriftState only ran from applyHeadChange (head MOVED) and wrote
+// nothing when GitHub answered `mergeable: null` — which is what GitHub
+// returns for the first read after a push, i.e. exactly the read
+// applyHeadChange makes. Its "the next sweep re-checks" could therefore never
+// happen: every later sweep returned at the unchanged-head check first, so
+// "Conflict resolution failed" stuck to a pull request that had since become
+// a clean fast-forward.
+
+test('syncImportedProposal: a stranded failed snapshot is re-derived once GitHub decides', async () => {
+  const conflictWrites = [];
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({
+      head: { sha: 'a'.repeat(40), ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true,
+    })],
+    [fakeSyncMain, 'persistConflictState', async (_pool, _session, snapshot) => {
+      conflictWrites.push(snapshot);
+    }],
+  ], async () => {
+    const pool = recordingPool();
+    const res = await prImportSync.syncImportedProposal({
+      config: {}, pool, session: { ...SESSION, merge_conflict_state: 'failed' },
+    });
+    assert.equal(res, 'unchanged', 'the head really has not moved');
+    assert.deepEqual(
+      conflictWrites.map((w) => w.state), ['clean'],
+      'the resolved pull request is written back as clean without the head moving'
+    );
+  });
+});
+
+test('syncImportedProposal: a stranded conflict snapshot that is still conflicted stays conflicted', async () => {
+  const conflictWrites = [];
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({
+      head: { sha: 'a'.repeat(40), ref: 'feature/x' }, base: { ref: 'main' }, mergeable: false,
+    })],
+    [fakeSyncMain, 'persistConflictState', async (_pool, _session, snapshot) => {
+      conflictWrites.push(snapshot);
+    }],
+  ], async () => {
+    const pool = recordingPool();
+    await prImportSync.syncImportedProposal({
+      config: {}, pool, session: { ...SESSION, merge_conflict_state: 'conflict' },
+    });
+    assert.deepEqual(conflictWrites.map((w) => w.state), ['conflict']);
+  });
+});
+
+test('syncImportedProposal: an undecided mergeable writes nothing and leaves it for the next sweep', async () => {
+  const conflictWrites = [];
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({
+      head: { sha: 'a'.repeat(40), ref: 'feature/x' }, base: { ref: 'main' }, mergeable: null,
+    })],
+    [fakeSyncMain, 'persistConflictState', async (_pool, _session, snapshot) => {
+      conflictWrites.push(snapshot);
+    }],
+  ], async () => {
+    const pool = recordingPool();
+    await prImportSync.syncImportedProposal({
+      config: {}, pool, session: { ...SESSION, merge_conflict_state: 'failed' },
+    });
+    assert.deepEqual(conflictWrites, [], 'nothing is written while GitHub is still computing');
+    assert.equal(pool.calls.length, 0, 'and no drift query is paid for either');
+  });
+});
+
+test('syncImportedProposal: a settled snapshot is not re-read on an unchanged head', async () => {
+  for (const state of ['clean', 'behind', 'resolving', null]) {
+    const conflictWrites = [];
+    // eslint-disable-next-line no-await-in-loop
+    await withStubs([
+      [fakeGithub, 'getPR', async () => ({
+        head: { sha: 'a'.repeat(40), ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true,
+      })],
+      [fakeSyncMain, 'persistConflictState', async (_pool, _session, snapshot) => {
+        conflictWrites.push(snapshot);
+      }],
+    ], async () => {
+      const pool = recordingPool();
+      await prImportSync.syncImportedProposal({
+        config: {}, pool, session: { ...SESSION, merge_conflict_state: state },
+      });
+      assert.deepEqual(conflictWrites, [], `${state} is settled — nothing to correct`);
+      assert.equal(pool.calls.length, 0, `${state} costs no queries`);
+    });
+  }
 });
 
 test('syncImportedProposal: active imports refresh without vote reset or re-review copy', async () => {

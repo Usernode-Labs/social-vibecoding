@@ -247,7 +247,7 @@ test('read-only viewers get only Fork in the "+" menu', () => {
     'the writeable block is gated on readOnly and closes before the fork row'
   );
   const gated = FRAME_SRC.slice(start, end);
-  for (const item of ['proposal', 'issue', 'members', 'rename', 'secrets']) {
+  for (const item of ['import-pr', 'members', 'rename', 'secrets']) {
     assert.ok(gated.includes(`data-plus="${item}"`), `${item} item is inside the readOnly gate`);
   }
   assert.ok(!gated.includes('data-plus="fork"'), 'fork is NOT inside the readOnly gate');
@@ -255,9 +255,13 @@ test('read-only viewers get only Fork in the "+" menu', () => {
   // Read-only also swaps the "+" button's tooltip and, on the self-app,
   // hides the button outright.
   assert.ok(FRAME_SRC.includes("? 'Fork this app'"), 'read-only tooltip preserved');
+  // Tolerant of layout classes between 'relative' and the gate: #1440 added
+  // `ml-auto` here and broke a version of this that pinned the exact string.
+  // What this test protects is the readOnly && selfHosted gate, not the
+  // flex utilities beside it.
   assert.match(
     FRAME_SRC,
-    /relative \$\{readOnly && selfHosted \? 'hidden' : ''\}/,
+    /relative[^`$]*\$\{readOnly && selfHosted \? 'hidden' : ''\}/,
     'the "+" button is hidden for a read-only viewer of the self-app'
   );
   assert.match(

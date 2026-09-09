@@ -56,15 +56,23 @@ function truncate(value, max) {
 }
 
 const AUTO_SOLVE_BODIES = Object.freeze({
-  spec: 'Spec ready — review it in the app',
-  code: "Code ready — review and promote when you're happy",
-  spec_code: "Spec and code ready — review and promote when you're happy",
+  spec: 'Spec ready. Review it in the app',
+  code: "Code ready. Review and promote when you're happy",
+  spec_code: "Spec and code ready. Review and promote when you're happy",
 });
 
 function daysSince(value, now) {
   const elapsed = new Date(now).getTime() - new Date(value || NaN).getTime();
   if (!Number.isFinite(elapsed) || elapsed < 0) return 0;
   return Math.floor(elapsed / (24 * 60 * 60 * 1000));
+}
+
+// #1405. Same shape as daysSince, at the grain path B's copy needs: this is a
+// nudge measured in minutes, not a proposal going stale over days.
+function minutesSince(value, now) {
+  const elapsed = new Date(now).getTime() - new Date(value || NaN).getTime();
+  if (!Number.isFinite(elapsed) || elapsed < 0) return 0;
+  return Math.floor(elapsed / (60 * 1000));
 }
 
 // Kind-specific {title, body}, or null when the kind's essential context is
@@ -85,6 +93,8 @@ function buildCopy(kind, context, now) {
   const quoted = label ? `"${truncate(label, EMBED_TITLE_MAX)}"` : '';
   const quotedTitle = label ? `"${truncate(label, TITLE_EMBED_MAX)}"` : '';
   switch (kind) {
+    case 'test_alert':
+      return { title: 'Usernode test alert', body: 'Your phone can receive push notifications from Usernode.' };
     case 'conversation_invite':
       return {
         title: withConversation(actor ? `@${actor} invited you to a conversation`
@@ -143,17 +153,17 @@ function buildCopy(kind, context, now) {
         title: actor
           ? (app ? `@${actor} wants to build ${app} with you` : `@${actor} wants to build with you`)
           : withApp('You have a collaboration invite'),
-        body: 'Join as a collaborator — accept or decline in the app',
+        body: 'Join as a collaborator. Accept or decline in the app',
       };
     case 'collab_invite_accepted':
       return actor && {
         title: withApp(`@${actor} is in!`),
-        body: 'Your invite was accepted — you can start building together',
+        body: 'Your invite was accepted. You can start building together',
       };
     case 'approver_invite':
       return {
         title: withApp(actor ? `@${actor} asked you to be an approver` : 'You have an approver invite'),
-        body: "You'd review and vote on proposals — accept in the app",
+        body: "You'd review and vote on proposals. Accept in the app",
       };
     case 'approver_invite_accepted':
       return actor && {
@@ -165,12 +175,12 @@ function buildCopy(kind, context, now) {
         title: withApp(actor
           ? (quotedTitle ? `@${actor} shared ${quotedTitle} with you` : `@${actor} shared a spec with you`)
           : 'A spec was shared with you'),
-        body: detail ? `Spec v${detail} — take a look and leave feedback` : 'Take a look and leave feedback',
+        body: detail ? `Spec v${detail}. Take a look and leave feedback` : 'Take a look and leave feedback',
       };
     case 'session_done':
       return {
         title: withApp('Your build is ready'),
-        body: quoted && `${quoted} finished — review it while it's fresh`,
+        body: quoted && `${quoted} finished. Review it while it's fresh`,
       };
     case 'auto_solve_done': {
       if (detail === 'question') {
@@ -183,8 +193,8 @@ function buildCopy(kind, context, now) {
       if (detail === 'failed') {
         return {
           title: withApp('Auto-solve hit a wall'),
-          body: quoted ? `${quoted} failed — open the log to see what happened`
-            : 'The run failed — open the log to see what happened',
+          body: quoted ? `${quoted} failed. Open the log to see what happened`
+            : 'The run failed. Open the log to see what happened',
         };
       }
       return {
@@ -195,7 +205,7 @@ function buildCopy(kind, context, now) {
     case 'pr_proposed':
       return actor && {
         title: withApp(quotedTitle ? `@${actor} proposed ${quotedTitle}` : `@${actor} proposed a change`),
-        body: 'Take a look — your vote decides',
+        body: `@${actor} would love your eyes on this`,
       };
     case 'check_failed':
       return {
@@ -206,10 +216,38 @@ function buildCopy(kind, context, now) {
       const days = daysSince(context.promotedAt, now);
       return {
         title: withApp(quotedTitle
-          ? `${quotedTitle} is waiting for votes` : 'Your proposal needs attention'),
+          ? `${quotedTitle} is waiting for eyes` : 'Your proposal needs attention'),
         body: days >= 1
-          ? `No votes in ${days} ${days === 1 ? 'day' : 'days'} — nudge collaborators or share the preview`
-          : 'Nudge collaborators or share the preview',
+          ? `Nobody has weighed in for ${days} ${days === 1 ? 'day' : 'days'}. Share the preview or ask a friend to try it`
+          : 'Share the preview or ask a friend to try it',
+      };
+    }
+    // #1405 path A. The agent, not you, put this somewhere — so the copy leads
+    // with the destination, which is the fact you cannot infer from being away.
+    case 'connector_submitted':
+      return {
+        title: withApp(quotedTitle
+          ? `Your agent submitted ${quotedTitle}`
+          : 'Your agent submitted work'),
+        body: context.detail === 'shared'
+          ? 'It is visible in the in-progress area (no vote yet)'
+          : 'It is up for the group\'s vote, and its checks are running',
+      };
+    // #1405 path B, and the copy is load-bearing.
+    //
+    // It says WHEN the question was asked, never "Claude is waiting on you".
+    // The difference matters because the clear depends on the agent calling
+    // back, which it may forget: "is waiting on you" is FALSE once you have
+    // answered, and a notification making a false claim reads as broken. "asked
+    // you something N minutes ago" stays true either way, which turns the
+    // failure this design cannot prevent into a mild redundancy instead.
+    case 'agent_awaiting_input': {
+      const mins = minutesSince(context.armedAt || context.createdAt, now);
+      return {
+        title: withApp('Claude asked you something'),
+        body: mins >= 1
+          ? `Asked ${mins} ${mins === 1 ? 'minute' : 'minutes'} ago. It is holding for your answer`
+          : 'It is holding for your answer',
       };
     }
     default:
@@ -231,7 +269,7 @@ function buildNotificationCopy(kind, context, now = new Date()) {
 
 function buildMessage({
   token, notificationId, kind, environment, installationId, userId,
-  expiresAt, context, now = new Date(),
+  expiresAt, context, unreadCount, now = new Date(),
 }) {
   if (typeof token !== 'string' || !token) throw new Error('mobile_push_registration_missing');
   if (!ALLOWED_KINDS.has(kind)) throw new Error('mobile_push_kind_not_allowed');
@@ -244,7 +282,7 @@ function buildMessage({
   if (!Number.isFinite(ttl) || ttl <= 0) throw new Error('mobile_push_delivery_expired');
 
   const collapseId = `usernode-social-${id}`;
-  return {
+  const message = {
     token,
     notification: buildNotificationCopy(kind, context, now),
     data: {
@@ -269,6 +307,16 @@ function buildMessage({
       payload: { aps: { category: 'USERNODE_SOCIAL', threadId: 'usernode-social' } },
     },
   };
+  // #1445: the homescreen icon badge. iOS only ever badges the icon when a
+  // push carries `aps.badge`; Android launchers read the count from
+  // `notificationCount`. Like the copy context above, this is display-only
+  // and optional — anything but a usable count degrades to omitting the
+  // field (the pre-badge payload) rather than failing the delivery.
+  if (Number.isSafeInteger(unreadCount) && unreadCount >= 0) {
+    message.android.notification.notificationCount = unreadCount;
+    message.apns.payload.aps.badge = unreadCount;
+  }
+  return message;
 }
 
 module.exports = {

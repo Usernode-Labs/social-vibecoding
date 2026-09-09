@@ -70,19 +70,30 @@ test('both proposal SELECTs expose the stored verdict to the UI', () => {
 // ── The card ──────────────────────────────────────────────────────────
 
 const detailFn = (() => {
-  const start = appViewJs.indexOf('_platformEnvDetailHtml(pr) {');
-  assert.notStrictEqual(start, -1, '_platformEnvDetailHtml is missing');
+  const start = appViewJs.indexOf('_platformEnvNote(pr) {');
+  assert.notStrictEqual(start, -1, '_platformEnvNote is missing');
   return appViewJs.slice(start, start + 3000);
 })();
 
 test('the block is rendered next to the checks block', () => {
-  assert.match(appViewJs, /\$\{AppView\._checksDetailHtml\(pr\)\}\s*\n\s*\$\{AppView\._platformEnvDetailHtml\(pr\)\}/,
-    'one place to look for "why can this not merge yet"');
+  // The head builds an ORDERED list of detail blocks now (see
+  // `_proposalDetailsView`) instead of concatenating three strings; the
+  // ordering contract it encodes is the same one this pinned.
+  // #1442 added a fourth block to the run — the PREDICTED conflict, which
+  // sits between the attempted one and the checks because it answers the
+  // same question earlier. The contract this pins is the grouping, not the
+  // exact count, so the merge-blocking notes are allowed to grow between
+  // the two anchors as long as they stay contiguous.
+  assert.match(
+    appViewJs,
+    /_mergeConflictNote\(pr\),\s*\n(?:\s*AppView\._\w+\(pr\),\s*\n)*[^\n]*checks[^\n]*\n\s*AppView\._platformEnvNote\(pr\),/,
+    'one place to look for "why can this not merge yet"'
+  );
 });
 
 test('skipped renders nothing at all', () => {
   assert.match(detailFn, /'skipped'/);
-  assert.match(detailFn.slice(0, 600), /return ''/,
+  assert.match(detailFn.slice(0, 600), /return null/,
     'the overwhelmingly common case must add no chrome to the card');
 });
 
@@ -91,7 +102,7 @@ test('a failing verdict names the missing keys and offers the fix in place', () 
   // The card only ever renders on a self-app proposal, so the viewer is
   // already on the app whose panel fixes this — open it rather than sending
   // them to a deep link (and a non-admin to a screen they can't act on).
-  assert.match(detailFn, /AppView\.openPlatformVariables\(\)/,
+  assert.match(detailFn, /fn: 'openPlatformVariables'/,
     'one click from the block to the panel is the difference between a '
     + '20-second fix and a hunt');
   assert.match(detailFn, /'Set them now' : 'Propose a value'/,

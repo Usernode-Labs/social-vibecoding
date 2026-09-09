@@ -26,10 +26,13 @@ import { useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 
 import { CheckIcon } from '@/components/ui/icons';
+import { ListRow } from '@/components/ui/grouped-list';
+import { Button } from '@/components/ui/button';
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type RowView = {
   app: Record<string, any>;
+  directoryTier?: 'ready' | 'unreviewed' | 'more';
   slug: string;
   name: string;
   meta: string;
@@ -47,9 +50,16 @@ function controller(): any {
 
 const ADD_BASE = 'browse-add-btn shrink-0 inline-flex items-center gap-1 rounded-full '
   + 'border px-3 py-1.5 text-xs font-medium transition-colors ';
-const ADD_ON = 'bg-emerald-500 border-emerald-500 text-white';
-const ADD_OFF = 'border-violet-500 dark:border-violet-400 text-violet-600 '
-  + 'dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950';
+// emerald-700, not -500: white on #10b981 is 2.5:1 — a green you can see and a
+// label you cannot read. -700 takes the same pill to 5.5:1 with the state
+// unchanged.
+const ADD_ON = 'bg-emerald-700 border-emerald-700 text-white';
+// Filled neutral, not an accent outline: the row sits on a white card now, and
+// an outlined control on a floating surface is the shape the language never
+// draws (see the `neutral` variant in @/components/ui/button.tsx). ADD_ON stays
+// a filled emerald because "Added" is a STATE, not an action.
+const ADD_OFF = 'border-transparent bg-zinc-100 dark:bg-zinc-800 text-zinc-900 '
+  + 'dark:text-zinc-100 hover:bg-zinc-200 dark:hover:bg-zinc-700';
 
 function Row({ view }: { view: RowView }): ReactNode {
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -79,32 +89,52 @@ function Row({ view }: { view: RowView }): ReactNode {
   const warm = () => controller()?.warmRow(view);
 
   return (
-    <div
+    <ListRow
       ref={rowRef}
-      className={`browse-row flex items-center gap-3 px-3 py-2.5 ${view.openable ? 'cursor-pointer' : 'cursor-default'}`}
+      className={`browse-row ${view.openable ? 'cursor-pointer' : 'cursor-default'}`}
       data-slug={view.slug}
       data-demo={view.demo ? 'true' : undefined}
+      data-directory-state={view.app.directory?.state}
       onPointerDown={warm}
       onMouseEnter={warm}
-    >
-      <div
-        className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
-        data-icon={appIconKind(view.app)}
-      >
-        <AppIconContent app={view.app} />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="font-medium text-sm truncate">{view.name}</span>
-          <span className={`status-dot ${view.statusDot} shrink-0`} title={view.status}></span>
+      inset="none"
+      chevron={false}
+      contentClassName="browse-row-content"
+      titleClassName="browse-row-title"
+      subtitleClassName="browse-row-meta"
+      leading={(
+        <div
+          className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
+          data-icon={appIconKind(view.app)}
+          // The same slug-derived identity tint the launcher grid draws. An
+          // app that is a lilac tile on Home was a blank white square here,
+          // which is the one thing a launcher icon must never be: different
+          // per screen. app.css turns the attribute into the colour.
+        >
+          <AppIconContent app={view.app} />
         </div>
-        <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">{view.meta}</div>
-        {hasAppPills(view.app) ? (
-          <div className="flex flex-wrap items-center gap-1 mt-1">
-            <AppPills app={view.app} />
-          </div>
-        ) : null}
-      </div>
+      )}
+      title={(
+        <span className="flex items-center gap-1.5 min-w-0">
+          <span className="browse-row-name truncate">{view.name}</span>
+          <span className={`status-dot ${view.statusDot} shrink-0`} title={view.status}></span>
+        </span>
+      )}
+      subtitle={(
+        <>
+          {view.app.directory?.label ? (
+            <span className="block text-xs text-zinc-600 dark:text-zinc-400">{view.app.directory.label}</span>
+          ) : null}
+          <span className="block truncate">{view.meta}</span>
+          {hasAppPills(view.app) ? (
+            <span className="mt-1 flex flex-wrap items-center gap-1">
+              <AppPills app={view.app} />
+            </span>
+          ) : null}
+        </>
+      )}
+      trailing={(
+        <>
       {/* No `type` — the hand-written row shipped a bare <button>, and it sits
           in no form, so the default submit type is inert either way. */}
       <button
@@ -119,13 +149,61 @@ function Row({ view }: { view: RowView }): ReactNode {
         }}
       >
         {view.added ? <CheckIcon className="w-3.5 h-3.5" strokeWidth="3" aria-hidden="true" /> : null}
-        {view.added ? 'Added' : 'Add'}
+        {/* #1553: "Add" alone never said add to WHAT. Every other surface that
+            offers this already spells out the destination — the detail page's
+            button, the app-chip menu, this button's own title attribute — so
+            the row stops being the one place it is a guess. "Added" stays
+            short: it is a state, and the row it sits on says which app. */}
+        {view.added ? 'Added' : 'Add to Your apps'}
       </button>
-    </div>
+        </>
+      )}
+    />
   );
 }
 
-export function BrowseRows({ rows }: { rows: RowView[] | null }): ReactNode {
+export function BrowseRows({ rows, curated = false, moreExpanded = false }: {
+  rows: RowView[] | null;
+  curated?: boolean;
+  moreExpanded?: boolean;
+}): ReactNode {
   if (!rows) return null;
-  return <>{rows.map((view) => <Row key={view.slug} view={view} />)}</>;
+  const renderRows = (items: RowView[]) => items.map((view) => <Row key={view.slug} view={view} />);
+  if (!curated) return <>{renderRows(rows)}</>;
+  const ready = rows.filter((view) => view.directoryTier === 'ready');
+  const unreviewed = rows.filter((view) => view.directoryTier !== 'ready' && view.directoryTier !== 'more');
+  const more = rows.filter((view) => view.directoryTier === 'more');
+  const heading = 'md:col-span-full px-3 pt-3 pb-1 text-sm font-semibold text-zinc-700 dark:text-zinc-300';
+  return (
+    <>
+      {ready.length ? <h2 className={heading}>Reviewed working apps</h2> : null}
+      {renderRows(ready)}
+      {unreviewed.length ? <h2 className={heading}>Not yet reviewed</h2> : null}
+      {renderRows(unreviewed)}
+      {more.length ? (
+        <>
+          <div className="md:col-span-full p-3">
+            <p className="mb-2 text-sm text-zinc-600 dark:text-zinc-400">
+              Demos and apps needing fixes, setup, or an icon are still available below and in search.
+            </p>
+            <Button
+              type="button"
+              variant="neutral"
+              ink="neutral"
+              aria-expanded={moreExpanded}
+              aria-controls="browse-more-apps"
+              onClick={() => controller()?.toggleMore()}
+            >
+              {moreExpanded ? 'Show less' : `Show more (${more.length})`}
+            </Button>
+          </div>
+          <div id="browse-more-apps" className={moreExpanded
+            ? 'md:col-span-full md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3'
+            : 'hidden'}>
+            {moreExpanded ? renderRows(more) : null}
+          </div>
+        </>
+      ) : null}
+    </>
+  );
 }

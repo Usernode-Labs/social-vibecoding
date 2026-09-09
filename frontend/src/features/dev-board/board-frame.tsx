@@ -12,27 +12,32 @@
  * attribute and `hidden` semantic is the one the template emitted.
  *
  * React-owned, and now stateful:
- *   * the header bar — caption, the four-button view toggle, the "+" button and
- *     its dropdown, including every `data-plus` row and the two
- *     `data-plus-group` headings;
- *   * `#dev-forum-scroll` and the General-chat card.
+ *   * the header bar — the "+" button and its dropdown, including every
+ *     `data-plus` row and the two `data-plus-group` headings. The Feed/Kanban
+ *     tab strip is NOT here any more: the Board's two layouts are a choice
+ *     under the Improve panel's Board row now (see improve-panel.tsx), because
+ *     a strip whose first tab restated the destination the header chip had
+ *     just named was navigation drawn twice;
+ *   * `#dev-forum-scroll` and, on the kanban only, the General-discussion
+ *     card. See ./discussion-store.ts for why the board carries it and why the
+ *     Feed draws the same fact as an activity row instead.
  *
  * Legacy-owned hosts, rendered by React but never reconciled into:
  *   * `#dev-body` — `AppView._repaintDevBody()` replaces its `innerHTML` on
- *     every mode switch and feed reload, so its initial content is a CONSTANT
+ *     every tab switch and feed reload, so its initial content is a CONSTANT
  *     `dangerouslySetInnerHTML` OBJECT (`DEV_BODY_INITIAL`). React writes it
  *     once at mount and, because the object's identity never changes, never
  *     looks inside again. The identity is what matters: React 19 diffs host
  *     props by reference and re-assigns `innerHTML` whenever the `{__html}`
  *     wrapper is a new object, even for an identical string — an inline
- *     literal here made every toggle click wipe the module's paint back to
- *     "Loading…". Rendering `#dev-feed` and `#gc-merged` as JSX children
- *     instead would make every view-mode re-render reconcile against nodes
- *     the module has since replaced.
- *   * `#dev-locked-notice`, `#dev-chat-card-preview`, `#dc-secrets-state` —
- *     leaves the module writes text or `innerHTML` into, and in the notice's
- *     case toggles `hidden` on. They are safe because React renders their
- *     `className` (and the preview's placeholder text) as CONSTANT props: React
+ *     literal here made every tab click wipe the module's paint back to
+ *     "Loading…". Rendering `#dev-feed` as a JSX child instead would make
+ *     every view-mode re-render reconcile against nodes the module has since
+ *     replaced.
+ *   * `#dc-secrets-state` —
+ *     a leaf the module writes text or `innerHTML` into. It is safe because
+ *     React renders its
+ *     `className` as a CONSTANT prop: React
  *     only writes an attribute when the prop CHANGES, so a re-render of this
  *     component does not clobber a class or a string the module has since
  *     written. That is the same rule the dialog islands run under — see the
@@ -53,9 +58,20 @@
  * exists on the Dev route. Chunk H (#1085) folds it into the main tree.
  */
 
-import { ChevronRightIcon, DiscussionIcon, Glyph } from '@/components/ui/icons';
+import { useRef } from 'react';
 
-import { useDevViewMode, type DevViewMode } from './view-mode-store';
+import type { ReactNode } from 'react';
+
+import {
+  AppWindowIcon, ChatIcon, ChevronRightIcon, GitHubIcon, KeyIcon,
+  PencilSquareIcon, UserGroupIcon,
+} from '@/components/ui/icons';
+
+import { useStoreState } from '../../lib/use-store-state';
+import { useDevViewMode } from './view-mode-store';
+import { discussionStore, type DiscussionState } from './discussion-store';
+import { skeletonKanbanHtml, skeletonListHtml } from './card/skeleton';
+import { lockedNoticeStore, type LockedNoticeState } from './locked-notice-store';
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
 export interface DevBoardFrameProps {
@@ -71,83 +87,6 @@ export interface DevBoardFrameProps {
   cardCls: string;
   /** `AppView.DEV_CARD_HOVER_CLS`. */
   cardHoverCls: string;
-  /** Called when a toggle button is pressed — `AppView._setViewMode` + repaint. */
-  onSelectViewMode: (mode: DevViewMode) => void;
-}
-
-/**
- * `AppView._viewToggleBtnCls(active)`, character for character.
- *
- * Kept here rather than imported from the module because this is the only
- * remaining caller: `_updateViewToggleUI()` is gone and `_renderViewToggle()`
- * with it.
- */
-function viewToggleBtnCls(active: boolean): string {
-  return (
-    // #1288: 36px boxes + the kit's 44px tap halo. The outer-corner rounding
-    // lives on the first/last segments (7px = the container's 8px rounded-lg
-    // minus its 1px border) because the container must NOT clip overflow —
-    // overflow-hidden would cut the un-touch-target halos back to the box.
-    'dev-view-btn un-touch-target w-9 h-9 flex items-center justify-center transition-colors ' +
-    'first:rounded-l-[7px] last:rounded-r-[7px] ' +
-    (active
-      ? 'bg-violet-600 text-white'
-      : 'text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800')
-  );
-}
-
-/** The four inline SVGs the template built, as JSX. Same paths, same order. */
-const VIEW_ICON_PATHS: Record<DevViewMode, string> = {
-  // List-lines (three rows).
-  list: 'M4 6h16M4 12h16M4 18h16',
-  // Board / columns.
-  kanban: 'M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z',
-  // People (two-person silhouette) for the PM assignment overview.
-  pm: 'M17 20h5v-1a4 4 0 00-3-3.87M9 20H4v-1a4 4 0 013-3.87m6 4.87v-1a4 4 0 00-3-3.87M12 7a3 3 0 11-6 0 3 3 0 016 0zm7 3a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z',
-  // #1100: document-with-lines for the read-only progress report.
-  report: 'M8 4h8l4 4v12H8zM8 4H6a2 2 0 00-2 2v12M11 12h6M11 16h6M11 8h2',
-};
-
-const VIEW_BUTTONS: {
-  mode: DevViewMode;
-  id: string;
-  title: string;
-}[] = [
-  { mode: 'list', id: 'dev-view-list', title: 'List view' },
-  { mode: 'kanban', id: 'dev-view-kanban', title: 'Kanban view' },
-  { mode: 'pm', id: 'dev-view-pm', title: 'PM view — tasks by assignee' },
-  { mode: 'report', id: 'dev-view-report', title: 'Reporting — progress report' },
-];
-
-function ViewToggle({
-  active,
-  onSelect,
-}: {
-  active: DevViewMode;
-  onSelect: (mode: DevViewMode) => void;
-}) {
-  return (
-    <div
-      className="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700"
-      role="group"
-      aria-label="Dev view mode"
-    >
-      {VIEW_BUTTONS.map(({ mode, id, title }) => (
-        <button
-          key={mode}
-          id={id}
-          data-view={mode}
-          className={viewToggleBtnCls(active === mode)}
-          aria-pressed={active === mode}
-          title={title}
-          aria-label={title}
-          onClick={() => onSelect(mode)}
-        >
-          <Glyph className="w-5 h-5" aria-hidden="true" d={VIEW_ICON_PATHS[mode]} />
-        </button>
-      ))}
-    </div>
-  );
 }
 
 /**
@@ -172,7 +111,7 @@ function PlusMenuHeading({
     <div
       data-plus-group={groupKey}
       className={
-        'px-3 pt-2.5 pb-1 text-[10px] uppercase font-semibold tracking-wider text-zinc-400 dark:text-zinc-500 select-none' +
+        'px-3 pt-2.5 pb-1 text-[0.9375rem] font-semibold text-zinc-500 dark:text-zinc-500 select-none' +
         (divider ? ' border-t border-zinc-200 dark:border-zinc-800 mt-1' : '')
       }
     >
@@ -181,51 +120,184 @@ function PlusMenuHeading({
   );
 }
 
-/** The shared row shell for every `data-plus` action. */
+/**
+ * The shared row shell for every `data-plus` action.
+ *
+ * #1615: the same shape as the app chip's menu — a leading glyph, `gap-3`,
+ * `px-5`, a 44px floor and that menu's hover tint — so the two lists in this
+ * shell read as one kind of thing. What it deliberately does NOT copy is the
+ * chip menu's single-line row: every action here has a subtitle explaining
+ * what it does ("Renames are proposals, applied once voted in"), and those
+ * lines are the reason this menu is legible at all.
+ *
+ * The row's title carries `data-plus-title`, and `AppView._wirePlusMenu` reads
+ * THAT for its touch action sheet. It used to take `querySelector('span')` —
+ * the first span in the row — which was the title only by accident of source
+ * order, and any wrapper introduced above it (this layout needs one for the
+ * text column) would have handed every sheet row the wrong label, or none.
+ */
 const PLUS_ROW_CLS =
-  'w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
+  'w-full text-left flex items-start gap-3 px-5 py-2.5 min-h-[44px] '
+  + 'hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors';
 const PLUS_ROW_DIVIDER_CLS = ' border-t border-zinc-200 dark:border-zinc-800';
+const PLUS_ICON_CLS = 'shrink-0 mt-0.5 w-5 h-5 text-zinc-500 dark:text-zinc-400';
 const PLUS_TITLE_CLS = 'block text-sm font-medium text-zinc-800 dark:text-zinc-200';
 const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
 
 /**
- * The General-chat card's tinted icon chip — `AppView._devCardIcon('chat')`.
+ * One `data-plus` action, as the row shell above.
  *
- * Only the `chat` entry is duplicated here, on purpose. The rest of
- * `AppView.DEV_CARD_ICONS` is still consumed by the feed, kanban, PM and
- * merged-section row builders, which write HTML strings into hosts this
- * component does not own, so the table stays in app-view.js as the single
- * source of truth for those. Duplicating the whole table to serve one card
- * would create exactly the drift risk the migration is trying to avoid.
+ * The action and the divider come in spelled exactly as the markup spells
+ * them, rather than as an `action` string and a boolean. Two reasons, and the
+ * second is why it is worth the slightly odd prop name: the source stays
+ * greppable per row, which is how tests/dev-plus-menu.test.js and
+ * tests/pr-import-menu.test.js locate each one and prove its gate (they read
+ * this file's TEXT and compare positions, so no example row name appears in
+ * this comment); and the divider EXPRESSIONS stay visible at the call site,
+ * where the condition ("does the members row render above me?") is the
+ * interesting part.
  */
-function ChatCardIcon() {
+function PlusRow({
+  'data-plus': action, icon, title, sub, dividerCls = '', titleNode,
+}: {
+  'data-plus': string;
+  icon: ReactNode;
+  title?: string;
+  sub: ReactNode;
+  dividerCls?: string;
+  /** For the one row whose title carries a legacy-owned leaf beside it. */
+  titleNode?: ReactNode;
+}): ReactNode {
   return (
-    <span className="w-9 h-9 rounded-lg bg-violet-600/15 text-violet-500 flex items-center justify-center shrink-0">
-      <DiscussionIcon className="w-5 h-5" aria-hidden="true" />
-    </span>
+    <button
+      data-plus={action}
+      className={PLUS_ROW_CLS + dividerCls}
+    >
+      {icon}
+      <span className="min-w-0 flex-1">
+        {titleNode ?? (
+          <span data-plus-title className={PLUS_TITLE_CLS}>{title}</span>
+        )}
+        <span className={PLUS_SUB_CLS}>{sub}</span>
+      </span>
+    </button>
   );
 }
 
 /**
  * `#dev-body`'s initial content, as a constant string — see the header.
  *
- * Byte-for-byte what the template put there, so the first paint (before
- * `_repaintDevBody()` runs) is the "Loading…" placeholder it always was.
+ * A SKELETON, not the word "Loading…". The report this answers was that
+ * content "loads without you realising it's loading": eleven characters of
+ * `text-xs` grey in the top-left of an empty screen is not a state anybody
+ * reads, and the eye takes the blank area for an empty board rather than a
+ * pending one.
+ *
+ * TWO constants, one per mode, CHOSEN ONCE PER MOUNT — see `useBodyInitial`
+ * below. It was one constant on the argument that "card-shaped rows are a
+ * fair first frame for either mode", and they are not: a cold load of
+ * `/app/<slug>/board` painted this single column and then became four columns
+ * when <DevKanban/> mounted. A skeleton exists to predict the shape of what is
+ * coming, so predicting the wrong one is the one thing it must not do.
+ *
+ * What made this look unavoidable is real and is handled a different way: the
+ * prop's identity has to stay stable, because React 19 assigns `innerHTML`
+ * whenever the object differs and would rewrite `#dev-body` out from under
+ * whatever `_repaintDevBody` had just painted there. So these stay
+ * module-scope constants — the same bytes on every render — and the CHOICE
+ * between them is frozen at mount rather than followed live. A view toggle
+ * does not re-pick: by then the real board owns the node.
+ *
+ * The list form is the Workshop's (`#dev-workshop`, features/dev-board/
+ * workshop/workshop.tsx), which replaced the Activity feed as the Dev
+ * screen's lander; the kanban Done column renders its own completed rows.
  */
-const DEV_BODY_INITIAL_HTML =
-  '<div id="dev-feed"><div class="text-xs text-zinc-500 dark:text-zinc-400">Loading…</div></div>' +
-  '<div id="gc-merged" class="mt-4"></div>';
+const DEV_BODY_WORKSHOP_INITIAL = { __html: '<div id="dev-workshop">' + skeletonListHtml(3) + '</div>' };
+const DEV_BODY_KANBAN_INITIAL = { __html: skeletonKanbanHtml() };
 
 /**
- * Module-level so the prop's IDENTITY is stable across renders. React 19's
- * host-prop diff is `nextProp !== lastProp` and its dangerouslySetInnerHTML
- * setter assigns `innerHTML` unconditionally (the `__html` string comparison
- * React 18 did is gone) — with an inline `{{ __html: … }}` literal, every
- * re-render of this frame (i.e. every view-toggle click, via the view-mode
- * store) rewrote #dev-body back to the placeholder right after
- * `_repaintDevBody()` painted it.
+ * Which of the two this mount opens with, decided ONCE.
+ *
+ * The mode is known by now: `restoreFromHash` applies `boardView` BEFORE it
+ * dispatches, precisely so "a cold entry paints the right layout on the
+ * board's first frame" — this is the frame that note is about.
+ *
+ * A ref rather than the live `useDevViewMode()` value, because the object
+ * identity is the contract: re-reading it would hand React a different object
+ * the moment somebody toggled the view, and React would assign `innerHTML`
+ * over the real board.
  */
-const DEV_BODY_INITIAL = { __html: DEV_BODY_INITIAL_HTML };
+function useBodyInitial(): { __html: string } {
+  const mode = useDevViewMode();
+  const chosen = useRef<{ __html: string } | null>(null);
+  if (!chosen.current) {
+    chosen.current = mode === 'kanban' ? DEV_BODY_KANBAN_INITIAL : DEV_BODY_WORKSHOP_INITIAL;
+  }
+  return chosen.current;
+}
+
+/**
+ * The General-discussion card — the kanban's door to the app's general chat.
+ *
+ * ── Why it is here and only on the kanban ──────────────────────────────
+ *
+ * The card shipped, was retired when Activity became a first-class hash for
+ * the general chat, and is back because Activity stopped meaning the general
+ * chat: the board's recency stream took the name, and the screen it displaced
+ * was left reachable only from a notification.
+ *
+ * It draws on the KANBAN only. The Workshop draws the same fact as one of its
+ * own rows (`AppView._discussionCardModel`), in its own place between the
+ * strips and the themes, so a second copy above the host would be the
+ * discussion twice. The kanban is a prioritised worklist with no such slot,
+ * so there the card is chrome above the columns — which is exactly what it
+ * always was.
+ *
+ * ── An anchor ──────────────────────────────────────────────────────────
+ *
+ * `#app/<slug>/dev/chat` is a real address, so cmd/ctrl-click and "open in new
+ * tab" work on it — the rule tests/nav-new-tab.test.js pins across the shell,
+ * and the reason the card it replaces (a `<button>` with a delegated handler)
+ * is not simply restored as it was.
+ *
+ * `href: null` — no app open — renders nothing rather than a dead card.
+ */
+function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverCls: string }) {
+  const mode = useDevViewMode();
+  const { href, preview } = useStoreState<DiscussionState>(discussionStore);
+  if (mode !== 'kanban' || !href) return null;
+  return (
+    <div className="px-3 pt-2">
+      <a
+        id="dev-chat-card"
+        href={href}
+        className={`${cardCls} ${cardHoverCls}`}
+        title="Open the app's general chat"
+      >
+        <span className="w-9 h-9 rounded-lg bg-violet-600/15 text-violet-700 flex items-center justify-center shrink-0 dark:text-violet-400">
+          <ChatIcon className="w-5 h-5" aria-hidden="true" />
+        </span>
+        <span className="flex-1 min-w-0">
+          <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
+            General discussion
+          </span>
+          {/* The last thing said in it, or the standing description until the
+              one request for it lands. RENDERED, not an innerHTML host: the
+              card it replaces had `#dev-chat-card-preview` written into by
+              `_loadChatCardPreview`, which is two owners of one node. The
+              module publishes the line now (./discussion-store.ts). */}
+          <span
+            id="dev-chat-card-preview"
+            className="block text-xs text-zinc-500 dark:text-zinc-400 truncate"
+          >
+            {preview}
+          </span>
+        </span>
+        <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" />
+      </a>
+    </div>
+  );
+}
 
 export function DevBoardFrame({
   selfHosted,
@@ -234,28 +306,60 @@ export function DevBoardFrame({
   showsMembers,
   cardCls,
   cardHoverCls,
-  onSelectViewMode,
 }: DevBoardFrameProps) {
-  const mode = useDevViewMode();
-
+  const { locked } = useStoreState<LockedNoticeState>(lockedNoticeStore);
+  const bodyInitial = useBodyInitial();
   return (
-    <div className="flex flex-col h-full min-h-0">
-      {/* Header bar: caption + view-mode toggle + the "+" menu (top right).
-          The "DEV" caption renders ONLY when the header's #app-mode-switch is
-          hidden — i.e. on the self-hosted platform row. Everywhere else the
-          header now says "Dev" a few pixels above this row, and printing it
-          twice reads as a bug. The flex-1 spacer keeps the toggle and "+"
-          right-aligned either way. */}
-      <div className="flex items-center gap-3 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-        {selfHosted ? (
-          <span className="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">
-            Dev
-          </span>
-        ) : (
-          <span className="flex-1"></span>
-        )}
-        <ViewToggle active={mode} onSelect={onSelectViewMode} />
-        <div className={`relative ${readOnly && selfHosted ? 'hidden' : ''}`}>
+    <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-strip">
+      {/*
+          THE BOARD IS THE STRIP. The dev area is drawn on the lift ladder the
+          session view already uses (`.dc-lift` in app.css): this column is
+          the frosted strip on the wallpaper, and a topic or the Discussion
+          opens as the sheet rising on it (./topic-frame.tsx, ./chat-frame.tsx).
+          Nothing inside the column changes.
+      */}
+      {/*
+          THE "DEV" SUB-HEADER ROW IS GONE (#1367 follow-up).
+
+          It carried three things: a "Dev" caption, the Feed/Kanban tabs, and
+          the "+" menu. The caption named an area the header already names, the
+          tabs are the header's App/Feed/Kanban toggle now (see the note above),
+          and with both gone the row was a full-height strip of chrome holding
+          one button — so the button moved down to sit with the filter controls
+          and the row went.
+
+          `#dev-actions` is that new row, and the "+" sits at its right end with
+          the filter controls to its left. The controls are legacy-rendered, so
+          the row carries an innerHTML HOST for them rather than the markup —
+          the same seam `#dev-body` below already is.
+
+          THE HOST IS OUTSIDE `#dev-body` ON PURPOSE, and it is the whole reason
+          this row is shaped this way. `_repaintDevBody()` assigns
+          `body.innerHTML` on every view switch; anything living in there is
+          destroyed and rebuilt. The "+" is React's — button, menu, listeners —
+          so it can never be a child of that node, and moving it in and out
+          around each repaint would be a race waiting to happen. Keeping BOTH
+          the filter host and the button up here means the row is stable, React
+          never reconciles inside the host, and the module never writes outside
+          it. `_renderKanbanFilterBar()` fills the shared Board/Activity strip.
+      */}
+      <div id="dev-actions" className="flex items-center gap-2 px-3 pt-2 shrink-0">
+        {/*
+            Legacy portal host for the filter strip. It ships EMPTY because the
+            store is published only after the first data load, but `min-h-8`
+            reserves the search field's one-row height from the frame's first
+            paint. Without that reservation, a read-only self-hosted view —
+            where the adjacent "+" is hidden — grows by 32px when the search
+            arrives and pushes the scrolling board down. `min-height`, rather
+            than a fixed height, still lets active chips wrap onto extra rows.
+        */}
+        <div id="dev-kanban-filterbar" className="flex-1 min-w-0 min-h-8" />
+        {/*
+            The filter host's `flex-1` places the "+" at the right edge on both
+            Board and Activity. Keep `ml-auto` as the button wrapper's own
+            defensive alignment; with the always-present host it is a no-op.
+        */}
+        <div className={`relative ml-auto ${readOnly && selfHosted ? 'hidden' : ''}`}>
           <button
             id="dev-plus-btn"
             aria-haspopup="true"
@@ -264,7 +368,7 @@ export function DevBoardFrame({
             title={
               readOnly
                 ? 'Fork this app'
-                : 'Propose a change, file an issue, or manage this app'
+                : 'Import a PR or manage this app'
             }
           >
             +
@@ -275,90 +379,87 @@ export function DevBoardFrame({
           >
             {readOnly ? null : (
               <>
-                <PlusMenuHeading label="Build a change" groupKey="build" divider={false} />
-                <button data-plus="proposal" className={PLUS_ROW_CLS}>
-                  <span className={PLUS_TITLE_CLS}>Propose a change</span>
-                  <span className={PLUS_SUB_CLS}>
-                    Start a dev session — you pick where it is built, and can change that
-                    any time
-                  </span>
-                </button>
+                {/* New change and Give feedback live in Improve (#1490). */}
                 {canCollaborate ? (
-                  <button
-                    data-plus="import-pr"
-                    className={PLUS_ROW_CLS + PLUS_ROW_DIVIDER_CLS}
-                  >
-                    <span className={PLUS_TITLE_CLS}>Import Feature from a PR</span>
-                    <span className={PLUS_SUB_CLS}>
-                      Your computer &middot; your own tools — you have already built it, so
-                      there is no chat for this one
-                    </span>
-                  </button>
+                  <>
+                    <PlusMenuHeading label="Import a change" groupKey="build" divider={false} />
+                    <PlusRow
+                      data-plus="import-pr"
+                      icon={<GitHubIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                      title="Import Feature from a PR"
+                      sub={(
+                        <>
+                          Your computer &middot; your own tools. You have already built it, so
+                          there is no chat for this one
+                        </>
+                      )}
+                    />
+                  </>
                 ) : null}
-                <button data-plus="issue" className={PLUS_ROW_CLS + PLUS_ROW_DIVIDER_CLS}>
-                  <span className={PLUS_TITLE_CLS}>New issue</span>
-                  <span className={PLUS_SUB_CLS}>
-                    Report a problem or idea without building it yourself
-                  </span>
-                </button>
                 <PlusMenuHeading
                   label="Settings &amp; rules"
                   groupKey="settings"
-                  divider={true}
+                  divider={canCollaborate}
                 />
                 {showsMembers ? (
-                  <button data-plus="members" className={PLUS_ROW_CLS}>
+                  <>
                     {selfHosted ? (
-                      <>
-                        <span className={PLUS_TITLE_CLS}>Proposal approvals</span>
-                        <span className={PLUS_SUB_CLS}>
-                          Who approves proposals and how many approvals are needed
-                        </span>
-                      </>
+                      <PlusRow
+                        data-plus="members"
+                        icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                        title="Proposal approvals"
+                        sub="Who approves proposals and how many approvals are needed"
+                      />
                     ) : (
-                      <>
-                        <span className={PLUS_TITLE_CLS}>Members &amp; visibility</span>
-                        <span className={PLUS_SUB_CLS}>Who can build and see this app</span>
-                      </>
+                      <PlusRow
+                        data-plus="members"
+                        icon={<UserGroupIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                        title="Members &amp; visibility"
+                        sub="Who can build and see this app"
+                      />
                     )}
-                  </button>
+                  </>
                 ) : null}
-                <button
+                <PlusRow
                   data-plus="rename"
-                  className={PLUS_ROW_CLS + (showsMembers ? PLUS_ROW_DIVIDER_CLS : '')}
-                >
-                  <span className={PLUS_TITLE_CLS}>App display name</span>
-                  <span className={PLUS_SUB_CLS}>
-                    Renames are proposals — applied once voted in
-                  </span>
-                </button>
-                <button data-plus="secrets" className={PLUS_ROW_CLS + PLUS_ROW_DIVIDER_CLS}>
-                  <span className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                    {selfHosted ? 'Platform variables' : 'App secrets'}
-                    {/* Filled by AppView.refreshDevChatSecretsState() — a
-                        legacy-owned leaf, so it renders empty and React never
-                        writes its text again. */}
+                  icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                  title="App display name"
+                  sub="Renames are proposals, applied once voted in"
+                  dividerCls={showsMembers ? PLUS_ROW_DIVIDER_CLS : ''}
+                />
+                <PlusRow
+                  data-plus="secrets"
+                  icon={<KeyIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                  titleNode={(
                     <span
-                      id="dc-secrets-state"
-                      className="text-xs font-normal text-zinc-400 dark:text-zinc-500"
-                    ></span>
-                  </span>
-                  <span className={PLUS_SUB_CLS}>
-                    {selfHosted
-                      ? "The platform's own env — applied on its next deploy"
-                      : 'Set or update secret values'}
-                  </span>
-                </button>
+                      data-plus-title
+                      className="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200"
+                    >
+                      {selfHosted ? 'Platform variables' : 'App secrets'}
+                      {/* Filled by AppView.refreshDevChatSecretsState() — a
+                          legacy-owned leaf, so it renders empty and React never
+                          writes its text again. */}
+                      <span
+                        id="dc-secrets-state"
+                        className="text-xs font-normal text-zinc-500 dark:text-zinc-500"
+                      ></span>
+                    </span>
+                  )}
+                  sub={selfHosted
+                    ? "The platform's own env, applied on its next deploy"
+                    : 'Set or update secret values'}
+                  dividerCls={PLUS_ROW_DIVIDER_CLS}
+                />
               </>
             )}
             {selfHosted ? null : (
-              <button
+              <PlusRow
                 data-plus="fork"
-                className={PLUS_ROW_CLS + (readOnly ? '' : PLUS_ROW_DIVIDER_CLS)}
-              >
-                <span className={PLUS_TITLE_CLS}>Fork this app</span>
-                <span className={PLUS_SUB_CLS}>Stand up your own independent copy</span>
-              </button>
+                icon={<AppWindowIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title="Fork this app"
+                sub="Stand up your own independent copy"
+                dividerCls={readOnly ? '' : PLUS_ROW_DIVIDER_CLS}
+              />
             )}
           </div>
         </div>
@@ -370,36 +471,30 @@ export function DevBoardFrame({
         id="dev-forum-scroll"
         className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll"
       >
-        <div id="dev-locked-notice" className="px-3 pt-2 hidden"></div>
-        <div className="px-3 pt-2">
-          <button
-            id="dev-chat-card"
-            className={`${cardCls} ${cardHoverCls}`}
-            title="Open the general chat"
-          >
-            <ChatCardIcon />
-            <span className="flex-1 min-w-0">
-              <span className="block text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                General chat
-              </span>
-              <span
-                id="dev-chat-card-preview"
-                className="block text-xs text-zinc-500 dark:text-zinc-400 truncate"
-              >
-                Talk with everyone building this app
-              </span>
-            </span>
-            <ChevronRightIcon className="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" />
-          </button>
+        {/*
+            The locked-app banner. It used to be one of the leaves above — a
+            host the module toggled `hidden` on and wrote `innerHTML` into —
+            which meant TWO owners of one node's class attribute, tolerated only
+            because React rendered that class as a constant. It is a field on
+            the view-mode store now, so the node has one writer and the banner
+            has one spelling.
+        */}
+        <div id="dev-locked-notice" className={locked ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
+          {locked ? (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 py-2.5 text-xs text-amber-800 dark:text-amber-400">
+              App is locked. An admin must approve any proposal before it applies.
+            </div>
+          ) : null}
         </div>
-        {/* Body region: list mode mounts #dev-feed + #gc-merged here; kanban
-            mode mounts #dev-kanban. _repaintDevBody() owns the swap. The
-            wrapper node is stable across mode switches so the delegated
-            card-open handler (bound by the module) survives both. */}
+        <DiscussionCard cardCls={cardCls} cardHoverCls={cardHoverCls} />
+        {/* Body region: the Workshop mounts #dev-workshop here; Kanban mounts
+            #dev-kanban-board. _repaintDevBody() owns the swap. The wrapper
+            node is stable across tab switches so the delegated card-open
+            handler (bound by the module) survives both. */}
         <div
           id="dev-body"
           className="px-3 py-2"
-          dangerouslySetInnerHTML={DEV_BODY_INITIAL}
+          dangerouslySetInnerHTML={bodyInitial}
         />
       </div>
     </div>

@@ -184,9 +184,9 @@ test('the block message points at the panel and names both paths', () => {
 
 test('the Checks card offers the fix in place, for admins and non-admins', () => {
   const appViewJs = fs.readFileSync(path.join(root, 'public/js/app-view.js'), 'utf8');
-  const detail = appViewJs.slice(appViewJs.indexOf('_platformEnvDetailHtml(pr) {'));
+  const detail = appViewJs.slice(appViewJs.indexOf('_platformEnvNote(pr) {'));
   assert.match(detail.slice(0, 3000), /'Set them now' : 'Propose a value'/);
-  assert.match(detail.slice(0, 3000), /AppView\.openPlatformVariables\(\)/);
+  assert.match(detail.slice(0, 3000), /fn: 'openPlatformVariables'/);
   assert.ok(!/#admin\/platform-env/.test(appViewJs),
     'the deep link into the deleted console section must be gone');
 });

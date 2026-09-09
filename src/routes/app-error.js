@@ -89,7 +89,7 @@ function renderPage(displayName) {
   <div class="wrap">
     <div class="spinner" id="spinner"></div>
     <h1 id="title">${name} is restarting</h1>
-    <p id="msg">It&#39;ll be back in a moment &mdash; this page retries automatically.</p>
+    <p id="msg">It&#39;ll be back in a moment. This page retries automatically.</p>
   </div>
 <script>
 (function () {

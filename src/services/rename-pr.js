@@ -204,10 +204,10 @@ async function createRenamePR(config, pool, app, newName, actor) {
     prBody:
       `${actor.username} (via Usernode) proposed renaming "${app.name}" to "${newName}".\n\n` +
       `This PR updates the \`name\` field in \`dapp.json\`. It still needs a regular ` +
-      `merge vote to land — vote in the app's group chat panel. The new name applies ` +
+      `merge vote to land. Vote in the app's group chat panel. The new name applies ` +
       `automatically once the PR merges and the app redeploys.`,
     chatText: (prData, majority, activeUsers) =>
-      `${actor.username} proposed renaming to "${newName}". Opened PR #${prData.number} — needs ${majority}/${activeUsers} votes to land.`,
+      `${actor.username} proposed renaming to "${newName}". Opened PR #${prData.number}, which needs ${majority}/${activeUsers} votes to land.`,
     eventMetadata: { rename: true },
   });
 }
@@ -235,10 +235,10 @@ async function createVisibilityPR(config, pool, app, { collab, view }, actor) {
       `${actor.username} (via Usernode) proposed changing "${app.name}" to be ${desc}.\n\n` +
       `This PR updates the \`visibility\` block in \`dapp.json\` (\`build\` = who can ` +
       `build the app, \`view\` = who can see & use it). It still needs a regular merge ` +
-      `vote to land — vote in the app's group chat panel. The new visibility applies ` +
+      `vote to land. Vote in the app's group chat panel. The new visibility applies ` +
       `automatically once the PR merges and the app redeploys.`,
     chatText: (prData, majority, activeUsers) =>
-      `${actor.username} proposed making this app ${desc}. Opened PR #${prData.number} — needs ${majority}/${activeUsers} votes to land.`,
+      `${actor.username} proposed making this app ${desc}. Opened PR #${prData.number}, which needs ${majority}/${activeUsers} votes to land.`,
     eventMetadata: { visibility: true },
   });
 }
@@ -274,10 +274,10 @@ async function createGovernancePR(config, pool, app, { policy, approvalsRequired
       `settings to ${desc}.\n\n` +
       `This PR updates the \`governance\` block in \`dapp.json\` (\`approvers\` = who can ` +
       `approve proposals, \`approvals\` = how many approvals are needed). It still needs a ` +
-      `regular merge vote to land — vote in the app's group chat panel. The new settings ` +
+      `regular merge vote to land. Vote in the app's group chat panel. The new settings ` +
       `apply automatically once the PR merges and the app redeploys.`,
     chatText: (prData, majority, activeUsers) =>
-      `${actor.username} proposed changing proposal approvals to ${desc}. Opened PR #${prData.number} — needs ${majority}/${activeUsers} votes to land.`,
+      `${actor.username} proposed changing proposal approvals to ${desc}. Opened PR #${prData.number}, which needs ${majority}/${activeUsers} votes to land.`,
     eventMetadata: { governance: true },
   });
 }
@@ -310,7 +310,7 @@ async function createAdminsPR(config, pool, app, { usernames }, actor) {
     prBody:
       `${actor.username} (via Usernode) proposed changing "${app.name}"'s app admins ` +
       `to ${desc}.\n\n` +
-      `This PR updates the \`admins\` array in \`dapp.json\` — the platform users who can ` +
+      `This PR updates the \`admins\` array in \`dapp.json\`: the platform users who can ` +
       `administer this app (creator-level settings plus force-merging its proposals). ` +
       `Because it grants app-level power, the time-based merge paths are switched off for ` +
       `this proposal: it merges only when the app's normal vote threshold is met by Yes ` +
@@ -319,7 +319,7 @@ async function createAdminsPR(config, pool, app, { usernames }, actor) {
       `app redeploys.`,
     chatText: (prData, majority, activeUsers) =>
       `${actor.username} proposed changing this app's admins to ${desc}. Opened PR ` +
-      `#${prData.number} — it needs real Yes votes (${majority}/${activeUsers}) and won't ` +
+      `#${prData.number}: it needs real Yes votes (${majority}/${activeUsers}) and won't ` +
       `merge on a timer.`,
     eventMetadata: { admins: true },
     explicitApproval: true,
@@ -377,7 +377,7 @@ async function createSecretDeclarationPR(config, pool, app, { scope, key, declar
   ];
   if (decl.default != null) {
     flagBits.push(isPlatform
-      ? `\`default: "${decl.default}"\` (documentation of the committed fallback — the platform's deploy stays authoritative)`
+      ? `\`default: "${decl.default}"\` (documentation of the committed fallback; the platform's deploy stays authoritative)`
       : `\`default: "${decl.default}"\` (used when no value is stored)`);
   }
   if (!isPlatform && decl.staging_default != null) {
@@ -386,8 +386,8 @@ async function createSecretDeclarationPR(config, pool, app, { scope, key, declar
 
   const valueLine = hasValue
     ? 'A value for it is part of this proposal and is applied when this PR merges. '
-      + 'The value itself is deliberately not in this PR — it is stored encrypted by the platform.'
-    : 'No value accompanies this proposal — it declares the variable only.';
+      + 'The value itself is deliberately not in this PR: it is stored encrypted by the platform.'
+    : 'No value accompanies this proposal: it declares the variable only.';
 
   return createManifestPR(config, pool, app, actor, {
     mutate: (m) => {
@@ -405,17 +405,17 @@ async function createSecretDeclarationPR(config, pool, app, { scope, key, declar
     prTitle: title,
     prBody:
       `${actor.username} (via Usernode) proposed declaring ${isPlatform ? 'a new platform variable' : 'a new app secret'} `
-      + `\`${key}\`${decl.description ? ` — ${decl.description}` : ''}.\n\n`
+      + `\`${key}\`${decl.description ? `: ${decl.description}` : ''}.\n\n`
       + `This PR appends one entry to the \`${isPlatform ? 'platform_env' : 'secrets'}\` array in \`dapp.json\`:\n`
       + `${flagBits.map((b) => `- ${b}`).join('\n')}\n\n`
       + `${valueLine}\n\n`
-      + `It still needs a regular merge vote to land — vote in the app's group chat panel. `
+      + `It still needs a regular merge vote to land. Vote in the app's group chat panel. `
       + (isPlatform
         ? 'Once merged, the declaration is picked up on the platform\'s next deploy, which is also when the value reaches the platform process.'
         : 'Once merged, the value is stored and the app redeploys with the new variable in its environment.'),
     chatText: (prData, majority, activeUsers) =>
       `${actor.username} proposed adding the ${isPlatform ? 'platform variable' : 'app secret'} ${key}`
-      + `${hasValue ? ' (value included)' : ''}. Opened PR #${prData.number} — needs ${majority}/${activeUsers} votes to land.`,
+      + `${hasValue ? ' (value included)' : ''}. Opened PR #${prData.number}, which needs ${majority}/${activeUsers} votes to land.`,
     eventMetadata: { secretDeclaration: true, scope, key },
     explicitApproval: false,
   });

@@ -86,16 +86,18 @@ test('the input stylesheet ships all three layers and stays out of public/', () 
 test('the Dockerfile compiles the stylesheet in a builder stage', () => {
   const dockerfile = file(files(), 'Dockerfile');
   assert.match(dockerfile, /FROM node:22-alpine AS css/, 'needs a named builder stage');
-  assert.match(dockerfile, /npm install tailwindcss@3\.4\.17/,
-    'the builder stage should install the pinned Tailwind version');
-  assert.match(dockerfile, /-o public\/tailwind\.css/, 'the builder stage should compile to public/tailwind.css');
+  assert.match(dockerfile, /COPY package.json package-lock.json/);
+  assert.match(dockerfile, /npm ci --include=dev/,
+    'the builder installs the locked compiler and dependencies');
+  assert.match(dockerfile, /RUN npm run build/,
+    'Docker and Paketo must use the same npm build entrypoint');
   assert.match(dockerfile, /COPY --from=css \/build\/public\/tailwind\.css \.\/public\/tailwind\.css/,
     'the runtime stage should copy the compiled stylesheet in');
 
   // The runtime image must stay production-only: tailwindcss lives in the
   // builder stage and never reaches the shipped container.
-  assert.match(dockerfile, /RUN npm install --production/, 'the runtime stage still installs production deps only');
-  const runtime = dockerfile.slice(dockerfile.indexOf('RUN npm install --production'));
+  assert.match(dockerfile, /RUN npm ci --omit=dev/, 'the runtime stage still installs production deps only');
+  const runtime = dockerfile.slice(dockerfile.indexOf('RUN npm ci --omit=dev'));
   assert.ok(!runtime.includes('tailwindcss'), 'the runtime stage must not install tailwindcss');
 
   // Ordering matters: COPY . . would clobber the compiled file if it landed
@@ -118,4 +120,35 @@ test('the build context carries what the builder stage needs', () => {
     assert.ok(!['styles', 'styles/', 'tailwind.config.js'].includes(line),
       `.dockerignore excludes ${line}, which the builder stage needs`);
   }
+});
+
+test('the scaffold keeps dependencies out of Git and Cloud Native Buildpacks input', () => {
+  const list = files();
+  assert.match(file(list, '.gitignore'), /^node_modules\/$/m,
+    'generated apps must not commit dependency trees');
+  const project = file(list, 'project.toml');
+  assert.match(project, /schema-version = "0\.2"/);
+  assert.match(project, /exclude = \[[\s\S]*"node_modules"[\s\S]*\]/,
+    'kpack must exclude a dependency tree even if a repository accidentally tracks one');
+  assert.match(project, /name = "BP_NODE_RUN_SCRIPTS"\nvalue = "build"/);
+  assert.match(project, /"public\/tailwind.css"/);
+});
+
+test('new apps declare a locked, build-time Tailwind compiler and standard build script', () => {
+  const list = files();
+  const pkg = JSON.parse(file(list, 'package.json'));
+  const lock = JSON.parse(file(list, 'package-lock.json'));
+  assert.equal(pkg.scripts.build, 'npm run build:css');
+  assert.match(pkg.scripts['build:css'], /-o public\/tailwind\.css --minify$/);
+  assert.equal(pkg.devDependencies.tailwindcss, '3.4.17');
+  assert.equal(pkg.dependencies.tailwindcss, undefined);
+  assert.equal(lock.name, pkg.name);
+  assert.equal(lock.packages[''].name, pkg.name);
+  assert.deepEqual(lock.packages[''].dependencies, pkg.dependencies);
+  assert.deepEqual(lock.packages[''].devDependencies, pkg.devDependencies);
+  assert.equal(lock.packages['node_modules/tailwindcss'].version, '3.4.17');
+  assert.match(lock.packages['node_modules/tailwindcss'].integrity, /^sha512-/);
+  const second = getTemplateFiles('Other', 'other-456');
+  assert.equal(JSON.parse(file(second, 'package-lock.json')).name, 'other-456');
+  assert.equal(JSON.parse(file(files(), 'package-lock.json')).name, 'my-app-123');
 });

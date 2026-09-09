@@ -88,9 +88,9 @@ export function importPrErrorMessage(
   prNumber: number,
 ): string {
   if (serverError) return serverError;
-  if (status === 404) return `PR #${prNumber} wasn’t found on GitHub — it may have been deleted.`;
+  if (status === 404) return `PR #${prNumber} wasn’t found on GitHub. It may have been deleted.`;
   if (status === 409) return `PR #${prNumber} can’t be imported right now.`;
-  if (status === 503) return 'The platform is restarting — try the import again in a few seconds.';
+  if (status === 503) return 'The platform is restarting. Try the import again in a few seconds.';
   return 'Something went wrong importing this PR. Please try again.';
 }
 
@@ -155,7 +155,7 @@ export function ImportPrDialog() {
       ok = res.ok;
       data = await res.json().catch(() => ({}));
     } catch {
-      setList({ kind: 'error', text: 'Couldn’t load pull requests — please try again.' });
+      setList({ kind: 'error', text: 'Couldn’t load pull requests. Please try again.' });
       return;
     }
     if (!ok) {
@@ -197,7 +197,7 @@ export function ImportPrDialog() {
     setSlow(false);
     if (!on) return;
     setProgressText(
-      `Importing PR #${prNumber} — checking it on GitHub and adding it to In progress…`,
+      `Importing PR #${prNumber}: checking it on GitHub and adding it to In progress…`,
     );
     slowTimer.current = setTimeout(() => {
       if (busyRef.current) setSlow(true);
@@ -240,7 +240,7 @@ export function ImportPrDialog() {
       status = data.status || 'active';
     } catch {
       setImportBusy(false);
-      setError('Network error — please try again.');
+      setError('Network error. Please try again.');
       return;
     }
 
@@ -259,7 +259,7 @@ export function ImportPrDialog() {
       // the staging build takes minutes, and until it lands the proposal shows
       // "Preview building…" with checks pending.
       window.PlatformUI?.toast?.(
-        `PR #${pr} was imported — its preview is being built now. Find it in Dev under In progress.`,
+        `PR #${pr} was imported. Its preview is being built now. Find it in Dev under In progress.`,
       );
     }
     dialog.close();
@@ -275,7 +275,7 @@ export function ImportPrDialog() {
         <h2 className="text-lg font-bold mb-1">
           Import a pull request
         </h2>
-        <p className="text-xs text-zinc-500 mb-2">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           Pick an open pull request to add to In progress. It stays there until you put it up for vote.
         </p>
         {/*
@@ -286,9 +286,9 @@ export function ImportPrDialog() {
             fork — rows marked "from a fork" run an outside contributor's
             code in the preview, so read the diff on GitHub first.
         */}
-        <p className="text-xs text-zinc-500 mb-4">
-          {"A staging preview is built from the pull request's head commit, so it takes a few minutes to appear — and automated checks stay pending until it does. Rows marked "}
-          <span className="text-amber-600 dark:text-amber-400">
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-4">
+          {"A staging preview is built from the pull request's head commit, so it takes a few minutes to appear, and automated checks stay pending until it does. Rows marked "}
+          <span className="text-amber-800 dark:text-amber-400">
             from a fork
           </span>
           {" are branches in someone else's repository: review the changes on GitHub before importing."}
@@ -331,7 +331,7 @@ export function ImportPrDialog() {
                       #{num} · {String(c.title || '')}
                     </span>
                     <span className="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                      {`${String(c.author || 'unknown')} — `}
+                      {`${String(c.author || 'unknown')} · `}
                       <span className="font-mono">
                         {String(c.headBranch || '')} → {String(c.baseBranch || '')}
                       </span>
@@ -345,10 +345,10 @@ export function ImportPrDialog() {
                     */}
                     {c.fromFork ? (
                       <span
-                        className="block text-xs text-amber-600 dark:text-amber-400 mt-0.5"
+                        className="block text-xs text-amber-800 dark:text-amber-400 mt-0.5"
                         title="This branch lives in a fork, not in this app's own repository. The preview is built from the pull request's head commit. Review the changes on GitHub before importing."
                       >
-                        {'from a fork — '}
+                        {'from a fork: '}
                         <span className="font-mono">{String(c.headRepo || 'unknown fork')}</span>
                       </span>
                     ) : null}
@@ -357,7 +357,7 @@ export function ImportPrDialog() {
                         href={String(c.htmlUrl)}
                         target="_blank"
                         rel="noopener"
-                        className="inline-block text-xs text-violet-500 hover:underline mt-1"
+                        className="inline-block text-xs text-violet-700 hover:underline mt-1 dark:text-violet-400"
                         onClick={(event) => event.stopPropagation()}
                       >
                         View on GitHub ↗
@@ -389,7 +389,7 @@ export function ImportPrDialog() {
             </span>
           </div>
           <div id="import-pr-progress-slow" ref={slowRef} className="hidden mt-1 text-xs opacity-80">
-            Still working — GitHub is being slow. Don’t close this window.
+            Still working. GitHub is being slow, so don’t close this window.
           </div>
         </div>
         <div id="import-pr-error" ref={errorRef} className="text-red-400 text-sm hidden mt-3">
@@ -399,7 +399,7 @@ export function ImportPrDialog() {
           <button
             type="button"
             id="import-pr-cancel"
-            className="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+            className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
             disabled={busy}
             onClick={() => dialog.close()}
           >

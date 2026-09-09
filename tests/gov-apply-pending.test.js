@@ -26,6 +26,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { govCardHtml, issueCardHtml } = require('./lib/dev-card-html');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -293,7 +294,7 @@ test('the slow and stalled phases soften the copy instead of spinning forever', 
 
   h.fireTimer(h.AppView.GOV_APPLY_STALLED_MS);
   const stalled = h.AppView._govApplyState(row);
-  assert.equal(stalled.label, 'Still closing — refresh to check');
+  assert.equal(stalled.label, 'Still closing. Refresh to check');
   assert.equal(stalled.spinner, false, 'stops spinning rather than lying');
   assert.equal(stalled.busy, false, 'and stops blocking the buttons');
 });
@@ -318,7 +319,7 @@ test('applied → success toast, state cleared', async () => {
 
 test('superseded → "already closed", treated as success not failure', async () => {
   const h = await voteWith({ ok: true, issueClosed: { applied: false, superseded: true } });
-  assert.match(h.toasts[0], /already closed — the proposal was resolved automatically/);
+  assert.match(h.toasts[0], /already closed. The proposal was resolved automatically/);
   assert.equal(h.AppView._govApplying[61], undefined, 'no failure label parked on the card');
 });
 
@@ -333,7 +334,7 @@ test('waitingForWindow → no toast at all; the countdown pill says it', async (
 
 test('awaitingAdmin → the locked-app explanation', async () => {
   const h = await voteWith({ ok: true, issueClosed: { applied: false, awaitingAdmin: true } });
-  assert.match(h.toasts[0], /an admin still needs to approve/);
+  assert.match(h.toasts[0], /An admin still needs to approve/);
 });
 
 test('a non-ok response is surfaced (the 409 that used to be silent)', async () => {
@@ -358,7 +359,7 @@ test('a thrown fetch parks the failure copy on the card', async () => {
   // The server-side apply may well have completed, so the card must not
   // pretend nothing happened.
   const state = h.AppView._govApplyState(PROPOSAL());
-  assert.equal(state.label, 'Close didn\'t complete — try voting again');
+  assert.equal(state.label, 'Close didn\'t complete. Try voting again');
   assert.equal(state.spinner, false);
 });
 
@@ -396,7 +397,7 @@ test('derived: past the 120s grace the spinner degrades to the retry copy', () =
     PROPOSAL({ up_count: 2, merge_window_ends_at: secsAgo(600) })
   );
   assert.ok(state);
-  assert.equal(state.label, 'Close pending — will retry automatically');
+  assert.equal(state.label, 'Close pending, will retry automatically');
   assert.equal(state.spinner, false, 'never spins indefinitely');
   assert.equal(state.busy, false, 'and stops blocking the vote buttons');
 });
@@ -417,7 +418,7 @@ test('derived: a due row with NO window end is still bounded (first-seen anchor)
   AppView._govDueSince[61] = Date.now() - (AppView.GOV_APPLY_DERIVED_GRACE_MS + 1000);
   const later = AppView._derivedGovApplying(row);
   assert.equal(later.spinner, false);
-  assert.equal(later.label, 'Close pending — will retry automatically');
+  assert.equal(later.label, 'Close pending, will retry automatically');
 });
 
 test('derived: the first-seen anchor is dropped when the row stops being due', () => {
@@ -512,7 +513,7 @@ test('_renderGovCard shows the spinner badge and disables every control while ap
   const row = PROPOSAL({ up_count: 2, created_by: 1 });
   h.AppView._beginGovApply(row, 'up');
 
-  const html = h.AppView._renderGovCard(row);
+  const html = govCardHtml(h.AppView, row);
   assert.match(html, /gc-merging-badge/, 'reuses the in-flight merge badge treatment');
   assert.match(html, /dc-status-spinner-arc/, 'and its spinner glyph');
   assert.match(html, /Closing issue #42/);
@@ -522,11 +523,18 @@ test('_renderGovCard shows the spinner badge and disables every control while ap
   // second Yes would otherwise retract the deciding vote. Yes/No are inline
   // card-face buttons; Admin merge and Withdraw are demoted into the ⋯ menu
   // (card-as-pointer), so their busy state is a disabled descriptor there
-  // rather than a disabled attribute in the returned HTML.
-  const buttons = html.match(/<button[^>]*>/g) || [];
-  const voteButtons = buttons.filter((b) => /castIssueVote/.test(b));
-  assert.ok(voteButtons.length >= 2, 'Yes / No rendered');
-  for (const b of voteButtons) assert.match(b, /disabled/, `control disabled while applying: ${b}`);
+  // rather than a disabled attribute in the rendered markup.
+  //
+  // The card holds its handlers as closures now, so which button is which
+  // is read off the MODEL rather than off an onclick attribute.
+  const model = h.AppView._govCardModel(row);
+  const voteActions = model.actions.filter((a) => a.act && a.act.fn === 'castIssueVote');
+  assert.equal(voteActions.length, 2, 'Yes / No rendered');
+  for (const a of voteActions) assert.ok(a.disabled, `control disabled while applying: ${a.label}`);
+  // The pair is ONE vote button on the card face (round three), and it goes
+  // inert with them.
+  assert.match(html, /<button[^>]*class="dev-vote-btn"[^>]*disabled=""/, 'the vote button renders inert');
+  assert.equal((html.match(/<button[^>]*disabled=""/g) || []).length, 1, 'and it is the only control on the face');
 
   const menu = menuItems(h.AppView, html);
   const menuControls = menu.filter((it) =>
@@ -543,10 +551,13 @@ test('_renderGovCard renders the badge but no controls for a read-only viewer', 
   assert.equal(h.AppView.readOnly, true);
   const row = PROPOSAL({ up_count: 2, merge_window_ends_at: secsAgo(30) });
 
-  const html = h.AppView._renderGovCard(row);
+  const html = govCardHtml(h.AppView, row);
   // Status, not an action: they should still see what is happening.
   assert.match(html, /Closing issue #42/);
-  assert.ok(!/castIssueVote/.test(html), 'no vote controls for read-only viewers');
+  assert.equal(h.AppView._govCardModel(row).actions.length, 0,
+    'no vote controls for read-only viewers');
+  assert.ok(!/<button/.test(html.split('gc-card-actions')[1] || ''),
+    'and the action band renders empty');
 });
 
 test('_renderGovCard leaves a settled row alone (the vote is history)', () => {
@@ -557,7 +568,7 @@ test('_renderGovCard leaves a settled row alone (the vote is history)', () => {
     status: 'closed', up_count: 2,
     payload: { issueNumber: 42, appliedAt: new Date().toISOString(), appliedBy: 'group-vote', required: 2 },
   });
-  const html = h.AppView._renderGovCard(row);
+  const html = govCardHtml(h.AppView, row);
   assert.ok(!/dc-status-spinner-arc/.test(html), 'no spinner on an applied proposal');
 });
 
@@ -569,10 +580,12 @@ test('the target issue row reads "Closing…" while its close proposal applies',
   const row = PROPOSAL({ up_count: 2, merge_window_ends_at: secsAgo(30) });
   h.AppView._govProposals = [row];
 
-  const html = h.AppView._renderIssueRow({
+  const html = issueCardHtml(h.AppView, {
     number: 42, title: 'Dark mode resets', htmlUrl: 'https://example.test/42',
   });
-  assert.match(html, /Closing&hellip;/, 'the issue row says the close is running');
+  // React renders text children, so the entity the string builder wrote is
+  // the character itself now.
+  assert.match(html, /Closing…/, 'the issue row says the close is running');
   assert.match(html, /dc-status-spinner-arc/);
   assert.ok(!/Close proposed/.test(html), 'not the pre-vote wording any more');
 });
@@ -584,11 +597,11 @@ test('the target issue row still reads "Close proposed" while the vote is open',
   h.AppView._ghIssuesMeta = {};
   h.AppView._govProposals = [PROPOSAL({ up_count: 1 })];
 
-  const html = h.AppView._renderIssueRow({
+  const html = issueCardHtml(h.AppView, {
     number: 42, title: 'Dark mode resets', htmlUrl: 'https://example.test/42',
   });
   assert.match(html, /Close proposed/);
-  assert.ok(!/Closing&hellip;/.test(html));
+  assert.ok(!/Closing…/.test(html));
 });
 
 // ── The ?demo=1 staging states, end to end ────────────────────────────────
@@ -627,14 +640,14 @@ test('?demo=1 mock 9100005 renders the spinner state the staging check asserts',
   const row = gov.find((g) => g.id === 9100005);
   assert.ok(row, 'the mock governance row exists');
 
-  const html = h.AppView._renderGovCard(row);
+  const html = govCardHtml(h.AppView, row);
   assert.match(html, /data-gov-row="9100005"/);
   assert.match(html, /gc-merging-badge/);
   assert.match(html, /dc-status-spinner-arc/);
   assert.match(html, /Closing issue #900011/);
   // And on the proposal's own discussion page (noNav), which is a separate
   // capture path.
-  assert.match(h.AppView._renderGovCard(row, { noNav: true }), /dc-status-spinner-arc/);
+  assert.match(govCardHtml(h.AppView, row, { noNav: true }), /dc-status-spinner-arc/);
 });
 
 test('?demo=1 apply mocks stay reviewable when the cloned self-app is locked', () => {
@@ -643,7 +656,7 @@ test('?demo=1 apply mocks stay reviewable when the cloned self-app is locked', (
   h.AppView._proposalsCtx = { majority: 2, locked: true };
   const row = gov.find((g) => g.id === 9100005);
   assert.equal(row.demo, true);
-  assert.match(h.AppView._renderGovCard(row), /dc-status-spinner-arc/);
+  assert.match(govCardHtml(h.AppView, row), /dc-status-spinner-arc/);
 });
 
 test('?demo=1 mock 9100006 renders the retry copy with no spinner', () => {
@@ -653,9 +666,9 @@ test('?demo=1 mock 9100006 renders the retry copy with no spinner', () => {
   const row = gov.find((g) => g.id === 9100006);
   assert.ok(row, 'the mock governance row exists');
 
-  const html = h.AppView._renderGovCard(row);
+  const html = govCardHtml(h.AppView, row);
   assert.match(html, /gc-checks-running-badge/);
-  assert.match(html, /Close pending — will retry automatically/);
+  assert.match(html, /Close pending, will retry automatically/);
   assert.ok(!/dc-status-spinner-arc/.test(html), 'a long-stalled apply must not spin');
 });
 
@@ -663,7 +676,7 @@ test('?demo=1 mock 9100003 (still voting) is untouched by the new states', () =>
   const h = makeSandbox();
   const { gov } = stagingMocks();
   h.AppView._proposalsCtx = { majority: 2, locked: false };
-  const html = h.AppView._renderGovCard(gov.find((g) => g.id === 9100003));
+  const html = govCardHtml(h.AppView, gov.find((g) => g.id === 9100003));
   assert.ok(!/gc-merging-badge/.test(html), 'an open vote shows no applying badge');
   assert.ok(!/disabled/.test(html), 'and its controls stay live');
 });
@@ -675,12 +688,12 @@ test('?demo=1 target issue rows pair with their close proposals', () => {
   h.AppView._govProposals = gov;
   h.AppView._ghIssuesMeta = {};
 
-  const applying = h.AppView._renderIssueRow(issues.find((i) => i.number === 900011));
-  assert.match(applying, /Closing&hellip;/);
+  const applying = issueCardHtml(h.AppView, issues.find((i) => i.number === 900011));
+  assert.match(applying, /Closing…/);
   assert.match(applying, /dc-status-spinner-arc/);
 
   // 900001's proposal (9100003) is still in its voting window.
-  const voting = h.AppView._renderIssueRow(issues.find((i) => i.number === 900001));
+  const voting = issueCardHtml(h.AppView, issues.find((i) => i.number === 900001));
   assert.match(voting, /Close proposed/);
 });
 
@@ -723,7 +736,7 @@ test('a locked app with no ?demo=1 still suppresses the derived states', () => {
   const { gov } = stagingMocks();
   h.AppView._proposalsCtx = { majority: 2, locked: true };
   const { demo, ...realRow } = gov.find((g) => g.id === 9100005);
-  const html = h.AppView._renderGovCard(realRow);
+  const html = govCardHtml(h.AppView, realRow);
   assert.ok(!/dc-status-spinner-arc/.test(html),
     'a locked app is waiting on an admin Yes, not applying');
 });

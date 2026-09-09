@@ -37,12 +37,9 @@ const ACCOUNT_COLUMNS = [
   'se.id AS event_id', 'se.name AS event_name',
   'u.id AS user_id_full', 'u.username AS user_username', 'u.email AS user_email',
   'u.display_name AS user_display_name', 'u.discord AS user_discord',
-  // Live delegation state, by address (the delegations table is keyed on
-  // the ut1… address, not this row's id — duplicates of the address
-  // across season events all report the same state, which is correct:
-  // delegation is a property of the on-chain account, not of one grant
-  // row). The partial unique index guarantees at most one open period,
-  // so the scalar subquery needs no LIMIT semantics beyond itself.
+  // Pre-cutover timestamp history, by address. Once the immutable cutover C
+  // exists every period is closed, so these compatibility fields read false
+  // and do not compete with the epoch ledger's current policy.
   `EXISTS (SELECT 1 FROM account_delegation_periods adp
             WHERE adp.account = oa.address AND adp.ended_at IS NULL) AS delegated`,
   `(SELECT adp.started_at FROM account_delegation_periods adp
@@ -158,7 +155,8 @@ function onchainAccountsAdminRoutes(config) {
         params.push(isUsed);
         where += ` AND oa.is_used = $${params.length}`;
       }
-      // Param-less on purpose (EXISTS over open periods) so the shared
+      // Legacy-history compatibility filter. Param-less on purpose (EXISTS
+      // over open periods) so the shared
       // filter-param ordering the count/list queries rely on is
       // untouched. Same present-but-unparseable discipline as is_used.
       if (req.query.delegated !== undefined) {

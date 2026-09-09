@@ -1,0 +1,348 @@
+/**
+ * The legacy → React seam for the group chat transcript.
+ *
+ * `public/js/group-chat.js` is a classic script that runs before this bundle,
+ * so it cannot import anything from here. It calls by name instead:
+ * `window.UsernodeReact.groupChat.mountTranscript(host)` where it used to
+ * assign `container.innerHTML = …`, and pushes its view model through
+ * `publishTranscript`.
+ *
+ * ── Why the host is mounted, not rendered into the tree ───────────────
+ *
+ * `#gc-messages` does not exist in the shell's markup. `AppView.renderDevChatTab`
+ * creates it at runtime inside `#app-content`, and destroys it on every tab
+ * switch — so there is no node for the main React tree to own, and the portal
+ * has to be (re)established each time the host is rebuilt. That is the same
+ * situation the Dev board's regions are in, and this uses the same machinery
+ * (../../lib/legacy-portals).
+ *
+ * `unmount` matters here more than it does for the board: the transcript is
+ * re-created on every switch between the chat tab and anything else, and a
+ * portal left pointing at a detached node keeps its subtree — and its store
+ * subscription — alive for the life of the page.
+ *
+ * Published at module-evaluation time, like features/dev-board/mount.ts, so the
+ * API exists before hydration and therefore long before `App.switchTab()` can
+ * reach the chat tab. The `typeof window` guard is not decoration: the SSG
+ * prerender pass evaluates this whole module graph in Node.
+ */
+
+import { createElement } from 'react';
+import { flushSync } from 'react-dom';
+
+import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
+import { MentionMenu, RefMenu } from './autocomplete';
+import {
+  autocompleteStore,
+  type MentionOption,
+  type RefOption,
+} from './autocomplete-store';
+import {
+  composerStore,
+  type ComposerScope,
+  type ComposerSlot,
+} from './composer-store';
+import { GeneralChat, type GeneralChatProps } from './general-chat';
+import { ReactionBar, type ReactionBarProps } from './reaction-bar';
+import { reactionBarStore, type ReactionBarState } from './reaction-bar-store';
+import { SpecPanel } from './spec-panel';
+import { specPanelStore, type SpecPanelState } from './spec-panel-store';
+import { ThreadShell, type ThreadShellProps } from './thread-shell';
+import { Transcript } from './transcript';
+import {
+  EMPTY_VIEW,
+  transcriptStore,
+  type TranscriptLead,
+  type TranscriptMessage,
+  type TranscriptState,
+} from './transcript-store';
+
+/** Mount (or re-establish) the transcript inside the host app-view just built. */
+export function mountTranscript(host: Element | null, key = 'main'): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(Transcript, { source: key }));
+}
+
+export function unmountTranscript(host: Element | null): void {
+  if (!host) return;
+  unmountLegacyPortal(host);
+}
+
+/** The whole transcript, replacing whatever was there. */
+export function publishTranscript(
+  messages: TranscriptMessage[],
+  key = 'main',
+  lead: TranscriptLead = { earlier: false, placeholder: null },
+): void {
+  transcriptStore.set((s: TranscriptState) => ({
+    ready: true,
+    byKey: { ...s.byKey, [key]: { messages, lead } },
+  }));
+}
+
+/**
+ * Append one row — the live-message path.
+ *
+ * A separate entry point rather than a re-publish of the whole list because
+ * that is what the caller has: `appendMessage` used to `insertAdjacentHTML` a
+ * single row precisely so an incoming message did not rebuild the transcript
+ * under the reader's scroll position. Appending to the array preserves that
+ * property through the reconciler instead of around it.
+ */
+export function appendTranscriptMessage(message: TranscriptMessage, key = 'main'): void {
+  transcriptStore.set((s: TranscriptState) => {
+    const view = s.byKey[key] || EMPTY_VIEW;
+    return {
+      ready: true,
+      byKey: { ...s.byKey, [key]: { ...view, messages: [...view.messages, message] } },
+    };
+  });
+}
+
+/**
+ * Patch one row in place — reactions, a bookmark toggle, an edit.
+ *
+ * Each of these used to be its own targeted `innerHTML` write into a row the
+ * module had built. They are a field update now, and React repaints only the
+ * row whose identity changed. A patch for an unknown id is a no-op rather than
+ * an append: the row may legitimately have been pruned by a reload that raced
+ * the websocket event.
+ */
+export function patchTranscriptMessage(id: number, patch: Partial<TranscriptMessage>): void {
+  transcriptStore.set((s: TranscriptState) => {
+    let hit = false;
+    const byKey: Record<string, typeof EMPTY_VIEW> = {};
+    // Patched across EVERY transcript: the same message can be on screen in
+    // both the general chat and an open thread, and a reaction on one is a
+    // reaction on the other.
+    for (const [k, view] of Object.entries(s.byKey)) {
+      byKey[k] = {
+        ...view,
+        messages: view.messages.map((m: TranscriptMessage) => {
+          if (m.id !== id) return m;
+          // A patch that says nothing new is not a state change. That is a
+          // saved repaint everywhere, and a REQUIREMENT for the one caller
+          // that runs after every render: `refreshVoteControls` patches each
+          // vote row's tint from the effect in transcript.tsx, so an
+          // unconditional new object would render → patch → render forever.
+          const keys = Object.keys(patch) as (keyof TranscriptMessage)[];
+          if (keys.every((key) => m[key] === patch[key])) return m;
+          hit = true;
+          return { ...m, ...patch };
+        }),
+      };
+    }
+    return hit ? { ...s, byKey } : s;
+  });
+}
+
+/**
+ * `setFlush(flushSync)` on the autocomplete store, and it is load-bearing.
+ *
+ * `_render()` publishes the rows and then, two lines later, calls
+ * `_position()`, which reads `menu.offsetHeight` to decide whether the menu
+ * fits above the composer or has to flip below it. Batched — React 18's
+ * default for an update that starts outside React — that measurement would run
+ * against the previous frame and a freshly-opened menu would be placed as if
+ * it were empty. The innerHTML assignment this replaces was synchronous, so
+ * the flush is what keeps the contract rather than what changes it.
+ */
+autocompleteStore.setFlush(flushSync);
+
+/**
+ * The spec panel's store gets the same flush, for the same shape of reason:
+ * `_renderSpecPanel` publishes and then immediately calls
+ * `_applySavedSpecPanelWidth()` and adds the open class, and the resizer's
+ * drag measures the panel. All of those read a panel the publish is supposed
+ * to have filled.
+ */
+specPanelStore.setFlush(flushSync);
+
+/**
+ * And the reaction bar's, for the third instance of the same sentence:
+ * `_openReactionBar` publishes `{ gridOpen: false, editable }` and then reads
+ * `bar.offsetWidth` / `bar.offsetHeight` to decide whether the bar fits above
+ * the row or has to flip below it. Whether the pencil is rendered changes the
+ * first of those, so a batched publish would place the bar against the
+ * PREVIOUS row's answer.
+ */
+reactionBarStore.setFlush(flushSync);
+
+/**
+ * The composer's store gets it too. `setupAttachments` publishes the strip and
+ * then reads the paperclip and the file input back by id on the next line;
+ * `mountThread` publishes the staged reply and then measures the composer to
+ * place an autocomplete against it. Both were synchronous when they were
+ * `innerHTML`, so the flush keeps the contract rather than changing it.
+ */
+composerStore.setFlush(flushSync);
+
+// ── The composer's two autocomplete menus ─────────────────────────────
+//
+// Same seam, one level smaller: `_ensureMenu` still creates the floating host
+// and appends it to `document.body` — it is `position: fixed`, measured
+// against the composer, and belongs to no React tree — and then mounts a
+// portal into it ONCE. Everything after that is a publish.
+//
+// `mountLegacyPortal` is the right tool even though these hosts are never
+// destroyed: it is what gives the subtree a root, and the unmount path exists
+// for symmetry rather than because anything calls it today.
+
+/** Establish the `@name` menu's contents. Idempotent — the host is cached. */
+export function mountMentionMenu(host: Element | null): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(MentionMenu));
+}
+
+/** Establish the `#123` / `PR#123` menu's contents. */
+export function mountRefMenu(host: Element | null): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(RefMenu));
+}
+
+/**
+ * The rows and the highlighted index, together.
+ *
+ * One call rather than a publish plus a separate "move the highlight",
+ * because an arrow key changes only `active` and a new token changes both —
+ * and the module already holds them as one pair (`_items` / `_active`).
+ */
+export function publishMentionMenu(items: MentionOption[], active: number): void {
+  autocompleteStore.set({ mention: { items, active } });
+}
+
+export function publishRefMenu(items: RefOption[], active: number): void {
+  autocompleteStore.set({ ref: { items, active } });
+}
+
+/**
+ * The thread panel's shell — scroller, messages host, typing slot, composer.
+ *
+ * `mountThread` used to assign `container.innerHTML` and then bind its
+ * listeners to what came back. The assignment is this; the listeners still
+ * attach to the same ids on the line after, which is what keeps the draft, the
+ * typing ping, the multi-line submit semantics and both autocompletes in one
+ * owner.
+ *
+ * The props go through the portal node rather than a store: they are fixed for
+ * the life of one mount and only change when `mountThread` runs again, and
+ * `mountLegacyPortal` re-renders and commits synchronously — so the node IS
+ * the publish.
+ */
+export function mountThreadShell(host: Element | null, props: ThreadShellProps): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(ThreadShell, props));
+}
+
+// ── The shared-spec reader ────────────────────────────────────────────
+//
+// `#gc-spec-side-panel` is written into `#app-content` by
+// `AppView.renderDevChatTab`, so — like the transcript — it is a runtime host
+// that has to be (re)mounted rather than rendered from the tree, and it is
+// torn down by the same `unmountAllLegacyPortals` in
+// `AppView._teardownDevRoots`.
+
+/** Establish the panel's contents. Idempotent per host. */
+export function mountSpecPanel(host: Element | null): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(SpecPanel));
+}
+
+/**
+ * Open the panel with a document, or close it.
+ *
+ * Closing publishes `open: false` rather than clearing the host: the host is
+ * React's subtree now, and an `innerHTML = ''` behind its back is exactly the
+ * write the ownership rule forbids. The host's own
+ * `gc-spec-side-panel-open` class stays group-chat.js's — it is what the
+ * resizer and the width restore read.
+ */
+export function publishSpecPanel(next: SpecPanelState): void {
+  specPanelStore.set(next);
+}
+
+// ── The two composers ─────────────────────────────────────────────────
+//
+// One store with a slot per scope, one set of components, two callers. See
+// ./composer-store.ts for why they are together.
+
+/**
+ * The general chat pane, into `#dev-chat-body`.
+ *
+ * `AppView.renderGroupChatTab` used to assign that host's `innerHTML` and then
+ * bind its listeners to what came back. The assignment is this; the listeners
+ * still attach to the same ids on the line after, exactly as `mountThread`
+ * does for the thread panel.
+ */
+export function mountGeneralChat(host: Element | null, props: GeneralChatProps): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(GeneralChat, props));
+}
+
+export function unmountGeneralChat(host: Element | null): void {
+  if (!host) return;
+  unmountLegacyPortal(host);
+}
+
+/**
+ * Patch one composer's slot — the staged reply, the error line, the pending
+ * uploads, the status line — leaving the other scope's alone.
+ *
+ * A patch rather than a whole-state publish because the module's writers are
+ * independent: `_setAttachError` knows nothing about the strip, and the typing
+ * ticker knows nothing about either.
+ */
+export function publishComposer(scope: ComposerScope, patch: Partial<ComposerSlot>): void {
+  composerStore.set((s) => ({ ...s, [scope]: { ...s[scope], ...patch } }));
+}
+
+// ── The long-press reaction bar ───────────────────────────────────────
+//
+// One floating host for every message row, created and placed by
+// `_ensureReactionBar` / `_openReactionBar`. Its contents are a portal
+// established once, and its two moving parts are a publish.
+
+/**
+ * Establish the bar's contents. Idempotent — the host is cached by the module.
+ *
+ * The emoji sets arrive as props on the portal node rather than through the
+ * store: they are constants in public/js/group-chat.js, fixed for the life of
+ * the page, and `mountLegacyPortal` commits synchronously — so the mount IS
+ * their publish, the same way ThreadShell's layout is.
+ */
+export function mountReactionBar(host: Element | null, props: ReactionBarProps): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(ReactionBar, props));
+}
+
+/**
+ * The grid's open state and whether this row offers Edit, together — the two
+ * `classList.toggle` calls that used to reach into the built markup.
+ */
+export function publishReactionBar(next: ReactionBarState): void {
+  reactionBarStore.set(next);
+}
+
+if (typeof window !== 'undefined') {
+  const w = window as unknown as { UsernodeReact?: Record<string, unknown> };
+  w.UsernodeReact = w.UsernodeReact || {};
+  (w.UsernodeReact as Record<string, unknown>).groupChat = {
+    mountTranscript,
+    unmountTranscript,
+    publishTranscript,
+    appendTranscriptMessage,
+    patchTranscriptMessage,
+    mountMentionMenu,
+    mountRefMenu,
+    publishMentionMenu,
+    publishRefMenu,
+    mountSpecPanel,
+    publishSpecPanel,
+    mountThreadShell,
+    mountReactionBar,
+    publishReactionBar,
+    mountGeneralChat,
+    unmountGeneralChat,
+    publishComposer,
+  };
+}

@@ -24,6 +24,18 @@ const { installAppCard } = require('./helpers/app-card');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const { HOME_SRC, PANELS_SRC } = require('./helpers/home-modules');
+const { installPanelsStore } = require('./helpers/home-grid-store');
+const { renderComponent } = require('./lib/render-tsx');
+// The panel RENDERERS moved to frontend/src/features/home/panels/*.tsx when
+// the three sections became React (#1191); home-panels.js keeps the data and
+// the view models. Assertions about markup read the components, assertions
+// about what decides the markup read the module.
+const PANEL_SRC = Object.fromEntries(
+  ['ui', 'challenges', 'discover', 'create', 'sections'].map(
+    (n) => [n, read(`frontend/src/features/home/panels/${n}.tsx`)]
+  )
+);
+const LAYOUT_SRC = read('frontend/src/features/home/home-layout.js');
 const INDEX = read('public/index.html');
 const CSS = read('public/css/app.css');
 const ROUTE = read('src/routes/home-panels.js');
@@ -55,6 +67,10 @@ function makePanels({ canCreate = true, featured = [] } = {}) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
+  // home-panels.js imports its view-model store; ./helpers/home-modules strips
+  // the line so the source runs as classic script text, and this supplies the
+  // binding it would have made.
+  installPanelsStore(sandbox);
   vm.runInContext(`${PANELS_SRC}\n;globalThis.__HP = HomePanels;`, sandbox);
   return { HP: sandbox.__HP, sandbox };
 }
@@ -62,11 +78,12 @@ const SCHEMA = read('src/db/schema.sql');
 const APPS_ROUTE = read('src/routes/apps.js');
 
 // `search` drives the screenshot-state deep links the module reads off
-// location (?shot=create-disabled, ?shot=discover-empty).
-function makeHome({ search = '' } = {}) {
+// location (?shot=create-enabled, ?shot=create-disabled,
+// ?shot=discover-empty).
+function makeHome({ search = '', canCreateApps = true } = {}) {
   const sandbox = {
     console,
-    App: { user: { id: 1, canCreateApps: true } },
+    App: { user: { id: 1, canCreateApps } },
     document: {
       getElementById: () => null,
       querySelector: () => null,
@@ -108,6 +125,8 @@ const app = (over) => ({
   slug: 'some-app',
   name: 'Some App',
   status: 'running',
+  icon_emoji: '🧩',
+  directory: { tier: 'ready', state: 'working', label: 'Reviewed working' },
   is_collaborator: false,
   is_favorited: false,
   favorite_order: null,
@@ -117,6 +136,21 @@ const app = (over) => ({
 });
 
 // ── featuredApps selection ────────────────────────────────────────
+
+test('discovery requires a current review and a real icon, not just popularity or featuring', () => {
+  const Home = makeHome();
+  const candidates = [
+    app({ slug: 'ready', active_users: 1 }),
+    app({ slug: 'no-icon', icon_emoji: null, active_users: 100 }),
+    app({ slug: 'not-running', status: 'creating', active_users: 100 }),
+    ...['unreviewed', 'outdated', 'demo', 'broken'].map((state) => app({
+      slug: state, active_users: 100, directory: { state, tier: state === 'outdated' || state === 'unreviewed' ? 'unreviewed' : 'more' },
+    })),
+  ];
+  assert.deepEqual(Home.popularApps(candidates).map((a) => a.slug), ['ready']);
+  assert.deepEqual(Home.featuredApps(candidates.map((a) => ({ ...a, featured: true }))).map((a) => a.slug), ['ready']);
+  assert.equal(Home.isDiscoveryReady(app({ demo: true })), true, 'staging inertness is not an editorial demo classification');
+});
 
 test('featuredApps: only featured rows, ordered by featured_order', () => {
   const Home = makeHome();
@@ -141,6 +175,95 @@ test('featuredApps: apps already in "Your apps" are left out', () => {
   ];
   assert.deepEqual(Home.featuredApps(apps).map((a) => a.slug), ['fresh'],
     'no point re-offering what the user already keeps');
+});
+
+// ── #1567: the rail holds still while the tap is happening ─────────
+
+test('featuredApps: a slug in _discoverKeep stays in the rail after it becomes yours', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ slug: 'kept', featured: true, featured_order: 0, is_favorited: true }),
+    app({ slug: 'other', featured: true, featured_order: 1, is_favorited: true }),
+  ];
+  assert.deepEqual(Home.featuredApps(apps).map((a) => a.slug), [],
+    'both are yours, so neither is offered');
+  Home._discoverKeep.add('kept');
+  assert.deepEqual(Home.featuredApps(apps).map((a) => a.slug), ['kept'],
+    'the one the finger is on holds its place, ticked, so the tap is reversible');
+});
+
+test('popularApps: _discoverKeep holds a card there too, and only that card', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ slug: 'kept', active_users: 9, is_favorited: true }),
+    app({ slug: 'other', active_users: 8, is_favorited: true }),
+  ];
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), []);
+  Home._discoverKeep.add('kept');
+  assert.deepEqual(Home.popularApps(apps).map((a) => a.slug), ['kept']);
+});
+
+test('_discoverKeep is per-visit: a fresh Home offers the honest list again', () => {
+  const kept = makeHome();
+  kept._discoverKeep.add('kept');
+  const apps = [app({ slug: 'kept', featured: true, featured_order: 0, is_favorited: true })];
+  assert.equal(kept.featuredApps(apps).length, 1);
+  assert.equal(makeHome().featuredApps(apps).length, 0,
+    'the next load of the home screen starts from what the viewer actually has');
+});
+
+test('featuredApps: ?shot=discover-empty still wins over a kept slug', () => {
+  const Home = makeHome({ search: '?shot=discover-empty' });
+  Home._discoverKeep.add('kept');
+  const apps = [app({ slug: 'kept', featured: true, featured_order: 0, is_favorited: true })];
+  assert.equal(Home.featuredApps(apps).length, 0);
+});
+
+test('_wireDiscoveryCards binds each badge once, however often the lane re-runs it', () => {
+  const Home = makeHome();
+  let toggles = 0;
+  Home.toggleAdded = () => { toggles += 1; };
+  // BY TYPE, since #1763: the badge carries two listeners now — its click,
+  // and the pointerdown guard that keeps a press on ⊕ from arming the lane's
+  // drag recognizer. Both are bound through the same WeakSet, so both are the
+  // claim this test makes.
+  const mkBtn = (cls, slug) => {
+    const handlers = {};
+    return {
+      className: cls,
+      dataset: { slug, added: 'false' },
+      addEventListener: (t, fn) => { (handlers[t] || (handlers[t] = [])).push(fn); },
+      handlers,
+    };
+  };
+  const badge = mkBtn('card-add-btn', 'fresh');
+  const card = {
+    dataset: { slug: 'fresh', status: 'running' },
+    addEventListener: () => {},
+  };
+  const lane = {
+    querySelectorAll: (sel) => {
+      if (sel === '.app-card') return [card];
+      if (sel === '.card-add-btn') return [badge];
+      return [];
+    },
+  };
+  // Twice, which is what really happens now: the badge flipping to "added"
+  // changes the effect's key while React keeps the very same element.
+  Home._wireDiscoveryCards(lane);
+  Home._wireDiscoveryCards(lane);
+  assert.equal(badge.handlers.click.length, 1, 'one listener, not two');
+  assert.equal(badge.handlers.pointerdown.length, 1, 'and one guard, not two');
+  badge.handlers.click[0]({ stopPropagation: () => {} });
+  assert.equal(toggles, 1, 'so one tap is one toggle');
+
+  // The guard's whole job: the kit's recognizer listens for pointerdown on the
+  // LANE and takes the first card that contains the target, so a press on the
+  // badge is a press on the card unless the event stops here (#1763). On
+  // desktop it arms after 6px, which is inside the slop of an ordinary click.
+  let stopped = 0;
+  badge.handlers.pointerdown[0]({ stopPropagation: () => { stopped += 1; } });
+  assert.equal(stopped, 1, 'a press on ⊕ never reaches the lane');
 });
 
 test('featuredApps: a hidden member app IS offered again (#618)', () => {
@@ -192,6 +315,15 @@ test('featuredApps: ?shot=discover-empty forces the empty state', () => {
   assert.equal(shot.featuredApps(apps).length, 0, 'the deep link empties it');
   // Paint-only: a DIFFERENT shot value must not touch this list.
   assert.equal(makeHome({ search: '?shot=create-disabled' }).featuredApps(apps).length, 1);
+});
+
+test('the create-widget shot paths pin both quota treatments', () => {
+  assert.equal(makeHome({ canCreateApps: false }).canCreate(), false,
+    'the ordinary state follows the authenticated quota');
+  assert.equal(makeHome({ search: '?shot=create-enabled', canCreateApps: false }).canCreate(), true,
+    'the enabled review path does not depend on capture-admin privileges');
+  assert.equal(makeHome({ search: '?shot=create-disabled', canCreateApps: true }).canCreate(), false,
+    'the locked review path stays deterministic too');
 });
 
 // ── popularApps selection (#949) ──────────────────────────────────
@@ -258,21 +390,21 @@ test('popularApps: capped at POPULAR_LIMIT; empty / missing input is safe', () =
 // ── The row hides itself when there is nothing to show ───────────
 
 test('the Discover widget swaps its tile row for a note, never an empty box', () => {
-  const src = PANELS_SRC.slice(
-    PANELS_SRC.indexOf('renderDiscoverPanel(panel) {'),
-    PANELS_SRC.indexOf('renderDiscoverTile(app) {'));
-  assert.ok(src.length > 200, 'located renderDiscoverPanel');
+  const src = PANEL_SRC.discover;
+  assert.ok(src.length > 200, 'located the Discover renderer');
   // Tiles OR a one-line note — never a bare bar over an empty lane.
-  assert.match(src, /featured\.length/);
+  assert.match(src, /view\.featured\.length/);
   assert.match(src, /Nothing featured right now/);
   // The browse control always renders: it is THE discovery path, so it must
-  // not depend on curation existing. It lives in the title bar now (#949),
-  // not in a footer — see the block test below.
-  assert.match(src, /home-browse-btn/);
-  assert.match(src, /Browse all apps/);
+  // not depend on curation existing. It lives in the SECTION HEADING now, not
+  // in the card at all — see the block test below — so it does not even
+  // depend on the block having rendered.
+  assert.match(PANEL_SRC.ui, /home-browse-btn/);
+  assert.match(PANEL_SRC.ui, /Browse all apps/);
+  assert.match(PANEL_SRC.sections, /<BrowseLink \/>/);
   // ...and the widget derives its tiles from the SAME per-viewer flags the
   // old row did, rather than issuing a second query.
-  assert.match(src, /Home\.featuredApps\(/);
+  assert.match(PANELS_SRC, /Home\.featuredApps\(/);
 });
 
 // ── Card mode: discovery tiles carry an add badge, not a "…" menu ──
@@ -291,26 +423,28 @@ test('renderAppCard: discovery mode leads with the add badge', () => {
   assert.match(withMenu, /card-menu-btn/, 'browse opts in');
 });
 
-test('Discover tiles are the compact treatment, wired like the old row', () => {
-  const src = PANELS_SRC.slice(
-    PANELS_SRC.indexOf('renderDiscoverTile(app) {'),
-    PANELS_SRC.indexOf('renderCreatePanel(panel) {'));
-  // The block is ~366px wide on a phone across six tracks — a 56px launcher
-  // card does not fit, so the widget uses the 40px widget-strip tile. The
-  // size lives in CSS now (#949): the icon fills its track up to that same
-  // 40px, because the narrowest 5-column lane gives it only ~32px and a
-  // fixed box there would overflow and be clipped.
-  assert.match(src, /class="app-icon-tile home-discover-icon/);
-  assert.doesNotMatch(src, /w-14 h-14/);
-  // The cap sits on the wrapper, whose width is definite; see the sizing
-  // note in app.css and the budget test in home-panels-render.test.js.
-  assert.match(CSS, /\.home-discover-icon-wrap \{[^}]*max-width: 2\.5rem/);
-  // It still carries .app-card + data-slug, which is what lets it reuse
-  // Home._wireDiscoveryCards wholesale (tap opens, badge toggles) so the
-  // widget cannot drift from the row it replaced.
-  assert.match(src, /class="app-card home-discover-tile/);
+test('Discover cards keep the wiring the compact tiles had', () => {
+  const src = PANEL_SRC.discover.slice(PANEL_SRC.discover.indexOf('function DiscoverCard('));
+  // THE COMPACT TREATMENT IS GONE. It was a 40px widget-strip tile, sized to
+  // fit six of them across a ~366px phone block — the icon filled its grid
+  // track up to that cap, because the narrowest lane gave it ~32px and a fixed
+  // box there overflowed. The lane is a rail of 152px cards now, so the track,
+  // the cap and the fluid icon all went with the grid (see the retirement note
+  // in app.css and the rail test in home-panels-render.test.js).
+  assert.doesNotMatch(src, /app-icon-tile home-discover-icon/,
+    'the 40px tile face is retired');
+  assert.doesNotMatch(CSS, /^\.home-discover-icon-wrap[\s,{]/m,
+    'and so is the wrapper that capped it');
+  // What SURVIVES is the contract with Home's wiring: `.app-card` and
+  // `data-slug` are what let the card reuse _wireDiscoveryCards wholesale
+  // (tap opens, badge toggles), so a redesign cannot quietly drift from the
+  // behaviour of the row this area has always had. dapp.json's own Discover
+  // check chains `.app-card` too.
+  assert.match(src, /className={`app-card home-discover-card /);
   assert.match(src, /card-add-btn/);
-  assert.match(PANELS_SRC, /Home\._wireDiscoveryCards\(tiles\)/);
+  // The binding runs from the LANE's effect — still Home's function, still
+  // once per lane.
+  assert.match(PANEL_SRC.discover, /_wireDiscoveryCards\?\.\(el\)/);
 });
 
 test('renderAppCard: an already-added app renders the ✓ state', () => {
@@ -321,51 +455,86 @@ test('renderAppCard: an already-added app renders the ✓ state', () => {
   assert.match(html, /Remove mine from Your apps|Remove Some App from Your apps/);
 });
 
-test('renderAppCard: home mode is unchanged (default, menu badge)', () => {
+test('renderAppCard: home mode leaves the icon free of menu badges (#1616)', () => {
   const Home = makeHome();
   const html = Home.renderAppCard(app({ slug: 'mine', is_collaborator: true }));
-  assert.match(html, /card-menu-btn/);
+  assert.doesNotMatch(html, /card-menu-btn/);
   assert.doesNotMatch(html, /card-add-btn/);
 });
 
 // ── index.html section shells ────────────────────────────────────
 
-test('index.html retires the two trailing sections for in-grid widgets', () => {
-  // Both are widgets now — placeable anywhere in the grid rather than
-  // pinned below everything — so their section shells are gone.
-  for (const id of ['home-find-more', 'home-create-section',
-    'home-featured-list', 'home-featured-empty', 'home-create-body']) {
-    assert.equal(INDEX.indexOf(`id="${id}"`), -1, `#${id} should be gone`);
-  }
-  // The grid and the fallback widget host remain, in that order.
+test('index.html stacks the four home areas in order', () => {
+  // This assertion has now inverted twice. Discover and Create app began as
+  // fixed trailing sections below the grid; #911 made them WIDGETS, placeable
+  // anywhere on the launcher canvas, and the section shells went; THE UI
+  // OVERHAUL made them fixed sections again — deliberately, and with the
+  // reasoning that settles it: a home screen with a reading order is a page,
+  // and the same four things at wherever-you-dropped-them was a canvas that
+  // made every one of them feel optional.
   const grid = INDEX.indexOf('id="app-list"');
-  const panels = INDEX.indexOf('id="home-panels"');
-  assert.ok(grid > 0 && panels > grid);
-  // And the iOS widget-editing strip moved ABOVE the grid: a full-width
-  // flow item cannot coexist with explicit cell placement.
+  const discover = INDEX.indexOf('id="home-discover-section"');
+  const challenges = INDEX.indexOf('id="home-challenges-section"');
+  const create = INDEX.indexOf('id="home-create-section"');
+  assert.ok(grid > 0, 'the launcher grid is present');
+  assert.ok(discover > grid, 'Discover comes after the apps grid');
+  assert.ok(challenges > discover, 'Challenges after Discover');
+  assert.ok(create > challenges, 'Create app last');
+  // The widgets' fallback host is gone with the placement it existed for: it
+  // caught the moment before the first grid paint and the active-search view,
+  // because a widget INSIDE #app-list vanished whenever #app-list did.
+  assert.equal(INDEX.indexOf('id="home-panels"'), -1,
+    'the fallback stack is retired');
+  // The iOS widget-editing strip stays ABOVE the grid, where explicit cell
+  // placement forced it and where it still belongs.
   const strip = INDEX.indexOf('id="home-widget-strip-section"');
   assert.ok(strip > 0 && strip < grid);
 });
 
-test('Discover is one bordered block: lanes under a bar that carries the browse link', () => {
-  // Same shell as every other widget, so the three read as one family and
-  // the drag handle is in the same place — but Discover passes NO footer
-  // (#949). A .home-panel-footer is 27px, which on a phone is the whole
-  // difference between a tile lane that fits its one cell and one that
-  // clips.
-  assert.match(PANELS_SRC,
-    /renderDiscoverPanel\(panel\) \{[\s\S]*?_panelShell\(panel\.key, titleHtml, featuredHtml \+ popularHtml, null,/);
-  const src = PANELS_SRC.slice(
-    PANELS_SRC.indexOf('renderDiscoverPanel(panel) {'),
-    PANELS_SRC.indexOf('renderDiscoverTile(app) {'));
+test('the apps grid is four columns at every width, two rows by default', () => {
+  const tag = INDEX.match(/<div id="app-list"[^>]*>/)[0];
+  assert.match(tag, /\bgrid-cols-4\b/, 'four columns');
+  assert.doesNotMatch(tag, /sm:grid-cols-\d/,
+    'and no second breakpoint — one column count is the point');
+  // The two-row default is a cap on what is SHOWN, with a way out. The
+  // wording moved with the button: #1191 made `#home-apps-more` React's, so
+  // home.js pushes the COUNT (Home._renderAppsMore) and apps-more.tsx spells
+  // the label. Both halves are pinned so neither can drift alone.
+  assert.match(LAYOUT_SRC, /DEFAULT_ROWS: 2,/);
+  assert.match(HOME_SRC, /chromeStore\.set\(\{\s*moreCount: count \|\| 0,/);
+  assert.match(
+    read('frontend/src/features/home/apps-more.tsx'),
+    /`Show all \$\{moreCount\} apps`/
+  );
+  assert.equal(INDEX.indexOf('id="home-apps-more"') > 0, true,
+    'the expander has a host outside #app-list');
+});
+
+test('Discover is one bordered block: two lanes, and no chrome of its own', () => {
+  // Same shell as every other widget, so the three read as one family — but
+  // Discover passes NO footer (#949), and since the title moved out to become
+  // the section's label there is no bar either: the card is two lanes and the
+  // hairline between them.
+  const src = PANEL_SRC.discover;
+  assert.match(src, /<PanelShell\b/, 'the same shell as every other block');
+  assert.doesNotMatch(src, /footer=/, 'and Discover passes it no footer');
   assert.doesNotMatch(src, /home-panel-footer/, 'no footer of its own');
-  // The browse control rides in the TITLE BAR instead, and it is still the
-  // same #home-browse-btn the old footer carried.
-  assert.match(src, /titleHtml = `[\s\S]*?id="home-browse-btn"[\s\S]*?`;/);
-  assert.match(src, /home-panel-browse/);
+  assert.doesNotMatch(src, /home-panel-bar/, 'and no title bar');
+  // The browse control rides in the SECTION HEADING instead, and it is still
+  // the same #home-browse-btn the old footer carried.
+  assert.match(PANEL_SRC.sections, /action=\{<BrowseLink \/>\}/, "the heading action is the browse link alone — the ⋮ is gone");
+  assert.match(PANEL_SRC.ui, /home-panel-browse/);
   // The second lane is separated by a hairline, so it reads as part of the
-  // same block rather than a second card.
-  assert.match(src, /home-discover-divider[^`]*border-t/);
+  // same block rather than a second card. The hairline used to be a
+  // `border-t` utility ON the divider; the reskin moved it into app.css as an
+  // INSET ::before, because a rule running the full width of a rounded card
+  // reaches its corner radius. So the markup half of the contract is now just
+  // that the divider element is still there, and the rule itself is asserted
+  // where it lives.
+  assert.match(src, /home-discover-divider/);
+  assert.match(read('public/css/app.css'),
+    /\.home-discover-divider::before \{[^}]*background: var\(--border-light\)/,
+    'app.css draws the divider hairline');
 });
 
 // The width bound is on the FEED, not on each box: #home-body is a
@@ -373,20 +542,22 @@ test('Discover is one bordered block: lanes under a bar that carries the browse 
 // edge to edge (inside the section's own px-3 gutter) and share their
 // left edge with the "Your apps" grid above. The heading stays a plain
 // sibling above the card.
-test('every widget is one bordered block, sized by the cells it occupies', () => {
-  // The widget's box fills whatever rectangle the layout gave it, rather
-  // than sitting at its natural height in the top-left of a 2x2 block.
-  assert.match(CSS, /\.home-panel-slot \{[^}]*display: flex/);
-  assert.match(CSS, /\.home-panel-slot > \.home-panel,[\s\S]*?width: 100%/);
-  // Footprints come from the server registry, per column count. Challenges
-  // is ASYMMETRIC (#968): one row on a phone, where a two-row footprint made
-  // its content-height block hand its height to whitespace instead of to the
-  // page; its original two on desktop, where it is a tile among app icons.
-  assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[2, 2\] \}/);   // challenges
-  // Discover is ASYMMETRIC (#949) the same way, and for the same reason.
-  assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[2, 2\] \}/);
-  // The create widget is a single desktop cell and a full-width phone ROW.
-  assert.match(ROUTE, /sizes: \{ 4: \[4, 1\], 5: \[1, 1\] \}/);   // create
+test('every block is one bordered box, sized by its own content', () => {
+  // A block's box used to fill whatever rectangle the layout gave it — a
+  // `.home-panel-slot` grid host with `display: flex` and a 100%-width child,
+  // so a short block stretched rather than sitting in the top-left of a 2x2
+  // cell — and the rectangle itself came from a per-column-count footprint
+  // table in the server registry (`sizes`, asymmetric for two of the three).
+  // THE UI OVERHAUL made all three fixed <section>s, so both went: nothing is
+  // placed, and a section is as tall as it draws.
+  assert.doesNotMatch(CSS, /^\.home-panel-slot[\s,{]/m);
+  assert.doesNotMatch(ROUTE, /sizes:/);
+  // What each host DOES still carry is the key of the block it is for — the
+  // hook the dapp.json checks and the screenshot assertions select on.
+  for (const key of ['discover', 'challenges', 'create']) {
+    assert.match(INDEX, new RegExp(`<section id="home-${key}-section" data-panel-slot="${key}"`),
+      `${key}: its section names it`);
+  }
 });
 
 // Short feed on a tall screen: the trailing sections sit at the BOTTOM of
@@ -440,56 +611,65 @@ test('the home feed is a 1024px centred column', () => {
 test('the browse action routes through the hash for a real history entry', () => {
   // The OS/browser back gesture has to return to home, so this navigates by
   // hash rather than calling the router directly.
-  assert.match(PANELS_SRC, /home-panel-browse[\s\S]*?location\.hash = '#apps'/);
-  // ...and it is reachable from the widget's ⋮ menu too.
-  assert.match(PANELS_SRC, /label: 'Browse all apps'/);
+  assert.match(PANEL_SRC.ui, /home-panel-browse[\s\S]*?location\.hash = '#apps'/);
 });
 
-test('the create widget renders in both states, and only one is tappable', () => {
+test('the create widget renders in both states and keeps quota details reachable', () => {
   const { HP, sandbox } = makePanels();
+  const createHtml = () => renderComponent(
+    'frontend/src/features/home/panels/create.tsx', 'CreatePanel',
+    { view: HP.createView({ key: 'create' }) },
+  );
 
   sandbox.Home.canCreate = () => true;
-  const on = HP.renderCreatePanel({ key: 'create' });
+  const on = createHtml();
   assert.match(on, /data-create-enabled="true"/);
-  assert.match(on, /home-create-btn/, 'wireCreateButtons keys off this class');
+  assert.match(on, /home-create-btn/, 'the class app.css styles the tile through');
   assert.match(on, /Create app/);
   assert.doesNotMatch(on, /aria-disabled/);
 
   sandbox.Home.canCreate = () => false;
-  const off = HP.renderCreatePanel({ key: 'create' });
+  const off = createHtml();
   // Still a real widget in a real cell — dimmed, not absent.
   assert.ok(off.length > 100, 'the widget renders for a viewer with no quota');
   assert.match(off, /data-create-enabled="false"/);
   assert.match(off, /home-create-widget--disabled/);
-  assert.match(off, /aria-disabled="true"/);
-  assert.match(off, /Ask an admin to enable app creation/, 'the hint is its tooltip');
+  assert.doesNotMatch(off, /aria-disabled/,
+    'the available open-quota-details action is not disabled to assistive technology');
+  assert.match(off, /View app quota\. Ask an admin to enable app creation/,
+    'the available action and the lock reason are both announced');
   // NOT the disabled ATTRIBUTE: that swallows pointer events, which would
-  // kill the explanatory toast AND the widget's own drag.
+  // prevent the viewer from opening the dialog to read their quota.
   assert.doesNotMatch(off, /<button[^>]*\sdisabled/);
 });
 
-test('the create widget IS in the grid, for every account', () => {
-  // The inverse of the old assertion: it used to be banished from the grid
-  // into a trailing section, and it is a first-class grid item again.
-  assert.match(PANELS_SRC, /renderCreatePanel\(panel\) \{/);
-  assert.match(HOME_SRC, /data-panel-slot="\$\{escapeHtml\(item\.key\)\}"/);
-  // The server places it unconditionally: no viewer argument reaches the
+test('Create app is a fixed section, for every account', () => {
+  // This assertion has inverted twice with the surface: banished from the
+  // grid into a trailing section, then a first-class grid item (#911), and
+  // now a fixed section again. What never changed is the part that matters —
+  // it exists for EVERY account, and app quota decides whether it is
+  // tappable, never whether it is there.
+  assert.match(PANELS_SRC, /createView\(panel\) \{/);
+  assert.match(PANELS_SRC, /create: 'home-create-section'/,
+    'it renders into its own fixed host');
+  assert.doesNotMatch(HOME_SRC, /data-panel-slot="/,
+    'and the grid plants no widget slots any more');
+  // The server builds it unconditionally: no viewer argument reaches the
   // registry, so app quota can never decide whether it exists.
   const registry = ROUTE.match(/const PANEL_REGISTRY = \[[\s\S]*?\n\];/)[0];
   assert.match(registry, /key: 'create'/);
   assert.doesNotMatch(registry, /canCreateApps|quota/i);
 });
 
-test('a viewer with no quota gets the hint on tap, not a dead tile', () => {
-  // One constant, three surfaces: the tooltip, the toast, and the inert
-  // note in the widget's ⋮ menu.
-  assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'Ask an admin to enable app creation for your account\.'/);
-  const wire = PANELS_SRC.match(/_wire\(section\) \{[\s\S]*?\n {2}\},/)[0];
-  assert.match(wire, /createEnabled === 'true'/);
-  assert.match(wire, /wireCreateButtons\(\)/, 'the enabled tile opens the create modal');
-  assert.match(wire, /PlatformUI\.toast\(hint\)/, 'the disabled one explains itself');
-  // The menu carries the same sentence as an inert row.
-  assert.match(PANELS_SRC, /key === 'create' && window\.Home[\s\S]*?CREATE_DISABLED_HINT/);
+test('a viewer with no quota can open the dialog to inspect it', () => {
+  // The compact locked state carries the shared hint in its tooltip;
+  // tapping opens the detailed used-of-limit row.
+  assert.match(HOME_SRC, /CREATE_DISABLED_HINT: 'View your app allowance or request more slots\.'/);
+  const btn = PANEL_SRC.create.slice(PANEL_SRC.create.indexOf('onClick={'));
+  assert.match(btn, /App\?\.showCreateModal\?\.\(\)/,
+    'both enabled and locked tiles open the create modal');
+  assert.doesNotMatch(btn, /PlatformUI\?\.toast\?\.\(/,
+    'a generic toast cannot replace the exact quota display');
 });
 
 // ── Server side: the featured flags this row is built from ────────
@@ -516,9 +696,8 @@ test('GET /api/apps joins featured_apps and serializes both flags', () => {
 });
 
 test('staging seeds featured rows both ways (boot seed + ?demo=1 tiles)', () => {
-  // featured_apps is new, so a prod-cloned staging DB has no rows: the
-  // home row, the browse ordering and the admin list would all be empty
-  // in every PR preview without these.
+  // Boot fixtures must work with a cloned featured list as well as an
+  // empty one; request-time demo tiles cannot exercise real add/remove.
   const migrate = read('src/db/migrate.js');
   assert.match(migrate, /async function seedStagingFeaturedApps\(pool\)/);
   assert.match(migrate, /await seedStagingFeaturedApps\(pool\)/);
@@ -533,4 +712,81 @@ test('staging seeds featured rows both ways (boot seed + ?demo=1 tiles)', () => 
   // Request-time demo tiles for the ?demo=1 path.
   assert.match(APPS_ROUTE, /staging-demo-featured/);
   assert.match(APPS_ROUTE, /featured: true/);
+});
+
+function stagingFeaturedSeed(env = 'staging') {
+  const migrate = read('src/db/migrate.js');
+  const source = migrate.slice(
+    migrate.indexOf('async function seedStagingFeaturedApps(pool)'),
+    migrate.indexOf('// Per-user app-quota fixtures')
+  );
+  return vm.runInNewContext(`${source}\nseedStagingFeaturedApps;`, {
+    process: { env: { USERNODE_ENV: env } },
+    log: { info() {}, warn(_area, _message, error) { assert.fail(error.message); } },
+  });
+}
+
+for (const prepopulated of [false, true]) {
+  test(`staging Discover has addable reviewed fixtures with an ${prepopulated ? 'existing' : 'empty'} featured list`, async () => {
+    const curation = require('../src/services/discovery-curation');
+    const real = app({ id: 1, slug: 'real-cloned-app', directory_review_status: 'unreviewed', active_users: 10 });
+    const fixtures = ['puzzle-chain', 'word-garden', 'pixel-racer'].map((name, i) => app({
+      id: i + 2, slug: `staging-demo-${name}`, directory_review_status: 'unreviewed', active_users: 0,
+    }));
+    const featured = new Map(prepopulated ? [[real.id, 7]] : []);
+    const pool = { async query(raw, params = []) {
+      const sql = raw.replace(/\s+/g, ' ').trim();
+      // Model just the fixture persistence; the actual Home selection and
+      // review classification below execute production code.
+      if (sql.startsWith('UPDATE apps SET icon_emoji')) {
+        assert.match(sql, /created_by = \(SELECT id FROM users WHERE username = 'staging-demo-user'\)/);
+        assert.match(sql, /AND directory_review_status = 'unreviewed'/);
+        for (const fixture of fixtures) {
+          if (fixture.directory_review_status !== 'unreviewed') continue;
+          Object.assign(fixture, {
+            icon_emoji: '🧩', main_sha: '0000000000000000000000000000000000000001',
+            directory_review_status: 'working', directory_reviewed_at: '2026-09-07T12:00:00Z',
+            directory_reviewed_sha: '0000000000000000000000000000000000000001',
+          });
+        }
+        return { rows: [] };
+      }
+      if (sql === 'SELECT 1 FROM featured_apps LIMIT 1') {
+        return { rows: featured.size ? [{ exists: 1 }] : [] };
+      }
+      if (sql.startsWith('SELECT id FROM apps')) {
+        assert.match(sql, /created_by = \(SELECT id FROM users WHERE username = 'staging-demo-user'\)/);
+        assert.match(sql, /AND directory_review_status = 'working'/);
+        return { rows: fixtures.filter((a) => a.directory_review_status === 'working') };
+      }
+      if (sql.startsWith('INSERT INTO featured_apps')) {
+        assert.match(sql, /COALESCE\(MAX\(sort_order\), -1\) \+ 1/);
+        assert.match(sql, /ON CONFLICT \(app_id\) DO NOTHING/);
+        if (!featured.has(params[0])) featured.set(params[0], Math.max(-1, ...featured.values()) + 1);
+        return { rows: [] };
+      }
+      assert.fail(`Unexpected seed query: ${sql}`);
+    } };
+    const seed = stagingFeaturedSeed();
+    await seed(pool);
+    const first = [...featured];
+    await seed(pool);
+    assert.deepEqual([...featured], first, 'reboot preserves existing positions without duplicates');
+    if (prepopulated) assert.equal(featured.get(real.id), 7, 'cloned ordering is preserved');
+    assert.equal(real.directory_review_status, 'unreviewed', 'no real app is certified by the seed');
+    const apps = [real, ...fixtures].map((a) => ({
+      ...a, directory: curation.describe(a), featured: featured.has(a.id), featured_order: featured.get(a.id),
+    }));
+    const Home = makeHome();
+    const offered = Home.featuredApps(apps);
+    assert.deepEqual(offered.map((a) => a.slug), fixtures.map((a) => a.slug));
+    assert.ok(offered.every((a) => !a.demo && !Home.isYours(a)),
+      'real DB-backed fixtures must remain available to the Discover add/remove check');
+  });
+}
+
+test('staging discovery fixtures never write outside staging', async () => {
+  for (const env of ['production', 'local', undefined]) {
+    await stagingFeaturedSeed(env === undefined ? '' : env)({ query() { assert.fail(`seed ran in ${env}`); } });
+  }
 });

@@ -41,7 +41,10 @@ const MODELS = {
   'claude-sonnet-5': {
     label: 'Sonnet 5',
     tier: 'sonnet',
-    outputCostPerMTok: 15,
+    // Sonnet 5 is $2 in / $10 out per MTok; 15 was the 4.6 generation's
+    // rate, carried over when the id moved. services/llm.js's per-1k table
+    // reads the same figures.
+    outputCostPerMTok: 10,
     changeSize: {
       short: 'simple, small changes',
       long: 'One small thing at a time: a text tweak, a colour, a single file.',
@@ -56,13 +59,18 @@ const MODELS = {
       long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
     },
   },
-  'claude-fable-5': {
-    label: 'Fable 5',
+  // Fable 5.1 succeeds Fable 5 in the same tier at the same per-token price
+  // ($10 in / $50 out per MTok), so `outputCostPerMTok` is unchanged. What it
+  // does NOT share is forced tool use: `tool_choice` `any`/`tool` returns a
+  // 400 on 5.1, which is why services/llm.js's pills call had to move to
+  // `auto` + `strict` in the same change as this rename.
+  'claude-fable-5-1': {
+    label: 'Fable 5.1',
     tier: 'fable',
     outputCostPerMTok: 50,
     changeSize: {
       short: 'design, taste, and difficult coding',
-      long: 'Design and taste — how a screen looks, reads, and feels — plus the most difficult coding work.',
+      long: 'Design and taste (how a screen looks, reads, and feels) plus the most difficult coding work.',
     },
   },
 };

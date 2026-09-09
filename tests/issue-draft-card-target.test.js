@@ -1,6 +1,6 @@
 // #1037: the draft card must say WHERE the issue will be filed, because
 // the tap is irreversible and the Mayor picks the destination from the
-// user's wording. An app-targeted card reads "Issue draft — <app>" with a
+// user's wording. An app-targeted card reads "Issue draft: <app>" with a
 // "File issue" button; a platform-targeted one keeps the historical
 // "Suggested platform report" / "Report to platform" copy — and so does a
 // card with NO target at all, which is every draft written before #1037
@@ -18,6 +18,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
+const { makeTranscriptBridge } = require('./lib/dev-transcript-html');
+
 const issueDraft = require('../src/services/issue-draft');
 
 const SRC = fs.readFileSync(
@@ -30,10 +32,12 @@ const escapeHtml = (s) => String(s == null ? '' : s)
   .replace(/"/g, '&quot;');
 
 function makeDevChat() {
-  let captured = '';
+  // #1078: the rows are a React island. `renderMessages` publishes a view
+  // model instead of writing this element's innerHTML, so the element is only
+  // the portal's host and the markup comes back from the component.
+  const t = makeTranscriptBridge();
   const messagesEl = {
-    set innerHTML(v) { captured = v; },
-    get innerHTML() { return captured; },
+    innerHTML: '',
     querySelectorAll: () => ({ forEach: () => {} }),
     scrollTop: 0, scrollHeight: 0,
   };
@@ -63,6 +67,7 @@ function makeDevChat() {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
+  sandbox.UsernodeReact = { devChat: t.bridge };
   vm.createContext(sandbox);
   vm.runInContext(`${SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
   const DevChat = sandbox.__DevChat;
@@ -73,8 +78,14 @@ function makeDevChat() {
       DevChat.messages = messages;
       DevChat.currentSession = { id: 7, status: 'active' };
       DevChat.renderMessages();
-      return captured;
+      return t.html();
     },
+    // The confirm / dismiss wiring was an inline
+    // `onclick="DevChat.resolvePlatformIssueDraft(42, 'confirm', this)"`,
+    // because an innerHTML card had nowhere else to put a handler. A React
+    // card holds the closure, so the wiring is in the MODEL — which is
+    // strictly more precise than the string match was.
+    draftRow: () => t.state().rows.find((r) => r.t === 'issueDraft'),
   };
 }
 
@@ -94,12 +105,14 @@ const card = (draft, content) => ({
 });
 
 test('a draft with NO target keeps the platform copy (legacy + fixture rows)', () => {
-  const { render } = makeDevChat();
+  const { render, draftRow } = makeDevChat();
   const html = render([card({})]);
 
   assert.match(html, /Suggested platform report/);
-  assert.match(html, /resolvePlatformIssueDraft\(42, 'confirm', this\)[^>]*>Report to platform</);
-  assert.doesNotMatch(html, /Issue draft —/);
+  assert.deepEqual(draftRow().action, { kind: 'buttons', confirmLabel: 'Report to platform' });
+  assert.equal(draftRow().msgId, 42, 'the row the buttons resolve');
+  assert.match(html, /class="dc-pr-btn dc-pr-btn-promote">Report to platform</);
+  assert.doesNotMatch(html, /Issue draft:/);
 });
 
 test('an explicit platform target renders identically to an untargeted draft', () => {
@@ -110,20 +123,22 @@ test('an explicit platform target renders identically to an untargeted draft', (
 });
 
 test('an app target names the app and offers "File issue"', () => {
-  const { render } = makeDevChat();
+  const { render, draftRow } = makeDevChat();
   const html = render([card({ target: 'app', appName: 'Demo App' })]);
 
-  assert.match(html, /Issue draft — Demo App/, 'the destination is on the card');
-  assert.match(html, /resolvePlatformIssueDraft\(42, 'confirm', this\)[^>]*>File issue</);
+  assert.match(html, /Issue draft: Demo App/, 'the destination is on the card');
+  assert.deepEqual(draftRow().action, { kind: 'buttons', confirmLabel: 'File issue' });
+  assert.equal(draftRow().msgId, 42);
+  assert.match(html, /class="dc-pr-btn dc-pr-btn-promote">File issue</);
   assert.doesNotMatch(html, /Report to platform/, 'the platform wording is gone');
-  assert.match(html, /resolvePlatformIssueDraft\(42, 'dismiss', this\)[^>]*>Dismiss</,
+  assert.match(html, /class="dc-pr-btn dc-pr-btn-preview">Dismiss</,
     'Dismiss is unchanged for both targets');
 });
 
 test('an app-targeted card with no app name still reads sensibly', () => {
   const { render } = makeDevChat();
   const html = render([card({ target: 'app', appName: undefined })]);
-  assert.match(html, /Issue draft — this app/);
+  assert.match(html, /Issue draft: this app/);
 });
 
 test('an app name containing markup is escaped in the header', () => {
@@ -134,18 +149,23 @@ test('an app name containing markup is escaped in the header', () => {
 });
 
 test('the resolved-state label follows the target too', () => {
-  const { render } = makeDevChat();
+  const { render, draftRow } = makeDevChat();
   const platform = render([card({ status: 'filed' })]);
   assert.match(platform, /Reported to the platform/);
 
+  // React escapes text children, apostrophe included — so the copy itself is
+  // read off the model and the html is checked for the escaped form it
+  // actually ships. Both say the same thing; only the serialization differs
+  // from the template that interpolated the string raw.
   const app = render([card({ status: 'filed', target: 'app' })]);
-  assert.match(app, /Filed on this app's repo/);
+  assert.deepEqual(draftRow().action, { kind: 'note', text: "Filed on this app's repo" });
+  assert.match(app, /Filed on this app&#x27;s repo/);
 
   // A filed card WITH a url still links out, whichever target it used.
   const linked = render([card({
     status: 'filed', target: 'app', issueUrl: 'https://github.com/acme/demo/issues/9', issueNumber: 9,
   })]);
-  assert.match(linked, /Reported — issue #9/);
+  assert.match(linked, /Reported: issue #9/);
 });
 
 test('a user-requested card reads as fulfilment, an agent one as a suggestion', () => {

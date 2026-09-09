@@ -34,6 +34,10 @@ const BV = require('../public/js/build-venues.js');
 const OPEN = {
   openrouterAvailable: true,
   cliAuthEnabled: true,
+  // #1281: `local` needs the deployment flag AND the user's own opt-in, so
+  // "everything on" has to include the opt-in or the maximal deployment
+  // would quietly be a five-venue one.
+  sessionBridgeEnabled: true,
   externalFlowsAvailable: true,
   canCollaborate: true,
 };
@@ -44,8 +48,8 @@ const idsFor = (state) => BV.venuesFor(state).map((r) => r.id);
 
 test('six venues, in-chat first, in menu order', () => {
   assert.deepEqual(BV.VENUES.map((v) => v.id), [
-    'usernode-claude',
     'usernode-openrouter',
+    'usernode-claude',
     'local',
     'web-claude-code',
     'web-codex',
@@ -118,12 +122,26 @@ test('a bare deployment offers only what needs nothing', () => {
 test('each capability flag adds exactly its own venue, and never a disabled row', () => {
   const cases = [
     ['openrouterAvailable', 'usernode-openrouter'],
-    ['cliAuthEnabled', 'local'],
     ['canCollaborate', 'own-tools-pr'],
   ];
   for (const [flag, id] of cases) {
-    assert.deepEqual(idsFor({ [flag]: true }), ['usernode-claude', id], `${flag} → ${id}`);
+    const expected = flag === 'openrouterAvailable'
+      ? [id, 'usernode-claude']
+      : ['usernode-claude', id];
+    assert.deepEqual(idsFor({ [flag]: true }), expected, `${flag} → ${id}`);
   }
+  // #1281: `local` is the one venue behind TWO flags — the deployment has to
+  // offer the CLI surface and the user has to have opted in. Either alone
+  // offers nothing, which is the whole point of a gate that defaults off.
+  assert.deepEqual(idsFor({ cliAuthEnabled: true }), ['usernode-claude'],
+    'the deployment flag alone does not offer the bridge');
+  assert.deepEqual(idsFor({ sessionBridgeEnabled: true }), ['usernode-claude'],
+    'the opt-in alone does not offer it on a deployment without the CLI');
+  assert.deepEqual(
+    idsFor({ cliAuthEnabled: true, sessionBridgeEnabled: true }),
+    ['usernode-claude', 'local'],
+    'both together → the bridge',
+  );
   // One flag, two venues: the web hand-offs share a deployment capability.
   assert.deepEqual(
     idsFor({ externalFlowsAvailable: true }),
@@ -181,7 +199,7 @@ test('the current venue is marked on its row and on no other', () => {
 
 test('own-tools-pr cannot be a default, and every other venue can', () => {
   assert.deepEqual(BV.defaultableVenues().map((v) => v.id), [
-    'usernode-claude', 'usernode-openrouter', 'local', 'web-claude-code', 'web-codex',
+    'usernode-openrouter', 'usernode-claude', 'local', 'web-claude-code', 'web-codex',
   ]);
   assert.ok(!BV.defaultableVenues().some((v) => v.id === 'own-tools-pr'));
 });
@@ -226,8 +244,8 @@ test('three modes, and anything unrecognised reads as start', () => {
 
 test('start mode labels the venue and nothing else', () => {
   assert.deepEqual(BV.venuesFor({ ...OPEN, mode: 'start' }).map((r) => r.label), [
-    'Usernode · Claude',
     'Usernode · OpenRouter',
+    'Usernode · Claude',
     'Your computer · Usernode session',
     'Claude Code on the web',
     'Codex on the web',
@@ -290,6 +308,22 @@ test('webTargetKind is the three-way derivation, moved here intact', () => {
   for (const [state, expected] of cases) {
     assert.equal(BV.webTargetKind(state), expected, `${JSON.stringify(state)} → ${expected}`);
   }
+});
+
+test('an active session with no branch is a REACHABLE state, not a stale row (#1350)', () => {
+  // Branch creation is deferred to the first turn now, so "active, no branch"
+  // is what every freshly created session looks like until somebody sends a
+  // message. The derivation already answered 'new' for it; what changed is
+  // that this row is common rather than a leftover, so the hand-off has to
+  // read as starting work rather than as continuing a branch that is not there.
+  for (const status of ['active', 'paused']) {
+    assert.equal(BV.webTargetKind({ sessionStatus: status, hasBranch: false }), 'new', status);
+    assert.equal(BV.webVerb(BV.webTargetKind({ sessionStatus: status, hasBranch: false })),
+      BV.webVerb('new'), 'and it is offered with the start-new-work verb');
+  }
+  // Promotion is the one status that outranks the missing branch: a promoted
+  // session has a proposal to continue whatever its own branch column says.
+  assert.equal(BV.webTargetKind({ sessionStatus: 'promoted', hasBranch: false }), 'proposal');
 });
 
 test('the hand-off verb follows the target kind', () => {
@@ -397,33 +431,49 @@ test('an unknown fallback reason renders nothing at all', () => {
   }
 });
 
-// ── The rendered line ───────────────────────────────────────────────
+// ── What the selector is BUILT FROM (#1348) ─────────────────────────
+//
+// `selectorHtml` used to be here and built the `#dc-venue-select` button as a
+// string. The session header is a component now and the button is JSX
+// (features/dev-chat/session-header.tsx), because a declared check selects it
+// as a DIRECT, LAST child of the strip and a `dangerouslySetInnerHTML` sink
+// would have made it a grandchild. What this module still owns is every
+// question the button ASKS it, so that is what these assert; the markup is
+// asserted against the component in tests/dev-session-header.test.js.
 
-test('the venue line states where this is building, with a way to change it', () => {
-  const html = BV.lineHtml({ agentBackend: 'codex_openrouter' });
-  assert.match(html, /data-venue-line="usernode-openrouter"/);
-  assert.match(html, /Building in/);
-  assert.match(html, /Usernode · OpenRouter/);
-  assert.match(html, /data-venue-change="1"/);
-  assert.match(html, /Change how this is built/);
-  // No fallback → no note.
-  assert.ok(!/dc-venue-note/.test(html));
+test('the selector states where this is building, and is the way to change it', () => {
+  const id = BV.currentVenue({ agentBackend: 'codex_openrouter' });
+  assert.equal(id, 'usernode-openrouter');
+  const v = BV.venue(id);
+  assert.equal(v.label, 'Usernode · OpenRouter');
+  // The visible LABEL is the venue and nothing else: the control sits in the
+  // header beside a truncating session title, so the caption sentence the old
+  // line carried survives only as the hover title — assembled in dev-chat.js's
+  // `_headerVenue` from this `blurb`.
+  assert.ok(!/Building in/.test(v.label), 'the caption sentence is not in the label');
+  assert.ok(v.blurb, 'the sentence the tooltip is built from is here');
+  // The note is a separate render — the selector never carried it.
+  assert.ok(!/dc-venue-note/.test(v.label + v.blurb));
 });
 
-test('the venue line carries the fallback sentence when the server sent one', () => {
-  const html = BV.lineHtml({ agentBackend: 'claude_code', fallbackReason: 'no_credential' });
+test('the fallback sentence renders on its own, away from the header', () => {
+  const html = BV.noteHtml({ agentBackend: 'claude_code', fallbackReason: 'no_credential' });
   assert.match(html, /dc-venue-note/);
   assert.match(html, /OpenRouter key is missing/);
+  // No fallback → nothing at all, so .dc-venue-slot:empty collapses.
+  assert.equal(BV.noteHtml({ agentBackend: 'claude_code' }), '');
+  assert.equal(BV.noteHtml({}), '');
+  assert.equal(BV.noteHtml(), '');
 });
 
-test('an imported proposal reports its own venue in the line', () => {
-  const html = BV.lineHtml({ source: 'imported', agentBackend: 'claude_code' });
-  assert.match(html, /data-venue-line="own-tools-pr"/);
-  assert.match(html, /Your computer · your own tools/);
+test('an imported proposal reports its own venue in the selector', () => {
+  const id = BV.currentVenue({ source: 'imported', agentBackend: 'claude_code' });
+  assert.equal(id, 'own-tools-pr');
+  assert.equal(BV.venue(id).label, 'Your computer · your own tools');
 });
 
-test('the line and the chip refuse an unknown venue instead of half-rendering', () => {
-  assert.equal(BV.lineHtml({ current: 'nope' }), '');
+test('the selector and the chip refuse an unknown venue instead of half-rendering', () => {
+  assert.equal(BV.venue('nope'), null);
   assert.equal(BV.chipHtml('nope'), '');
   assert.equal(BV.chipHtml(undefined), '');
 });
@@ -440,13 +490,15 @@ test('interpolated state is escaped', () => {
   assert.equal(BV.escapeHtml('<img src=x onerror=1>'), '&lt;img src=x onerror=1&gt;');
   assert.equal(BV.escapeHtml('a"b\'c&d'), 'a&quot;b&#39;c&amp;d');
   assert.equal(BV.escapeHtml(null), '');
-  const html = BV.lineHtml({ current: 'usernode-claude', fallbackReason: 'flag_off' });
-  assert.ok(!/<script/i.test(html));
+  // The selector's own escaping moved with its markup: React escapes text
+  // children and attribute values, which is why `_headerVenue` carries the
+  // label and the sentence RAW. What is still a string here is the note.
+  assert.ok(!/<script/i.test(BV.noteHtml({ current: 'usernode-claude', fallbackReason: 'flag_off' })));
 });
 
 // ── The sheet ───────────────────────────────────────────────────────
 
-test('the sheet groups the rows under non-interactive headings, not disabled ones', async () => {
+test('the sheet asks one coarse question, four rows, no headings (#1348)', async () => {
   const calls = [];
   global.window = {
     PlatformUI: {
@@ -461,38 +513,94 @@ test('the sheet groups the rows under non-interactive headings, not disabled one
   }
   assert.equal(calls.length, 1);
   const items = calls[0].items;
-  assert.equal(calls[0].title, 'Where should the rest of this be built?');
-  assert.equal(items[0].label, '— In this chat —');
-  assert.equal(items[4].label, '— Somewhere else —');
-  assert.equal(items.length, 8, 'six venues plus two headings');
-  // The headings are inert by having a no-op handler, NOT by `disabled` —
-  // the touch action sheet drops disabled rows, which would silently delete
-  // the headings on exactly the platform where the grouping matters most.
+  assert.equal(calls[0].title, 'Where do you want to work on this?');
+  // The group headings were load-bearing while the rows were six venue
+  // names that did not say what they did. The coarse labels say it, so
+  // there is nothing left for a heading to explain — and every row is a
+  // real answer now, not a separator with a no-op handler.
+  assert.equal(items.length, 4, `four choices, got ${items.map((i) => i.label).join(' / ')}`);
+  assert.deepEqual(items.map((i) => i.label.replace(' ✓', '')), [
+    'On-Platform',
+    'Claude or Codex WebUI',
+    'Your Own Developer Tooling',
+    'Local CLI Bridge',
+  ]);
   for (const item of items) {
     assert.ok(!('disabled' in item), `${item.label} carries a disabled flag`);
     assert.equal(typeof item.handler, 'function');
+    assert.ok(!/^—/.test(item.label), 'no separator rows survive');
   }
 });
 
-test('picking a row hands back the mechanism, never the venue id alone', async () => {
+test('every row carries a kit icon the kit actually ships (#1348)', async () => {
+  // An icon name the kit does not know draws nothing — no throw, no
+  // fallback glyph — so a typo here is a silently iconless row.
+  const { physics } = require('../public/usernode-native/v1/native.js');
+  let items = null;
+  global.window = {
+    PlatformUI: {
+      hasKit: () => true,
+      menu: (opts) => { items = opts.items; return Promise.resolve(null); },
+    },
+  };
+  try {
+    await BV.open({ state: { ...OPEN, mode: 'switch' } });
+  } finally {
+    delete global.window;
+  }
+  assert.equal(items.length, 4);
+  for (const item of items) {
+    assert.ok(item.icon, `${item.label} has no icon`);
+    assert.ok(physics.ICON_NAMES.includes(item.icon),
+      `${item.label}: '${item.icon}' is not in the kit's set`);
+  }
+});
+
+test('picking a row hands back the choice, with the venue it resolves to', async () => {
   const picked = [];
   global.window = {
     PlatformUI: {
       hasKit: () => true,
       menu: (opts) => {
-        opts.items.find((i) => i.label === 'Usernode · OpenRouter').handler();
+        opts.items.find((i) => /Your Own Developer Tooling/.test(i.label)).handler();
         return Promise.resolve(null);
       },
     },
   };
   try {
-    await BV.open({ state: OPEN, onPick: (pre, row) => picked.push([pre, row]) });
+    await BV.open({ state: OPEN, onPick: (row) => picked.push(row) });
   } finally {
     delete global.window;
   }
   assert.equal(picked.length, 1);
-  assert.equal(picked[0][0].backend, 'codex_openrouter');
-  assert.equal(picked[0][1].id, 'usernode-openrouter');
+  assert.equal(picked[0].id, 'own-tools');
+  assert.equal(picked[0].venue, 'own-tools-pr',
+    'the caller still gets a venue id it can preselect() through');
+});
+
+test('the on-platform row resolves its venue server-side, not here', async () => {
+  // Its `venue` is null on purpose: which of the two in-chat backends this
+  // means is the user's last-used one, and only the server knows that.
+  const picked = [];
+  global.window = {
+    PlatformUI: {
+      hasKit: () => true,
+      menu: (opts) => {
+        opts.items.find((i) => /On-Platform/.test(i.label)).handler();
+        return Promise.resolve(null);
+      },
+    },
+  };
+  try {
+    // `current: 'web-codex'` so the on-platform row is not the current one
+    // — a row you are already in is not pickable.
+    await BV.open({ state: { ...OPEN, current: 'web-codex' }, onPick: (row) => picked.push(row) });
+  } finally {
+    delete global.window;
+  }
+  assert.equal(picked.length, 1);
+  assert.equal(picked[0].id, 'on-platform');
+  assert.equal(picked[0].venue, null);
 });
 
 test('an unavailable row explains itself instead of being picked', async () => {
@@ -502,7 +610,7 @@ test('an unavailable row explains itself instead of being picked', async () => {
     PlatformUI: {
       hasKit: () => true,
       menu: (opts) => {
-        const row = opts.items.find((i) => /Usernode · Claude/.test(i.label));
+        const row = opts.items.find((i) => /On-Platform/.test(i.label));
         assert.match(row.label, /unavailable/);
         row.handler();
         return Promise.resolve(null);
@@ -518,12 +626,14 @@ test('an unavailable row explains itself instead of being picked', async () => {
   } finally {
     delete global.window;
   }
-  assert.equal(picked.length, 0, 'a blocked venue must not be selectable');
+  assert.equal(picked.length, 0, 'a blocked choice must not be selectable');
   assert.equal(refused.length, 1);
-  assert.equal(refused[0].id, 'usernode-claude');
+  assert.equal(refused[0].id, 'on-platform');
 });
 
-test('the current venue is ticked in the sheet', async () => {
+test('the current venue ticks the coarse row that contains it', async () => {
+  // `local` is one venue inside the Local CLI Bridge row — the tick has to
+  // follow the containment, not an id match.
   let items = null;
   global.window = {
     PlatformUI: {
@@ -538,7 +648,27 @@ test('the current venue is ticked in the sheet', async () => {
   }
   const ticked = items.filter((i) => /✓/.test(i.label));
   assert.equal(ticked.length, 1);
-  assert.match(ticked[0].label, /Your computer · Usernode session/);
+  assert.match(ticked[0].label, /Local CLI Bridge/);
+});
+
+test('either in-chat venue ticks On-Platform, because the row is the pair', async () => {
+  for (const venue of ['usernode-claude', 'usernode-openrouter']) {
+    let items = null;
+    global.window = {
+      PlatformUI: {
+        hasKit: () => true,
+        menu: (opts) => { items = opts.items; return Promise.resolve(null); },
+      },
+    };
+    try {
+      await BV.open({ state: { ...OPEN, current: venue } });
+    } finally {
+      delete global.window;
+    }
+    const ticked = items.filter((i) => /✓/.test(i.label));
+    assert.equal(ticked.length, 1, `${venue} ticks exactly one row`);
+    assert.match(ticked[0].label, /On-Platform/, `${venue} ticks On-Platform`);
+  }
 });
 
 test('with no kit the sheet resolves null rather than throwing', async () => {
@@ -549,4 +679,60 @@ test('with no kit the sheet resolves null rather than throwing', async () => {
   } finally {
     delete global.window;
   }
+});
+
+test('every row is a bare answer to the sheet\'s question (#1348)', () => {
+  // No verbs at all now: under "Where do you want to work on this?" a bare
+  // noun IS the answer, and "Move to …" / "Continue this session with …"
+  // read as instructions bolted onto one.
+  const rows = BV.choicesFor({ ...OPEN, mode: 'switch', sessionStatus: 'active', hasBranch: true });
+  for (const row of rows) {
+    assert.doesNotMatch(row.label, /^(Continue|Start new work|Move to)\b/,
+      `${row.id} should read as a bare answer, got "${row.label}"`);
+  }
+});
+
+test('the web row still explains WHICH work the hand-off takes (#1071)', () => {
+  // The label stopped saying it (#1348), so this is the only place left on
+  // this surface: continuing this session, continuing the proposal, and
+  // starting fresh are different promises, and picking the wrong one costs
+  // somebody their branch. Desktop shows it as the row's tooltip.
+  const note = (state) => BV.choicesFor(state).find((r) => r.id === 'web-agent').consequence;
+  const base = { ...OPEN, mode: 'switch', hasBranch: true, sessionId: 7 };
+  assert.match(note({ ...base, sessionStatus: 'active' }),
+    /pushes its work back onto this session/);
+  assert.match(note({ ...base, sessionStatus: 'paused' }),
+    /pushes its work back onto this session/);
+  assert.match(note({ ...base, sessionStatus: 'promoted' }),
+    /pushes back onto the same proposal/);
+  assert.match(note({ ...base, sessionStatus: 'archived', hasBranch: false }),
+    /comes back as its own proposal/);
+  // All four must stay distinguishable from one another.
+  const notes = ['active', 'promoted', 'archived']
+    .map((sessionStatus) => note({ ...base, sessionStatus, hasBranch: sessionStatus !== 'archived' }));
+  assert.equal(new Set(notes).size, 3, 'the three target states must not collapse into one sentence');
+});
+
+test('a refused row says only that, not that you are also standing in it', async () => {
+  // Blocked mode marks the venue that just refused the turn — which is by
+  // definition the one you are in, so the tick and the note would always
+  // land together. "On-Platform ✓ (unavailable)" is two answers to one
+  // question.
+  let items = null;
+  global.window = {
+    PlatformUI: {
+      hasKit: () => true,
+      menu: (opts) => { items = opts.items; return Promise.resolve(null); },
+    },
+  };
+  try {
+    await BV.open({ state: { ...OPEN, mode: 'blocked', current: 'usernode-claude' } });
+  } finally {
+    delete global.window;
+  }
+  const row = items.find((i) => /On-Platform/.test(i.label));
+  assert.match(row.label, /\(unavailable\)/);
+  assert.doesNotMatch(row.label, /✓/, 'no tick on a row that is refusing you');
+  // …while an ordinary current row still ticks.
+  assert.equal(items.filter((i) => /✓/.test(i.label)).length, 0);
 });

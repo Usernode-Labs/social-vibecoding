@@ -35,6 +35,7 @@ const queueJs = read('public', 'js', 'feedback-queue.js');
 const indexHtml = read('public', 'index.html');
 const shellTsx = read('frontend', 'src', 'Shell.tsx');
 const headerTsx = read('frontend', 'src', 'features', 'header', 'platform-header.tsx');
+const improveBtnTsx = read('frontend', 'src', 'features', 'improve', 'improve-button.tsx');
 const swJs = read('public', 'sw.js');
 const dapp = JSON.parse(read('dapp.json'));
 
@@ -76,7 +77,7 @@ test('the saved confirmation reads as success, and consumes the draft', () => {
     feedbackJs.indexOf('const saveForLater = async (body)'),
     feedbackJs.indexOf('// Keep the dialog honest while it is open'),
   );
-  assert.match(saveForLater, /Saved on this device — we'll send it as soon as you're back online\./);
+  assert.match(saveForLater, /Saved on this device. We'll send it as soon as you're back online\./);
   assert.match(saveForLater, /text-emerald-400/, 'the same green a filed issue gets');
   // Same cleanup as a successful submit: the draft is gone, the dialog locks
   // and closes on the shared 1500 ms grace window.
@@ -116,7 +117,7 @@ test('a permanently-refused message is handed back with the words intact', () =>
   assert.match(openModal, /feedbackText\.value = p\.description \|\| '';/);
   assert.match(openModal, /This message couldn't be sent/);
   // Live text always wins — a returned draft must not overwrite typing.
-  assert.match(openModal, /if \(feedbackText\.disabled \|\| feedbackText\.value\.trim\(\)\) return;/);
+  assert.match(openModal, /if \(feedbackText\.readOnly \|\| feedbackText\.value\.trim\(\)\) return;/);
 });
 
 test('a captured screenshot survives a failed upload', () => {
@@ -128,7 +129,7 @@ test('a captured screenshot survives a failed upload', () => {
   );
   const networkCatch = uploadCatch.slice(uploadCatch.indexOf('} catch {'));
   assert.doesNotMatch(networkCatch, /resetScreenshotState\(\)/, 'the blob must be kept for the outbox');
-  assert.match(networkCatch, /Saved with your feedback — it'll upload when you're back online/);
+  assert.match(networkCatch, /Saved with your feedback. It'll upload when you're back online/);
   assert.match(feedbackJs, /let screenshotBlob = null;/);
   // Cleared with the rest of the attachment state, and re-uploaded before an
   // online submit so the promise on screen stays true.
@@ -176,20 +177,33 @@ test('the queued shot seeds the store before it pins connectivity', () => {
     'seed first, then pin — otherwise the offline-change read races the seed',
   );
   assert.ok(
-    shot.indexOf('seedDisplayOnly?.(') < shot.indexOf('setTimeout(() =>'),
+    // The deferred presentation is a named `attempt` that retries until the
+    // dialog island has hydrated, rather than one anonymous setTimeout — but
+    // the ordering it must not cross is unchanged: everything address-driven
+    // is installed synchronously, and only the PRESENTATION waits.
+    shot.indexOf('seedDisplayOnly?.(') < shot.indexOf('const attempt = () =>'),
     'the display-only store must be installed before enterAuthed starts the sign-in flush',
   );
   assert.ok(
-    shot.indexOf('window.Offline?.forceOffline()') < shot.indexOf('setTimeout(() =>'),
+    shot.indexOf('window.Offline?.forceOffline()') < shot.indexOf('const attempt = () =>'),
     'the offline body state is address state, not delayed modal presentation',
   );
 });
 
 test('the header dot is markup, hidden, and toggled from the store', () => {
-  assert.match(headerTsx, /id="feedback-queue-dot"/);
-  assert.match(headerTsx, /<button id="feedback-btn" className="relative /, 'the dot is positioned against the button');
-  const dot = headerTsx.slice(headerTsx.indexOf('id="feedback-queue-dot"'));
-  assert.match(dot.slice(0, 200), /className="hidden absolute/, 'ships hidden: an island renders empty/hidden markup');
+  // THE UI OVERHAUL retired #feedback-btn: the dialog opens from the Improve
+  // panel now. The dot moved onto #improve-btn rather than going with it,
+  // because that button is the only remaining way to reach the dialog from the
+  // header — an unsent draft with no visible cue is exactly what it exists to
+  // prevent. Same id, same writer, same publish seam; new host component.
+  assert.match(improveBtnTsx, /id="feedback-queue-dot"/);
+  assert.match(improveBtnTsx, /const IMPROVE_BTN_CLASS =\n  'relative /,
+    'the dot is positioned against the button');
+  const dot = improveBtnTsx.slice(improveBtnTsx.indexOf('id="feedback-queue-dot"'));
+  assert.match(dot.slice(0, 200), /className="hidden absolute/,
+    'ships hidden: an island renders empty/hidden markup');
+  assert.doesNotMatch(headerTsx, /id="feedback-queue-dot"/,
+    'exactly one host for the dot — it did not get left behind in the header');
   // The generated document carries it too (build:shell was run).
   assert.match(indexHtml, /id="feedback-queue-dot"/);
 });
@@ -204,12 +218,14 @@ test('the dot travels through the visibility store, not a classList write', () =
   assert.match(feedbackJs, /publishVisibility\('feedback-queue-dot', n > 0\)/);
   assert.doesNotMatch(feedbackJs, /getElementById\('feedback-queue-dot'\)/,
     'no direct DOM write may sneak back in beside the publish');
-  assert.match(headerTsx, /useVisibilityHiddenClass\(feedbackDotRef, 'feedback-queue-dot', false\)/);
-  assert.match(headerTsx, /ref=\{feedbackDotRef\} id="feedback-queue-dot"/);
+  assert.match(improveBtnTsx, /useVisibilityHiddenClass\(dotRef, 'feedback-queue-dot', false\)/);
+  assert.match(improveBtnTsx, /ref=\{dotRef\}\n\s+id="feedback-queue-dot"/);
 });
 
 test('the queue module loads before app.js and is precached', () => {
-  assert.match(shellTsx, /<script src="\/js\/feedback-queue\.js" \/>/);
+  // Through assetUrl(): the src is build-scoped in a deployed document
+  // (frontend/src/lib/asset-url.ts).
+  assert.match(shellTsx, /<script src=\{assetUrl\('\/js\/feedback-queue\.js'\)\} \/>/);
   const order = [
     indexHtml.indexOf('/js/feedback-queue.js'),
     indexHtml.lastIndexOf('/js/app.js'),
@@ -249,8 +265,9 @@ test('the two screenshot deep links exist and are display-only', () => {
   for (const check of dapp.tests.filter((t) => String(t.path).startsWith('/?shot=feedback-'))) {
     if (!check.expectText) continue;
     assert.ok(
-      feedbackJs.includes(check.expectText),
-      `dapp.json expects "${check.expectText}" but no such string is in feedback-controller.js`,
+      feedbackJs.includes(check.expectText)
+        || read('frontend', 'src', 'features', 'dialogs', 'feedback.tsx').includes(check.expectText),
+      `dapp.json expects "${check.expectText}" but it is absent from the feedback controller and markup`,
     );
   }
 });

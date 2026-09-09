@@ -19,6 +19,7 @@ const { Router } = require('express');
 const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
 const waitlist = require('../../../services/waitlist');
+const { signalsFor } = require('../../../services/waitlist-signals');
 const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
@@ -37,9 +38,33 @@ function formatSignup(row) {
     linked_user_id: row.linked_user_id != null ? Number(row.linked_user_id) : null,
     linked_username: row.linked_username ?? null,
     has_platform_access: row.has_platform_access ?? null,
+    // The other half of the invite graph. `invited_count` (below, via
+    // signals) says how many this row brought in; these two say who
+    // brought THIS row in, which is the question an admin looking at a
+    // referral chain actually has. The address is carried because the id
+    // alone is unreadable on a screen that is keyed by email.
+    invited_by: row.invited_by != null ? Number(row.invited_by) : null,
+    invited_by_email: row.invited_by_email ?? null,
+    // What happened to the "you're in" mail for an admitted row. Admitting
+    // sends exactly one, and whether it actually left is otherwise
+    // invisible here — an admin seeing "Admitted" with no mail behind it
+    // was reading a half-finished action as a finished one. Null when
+    // nothing was ever recorded, which is also every row in a staging
+    // clone (mail_deliveries is staging:private).
+    invite_email: row.invite_mail_status
+      ? {
+        status: row.invite_mail_status,
+        created_at: iso(row.invite_mail_at),
+        error: row.invite_mail_error ?? null,
+      }
+      : null,
     // Two-stage survey payload (versioned JSON — stage 1 at join, stage 2
     // merged in via the "Want in sooner?" form). Null for plain-email rows.
     answers: row.answers && typeof row.answers === 'object' ? row.answers : null,
+    // What this signup actually DID, derived in one place
+    // (services/waitlist-signals.js) so this screen and any future ranking
+    // read the same facts. Facts only: there is deliberately no score.
+    signals: signalsFor(row),
   };
 }
 
@@ -62,14 +87,43 @@ function waitlistAdminRoutes(config) {
   // ── GET /api/v4/admin/waitlist ────────────────────────────────────────
   // `?status=pending|released` filters; default lists everything,
   // pending first, oldest submission first within each group (FIFO —
-  // the natural release order for a queue).
+  // the natural release order for a queue, and the only order this ships).
+  //
+  // `?only=confirmed|invited` narrows further, and `?sort=answered` is an
+  // admin's manual lens over the same rows — how much someone filled in,
+  // which is a coarse proxy and deliberately NOT a score. Nothing here
+  // ranks the queue automatically.
   router.get('/api/v4/admin/waitlist', async (req, res) => {
     try {
       const { page, perPage } = paginate(req, { defaultPerPage: 200 });
       const status = typeof req.query.status === 'string' ? req.query.status : '';
-      let where = '';
-      if (status === 'pending') where = 'WHERE w.released_at IS NULL';
-      else if (status === 'released') where = 'WHERE w.released_at IS NOT NULL';
+      const only = typeof req.query.only === 'string' ? req.query.only : '';
+      const clauses = [];
+      if (status === 'pending') clauses.push('w.released_at IS NULL');
+      else if (status === 'released') clauses.push('w.released_at IS NOT NULL');
+      if (only === 'confirmed') clauses.push('w.confirmed_at IS NOT NULL');
+      else if (only === 'invited') {
+        clauses.push('EXISTS (SELECT 1 FROM waitlist_signups c WHERE c.invited_by = w.id)');
+      }
+      const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+
+      // The key count is computed in SQL rather than from signalsFor
+      // because the list is PAGINATED: sorting the 200 rows a page happens
+      // to contain would order each page against itself. jsonb_object_keys
+      // rejects a non-object and these rows come from a public endpoint
+      // across several schema versions, so the typeof guard is
+      // load-bearing. `_version` is counted along with the real sections;
+      // for a coarse ordering that is fine.
+      const answeredCount = `
+        CASE WHEN jsonb_typeof(w.answers) = 'object'
+             THEN (SELECT COUNT(*) FROM jsonb_object_keys(w.answers))
+             ELSE 0 END`;
+      const order = req.query.sort === 'answered'
+        ? `ORDER BY (w.released_at IS NOT NULL),
+                    (w.confirmed_at IS NOT NULL) DESC,
+                    ${answeredCount} DESC,
+                    w.submitted_at ASC, w.id ASC`
+        : 'ORDER BY (w.released_at IS NOT NULL), w.submitted_at ASC, w.id ASC';
 
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*)::int AS c FROM waitlist_signups w ${where}`
@@ -78,12 +132,25 @@ function waitlistAdminRoutes(config) {
 
       const { rows } = await pool.query(
         `SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at,
-                w.linked_user_id, w.answers,
-                u.username AS linked_username, u.has_platform_access
+                w.linked_user_id, w.answers, w.invited_by,
+                (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited_by = w.id)
+                  AS invited_count,
+                p.email AS invited_by_email,
+                u.username AS linked_username, u.has_platform_access,
+                m.status AS invite_mail_status, m.created_at AS invite_mail_at,
+                m.error AS invite_mail_error
            FROM waitlist_signups w
            LEFT JOIN users u ON u.id = w.linked_user_id
+           LEFT JOIN waitlist_signups p ON p.id = w.invited_by
+           LEFT JOIN LATERAL (
+             SELECT d.status, d.created_at, d.error
+               FROM mail_deliveries d
+              WHERE d.recipient = w.email AND d.kind = 'waitlist_released'
+              ORDER BY d.created_at DESC, d.id DESC
+              LIMIT 1
+           ) m ON TRUE
           ${where}
-          ORDER BY (w.released_at IS NOT NULL), w.submitted_at ASC, w.id ASC
+          ${order}
           LIMIT $1 OFFSET $2`,
         [perPage, (page - 1) * perPage]
       );
@@ -113,6 +180,12 @@ function waitlistAdminRoutes(config) {
       if (released.newly_released) {
         await sendWaitlistReleaseMail(config, released.email, {
           hasAccount: released.linked_user_id != null,
+          // #1548: lets the signup screen prefill the address and send the
+          // code without a second step. An unguessable capability already
+          // delivered to this address, so it carries nothing the recipient
+          // does not already hold — and unlike the address itself it is safe
+          // in a query string, which is what survives a link rewriter.
+          moreToken: released.more_token || null,
         });
       }
       return ok(res, {

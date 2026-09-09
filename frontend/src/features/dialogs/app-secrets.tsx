@@ -69,7 +69,7 @@ export function AppSecretsDialog() {
       <DialogCard size="lg" relative scroll>
         <button
           id="app-secrets-close"
-          className="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 transition-colors"
+          className="absolute top-4 right-4 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-200 transition-colors"
           aria-label="Close"
           onClick={() => Secrets.close()}
         >
@@ -113,10 +113,10 @@ export function AppSecretsDialog() {
         </div>
         <div
           id="app-secrets-footer"
-          className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 hidden"
+          className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 dark:text-zinc-400 hidden"
         >
           Changes apply on the next deploy. Admins can
-          <button id="app-secrets-redeploy" className="text-violet-500 hover:text-violet-400 underline">
+          <button id="app-secrets-redeploy" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">
             redeploy now
           </button>
           .

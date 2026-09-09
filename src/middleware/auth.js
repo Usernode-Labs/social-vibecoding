@@ -1,3 +1,4 @@
+const { nativeWebSessionIsLive } = require('../services/web-session-auth');
 const crypto = require('crypto');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -17,6 +18,9 @@ const PUBLIC_PATHS = [
   '/waiting.html',
   '/api/auth/login',
   '/api/auth/register',
+  // Email-code signup uses an HttpOnly continuation and creates the ordinary
+  // web session only after password setup; all three steps are pre-login.
+  '/api/auth/otp/',
   '/api/auth/wallet-check',
   '/api/auth/wallet-verify',
   // Self-service wallet password reset is pre-login by definition — the
@@ -54,6 +58,13 @@ const PUBLIC_PATHS = [
   // and the service-worker precache fills with redirects. Static JS only, no
   // data access.
   '/shell/',
+  // Build-scoped shell assets (/b/<build sha>/js/app.js and so on): the same
+  // files as /js/, /css/, /vendor/ and /shell/ above, addressed per build so
+  // a deploy can serve them immutable (src/services/static-cache.js). Public
+  // for the same reason as every entry above it: a deployed document loads
+  // ALL of its scripts this way, on the anonymous screens too. Static assets
+  // only, no data access.
+  '/b/',
   // Vendored third-party browser libs (public/vendor/ — marked, DOMPurify,
   // qrcodejs). Same public tier as /css/ and /js/, and public for the same
   // reason: index.html loads them from its <head> on EVERY load including
@@ -124,6 +135,17 @@ const GATE_OPEN_PATHS = [
   '/api/iframe-token',
 ];
 
+// Documents owned by the platform SPA. Clean app URLs deliberately live in
+// the pathname (`/app/<slug>...`) rather than the fragment, so they must reach
+// index.html with or without a session. API access remains authenticated by
+// the routes themselves; this only lets the browser boot the same shell `/`
+// already serves. Keep this narrower than the catch-all so an unrelated typo
+// retains the existing redirect-to-root behaviour.
+function isSpaDocumentPath(pathname) {
+  return pathname === '/' || pathname === '/index.html'
+    || /^\/app\/[a-z0-9][a-z0-9-]{0,254}(?:\/.*)?$/.test(pathname);
+}
+
 // Returns true when it handled the response (caller must return).
 function enforcePlatformAccessGate(req, res, user) {
   if (user.hasPlatformAccess || user.isAdmin) return false;
@@ -138,7 +160,7 @@ function enforcePlatformAccessGate(req, res, user) {
   // The SPA shell serves for a gated session; app.js routes it to the
   // in-SPA waiting room (#waiting). Any other navigation bounces to the
   // shell for the same client-side routing.
-  if (req.path === '/' || req.path === '/index.html') return false;
+  if (isSpaDocumentPath(req.path)) return false;
   res.redirect('/');
   return true;
 }
@@ -189,13 +211,15 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.locale, u.has_platform_access
+          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platform_access,
+             ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
           [cookieToken]
         );
 
-        if (rows.length > 0 && new Date(rows[0].expires_at) >= new Date()) {
+        if (rows.length > 0 && rows[0].native_session_valid !== false
+            && new Date(rows[0].expires_at) >= new Date()) {
           // Staging identity switch: a request that carries a VALID iframe
           // JWT for a DIFFERENT user than the cookie session re-mints as
           // the token's user (replacing the cookie) instead of silently
@@ -257,6 +281,8 @@ function authMiddleware(config) {
             // Experimental per-user opt-in (default FALSE) — read by
             // runClaudeCodeTool to gate the Haiku progress estimator.
             aiProgressEstimate: !!rows[0].ai_progress_estimate,
+            // #1281: opt-in for the session-CLI bridge venue. Default FALSE.
+            sessionBridgeEnabled: !!rows[0].session_bridge_enabled,
             // Platform-level language preference (issue #757): a BCP-47
             // tag or null when unset. Surfaced via /api/auth/me.
             locale: rows[0].locale || null,
@@ -275,7 +301,9 @@ function authMiddleware(config) {
         if (rows.length > 0) {
           await pool.query('DELETE FROM sessions WHERE token = $1', [cookieToken]);
         }
-        res.clearCookie('session');
+        // An old in-flight request may finish after native recovery installed
+        // a replacement cookie. A 401 must not clear that newer credential.
+        // Explicit logout clears cookies; login/recovery replaces them.
       } catch (err) {
         log.error('auth', 'Session check failed', { message: err.message });
         return res.status(500).json({ error: 'Internal server error' });
@@ -334,7 +362,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
   let userRow;
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, locale, has_platform_access FROM users WHERE id = $1',
+      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
       [payload.id]
     );
     userRow = rows[0];
@@ -387,22 +415,35 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     canAdminWrite: !!userRow.is_admin && !userRow.admin_readonly,
     appQuota: userRow.app_quota ?? 0,
     aiProgressEstimate: !!userRow.ai_progress_estimate,
+    sessionBridgeEnabled: !!userRow.session_bridge_enabled,
     locale: userRow.locale || null,
     hasPlatformAccess: !!userRow.has_platform_access,
   };
 }
 
 function redirectOrReject(req, res, next) {
+  // The native app opens OAuth in the system browser, whose cookie jar may
+  // be empty. Only these two account-pinned document navigations may resume
+  // after login; ordinary unauthenticated API requests still receive 401.
+  if (req.method === 'GET'
+      && /^\/api\/me\/social-identities\/(github|x)\/connect$/.test(req.path)
+      && typeof req.query?.account === 'string'
+      && /^[1-9][0-9]*$/.test(req.query.account)) {
+    const target = `${req.path}?account=${req.query.account}`;
+    res.setHeader('Cache-Control', 'no-store');
+    return res.redirect(302, '/?return_to=' + encodeURIComponent(target) + '#login');
+  }
   if (req.path.startsWith('/api/')) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
   // Anonymous SPA boot (fold-auth-pages-into-SPA): the shell serves
   // without a session and boots into the in-SPA landing/login screens
   // (auth-screens.js); every data read stays behind the /api/* 401
-  // above. Deeper paths bounce to the shell — the URL fragment survives
-  // the redirect, so a shared deep link (e.g. /#app/<slug>/full) still
-  // reaches the login screen with the destination preserved.
-  if (req.path === '/' || req.path === '/index.html') {
+  // above. Clean app paths are shell documents too. Letting them through
+  // preserves the pathname so the client can remember it across login;
+  // redirecting to `/` would erase the app the visitor meant to open.
+  // Legacy fragment links still enter through `/` and keep working.
+  if (isSpaDocumentPath(req.path)) {
     return next();
   }
   return res.redirect('/');

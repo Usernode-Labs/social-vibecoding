@@ -64,15 +64,20 @@ test('the whole suite fits inside the container run timeout', () => {
 
 test('the budget is big enough for a full manifest at measured speed', () => {
   // Production timing: ~3.9s marginal per check. A FULL manifest at the
-  // ceiling — 400 since PR #1125, when this repo's own crossed 300 — is
-  // ~195s of ideal work over a pool of 8; at the 55-70% efficiency a shared
-  // preview actually delivers, ~280-355s. The budget has to clear that with
-  // room, or the tail of a real manifest gets cut every single build and the
-  // checks that were invisible before become "did not finish" instead.
+  // ceiling — 600 now (580, 560, 530, 480 since #1417, 430, 400 since #1125)
+  // — is ~293s of ideal work over a pool of 8; at the 55-70% efficiency a
+  // shared preview actually delivers, ~370-470s. The budget has to clear that
+  // with room, or the tail of a real manifest gets cut every single build and
+  // the checks that were invisible before become "did not finish" instead.
   //
   // This is the assertion that makes raising MAX_DECLARED_TESTS cost
-  // something: past ~430 checks the 420s deadline stops clearing 2x and the
-  // deadline (and RUN_TIMEOUT_MS above it) has to move with the ceiling.
+  // something, and it is what forced the deadline from 420s to 470s when the
+  // ceiling moved to 480 (the 420s budget cleared only 1.79x), and from 470s
+  // to 520s when it moved to 530. That second move passed 480s, so
+  // RUN_TIMEOUT_MS went 600s → 640s with it — that one must stay 120s clear,
+  // and the NEXT bump moves both again. It did, twice more on the same rule:
+  // 530 → 560 took the deadline 520s → 560s and RUN_TIMEOUT_MS 640s → 680s,
+  // and 580 → 600 (#1824) took them 570s → 590s and 690s → 710s.
   const suiteDeadline = numericConstant('TESTS_DEADLINE_MS');
   const perCheckSeconds = 3.9;
   const pool = capture.poolSize({});
@@ -105,7 +110,7 @@ test('the pool bounds are passed to the capture image', () => {
 test('the staging preview can serve a parallel suite', () => {
   // The preview is the thing being hammered now. It was capped at 1 CPU when
   // exactly one page at a time talked to it.
-  assert.equal(docker.STAGING_CPUS, '2');
+  assert.equal(docker.STAGING_CPUS, '4');
   assert.equal(docker.STAGING_MEMORY, '256m',
     'memory was never the constraint — production previews sit at 28-57 MiB');
 });

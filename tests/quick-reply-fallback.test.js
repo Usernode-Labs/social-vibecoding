@@ -524,6 +524,13 @@ test('the session list serializes created_from_issue_number', () => {
     'the dev-chat session list SELECT carries the issue number');
   assert.match(select, /\(spec_md IS NOT NULL AND spec_md <> ''\) AS has_spec/,
     'and still reports whether a spec exists');
+  // …and whether a slept preview can be woken. This list feeds the board's
+  // OWN-session cards, whose preview affordance used to fall back to
+  // `pr_number` — null for a session shared with `share: true`, which left
+  // its own author with no way to wake it. Derived exactly as the
+  // shared-session list derives it, so the two cards cannot disagree.
+  assert.match(select, /\(pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL\)\s*AS can_preview/,
+    'and whether the branch has pushed changes, for the preview affordance');
 });
 
 // ── 4. Staging fixtures ──────────────────────────────────────────────
