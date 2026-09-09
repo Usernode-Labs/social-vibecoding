@@ -105,6 +105,12 @@ helm template social-vibecoding-platform ./social-vibecoding-platform \
 
 ## Proposal checks in Kubernetes
 
+Capture Jobs honor the same `CAPTURE_CPUS` and `CAPTURE_MEMORY` limits as
+Docker (four CPUs / 4 GiB by default). Their requests are one CPU / 3 GiB,
+matching the observed browser working set; smaller limit overrides also lower
+the requests so Kubernetes can admit the Pod. Per-job ephemeral storage remains
+1 GiB requested / 4 GiB limited. Changes apply to newly created check Jobs.
+
 Capture Jobs visit the generated app and preview HTTPS ingress hostnames. The
 self-app's production capture uses the canonical platform hostname. Worker
 namespace DNS and egress must reach these ingress endpoints with valid TLS;

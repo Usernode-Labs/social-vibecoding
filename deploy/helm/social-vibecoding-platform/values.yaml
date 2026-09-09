@@ -102,6 +102,8 @@ config:
   logLevel: INFO
   workerMemory: 2g
   workerCpus: "2"
+  captureMemory: 4g
+  captureCpus: "4"
 
 secrets:
   create: false

@@ -399,12 +399,53 @@ test('capture runtime uses a bounded Job and caps log retrieval', async () => {
   assert.equal(created.body.spec.activeDeadlineSeconds, 120);
   assert.equal(created.body.spec.ttlSecondsAfterFinished, 3600);
   assert.equal(created.body.spec.template.spec.automountServiceAccountToken, false);
-  assert.equal(created.body.spec.template.spec.containers[0].resources.limits.memory, '4Gi');
+  assert.deepEqual(created.body.spec.template.spec.containers[0].resources, {
+    requests: { cpu: '1', memory: '3Gi', 'ephemeral-storage': '1Gi' },
+    limits: { cpu: '4', memory: '4Gi', 'ephemeral-storage': '4Gi' },
+  });
   assert.equal(created.body.spec.template.spec.securityContext.runAsUser, 1000);
   assert.equal(created.body.spec.template.spec.securityContext.runAsGroup, 1000);
   assert.equal(created.body.spec.template.spec.securityContext.fsGroup, 1000);
   assert.equal(logRequest.limitBytes, 64 * 1024 * 1024 + 1);
   assert.equal(result.stdout, 'result');
+});
+
+for (const kind of ['Capture', 'UnitSuite']) {
+  for (const [cpus, memory, expectedMemory, expectedRequestMemory] of [
+    ['6', '6g', '6Gi', kind === 'Capture' ? '3Gi' : '1Gi'],
+    ['0.5', '512m', '512Mi', '512Mi'],
+  ]) {
+    test(`${kind} honors resource overrides ${cpus} CPU / ${memory} without exceeding limits`, async () => {
+      let created;
+      kubernetes._setClientsForTest({
+        batch: {
+          async createNamespacedJob({ body }) { created = body; },
+          async readNamespacedJob() { return { status: { succeeded: 1 } }; },
+        },
+        core: {
+          async createNamespacedSecret() {},
+          async deleteNamespacedSecret() {},
+          async listNamespacedPod() { return { items: [{ metadata: { name: 'check-pod' } }] }; },
+          async readNamespacedPodLog() { return 'passed'; },
+        },
+      });
+      await kubernetes[`run${kind}Job`](config(), { sessionId: 42, env: {}, cpus, memory });
+      const { requests, limits } = created.spec.template.spec.containers[0].resources;
+      assert.equal(limits.cpu, cpus);
+      assert.equal(limits.memory, expectedMemory);
+      assert.equal(requests.cpu, Number(cpus) < 1 ? cpus : '1');
+      assert.equal(requests.memory, expectedRequestMemory);
+    });
+  }
+}
+
+test('invalid capture resource limits fail before creating credentials or workloads', async () => {
+  kubernetes._setClientsForTest({});
+  for (const options of [{ cpus: '0' }, { cpus: 'invalid' }, { memory: '-1g' }]) {
+    await assert.rejects(kubernetes.runCaptureJob(config(), {
+      sessionId: 42, env: {}, stdinPayload: '{}', ...options,
+    }), /Invalid check (CPU|memory) limit/);
+  }
 });
 
 test('capture runtime transports oversized test input through a temporary Secret volume', async () => {

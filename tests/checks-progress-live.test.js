@@ -159,6 +159,7 @@ test('notifyChecksProgress rides the existing checks_ready event with checkState
 test('the capture run feeds one observer to BOTH transports, throttled, with the done sentinel always flushed', () => {
   const src = read('src/services/visuals.js');
   assert.match(src, /runCaptureJob\(config, \{\n\s+onStdoutLine: progressObserver,/);
+  assert.match(src, /runCaptureJob\(config, \{\s+onStdoutLine: progressObserver,\s+memory: CAPTURE_MEMORY,\s+cpus: CAPTURE_CPUS,/);
   assert.match(src, /runOneShot\(`usernode-capture-\$\{session\.id\}`, \{\n\s+onStdoutLine: progressObserver,/);
   assert.match(src, /if \(urgent \|\| gap >= minGapMs\)/, 'done always flushes; otherwise one snapshot per gap');
   assert.match(src, /onProgress: progress\.observeUnit,/, 'the unit suite reports into the same state');
