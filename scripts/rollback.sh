@@ -155,6 +155,7 @@ if docker compose config --services 2>/dev/null | grep -qx usernode-blue; then
 	reverse_proxy usernode-blue:3000 {
 		lb_try_duration 30s
 		lb_try_interval 250ms
+		stream_close_delay 5s
 		transport http {
 			dial_timeout 2s
 		}
