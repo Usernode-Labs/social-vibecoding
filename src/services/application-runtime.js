@@ -80,7 +80,12 @@ async function deploy(config, {
     // persist the deterministic name rather than the opaque run result.
     return { runtimeKind: 'docker', runtimeName: dockerName, imageRef, hostname, url };
   }
-  return kubernetes.deployApplication(config, { app, environment, sessionId, imageRef, env, cpus });
+  return kubernetes.deployApplication(config, { app, environment, sessionId, imageRef, env, cpus, labels });
+}
+
+async function inspect(config, ref) {
+  if ((ref.runtimeKind || mode(config)) === 'docker') return docker.inspectContainer(ref.runtimeName);
+  return kubernetes.inspectApplication(config, ref.runtimeName);
 }
 
 async function status(config, ref) {
@@ -124,5 +129,5 @@ async function remove(config, ref, options = {}) {
 }
 
 module.exports = {
-  mode, build, cleanupFailedBuilds, deploy, dnsAlias, status, probeHealth, logs, restart, remove,
+  mode, build, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
 };

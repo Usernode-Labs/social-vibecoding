@@ -334,12 +334,12 @@ function containerSecurityContext() {
 // docker.STAGING_CPUS through application-runtime.deploy so the capture
 // run's eight concurrent pages get the same headroom on both runtimes;
 // production apps pass nothing and keep the 1-CPU limit they always had.
-async function deployApplication(config, { app, environment, sessionId, imageRef, env, cpus = null }) {
+async function deployApplication(config, { app, environment, sessionId, imageRef, env, cpus = null, labels: extraLabels = {} }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
   const cfg = config.kubernetes;
   const namespace = cfg.appNamespace;
   const name = appResourceName(app, environment, sessionId);
-  const resourceLabels = labels({ appId: app.id, sessionId, environment });
+  const resourceLabels = { ...extraLabels, ...labels({ appId: app.id, sessionId, environment }) };
   const selectorLabels = { 'social.usernode.io/runtime-name': name };
   const secretName = withSuffix(name, 'env');
   const hostname = environment === 'production'
@@ -439,13 +439,17 @@ async function waitForDeployment(namespace, name, { timeoutMs = 5 * 60 * 1000, g
 }
 
 async function getApplicationStatus(config, runtimeName) {
+  return (await inspectApplication(config, runtimeName)).status;
+}
+
+async function inspectApplication(config, runtimeName) {
   try {
     const deployment = await getClients().apps.readNamespacedDeployment({ name: runtimeName, namespace: config.kubernetes.appNamespace });
-    if (deployment.status?.availableReplicas >= 1) return 'running';
-    if (deployment.status?.unavailableReplicas) return 'restarting';
-    return 'created';
+    const status = deployment.status?.availableReplicas >= 1 ? 'running'
+      : deployment.status?.unavailableReplicas ? 'restarting' : 'created';
+    return { status, labels: deployment.spec?.template?.metadata?.labels || {} };
   } catch (err) {
-    if (isNotFound(err)) return 'not_found';
+    if (isNotFound(err)) return { status: 'not_found', labels: {} };
     throw err;
   }
 }
@@ -1092,7 +1096,7 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
 }
 
 module.exports = {
-  dnsName, withSuffix, labels, createBuild, deployApplication, getApplicationStatus,
+  dnsName, withSuffix, labels, createBuild, deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   runCaptureJob, runUnitSuiteJob, execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, deleteWorker, listWorkers, cloneWorkerVolume,

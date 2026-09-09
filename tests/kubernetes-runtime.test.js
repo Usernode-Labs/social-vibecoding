@@ -191,7 +191,8 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     readNamespacedService: async () => { throw notFound(); },
     readNamespacedDeployment: async ({ name }) => {
       if (written.some((item) => item.kind === 'Deployment')) {
-        return { metadata: { name, generation: 1 }, status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+        return { ...written.find(item => item.kind === 'Deployment').body,
+          metadata: { name, generation: 1 }, status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
       }
       throw notFound();
     },
@@ -203,13 +204,18 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     apps: { ...missingReads, createNamespacedDeployment: record('Deployment') },
     networking: { ...missingReads, createNamespacedIngress: record('Ingress') },
   });
-  const result = await kubernetes.deployApplication(config(), {
+  const result = await require('../src/services/application-runtime').deploy({ ...config(), appRuntime: 'kubernetes' }, {
     app: { id: 7, slug: 'demo' }, environment: 'production',
     imageRef: 'ghcr.io/example/social-apps/demo@sha256:deadbeef',
     env: { DATABASE_URL: 'postgres://redacted', PORT: '3000' },
+    labels: { 'usernode.env.fp': '0123456789abcdef', 'app.kubernetes.io/managed-by': 'cannot-override-owner' },
   });
   assert.deepEqual(written.map((item) => item.kind).sort(), ['Deployment', 'Ingress', 'Secret', 'Service']);
   const deployment = written.find((item) => item.kind === 'Deployment').body;
+  assert.equal(deployment.spec.template.metadata.labels['usernode.env.fp'], '0123456789abcdef');
+  assert.equal(deployment.metadata.labels['app.kubernetes.io/managed-by'], 'social-vibecoding-runtime');
+  assert.deepEqual(deployment.spec.selector.matchLabels, { 'social.usernode.io/runtime-name': result.runtimeName });
+  assert.equal((await kubernetes.inspectApplication(config(), result.runtimeName)).labels['usernode.env.fp'], '0123456789abcdef');
   assert.equal(deployment.spec.template.spec.containers[0].image, 'ghcr.io/example/social-apps/demo@sha256:deadbeef');
   assert.equal(deployment.spec.template.spec.serviceAccountName, 'social-generated-app');
   assert.equal(
