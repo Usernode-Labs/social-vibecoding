@@ -8,6 +8,12 @@ function mode(config) {
   return value;
 }
 
+function productionRef(config, app) {
+  const runtimeKind = app.runtime_kind || mode(config);
+  return { runtimeKind, runtimeName: app.runtime_name || (runtimeKind === 'kubernetes'
+    ? kubernetes.appResourceName(app, 'production') : `usernode-app-${app.slug}`) };
+}
+
 // `onProgress(image)` reports the image build as it goes, in the runtime's
 // own terms: kpack lifecycle phases with their times on kubernetes, the
 // builder's step counter on docker. See each module for the shape.
@@ -129,5 +135,5 @@ async function remove(config, ref, options = {}) {
 }
 
 module.exports = {
-  mode, build, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
+  mode, productionRef, build, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
 };
