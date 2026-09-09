@@ -672,7 +672,7 @@
     {
       "name": "Dev board: one composite status pill and a menu trigger per card (card-as-pointer)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .gc-vote-item .dev-status-pill ~ .dev-chat-badge, #dev-kanban .gc-vote-item [data-card-menu]",
+      "expectSelector": "#dev-kanban .gc-vote-item .dev-card-meta > .dev-chat-badge, #dev-kanban .gc-vote-item [data-card-menu]",
       "expectText": "Create proposal"
     },
     {

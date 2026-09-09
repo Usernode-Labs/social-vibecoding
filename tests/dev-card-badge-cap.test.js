@@ -133,15 +133,17 @@ test('the builder drops falsy entries before the cap counts them', () => {
   assert.ok(model.badges.every(Boolean));
 });
 
-test('a null chat count omits the 💬 badge entirely, and a 0 count draws none on the dense card', () => {
+test('a null chat count omits the 💬 badge entirely, and a 0 count draws none at either size', () => {
   assert.doesNotMatch(BANDS({ badges: CHIPS(1), chatCount: null }), /dev-chat-badge/);
   // The dense card's facts row is emitted only with something visible in
   // it, and a live bump repaints from the model, so no hidden 0 waits there.
   assert.doesNotMatch(BANDS({ badges: CHIPS(1), chatCount: 0 }), /dev-chat-badge/);
-  assert.match(BANDS({ badges: CHIPS(1), chatCount: 2 }), /dev-card-facts"><span class="marker">1<\/span><span class="dev-chat-badge/,
-    'a real count rides the facts row, after the chips');
-  // The detail head keeps drawing it at 0, hidden, as it always has.
-  assert.match(BANDS({ dense: false, badges: CHIPS(1), chatCount: 0 }), /dev-chat-badge dev-badge hidden/);
+  assert.match(BANDS({ badges: CHIPS(1), chatCount: 2 }), /<div class="dev-card-meta"><span class="dev-chat-badge/,
+    'a real count rides the meta line with the tags, at both sizes');
+  // The detail head draws nothing at 0 either: the count is the meta line's
+  // at every size, and there only when there is one.
+  assert.doesNotMatch(BANDS({ dense: false, badges: CHIPS(1), chatCount: 0 }), /dev-chat-badge/);
+  assert.match(BANDS({ dense: false, badges: CHIPS(1), chatCount: 4 }), /<div class="dev-card-meta"><span class="dev-chat-badge/);
 });
 
 test('the detail head opts OUT of the cap (every chip must be reachable there)', () => {

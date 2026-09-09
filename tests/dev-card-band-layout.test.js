@@ -225,15 +225,16 @@ test('#1139: a bare issue card — nothing voted, claimed or said — is flagged
   assert.doesNotMatch(band, /dev-card-facts|dev-chat-badge|dev-status-pill-block|Closes #/);
 });
 
-test('#1139: a 0 chat count is not content, a real one is a facts row', () => {
+test('#1139: a 0 chat count is not content; a real one rides the meta line', () => {
   const AppView = makeAppView();
   const zero = BANDS({ chatCount: 0 });
   assert.match(zero, /data-empty="1"/, '💬 0 is invisible: the status row (no bar, no vote) is flagged');
-  assert.doesNotMatch(zero, /dev-card-facts|dev-chat-badge/, 'and no facts row is drawn to hold a hidden badge');
+  assert.doesNotMatch(zero, /dev-card-facts|dev-chat-badge/, 'and nothing is drawn to hold a hidden badge');
   const one = BANDS({ chatCount: 1 });
-  assert.match(one, /<div class="dev-card-badges dev-card-facts"><span class="dev-chat-badge/, 'one message is a facts row');
+  assert.match(one, /<div class="dev-card-meta"><span class="dev-chat-badge/, 'one message is on the meta line, with the tags');
+  assert.doesNotMatch(one, /dev-card-facts/);
   assert.match(one, /dev-card-status" data-empty="1"/,
-    'the status row stays bare — the count is a fact under the bar, not the bar');
+    'the status row stays bare — the count is a fact about the item, not its state');
   // null/undefined mean "this card type has no thread badge at all".
   const none = BANDS({ chatCount: null });
   assert.match(none, /data-empty="1"/);
@@ -274,10 +275,11 @@ test('#1139: the non-dense head omits a row holding only a hidden badge', () => 
   const loose = BANDS({ dense: false, chatCount: 0 });
   assert.doesNotMatch(loose, /dev-card-badges/, 'no row at all');
   assert.doesNotMatch(loose, /data-empty/, 'and no flag needed — it collapses');
-  // With a real count it still renders, uncapped and unflagged as before.
+  // With a real count the badge rides the meta line, as on every card, and
+  // the head still draws no badge row for it.
   const withChat = BANDS({ dense: false, chatCount: 3 });
-  assert.match(withChat, /<div class="dev-card-badges">/);
-  assert.doesNotMatch(withChat, /dev-card-status/);
+  assert.match(withChat, /<div class="dev-card-meta"><span class="dev-chat-badge/);
+  assert.doesNotMatch(withChat, /dev-card-badges|dev-card-status/);
 });
 
 test('#1139: bumpThreadBadge clears the flag when it reveals the badge', () => {

@@ -472,3 +472,35 @@ test('the declared checks follow the two rows and the row’s last line', () => 
       `${t.name}: no check names a seat that no longer exists`);
   }
 });
+
+test('a merged card opens whole: the kudos slot is filled before paint, and the band re-folds around it', () => {
+  // The slot is legacy-filled (`_fillKudosHosts`). Filled from a plain effect
+  // it landed a frame after the card, and the pill popping in shoved "Open
+  // card" along the band — the flicker at the bottom-left of every merged
+  // card on open. Both surfaces fill it from a LAYOUT effect now, and the
+  // fold measurement watches the band's subtree so it re-folds around the
+  // filled slot in the same frame.
+  assert.match(KANBAN, /useLayoutEffect\(\(\) => \{\s*if \(hostRef\.current\) callAppView\('_fillKudosHosts', hostRef\.current\);\s*\}, \[openKey, unfolded\]\);/);
+  assert.ok(!/\bimport \{[^}]*\buseEffect\b/.test(KANBAN), 'the column has no plain effect left to fill from');
+  assert.match(WORKSHOP, /useLayoutEffect\(\(\) => \{\s*const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_wireFeedComments', host\);\s*callAppView\('_fillKudosHosts', host\);/);
+  const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
+  assert.match(CARD, /const mo = new MutationObserver\(measure\);\s*mo\.observe\(band, \{ childList: true, subtree: true, characterData: true \}\);/);
+});
+
+test('the message count rides the meta line at both sizes, and only when there is one', () => {
+  const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
+  assert.match(CARD, /const count = m\.chatCount \|\| 0;\s*if \(count > 0\) nodes\.push\(<Badge key="chat" b=\{\{ t: 'chat', key: 'chat', count \}\} \/>\);/);
+  assert.ok(!/count \? <Badge b=\{\{ t: 'chat'/.test(FOLD), 'the row’s last line no longer draws it');
+  assert.ok(!/\{chat\}/.test(CARD), 'nor the card’s rows');
+  const AppView = makeAppView({ search: '?cards=open&demo=1' });
+  AppView._proposals[0].chat_count = 5;
+  const open = kanbanHtml(AppView);
+  assert.match(open, /data-proposal-row="34"[\s\S]*?<div class="dev-card-meta">(?:(?!<\/div>)[\s\S])*?<span class="dev-chat-badge[^>]*data-count="5"/, 'on the open card');
+  const quiet = makeAppView();
+  quiet._proposals[0].chat_count = 5;
+  const folded = kanbanHtml(quiet);
+  assert.match(folded, /data-proposal-row="34"[\s\S]*?<span class="dev-ws-row-meta">(?:(?!<\/span><span class="dev-ws-row-band">)[\s\S])*?<span class="dev-chat-badge/, 'and on the row, in the same place');
+  // The two sizes share one corner now, too.
+  assert.match(CSS, /\.dev-ws-row \{[^}]*border-radius: 1\.25rem;/);
+  assert.match(read('tailwind.config.js'), /'2xl': '1\.25rem'/, 'the card\u2019s rounded-2xl');
+});
