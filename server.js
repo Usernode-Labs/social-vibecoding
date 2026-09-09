@@ -913,6 +913,7 @@ async function becomeLeader() {
     .catch((err) => {
       log.warn('server', 'Failed kpack Build sweep failed', { err: err.message });
     });
+  require('./src/services/build-retention').start(config);
 
   // Backfill `main_sha` for apps created before #21 added the column.
   // Non-blocking: we log and continue so a single slow/unauthorized
@@ -4147,7 +4148,7 @@ function startSessionAutoPauseSweeper(config) {
       try {
         const { rows } = await pool.query(
           `SELECT id FROM chat_sessions
-           WHERE staging_container_id IS NOT NULL
+           WHERE (staging_runtime_name IS NOT NULL OR staging_container_id IS NOT NULL)
              AND status NOT IN ('promoted', 'merging', 'merged')
              AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
            ORDER BY last_activity_at ASC
@@ -5029,6 +5030,7 @@ async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
   lifecycle.setShuttingDown();
+  const retentionStop = require('./src/services/build-retention').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in
   // parallel with HTTP/session draining and is awaited before pool close.
   const pushStop = mobilePush.stop({ timeoutMs: DRAIN_TIMEOUT_MS }).catch((err) => {
@@ -5114,7 +5116,7 @@ async function cleanup() {
     let poolTimer = null;
     try {
       await Promise.race([
-        shutdownPool.end(),
+        retentionStop.then(() => shutdownPool.end()),
         new Promise((resolve) => { poolTimer = setTimeout(resolve, POOL_CLOSE_TIMEOUT_MS); }),
       ]);
       log.info('server', 'Pool closed', { durationMs: Date.now() - poolStartedAt });

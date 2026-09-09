@@ -136,22 +136,24 @@ async function findStuckCheckSessions({
 // that only wants liveness, and every pre-existing preview, behave as before.
 async function stagingNeedsRebuild(session, { config = null, headSha = null } = {}) {
   if (!session.staging_url) return true;
+  let state;
   if (session.staging_runtime_kind === 'kubernetes') {
     if (!session.staging_runtime_name) return true;
     const applicationRuntime = require('./application-runtime');
-    const config = {
-      appRuntime: 'kubernetes',
-      kubernetes: { appNamespace: process.env.APP_NAMESPACE || 'social-apps' },
+    const runtimeConfig = {
+      ...config, appRuntime: 'kubernetes',
+      kubernetes: { appNamespace: process.env.APP_NAMESPACE || 'social-apps', ...config?.kubernetes },
     };
-    const status = await applicationRuntime.status(config, {
-      runtimeKind: 'kubernetes', runtimeName: session.staging_runtime_name,
-    });
-    if (status !== 'running') return true;
-    return previewIsOfAnotherCommit(session, headSha);
+    try {
+      state = await applicationRuntime.inspect(runtimeConfig, {
+        runtimeKind: 'kubernetes', runtimeName: session.staging_runtime_name,
+      });
+    } catch (_) { return false; } // An API outage is not evidence of a stale preview.
+  } else {
+    if (!session.staging_container_id) return true;
+    const docker = require('./docker');
+    state = await docker.inspectContainer(session.staging_container_id);
   }
-  if (!session.staging_container_id) return true;
-  const docker = require('./docker');
-  const state = await docker.inspectContainer(session.staging_container_id);
   // The inspect could not be PERFORMED (unreachable daemon). Distinct from
   // 'not_found', which means the container is genuinely gone and is handled
   // below by the status check. Leave the preview strictly alone here: a docker
@@ -166,7 +168,7 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null } = 
 
   const stagingEnv = require('./staging-env');
   const expected = stagingEnv.expectedStagingFingerprint(config);
-  const actual = state.labels[stagingEnv.LABEL_ENV_FP] || null;
+  const actual = state.labels?.[stagingEnv.LABEL_ENV_FP] || null;
   if (actual === expected) return false;
 
   log.info('staging-recovery', 'Preview env is stale — rebuild needed', {

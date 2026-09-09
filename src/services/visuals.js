@@ -2097,6 +2097,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           env: captureEnv,
           stdinPayload: testsViaStdin ? testsJson : null,
           timeoutMs: RUN_TIMEOUT_MS,
+          maxBuffer: RUN_MAX_BUFFER,
+          salvagePartial: true,
         }));
       } else {
         ({ stdout, ...res } = await docker.runOneShot(`usernode-capture-${session.id}`, {

@@ -7212,14 +7212,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // short of a new commit. Attaching it here is idempotent, one
         // `docker inspect` on the already-aliased path, and never throws.
         const stagingName = `usernode-staging-${session.app_slug}--${sessionId}`;
-        await docker.ensureNetworkAlias(
-          stagingName,
-          applicationRuntime.dnsAlias({ environment: 'staging', sessionId })
-        ).catch(() => false);
-        const verified = await docker.probeHealthOnce(
-          stagingName, 3000, '/health',
-          { timeoutMs: 3000 }
-        ).catch(() => false);
+        const runtimeKind = session.staging_runtime_kind || applicationRuntime.mode(config);
+        if (runtimeKind === 'docker') {
+          await docker.ensureNetworkAlias(
+            stagingName,
+            applicationRuntime.dnsAlias({ environment: 'staging', sessionId })
+          ).catch(() => false);
+        }
+        const verified = await applicationRuntime.probeHealth(config, {
+          runtimeKind,
+          runtimeName: session.staging_runtime_name || (runtimeKind === 'docker' ? stagingName : null),
+        }, { timeoutMs: 3000 }).catch(() => false);
         if (!verified) {
           log.warn('sessions', 'ensure-staging: preview is live but did not answer its healthcheck', {
             sessionId, appSlug: session.app_slug,

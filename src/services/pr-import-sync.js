@@ -398,13 +398,20 @@ async function stillOpenForPreview(pool, session) {
 // no longer open. Without this the row keeps a staging_container_id nothing
 // will ever reclaim (the idle GC skips 'archived'/'merged' rows) and the card
 // re-grows a Preview button pointing at a withdrawn proposal. The fresh
-// container id + URL are threaded in explicitly: teardownStaging derives the
-// staging DB name from `staging_url`, and the persisted row deliberately
-// never got one.
+// runtime identity + URL are threaded in explicitly: the session object was
+// fetched before the build, and Kubernetes returns no Docker container ID.
+// teardownStaging needs the fresh runtime name before it can remove the
+// deployment and safely drop the database derived from `staging_url`.
 async function discardStagingResult({ staging, session, app, result }) {
   try {
     await staging.teardownStaging(
-      { ...session, staging_container_id: result.containerId, staging_url: result.stagingUrl },
+      {
+        ...session,
+        staging_container_id: result.containerId,
+        staging_runtime_kind: result.runtimeKind || 'docker',
+        staging_runtime_name: result.runtimeName || result.containerId,
+        staging_url: result.stagingUrl,
+      },
       { slug: app.slug }
     );
   } catch (err) {

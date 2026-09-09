@@ -130,6 +130,35 @@ function loadWorker({
 
 // ── 1. The record's lifetime ────────────────────────────────────────────
 
+for (const alreadyCleared of [false, true]) {
+  test(`Kubernetes finishTurn ${alreadyCleared ? 'removes only the old journal after release' : 'removes owned files before releasing the turn'}`, async (t) => {
+    const previous = process.env.WORKER_RUNTIME;
+    process.env.WORKER_RUNTIME = 'kubernetes';
+    const fx = loadWorker(alreadyCleared ? { initialActiveTurn: null } : {});
+    t.after(() => {
+      fx.restore();
+      if (previous === undefined) delete process.env.WORKER_RUNTIME;
+      else process.env.WORKER_RUNTIME = previous;
+    });
+    const calls = [];
+    t.mock.method(require('../src/services/kubernetes'), 'execInWorker', async (_config, runtime, command, input, options) => {
+      calls.push({ runtime, command, input, options });
+      assert.equal(fx.getActiveTurn()?.phase || null, alreadyCleared ? null : 'cleanup_pending');
+      return { stdout: '', stderr: '' };
+    });
+    const journal = '/home/node/.claude/turn-777.log';
+    assert.equal(await fx.worker.finishTurn(2954, { journal, turnId: 'logical-1' }), true);
+    assert.equal(fx.execs.length, 0, 'Kubernetes cleanup must not invoke Docker');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].runtime, 'sv-worker-s2954');
+    assert.deepEqual(calls[0].command, ['rm', '-f', journal, ...(alreadyCleared ? [] : [
+      fx.worker.TURN_PROMPT_PATH, fx.worker.TURN_SYSTEM_PROMPT_PATH, fx.worker.TURN_RESUME_FALLBACK_PROMPT_PATH,
+    ])]);
+    assert.equal(calls[0].options.timeoutMs, 5000);
+    assert.equal(fx.getActiveTurn(), null);
+  });
+}
+
 test('markTurnTail advances the owned turn to tail_pending with seed milestones', async () => {
   const { worker, queries, getActiveTurn, restore } = loadWorker();
   try {
