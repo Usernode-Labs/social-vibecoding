@@ -140,7 +140,14 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
   const suffix = sessionId ? `s${sessionId}-` : '';
   const repository = `${cfg.repositoryPrefix}/${dnsName(app.slug)}`;
   const cacheTag = `${cfg.cacheRepositoryPrefix}/${dnsName(app.slug)}:cache`;
-  const buildEnv = [{ name: 'BP_NODE_VERSION', value: cfg.nodeVersion }];
+  // Both staging and production images need production frontend artifacts.
+  // Explicit kpack env takes precedence over npm-install's development layer
+  // environment. Paketo still installs build dependencies in its separate
+  // development install step before running these scripts.
+  const buildEnv = [
+    { name: 'BP_NODE_VERSION', value: cfg.nodeVersion },
+    { name: 'NODE_ENV', value: 'production' },
+  ];
   // The platform self-app generates ignored React/Tailwind artifacts. Paketo
   // must materialize them while /workspace is writable; the launch container
   // deliberately runs as non-root and treats the image filesystem as built.
