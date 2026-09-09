@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const kubernetes = require('../src/services/kubernetes');
 
 function notFound() {
@@ -47,7 +48,10 @@ test('kpack Build is isolated in social-builds and returns status.latestImage', 
   assert.equal(created.namespace, 'social-builds');
   assert.equal(created.body.spec.source.git.revision, revision);
   assert.equal(created.body.spec.serviceAccountName, 'social-kpack-builder');
-  assert.deepEqual(created.body.spec.env, [{ name: 'BP_NODE_VERSION', value: '22.*' }]);
+  assert.deepEqual(created.body.spec.env, [
+    { name: 'BP_NODE_VERSION', value: '22.*' },
+    { name: 'NODE_ENV', value: 'production' },
+  ]);
   assert.equal(result.imageRef, 'ghcr.io/example/social-apps/demo@sha256:deadbeef');
   assert.match(result.buildRef, /^social-builds\//);
 });
@@ -75,8 +79,17 @@ test('kpack runs the shell generator during build when the checked-out app decla
 
   assert.deepEqual(created.body.spec.env, [
     { name: 'BP_NODE_VERSION', value: '22.*' },
+    { name: 'NODE_ENV', value: 'production' },
     { name: 'BP_NODE_RUN_SCRIPTS', value: 'ensure:shell' },
   ]);
+  // The source SHA is unchanged: adding production mode must invalidate the
+  // successful Build/image made by the old adapter with development React.
+  const oldRecipe = crypto.createHash('sha256').update(JSON.stringify({
+    builder: config().kubernetes.builderImage,
+    env: created.body.spec.env.filter((entry) => entry.name !== 'NODE_ENV'),
+  })).digest('hex').slice(0, 12);
+  assert.notEqual(created.body.metadata.name, `sv-10-s42-${'b'.repeat(12)}-${oldRecipe}`);
+  assert.ok(!created.body.spec.tags[0].endsWith(`-${oldRecipe}`));
 });
 
 test('kpack selects a declared build script but preserves shell ordering and legacy apps', async (t) => {
@@ -102,6 +115,7 @@ test('kpack selects a declared build script but preserves shell ordering and leg
       revision: 'd'.repeat(40), environment: 'production', sourceDir,
     });
     assert.equal(created.body.spec.env.find((v) => v.name === 'BP_NODE_RUN_SCRIPTS')?.value, expected);
+    assert.equal(created.body.spec.env.find((v) => v.name === 'NODE_ENV')?.value, 'production');
   }
 });
 
