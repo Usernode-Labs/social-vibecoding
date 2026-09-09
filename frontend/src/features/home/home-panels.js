@@ -398,11 +398,25 @@ const HomePanels = {
         summary: null,
         season: null,
         total,
+        allTotal: total,
+        expandable: false,
         expanded: false,
         rows: [],
       };
     }
     const { rows } = HomePanels.visibleSlots(panel, { slots: HomePanels.ROW_SLOTS });
+    // #1824: whether the footer's expand toggle has anything to reveal.
+    // `total` counts the OPEN challenges and `all_total` the ones an
+    // expansion would draw (the season's finished and out-of-window ones
+    // too), so the honest question is "are there more than are on screen?" —
+    // and a block already showing every challenge there is draws no toggle,
+    // instead of a "See all 3 challenges" beside three challenges. An older
+    // cached payload has no `all_total`; `total` alone is the fallback.
+    const allTotal = Math.max(
+      total,
+      Number.isFinite(Number(panel.all_total)) ? Number(panel.all_total) : 0
+    );
+    const expandable = expanded || rows.length < allTotal;
     return {
       key: panel.key,
       title: panel.title || 'Challenges',
@@ -418,6 +432,8 @@ const HomePanels = {
           : `${panel.onboarding.completed} of ${panel.onboarding.total} onboarding challenges completed. Finish these to unlock persistent and weekly challenges.`)
         : null,
       total,
+      allTotal,
+      expandable,
       expanded,
       rows: rows.map((c) => HomePanels.challengeRowView(c)),
     };

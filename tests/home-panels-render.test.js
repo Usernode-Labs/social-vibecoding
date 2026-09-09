@@ -756,6 +756,81 @@ test('render: the footer carries the expand toggle and the way out', () => {
   assert.match(html, /aria-expanded="false"/);
 });
 
+// ── The toggle only appears when it has something to reveal (#1824) ──
+//
+// It used to render whenever the block had any rows, so a season with three
+// challenges drew "See all 3 challenges" underneath all three of them: a
+// label that was false and a click that refetched the same list. The payload
+// carries `all_total` — how many rows an expansion would DRAW, finished and
+// out-of-window challenges included — precisely so the client can tell a
+// full-but-short list from a short list with more behind it.
+
+test('#1824: a block already showing every challenge draws no expand toggle', () => {
+  const three = Array.from({ length: 3 }, (_, i) => challenge({ id: i + 1 }));
+  const { html, HP } = renderWith({
+    registry: [], hidden: [],
+    panels: [panel({ total: 3, all_total: 3, challenges: three })],
+  }, AT_DESKTOP);
+  assert.equal((html.match(/data-challenge-id/g) || []).length, 3);
+  assert.doesNotMatch(html, /home-panel-expand/, 'no toggle');
+  assert.doesNotMatch(html, /See all 3 challenges/, 'and no false label');
+  // The footer itself stays — it still carries the way out to the Challenges
+  // tab — and with only that child it seats it right rather than letting it
+  // drift to the left edge where the toggle used to be.
+  assert.match(html, /home-panel-footer[^"]*justify-end/);
+  assert.doesNotMatch(html, /home-panel-footer[^"]*justify-between/);
+  assert.match(html, /home-panel-open[^>]*aria-label="Open challenges"/);
+  // The view says so in one field, so a renderer cannot re-derive it wrong.
+  const view = HP.challengesView(panel({ total: 3, all_total: 3, challenges: three }));
+  assert.equal(view.expandable, false);
+  assert.equal(view.allTotal, 3);
+});
+
+test('#1824: the toggle stays when the list is truncated, or has finished rows behind it', () => {
+  const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
+  // Truncated: eight open, four drawn.
+  const cut = renderWith({
+    registry: [], hidden: [],
+    panels: [panel({ total: 8, all_total: 8, challenges: four })],
+  }, AT_DESKTOP);
+  assert.match(cut.html, /home-panel-expand[^>]*data-panel-key="challenges"/);
+  assert.match(cut.html, /See all 8 challenges/);
+  assert.match(cut.html, /home-panel-footer[^"]*justify-between/);
+
+  // Not truncated, but the season has finished challenges an expansion
+  // reveals — `total` alone would have hidden the toggle and taken the only
+  // door to them off the home screen.
+  const three = Array.from({ length: 3 }, (_, i) => challenge({ id: i + 1 }));
+  const behind = renderWith({
+    registry: [], hidden: [],
+    panels: [panel({ total: 3, all_total: 5, challenges: three })],
+  }, AT_DESKTOP);
+  assert.match(behind.html, /home-panel-expand[^>]*data-panel-key="challenges"/);
+  assert.match(behind.html, /See all 3 challenges/, 'the label still counts the OPEN ones');
+});
+
+test('#1824: a payload with no all_total falls back to `total`', () => {
+  const { HP } = makeHomePanels();
+  // A client running from a cache written before the field existed.
+  const three = Array.from({ length: 3 }, (_, i) => challenge({ id: i + 1 }));
+  assert.equal(HP.challengesView(panel({ total: 3, challenges: three })).expandable, false);
+  assert.equal(HP.challengesView(panel({ total: 9, challenges: three })).expandable, true,
+    'more open than are drawn is still an expansion, field or no field');
+  // And a nonsense value never shrinks the answer below what `total` proves.
+  assert.equal(HP.challengesView(panel({ total: 9, all_total: 'wat', challenges: three })).allTotal, 9);
+});
+
+test('#1824: an expanded block always keeps its way back', () => {
+  const { HP } = makeHomePanels();
+  const three = Array.from({ length: 3 }, (_, i) => challenge({ id: i + 1 }));
+  HP._expanded.challenges = true;
+  // Expanded and nothing more to show: the toggle is the only "Show less"
+  // there is, so it must render regardless of the count.
+  const view = HP.challengesView(panel({ total: 3, all_total: 3, challenges: three }));
+  assert.equal(view.expanded, true);
+  assert.equal(view.expandable, true);
+});
+
 test('render: expanded lifts the cap, shows everything, and flips the toggle', () => {
   const nine = Array.from({ length: 9 }, (_, i) => challenge({ id: i + 1 }));
   const hosts = ['challenges'].map(makeSlot);

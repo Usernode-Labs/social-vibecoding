@@ -63,17 +63,25 @@ function makeMockPool(state) {
       if (sql.includes('FROM seasons')) {
         return { rows: state.season ? [state.season] : [] };
       }
-      // The COUNT(*) totals query.
-      if (sql.includes('COUNT(*)::int AS total')) {
+      // The COUNT(*) totals query. It counts the EXPANDED scope and narrows
+      // to the collapsed one with a FILTER, which is how one statement
+      // produces both `total` (open) and `all_total` (what an expansion
+      // would draw) — see #1824.
+      if (sql.includes('AS all_total')) {
         // The totals query runs over the WHOLE open set, so the fixture
         // may declare `allRows` (what the season really has) separately
         // from `rows` (the capped page the row query returns). Defaults to
         // `rows` when a test doesn't care about the difference.
         const all = state.allRows || state.rows || [];
         const isDone = (r) => Number(r.my_activity_count) > 0;
+        const total = state.total != null ? state.total : all.length;
         return {
           rows: [{
-            total: state.total != null ? state.total : all.length,
+            total,
+            // A fixture that wants finished/out-of-window challenges behind
+            // the expansion says so; absent means the open set is all there
+            // is, which is what most of these tests are about.
+            all_total: state.allTotal != null ? state.allTotal : total,
             done: all.filter(isDone).length,
             // array_agg(COALESCE(c.reward, ct.reward)) FILTER (NOT done)
             open_rewards: all.filter((r) => !isDone(r))
@@ -387,9 +395,11 @@ test('the SQL done rule mirrors resolveProgress — "has a ledger row" is NOT do
     assert.match(q.sql, /= 'blocks_produced' THEN COALESCE\(\(SELECT ls\.event_total_produced_blocks/);
   }
   // The totals COUNT uses the same expression, so "N of M done" and the
-  // per-row chips cannot disagree.
-  const totals = queries.find((q) => q.sql.includes('COUNT(*)::int AS total'));
-  assert.match(totals.sql, /COUNT\(\*\) FILTER \(WHERE CASE/);
+  // per-row chips cannot disagree. It is a FILTER over the collapsed scope
+  // AND the done rule now, because the same statement also counts the
+  // expanded scope for `all_total` (#1824).
+  const totals = queries.find((q) => q.sql.includes('AS all_total'));
+  assert.match(totals.sql, /COUNT\(\*\) FILTER \( WHERE \(.*?\) AND \( CASE WHEN COALESCE\(c\.metric_type/);
 });
 
 test('GET /api/home-panels: the query\'s done verdict wins over recomputation', async () => {
@@ -470,9 +480,16 @@ test('GET /api/home-panels: prose in an OFF-page open reward still withholds the
 test('the totals query asks for the open rewards, and the row query is capped at 4', async () => {
   const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   await get(app, '/api/home-panels');
-  const totals = calls.find((c) => c.sql.includes('COUNT(*)::int AS total'));
-  assert.match(totals.sql, /array_agg\(COALESCE\(c\.reward, ct\.reward\)\) FILTER \(WHERE NOT \(/,
+  const totals = calls.find((c) => c.sql.includes('AS all_total'));
+  assert.match(totals.sql, /array_agg\(COALESCE\(c\.reward, ct\.reward\)\) FILTER \( WHERE \(.*?\) AND NOT \(/,
     'open rewards come from the full-predicate query, not the page');
+  // One statement, two counts: the collapsed scope for `total` and the
+  // expanded one for `all_total`, so the footer can tell "nothing to expand"
+  // from "finished challenges behind the toggle" (#1824) with no extra trip.
+  assert.match(totals.sql, /COUNT\(\*\)::int AS all_total/);
+  const outerWhere = totals.sql.slice(totals.sql.lastIndexOf('WHERE se.season_id'));
+  assert.doesNotMatch(outerWhere, /c\.completed = FALSE/,
+    'the outer WHERE is the expanded scope; open-only lives in the FILTERs');
   const rowQuery = calls.find((c) => c.sql.includes('LIMIT $3'));
   // Four 40px rows is what fits the DESKTOP tile under --home-panel-max-h;
   // the footer reads "See all N" when total exceeds it. The phone shape draws
@@ -713,6 +730,13 @@ test('demoChallengesPanel: the few / none variants, and no standings preview', (
   const few = demoChallengesPanel({ variant: 'few', username: 'tester' });
   assert.equal(few.challenges.length, 2, 'two rows: the shrink state');
   assert.equal(few.total, 2, 'nothing past the cap to "see all" of');
+  // …and nothing behind an expansion either, which makes this route THE
+  // no-expand-toggle state of #1824. It stays that way when asked for the
+  // expanded scope: there is no finished row to reveal here on purpose.
+  assert.equal(few.all_total, 2, 'so the footer draws no expand toggle');
+  const fewExpanded = demoChallengesPanel({ variant: 'few', expanded: true, username: 'tester' });
+  assert.equal(fewExpanded.challenges.length, 2, 'expanding reveals nothing more');
+  assert.equal(fewExpanded.all_total, 2);
   // One metered and one binary, so the progress-bar lane is still exercised.
   assert.ok(few.challenges.some((c) => c.metric), 'a metered row');
   assert.ok(few.challenges.some((c) => !c.metric), 'a binary row');
@@ -731,6 +755,10 @@ test('demoChallengesPanel: the few / none variants, and no standings preview', (
   const base = demoChallengesPanel({ username: 'tester' });
   assert.equal(base.challenges.length, 4);
   assert.equal(base.total, 7);
+  // Four drawn of seven, so the default demo route KEEPS the toggle — the
+  // other half of the #1824 pair the checks navigate to.
+  assert.equal(base.all_total, 7);
+  assert.equal(demoChallengesPanel({ expanded: true, username: 'tester' }).all_total, 7);
   assert.equal(base.leaderboard, undefined);
 
   // An unknown value falls through to that default rather than erroring.
@@ -778,4 +806,17 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
   // to fill, so that payload's markup is untouched by this change.
   assert.ok(kept.some((t) => t.path === '/?demo=1' && /home-panel-bar-fill/.test(t.expectSelector)),
     'the existing challenges-widget check still runs');
+
+  // #1824, both directions. The `few` route shows every challenge it has, so
+  // its footer must carry the way out and NO expand toggle; the default route
+  // is truncated, so it must still carry one. A check on only the first would
+  // pass just as well if the toggle were deleted outright.
+  const allShown = kept.find((t) => t.path === '/?demo=1&challenges=few');
+  assert.ok(allShown, 'the all-shown check must survive the manifest reader');
+  assert.match(allShown.expectSelector, /home-panel-footer/);
+  assert.match(allShown.expectSelector, /:not\(:has\(\.home-panel-expand\)\)/,
+    'it asserts the ABSENCE of the toggle, which is the whole fix');
+  assert.ok(kept.some((t) => t.path === '/?demo=1'
+    && /home-panel-expand/.test(t.expectSelector)),
+    'and a truncated list still declares the toggle it keeps');
 });
