@@ -6,11 +6,13 @@
 // The card-as-pointer revision REVERSES that decision, so this file now pins
 // the opposite contract:
 //
-//   • at most ACTION_PRIMARY_MAX (3) text pills on the card face,
-//   • one icon-only Preview affordance (kept as an icon so a read-only
+//   • every text pill the card has, in one band that shows as many as fit
+//     its line and folds the rest into the menu (there is no count cap),
+//   • one labelled Preview affordance closing that band (a read-only
 //     viewer, who gets no vote buttons, still has a visible affordance),
-//   • one ⋯ trigger carrying every demoted action as a descriptor,
-//   • and NO ⋯ at all when a card has nothing to demote.
+//   • one menu trigger — the hamburger at the band's right edge — carrying
+//     every demoted action as a descriptor,
+//   • and NO trigger at all when a card has nothing to demote.
 //
 // assertNoOverflowMachinery is gone; assertCardActionContract replaces it.
 // Permission rules are unchanged — an action only ever MOVED between the card
@@ -32,11 +34,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {
-  budgets, cardHtml, govCardHtml, hasAction, issueCardHtml, mergedCardHtml, proposalCardHtml,
+  cardHtml, govCardHtml, hasAction, issueCardHtml, mergedCardHtml, proposalCardHtml,
 } = require('./lib/dev-card-html');
-
-// The two budgets moved to the component with the markup they govern.
-const { ACTION_PRIMARY_MAX } = budgets();
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
@@ -121,13 +120,11 @@ function menuHas(AppView, html, re, opts) {
   return !!it.act;
 }
 
-// The card-as-pointer budget: at most 2 text pills, and a ⋯ trigger exactly
-// when there is something behind it.
+// The card-as-pointer contract: the pills the card has, and a menu trigger
+// exactly when there is something behind it.
 function assertCardActionContract(AppView, html, expect) {
   const e = expect || {};
   const n = primaryCount(html);
-  assert.ok(n <= ACTION_PRIMARY_MAX,
-    `at most ${ACTION_PRIMARY_MAX} text pills on the card face, saw ${n}`);
   if (e.primary !== undefined) {
     assert.equal(n, e.primary, `expected ${e.primary} primary pill(s), saw ${n}`);
   }
@@ -140,25 +137,25 @@ function assertCardActionContract(AppView, html, expect) {
   }
   if (e.previewIcon !== undefined) {
     // Round three: the board card's preview is a LABELLED pill — the eye and
-    // the word — at the right end of the action band, because the 24px eye
-    // in the corner was the hardest thing on the card to hit. It never
-    // wears `gc-vote-btn-icon` now, and it never rides in the rail.
+    // the word — because the 24px eye in the corner was the hardest thing on
+    // the card to hit. It never wears `gc-vote-btn-icon` now.
     const hasPreview = /gc-vote-btn-preview/.test(html);
     assert.equal(hasPreview, e.previewIcon,
       e.previewIcon ? 'labelled Preview affordance present' : 'no Preview affordance');
     if (hasPreview) {
       assert.doesNotMatch(html, /gc-vote-btn-preview[^>]*gc-vote-btn-icon|gc-vote-btn-icon[^>]*gc-vote-btn-preview/,
         'the board preview is the labelled pill, not the icon variant');
-      // #1787 round four: the preview rides at the RIGHT END OF THE FACTS
-      // LINE, not on an action row of its own. It is the one control about
-      // looking rather than doing, and a whole row for it pushed the card
-      // taller while the facts line beside it had space to spare.
-      assert.match(html, /dev-card-status[\s\S]*?dev-card-status-end[^>]*>[\s\S]*?gc-vote-btn-preview/,
-        'the labelled Preview pill closes the facts line');
-      const railAt = html.indexOf('dev-card-rail');
-      if (railAt > 0) {
-        assert.doesNotMatch(html.slice(railAt), /gc-vote-btn-preview/, 'the rail no longer carries it');
+      // It CLOSES the action band, after the hamburger: the band is where
+      // the card's controls are, and the pair sits flush at its right edge.
+      // (It closed the facts line for a round; that seat is empty now.)
+      const band = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
+      assert.ok(band && /gc-vote-btn-preview/.test(band[1]), 'the labelled Preview pill is in the action band');
+      assert.match(band[1], /gc-vote-btn-preview[^>]*>[\s\S]*?<\/button>$/, 'and it is the band\'s last child');
+      if (menuKeyOf(html)) {
+        assert.ok(band[1].indexOf('data-card-menu') < band[1].indexOf('gc-vote-btn-preview'),
+          'right of the hamburger');
       }
+      assert.doesNotMatch(html, /dev-card-status-end[^>]*>[\s\S]*?gc-vote-btn-preview/, 'not on the facts line');
     }
   }
   // The demoted actions must NOT also sit on the card face.
@@ -184,43 +181,40 @@ test('the action band wraps the primary pills in the shared container', () => {
   assert.match(html, />B</);
 });
 
-// The cap is THREE now, not two: the four-band card reserves an action row
-// on every card, so one action per thin card type was promoted out of ⋯ to
-// fill it and has to fit beside Yes/No. The cap itself is what matters here —
-// that a fourth primary is still dropped rather than wrapping the band onto a
-// second (clipped) row.
-test('the action band caps primaries and appends the preview icon', () => {
-  assert.equal(ACTION_PRIMARY_MAX, 3);
+// There is no count cap any more. The cap was three text pills, then the
+// band's fourth was dropped at render time; now every pill renders, each
+// marked foldable, and the band's own measurement (useFoldedActions) hides
+// the ones its line cannot hold and lists them in the menu instead. So the
+// markup carries all of them, and the preview after them.
+test('the action band renders every pill, each foldable, and the preview after them', () => {
   const html = cardHtml(MODEL({
     actions: [pill('A'), pill('B'), pill('C'), pill('D')],
     actionPreview: { state: 'live', sessionId: 1, url: 'u', title: 'p', iconOnly: true },
   }));
-  assert.match(html, />A</);
-  assert.match(html, />B</);
-  assert.match(html, />C</);
-  assert.doesNotMatch(html, />D</, 'the fourth primary is dropped — it belongs in ⋯');
-  assert.equal(primaryCount(html), ACTION_PRIMARY_MAX);
-  assert.match(html, /gc-vote-btn-preview gc-vote-btn-icon/, 'and the eye follows them');
-  // The ⋯ is NOT in the action row — it is pinned in the card's rail.
+  for (const [i, l] of ['A', 'B', 'C', 'D'].entries()) {
+    assert.match(html, new RegExp(`<button class="gc-vote-btn" data-fold="${i + 1}">${l}<`),
+      `${l} renders, foldable — the first included`);
+  }
+  assert.equal(primaryCount(html), 4);
+  assert.match(html, />D<\/button><button [^>]*gc-vote-btn-preview/, 'and the preview follows them');
+  // No trigger: nothing is registered behind this bare model's band.
   assert.equal(menuKeyOf(html), null);
 });
 
-test('the ⋯ lives in the card\'s top-right RAIL, not in the action row', () => {
+test('the hamburger sits at the right end of the action band; the card has no rail', () => {
   const AppView = makeAppView(ME);
   const model = AppView._proposalCardModel(baseProposal());
   const html = cardHtml(model);
-  // The rail is the card's last child: a right-edge column holding the ⋯ at
-  // the top and the tap-through chevron centred below it. Sharing one column
-  // rather than taking two is what keeps the badge row's width — a separate
-  // flex slot for the ⋯ cost 30px of a ~175px row.
-  assert.match(html, /dev-card-rail/);
-  const rail = html.slice(html.indexOf('dev-card-rail'));
-  assert.match(rail, /dev-card-menu-btn/, 'the trigger is inside the rail');
-  assert.match(rail, /M9 5l7 7-7 7/, 'and the chevron below it');
-  // Never in the action row.
-  const actions = html.match(/<div class="gc-card-actions">[\s\S]*?<\/div>/);
-  assert.ok(actions && !/data-card-menu/.test(actions[0]),
-    'the action row carries only the primary pills');
+  // The trigger was a ⋯ in a right-edge column (.dev-card-rail) with the
+  // chevron centred below it. It is the band's own "more" now — the menu is
+  // where the pills that do not fit the band go — so it sits at the end of
+  // that row, and the column is gone: the chevron is the card's only
+  // right-edge child.
+  assert.doesNotMatch(html, /dev-card-rail/);
+  const actions = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
+  assert.ok(actions && /data-card-menu/.test(actions[1]), 'the trigger is inside the action band');
+  assert.match(actions[1], /dev-card-menu-btn"[^>]*>[\s\S]*?<\/button>$/, 'as its last child when there is no preview');
+  assert.ok(html.indexOf('data-card-menu') < html.indexOf('M9 5l7 7-7 7'), 'and the chevron after the content column');
   assert.match(html, /aria-haspopup="true"/);
   assert.match(html, /aria-label="More actions"/);
 });

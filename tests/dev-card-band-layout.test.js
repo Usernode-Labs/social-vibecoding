@@ -325,7 +325,7 @@ test('every board card type clamps its title', () => {
 
 // ── Band 3: one merged status band ───────────────────────────────────────
 
-test('the state bar, the Closes pills and the chips share ONE band', () => {
+test('the state bar and the Closes pills share ONE band; the chips ride the meta line', () => {
   const AppView = makeAppView();
   const model = AppView._proposalCardModel(PR({
     linked_issues: [4],
@@ -337,7 +337,12 @@ test('the state bar, the Closes pills and the chips share ONE band', () => {
   const band = html.slice(open, html.indexOf('<div class="gc-card-actions"', open));
   assert.match(band, /dev-status-pill-block/, 'state bar in the band');
   assert.match(band, /Closes #4/, 'linked-issue pill in the same band');
-  assert.match(band, /High/, 'and the metadata chips');
+  // The metadata chips are TAGS, not states: since #1787 they ride the meta
+  // line beside the number and the author, which wraps for them, on the
+  // open card and on the folded row alike.
+  assert.doesNotMatch(band, /High/, 'the priority chip is not in the band');
+  const meta = html.slice(html.indexOf('class="dev-card-meta"'), open);
+  assert.match(meta, /dev-badge[^>]*>[\s\S]*?High/, 'it is on the meta line');
   // Only ONE status band per card: .dev-status-row is retired, and a second
   // full-width row is exactly what the merge removed.
   assert.equal(html.split('dev-card-badges dev-card-status').length - 1, 1);
@@ -350,21 +355,23 @@ test('Closes-#N pills left the META line for the status band', () => {
   const html = cardHtml(model);
   const meta = html.slice(html.indexOf('class="dev-card-meta"'),
     html.indexOf('class="dev-card-badges dev-card-status"'));
-  assert.doesNotMatch(meta, /dev-badge/,
-    'the meta line is words only now — it truncates, and a pill in it was the '
-    + 'thing that got cut first');
-  assert.match(html.slice(html.indexOf('dev-card-status')), /dev-badge/);
+  assert.doesNotMatch(meta, /Closes #4/,
+    'the linkage is a STATE, and the band is where states go; the meta line '
+    + 'carries the number, the author and the tags');
+  assert.match(html.slice(html.indexOf('dev-card-status')), /Closes #4/);
 });
 
 test('the state bar LEADS the band and flexes rather than filling it', () => {
   const AppView = makeAppView();
   const model = AppView._proposalCardModel(PR({
+    linked_issues: [4],
     priority: { top: 'high', count: 1, myValue: null },
   }));
   const html = cardHtml(model);
   const band = html.indexOf('dev-card-badges dev-card-status');
-  assert.ok(html.indexOf('dev-status-pill-block', band) < html.indexOf('High', band),
+  assert.ok(html.indexOf('dev-status-pill-block', band) < html.indexOf('Closes #4', band),
     'state first — it is the card\'s headline, and the band clips at its end');
+  assert.ok(html.indexOf('High') < band, 'the tag that used to trail it sits on the meta line above');
 });
 
 // ── dense: false — the one caller that opts out ──────────────────────────
@@ -500,72 +507,59 @@ test('the kudos pill hugs its wrapper inside the capped action band', () => {
   assert.doesNotMatch(CSS, /\n\.kudos-wrap \{[^}]*inline-flex/);
 });
 
-test('the preview eye is pinned to the BOTTOM of the card\'s right-hand rail', () => {
-  // The eye is the one action that leaves the platform, so it is parked in the
-  // card's bottom-right corner: a column of cards then shows its previews in
-  // one vertical line, instead of at whatever x the text pills before it
-  // happen to end. It shares the rail with the two other right-edge controls —
-  // ⋯ at the top, chevron centred between them — and being out of the action
-  // band means the band's `max-height: 24px` can no longer clip it.
-  const r = rule('.dev-card-rail');
-  assert.match(r, /flex-direction: column/);
-  assert.match(r, /align-self: stretch/,
-    'the rail spans the card\'s full height — that is what gives it a bottom');
-  // ONE pair of auto margins does all the positioning, and it is scoped to
-  // `> svg`: the chevron is the rail's only direct <svg> child (the ⋯ is a
-  // <button>, the preview a <button>/<span>). So the ⋯ keeps the top, the eye
-  // keeps the bottom, and the chevron centres in whatever is left between.
-  const c = rule('.dev-card-rail > svg');
-  assert.match(c, /margin-top: auto/);
-  assert.match(c, /margin-bottom: auto/);
+test('the band\'s controls: the hamburger takes the right edge, Preview after it, and no rail rule remains', () => {
+  // The hamburger's auto margin is what pushes the pair to the band's right
+  // edge, so a column of cards shows every preview on one vertical line; a
+  // second auto margin on the preview would split the free space between
+  // them. The right-hand rail that used to hold the ⋯ up top and the eye at
+  // the bottom has no rule left to fight either.
+  const trigger = rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn');
+  assert.match(trigger, /margin-left: auto/);
+  const preview = rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview');
+  assert.doesNotMatch(preview, /margin-left/);
+  assert.doesNotMatch(CSS, /\.dev-card-rail\s*[{>]/, 'no rail rule remains');
   assert.match(CARD_TSX, /gc-vote-btn gc-vote-btn-icon dev-card-menu-btn/,
-    'the ⋯ trigger is a <button>, so the centring rule does not match it');
-  assert.match(rule('.dev-card-rail > .gc-vote-btn-icon'), /flex: none/,
-    'and neither pill may be shrunk in height by a short card');
-  // The dead rule from the previous placement must be gone, not left to fight
-  // the rail: nothing in the action band pushes a trailing icon pill any more.
+    'the trigger is the icon pill variant, so it never outsizes a text pill');
+  // The dead rule from an older placement must be gone too: nothing in the
+  // band pushes a trailing icon pill.
   assert.doesNotMatch(CSS, /gc-card-actions > \.gc-vote-btn-icon/);
   const band = rule('.dev-card-status + .gc-card-actions');
   assert.doesNotMatch(band, /justify-content/,
     'the band itself stays a plain left-aligned flex row');
 });
 
-test('the rail emits ⋯, then the chevron; the preview rides at the end of the band', () => {
+test('the band ends with the hamburger, then Preview; the chevron stands alone on the right edge', () => {
   const AppView = makeAppView();
   const key = AppView._registerCardMenu('k:1', [{ label: 'Withdraw', act: () => {} }]);
   const eye = { state: 'live', sessionId: 1, url: 'u', title: 'p', iconOnly: true };
-  const railOf = (rail) => {
-    const html = BANDS({ rail });
-    const at = html.indexOf('<div class="dev-card-rail">');
-    return at < 0 ? '' : html.slice(at, html.lastIndexOf('</div>'));
-  };
+  const bandOf = (html) => { const m = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/); return m ? m[1] : ''; };
   // Round three took the preview out of the rail and made it a LABELLED pill
   // (the corner eye was the hardest thing on the card to hit); #1787 round
-  // four moved that pill onto the right end of the FACTS line, so it shares
-  // a row with "Closes #N" instead of holding one open by itself. Either
-  // way `rail.preview` — which the builders still hand over — is not drawn
-  // in the rail, which holds the ⋯ and the chevron only.
-  assert.match(railOf({ menuKey: key, chevron: true, preview: eye }),
-    /^<div class="dev-card-rail"><button [^>]*dev-card-menu-btn[\s\S]*?<svg [^>]*class="w-4 h-4[\s\S]*?<\/svg><\/div>$/);
-  assert.doesNotMatch(railOf({ menuKey: key, chevron: true, preview: eye }), /gc-vote-btn-preview/);
-  const withEye = BANDS({ rail: { menuKey: key, chevron: true, preview: eye } });
-  assert.match(withEye, /class="dev-card-badges dev-card-status"[\s\S]*?<span class="dev-card-status-end"><button [^>]*class="gc-vote-btn gc-vote-btn-preview"[^>]*>[\s\S]*?Preview<\/button><\/span>/,
-    'the labelled pill closes the facts line');
-  assert.ok(!/<div class="gc-card-actions">[\s\S]*?gc-vote-btn-preview/.test(withEye),
-    'and no longer the action band');
-  assert.doesNotMatch(withEye, /gc-vote-btn-preview[^>]*gc-vote-btn-icon/, 'never the icon variant on a board card');
+  // four moved it onto the facts line; this round seats it where the card's
+  // other controls are — the END of the action band, after the hamburger,
+  // which took the ⋯'s place at the band's right edge. The rail column went
+  // with both: `rail.preview` — which the builders still hand over — is
+  // drawn in the band, and the chevron is the card's only right-edge child.
+  const full = BANDS({ rail: { menuKey: key, chevron: true, preview: eye } });
+  assert.doesNotMatch(full, /dev-card-rail/);
+  assert.match(bandOf(full), /<button [^>]*dev-card-menu-btn" data-card-menu="k:1"[^>]*>[\s\S]*?<\/button><button [^>]*class="gc-vote-btn gc-vote-btn-preview"[^>]*>[\s\S]*?Preview<\/button>$/,
+    'the hamburger, then the labelled Preview, closing the band');
+  assert.doesNotMatch(full, /dev-card-status-end/, 'nothing on the facts line');
+  assert.doesNotMatch(full, /gc-vote-btn-preview[^>]*gc-vote-btn-icon/, 'never the icon variant on a board card');
+  assert.match(full, /<\/div><\/div><svg [^>]*class="w-4 h-4/, 'the chevron after the content column');
 
-  // No preview → the rail as it was: no reserved slot.
-  assert.equal(railOf({ menuKey: key, chevron: true, preview: null }),
-    railOf({ menuKey: key, chevron: true }));
+  // No preview → the band ends with the hamburger, and nothing is reserved.
+  const noEye = BANDS({ rail: { menuKey: key, chevron: true, preview: null } });
+  assert.match(bandOf(noEye), /dev-card-menu-btn" data-card-menu="k:1"[^>]*>[\s\S]*?<\/button>$/);
+  assert.equal(noEye, BANDS({ rail: { menuKey: key, chevron: true } }));
 
-  // A card with a preview but no ⋯ (the shared-session card) needs no column:
-  // the chevron is the rail's sole content, so it renders bare.
-  assert.doesNotMatch(BANDS({ rail: { chevron: true, preview: eye } }), /dev-card-rail/);
-  assert.match(BANDS({ rail: { chevron: true, preview: eye } }), /gc-vote-btn-preview[\s\S]*w-4 h-4/,
-    'preview in the band, chevron after it');
-  assert.doesNotMatch(BANDS({ rail: { chevron: true } }), /dev-card-rail/,
-    'a lone chevron needs no column to be centred in');
+  // A card with a preview but no menu (the shared-session card): the band
+  // holds the preview alone, and the chevron still stands bare.
+  const eyeOnly = BANDS({ rail: { chevron: true, preview: eye } });
+  assert.doesNotMatch(eyeOnly, /dev-card-rail|data-card-menu/);
+  assert.match(bandOf(eyeOnly), /^<button [^>]*gc-vote-btn-preview[^>]*>[\s\S]*?Preview<\/button>$/);
+  assert.match(eyeOnly, /gc-vote-btn-preview[\s\S]*w-4 h-4/, 'preview in the band, chevron after it');
+  assert.doesNotMatch(BANDS({ rail: { chevron: true } }), /dev-card-rail/, 'a lone chevron needs no column');
   assert.doesNotMatch(BANDS({ rail: { chevron: false } }), /dev-card-rail|w-4 h-4/);
 });
 

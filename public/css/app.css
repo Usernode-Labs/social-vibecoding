@@ -5537,11 +5537,10 @@ span.gc-vote-btn-icon { cursor: default; }
    the meta line has moved out there is nothing left below the title for
    `center` to drift toward.
 
-   The ⋯ trigger is not in here: it lives in the card's TOP-RIGHT rail
-   (.dev-card-rail), because the corner is where "more about this card"
-   belongs and it keeps the action row to the one or two things you'd
-   actually do. Its own flex column means it can never collide with the
-   💬 badge or the drag grip (a gutter outside the card entirely). */
+   The menu trigger is not in here either: it is the hamburger at the right
+   edge of the action band, with Preview after it — the band is where the
+   card's controls are, and the menu is where the pills that do not fit the
+   band go. */
 .dev-card-head {
   display: flex;
   align-items: center;
@@ -5554,46 +5553,13 @@ span.gc-vote-btn-icon { cursor: default; }
   flex: 1 1 auto;
   min-width: 0;
 }
-/* The right-edge rail: ⋯ pinned to the card's top-right corner, the icon
-   Preview pinned to its bottom-right one, and the chevron centred in whatever
-   height is left between them. One column for all three, because a kanban
-   column only gives a card ~175px of text width and a separate flex slot for
-   the ⋯ cost 30px of it.
-
-   Pinning the eye HERE rather than at the end of the action band is what puts
-   it in one vertical line down a whole column of cards: the band's trailing
-   pill moves left and right with the width of the vote/claim pills before it,
-   the rail's bottom does not. It also keeps the eye out of the band's
-   `max-height: 24px` clip, so a card whose pills already fill that row can no
-   longer hide its preview.
-
-   The centring rule matches `> svg` — i.e. the chevron and nothing else, since
-   the ⋯ trigger is a <button> and the preview a <button>/<span>. So the same
-   two auto margins do all three jobs: with a preview they centre the chevron
-   BETWEEN the two pills, and without one they centre it in the space below the
-   ⋯ exactly as before, reserving no empty slot for a preview that isn't there. */
-.dev-card-rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  align-self: stretch;
-  flex: none;
-  gap: 4px;
-}
-.dev-card-rail > svg {
-  margin-top: auto;
-  margin-bottom: auto;
-}
-/* Both pills keep their 24px box in a column that may be shorter than their
-   sum — flex-shrink applies to HEIGHT here, and a squashed eye would clip its
-   own border the way the kudos wrapper once did. */
-.dev-card-rail > .gc-vote-btn-icon {
-  flex: none;
-}
+/* The card's right edge is the tap-through chevron alone now. The column
+   that held the ⋯ up top and the preview eye at the bottom (.dev-card-rail)
+   is gone with them: both live in the action band. */
 .dev-card-menu-btn {
   flex: none;
   color: var(--text-faint);
-  /* No border: it is a corner affordance, not one of the action pills. */
+  /* No border: it is the band's "more", not one of the action pills. */
   border-color: transparent;
 }
 .dev-card-menu-btn:hover { border-color: var(--accent-light); }
@@ -10873,11 +10839,34 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 
 /* ── Two type sizes ──
    14px title, 12.5px for the meta line, the bar, the facts, the pills. The
-   reserved heights follow: 2 x 1.35 x 14 = 37.8 for the title's two lines,
-   1.4 x 12.5 = 17.5 for the one-line meta. */
+   title still clamps at two lines but no longer RESERVES the second: the
+   reservation lined the bands of a column of open cards up, and a column
+   holds one open card among folded rows now (#1787), so a one-line title
+   has its meta line snug beneath it, as the folded row does. */
 :is(.dev-card-dense, .dev-card-topic) .dev-card-title { font-size: 14px; }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-title-clamp { min-height: 37.8px; }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-meta { font-size: 12.5px; min-height: 17.5px; max-height: 17.5px; }
+:is(.dev-card-dense, .dev-card-topic) .dev-card-title-clamp { min-height: 0; }
+:is(.dev-card-dense, .dev-card-topic) .dev-card-meta {
+  font-size: 12.5px;
+  /* The tags (priority, assignee, category) ride here beside the number and
+     the author, and the line may wrap to a second one for them: the old
+     one-line clamp (min/max 17.5px) is gone. 21px lines so a 19px chip sits
+     on the line without pushing it. */
+  min-height: 21px; max-height: none; line-height: 21px;
+  white-space: normal; overflow: visible; text-overflow: clip;
+}
+:is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge {
+  height: 19px; font-size: 11.5px; vertical-align: middle; margin-left: 4px;
+}
+/* Tabbed in under the title, as the folded row's meta line is: the row keeps
+   its icon in a column of its own and the title and meta share the next, so
+   the two sizes of one card put the number and the tags on the same left
+   edge (#1787). The indent is the head's — the 22px glyph plus its 8px gap
+   — and only a head that has a glyph earns it. The bands below stay at the
+   padding edge: the bar wants the card's full width beside its vote button,
+   and the pills already fold to fit. */
+:is(.dev-card-dense, .dev-card-topic) .dev-card-head:has(> .dev-card-icon) + .dev-card-meta { padding-left: 30px; }
+:is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge.font-mono { font-size: 11px; }
+:is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge .attr-avatar { width: 14px; height: 14px; }
 
 /* ── The status band: the bar row, then the facts as one line ──
    Two rows at most — the bar with the vote button beside it, then the
@@ -11081,9 +11070,30 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   padding: 0 10px;
   font-size: 12px;
   font-weight: 600;
+  /* The Vote button's "Yes" state (.dev-vote-btn-yes): the accent on its
+     tint. The band's pills were the neutral grey fill, which read as a
+     third colour beside the blue Vote and the blue Preview. */
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: transparent;
 }
-:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview {
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent-light);
+  color: var(--accent);
+}
+/* The menu trigger: a hamburger at the far right of the band, the row's own
+   "more" — that is where the pills that do not fit the line go. */
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn {
   margin-left: auto;
+  width: 28px;
+  padding: 0;
+  color: var(--accent);
+}
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn svg { width: 16px; height: 16px; }
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview {
+  /* After the hamburger, which is what pushes the pair to the band's right
+     edge; a second auto margin here would split the free space between them. */
   gap: 5px;
   padding: 0 10px 0 9px;
   color: var(--accent);
@@ -11102,20 +11112,9 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   flex: none;
 }
 
-/* ── The rail: ⋯ as a 28px well in the corner ── */
-:is(.dev-card-dense, .dev-card-topic) .dev-card-rail > .dev-card-menu-btn {
-  width: 28px;
-  height: 28px;
-  margin: -2px -4px 0 0;
-  background: var(--bg-tertiary);
-  color: var(--text-muted);
-}
-:is(.dev-card-dense, .dev-card-topic) .dev-card-rail > .dev-card-menu-btn:hover { background: var(--accent-tint); color: var(--accent); }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-rail > .dev-card-menu-btn svg { width: 16px; height: 16px; }
-
 /* Cards with 22px corners want a little more air between them than the
    column's space-y-2 gives. */
-#dev-kanban .dev-kanban-col > .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 10px; }
+#dev-kanban .dev-kanban-col > .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 4px; }
 
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -11866,8 +11865,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-row[data-edge="neutral"]   { --dev-edge: var(--state-neutral); }
 .dev-ws-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .dev-ws-row-title { font-size: 14px; line-height: 1.3; }
-.dev-ws-row-meta { display: flex; gap: 8px; font-size: 12px; color: var(--text-muted); min-width: 0; }
+.dev-ws-row-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; font-size: 12px; color: var(--text-muted); min-width: 0; margin-top: 1px; }
 .dev-ws-row-meta > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The tags ride on this line at the row's size too (fold.tsx tagsOf),
+   in the card's chip geometry. */
+.dev-ws-row-meta > .dev-badge { height: 19px; font-size: 11.5px; }
+.dev-ws-row-meta > .dev-badge .attr-avatar { width: 14px; height: 14px; }
 /* ── The row's status band ───────────────────────────────────
    A mini of `.dev-card-badges.dev-card-status`, and clipped exactly as that
    one is and for the same reason: ONE line, overflow hidden, so a card with
@@ -11925,7 +11928,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    components from the same view model, indented under the card so a reader
    can see where the item ends. Not the comment threads: the sheet already
    carries both, above and below this block. */
-.dev-ws-open-btn { white-space: nowrap; }
+.dev-ws-open-btn { white-space: nowrap; text-decoration: none; }
 .dev-ws-detail {
   margin-top: 10px;
   padding-left: 10px;
@@ -11945,12 +11948,11 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-row-trailing { display: inline-flex; align-items: center; flex-shrink: 0; }
 /* ── The Board's columns fold their cards too (#1787) ─────────
    The same row, the same sheet and the same fold (card/fold.tsx), inside a
-   kanban column. The column's own `space-y-2` (10px, see #dev-kanban above)
+   kanban column. The column's own `space-y-2` (4px, see #dev-kanban above)
    is the rhythm between rows, so the wrapper's 4px is not added to it. The
    open card is the column's tile as it always was; the sheet around it is
    transparent here — the Workshop's frosted plane is scoped to #dev-workshop
-   on purpose — so the only thing the sheet draws on the board is the "Open
-   on its own page" line under the card. */
+   on purpose — and it draws nothing else: the Board's "Open card" is itself
+   the link to the item's page, so the sheet has no line under the card. */
 #dev-kanban .dev-ws-rowwrap { margin-bottom: 0; }
-#dev-kanban .dev-ws-sheet-actions { padding: 0 10px; margin-top: 6px; font-size: 12px; }
 .dev-ws-foot-note { font-size: 12px; color: var(--text-muted); text-align: center; padding: 6px 0 2px; }

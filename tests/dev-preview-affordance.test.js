@@ -302,16 +302,15 @@ test('an issue run with no preview (or a spec-only outcome) shows no affordance'
   }), /gc-vote-btn-preview/);
 });
 
-test('on a board card the preview is a labelled pill at the END of the FACTS line', () => {
+test('on a board card the preview is a labelled pill closing the ACTION BAND, after the hamburger', () => {
   // Round three moved the preview out of the rail's corner and made it a pill
   // with the eye AND the word: the 24px corner eye was the hardest thing on
-  // the card to hit. #1787 round four moved that pill again, off its own
-  // action row and onto the right end of the facts line ("Closes #N", the
-  // assignee) — it is the one control about LOOKING rather than doing, and a
-  // row to itself pushed the card taller while the line beside it had space.
-  // app.css still pushes it to the right end (`margin-left: auto`), so a
-  // column of cards shows every preview on one vertical line, and the rail is
-  // the ⋯ and the chevron only.
+  // the card to hit. #1787 round four moved that pill onto the facts line;
+  // this round seats it with the card's other controls instead — the far
+  // right of the action band, after the hamburger, a fixed child the pills
+  // fold around. The hamburger's auto margin pushes the pair to the band's
+  // right edge, so a column of cards shows every preview on one vertical
+  // line, and there is no rail at all any more.
   const AppView = makeAppView();
   const cards = {
     proposal: proposalCardHtml(AppView, PR({ staging_url: 'https://s' })),
@@ -325,32 +324,27 @@ test('on a board card the preview is a labelled pill at the END of the FACTS lin
     }),
   };
   for (const [kind, html] of Object.entries(cards)) {
-    const facts = html.match(/class="dev-card-badges dev-card-status"[^>]*>([\s\S]*?)<\/div>\s*(?:<div|<\/div)/);
-    assert.ok(facts, `${kind}: the facts line is still emitted`);
-    assert.match(facts[1], /<span class="dev-card-status-end">\s*<button [^>]*gc-vote-btn-preview/,
-      `${kind}: the preview closes the facts line`);
-    assert.match(facts[1], /gc-vote-btn-preview"[^>]*>[\s\S]*?Preview</,
-      `${kind}: and it is labelled`);
-    assert.doesNotMatch(facts[1], /gc-vote-btn-preview[^>]*gc-vote-btn-icon/,
+    const band = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
+    assert.ok(band, `${kind}: the action band is emitted`);
+    assert.match(band[1], /gc-vote-btn-preview"[^>]*>[\s\S]*?Preview<\/button>$/,
+      `${kind}: the labelled preview closes the band`);
+    assert.doesNotMatch(band[1], /gc-vote-btn-preview[^>]*gc-vote-btn-icon/,
       `${kind}: never the icon variant`);
-    assert.ok(!/<div class="gc-card-actions">[\s\S]*?gc-vote-btn-preview/.test(html),
-      `${kind}: and no longer the action band`);
-    const railAt = html.indexOf('dev-card-rail');
-    if (railAt > 0) {
-      assert.doesNotMatch(html.slice(railAt), /gc-vote-btn-preview/,
-        `${kind}: the rail no longer carries it`);
+    if (/data-card-menu/.test(band[1])) {
+      assert.ok(band[1].indexOf('data-card-menu') < band[1].indexOf('gc-vote-btn-preview'),
+        `${kind}: right of the hamburger`);
     }
+    assert.doesNotMatch(html, /dev-card-status-end/, `${kind}: nothing on the facts line`);
+    assert.doesNotMatch(html, /dev-card-rail/, `${kind}: and no rail`);
   }
 });
 
-test('a card with nothing to preview keeps exactly the rail it had before', () => {
-  // The rail is the ⋯ and the chevron; a card with no preview has nothing
-  // else in its band's right end either.
+test('a card with nothing to preview ends its band with the hamburger, and the chevron is still its last child', () => {
   const AppView = makeAppView();
   const html = proposalCardHtml(AppView, PR({ staging_url: null }));
-  const rail = html.slice(html.indexOf('dev-card-rail'));
-  assert.doesNotMatch(rail, /gc-vote-btn-preview|gc-checks-running-badge|gc-conflict-badge/);
-  const children = rail.match(/<(?:button|span|svg)\b[^>]*class="[^"]*"/g) || [];
-  assert.match(children[children.length - 1], /w-4 h-4/,
-    'the chevron is still the rail\'s last child, centred below the ⋯');
+  const band = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
+  assert.ok(band, 'the action band is emitted');
+  assert.doesNotMatch(band[1], /gc-vote-btn-preview|gc-checks-running-badge|gc-conflict-badge/);
+  assert.match(band[1], /dev-card-menu-btn"[^>]*>[\s\S]*?<\/button>$/, 'the hamburger closes the band');
+  assert.match(html.slice(html.lastIndexOf('<svg')), /w-4 h-4/, 'the chevron is the card\'s last child');
 });

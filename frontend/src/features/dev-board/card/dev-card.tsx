@@ -50,17 +50,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  EllipsisHorizontalIcon,
-  EyeIcon,
-  EyeOffIcon,
-  Glyph,
-  PencilSquareIcon,
-  XIcon,
-} from '@/components/ui/icons';
+import { Bars3Icon, CheckIcon, ChevronDownIcon, ChevronRightIcon, EyeIcon, EyeOffIcon, Glyph, PencilSquareIcon, XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { useStoreState } from '../../../lib/use-store-state';
 import { aiEnabledStore, cardNowStore } from './cards-store';
@@ -391,13 +381,15 @@ export function Badge({ b }: { b: BadgeSpec }): ReactNode {
 }
 
 /**
- * The board caps the metadata chips at four; the pill, the linkage and the
+ * The status band caps the STATE chips at four; the pill, the linkage and the
  * 💬 count ride outside the cap (`_cardBadgesHtml`'s contract, transcribed
- * with the markup it governed).
+ * with the markup it governed). The tags — priority, assignee, category —
+ * are not under it: they ride on the meta line, which wraps for them.
+ *
+ * The action band has no count cap any more. It shows as many pills as fit
+ * its one line and folds the rest into the menu (useFoldedActions).
  */
 export const BADGE_MAX = 4;
-/** And the action band at three text pills (`ACTION_PRIMARY_MAX`). */
-export const ACTION_PRIMARY_MAX = 3;
 
 /**
  * The card's vote control: one button beside the state bar.
@@ -551,8 +543,8 @@ function isVoteSpec(a: ActionSpec, side: 'yes' | 'no'): boolean {
 /** One action pill; the kudos slot and the Explore pill are its two specials. */
 export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number; hidden?: boolean }): ReactNode {
   const { enabled } = useStoreState(aiEnabledStore);
-  // `data-fold` marks a pill the one-line band may hide; the first pill and
-  // the kudos host never carry it.
+  // `data-fold` marks a pill the one-line band may hide; every pill carries
+  // one but the kudos host.
   const foldAttrs = fold ? { 'data-fold': String(fold), 'data-folded': hidden ? '1' : undefined } : {};
   if (a.kudos != null) {
     // The controller host — `AppView._fillKudosHosts` owns everything below.
@@ -609,32 +601,42 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
 }
 
 /**
- * The card's right-edge rail (`_cardRailHtml`): ⋯ up top, the chevron below.
+ * The card's menu trigger: a hamburger at the far right of the action band.
  *
- * The eye used to be pinned at the bottom of this column. A board card now
- * draws its preview as a LABELLED pill at the end of the action band (see
- * DevCard), so `rail.preview` is only drawn here by a caller that still
- * wants the corner form — none of the board's builders do.
+ * It was a ⋯ in the card's top-right rail. The band is where the card's
+ * other controls are, and the menu is where the pills that do not fit the
+ * band go (useFoldedActions), so the trigger sits at the end of that row,
+ * pushed to its right edge, as the row's own "more". Same `data-card-menu`
+ * hook, same `dev-card-menu-btn` class: `_openCardMenu`, `_reanchorCardMenu`
+ * and the declared checks find it where they always did.
  */
-function Rail({ rail }: { rail: RailSpec }): ReactNode {
-  const trigger = rail.menuKey ? (
+function MenuTrigger({ menuKey }: { menuKey: string }): ReactNode {
+  return (
     <button
       type="button"
       className="gc-vote-btn gc-vote-btn-icon dev-card-menu-btn"
-      data-card-menu={rail.menuKey}
+      data-card-menu={menuKey}
       aria-haspopup="true"
       aria-label="More actions"
       title="More actions"
     >
-      <EllipsisHorizontalIcon aria-hidden="true" />
+      <Bars3Icon aria-hidden="true" />
     </button>
-  ) : null;
-  const chevron = rail.chevron ? <Chevron /> : null;
-  const preview = rail.preview ? <Preview spec={rail.preview} /> : null;
-  if (!trigger && !chevron && !preview) return null;
-  // A lone chevron is already the card's only right-edge child — no column.
-  if (!trigger && !preview) return chevron;
-  return <div className="dev-card-rail">{trigger}{chevron}{preview}</div>;
+  );
+}
+
+/**
+ * The card's right edge: the tap-through chevron, or nothing.
+ *
+ * This was a column (`.dev-card-rail`) holding the ⋯ up top, the preview eye
+ * at the bottom and the chevron centred between them. Both controls live in
+ * the action band now — the hamburger at its right edge, the labelled
+ * Preview after it — so the chevron is the card's only right-edge child and
+ * needs no column to be centred in. `rail.preview` is still handed over by
+ * the builders; DevCard draws it in the band, never here.
+ */
+function Rail({ rail }: { rail: RailSpec }): ReactNode {
+  return rail.chevron ? <Chevron /> : null;
 }
 
 function MetaPartView({ p }: { p: MetaPart }): ReactNode {
@@ -747,57 +749,60 @@ export function DevCard(
   const voteBtn = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
   const bandActions = voteBtn ? allActions.filter((a) => a !== yesSpec && a !== noSpec) : allActions;
   const chips = (m.badges || []).filter(Boolean);
-  const kept = m.uncapped ? chips : chips.slice(0, BADGE_MAX);
+  // The TAGS — priority, assignee, category — ride on the meta line beside
+  // the number and the author, and may wrap it to a second line. The status
+  // band keeps what is a STATE rather than a label: the composite pill, the
+  // work-state chip, the imported / paused chips, Closes #N, the chat count.
+  const tags = chips.filter((b) => b.t === 'attr');
+  const states = chips.filter((b) => b.t !== 'attr');
+  const kept = m.uncapped ? states : states.slice(0, BADGE_MAX);
   const linked = m.linked || [];
   // #1139: a status band with nothing a reader can see is emitted (the node
   // must stay — app.css caps the action band through the sibling chain) but
   // stamped data-empty and hidden by CSS. A 0 chat count is NOT content.
-  const statusHasContent = chips.length > 0 || !!m.pill || linked.length > 0
+  const statusHasContent = states.length > 0 || !!m.pill || linked.length > 0
     || (m.chatCount !== null && m.chatCount !== undefined && (m.chatCount || 0) > 0);
   const chat = m.chatCount !== null && m.chatCount !== undefined
     ? <Badge b={{ t: 'chat', key: 'chat', count: m.chatCount || 0 }} />
     : null;
-  // The preview rides at the right end of the FACTS line, not on an action
-  // row of its own. It is the one control that is about looking rather than
-  // doing, and a whole row for it pushed the card taller while the facts
-  // line beside it had space to spare. (The builders still hand it over as
-  // `rail.preview`; the model did not move.) The detail head's arrives as
-  // `actionPreview`, already labelled.
-  const previewSpec = m.actionPreview
-    || (m.rail.preview ? { ...m.rail.preview, iconOnly: false } : null);
+  // The preview is the last thing in the action band, after the hamburger,
+  // with the card's other controls: a fixed child of the band, which the
+  // pills fold around, and always the LABELLED pill — the eye and the word —
+  // whichever builder handed it over. (It closed the facts line for a round,
+  // and before that sat as a bare eye in the corner rail; the board's
+  // builders still hand it over as `rail.preview`, the detail head's as
+  // `actionPreview`, and the model did not move.)
+  const previewSource = m.actionPreview || m.rail.preview;
+  const previewSpec = previewSource ? { ...previewSource, iconOnly: false } : null;
   const bandPreview = previewSpec ? <Preview spec={previewSpec} /> : null;
 
   // ── Where the primary actions go ──────────────────────────────────
   //
-  // `statusLead` is a caller's own control at the right-hand end of the
-  // facts line; only the Workshop passes one ("Open card"). Where it does,
-  // the card's own primary actions join it there — "Create proposal" and
-  // "Claim this issue" beside "Open card" and "Preview", one line of things
-  // you can do to this item instead of two rows saying it twice.
+  // Every action the card has goes in the band, then the caller's
+  // `actionEnd` control, then the hamburger, then Preview. The band's
+  // measurement (useFoldedActions) shows as many pills as fit its one line
+  // and folds the rest, from the end, into the menu behind the hamburger;
+  // the three controls after the pills are fixed children it folds around.
+  // The old cap of three text pills is gone: the line is the cap now. That
+  // is the seat both surfaces use for "Open card" (card/fold.tsx), so an
+  // open card on the Board and on the Workshop is one drawing.
   //
-  // Only there. A board card sits in a kanban column ~165px wide, its
-  // actions fold into ⋯ by measuring the band they are in, and that
-  // measurement is meaningless inside a content-width group at the end of a
-  // wrapping line. The Workshop's card is the full width of the sheet and
-  // needs no folding, so this moves the pills exactly where there is room
-  // for them and nowhere else.
-  //
-  // `actionEnd` is the other seat for such a control: the END of the action
-  // band, after the card's own pills. That is where the Board's open card
-  // puts its "Open card" (card/fold.tsx), because a kanban column has no
-  // facts line wide enough for the actions to move onto. The band's fold
-  // measurement (useFoldedActions) counts every child without `data-fold`
-  // as fixed width, so the pills fold into ⋯ AROUND it rather than under it.
-  const primary = bandActions.slice(0, ACTION_PRIMARY_MAX);
+  // `statusLead` is the other seat, kept for a surface that wants it: the
+  // caller's control at the right-hand end of the facts line, with the
+  // card's own primary actions moved up beside it. Nothing passes one today.
+  // It only ever made sense on a card the full width of its sheet — the
+  // band's fold measurement is meaningless inside a content-width group at
+  // the end of a wrapping line, so a ~300px column could never take it.
+  const primary = bandActions;
   const inlineActions = !!statusLead;
   const bandPrimary = inlineActions ? [] : primary;
-  const hasActions = bandPrimary.length > 0 || !!actionEnd;
-  const folded = useFoldedActions(bandPrimary, m.rail.menuKey || '', false);
-  const statusEnd = statusLead || bandPreview || (inlineActions && primary.length) ? (
+  const menuTrigger = m.rail.menuKey ? <MenuTrigger menuKey={m.rail.menuKey} /> : null;
+  const hasActions = bandPrimary.length > 0 || !!actionEnd || !!menuTrigger || !!bandPreview;
+  const folded = useFoldedActions(bandPrimary, m.rail.menuKey || '', !!bandPreview);
+  const statusEnd = statusLead || (inlineActions && primary.length) ? (
     <span className="dev-card-status-end">
       {inlineActions ? primary.map((a) => <ActionButton key={a.key} a={a} />) : null}
       {statusLead}
-      {bandPreview}
     </span>
   ) : null;
 
@@ -836,12 +841,13 @@ export function DevCard(
   const actionRow = hasActions ? (
     <div className="gc-card-actions" ref={folded.ref}>
       {bandPrimary.map((a, i) => (
-        <ActionButton key={a.key} a={a} fold={i > 0 && a.kudos == null ? i : undefined} hidden={i > 0 && i >= bandPrimary.length - folded.n} />
+        <ActionButton key={a.key} a={a} fold={a.kudos == null ? i + 1 : undefined} hidden={i >= bandPrimary.length - folded.n} />
       ))}
       {actionEnd}
+      {menuTrigger}
+      {bandPreview}
     </div>
   ) : (dense ? <div className="gc-card-actions"></div> : null);
-  const rail: RailSpec = { ...m.rail, preview: null };
   const edge = edgeFor(m);
 
   // The meta line, ' · '-joined. Dense reserves the band even when empty;
@@ -851,8 +857,13 @@ export function DevCard(
     if (i) metaNodes.push(' · ');
     metaNodes.push(<MetaPartView key={i} p={p} />);
   });
-  const metaRow = dense || metaNodes.length
-    ? <div className="dev-card-meta">{metaNodes}</div>
+  const metaRow = dense || metaNodes.length || tags.length
+    ? (
+      <div className="dev-card-meta">
+        {metaNodes}
+        {tags.map((b) => <Badge key={b.key} b={b} />)}
+      </div>
+    )
     : null;
 
   return (
@@ -877,7 +888,7 @@ export function DevCard(
         {actionRow}
         {(m.extra || []).map((x) => <ExtraRow key={x.key} x={x} />)}
       </div>
-      <Rail rail={rail} />
+      <Rail rail={m.rail} />
     </div>
   );
 }
@@ -923,7 +934,10 @@ function useFoldedActions(
 ): { ref: (el: HTMLDivElement | null) => void; n: number } {
   const bandRef = useRef<HTMLDivElement | null>(null);
   const [n, setN] = useState(0);
-  const foldable = primary.filter((a, i) => i > 0 && a.kudos == null).length;
+  // Every pill but a kudos host may fold — the first included. The fixed
+  // children ("Open card", the hamburger, Preview) sit at the band's right
+  // and a narrow column may leave no room before them.
+  const foldable = primary.filter((a) => a.kudos == null).length;
   useIsoLayoutEffect(() => {
     const band = bandRef.current;
     if (!band || !foldable) { if (n) setN(0); return undefined; }
@@ -966,7 +980,7 @@ function useFoldedActions(
     if (!menuKey) return undefined;
     const av = typeof window !== 'undefined' ? (window as any).AppView : null;
     if (!av || typeof av._setFoldedCardActions !== 'function') return undefined;
-    const hidden = n > 0 ? primary.filter((a, i) => i > 0 && a.kudos == null).slice(-n) : [];
+    const hidden = n > 0 ? primary.filter((a) => a.kudos == null).slice(-n) : [];
     av._setFoldedCardActions(menuKey, hidden);
     return () => { av._setFoldedCardActions(menuKey, []); };
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -121,17 +121,28 @@ test('?cards=open draws every card at full size, hooks intact: the board as it w
   assert.equal(count(html, /class="dev-ws-rowwrap dev-ws-rowwrap-open"/g), cards, 'every wrapper open');
   assert.equal(count(html, /class="dev-ws-row hover/g), 0, 'and no folded row drawn beside a card');
   assert.equal(count(html, /class="gc-vote-item [^"]*dev-card-dense"/g), cards, 'the dense card, once per item');
-  // The Workshop's "Open card" toggle, on every open card — but as the LAST
-  // pill of the action band, not on the facts line: that seat moves the
-  // card's actions up beside it, which a ~300px column cannot hold. The
-  // actions stay in their band (the checks that read it still resolve) and
-  // the band's own measurement folds them into ⋯ around the toggle.
+  // "Open card", on every open card, in the action band after the card's
+  // own pills and before the hamburger — the seat the Workshop's open card
+  // uses too, so the two surfaces draw one card. Not on the facts line:
+  // that seat moves the card's actions up beside it, which a ~300px column
+  // cannot hold. The pills stay in their band (the checks that read it
+  // still resolve), every one of them foldable, and the band's own
+  // measurement folds them into the menu around the fixed controls.
+  //
+  // On the Board it is a LINK to the item's page, not the in-place toggle
+  // the Workshop draws: a column is the wrong width for the ledger and the
+  // transcript, and the page is one tap away. It also works on every kind —
+  // the in-place body exists for issues and proposals only, so on a
+  // session, a merged change or a governance item the toggle did nothing.
   assert.equal(count(html, /class="gc-vote-btn dev-ws-open-btn"/g), cards, 'each open card offers Open card');
+  assert.equal(count(html, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/[a-z]+\/\d+" data-ws-open-card="[a-z-]+:\d+">Open card<\/a>/g), cards,
+    'as a link to the item\u2019s page');
   assert.equal(count(html, /class="gc-card-actions"[^>]*>(?:(?!<\/div>)[\s\S])*?class="gc-vote-btn dev-ws-open-btn"/g), cards,
     'and it sits inside the action band');
   assert.ok(!/dev-card-status-end"[^>]*>(?:(?!<\/span>)[\s\S])*?dev-ws-open-btn/.test(html), 'not on the facts line');
-  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"[^>]*data-act="createPrForIssue">Create proposal<\/button><button[^>]*data-fold="1"[^>]*data-act="markIssueInProgress">[^<]*<\/button><button type="button" class="gc-vote-btn dev-ws-open-btn"/,
-    'the card\u2019s own pills come first, the foldable one still marked, the toggle last');
+  assert.ok(!/dev-ws-open-btn"[^>]*aria-expanded/.test(html), 'and never the in-place toggle here');
+  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="createPrForIssue">Create proposal<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
+    'the card\u2019s own pills come first, each marked foldable, then the link, then the hamburger');
   // A card with nothing in its status band still drops the band (#1139):
   // the toggle is not in it.
   assert.match(html, /data-empty="1"/);
@@ -142,9 +153,11 @@ test('?cards=open draws every card at full size, hooks intact: the board as it w
   // item by them, and nothing strips them any more.
   assert.match(html, /class="gc-vote-item [^"]*dev-card-dense"[^>]*data-issue-row="1575"/);
   assert.match(html, /class="gc-vote-item [^"]*dev-card-dense"[^>]*data-proposal-row="34"/);
-  // The way out to the item's own page.
-  assert.match(html, /<a href="#app\/demo-app\/dev\/issues\/1575" class="dev-ws-link">Open on its own page ›<\/a>/);
-  assert.match(html, /<a href="#app\/demo-app\/dev\/proposals\/34" class="dev-ws-link">/);
+  // The way out to the item's own page is the pill itself, so the sheet
+  // draws no "Open on its own page" line under the card here.
+  assert.match(html, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/proposals\/34"/);
+  assert.ok(!html.includes('dev-ws-link'), 'no second link under the card');
+  assert.ok(!html.includes('dev-ws-sheet-actions'));
 });
 
 test('the view carries what the open card needs, and reads ?cards=open per build', () => {
@@ -170,21 +183,26 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(KANBAN, /slug=\{v\.slug \|\| ''\}/);
   assert.match(KANBAN, /unfolded=\{!!v\.unfolded\}/);
   assert.match(KANBAN, /detail: 'actions',/, 'the Board seats Open card in the action band');
-  assert.match(LIST_ROWS, /detail=\{fold\.detail\}/);
-  assert.match(FOLD, /detail: placement = 'facts',/, 'and the Workshop, passing nothing, keeps the facts-line seat');
+  assert.match(KANBAN, /expand: 'page',/, 'and makes it a link to the item\u2019s page');
+  assert.match(LIST_ROWS, /detail=\{fold\.detail\} expand=\{fold\.expand\}/);
+  assert.match(FOLD, /expand: mode = 'inline',/, 'the Workshop, passing nothing, opens in place');
+  assert.match(FOLD, /mode === 'page' \? \(\s*href \? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a> : undefined\s*\)/);
+  assert.match(FOLD, /\{href && mode === 'inline' \? \(\s*<div className="dev-ws-sheet-actions">/, 'the line under the sheet is the Workshop\u2019s');
+  assert.match(FOLD, /detail: placement = 'actions',/, 'and the Workshop, passing nothing, gets the same seat');
   assert.match(FOLD, /<DevCard model=\{card\} statusLead=\{placement === 'facts' \? openBtn : undefined\} actionEnd=\{placement === 'actions' \? openBtn : undefined\} \/>/);
-  // The seat itself: DevCard renders `actionEnd` after its own pills, and
-  // the fold measurement counts it as a fixed child (no data-fold).
+  // The seat itself: DevCard renders `actionEnd` after its own pills and
+  // before the hamburger and Preview, and the fold measurement counts all
+  // three as fixed children (no data-fold).
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
-  assert.match(CARD, /const hasActions = bandPrimary\.length > 0 \|\| !!actionEnd;/);
-  assert.match(CARD, /\{actionEnd\}\s*<\/div>/);
+  assert.match(CARD, /const hasActions = bandPrimary\.length > 0 \|\| !!actionEnd \|\| !!menuTrigger \|\| !!bandPreview;/);
+  assert.match(CARD, /\{actionEnd\}\s*\{menuTrigger\}\s*\{bandPreview\}\s*<\/div>/);
   assert.match(CARD, /if \(k\.dataset\.fold\) continue;\s*used \+= k\.offsetWidth/, 'a child without data-fold is counted as used width');
   // A merged card's kudos slot is legacy-filled after every publish; a fold
   // happens between publishes, so the column re-runs the filler.
   assert.match(KANBAN, /callAppView\('_fillKudosHosts', hostRef\.current\)/);
   // The row renderer hands a card to the fold when it is given one, and
   // draws the plain card otherwise.
-  assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} \/>/);
+  assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} expand=\{fold\.expand\} \/>/);
   assert.match(LIST_ROWS, /: <DevCard model=\{row\.card\} \/>/);
   // And the Workshop draws its rows from the SAME module — no second copy.
   assert.match(WORKSHOP, /import \{ CardRowView, callAppView \} from '\.\.\/card\/fold';/);
@@ -286,7 +304,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
 
   const unfold = DAPP.tests.find((t) => /shot=board-unfold/.test(t.path || ''));
   assert.ok(unfold, 'one check taps a row open');
-  assert.match(unfold.expectSelector, /\.dev-ws-rowwrap-open > \.dev-ws-sheet > \.gc-vote-item\.dev-card-dense\[data-edge\] \.gc-card-actions > \.dev-ws-open-btn\[aria-expanded="false"\]/,
+  assert.match(unfold.expectSelector, /\.dev-ws-rowwrap-open > \.dev-ws-sheet > \.gc-vote-item\.dev-card-dense\[data-edge\] \.gc-card-actions > a\.dev-ws-open-btn\[href\*="\/dev\/"\]/,
     'and reads the card it unfolded into, with its Open card toggle in the action band');
   assert.ok(!/cards=open/.test(unfold.path), 'without cards=open, or the tap would prove nothing');
 
@@ -304,9 +322,125 @@ test('the declared checks that read a board card’s anatomy run with the cards 
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
   assert.match(CSS, /#dev-kanban \.dev-ws-rowwrap \{ margin-bottom: 0; \}/);
-  assert.match(CSS, /#dev-kanban \.dev-ws-sheet-actions \{/);
+  assert.ok(!/#dev-kanban \.dev-ws-sheet-actions/.test(CSS), 'no line under the board\u2019s card to style');
   // The Workshop's frosted sheet stays the Workshop's: on the board the open
   // card is the column's tile, as it always was.
   assert.ok(!/#dev-kanban \.dev-feed-entry \{/.test(CSS));
   assert.match(CSS, /#dev-workshop \.dev-feed-entry \{/);
+});
+
+// ── The card's controls and lines, after the fold (#1787) ─────────────────
+//
+// With both surfaces drawing one card, the card itself was reworked: blue
+// pills, a hamburger at the band's right edge with Preview after it, every
+// pill foldable, the tags on the meta line at both sizes, that line tabbed
+// in under the title and snug beneath it, and folded rows 4px apart.
+
+test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds the band’s right edge, Preview after it', () => {
+  // The neutral grey fill read as a third colour beside the blue Vote and
+  // the blue Preview; the pills take `.dev-vote-btn-yes`'s accent on tint.
+  const at = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn {');
+  assert.ok(at > 0, 'the band pill rule exists');
+  const pill = CSS.slice(at, CSS.indexOf('\n}', at));
+  assert.match(pill, /background: var\(--accent-tint\);/);
+  assert.match(pill, /color: var\(--accent\);/);
+  assert.match(pill, /border-color: transparent;/);
+  assert.match(CSS, /\.dev-vote-btn-yes[^{]*\{ background: var\(--accent-tint\); color: var\(--accent\); \}/, 'the pair the Yes state uses');
+  // The ⋯ was a well in the card's top-right rail. The menu is where the
+  // pills that do not fit the band go, so its trigger is the band's own
+  // "more": a hamburger at its far right, and Preview, when there is one,
+  // after it — the hamburger's auto margin pushes the pair to the edge.
+  const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
+  assert.match(CARD, /<Bars3Icon aria-hidden="true" \/>/);
+  assert.ok(!CARD.includes('EllipsisHorizontalIcon'));
+  assert.ok(!CARD.includes('className="dev-card-rail"'), 'the rail column is gone from the card');
+  const tr = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn {');
+  assert.ok(tr > 0);
+  assert.match(CSS.slice(tr, CSS.indexOf('\n}', tr)), /margin-left: auto;/);
+  const pv = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview {');
+  assert.ok(pv > 0);
+  assert.doesNotMatch(CSS.slice(pv, CSS.indexOf('\n}', pv)), /margin-left/, 'a second auto margin would split the free space');
+  assert.ok(!/\n\.dev-card-rail \{/.test(CSS), 'and from app.css');
+});
+
+test('every pill is foldable: the band shows as many as fit its line and the menu lists the rest', () => {
+  const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
+  // The band capped at three text pills, and then the first pill was exempt
+  // from folding (`i > 0`). With "Open card", the hamburger and Preview all
+  // fixed at the band's right, a narrow column may leave no room before
+  // them, so the fold may take the first pill too; only a kudos host stays.
+  assert.match(CARD, /fold=\{a\.kudos == null \? i \+ 1 : undefined\} hidden=\{i >= bandPrimary\.length - folded\.n\}/);
+  assert.match(CARD, /const foldable = primary\.filter\(\(a\) => a\.kudos == null\)\.length;/);
+  assert.match(CARD, /const hidden = n > 0 \? primary\.filter\(\(a\) => a\.kudos == null\)\.slice\(-n\) : \[\];/);
+  assert.ok(!CARD.includes('ACTION_PRIMARY_MAX'), 'no count cap: the line is the cap');
+  assert.ok(!/i > 0 && a\.kudos == null/.test(CARD));
+  const html = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
+  assert.match(html, /data-fold="1"[^>]*data-act="createPrForIssue"/, 'the first pill carries a fold index');
+});
+
+test('the tags ride the meta line beside the number, on the open card and the folded row alike', () => {
+  const FOLD_SRC = read('frontend/src/features/dev-board/card/fold.tsx');
+  const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
+  // Priority, assignee and category are labels, not states: the status
+  // band keeps the states (the pill, the work-state chip, Closes #N, the
+  // chat count) and the meta line takes the tags, wrapping for them.
+  assert.match(CARD, /const tags = chips\.filter\(\(b\) => b\.t === 'attr'\);/);
+  assert.match(CARD, /const states = chips\.filter\(\(b\) => b\.t !== 'attr'\);/);
+  assert.match(CARD, /\{metaNodes\}\s*\{tags\.map\(\(b\) => <Badge key=\{b\.key\} b=\{b\} \/>\)\}/);
+  assert.match(FOLD_SRC, /export function tagsOf\(card: DevCardModel\): BadgeSpec\[\]/);
+  assert.match(FOLD_SRC, /\{tagsOf\(c\)\.map\(\(b\) => <Badge key=\{b\.key\} b=\{flatBadge\(b\)\} \/>\)\}/);
+  assert.match(FOLD_SRC, /filter\(\(b\) => b && b\.t !== 'attr'\)\.slice\(0, ROW_BADGE_MAX\)/, 'the row band keeps the states');
+  // Rendered: the fixture issue has an assignee, so its chip sits on the
+  // meta line at both sizes and its status band holds nothing.
+  const open = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
+  const card = open.slice(open.indexOf('data-issue-row="1575"'), open.indexOf('data-proposal-row="34"'));
+  const meta = card.slice(card.indexOf('<div class="dev-card-meta">'), card.indexOf('<div class="dev-card-badges dev-card-status"'));
+  assert.match(meta, /#1575/);
+  assert.match(meta, /<button(?=[^>]*attr-chip)[^>]*data-attr-field="assignee"[^>]*>[\s\S]*?@priya/, 'the assignee chip on the meta line');
+  assert.match(card, /<div class="dev-card-badges dev-card-status" data-empty="1">/, 'and nothing left in the band');
+  const folded = kanbanHtml(makeAppView());
+  const row = folded.slice(folded.indexOf('data-issue-row="1575"'), folded.indexOf('data-proposal-row="34"'));
+  assert.match(row, /<span class="dev-ws-row-meta"><span class="font-mono">#1575<\/span>[\s\S]*?<button(?=[^>]*attr-chip)[^>]*data-attr-field="assignee"/,
+    'and on the row, after the number');
+  assert.ok(!/dev-ws-row-band[\s\S]*?attr-chip/.test(row), 'never in the row’s state band');
+  // The meta line may wrap for them: the one-line clamp is gone.
+  const m = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .dev-card-meta {');
+  assert.ok(m > 0);
+  assert.match(CSS.slice(m, CSS.indexOf('\n}', m)), /white-space: normal; overflow: visible;/);
+  assert.match(CSS, /\.dev-ws-row-meta \{ display: flex; flex-wrap: wrap;/);
+});
+
+test('the open card’s meta line is tabbed in under the title, as the row’s is, and sits snug beneath it', () => {
+  // The row keeps its icon in a column of its own and the title and meta
+  // share the next; the card's meta line was at the padding edge. The
+  // indent is the head's — the 22px glyph plus its 8px gap — and only a
+  // head that has a glyph earns it; the bands below stay at the edge.
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head \{ gap: 8px;/);
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head > \.dev-card-icon \{\n  width: 22px;/);
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) \+ \.dev-card-meta \{ padding-left: 30px; \}/);
+  // The title still clamps at two lines but no longer reserves the second:
+  // that lined up the bands of a column of open cards, and a column holds
+  // one open card among folded rows now.
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-title-clamp \{ min-height: 0; \}/);
+  // Folded rows sit 4px apart, as the Workshop's do.
+  assert.match(CSS, /#dev-kanban \.dev-kanban-col > \.space-y-2 > :not\(\[hidden\]\) ~ :not\(\[hidden\]\) \{ margin-top: 4px; \}/);
+});
+
+test('Open card never answers a tap with nothing: the Board links out, and an in-place open with no body goes to the page', () => {
+  // The in-place body comes from `_workshopCardBody`, which the topic screen
+  // can build for an issue or a proposal only. A session, a merged change and
+  // a governance item all answer null — and the toggle used to set that null
+  // into state, so on those cards "Open card" did nothing at all.
+  const AppView = makeAppView({ search: '?cards=open&demo=1' });
+  assert.equal(AppView._workshopCardBody('gov:1'), null);
+  assert.equal(AppView._workshopCardBody('shared-session:71'), null);
+  assert.equal(AppView._workshopCardBody('merged:34'), null);
+  assert.ok(AppView._workshopCardBody('issue:1575'), 'an issue has one');
+  // So the Workshop's toggle goes to the item's page when there is nothing
+  // to open in place, and the Board's pill is that link to begin with.
+  assert.match(FOLD, /const body = readAppView<TopicBody>\('_workshopCardBody', key\);\s*if \(!body\) \{ if \(href\) window\.location\.hash = href; return; \}\s*setDetail\(body\);/);
+  const html = kanbanHtml(AppView);
+  for (const kind of ['issues/1575', 'proposals/34']) {
+    assert.match(html, new RegExp(`<a class="gc-vote-btn dev-ws-open-btn" href="#app/demo-app/dev/${kind}"`), `${kind}: a real link`);
+  }
 });
