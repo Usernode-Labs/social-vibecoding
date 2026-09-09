@@ -51,9 +51,16 @@ test('kpack Build is isolated in social-builds and returns status.latestImage', 
   assert.deepEqual(created.body.spec.env, [
     { name: 'BP_NODE_VERSION', value: '22.*' },
     { name: 'NODE_ENV', value: 'production' },
+    { name: 'GIT_SHA', value: revision },
+    { name: 'BPE_OVERRIDE_GIT_SHA', value: revision },
   ]);
   assert.equal(result.imageRef, 'ghcr.io/example/social-apps/demo@sha256:deadbeef');
   assert.match(result.buildRef, /^social-builds\//);
+  const unstampedRecipe = crypto.createHash('sha256').update(JSON.stringify({
+    builder: config().kubernetes.builderImage,
+    env: created.body.spec.env.filter(entry => !['GIT_SHA', 'BPE_OVERRIDE_GIT_SHA'].includes(entry.name)),
+  })).digest('hex').slice(0, 12);
+  assert.ok(!created.body.spec.tags[0].endsWith(`-${unstampedRecipe}`), 'the same commit must rebuild its previously unstamped image');
 });
 
 test('kpack runs the shell generator during build when the checked-out app declares it', async (t) => {
@@ -80,6 +87,8 @@ test('kpack runs the shell generator during build when the checked-out app decla
   assert.deepEqual(created.body.spec.env, [
     { name: 'BP_NODE_VERSION', value: '22.*' },
     { name: 'NODE_ENV', value: 'production' },
+    { name: 'GIT_SHA', value: 'b'.repeat(40) },
+    { name: 'BPE_OVERRIDE_GIT_SHA', value: 'b'.repeat(40) },
     { name: 'BP_NODE_RUN_SCRIPTS', value: 'ensure:shell' },
   ]);
   // The source SHA is unchanged: adding production mode must invalidate the

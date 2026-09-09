@@ -147,6 +147,11 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
   const buildEnv = [
     { name: 'BP_NODE_VERSION', value: cfg.nodeVersion },
     { name: 'NODE_ENV', value: 'production' },
+    // Stamp both generated frontend assets and the image's launch process.
+    // Build-time env alone is not retained by the CNB launcher. Paketo's
+    // environment-variables buildpack embeds this non-secret source identity.
+    { name: 'GIT_SHA', value: revision },
+    { name: 'BPE_OVERRIDE_GIT_SHA', value: revision },
   ];
   // The platform self-app generates ignored React/Tailwind artifacts. Paketo
   // must materialize them while /workspace is writable; the launch container
