@@ -90,11 +90,37 @@ const { internalRoutes } = require('../src/routes/internal');
 
 let server;
 let baseUrl;
+const routeConfig = { jwtSecret: JWT_SECRET, platformRepoUrl: '' };
+
+test('Kubernetes logs use managed runtime names, preserve redaction and enforce the byte cap', async (t) => {
+  routeConfig.appRuntime = 'kubernetes';
+  t.after(() => { delete routeConfig.appRuntime; });
+  const before = dockerCalls.length;
+  const calls = [];
+  t.mock.method(require('../src/services/kubernetes'), 'getDebugLogs', async (_config, name, options) => {
+    calls.push({ name, options });
+    return '🚀'.repeat(70000) + '\nkey: sk-ant-api03-abcdef123456\n';
+  });
+  const result = await call({ method: 'GET',
+    path: `/api/internal/sessions/${ELIGIBLE_ID}/prod-debug/logs/sv-worker-s42?tail=99999`, token: mint(ELIGIBLE_ID) });
+  assert.equal(result.status, 200);
+  assert.equal(result.json.truncated, true);
+  assert.ok(Buffer.byteLength(result.json.logs) <= require('../src/services/debug-access').MAX_LOG_BYTES);
+  assert.ok(!result.json.logs.includes('sk-ant-api03-abcdef123456'));
+  assert.equal(calls[0].options.tailLines, 2000);
+  assert.equal(dockerCalls.length, before);
+  for (const name of ['usernode', 'unrelated', 'sv-app-7-demo.other-namespace']) {
+    const denied = await call({ method: 'GET',
+      path: `/api/internal/sessions/${ELIGIBLE_ID}/prod-debug/logs/${name}`, token: mint(ELIGIBLE_ID) });
+    assert.equal(denied.status, 400);
+  }
+  assert.equal(calls.length, 1);
+});
 
 test.before(async () => {
   const app = express();
   app.use(express.json());
-  app.use(internalRoutes({ jwtSecret: JWT_SECRET, platformRepoUrl: '' }));
+  app.use(internalRoutes(routeConfig));
   await new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', resolve);
   });

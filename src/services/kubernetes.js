@@ -467,6 +467,35 @@ async function getApplicationLogs(config, runtimeName, tailLines = 200) {
   return getClients().core.readNamespacedPodLog({ name: pod.metadata.name, namespace, container: 'app', tailLines });
 }
 
+// Production debug may read only workloads managed by this platform in its
+// configured app/worker namespaces. A caller never supplies a namespace or
+// pod name, and a matching name alone does not grant access to another owner.
+async function getDebugLogs(config, runtimeName, { tailLines = 200, maxBytes = 256 * 1024, timeoutMs = 15000 } = {}) {
+  if (!require('./debug-access').isAllowedLogContainer(runtimeName, 'kubernetes')) throw new Error('Invalid runtime name');
+  const worker = runtimeName.startsWith('sv-worker-');
+  const namespace = worker ? config.kubernetes.workerNamespace : config.kubernetes.appNamespace;
+  const container = worker ? 'worker' : 'app';
+  const managedBy = 'app.kubernetes.io/managed-by';
+  const { apps, core } = getClients();
+  const operation = async () => {
+    const deployment = await apps.readNamespacedDeployment({ name: runtimeName, namespace });
+    if (deployment.metadata?.labels?.[managedBy] !== MANAGED_BY) throw new Error('Runtime is not managed by this platform');
+    const pods = await core.listNamespacedPod({ namespace,
+      labelSelector: `social.usernode.io/runtime-name=${runtimeName},${managedBy}=${MANAGED_BY}` });
+    const candidates = (pods.items || []).filter(pod => !pod.metadata?.deletionTimestamp);
+    candidates.sort((a, b) => new Date(b.metadata?.creationTimestamp || 0) - new Date(a.metadata?.creationTimestamp || 0));
+    const pod = candidates[0];
+    if (!pod) throw new Error('Runtime Pod not found');
+    return core.readNamespacedPodLog({ name: pod.metadata.name, namespace, container, tailLines, limitBytes: maxBytes + 1 });
+  };
+  let timer;
+  try {
+    return await Promise.race([operation(), new Promise((_resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('Runtime log read timed out')), timeoutMs);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+
 async function restartApplication(config, runtimeName) {
   const namespace = config.kubernetes.appNamespace;
   const deployment = await getClients().apps.readNamespacedDeployment({ name: runtimeName, namespace });
@@ -1102,7 +1131,7 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
 
 module.exports = {
   dnsName, withSuffix, labels, appResourceName, createBuild, deployApplication, getApplicationStatus, inspectApplication,
-  getApplicationLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
+  getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   runCaptureJob, runUnitSuiteJob, execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, deleteWorker, listWorkers, cloneWorkerVolume,
   listStatusResources, listNamespaceCapacity,
