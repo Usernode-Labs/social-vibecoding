@@ -198,6 +198,17 @@ function Capacity({ data }: { data: StatusData }) {
               ['Pods', resources.pods],
               ['CPU requests', resources.requestsCpu],
               ['Memory requests', resources.requestsMemory],
+              ['CPU limits', resources.limitsCpu],
+              ['Memory limits', resources.limitsMemory],
+              ['Ephemeral storage requests', resources.requestsEphemeralStorage],
+              ['Ephemeral storage limits', resources.limitsEphemeralStorage],
+              ['Persistent storage requests', resources.requestsStorage],
+              ['Volume claims', resources.persistentVolumeClaims],
+              ['Services', resources.services],
+              ['Secrets', resources.secrets],
+              ['ConfigMaps', resources.configMaps],
+              ['Jobs', resources.jobs],
+              ['Build records', resources.builds],
             ] : [];
             return (
               <div key={item.namespace} className="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-800">
@@ -206,7 +217,7 @@ function Capacity({ data }: { data: StatusData }) {
                   ? <div className="text-xs text-zinc-500 dark:text-zinc-400">No readable ResourceQuota.</div>
                   : rows.filter(([, metric]) => metric).map(([label, metric]) => {
                     const pct = metric.percent == null ? 0 : metric.percent;
-                    const tone: Tone = pct >= 90 ? 'red' : pct >= 70 ? 'yellow' : 'green';
+                    const tone: Tone = pct >= 90 ? 'red' : pct >= 75 ? 'yellow' : 'green';
                     return (
                       <MeterRow key={label} label={label} pct={pct} tone={tone}
                         value={`${metric.used} / ${metric.hard}${
