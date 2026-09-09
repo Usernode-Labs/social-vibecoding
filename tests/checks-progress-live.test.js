@@ -225,7 +225,9 @@ test('the suite size is remembered on the apps row and read back as the next den
 
 test('maybeRunUnitSuite observes its container and reports once more at the end', () => {
   const src = read('src/services/unit-suite.js');
-  assert.match(src, /docker\.runOneShot\(`usernode-unit-suite-\$\{sessionId\}`, \{\n\s+onStdoutLine: observe,/);
+  assert.match(src, /const options = \{\n\s+onStdoutLine: observe,/);
+  assert.match(src, /kubernetes\.runUnitSuiteJob\(config, \{ sessionId, \.\.\.options \}\)/);
+  assert.match(src, /docker\.runOneShot\(`usernode-unit-suite-\$\{sessionId\}`, options\)/);
   assert.match(src, /const finalSnap = tracker\.finish\(passed\);\n\s+report\(finalSnap\);/);
   assert.match(src, /echo "\$\{CLONED_SENTINEL\}"\nif \[ -f package-lock\.json \]/, 'the cloned marker precedes npm ci');
   assert.match(src, /\.\.\.\(summary \? \{ summary \} : \{\}\),/, 'the TAP summary rides the row');
