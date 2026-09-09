@@ -79,6 +79,34 @@ const restores = (calls) => calls.filter((c) => c.cmd === 'pg_restore');
 const fresh = () => `staging-template source=app_demo refreshed_at=${new Date().toISOString()}`;
 const stale = () => `staging-template source=app_demo refreshed_at=${new Date(Date.now() - 3600 * 1000).toISOString()}`;
 
+for (const stage of ['database', 'role']) {
+  const failOn = stage === 'database' ? /^DROP DATABASE IF EXISTS app_demo_staging_/ : /^DROP ROLE IF EXISTS app_demo_staging_/;
+  for (const viaTemplate of [false, true]) {
+    test(`${viaTemplate ? 'template' : 'direct'} clone stops before creation when old ${stage} cleanup fails`, async () => {
+      const { dbManager, calls, restore } = loadDbManager({ failOn, templateComment: fresh() });
+      try {
+        await assert.rejects(
+          dbManager.cloneDatabase('app_demo', 'app_demo_staging_s9_abc123', { viaTemplate }),
+          /boom: DROP/,
+        );
+        assert.ok(!sqls(calls).some((sql) => /^CREATE (ROLE|DATABASE) app_demo_staging_/.test(sql)),
+          'failed cleanup must not be masked by a duplicate role or database error');
+        assert.equal(dumps(calls).length, 0);
+        if (stage === 'database') {
+          assert.ok(!sqls(calls).some((sql) => /^DROP ROLE/.test(sql)), 'keep the role that still owns the database');
+        }
+      } finally { restore(); }
+    });
+  }
+
+  test(`ordinary teardown stays best-effort when ${stage} cleanup fails`, async () => {
+    const { dbManager, restore } = loadDbManager({ failOn });
+    try {
+      await assert.doesNotReject(dbManager.dropDatabase('app_demo_staging_s9_abc123'));
+    } finally { restore(); }
+  });
+}
+
 test('no template yet: it is built into _next with the direct steps, stamped, locked, and swapped in by rename', async () => {
   const { dbManager, calls, restore } = loadDbManager();
   try {

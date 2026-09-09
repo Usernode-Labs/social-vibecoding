@@ -181,11 +181,14 @@ async function createDatabase(dbName) {
 // won't drop a role that owns objects, so the DB has to go first.
 // `DROP OWNED BY <role>` cleans up any cluster-level privileges
 // (none in our model, but defensive).
-async function dropDatabase(dbName) {
+// Recreating a clone requires confirmed cleanup. Ordinary teardown remains
+// best-effort, but clone callers must not create a new role after a failed drop.
+async function dropDatabase(dbName, { strict = false } = {}) {
   log.info('db-manager', 'Dropping database', { dbName });
 
   if (!SAFE_IDENT.test(dbName)) {
     log.warn('db-manager', 'Refusing to drop database with unsafe name', { dbName });
+    if (strict) throw new Error('dropDatabase: unsafe database name');
     return;
   }
 
@@ -200,6 +203,7 @@ async function dropDatabase(dbName) {
     log.warn('db-manager', 'Failed to drop database', { dbName, err: err.message });
     // Don't try to drop the role if the DB drop failed — the role
     // still owns it.
+    if (strict) throw err;
     return;
   }
 
@@ -211,6 +215,7 @@ async function dropDatabase(dbName) {
     log.warn('db-manager', 'Failed to drop role (may still own objects in another DB)', {
       role, err: err.message,
     });
+    if (strict) throw err;
   });
 
   log.info('db-manager', 'Database and role dropped', { dbName, role });
@@ -263,7 +268,7 @@ async function cloneDatabaseDirect(sourceDb, targetDb) {
 
   // Drop any prior clone (and its role) before cloning fresh. The
   // dropDatabase below also takes care of the role.
-  await dropDatabase(targetDb);
+  await dropDatabase(targetDb, { strict: true });
 
   // Create the per-clone role first so we can hand it the fresh clone
   // as OWNER. No need to terminate the source's connections any more —
@@ -609,7 +614,7 @@ async function cloneFromTemplate(templateDb, targetDb) {
     throw new Error(`cloneFromTemplate: unsafe roles ${templateRole}/${targetRole}`);
   }
   const startedAt = Date.now();
-  await dropDatabase(targetDb);
+  await dropDatabase(targetDb, { strict: true });
   const password = generatePassword();
   await execInDb(`CREATE ROLE ${targetRole} LOGIN PASSWORD '${password}'`);
   await execInDb(`CREATE DATABASE ${targetDb} TEMPLATE ${templateDb} OWNER ${targetRole}`);
