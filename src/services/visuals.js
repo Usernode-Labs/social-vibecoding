@@ -696,7 +696,11 @@ function classifyTests(frames, expectedCount, options) {
   const sentinel = opts.sentinel || null;
   const extraRows = Array.isArray(opts.extraRows) ? opts.extraRows : [];
 
-  const parsed = (Array.isArray(frames) ? frames : []).slice(0, TEST_MAX_RESULTS);
+  // The manifest ceiling bounds declarations, not observations. A full
+  // suite can emit additional retry frames; dropping those before grouping
+  // them falsely keeps recovered checks blocking. Earned-gating output is
+  // already bounded by the dispatched declarations below.
+  const parsed = Array.isArray(frames) ? frames : [];
 
   // ── Legacy shape ───────────────────────────────────────────────────────
   // extraRows (the unit-suite row today) still ride along: the synthesized
@@ -705,7 +709,7 @@ function classifyTests(frames, expectedCount, options) {
   // declares no dapp.json checks. Error verdicts stay decided by the
   // container's own frames, exactly as before.
   if (!dispatched) {
-    const results = parsed.map((f) => ({
+    const results = parsed.slice(0, TEST_MAX_RESULTS).map((f) => ({
       name: String(f.name || '').slice(0, CONSOLE_MAX_MSG_LEN),
       path: String(f.path || '').slice(0, CONSOLE_MAX_MSG_LEN),
       status: f.status === 'pass' ? 'pass' : 'fail',
