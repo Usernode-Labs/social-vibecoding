@@ -93,6 +93,68 @@ test('OpenRouter model labels show exact rates, cost tier, and advisory compatib
   assert.equal(limited, 'vendor/limited: Price unavailable · $100 /M input · ? /M output · limited');
 });
 
+test('OpenRouter picker labels and ordering surface favorites, recommendations, and new models', () => {
+  const h = makeHarness();
+  const models = [
+    { id: 'vendor/ordinary', name: 'Ordinary', isFavorite: false, isRecommended: false },
+    { id: 'openai/recommended', name: 'Recommended GPT', provider: 'openai', isRecommended: true },
+    { id: 'deepseek/favorite', name: 'Favorite DeepSeek', provider: 'deepseek', isFavorite: true },
+  ];
+  assert.deepEqual(
+    h.DevChat._openRouterModelsForPicker(models).map((model) => model.id),
+    ['deepseek/favorite', 'openai/recommended', 'vendor/ordinary'],
+  );
+  assert.deepEqual(
+    h.DevChat._openRouterModelsForPicker(models, { query: 'deepseek' }).map((model) => model.id),
+    ['deepseek/favorite'],
+  );
+  assert.deepEqual(
+    h.DevChat._openRouterModelsForPicker(models, { favoritesOnly: true }).map((model) => model.id),
+    ['deepseek/favorite'],
+  );
+  const label = h.DevChat._openRouterModelOptionLabel({
+    ...models[1], createdAt: new Date().toISOString(), costTier: 'low', compatibility: 'experimental',
+  });
+  assert.match(label, /Recommended GPT · Recommended · New:/);
+});
+
+test('forced catalog refresh and favorite writes bypass browser caches', async () => {
+  const h = makeHarness();
+  h.respondWith(async (url) => {
+    if (url === '/api/me/coding-agent') {
+      return { ok: true, json: async () => ({ defaultBackend: 'codex_openrouter', backends: {}, codexAvailable: true }) };
+    }
+    if (url === '/api/me/credentials/openrouter') {
+      return { ok: true, json: async () => ({ configured: true, status: 'valid' }) };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        models: [{ id: 'deepseek/deepseek-v4.1-flash' }],
+        recommendedModelId: 'deepseek/deepseek-v4.1-flash',
+        refreshedAt: '2026-09-10T12:00:00.000Z',
+        totalModels: 1,
+      }),
+    };
+  });
+
+  const catalog = await h.DevChat._loadCodingAgentChoiceData({ forceRefresh: true });
+  assert.equal(catalog.catalogLoaded, true);
+  assert.equal(catalog.models.length, 1);
+  const catalogRequest = h.requests.find((request) => request.url.includes('/models?'));
+  assert.match(catalogRequest.url, /refresh=1/);
+  assert.equal(catalogRequest.options.cache, 'no-store');
+
+  await h.DevChat._setOpenRouterModelFavorite('deepseek/deepseek-v4.1-flash', true);
+  const favoriteRequest = h.requests.at(-1);
+  assert.equal(favoriteRequest.url, '/api/me/coding-agent/models/favorite');
+  assert.equal(favoriteRequest.options.method, 'PATCH');
+  assert.equal(favoriteRequest.options.cache, 'no-store');
+  assert.deepEqual(JSON.parse(favoriteRequest.options.body), {
+    modelId: 'deepseek/deepseek-v4.1-flash', favorite: true,
+  });
+});
+
 test('new session creation sends the explicit Claude choice', async () => {
   const h = makeHarness();
   h.respondWith(async () => ({

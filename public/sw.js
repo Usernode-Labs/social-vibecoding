@@ -467,6 +467,11 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   }
   if (p === '/api/me/github' || p.startsWith('/api/me/github/')) return 'bypass';
   if (p === '/api/me/x' || p.startsWith('/api/me/x/')) return 'bypass';
+  // The OpenRouter catalog is private, key-filtered, and has its own short
+  // server cache plus an explicit refresh control. Replaying the PWA's much
+  // longer offline copy can hide newly released models and account-policy
+  // changes, while an offline picker cannot start a usable run anyway.
+  if (p === '/api/me/coding-agent/models') return 'bypass';
   if (p.startsWith('/.well-known/oauth-')) return 'bypass';
   // Auth endpoints are online-only — EXCEPT /api/auth/me, which is cached
   // so the SPA's boot check succeeds offline for a logged-in user.
