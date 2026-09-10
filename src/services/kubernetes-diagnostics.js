@@ -28,6 +28,7 @@ async function collectPodDiagnostics(core, {
   const chunks = [];
   let truncated = false;
   let infrastructure = false;
+  let deadlineExceeded = false;
   const read = async fn => {
     if (Date.now() >= deadline) { truncated = true; return null; }
     let timer;
@@ -54,6 +55,9 @@ async function collectPodDiagnostics(core, {
   }
   if (pods.length > 3) truncated = true;
   for (const pod of pods.slice(0, 3)) {
+    const podReason = [pod.status?.reason, pod.status?.message].filter(Boolean).join(': ');
+    if (podReason) details.push(podReason);
+    if (pod.status?.reason === 'DeadlineExceeded') deadlineExceeded = true;
     details.push(...conditionDetails(pod.status?.conditions));
     if (pod.status?.conditions?.some(c => c.type === 'PodScheduled' && c.status === 'False')) infrastructure = true;
     const statuses = [...(pod.status?.initContainerStatuses || []), ...(pod.status?.containerStatuses || [])];
@@ -77,7 +81,7 @@ async function collectPodDiagnostics(core, {
   }
   if (truncated) unavailable.push('Diagnostics collection bounded; additional evidence may be omitted');
   return { logs: boundedText(chunks.join('\n'), maxBytes), details: boundedText(details.join('\n'), 4096),
-    unavailable: boundedText(unavailable.join('\n'), 1024), infrastructure };
+    unavailable: boundedText(unavailable.join('\n'), 1024), infrastructure, deadlineExceeded };
 }
 
 module.exports = { collectPodDiagnostics, conditionDetails, boundedText };

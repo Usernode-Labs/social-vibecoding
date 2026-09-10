@@ -264,7 +264,12 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
       await custom.createNamespacedCustomObject({ group: 'kpack.io', version: 'v1alpha2', namespace: cfg.buildNamespace, plural: 'builds', body });
       break;
     } catch (err) {
-      if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err;
+      if (err?.code !== 409 && err?.response?.statusCode !== 409) {
+        err.buildFailed = true;
+        err.buildLog = boundedText(err.message);
+        err.message = boundedText(err.message);
+        throw err;
+      }
       // Background GC may still be removing a Build pruned just before this
       // deployment acquired its lock. Never reuse a terminating object.
       const existing = await readBuild(config, buildName).catch((readErr) => {
@@ -331,6 +336,7 @@ async function waitForBuild(config, name, { onProgress = null } = {}) {
   const clients = getClients();
   const { custom, core } = clients;
   const report = typeof onProgress === 'function';
+  let lastBuild = null;
   let image = { phase: null, phases: [], detail: null };
   let followed = null;
   let followAbort = null;
@@ -350,7 +356,7 @@ async function waitForBuild(config, name, { onProgress = null } = {}) {
     try {
       const sink = new stream.PassThrough();
       attachLineObserver(sink, (line) => {
-        const text = String(line || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
+        const text = log.redactString(String(line || '').replace(/\x1b\[[0-9;]*m/g, '')).trim();
         if (!text) return;
         image.detail = text.length > 160 ? `${text.slice(0, 157)}...` : text;
         emit();
@@ -375,18 +381,47 @@ async function waitForBuild(config, name, { onProgress = null } = {}) {
   try {
     while (Date.now() < deadline) {
       const build = await custom.getNamespacedCustomObject({ group: 'kpack.io', version: 'v1alpha2', namespace: cfg.buildNamespace, plural: 'builds', name });
+      lastBuild = build;
       const succeeded = build.status?.conditions?.find((condition) => condition.type === 'Succeeded');
       if (succeeded?.status === 'True' && build.status?.latestImage) {
         await observe(build);
         return { ...build, phases: image.phases.length ? image.phases : null };
       }
       if (succeeded?.status === 'False') {
-        throw new Error(`kpack Build ${name} failed: ${succeeded.message || succeeded.reason || 'unknown error'}`);
+        const err = new Error(`kpack Build ${name} failed: ${succeeded.message || succeeded.reason || 'unknown error'}`);
+        if (succeeded.reason === 'DeadlineExceeded') {
+          err.killed = true;
+          err.buildTimeoutSeconds = cfg.activeDeadlineSeconds;
+        }
+        throw err;
       }
       await observe(build);
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
-    throw new Error(`Timed out waiting for kpack Build ${name}`);
+    const err = new Error(`Timed out waiting for kpack Build ${name}`);
+    err.killed = true;
+    err.buildTimeoutSeconds = cfg.activeDeadlineSeconds + 60;
+    throw err;
+  } catch (err) {
+    // This error crosses the same persistence/reporting boundary as Docker's
+    // buildFailed/buildLog contract. Capture the lifecycle Pod before createBuild
+    // removes the failed Build and Kubernetes garbage-collects its Pod.
+    const podName = lastBuild?.status?.podName;
+    const diagnostics = podName
+      ? await collectPodDiagnostics(core, { namespace: cfg.buildNamespace, podName, container: null })
+      : { logs: '', details: '', unavailable: 'Build did not expose a Pod name' };
+    if (diagnostics.deadlineExceeded) {
+      err.killed = true;
+      err.buildTimeoutSeconds = cfg.activeDeadlineSeconds;
+    }
+    err.buildFailed = true;
+    err.buildRef = `${cfg.buildNamespace}/${name}`;
+    err.message = boundedText(err.message);
+    err.buildLog = boundedText([err.message, diagnostics.details, diagnostics.logs].filter(Boolean).join('\n'));
+    if (diagnostics.unavailable) log.warn('kubernetes', 'Build failure diagnostics incomplete', {
+      buildRef: err.buildRef, detail: diagnostics.unavailable,
+    });
+    throw err;
   } finally {
     stopFollow();
   }

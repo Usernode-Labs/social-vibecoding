@@ -145,7 +145,11 @@ function classify(err, opts = {}) {
     const log = truncateLog(err.buildLog || '');
     let reason;
     if (err.killed) {
-      reason = 'Build timed out after 5 minutes';
+      const seconds = Number.isFinite(err.buildTimeoutSeconds) && err.buildTimeoutSeconds > 0
+        ? err.buildTimeoutSeconds : 300;
+      reason = seconds % 60 === 0
+        ? `Build timed out after ${seconds / 60} minute${seconds === 60 ? '' : 's'}`
+        : `Build timed out after ${seconds} seconds`;
     } else {
       const line = pickReasonLine(log);
       reason = line ? `Build failed: ${line}` : `Build failed: ${err.message || 'unknown error'}`;
