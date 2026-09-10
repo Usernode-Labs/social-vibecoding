@@ -45,6 +45,23 @@ Deployment's existing secrets checksum triggers a rollout when these values
 change. After rollout, check the admin mail status and verify delivery to a
 mailbox you control.
 
+For GitHub account linking, add both OAuth credentials to the same encrypted
+file's existing `secrets` block using the SOPS editor:
+
+```yaml
+secrets:
+  githubLinkClientId: "<GitHub OAuth client ID>"
+  githubLinkClientSecret: "<GitHub OAuth client secret>"
+```
+
+With `secrets.create: true`, these map to `GITHUB_LINK_CLIENT_ID` and
+`GITHUB_LINK_CLIENT_SECRET` in the platform Secret and reach the process through
+the Deployment's `envFrom`. With `secrets.create: false`, provide those
+environment-variable keys in `secrets.existingSecret`. Both fields default to
+empty strings and remain optional for chart installation. Publish the updated
+chart and sync the encrypted values through Argo CD; the existing secrets
+checksum rolls out credential changes.
+
 `config.domain` is the canonical platform hostname (`USERNODE_DOMAIN`).
 `config.appsDomain` optionally sets a separate suffix for generated apps and
 session previews (`USERNODE_APPS_DOMAIN`). When empty, it defaults to

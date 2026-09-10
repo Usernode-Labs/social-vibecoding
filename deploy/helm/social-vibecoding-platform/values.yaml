@@ -134,6 +134,9 @@ secrets:
   githubAppId: ""
   githubPrivateKey: ""
   githubBotToken: ""
+  # Optional GitHub account-linking OAuth credentials. Set both in encrypted external values.
+  githubLinkClientId: ""
+  githubLinkClientSecret: ""
   anthropicApiKey: ""
   anthropicAdminKey: ""
   # Optional Gmail sender credentials. Set all three in encrypted external values.
