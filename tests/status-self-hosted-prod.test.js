@@ -31,9 +31,11 @@ const APP_COLUMNS = {
 // Load status.js against canned DB rows and an EMPTY container inventory —
 // so every app's production container looks missing, which is the whole
 // point: only the self-hosted one should be forgiven for it.
-function loadStatus(appRows) {
+function loadStatus(appRows, { sessions = [], busy = [], building = [] } = {}) {
   const ids = {
     pool: require.resolve('../src/db/pool'),
+    activeWorkers: require.resolve('../src/services/active-workers'),
+    staging: require.resolve('../src/services/staging'),
     runtimeStatus: require.resolve('../src/services/runtime-status'),
     deployStatus: require.resolve('../src/services/deploy-status'),
     nodeStatus: require.resolve('../src/services/node-status'),
@@ -54,13 +56,15 @@ function loadStatus(appRows) {
       query: async (sql) => {
         const text = String(sql);
         if (/FROM apps a/.test(text)) return { rows: appRows, rowCount: appRows.length };
-        if (/FROM chat_sessions cs/.test(text)) return { rows: [], rowCount: 0 };
+        if (/FROM chat_sessions cs/.test(text)) return { rows: sessions, rowCount: sessions.length };
         if (/FROM llm_usage/.test(text)) return { rows: [], rowCount: 0 };
         if (/FROM chat_sessions$/m.test(text)) return { rows: [EMPTY_CENSUS], rowCount: 1 };
         return { rows: [], rowCount: 0 };
       },
     }),
   });
+  stub(ids.activeWorkers, { isSessionBusy: (id) => busy.includes(id) });
+  stub(ids.staging, { hasInFlightBuild: (id) => building.includes(id) });
   stub(ids.runtimeStatus, {
     snapshot: async () => ({ resources: [], stats: {}, runtimeKind: 'docker' }),
     listDockerContainers: async () => [],
@@ -148,4 +152,28 @@ test('the row says self-hosted rather than missing', async () => {
   // Green, not red, and not the word the platform never expected to see.
   assert.match(source, /selfHostedNoContainer\s*\n?\s*\? 'running'/);
   assert.match(source, /selfHostedNoContainer\s*\n?\s*\? 'self-hosted'/);
+});
+
+
+test('missing-preview reporting excludes first turns, handoffs, active work and recent activity', async () => {
+  const old = new Date(Date.now() - 10 * 60000).toISOString();
+  const session = { app_id: 1, branch_name: 'dev/example', created_at: old,
+    last_activity_at: old, pr_number: 42, staging_url: null };
+  const sessions = [
+    { ...session, id: 1, pr_number: null }, // First coding turn.
+    { ...session, id: 2, pr_number: null, source: 'cli_handoff' },
+    { ...session, id: 3, has_active_turn: true },
+    { ...session, id: 4 }, // In-memory recovery/operation.
+    { ...session, id: 5 }, // Preview build in progress.
+    { ...session, id: 6, last_activity_at: new Date().toISOString() },
+    { ...session, id: 7 }, // Submitted, idle and preview absent.
+    { ...session, id: 8, staging_url: 'https://preview.example' },
+    { ...session, id: 9, pr_number: null, staging_build_ref: 'builds/previous' },
+  ];
+  const { status, restore } = loadStatus([APP_COLUMNS], { sessions, busy: [4], building: [5] });
+  try {
+    const data = await status.gather({}, { isAdmin: true });
+    assert.deepEqual(data.stuckSessions.map(s => s.id), [7, 9]);
+    assert.equal(data.summary.stuckSessions, 2);
+  } finally { restore(); }
 });

@@ -168,3 +168,30 @@ test('Kubernetes probes and push proxy preserve Docker operation deadlines', asy
   assert.equal((await worker.execPushFromWorker(70003, 'test-branch')).sha, 'abcdef');
   assert.deepEqual(deadlines, [5000, 12345, 60000]);
 });
+
+
+test('legacy recovery and stop helpers never invoke Docker in Kubernetes mode', async (t) => {
+  const prior = process.env.WORKER_RUNTIME;
+  process.env.WORKER_RUNTIME = 'kubernetes';
+  t.after(() => { if (prior === undefined) delete process.env.WORKER_RUNTIME; else process.env.WORKER_RUNTIME = prior; });
+  const docker = require('../src/services/docker');
+  t.mock.method(docker, 'execFileAsync', async () => assert.fail('must not call Docker'));
+  t.mock.method(docker, 'stopAndRemove', async () => assert.fail('must not call Docker'));
+  const removed = [];
+  t.mock.method(kubernetes, 'deleteWorker', async (cfg, id, options) => removed.push({ id, options }));
+  await assert.rejects(worker.watchWorker('sv-worker-s42'), /requires a turn journal/);
+  await worker.stopWorker('sv-worker-s42');
+  assert.deepEqual(removed, [{ id: 42, options: { deleteVolume: false } }]);
+  await assert.rejects(worker.destroyWorker('unexpected-name'), /Invalid Kubernetes worker name/);
+});
+
+test('legacy Docker stop preserves its existing stop-only behavior', async (t) => {
+  const prior = process.env.WORKER_RUNTIME;
+  process.env.WORKER_RUNTIME = 'docker';
+  t.after(() => { if (prior === undefined) delete process.env.WORKER_RUNTIME; else process.env.WORKER_RUNTIME = prior; });
+  const docker = require('../src/services/docker');
+  const calls = [];
+  t.mock.method(docker, 'execFileAsync', async (...args) => { calls.push(args); });
+  await worker.stopWorker('usernode-worker-42');
+  assert.deepEqual(calls, [['docker', ['stop', 'usernode-worker-42'], { timeout: 15000 }]]);
+});

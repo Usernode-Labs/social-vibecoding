@@ -34,13 +34,18 @@ require('./platform-keys').setPlatformKeys();
 // ── worker stub (must be in place before server.js is required) ─────────
 
 const workerCalls = [];
+let kubernetesMode = false;
+let runtimeState = 'running';
+let executing = false;
 const workerPath = require.resolve('../src/services/worker');
 const realWorker = require(workerPath);
 require.cache[workerPath].exports = {
   ...realWorker,
+  usesKubernetesWorkers: () => kubernetesMode,
+  getWorkerStatus: async () => { if (runtimeState instanceof Error) throw runtimeState; return runtimeState; },
   destroyWorker: async (name) => { workerCalls.push(['destroyWorker', name]); },
   adoptWarmWorker: (sessionId, name) => { workerCalls.push(['adoptWarmWorker', sessionId, name]); },
-  isWorkerExecuting: async () => { workerCalls.push(['isWorkerExecuting']); return false; },
+  isWorkerExecuting: async () => { workerCalls.push(['isWorkerExecuting']); return executing; },
   watchWorker: async (name) => { workerCalls.push(['watchWorker', name]); return {}; },
   stopTurn: async () => { workerCalls.push(['stopTurn']); return false; },
   clearActiveTurn: async (sessionId, args) => {
@@ -275,4 +280,38 @@ test('finalizeRecoveredTurn still runs the tail for non-headless sessions (guard
   assert.equal(emits[0].data.text, 'Claude Code made no changes');
   assert.equal(emits[0].data.ccOutcome, 'no_changes');
   assert.match(ret.summary, /finished without committing any changes/);
+});
+
+
+for (const scenario of ['probe-failure', 'not-ready', 'api-failure']) {
+  test(`Kubernetes orphan recovery retains state on ${scenario} without Docker fallback`, async (t) => {
+    kubernetesMode = true;
+    executing = scenario === 'probe-failure' ? null : false;
+    runtimeState = scenario === 'not-ready' ? 'created' : scenario === 'api-failure' ? new Error('API unavailable') : 'running';
+    t.after(() => { kubernetesMode = false; executing = false; runtimeState = 'running'; });
+    workerCalls.length = 0;
+    const pool = makePool({ ...HEADLESS_SESSION, is_headless: false, active_turn: null });
+    const deps = { config: {}, pool, staging: makeStaging(), ghub: {}, broadcastGlobal: () => {} };
+    const orphan = { name: 'sv-worker-s42', sessionId: 42, state: 'created' };
+    await assert.rejects(adoptOrphanWorker(orphan, deps), error => error.retainActiveTurn && error.retryWorkerRecovery);
+    assert.ok(!workerCalls.some(c => ['watchWorker', 'destroyWorker', 'clearActiveTurn', 'stopTurn'].includes(c[0])));
+    assert.ok(!pool.calls.some(c => /UPDATE|INSERT|DELETE/.test(c.sql)));
+    // The original startup snapshot remains 'created'; recovery must use
+    // the fresh API state rather than retrying that stale snapshot forever.
+    runtimeState = 'running'; executing = false;
+    await adoptOrphanWorker(orphan, deps);
+    assert.ok(workerCalls.some(c => c[0] === 'adoptWarmWorker'));
+    assert.ok(!workerCalls.some(c => c[0] === 'watchWorker'));
+  });
+}
+
+test('a missing Kubernetes worker never enters legacy log recovery', async (t) => {
+  kubernetesMode = true; runtimeState = 'not_found';
+  t.after(() => { kubernetesMode = false; runtimeState = 'running'; });
+  workerCalls.length = 0;
+  const pool = makePool({ ...HEADLESS_SESSION, is_headless: false, active_turn: null });
+  await adoptOrphanWorker({ name: 'sv-worker-s42', sessionId: 42, state: 'created' },
+    { config: {}, pool, staging: makeStaging(), ghub: {}, broadcastGlobal: () => {} });
+  assert.ok(!workerCalls.some(c => c[0] === 'watchWorker'));
+  assert.ok(!pool.calls.some(c => /INSERT/.test(c.sql)), 'do not invent a completed turn');
 });

@@ -9,6 +9,8 @@ const nodeStatus = require('./node-status');
 const workerSvc = require('./worker');
 const applicationRuntime = require('./application-runtime');
 const runtimeStatus = require('./runtime-status');
+const activeWorkers = require('./active-workers');
+const stagingSvc = require('./staging');
 
 const WORKER_PREFIX = 'usernode-worker-';
 const APP_PREFIX = 'usernode-app-';
@@ -22,7 +24,7 @@ const STAGING_PREFIX = 'usernode-staging-';
 const MAX_STAGING_GLOBAL = 25;
 const MAX_STAGING_PER_USER = 3;
 const WORKER_ORPHAN_THRESHOLD_MS = 20 * 60 * 1000;
-const STUCK_SESSION_THRESHOLD_MS = 2 * 60 * 1000;
+const MISSING_PREVIEW_THRESHOLD_MS = 2 * 60 * 1000;
 
 // Match sessions.js LLM caps so the dashboard shows the same numbers.
 const USER_DAILY_LIMIT_CENTS = 2500;
@@ -71,6 +73,7 @@ async function gatherFull(config) {
     pool.query(
       `SELECT cs.id, cs.app_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
               cs.session_title, cs.staging_container_id, cs.staging_url, cs.status, cs.created_at,
+              cs.active_turn IS NOT NULL AS has_active_turn, cs.last_activity_at,
               cs.staging_image_ref, cs.staging_build_ref, cs.staging_runtime_kind, cs.staging_runtime_name,
               u.username, u.id AS user_id, a.slug AS app_slug
        FROM chat_sessions cs
@@ -300,13 +303,19 @@ async function gatherFull(config) {
     }
   }
 
-  // Sessions that have a branch but no staging URL for > 2 min — the exact
-  // drift state the server-side recoverSessions() scans for on startup.
+  // A branch alone does not promise a preview: first coding turns and CLI
+  // handoffs normally have one before submitting anything. Report missing
+  // previews only after a PR/build exists and work has stopped. Keep the
+  // legacy payload key for clients, but never call this worker liveness.
   const stuckSessions = sessions
     .filter((s) =>
       s.branch_name &&
       !s.staging_url &&
-      Date.now() - new Date(s.created_at).getTime() > STUCK_SESSION_THRESHOLD_MS
+      (s.pr_number || s.staging_build_ref || s.staging_runtime_name || s.staging_container_id) &&
+      !s.has_active_turn &&
+      !activeWorkers.isSessionBusy(s.id) &&
+      !stagingSvc.hasInFlightBuild(s.id) &&
+      Date.now() - new Date(s.last_activity_at || s.created_at).getTime() > MISSING_PREVIEW_THRESHOLD_MS
     )
     .map((s) => ({
       id: s.id,

@@ -61,3 +61,15 @@ test('database export remains runtime-neutral through networked pg_dump', () => 
   assert.match(source, /DB_ADMIN_URL \|\| process\.env\.DATABASE_URL/);
   assert.doesNotMatch(source, /docker exec/);
 });
+
+
+test('capacity distinguishes idle connections from busy pool slots and labels missing previews honestly', () => {
+  const source = read('frontend/src/features/admin/admin-status.tsx');
+  assert.match(source, /Math.max\(0, db.total - db.idle\)/);
+  assert.match(source, /poolBusy \/ db.max/);
+  assert.match(source, /DB pool \(busy \/ max\)/);
+  assert.match(source, /db.idle} idle/);
+  assert.match(source, /db.waiting > 0/);
+  assert.match(source, /Missing previews/);
+  assert.doesNotMatch(source, />Stuck sessions<|label="Stuck"/);
+});
