@@ -3398,8 +3398,8 @@ function buildTurnStopScript(journal) {
 //
 // Returns:
 //   true   — claude (or its parent run-cc.sh) is currently executing
-//   false  — only the sleep wrapper is alive
-//   null   — couldn't determine (container not running, exec failed, etc.)
+//   false  — no turn is executing, or Kubernetes confirms no worker exists
+//   null   — couldn't determine (worker unready, exec/API failed, etc.)
 //
 // `timeoutMs` is overridable because the journal watchdog deliberately
 // runs the probe with a generous timeout (the probe is a safety net, not
@@ -3415,7 +3415,8 @@ async function isWorkerExecuting(containerName, { timeoutMs = 5000 } = {}) {
     if (out === 'busy') return true;
     if (out === 'idle') return false;
     return null;
-  } catch {
+  } catch (err) {
+    if (usesKubernetesWorkers() && err.code === 'WORKER_NOT_FOUND') return false;
     return null;
   }
 }
