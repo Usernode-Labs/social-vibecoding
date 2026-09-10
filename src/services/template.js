@@ -89,7 +89,15 @@ const PLATFORM_BASE_URL = `https://${PLATFORM_DOMAIN}`;
 const {
   SERVER_NAME: CONNECTOR_SERVER_NAME,
   READ_ONLY_ALLOW_RULES: CONNECTOR_ALLOW_RULES,
+  ALLOW_RULE_SERVER_NAMES: CONNECTOR_NAME_SPELLINGS,
 } = require('./mcp-connect-constants');
+
+// The spellings the shipped rules cover, rendered from the constant so a
+// name added or retired there cannot leave the scaffolded README naming a
+// different set than the settings file beside it.
+const CONNECTOR_SPELLING_LIST = CONNECTOR_NAME_SPELLINGS
+  .map((name) => `\`${name}\``)
+  .join(', ');
 
 // The `.claude/` scaffold, on its own so every path that creates a repo can
 // place it — not just the one that writes the whole template.
@@ -117,7 +125,7 @@ function getConnectorScaffoldFiles() {
       // rules — so the platform ships them where every user of every app
       // picks them up with no setup: the repo it scaffolds.
       //
-      // Three entries, NOT `mcp__${CONNECTOR_SERVER_NAME}__*`, and the
+      // Narrow entries, NOT `mcp__${CONNECTOR_SERVER_NAME}__*`, and the
       // reason is the scaffold rather than the tools: this file is committed
       // into every app repo, and "every call this connector can make" is not
       // something a repo should grant on a stranger's machine on their
@@ -152,7 +160,9 @@ ${JSON.stringify({ permissions: { allow: CONNECTOR_ALLOW_RULES } }, null, 2)}
 Deliberately not \`mcp__${CONNECTOR_SERVER_NAME}__*\`. This file is committed
 into the repo, so it grants on behalf of everyone who opens it — and "every
 call this connector can make" is not something one repo should decide for a
-stranger's machine. These three entries can only ever match reads.
+stranger's machine. These entries can only ever match reads, and they repeat
+because a permission rule names its server literally: the same short list,
+once per spelling the connector may be registered under.
 
 If you want the acting calls (\`submit_work\`, \`create_request\`,
 \`prepare_work\`, \`start_platform_build\`, \`submit_platform_build\`) allowed
@@ -173,11 +183,15 @@ permission on your behalf is exactly what that check exists to prevent.
 ## If you are still being prompted
 
 The server segment of a permission rule is a **literal** — \`mcp__*__get_*\`
-is not a thing — so these rules only match a connector named exactly
-\`${CONNECTOR_SERVER_NAME}\` or \`Usernode\` — the two spellings the shipped
-list covers. Claude.ai's "Add custom connector" dialog takes
-whatever **name you type**, and a rule aimed at a different one fails
-silently: no error, you just keep getting prompted.
+is not a thing — so these rules only match a connector named exactly one of
+the spellings the shipped list covers:
+
+${CONNECTOR_SPELLING_LIST}
+
+The last two are what this connector was called before it was renamed, kept
+so a connector added earlier keeps working. Claude.ai's "Add custom
+connector" dialog takes whatever **name you type**, and a rule aimed at a
+different one fails silently: no error, you just keep getting prompted.
 
 **Read the name off your own tool list rather than trusting this file.** The
 tool names you actually see are either \`mcp__<server>__whoami\` or
