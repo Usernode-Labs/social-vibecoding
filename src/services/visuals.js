@@ -34,7 +34,9 @@ const checkHistory = require('./check-history');
 const unitSuite = require('./unit-suite');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
 const { getPool } = require('../db/pool');
-const { connectionCensus } = require('../db/connection-census');
+const {
+  connectionCensus, mentionsConnectionLimit, connectionExhaustionMessage,
+} = require('../db/connection-census');
 
 const CAPTURE_IMAGE = 'usernode-capture:latest';
 
@@ -621,6 +623,43 @@ function unreachableOriginDetail(rows, origin) {
   }
   const where = origin ? ` at ${origin}` : '';
   return `Staging preview unreachable${where} — no route could be loaded (${sample}).`;
+}
+
+// The same re-labelling as unreachableOriginDetail, for the other way the
+// platform breaks a preview without the diff being involved (#1771).
+//
+// One Postgres server backs the platform, every production app and every
+// preview, and its max_connections is the stock 100. When the fleet uses
+// them all, a preview's own queries throw, its API answers 500, and every
+// declared check records an assertion failure. Sixty-five of them citing
+// one endpoint reads exactly like a broken commit, which is how the author
+// spends an afternoon on a diff that was fine.
+//
+// Two independent pieces of evidence, either sufficient:
+//
+//   - a row NAMES it (Postgres's complaint reached the page or the failure
+//     reason), which is proof;
+//   - the census says the server was saturated as the run finished, which
+//     is circumstance, and is usually all there is, because a 500 page
+//     rarely quotes the database.
+//
+// Guarded by the same "every container row failed" rule as #1381, and for
+// the same reason: one broken route among passing ones is the diff's doing
+// even on a busy server, and only a total wipeout is consistent with the
+// preview having no working database at all. `rows` must already exclude
+// synthesized rows, which never loaded a page.
+function connectionExhaustionDetail(rows, { origin = '', census = null } = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return null;
+  let named = false;
+  for (const r of list) {
+    if (r.status === 'pass') return null;
+    if (mentionsConnectionLimit(r.failureReason)) named = true;
+    const errs = Array.isArray(r.consoleErrors) ? r.consoleErrors : [];
+    if (errs.some((e) => e && mentionsConnectionLimit(e.message))) named = true;
+  }
+  if (!named && !(census && census.saturated)) return null;
+  return connectionExhaustionMessage(census, { where: 'ran its checks' });
 }
 
 // Classify the parsed test frames into the persisted snapshot:
@@ -2191,16 +2230,18 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       }
     }
 
-    // #1771: a run that did not pass gets one line saying whether the shared
-    // Postgres was starved while it ran. Twenty previews each holding six
-    // warm connections, on a server whose max_connections is the stock 100,
-    // is how a proposal's checks came back with 65 failures all citing one
+    // #1771: a run that did not pass asks whether the shared Postgres was
+    // starved while it ran. Twenty previews each holding six warm
+    // connections, on a server whose max_connections is the stock 100, is
+    // how a proposal's checks came back with 65 failures all citing one
     // endpoint's 500s and nothing anywhere naming the cause.
     //
     // Sampled HERE rather than at the write: this is the moment the run
-    // finished, and storeChecks has a call-order contract two tests pin. A
-    // log line, never a verdict — it does not excuse a single row, it only
-    // records what else was true.
+    // finished, and storeChecks has a call-order contract two tests pin.
+    //
+    // The census is taken for ANY non-passing run, because the log line is
+    // worth having either way, but it only changes the VERDICT under
+    // connectionExhaustionDetail's every-row rule.
     if (checksResult.state !== 'passing') {
       const census = await connectionCensus(getPool(config));
       if (census && census.saturated) {
@@ -2211,6 +2252,20 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           idle: census.idle,
           top: census.topDatabases.slice(0, 3),
         });
+      }
+      if (checksResult.state === 'failing') {
+        const containerRows = checksResult.results.filter((r) => !extraRows.includes(r));
+        const detail = connectionExhaustionDetail(containerRows, { origin: stagingOrigin, census });
+        if (detail) {
+          checksResult.state = 'error';
+          checksResult.errorDetail = detail;
+          log.warn('visuals', 'Checks starved of Postgres connections — recorded as error, not failing', {
+            sessionId: session.id,
+            rows: containerRows.length,
+            used: census ? census.used : null,
+            max: census ? census.max : null,
+          });
+        }
       }
     }
 
@@ -2914,6 +2969,7 @@ module.exports = {
   parseTestsDone,
   classifyTests,
   unreachableOriginDetail,
+  connectionExhaustionDetail,
   dnsHostname,
   serializeTestResults,
   overCeilingCheckRow,

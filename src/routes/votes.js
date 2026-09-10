@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
+const { connectionExhaustionMessage } = require('../db/connection-census');
 const log = require('../services/logger');
 const github = require('../services/github');
 const githubMock = require('../services/github-mock');
@@ -573,6 +574,24 @@ function stagingMockProposals(viewer) {
         '[Mock] Checks-error test: the staging build or test run itself broke',
         6, 1, 0, 0, { required: 2 }),
       check_state: 'error',
+      recheckable: true,
+      test_results: [],
+    },
+    // #1771: the same red badge, for the one cause that is NOT the author's
+    // to fix. A staging preview starved of Postgres connections used to
+    // record its 500s as assertion failures against the diff; it is an
+    // 'error' with an attribution sentence now, and this row is how that
+    // sentence is reviewable in a preview. The detail comes from the
+    // function that writes the real ones, so the fixture cannot drift from
+    // the copy an author actually sees.
+    {
+      ...mk(9000045, 900145,
+        '[Mock] Checks-error test: the preview was starved of database connections',
+        4, 1, 0, 1, { required: 2 }),
+      check_state: 'error',
+      check_error_detail: connectionExhaustionMessage(
+        { max: 100, used: 98 }, { where: 'ran its checks' }
+      ),
       recheckable: true,
       test_results: [],
     },

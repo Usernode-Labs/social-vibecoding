@@ -25,6 +25,8 @@
  * legacy string shape is unchanged for existing consumers.
  */
 
+const { mentionsConnectionLimit, connectionExhaustionMessage } = require('../db/connection-census');
+
 const MAX_REASON = 280;
 const MAX_LOG = 16 * 1024;
 
@@ -76,11 +78,41 @@ function stripCommandFailedPrefix(message) {
   return tail || text;
 }
 
+// ─── Infrastructure vs the diff (#1771) ────────────────────────────────
+//
+// A preview whose container cannot get a Postgres connection dies exactly
+// like a preview with a broken migration: non-zero exit, boot logs, a
+// healthcheck that never passes. The difference is invisible at this layer
+// unless something looks for it, and because nothing did, the proposal
+// author was handed "[exited] error: sorry, too many clients already" as
+// their own build's failure. It was not. Every OTHER proposal in the fleet
+// was about to fail the same way for the same reason.
+//
+// So look for it. Every blob the boot path can hand us is a candidate,
+// because which one carries Postgres's complaint depends on how the app
+// exits: a crash on first query puts it in containerLogs, a `docker run`
+// the daemon refused puts it on stderr, and a rejected execFile buries it
+// in the message.
+function bootFailureIsInfrastructure(err) {
+  if (!err) return false;
+  return mentionsConnectionLimit(err.containerLogs)
+    || mentionsConnectionLimit(err.stderr)
+    || mentionsConnectionLimit(err.message);
+}
+
 // Legacy shape: extract a concise, human-readable reason from a
 // build/boot failure (docker.waitForHealthy attaches containerLogs /
 // containerStatus to the thrown error). Kept byte-compatible with the
 // old visuals.summarizeBootFailure for check_error_detail consumers.
 function summarizeBootFailure(err) {
+  // One exception to the byte-compatibility above, and it is the point of
+  // #1771: when the boot logs show the shared Postgres refusing the
+  // connection, the most specific error line is the WRONG answer. It is
+  // true, it is about this container, and it still sends the author to
+  // re-read a diff that was never involved. Say what happened instead.
+  if (bootFailureIsInfrastructure(err)) {
+    return capReason(connectionExhaustionMessage(null, { where: 'started' }));
+  }
   const logs = (err && err.containerLogs) ? String(err.containerLogs) : '';
   let reason = pickReasonLine(logs);
   // No container logs at all means the container never got far enough to
@@ -103,6 +135,10 @@ function classify(err, opts = {}) {
       stage: 'healthcheck',
       reason: summarizeBootFailure(err),
       log: truncateLog(err.containerLogs || ''),
+      // Carried so the checks pipeline can record this as 'error' (retried,
+      // escalated to the platform owner) rather than 'failing' (blamed on
+      // the diff, sticky to the commit). Persisted records ignore it.
+      infrastructure: bootFailureIsInfrastructure(err),
     };
   }
   if (err && err.buildFailed) {
@@ -165,6 +201,7 @@ module.exports = {
   record,
   syntheticRecord,
   summarizeBootFailure,
+  bootFailureIsInfrastructure,
   truncateLog,
   stripAnsi,
   MAX_REASON,

@@ -4592,6 +4592,24 @@ function startSessionAutoPauseSweeper(config) {
     } catch (err) {
       log.warn('server', 'Orphan staging-DB sweep failed', { err: err.message });
     }
+
+    // Pass 9: connection-pressure preview reclaim (#1771). Passes 7 and 8
+    // reclaim previews for what is true about the PREVIEW (stale, orphaned).
+    // This one reclaims healthy previews for what is true about the SERVER:
+    // one Postgres backs the platform, every production app and every
+    // preview, and when its connection budget runs out the failure lands on
+    // whichever proposal's checks run next, recorded as a broken diff.
+    // Does nothing at all until a census says the server is saturated; then
+    // tears down the idle-longest previews, re-censusing after each one and
+    // stopping the moment the pressure is off. Own throttle in the service;
+    // never throws. STAGING_PRESSURE_SWEEP_INTERVAL_MS=0 disables it.
+    try {
+      if (stagingReap.pressureSweepDue()) {
+        await stagingReap.sweepConnectionPressure(config);
+      }
+    } catch (err) {
+      log.warn('server', 'Connection-pressure sweep failed', { err: err.message });
+    }
   }, config.sessionSweepIntervalMs).unref();
 }
 
