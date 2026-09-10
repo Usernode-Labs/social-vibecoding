@@ -358,3 +358,12 @@ test('client query timeout stops submissions on the uncertain connection before 
     assert.equal(dumps(fixture.calls).length, 1);
   } finally { fixture.restore(); }
 });
+
+test('strict database existence lookup propagates failure rather than authorizing a parallel clone', async () => {
+  const fixture = loadDbManager({ failOn: /SELECT 1 FROM pg_database/ });
+  try {
+    assert.equal(await fixture.dbManager.databaseExists('app_demo'), false, 'legacy best-effort callers remain compatible');
+    await assert.rejects(fixture.dbManager.databaseExists('app_demo', { strict: true }), /boom/);
+    await assert.rejects(fixture.dbManager.databaseExists('unsafe-name', { strict: true }), /unsafe/);
+  } finally { fixture.restore(); }
+});

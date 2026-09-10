@@ -128,17 +128,17 @@ async function deleteBuild(config, name) {
 // Source identity changes on every commit, but does not make dependency/launch
 // layers incompatible. Compare the remaining recipe without changing the
 // revision-bearing output tag or its existing fingerprint.
-function reusableBuildEnv(env) {
-  return JSON.stringify((env || []).filter((entry) => !['GIT_SHA', 'BPE_OVERRIDE_GIT_SHA'].includes(entry.name))
+function reusableBuildEnv(env, { includeRevision = false } = {}) {
+  return JSON.stringify((env || []).filter((entry) => includeRevision || !['GIT_SHA', 'BPE_OVERRIDE_GIT_SHA'].includes(entry.name))
     .map((entry) => [entry.name, entry.value, entry.valueFrom])
     .sort((a, b) => a[0].localeCompare(b[0])));
 }
 
-async function previousBuildImage(config, body, repository) {
+async function compatibleCompletedBuilds(config, body, repository) {
   // Mutable builder tags cannot establish that two builds used the same recipe.
-  if (!/@sha256:[a-f0-9]{64}$/.test(body.spec.builder.image)) return null;
+  if (!/@sha256:[a-f0-9]{64}$/.test(body.spec.builder.image)) return [];
   const appId = body.metadata.labels['social.usernode.io/app-id'];
-  if (!appId) return null;
+  if (!appId) return [];
   try {
     const builds = await listManagedBuilds(config, { appId });
     const eligible = builds.filter((build) => {
@@ -165,19 +165,13 @@ async function previousBuildImage(config, body, repository) {
       const finished = (build) => Date.parse(build.status.conditions.find((c) => c.type === 'Succeeded').lastTransitionTime);
       return finished(b) - finished(a) || a.metadata.name.localeCompare(b.metadata.name);
     });
-    if (!eligible.length) return null;
-    const previous = eligible[0];
-    // The cache remains at its configured per-app tag. Previous image selection
-    // is immutable and safe for concurrent builds; it never rewrites that tag
-    // or makes the prior Build a Kubernetes owner of the new one. Retention
-    // removes Build objects/Pods, not registry images.
-    return { image: previous.status.latestImage };
+    return eligible;
   } catch (err) {
     // Cache discovery is optional; an inventory failure still permits a build.
     log.warn('kubernetes', 'Previous build image lookup failed; building without image reuse', {
       appId, err: err.message,
     });
-    return null;
+    return [];
   }
 }
 
@@ -247,8 +241,21 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
       },
     },
   };
-  const lastBuild = await previousBuildImage(config, body, repository);
-  if (lastBuild) body.spec.lastBuild = lastBuild;
+  const completed = await compatibleCompletedBuilds(config, body, repository);
+  const exact = completed.find((previous) => previous.spec.source.git.revision === revision
+    && reusableBuildEnv(previous.spec.env, { includeRevision: true })
+      === reusableBuildEnv(body.spec.env, { includeRevision: true }));
+  if (exact) {
+    // Session identity affects deployment, not the immutable build artifact.
+    // Borrow only completed images: no ownership changes, shared in-flight
+    // jobs, or cancellation/deletion of another session's build on failure.
+    return {
+      buildRef: `${cfg.buildNamespace}/${exact.metadata.name}`,
+      imageRef: exact.status.latestImage, requestedTag: tag, phases: [], reused: true,
+    };
+  }
+  // A different revision can still supply cached dependency/launch layers.
+  if (completed.length) body.spec.lastBuild = { image: completed[0].status.latestImage };
   const { custom } = getClients();
   const createDeadline = Date.now() + 60000;
   while (true) {

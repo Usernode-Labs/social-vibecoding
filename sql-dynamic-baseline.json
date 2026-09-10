@@ -47,13 +47,6 @@
     {
       "source": "src/db/migrate.js",
       "kind": "structural-template",
-      "fingerprint": "7443932f8fa8a6d66a99",
-      "count": 1,
-      "preview": "`INSERT INTO llm_usage (user_id, date, total_cost_cents, byok_cost_cents) SELECT $1, CURRENT_DATE - g, LEAST($2 + (g % 5) * 10, $3)::numeric(10,4), ${byokExpr}:"
-    },
-    {
-      "source": "src/db/migrate.js",
-      "kind": "structural-template",
       "fingerprint": "7ad7a570203416ff9eca",
       "count": 1,
       "preview": "`INSERT INTO user_enrollments (id, user_id, season_id, season_event_id, created_at, updated_at) VALUES (${base}, $1, $2, NULL, NOW(), NOW()), (${base + 1}, $1, "

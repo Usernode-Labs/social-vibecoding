@@ -110,3 +110,53 @@ test('does not select its own existing immutable Build as a previous build', asy
   const existing = previous(cold.body.metadata.name);
   assert.equal((await build([{ items: [existing] }])).body.spec.lastBuild, undefined);
 });
+
+function exactBuild() {
+  const b = previous('other-session');
+  b.metadata.labels['social.usernode.io/session-id'] = '99';
+  b.spec.source.git.revision = revision;
+  for (const entry of b.spec.env) {
+    if (['GIT_SHA', 'BPE_OVERRIDE_GIT_SHA'].includes(entry.name)) entry.value = revision;
+  }
+  return b;
+}
+
+test('reuses an exact completed image from another session without creating or changing a Build', async () => {
+  const b = exactBuild();
+  const before = structuredClone(b);
+  const { body, result } = await build([{ items: [previous('newer', '2026-09-11T00:00:00Z'), b] }]);
+  assert.equal(body, undefined, 'no new build job');
+  assert.equal(result.imageRef, b.status.latestImage);
+  assert.equal(result.buildRef, 'builds/other-session');
+  assert.equal(result.reused, true);
+  assert.deepEqual(result.phases, [], 'do not report the original build duration as current work');
+  assert.deepEqual(b, before, 'the owning session keeps its Build unchanged');
+
+});
+
+for (const [reason, change] of Object.entries({
+  ...excluded,
+  revisionStamp: b => { b.spec.env.find(e => e.name === 'GIT_SHA').value = 'c'.repeat(40); },
+  launchStamp: b => { b.spec.env.find(e => e.name === 'BPE_OVERRIDE_GIT_SHA').value = 'c'.repeat(40); },
+})) {
+  test(`does not skip the build for an exact revision with ${reason}`, async () => {
+    const b = exactBuild(); change(b);
+    const { body, result } = await build([{ items: [b] }]);
+    assert.ok(body, 'a fresh build is required');
+    assert.notEqual(result.reused, true);
+  });
+}
+
+
+test('concurrent sessions independently reuse the same completed immutable image', async () => {
+  const b = exactBuild();
+  kubernetes._setClientsForTest({ custom: {
+    async listNamespacedCustomObject() { return { items: [b] }; },
+    async createNamespacedCustomObject() { assert.fail('must not create a Build'); },
+    async deleteNamespacedCustomObject() { assert.fail('must not delete the shared Build'); },
+  } });
+  const results = await Promise.all([1, 2].map(sessionId => kubernetes.createBuild(cfg, {
+    app, revision, environment: 'staging', sessionId,
+  })));
+  assert.ok(results.every(r => r.reused && r.imageRef === b.status.latestImage));
+});

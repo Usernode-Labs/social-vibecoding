@@ -87,3 +87,18 @@ After deployment, inspect a new Build's `spec.lastBuild.image`, analyzer argv
 and lifecycle logs, then compare build/export durations for repeat builds of
 the same app. API validation and mocked tests do not measure runtime savings.
 No new infrastructure permissions or schema migration is required.
+
+## Completed-image reuse across sessions
+
+When a retained, successful managed Build for the same app has the exact Git
+revision, immutable builder, source repository, service account and complete
+build environment, the runtime returns its immutable output image directly.
+A second session does not create a new Build just to produce the same image.
+The returned build reference points to the original Build; its labels and
+ownership stay unchanged. Concurrent callers can read the same completed
+artifact without sharing cancellation of an in-progress job.
+
+Different revisions still use previous-image layer reuse. Missing/pruned
+history, incompatible settings or an unavailable inventory fall back to a
+normal build. This does not search registry tags or trust mutable builders.
+Registry image retention must continue to cover images from retained Builds.

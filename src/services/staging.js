@@ -412,66 +412,85 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       );
     }
 
-    const imageBuildStartedAt = Date.now();
-    // Everything up to here — the shallow clone, its submodules, and the
-    // manifest/secrets gating — was the one leg of the build half with no
-    // phase of its own. It showed up in the trace only as the gap before the
-    // first step, which is precisely where an unexplained regression hides.
-    timings.sourceFetchMs = imageBuildStartedAt - buildStartedAt;
-    reportBuildStep(config, session, 'image_build', timings, imageBuildStartedAt);
     const { stdout: revisionOut } = await docker.execFileAsync('git', [
       '-C', cloneDir, 'rev-parse', 'HEAD',
     ], { timeout: 5000 });
     const resolvedRevision = (revisionOut || '').trim();
-    const imageProgress = makeImageProgressReporter(config, session, timings, imageBuildStartedAt);
-    let build;
-    try {
-      build = await applicationRuntime.build(config, {
-        app,
-        revision: resolvedRevision,
-        environment: 'staging',
-        sessionId: session.id,
-        sourceDir: cloneDir,
-        dockerImage: imageName,
-        onProgress: imageProgress.report,
-      });
-    } finally {
-      imageProgress.close();
-    }
-    timings.imageBuildMs = Date.now() - imageBuildStartedAt;
-    // The phases with their times, for the finished build's record: the
-    // kpack pod's own stamps, or the last docker step counter.
-    // The runtime's own phases when it reports them (kpack); otherwise the
-    // slowest of the steps it counted (docker). Either way the finished
-    // build says where inside the image build the time went.
-    const reportedPhases = build && Array.isArray(build.phases) && build.phases.length ? build.phases : null;
-    const countedSteps = reportedPhases ? null : imageProgress.slowestSteps();
-    if (reportedPhases) timings.imagePhases = reportedPhases;
-    else if (countedSteps && countedSteps.length) timings.imagePhases = countedSteps;
-    await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
-
-    // 3. Clone the production database. cloneDatabase creates a fresh
-    // per-clone postgres role with its own random password — the
-    // staging container connects as that ephemeral role, not as the
-    // shared superuser. The password lives only in the staging
-    // container's DATABASE_URL env (never persisted on the platform);
-    // teardown drops the role with the clone DB.
     const prodDbName = dbManager.appDbName(app.slug);
     const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
-    const cloneStartedAt = Date.now();
-    reportBuildStep(config, session, 'clone', timings, cloneStartedAt);
-    // Previews clone from the app's staging template (a redacted copy kept
-    // warm on the server) rather than dumping the live database each time;
-    // db-manager falls back to the direct copy on any template trouble.
-    // `cloneVia` rides the timings into the checks trace so the two can be
-    // told apart when the build half is being measured.
-    const cloned = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr, { viaTemplate: true });
-    const { password: stagingDbPassword } = cloned;
-    timings.cloneMs = Date.now() - cloneStartedAt;
-    timings.cloneVia = cloned.via || 'direct';
-    if (cloned.templateRefreshed) timings.templateRefreshed = true;
-    if (cloned.templateStale) timings.templateRefreshQueued = true;
-    const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, stagingDbPassword);
+    // Retries may address the database of a still-serving preview. Only
+    // overlap a clone when its target is confirmed absent; otherwise keep
+    // the old image-before-clone ordering. A failed lookup is not absence.
+    let parallelPreparation = false;
+    try {
+      parallelPreparation = !await dbManager.databaseExists(stagingDbNameStr, { strict: true });
+    } catch (err) {
+      log.warn('staging', 'Database lookup failed; preparing preview sequentially', { sessionId: session.id, err: err.message });
+    }
+    const imageBuildStartedAt = Date.now();
+    timings.sourceFetchMs = imageBuildStartedAt - buildStartedAt;
+    reportBuildStep(config, session, 'image_build', timings, imageBuildStartedAt);
+    const imageProgress = makeImageProgressReporter(config, session, timings, imageBuildStartedAt);
+    let imageFinished = false;
+    let cloneFinished = false;
+    let cloneStartedAt;
+    const buildImage = async () => {
+      let result;
+      try {
+        result = await applicationRuntime.build(config, {
+          app, revision: resolvedRevision, environment: 'staging', sessionId: session.id,
+          sourceDir: cloneDir, dockerImage: imageName, onProgress: imageProgress.report,
+        });
+        return result;
+      } finally {
+        imageProgress.close();
+        imageFinished = true;
+        timings.imageBuildMs = Date.now() - imageBuildStartedAt;
+        const reportedPhases = result && Array.isArray(result.phases) && result.phases.length ? result.phases : null;
+        const countedSteps = reportedPhases ? null : imageProgress.slowestSteps();
+        if (reportedPhases) timings.imagePhases = reportedPhases;
+        else if (countedSteps && countedSteps.length) timings.imagePhases = countedSteps;
+        if (cloneStartedAt && !cloneFinished) reportBuildStep(config, session, 'clone', timings, cloneStartedAt);
+      }
+    };
+    const cloneDatabase = async () => {
+      cloneStartedAt = Date.now();
+      if (imageFinished) reportBuildStep(config, session, 'clone', timings, cloneStartedAt);
+      try {
+        // Each clone retains its own role/password and template redaction.
+        const cloned = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr, { viaTemplate: true });
+        timings.cloneVia = cloned.via || 'direct';
+        if (cloned.templateRefreshed) timings.templateRefreshed = true;
+        if (cloned.templateStale) timings.templateRefreshQueued = true;
+        return cloned;
+      } finally {
+        cloneFinished = true;
+        timings.cloneMs = Date.now() - cloneStartedAt;
+      }
+    };
+    let build, cloned;
+    try {
+      if (parallelPreparation) {
+        // Settle both before cleanup or releasing the per-session guard:
+        // neither a late clone nor a build using cloneDir may outlive us.
+        const [imageResult, cloneResult] = await Promise.allSettled([buildImage(), cloneDatabase()]);
+        const failed = [imageResult, cloneResult].find(result => result.status === 'rejected');
+        if (failed) {
+          await dbManager.dropDatabase(stagingDbNameStr, { strict: true }).catch(err => {
+            log.warn('staging', 'Failed preparation clone cleanup failed', { sessionId: session.id, err: err.message });
+          });
+          throw failed.reason;
+        }
+        build = imageResult.value;
+        cloned = cloneResult.value;
+      } else {
+        build = await buildImage();
+        cloned = await cloneDatabase();
+      }
+    } finally {
+      await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
+    }
+    const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, cloned.password);
 
     // 4. Stop existing staging container if any. Short grace: a preview
     // being replaced has nothing worth draining (#767).
