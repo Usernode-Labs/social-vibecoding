@@ -22,6 +22,7 @@ const DAY_MS = 24 * HOUR_MS;
 // Per-kind recipient rules. `minGapMs` collapses a double-tap; `perHour`
 // bounds a determined one.
 const RULES = {
+  account_email: { minGapMs: 60 * 1000, perWindow: 5, windowMs: HOUR_MS },
   // A user may legitimately re-request a code (typo'd address, mail
   // delayed), so the gap is short and the hourly ceiling is what actually
   // bounds abuse.

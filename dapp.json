@@ -518,6 +518,13 @@
   ],
   "tests": [
     {
+      "name": "Account email and recovery is discoverable in Settings (#1841)",
+      "path": "/#settings/email",
+      "expectText": "Email & recovery",
+      "expectSelector": "[data-settings-section=\"email\"]:not(.hidden) [data-account-email-form]",
+      "allowConsoleErrors": false
+    },
+    {
       "name": "Guest back arrow returns to the app directory (#1028)",
       "path": "/?shot=anon-back#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",

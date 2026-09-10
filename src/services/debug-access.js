@@ -52,6 +52,7 @@ const DENIED_TABLES = new Set([
   'user_agent_files',   // personal instruction files (private user text)
   'platform_env_values', // platform's own env values (AES blobs, still deny)
   'pending_secret_declarations', // values held for a declaration PR (AES blobs)
+  'account_email_verifications', // mailbox proof and current-password hash snapshot
   'mobile_otp_codes',   // hashed one-time email signup/claim codes
   'waitlist_verification_codes', // one-time waitlist email codes, same treatment as mobile_otp_codes
   'web_signup_sessions', // hashed, single-use first-password continuations

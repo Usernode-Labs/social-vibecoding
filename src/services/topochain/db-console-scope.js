@@ -176,6 +176,8 @@ const CONSOLE_CREDENTIAL_COLUMNS = {
   // 6-digit code, and a token hash is a bearer credential in the
   // lookup-by-hash schemes these tables use.
   mobile_otp_codes: ['code_hash'],
+  // Account email proof and the password snapshot are both offline-guessable.
+  account_email_verifications: ['code_hash', 'password_hash'],
   web_signup_sessions: ['token_hash'],
   mobile_auth_tokens: ['token_hash'],
   // The waitlist's own email verification code, same shape and same
