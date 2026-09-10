@@ -139,6 +139,8 @@ secrets:
   githubLinkClientSecret: ""
   anthropicApiKey: ""
   anthropicAdminKey: ""
+  # Optional OpenRouter management credential, supplied through encrypted external values.
+  openrouterManagementApiKey: ""
   # Optional Gmail sender credentials. Set all three in encrypted external values.
   gmailOauthClientId: ""
   gmailOauthClientSecret: ""

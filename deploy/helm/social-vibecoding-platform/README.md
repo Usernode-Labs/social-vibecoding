@@ -62,6 +62,15 @@ empty strings and remain optional for chart installation. Publish the updated
 chart and sync the encrypted values through Argo CD; the existing secrets
 checksum rolls out credential changes.
 
+For OpenRouter managed keys, set `secrets.openrouterManagementApiKey` in the
+same SOPS-encrypted values file. With `secrets.create: true`, it maps to
+`OPENROUTER_MANAGEMENT_API_KEY` in the platform Secret, imported through the
+Deployment's `envFrom`. The field defaults to an empty string and is optional
+for chart installation. With `secrets.create: false`, supply
+`OPENROUTER_MANAGEMENT_API_KEY` in `secrets.existingSecret` instead. Release the
+updated chart and sync through Argo CD; the secrets checksum triggers a rollout
+when the value changes.
+
 `config.domain` is the canonical platform hostname (`USERNODE_DOMAIN`).
 `config.appsDomain` optionally sets a separate suffix for generated apps and
 session previews (`USERNODE_APPS_DOMAIN`). When empty, it defaults to
