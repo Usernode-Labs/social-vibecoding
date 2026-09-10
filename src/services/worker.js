@@ -3224,6 +3224,9 @@ async function evictWorker(sessionId) {
 // (recoverActiveWorkers in server.js). The live per-turn path uses
 // execInWorker which streams the docker-exec child's stdout directly.
 async function watchWorker(containerName, { onProgress, fromStart = true } = {}) {
+  if (usesKubernetesWorkers()) {
+    throw new Error('Kubernetes worker recovery requires a turn journal; legacy Docker log recovery is unavailable');
+  }
   const state = newWatchState();
   state.hostContainerName = containerName;
   const progress = typeof onProgress === 'function' ? onProgress : () => {};
@@ -3417,6 +3420,19 @@ async function isWorkerExecuting(containerName, { timeoutMs = 5000 } = {}) {
   }
 }
 
+async function getWorkerStatus(containerName) {
+  return usesKubernetesWorkers()
+    ? kubernetes.getWorkerStatus(kubernetesWorkerConfig(), containerName)
+    : docker.getContainerStatus(containerName);
+}
+
+// Legacy stop handles still exist during recovery. Kubernetes has no Docker
+// stop operation: remove the worker Deployment, preserving its workspace.
+async function stopWorker(containerName) {
+  if (usesKubernetesWorkers()) return destroyWorker(containerName);
+  await docker.execFileAsync('docker', ['stop', containerName], { timeout: 15000 });
+}
+
 // Hard teardown of a worker container. Used for session archive, error
 // recovery, and the orphan-adoption legacy path. Removes the registry
 // entry too so a follow-up ensureWorker doesn't trust stale state.
@@ -3425,7 +3441,8 @@ async function isWorkerExecuting(containerName, { timeoutMs = 5000 } = {}) {
 // instead — same effect, but the function name signals intent better.
 async function destroyWorker(containerName) {
   const m = containerName.match(/(?:usernode-worker-|sv-worker-s)(\d+)$/);
-  if (usesKubernetesWorkers() && m) {
+  if (usesKubernetesWorkers()) {
+    if (!m) throw new Error(`Invalid Kubernetes worker name: ${containerName}`);
     await kubernetes.deleteWorker(kubernetesWorkerConfig(), parseInt(m[1], 10), { deleteVolume: false }).catch(() => {});
   } else {
     await docker.stopAndRemove(containerName).catch(() => {});
@@ -3637,6 +3654,9 @@ function describePushFailure(err) {
 }
 
 module.exports = {
+  usesKubernetesWorkers,
+  getWorkerStatus,
+  stopWorker,
   describePushFailure,
   ensureWorkerImage,
   // long-lived API

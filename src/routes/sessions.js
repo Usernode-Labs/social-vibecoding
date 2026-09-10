@@ -6856,12 +6856,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           .finally(() => { handle.confirming = false; });
       }
     } else if (handle.workerName) {
-      // Legacy single-shot fallback: no in-flight turn to signal, so we
-      // SIGTERM the whole container. `docker stop` gives it ~10s
-      // before SIGKILL — fine for the legacy path because the wrapper
-      // IS the per-turn workload there.
-      docker.execFileAsync('docker', ['stop', handle.workerName], { timeout: 15000 })
-        .catch((err) => log.warn('sessions', 'docker stop failed', { err: err.message }));
+      // Legacy single-shot fallback: stop the whole worker through its
+      // runtime. Kubernetes removes the Deployment and retains the workspace;
+      // Docker keeps the existing stop-only behavior.
+      worker.stopWorker(handle.workerName)
+        .catch((err) => log.warn('sessions', 'Worker stop failed', { err: err.message }));
     }
 
     try { handle.abort.abort(); } catch {}

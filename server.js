@@ -2008,7 +2008,7 @@ async function recoverActiveWorkers(config) {
           log.warn('server', 'Orphan adoption paused with durable turn state retained', {
             name: orphan.name, sessionId: orphan.sessionId, err: err.message,
           });
-          scheduleRetainedOrphanRecovery(orphan, deps);
+          scheduleRetainedOrphanRecovery({ ...orphan, retryWorkerRecovery: !!err.retryWorkerRecovery }, deps);
           return;
         }
         log.warn('server', 'Orphan adoption failed', {
@@ -2074,7 +2074,7 @@ function scheduleRetainedOrphanRecovery(orphan, deps) {
     run: async () => {
       const activeTurn = await turnLifecycle.loadActiveTurn(deps.pool, sessionId);
       const action = turnLifecycle.recoveryAction(activeTurn);
-      if (action === 'none') return;
+      if (action === 'none' && !orphan.retryWorkerRecovery) return;
       if (action === 'cleanup') {
         const args = turnCleanupArgs(activeTurn);
         recoveryRetry.requireDurableTurnCleanup(
@@ -2158,7 +2158,12 @@ function recoveredAgentIdentity(session, activeTurn = null) {
 }
 
 async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
-  const { name: containerName, sessionId, state: containerState } = orphan;
+  const { name: containerName, sessionId } = orphan;
+  let containerState = orphan.state;
+  const kubernetesWorker = worker.usesKubernetesWorkers();
+  const retryRuntimeRecovery = (message) => Object.assign(new Error(message), {
+    retainActiveTurn: true, retryWorkerRecovery: true,
+  });
 
   const { rows } = await pool.query(
     // #896: app_self_hosted rides along so the recovered turn's Mayor
@@ -2230,6 +2235,16 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     return;
   }
 
+  if (kubernetesWorker) {
+    // Re-read on every retry: the startup inventory may describe a Pod that
+    // was still starting. An API failure or non-ready Deployment is not death.
+    try { containerState = await worker.getWorkerStatus(containerName); }
+    catch (_) { throw retryRuntimeRecovery('Kubernetes worker state is unavailable'); }
+    if (!['running', 'not_found'].includes(containerState)) {
+      throw retryRuntimeRecovery('Kubernetes worker is not ready for recovery');
+    }
+  }
+
   // Long-lived worker reality check: a *running* container could be
   //   (a) a warm-idle wrapper sitting in `sleep infinity` — clean adopt,
   //       no log scrape needed.
@@ -2265,6 +2280,9 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     }
 
     const busy = await worker.isWorkerExecuting(containerName);
+    if (kubernetesWorker && busy === null) {
+      throw retryRuntimeRecovery('Kubernetes worker liveness is unavailable');
+    }
     if (busy === false) {
       // Nothing is executing and there's no record to resume — normally
       // an idle warm container, correctly adopted in silence.
@@ -2292,7 +2310,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       worker.adoptWarmWorker(sessionId, containerName);
       return;
     }
-    if (busy === true && session.cc_session_id) {
+    if (busy === true && (session.cc_session_id || kubernetesWorker)) {
       // Case (d) conservative recovery: the prior in-flight turn
       // predates the detached contract and is unrecoverable from the
       // host. Kill the orphan exec to free the warm container for
@@ -2464,6 +2482,14 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
         }),
       ]
     ).catch(() => {});
+  }
+
+  // All running Kubernetes workers return above. A positively missing one
+  // has had its durable recovery handled; there are no container logs to
+  // scrape or a legacy result to synthesize.
+  if (kubernetesWorker) {
+    await worker.destroyWorker(containerName);
+    return;
   }
 
   const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
