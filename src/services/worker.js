@@ -1082,6 +1082,8 @@ function recordClaudeCodingRun({
 // ──────────────────────────────────────────────────────────────────────
 
 async function ensureWorkerImage() {
+  // Self-previews serve requests only; image builds belong to their parent.
+  if (process.env.USERNODE_ENV === 'staging') return;
   if (usesKubernetesWorkers()) {
     if (!(process.env.KUBERNETES_WORKER_IMAGE || '').includes('@sha256:')) {
       throw new Error('KUBERNETES_WORKER_IMAGE must be configured with an immutable digest');

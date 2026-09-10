@@ -90,6 +90,13 @@ historical CPU throttling as well as completion: a successful Job can still
 produce timing-sensitive assertion failures under CPU contention. Unit-suite
 and coding-worker resource settings are independent.
 
+Self-app previews (`USERNODE_ENV=staging`) do not build worker images, inspect
+Docker or Kubernetes workloads, or read the parent's deployment status. Their
+status API reports `runtimeKind: preview` and `runtimeAvailable: false`; fleet
+counters are null and the UI labels runtime status unavailable. Cloned app and
+session rows do not establish live workload readiness. Preview isolation does
+not require forwarding runtime credentials or a Kubernetes service-account token.
+
 The authorized `usernode-debug containers` and `usernode-debug logs <name>`
 interfaces accept managed runtime names such as `sv-worker-s42` and
 `sv-preview-7-s42`. Their inventory includes readiness but leaves CPU/memory

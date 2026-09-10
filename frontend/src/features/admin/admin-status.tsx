@@ -298,6 +298,9 @@ function nodeStatusMeta(node: any): { label: string; pill: string; tone: Tone } 
 }
 
 function Summary({ s, node, runtimeKind }: { s: StatusData; node: any; runtimeKind?: string }) {
+  if (runtimeKind === 'preview') return (
+    <SummaryCard label="Runtime status" tone="zinc">Unavailable in previews</SummaryCard>
+  );
   const prodTone: Tone = s.prodMissing > 0 ? 'red' : 'green';
   const workerTone: Tone = s.workersOrphaned > 0 ? 'red' : 'zinc';
   const stuckTone: Tone = s.stuckSessions > 0 ? 'yellow' : 'zinc';
@@ -492,8 +495,10 @@ function Node({ node }: { node: any }) {
 }
 
 function SessionRow({ s }: { s: any }) {
-  const stagingState = s.staging?.state || (s.stagingDriftWarning ? 'missing' : 'creating');
-  const stagingLabel = s.staging?.state || (s.stagingDriftWarning ? 'drift' : 'pending');
+  const stagingState = s.runtimeAvailable === false ? 'unknown'
+    : s.staging?.state || (s.stagingDriftWarning ? 'missing' : 'creating');
+  const stagingLabel = s.runtimeAvailable === false ? 'unavailable'
+    : s.staging?.state || (s.stagingDriftWarning ? 'drift' : 'pending');
   const resolve = typeof window !== 'undefined' && typeof (window as any).resolveDevHost === 'function'
     ? (window as any).resolveDevHost
     : (u: string) => u;
@@ -554,10 +559,10 @@ function Apps({ apps }: { apps: any[] }) {
         // otherwise the one app that is definitely up reads as the one app
         // that is down.
         const selfHostedNoContainer = !!a.selfHosted && !a.prod;
-        const prodState = selfHostedNoContainer
+        const prodState = a.runtimeAvailable === false ? 'unknown' : selfHostedNoContainer
           ? 'running'
           : (a.prod?.state || (a.dbStatus === 'creating' ? 'creating' : 'missing'));
-        const prodLabel = selfHostedNoContainer
+        const prodLabel = a.runtimeAvailable === false ? 'unavailable' : selfHostedNoContainer
           ? 'self-hosted'
           : (a.prod?.state || a.dbStatus || 'missing');
         let repoHost = '';
