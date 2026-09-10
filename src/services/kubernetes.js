@@ -809,6 +809,36 @@ async function getWorkerStatus(config, runtimeName) {
   }
 }
 
+// Pod termination evidence is separate from readiness: a restarted worker can
+// be ready again after losing the process that owned the current turn.
+async function inspectWorkerTermination(config, runtimeName, { since, timeoutMs = 5000 } = {}) {
+  const namespace = config.kubernetes.workerNamespace;
+  let timer;
+  const operation = async () => {
+    const pods = await getClients().core.listNamespacedPod({ namespace,
+      labelSelector: `social.usernode.io/runtime-name=${runtimeName},app.kubernetes.io/managed-by=${MANAGED_BY}` });
+    if (!pods.items?.length) return { status: 'gone', oomKilled: false };
+    const sinceMs = new Date(since).getTime();
+    let gone = true;
+    for (const pod of pods.items) {
+      const worker = pod.status?.containerStatuses?.find(c => c.name === 'worker');
+      if (!pod.metadata?.deletionTimestamp && worker?.state?.running) gone = false;
+      for (const terminated of [worker?.state?.terminated, worker?.lastState?.terminated]) {
+        if (terminated?.reason === 'OOMKilled' && Number.isFinite(sinceMs)
+            && new Date(terminated.finishedAt).getTime() >= sinceMs) {
+          return { status: 'exited', oomKilled: true };
+        }
+      }
+    }
+    return { status: gone ? 'not_running' : 'running', oomKilled: false };
+  };
+  try {
+    return await Promise.race([operation(), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Worker termination observation timed out')), timeoutMs);
+    })]);
+  } catch { return null; } finally { clearTimeout(timer); }
+}
+
 async function getWorkerContractVersion(config, runtimeName) {
   try {
     const deployment = await getClients().apps.readNamespacedDeployment({
@@ -1416,7 +1446,7 @@ module.exports = {
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runUnitSuiteJob, execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, deleteWorker, listWorkers, cloneWorkerVolume,
-  listStatusResources, listNamespaceCapacity,
+  listStatusResources, listNamespaceCapacity, inspectWorkerTermination,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,
   _buildPhasesFromPodForTest: buildPhasesFromPod,
