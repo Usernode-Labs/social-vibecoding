@@ -117,8 +117,11 @@ Ordered by how badly an agent working offline gets each one wrong.
    (`usernode.lookupUser()` / `searchUsers()`, or `/users/lookup` on the
    platform API) — never a guess from users your app has already seen.
 9. **Install a SIGTERM/SIGINT shutdown handler** that stops accepting
-   connections, drains for ~3 seconds, closes the pool and exits. Use
-   exec-form `CMD ["node", "server.js"]`.
+   connections, drains for ~3 seconds, closes the pool and exits. For
+   standalone Docker, use exec-form `CMD ["node", "server.js"]`.
+10. **Kubernetes uses kpack/Paketo, not Dockerfiles.** Declare npm `build`
+    and `start` scripts and keep the lockfile current. `ensure:shell`, when
+    present, runs instead of `build`.
 
 One thing NOT to apply: the full document contains a section titled
 "Don't `git push` yourself". That is addressed to Usernode's own build
@@ -132,8 +135,25 @@ exactly what you are being asked to do.
 ## Stack
 
 Each app is a Node.js / Express server with an HTML + JS + Tailwind
-frontend and its own PostgreSQL database. Containers are built from a
-`Dockerfile` in the repo root and listen on port 3000.
+frontend and its own PostgreSQL database. Apps listen on port 3000.
+
+The build contract depends on the platform runtime:
+
+- **Kubernetes:** kpack builds the exact Git revision with a platform-owned
+  Paketo builder. It does not execute the app's `Dockerfile`. Declare asset
+  compilation in `package.json`'s `build` script and launch in `start`
+  (normally `node server.js`); commit the matching lockfile. A declared
+  `ensure:shell` script takes precedence over `build`, so it must produce
+  all required assets. The platform self-app uses this ordering.
+- **Standalone Docker:** the platform builds the repository's root
+  `Dockerfile`. Keep its asset compilation aligned with `npm run build`
+  so both runtimes produce the same assets.
+
+Do not attempt to fix Kubernetes builds by editing Dockerfile `RUN`, `COPY`,
+or `CMD` instructions alone. OS packages or build tools missing from the
+platform builder need a platform-level change; report that requirement.
+The legacy Tailwind compatibility buildpack covers known older app layouts,
+not arbitrary Dockerfile instructions. Prefer an explicit npm build script.
 
 Required env vars at runtime (provided by the harness):
 
@@ -271,8 +291,8 @@ attribute-safe character check used on the landing-page anchor).
 
 Every app container is stopped and replaced on each deploy — a staging
 preview rebuilds on every push, and production is rebuilt on every merge.
-The platform does this by sending **SIGTERM** and giving the process a
-few seconds to exit before Docker SIGKILLs it. An app that ignores the
+The runtime sends **SIGTERM** and gives the process a bounded grace period
+before force-killing it. An app that ignores the
 signal is killed mid-request with open transactions, and the deploy waits
 out the whole grace window for nothing.
 
@@ -328,15 +348,15 @@ Rules:
 - **Serve `503` from `/health` once `shuttingDown` is true** so anything
   polling readiness sees the container leaving rotation rather than a
   connection reset.
-- **Use exec-form `CMD` in the Dockerfile** — `CMD ["node", "server.js"]`,
+- **For standalone Docker, use exec-form `CMD`** — `CMD ["node", "server.js"]`,
   not `CMD node server.js`. Shell form can interpose `/bin/sh` between the
   init process and Node, and a shell that doesn't `exec` swallows the
-  signal.
+  signal. Kubernetes app images use the Paketo launch process and the npm
+  `start` script; changing the Dockerfile does not change that launch path.
 
-Apps generated before this convention keep working — the platform runs
-containers with an init process, so they now exit promptly on SIGTERM
-instead of being force-killed — but they get no drain. **Adopt the
-handler above the next time you edit an app's `server.js`**, the same way
+Apps generated before this convention may have no application-level drain.
+Do not rely on an init process or the runtime to close their transactions.
+**Adopt the handler above the next time you edit an app's `server.js`**, the same way
 the chromeless-deep-link convention is adopted.
 
 ## Staging vs production — `USERNODE_ENV`
@@ -995,7 +1015,7 @@ stored value):
 
 | Key | Source | Why |
 |---|---|---|
-| `NODE_RPC_URL` | platform's own `process.env.NODE_RPC_URL` | Points at `usernode-node` (in-network) in prod; `host.docker.internal:3001` in local-dev. Hardcoding either in the manifest breaks the other. |
+| `NODE_RPC_URL` | platform's own `process.env.NODE_RPC_URL` | Supplied for the active runtime: a cluster Service on Kubernetes or the configured Docker/local endpoint. Never hardcode a deployment-specific host in the manifest. |
 
 Declaring these in `dapp.json` is **optional** — the platform injects
 its value into every deploy (production and staging) whether or not
@@ -2384,8 +2404,9 @@ apps**:
 ### 1. Precompiled (default) — no styling script at all
 
 The scaffold ships a `tailwind.config.js`, a `styles/tailwind-input.css`,
-and a **builder stage in the app's Dockerfile** that compiles them to
-`public/tailwind.css`. The HTML just links it:
+and an **npm build script** that compiles them to `public/tailwind.css`.
+Both the Kubernetes Paketo builder and the standalone Dockerfile invoke
+that script. The HTML just links it:
 
 ```html
 <link rel="stylesheet" href="/tailwind.css">
@@ -2396,9 +2417,10 @@ in-browser compiler, it paints instantly with no flash of unstyled content,
 and the visitor's device does no styling work.
 
 **There is no artifact to keep in sync and no rebuild step to remember.**
-The compile runs during `docker build`, which the platform does on a fresh
-clone for every production deploy *and* every staging preview — so the
-stylesheet is always generated from the markup in that exact commit.
+The compile runs during image creation from the requested Git revision,
+through kpack/Paketo on Kubernetes or `docker build` on standalone Docker.
+Production and staging may reuse a compatible image of the same revision;
+the stylesheet still comes from the markup in that exact commit.
 Nothing is committed to the repo; `public/tailwind.css` exists only inside
 the image.
 
