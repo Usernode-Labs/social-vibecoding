@@ -436,7 +436,7 @@ async function gatherFull(config) {
     version: process.env.GIT_SHA || 'dev',
     runtimeKind,
     isAdmin: true, // overridden in redact() based on requester
-    deployProgress: deployStatus.read(),
+    deployProgress: await deployStatus.read(config),
     node: nodeStatus.get(),
     explorer: nodeStatus.getExplorer(),
     limits: {

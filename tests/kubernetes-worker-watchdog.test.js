@@ -5,7 +5,7 @@ const worker = require('../src/services/worker');
 const flush = () => new Promise(setImmediate);
 let nextSession = 71000;
 
-async function runWatchdog(t, { probes, stopped = false, terminalOnLastProbe = false, missingJournal = false }) {
+async function runWatchdog(t, { probes, stopped = false, terminalOnLastProbe = false, missingJournal = false, termination = null }) {
   const previous = process.env.WORKER_RUNTIME;
   process.env.WORKER_RUNTIME = 'kubernetes';
   t.after(() => {
@@ -16,6 +16,10 @@ async function runWatchdog(t, { probes, stopped = false, terminalOnLastProbe = f
   const sessionId = nextSession++;
   let observed = 0;
   let terminal = false;
+  t.mock.method(kubernetes, 'inspectWorkerTermination', async (_config, _name, { since }) => {
+    assert.ok(Number.isFinite(new Date(since).getTime()));
+    return termination;
+  });
   t.mock.method(kubernetes, 'execInWorker', async (_config, name, command, _input, options) => {
     assert.equal(name, `sv-worker-s${sessionId}`);
     if (command[0] === 'cat') {
@@ -75,4 +79,14 @@ test('a late terminal journal marker wins over watchdog abandonment', async (t) 
   assert.equal(state.execExitSeen, true);
   assert.equal(state.exitCode, 0);
   assert.equal(state.markerlessCause, null);
+});
+
+test('Kubernetes OOM evidence preserves the specific markerless cause', async t => {
+  const state = await runWatchdog(t, { probes: [false, false], termination: { status: 'exited', oomKilled: true } });
+  assert.equal(state.markerlessCause, 'oom_killed');
+});
+
+test('a missing Kubernetes Pod is reported as container gone', async t => {
+  const state = await runWatchdog(t, { probes: Array(12).fill(null), termination: { status: 'gone', oomKilled: false } });
+  assert.equal(state.markerlessCause, 'container_gone');
 });
