@@ -432,6 +432,8 @@ function load() {
     workerRuntime: process.env.WORKER_RUNTIME || appRuntime,
     captureRuntime: process.env.CAPTURE_RUNTIME || appRuntime,
     kubernetes: {
+      platformNamespace: process.env.PLATFORM_NAMESPACE || 'social-platform',
+      platformDeployment: process.env.PLATFORM_DEPLOYMENT || 'social-vibecoding',
       buildNamespace: process.env.BUILD_NAMESPACE || 'social-builds',
       successfulBuildRetentionHours: Number(process.env.KPACK_SUCCESS_RETENTION_HOURS || '48'),
       appNamespace: process.env.APP_NAMESPACE || 'social-apps',

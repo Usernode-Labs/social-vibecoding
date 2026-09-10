@@ -6,6 +6,7 @@ const github = require('../services/github');
 const githubMock = require('../services/github-mock');
 const staging = require('../services/staging');
 const docker = require('../services/docker');
+const applicationRuntime = require('../services/application-runtime');
 const { checkAndResolveConflicts, isResolving } = require('../services/conflict-resolver');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
@@ -4075,7 +4076,10 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
           [result.containerId, sha || null, session.pr_number || null, app.id]
         );
       } else {
-        log.info('votes', 'Self-app PR merged; host deployer will roll the harness', {
+        const clusterRuntime = applicationRuntime.mode(config) === 'kubernetes';
+        log.info('votes', clusterRuntime
+          ? 'Self-app PR merged; GitHub Actions publishes the release for Argo CD'
+          : 'Self-app PR merged; host deployer will roll the harness', {
           appId: app.id, prNumber: session.pr_number,
         });
         // Skip the deployer's ~2-min baseline poll: tell it main just
@@ -4084,7 +4088,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         // the baseline poll still delivers the deploy.
         try {
           const { nudgeHostDeployer } = require('../services/deploy-nudge');
-          nudgeHostDeployer({ sha: mergeCommitSha, prNumber: session.pr_number });
+          if (!clusterRuntime) nudgeHostDeployer({ sha: mergeCommitSha, prNumber: session.pr_number });
         } catch (_) { /* never fail a merge over a hint */ }
       }
       // Let every tab watching this app refresh its commit pill without

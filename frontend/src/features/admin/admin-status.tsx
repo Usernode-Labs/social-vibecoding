@@ -846,15 +846,15 @@ function StatusSection() {
 
       {/* Deploy-in-progress banner. */}
       <div id="admin-status-deploy-banner"
-        className={`${deploy?.deploying ? '' : 'hidden '}mb-4 rounded-lg border border-violet-300 dark:border-violet-700/50 bg-violet-50 dark:bg-violet-900/20 px-4 py-3`}>
+        className={`${deploy?.deploying || deploy?.failed || deploy?.unavailable || deploy?.phase === 'paused' ? '' : 'hidden '}mb-4 rounded-lg border border-violet-300 dark:border-violet-700/50 bg-violet-50 dark:bg-violet-900/20 px-4 py-3`}>
         <div className="flex items-center gap-3">
           <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping" />
+            {deploy?.deploying ? <span className="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping" /> : null}
             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-violet-500" />
           </span>
           <div className="text-sm">
-            <span className="font-semibold text-violet-800 dark:text-violet-200">Deploy in progress:</span>
-            <span className="text-violet-700 dark:text-violet-300/80"> your changes may take a minute to go live.</span>
+            <span className="font-semibold text-violet-800 dark:text-violet-200">{deploy?.failed ? 'Deployment failed:' : deploy?.unavailable ? 'Deployment status unavailable:' : deploy?.phase === 'paused' ? 'Deployment paused:' : 'Deploy in progress:'}</span>
+            <span className="text-violet-700 dark:text-violet-300/80"> {deploy?.failed ? deploy.message : deploy?.unavailable ? 'the rollout could not be observed.' : deploy?.phase === 'paused' ? 'waiting for the rollout to resume.' : 'your changes may take a minute to go live.'}</span>
           </div>
           <span id="admin-status-deploy-meta" className="ml-auto text-xs mono text-violet-700 dark:text-violet-400">
             {[sha, elapsed && `${elapsed} ago`].filter(Boolean).join(' · ')}

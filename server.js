@@ -314,12 +314,12 @@ app.all('/__mock/*', (_req, res) => {
 //                        when the deploy workflow has flagged a redeploy in
 //                        flight (see services/deploy-status.js + deploy.yml).
 const deployStatus = require('./src/services/deploy-status');
-app.get('/api/version', (_req, res) => {
+app.get('/api/version', async (_req, res) => {
   res.json({
     sha: process.env.GIT_SHA || 'dev',
     name: process.env.USERNODE_PROJECT_NAME || 'usernode',
     repoUrl: config.platformRepoUrl,
-    deployProgress: deployStatus.read(),
+    deployProgress: await deployStatus.read(config),
     // Which environment this build is: 'staging' | 'production' | null.
     // Only used to NAME the no-SHA state in the drawer's "Platform
     // version" row: staging previews of the platform are built without

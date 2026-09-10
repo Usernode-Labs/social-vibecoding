@@ -893,6 +893,37 @@ function deploymentState(deployment) {
   return 'creating';
 }
 
+// Read only this installation's platform Deployment. This describes the
+// rollout that Argo has applied; image build/publication remains in Actions.
+async function getPlatformDeployStatus(config, { timeoutMs = 3000 } = {}) {
+  const cfg = config.kubernetes || {};
+  const namespace = cfg.platformNamespace || 'social-platform';
+  const name = cfg.platformDeployment || 'social-vibecoding';
+  let timer;
+  try {
+    const deployment = await Promise.race([
+      getClients().apps.readNamespacedDeployment({ namespace, name }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Platform rollout read timed out')), timeoutMs); }),
+    ]);
+    const status = deployment.status || {};
+    const observed = status.observedGeneration >= (deployment.metadata?.generation || 0);
+    const failure = observed && status.conditions?.find(c =>
+      (c.type === 'Progressing' && c.status === 'False') || (c.type === 'ReplicaFailure' && c.status === 'True'));
+    const complete = deploymentState(deployment) === 'running';
+    const stopped = deployment.spec?.replicas === 0 || !!deployment.metadata?.deletionTimestamp;
+    const progressing = status.conditions?.find(c => c.type === 'Progressing');
+    const revision = deployment.spec?.template?.metadata?.annotations?.['social.usernode.io/source-revision'];
+    return { runtimeKind: 'kubernetes', scope: 'rollout',
+      deploying: !complete && !failure && !deployment.spec?.paused && !stopped,
+      failed: !!failure,
+      phase: failure ? 'failed' : stopped ? 'stopped' : deployment.spec?.paused ? 'paused' : complete ? 'complete' : 'rollout',
+      sha: /^[a-f0-9]{40}$/i.test(revision || '') ? revision : null,
+      startedAt: progressing?.lastUpdateTime || progressing?.lastTransitionTime || null,
+      ...(failure ? { message: boundedText([failure.reason, failure.message].filter(Boolean).join(': '), 1000) } : {}),
+    };
+  } finally { clearTimeout(timer); }
+}
+
 function readyPod(pod) {
   return (pod.status?.conditions || []).some((condition) =>
     condition.type === 'Ready' && condition.status === 'True'
@@ -1446,7 +1477,7 @@ module.exports = {
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runUnitSuiteJob, execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, deleteWorker, listWorkers, cloneWorkerVolume,
-  listStatusResources, listNamespaceCapacity, inspectWorkerTermination,
+  listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,
   _buildPhasesFromPodForTest: buildPhasesFromPod,

@@ -230,3 +230,13 @@ Failed Jobs preserve their exit code and available test output in the check
 result; timeouts remain failures. Checks and earned merge gating are not
 bypassed. Existing previews can be rechecked after the platform release; a
 preview rebuild is not required just to change its capture URL.
+
+## Platform rollout reporting
+
+The platform reads its own Deployment for `/api/version` and admin status.
+The chart binds `social-platform-runtime` to a Role with only `get` on that
+Deployment and injects its namespace and name, including fullname overrides.
+Incomplete rollouts, controller failures, paused rollouts, and unavailable API
+reads remain distinct. This reports Argo-applied rollout state; image build and
+chart publication progress remain in the `Build Kubernetes images` workflow.
+Kubernetes self-app merges do not write the standalone host-deployer nudge.
