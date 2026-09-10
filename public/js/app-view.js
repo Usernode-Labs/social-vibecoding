@@ -9468,11 +9468,22 @@ const AppView = {
     }
 
     if (state === 'error') {
+      // The recorded reason, when the run left one. Without it the card only
+      // ever said "the staging build or the test run itself broke", which is
+      // an accusation on the two occasions it is not true: a preview starved
+      // of Postgres connections (#1771), and a boot that failed on something
+      // the platform owns. Both write check_error_detail, so it leads here
+      // and the generic sentence covers only the case with nothing better to
+      // say. Same 280-char cap the skipped verdict below uses.
+      const errDetail = pr.check_error_detail
+        ? String(pr.check_error_detail).slice(0, 280)
+        : '';
       return [{
         key: 'checks', tone: 'error', heading: "⚠ Checks couldn't run.",
         rows: [
-          { t: 'line', parts: ["The staging build or the test run itself broke, so the platform can't confirm the app works. Merge is blocked until checks pass."] },
-          { t: 'line', parts: ['Pushing a fix rebuilds the preview and re-runs the checks.'], weight: 'foot' },
+          { t: 'line', parts: [errDetail
+            || "The staging build or the test run itself broke, so the platform can't confirm the app works."] },
+          { t: 'line', parts: ['Merge is blocked until checks pass. Pushing a fix rebuilds the preview and re-runs the checks.'], weight: 'foot' },
         ],
         action: recheck,
       }];
