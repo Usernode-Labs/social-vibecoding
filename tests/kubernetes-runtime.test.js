@@ -548,7 +548,7 @@ test('status inventory normalizes application, preview and worker readiness from
           },
         },
         spec: { replicas: 1, template: { spec: { containers: [{ image: 'example/app@sha256:one' }] } } },
-        status: { observedGeneration: 2, replicas: 1, readyReplicas: 1, availableReplicas: 1 },
+        status: { observedGeneration: 2, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 },
       },
       {
         metadata: {
@@ -573,7 +573,7 @@ test('status inventory normalizes application, preview and worker readiness from
           },
         },
         spec: { replicas: 1, template: { spec: { containers: [{ image: 'example/worker@sha256:three' }] } } },
-        status: { observedGeneration: 1, replicas: 1, readyReplicas: 1, availableReplicas: 1 },
+        status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 },
       },
     ],
   };

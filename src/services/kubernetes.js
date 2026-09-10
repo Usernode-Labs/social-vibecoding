@@ -603,8 +603,8 @@ async function getApplicationStatus(config, runtimeName) {
 async function inspectApplication(config, runtimeName) {
   try {
     const deployment = await getClients().apps.readNamespacedDeployment({ name: runtimeName, namespace: config.kubernetes.appNamespace });
-    const status = deployment.status?.availableReplicas >= 1 ? 'running'
-      : deployment.status?.unavailableReplicas ? 'restarting' : 'created';
+    const state = deploymentState(deployment);
+    const status = state === 'creating' ? 'created' : state;
     return { status, labels: deployment.spec?.template?.metadata?.labels || {} };
   } catch (err) {
     if (isNotFound(err)) return { status: 'not_found', labels: {} };
@@ -854,7 +854,7 @@ async function listWorkers(config) {
   return (deployments.items || []).map((deployment) => ({
     name: deployment.metadata.name,
     sessionId: Number(deployment.metadata.labels?.['social.usernode.io/session-id']),
-    state: deployment.status?.availableReplicas >= 1 ? 'running' : 'created',
+    state: deploymentState(deployment) === 'creating' ? 'created' : deploymentState(deployment),
   })).filter((item) => Number.isFinite(item.sessionId));
 }
 
@@ -864,8 +864,13 @@ function deploymentState(deployment) {
   const available = deployment.status?.availableReplicas || 0;
   const observed = deployment.status?.observedGeneration || 0;
   const generation = deployment.metadata?.generation || 0;
-  if (desired === 0) return 'stopped';
-  if (ready >= desired && available >= desired && observed >= generation) return 'running';
+  if (desired === 0 || deployment.metadata?.deletionTimestamp) return 'stopped';
+  // Old replicas can remain ready while the new image is failing to start.
+  // Use the same completion contract as waitForDeployment before reporting
+  // the desired template as running.
+  if (ready >= desired && available >= desired && observed >= generation
+      && deployment.status?.updatedReplicas === desired
+      && deployment.status?.replicas === desired) return 'running';
   if ((deployment.status?.replicas || 0) > 0 || deployment.status?.unavailableReplicas) return 'restarting';
   return 'creating';
 }
