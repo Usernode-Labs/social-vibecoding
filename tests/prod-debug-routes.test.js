@@ -92,6 +92,25 @@ let server;
 let baseUrl;
 const routeConfig = { jwtSecret: JWT_SECRET, platformRepoUrl: '' };
 
+test('Kubernetes container inventory returns managed resources without Docker stats', async t => {
+  routeConfig.appRuntime = 'kubernetes';
+  t.after(() => { delete routeConfig.appRuntime; });
+  for (const method of ['listContainers', 'getStats']) {
+    t.mock.method(require('../src/services/status'), method, () => assert.fail('must not use Docker inventory'));
+  }
+  t.mock.method(require('../src/services/kubernetes'), 'listStatusResources', async () => [
+    { name: 'sv-preview-7-s42', runtimeKind: 'kubernetes', state: 'restarting', ready: 0, desired: 1 },
+  ]);
+  const r = await call({ path: `/api/internal/sessions/${ELIGIBLE_ID}/prod-debug/containers`,
+    token: mint(ELIGIBLE_ID) });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.runtimeKind, 'kubernetes');
+  assert.equal(r.json.containers[0].name, 'sv-preview-7-s42');
+  assert.equal(r.json.containers[0].state, 'restarting');
+  assert.equal(r.json.containers[0].cpu, null);
+  assert.equal(r.json.containers[0].mem, null);
+});
+
 test('Kubernetes logs use managed runtime names, preserve redaction and enforce the byte cap', async (t) => {
   routeConfig.appRuntime = 'kubernetes';
   t.after(() => { delete routeConfig.appRuntime; });

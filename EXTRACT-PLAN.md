@@ -1,5 +1,10 @@
 # Extracting Usernode into its own repo
 
+Historical repository-extraction plan. The standalone server described here is
+one supported deployment mode; it does not describe the Kubernetes runtime.
+See [Kubernetes operations](docs/kubernetes-operations.md) for cluster releases,
+logs and failure reporting.
+
 A phased plan for pulling `projects/usernode-social-vibecoding/` out of
 the `evanshapi.ro` monorepo and into a standalone repo
 (`Usernode-Labs/social-vibecoding`), without disrupting the running
