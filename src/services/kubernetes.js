@@ -4,6 +4,7 @@ const path = require('path');
 const stream = require('stream');
 const k8s = require('@kubernetes/client-node');
 const log = require('./logger');
+const { collectPodDiagnostics, conditionDetails, boundedText } = require('./kubernetes-diagnostics');
 
 const MANAGED_BY = 'social-vibecoding-runtime';
 const PART_OF = 'social-vibecoding';
@@ -263,7 +264,12 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
       await custom.createNamespacedCustomObject({ group: 'kpack.io', version: 'v1alpha2', namespace: cfg.buildNamespace, plural: 'builds', body });
       break;
     } catch (err) {
-      if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err;
+      if (err?.code !== 409 && err?.response?.statusCode !== 409) {
+        err.buildFailed = true;
+        err.buildLog = boundedText(err.message);
+        err.message = boundedText(err.message);
+        throw err;
+      }
       // Background GC may still be removing a Build pruned just before this
       // deployment acquired its lock. Never reuse a terminating object.
       const existing = await readBuild(config, buildName).catch((readErr) => {
@@ -330,6 +336,7 @@ async function waitForBuild(config, name, { onProgress = null } = {}) {
   const clients = getClients();
   const { custom, core } = clients;
   const report = typeof onProgress === 'function';
+  let lastBuild = null;
   let image = { phase: null, phases: [], detail: null };
   let followed = null;
   let followAbort = null;
@@ -349,7 +356,7 @@ async function waitForBuild(config, name, { onProgress = null } = {}) {
     try {
       const sink = new stream.PassThrough();
       attachLineObserver(sink, (line) => {
-        const text = String(line || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
+        const text = log.redactString(String(line || '').replace(/\x1b\[[0-9;]*m/g, '')).trim();
         if (!text) return;
         image.detail = text.length > 160 ? `${text.slice(0, 157)}...` : text;
         emit();
@@ -374,18 +381,47 @@ async function waitForBuild(config, name, { onProgress = null } = {}) {
   try {
     while (Date.now() < deadline) {
       const build = await custom.getNamespacedCustomObject({ group: 'kpack.io', version: 'v1alpha2', namespace: cfg.buildNamespace, plural: 'builds', name });
+      lastBuild = build;
       const succeeded = build.status?.conditions?.find((condition) => condition.type === 'Succeeded');
       if (succeeded?.status === 'True' && build.status?.latestImage) {
         await observe(build);
         return { ...build, phases: image.phases.length ? image.phases : null };
       }
       if (succeeded?.status === 'False') {
-        throw new Error(`kpack Build ${name} failed: ${succeeded.message || succeeded.reason || 'unknown error'}`);
+        const err = new Error(`kpack Build ${name} failed: ${succeeded.message || succeeded.reason || 'unknown error'}`);
+        if (succeeded.reason === 'DeadlineExceeded') {
+          err.killed = true;
+          err.buildTimeoutSeconds = cfg.activeDeadlineSeconds;
+        }
+        throw err;
       }
       await observe(build);
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
-    throw new Error(`Timed out waiting for kpack Build ${name}`);
+    const err = new Error(`Timed out waiting for kpack Build ${name}`);
+    err.killed = true;
+    err.buildTimeoutSeconds = cfg.activeDeadlineSeconds + 60;
+    throw err;
+  } catch (err) {
+    // This error crosses the same persistence/reporting boundary as Docker's
+    // buildFailed/buildLog contract. Capture the lifecycle Pod before createBuild
+    // removes the failed Build and Kubernetes garbage-collects its Pod.
+    const podName = lastBuild?.status?.podName;
+    const diagnostics = podName
+      ? await collectPodDiagnostics(core, { namespace: cfg.buildNamespace, podName, container: null })
+      : { logs: '', details: '', unavailable: 'Build did not expose a Pod name' };
+    if (diagnostics.deadlineExceeded) {
+      err.killed = true;
+      err.buildTimeoutSeconds = cfg.activeDeadlineSeconds;
+    }
+    err.buildFailed = true;
+    err.buildRef = `${cfg.buildNamespace}/${name}`;
+    err.message = boundedText(err.message);
+    err.buildLog = boundedText([err.message, diagnostics.details, diagnostics.logs].filter(Boolean).join('\n'));
+    if (diagnostics.unavailable) log.warn('kubernetes', 'Build failure diagnostics incomplete', {
+      buildRef: err.buildRef, detail: diagnostics.unavailable,
+    });
+    throw err;
   } finally {
     stopFollow();
   }
@@ -512,6 +548,16 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   try {
     await waitForDeployment(namespace, name, { generation: deployed?.metadata?.generation });
   } catch (err) {
+    const diagnostics = await collectPodDiagnostics(core, { namespace, runtimeName: name, imageRef,
+      environmentChecksum: envChecksum(env) });
+    err.healthcheckFailed = true;
+    err.containerLogs = boundedText([err.rolloutDetails, diagnostics.details, diagnostics.logs].filter(Boolean).join('\n'));
+    err.containerStatus = 'not_ready';
+    err.infrastructure = diagnostics.infrastructure || /exceeded quota/i.test(err.rolloutDetails || '');
+    err.message = boundedText(err.message);
+    if (diagnostics.unavailable) log.warn('kubernetes', 'Preview failure diagnostics incomplete', {
+      namespace, name, detail: diagnostics.unavailable,
+    });
     // A failed preview has no serving value but its declared CPU limit still
     // consumes ResourceQuota. Production keeps its prior ReplicaSet for a
     // recoverable rollout; previews are disposable and are rebuilt on retry.
@@ -530,10 +576,12 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
 async function waitForDeployment(namespace, name, { timeoutMs = 5 * 60 * 1000, generation = 0 } = {}) {
   const deadline = Date.now() + timeoutMs;
   const { apps } = getClients();
+  let rolloutDetails = '';
   while (Date.now() < deadline) {
     const deployment = await apps.readNamespacedDeployment({ name, namespace });
     const desired = deployment.spec?.replicas ?? 1;
     const status = deployment.status || {};
+    rolloutDetails = boundedText(conditionDetails(status.conditions).join('\n'), 4096);
     // An available OLD replica keeps serving during a rolling update. Wait
     // for the controller to observe our write, replace every old replica,
     // and make the updated replicas ready and available before publishing it.
@@ -543,7 +591,9 @@ async function waitForDeployment(namespace, name, { timeoutMs = 5 * 60 * 1000, g
         && status.readyReplicas >= desired && status.availableReplicas >= desired) return deployment;
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
-  throw new Error(`Timed out waiting for Deployment ${namespace}/${name}`);
+  const err = new Error(`Timed out waiting for Deployment ${namespace}/${name}`);
+  err.rolloutDetails = rolloutDetails;
+  throw err;
 }
 
 async function getApplicationStatus(config, runtimeName) {
@@ -720,8 +770,11 @@ async function ensureWorker(config, { sessionId, env }) {
           securityContext: nodePodSecurityContext(),
           containers: [{
             name: 'worker', image: cfg.workerImage, imagePullPolicy: 'IfNotPresent',
+            env: [{ name: 'USERNODE_WORKER_REQUIRE_READY', value: '1' }],
             envFrom: [{ secretRef: { name: secretName } }],
             volumeMounts: [{ name: 'state', mountPath: '/home/node/.claude' }],
+            startupProbe: { exec: { command: ['test', '-f', '/tmp/usernode-worker-ready'] }, periodSeconds: 2, failureThreshold: 150 },
+            readinessProbe: { exec: { command: ['test', '-f', '/tmp/usernode-worker-ready'] }, periodSeconds: 2, failureThreshold: 1 },
             resources: { requests: { cpu: '250m', memory: '512Mi' }, limits: { cpu: config.workerCpus || '2', memory: (config.workerMemory || '2Gi').replace(/g$/i, 'Gi') } },
             securityContext: containerSecurityContext(),
           }],
@@ -751,8 +804,17 @@ async function ensureWorker(config, { sessionId, env }) {
 
 async function getWorkerStatus(config, runtimeName) {
   try {
-    const deployment = await getClients().apps.readNamespacedDeployment({ name: runtimeName, namespace: config.kubernetes.workerNamespace });
-    return deployment.status?.availableReplicas >= 1 ? 'running' : 'created';
+    const { apps, core } = getClients();
+    const namespace = config.kubernetes.workerNamespace;
+    const deployment = await apps.readNamespacedDeployment({ name: runtimeName, namespace });
+    if (deployment.metadata?.deletionTimestamp || !deployment.status?.availableReplicas
+        || deployment.status.observedGeneration < deployment.metadata?.generation) return 'created';
+    // Deployment counters can lag a Pod restart. Reuse only a current ready
+    // worker, whose probe is tied to the container-local bootstrap marker.
+    const pods = await core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${runtimeName}` });
+    return pods.items?.some(pod => !pod.metadata?.deletionTimestamp && pod.status?.phase === 'Running'
+      && readyPod(pod) && pod.status?.containerStatuses?.some(c => c.name === 'worker' && c.ready && c.state?.running))
+      ? 'running' : 'created';
   } catch (err) {
     if (isNotFound(err)) return 'not_found';
     throw err;
