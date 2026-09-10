@@ -405,6 +405,30 @@ function containerSecurityContext() {
   return { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] }, readOnlyRootFilesystem: false };
 }
 
+function previewDatabaseAffinity(cfg, environment) {
+  if (environment !== 'staging' || !cfg.previewDatabaseNamespace || !cfg.previewDatabaseCluster) return {};
+  return {
+    affinity: {
+      podAffinity: {
+        // A preference leaves other eligible nodes available immediately.
+        // Select the primary role, not a Pod/node name, so new scheduling
+        // follows CNPG failover without moving already-running previews.
+        preferredDuringSchedulingIgnoredDuringExecution: [{
+          weight: 100,
+          podAffinityTerm: {
+            namespaces: [cfg.previewDatabaseNamespace],
+            labelSelector: { matchLabels: {
+              'cnpg.io/cluster': cfg.previewDatabaseCluster,
+              'cnpg.io/instanceRole': 'primary',
+            } },
+            topologyKey: 'kubernetes.io/hostname',
+          },
+        }],
+      },
+    },
+  };
+}
+
 // `cpus` is the container's CPU LIMIT (a ceiling, not a request — requests
 // stay at 100m so scheduling is unchanged). Staging previews pass
 // docker.STAGING_CPUS through application-runtime.deploy so the capture
@@ -449,6 +473,7 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
           serviceAccountName: cfg.generatedAppServiceAccount,
           automountServiceAccountToken: false,
           securityContext: podSecurityContext(),
+          ...previewDatabaseAffinity(cfg, environment),
           containers: [{
             name: 'app', image: imageRef, imagePullPolicy: 'IfNotPresent',
             ports: [{ name: 'http', containerPort: 3000 }],

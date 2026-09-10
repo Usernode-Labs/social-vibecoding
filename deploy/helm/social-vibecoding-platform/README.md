@@ -84,6 +84,30 @@ control ingress to its Pods. This also permits a cutover-ready configuration
 with the platform, migration Job, and ingress disabled until the database is
 writable.
 
+Previews prefer the node hosting the external CloudNativePG primary by default
+(`config.previewFollowDatabasePrimary: true`). The chart derives
+`PREVIEW_DATABASE_CLUSTER` from `postgresql.podSelector["cnpg.io/cluster"]` and
+`PREVIEW_DATABASE_NAMESPACE` from `postgresql.namespace` (or the release
+namespace). Set the flag to `false` to disable the preference. Bundled PostgreSQL
+and external databases without the CNPG cluster selector keep normal placement.
+Installations without Helm can set both environment variables on the platform.
+
+Only staging preview Deployments receive a weight-100 preferred Pod affinity
+term matching that cluster's `cnpg.io/instanceRole: primary` across
+`kubernetes.io/hostname`. Other eligible nodes remain available if the primary's
+node is full, unavailable, or no matching primary exists. This is a scheduler
+preference, not a guarantee: other scheduling scores can outweigh it. It needs
+no node labels beyond the standard hostname, extra runtime RBAC, or node lookup.
+
+After releasing the platform image and chart together, newly created or
+reconciled preview Deployments get this policy. Existing Deployments are not
+patched automatically. Following a database failover, newly scheduled Pods
+prefer the new primary; running previews stay where they are. Opting out affects
+future reconciliation too. Production apps, build Pods, workers and captures
+retain their existing placement. See the
+[Kubernetes affinity documentation](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity)
+and [CloudNativePG labels](https://cloudnative-pg.io/docs/1.28/labels_annotations/).
+
 Platform upgrades use a Kubernetes-native blue/green equivalent: a
 `RollingUpdate` Deployment creates a new ReplicaSet beside the live one,
 requires two consecutive readiness successes plus `minReadySeconds`, and keeps
