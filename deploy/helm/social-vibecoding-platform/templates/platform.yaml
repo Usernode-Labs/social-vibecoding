@@ -77,6 +77,17 @@ spec:
             - {name: APP_RUNTIME, value: kubernetes}
             - {name: WORKER_RUNTIME, value: kubernetes}
             - {name: CAPTURE_RUNTIME, value: kubernetes}
+            {{- $previewCluster := "" }}
+            {{- $previewNamespace := "" }}
+            {{- if and .Values.config.previewFollowDatabasePrimary (not .Values.postgresql.enabled) }}
+              {{- $previewCluster = index .Values.postgresql.podSelector "cnpg.io/cluster" | default "" }}
+              {{- if $previewCluster }}
+                {{- $previewNamespace = default .Release.Namespace .Values.postgresql.namespace }}
+              {{- end }}
+            {{- end }}
+            # Explicit empty values also override imported config when disabled.
+            - {name: PREVIEW_DATABASE_NAMESPACE, value: {{ $previewNamespace | quote }}}
+            - {name: PREVIEW_DATABASE_CLUSTER, value: {{ $previewCluster | quote }}}
             - {name: RUN_MIGRATIONS_ON_STARTUP, value: "false"}
             # During the rollout overlap both old and new platform Pods serve
             # HTTP, but only the Postgres advisory-lock leader runs singleton

@@ -263,6 +263,63 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
   assert.equal(result.url, 'https://demo.apps.example.test');
 });
 
+for (const [name, environment, database, preferred] of [
+  ['configured staging', 'staging', { previewDatabaseNamespace: 'database-ns', previewDatabaseCluster: 'writer-cluster' }, true],
+  ['production with database configuration', 'production', { previewDatabaseNamespace: 'database-ns', previewDatabaseCluster: 'writer-cluster' }, false],
+  ['unconfigured staging', 'staging', {}, false],
+  ['staging without database namespace', 'staging', { previewDatabaseCluster: 'writer-cluster' }, false],
+  ['staging without database cluster', 'staging', { previewDatabaseNamespace: 'database-ns' }, false],
+]) {
+  test(`preview primary placement: ${name}`, async () => {
+    let deployment;
+    const missing = async () => { throw notFound(); };
+    const record = async ({ body }) => body;
+    // Deliberately no Pod/node discovery API: the scheduler resolves the
+    // current primary, including after failover or when none matches.
+    kubernetes._setClientsForTest({
+      core: {
+        readNamespacedSecret: missing, createNamespacedSecret: record,
+        readNamespacedService: missing, createNamespacedService: record,
+      },
+      apps: {
+        readNamespacedDeployment: async () => {
+          if (!deployment) throw notFound();
+          return { ...deployment, metadata: { ...deployment.metadata, generation: 1 },
+            status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+        },
+        createNamespacedDeployment: async ({ body }) => { deployment = body; return body; },
+      },
+      networking: { readNamespacedIngress: missing, createNamespacedIngress: record },
+    });
+    const cfg = config();
+    Object.assign(cfg.kubernetes, database);
+    await kubernetes.deployApplication(cfg, {
+      app: { id: 7, slug: 'demo' }, environment, sessionId: 42,
+      imageRef: 'ghcr.io/example/demo@sha256:deadbeef', env: {},
+    });
+    const spec = deployment.spec.template.spec;
+    assert.equal(deployment.metadata.namespace, 'social-apps');
+    assert.equal(spec.nodeName, undefined, 'never pin to a specific node');
+    assert.equal(spec.nodeSelector, undefined, 'other eligible nodes remain available');
+    if (preferred) {
+      assert.deepEqual(spec.affinity, {
+        podAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [{
+          weight: 100,
+          podAffinityTerm: {
+            namespaces: ['database-ns'],
+            labelSelector: { matchLabels: {
+              'cnpg.io/cluster': 'writer-cluster', 'cnpg.io/instanceRole': 'primary',
+            } },
+            topologyKey: 'kubernetes.io/hostname',
+          },
+        }] },
+      }, 'use only a soft preference for this cluster’s current primary');
+    } else {
+      assert.equal(spec.affinity, undefined);
+    }
+  });
+}
+
 test('mutable image tags are refused before any Kubernetes write', async () => {
   await assert.rejects(
     kubernetes.deployApplication(config(), {

@@ -435,6 +435,9 @@ function load() {
       buildNamespace: process.env.BUILD_NAMESPACE || 'social-builds',
       successfulBuildRetentionHours: Number(process.env.KPACK_SUCCESS_RETENTION_HOURS || '48'),
       appNamespace: process.env.APP_NAMESPACE || 'social-apps',
+      // Both identify the CNPG writer that hosts preview database clones.
+      previewDatabaseNamespace: process.env.PREVIEW_DATABASE_NAMESPACE || '',
+      previewDatabaseCluster: process.env.PREVIEW_DATABASE_CLUSTER || '',
       workerNamespace: process.env.WORKER_NAMESPACE || 'social-workers',
       buildServiceAccount: process.env.BUILD_SERVICE_ACCOUNT || 'social-kpack-builder',
       generatedAppServiceAccount: process.env.GENERATED_APP_SERVICE_ACCOUNT || 'social-generated-app',
