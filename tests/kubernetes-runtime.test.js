@@ -259,7 +259,8 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
   );
   const ingress = written.find((item) => item.kind === 'Ingress').body;
   assert.equal(ingress.spec.ingressClassName, 'cilium');
-  assert.equal(ingress.metadata.annotations['cert-manager.io/cluster-issuer'], 'letsencrypt-public');
+  assert.equal(ingress.metadata.annotations['cert-manager.io/cluster-issuer'], undefined);
+  assert.deepEqual(ingress.spec.tls, [{ hosts: ['demo.apps.example.test'], secretName: 'social-apps-wildcard-tls' }]);
   assert.equal(result.url, 'https://demo.apps.example.test');
 });
 
@@ -367,7 +368,6 @@ test('a failed staging rollout removes its quota-consuming resources', async () 
     'Deployment/sv-preview-10-s42',
     'Ingress/sv-preview-10-s42',
     'Secret/sv-preview-10-s42-env',
-    'Secret/sv-preview-10-s42-tls',
     'Service/sv-preview-10-s42',
   ]);
 });
