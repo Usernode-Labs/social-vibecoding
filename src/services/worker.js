@@ -93,7 +93,8 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // builds. A v7 runner would retry a stale --resume with the compact prompt and
 // no scout history, so every older warm container must be replaced first.
 // v9: refresh warm workers so run-cc.sh emits partial usage events (#1600).
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v9';
+// v10 publishes bootstrap readiness and fences turns after container restarts.
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v10';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the

@@ -399,6 +399,10 @@ test('worker runtime reconciles a retained PVC, Secret and warm Deployment', asy
   assert.equal(pvc.spec.storageClassName, 'openebs-lvm-retain');
   const deployment = written.find((item) => item.kind === 'Deployment').body;
   assert.equal(deployment.spec.strategy.type, 'Recreate');
+  const workerContainer = deployment.spec.template.spec.containers[0];
+  assert.deepEqual(workerContainer.startupProbe.exec.command, ['test', '-f', '/tmp/usernode-worker-ready']);
+  assert.deepEqual(workerContainer.readinessProbe.exec.command, workerContainer.startupProbe.exec.command);
+  assert.deepEqual(workerContainer.env, [{ name: 'USERNODE_WORKER_REQUIRE_READY', value: '1' }]);
   assert.equal(deployment.metadata.labels['social.usernode.io/worker-contract'], 'v6');
   assert.equal(deployment.spec.template.metadata.labels['social.usernode.io/worker-contract'], 'v6');
   assert.deepEqual(

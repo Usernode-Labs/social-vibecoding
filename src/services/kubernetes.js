@@ -720,8 +720,11 @@ async function ensureWorker(config, { sessionId, env }) {
           securityContext: nodePodSecurityContext(),
           containers: [{
             name: 'worker', image: cfg.workerImage, imagePullPolicy: 'IfNotPresent',
+            env: [{ name: 'USERNODE_WORKER_REQUIRE_READY', value: '1' }],
             envFrom: [{ secretRef: { name: secretName } }],
             volumeMounts: [{ name: 'state', mountPath: '/home/node/.claude' }],
+            startupProbe: { exec: { command: ['test', '-f', '/tmp/usernode-worker-ready'] }, periodSeconds: 2, failureThreshold: 150 },
+            readinessProbe: { exec: { command: ['test', '-f', '/tmp/usernode-worker-ready'] }, periodSeconds: 2, failureThreshold: 1 },
             resources: { requests: { cpu: '250m', memory: '512Mi' }, limits: { cpu: config.workerCpus || '2', memory: (config.workerMemory || '2Gi').replace(/g$/i, 'Gi') } },
             securityContext: containerSecurityContext(),
           }],
@@ -751,8 +754,17 @@ async function ensureWorker(config, { sessionId, env }) {
 
 async function getWorkerStatus(config, runtimeName) {
   try {
-    const deployment = await getClients().apps.readNamespacedDeployment({ name: runtimeName, namespace: config.kubernetes.workerNamespace });
-    return deployment.status?.availableReplicas >= 1 ? 'running' : 'created';
+    const { apps, core } = getClients();
+    const namespace = config.kubernetes.workerNamespace;
+    const deployment = await apps.readNamespacedDeployment({ name: runtimeName, namespace });
+    if (deployment.metadata?.deletionTimestamp || !deployment.status?.availableReplicas
+        || deployment.status.observedGeneration < deployment.metadata?.generation) return 'created';
+    // Deployment counters can lag a Pod restart. Reuse only a current ready
+    // worker, whose probe is tied to the container-local bootstrap marker.
+    const pods = await core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${runtimeName}` });
+    return pods.items?.some(pod => !pod.metadata?.deletionTimestamp && pod.status?.phase === 'Running'
+      && readyPod(pod) && pod.status?.containerStatuses?.some(c => c.name === 'worker' && c.ready && c.state?.running))
+      ? 'running' : 'created';
   } catch (err) {
     if (isNotFound(err)) return 'not_found';
     throw err;
