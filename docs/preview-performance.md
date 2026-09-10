@@ -19,3 +19,25 @@ until that finishes, then cloning if the clone is still running.
 
 Completed Kubernetes images can also be reused across sessions; see
 [kpack image reuse](kpack-build-retention.md#completed-image-reuse-across-sessions).
+
+## Startup fixture batching
+
+The self-app's staging seed order stays sequential, including dependency guards
+and completion before the HTTP listener opens. Five routines now insert sets of
+rows instead of issuing one query per row: topic-scroll threads, home layouts,
+LLM usage, analytics charts, and spend distribution. Parameters remain bound;
+no data is interpolated into SQL. Explicit row ordering retains generated IDs
+where the old loops determined insertion order.
+
+A disposable PostgreSQL 17 comparison against the previous implementation
+produced identical rows in all six affected tables and reduced these routines
+from 277 to 17 queries with the test fixture's users and anchors. This is a
+query-count comparison, not an end-to-end startup speed measurement. Fewer
+network round trips particularly help previews placed far from their database.
+Other seed routines continue to run as before.
+
+Run the database integration test against a disposable local PostgreSQL server
+by setting `FIXTURE_BATCH_TEST_URL` and running
+`node --test tests/staging-fixture-batching.test.js`. The test creates and removes
+its own database, loads the real schema, and checks row contents, message order,
+repeated boots, partial threads, absent anchors/apps, and custom-layout retention.

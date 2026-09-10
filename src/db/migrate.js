@@ -5674,45 +5674,29 @@ async function seedStagingHomeLayout(pool, config) {
   ];
 
   try {
-    const { rows: viewerRows } = await pool.query(
-      'SELECT id FROM users WHERE username = ANY($1::text[])',
-      [[config.adminUsername, 'usernode-capture', 'usernode-capture-admin',
-        'staging-demo-quota-zero']]
+    const cells = [[5, LAYOUT_5], [4, LAYOUT_4]].flatMap(([cols, layout]) =>
+      layout.map(([id, col, row]) => ({
+        cols, item_type: id.startsWith('widget:') ? 'widget' : 'app',
+        item_key: id.slice(id.indexOf(':') + 1), grid_col: col, grid_row: row,
+      })));
+    const { rows: inserted } = await pool.query(
+      `INSERT INTO user_home_layout (user_id, cols, item_type, widget_key, app_id, grid_col, grid_row)
+       SELECT u.id, cell.cols, cell.item_type,
+              CASE WHEN cell.item_type = 'widget' THEN cell.item_key END,
+              a.id, cell.grid_col, cell.grid_row
+         FROM users u
+         CROSS JOIN jsonb_to_recordset($2::jsonb)
+           AS cell(cols int, item_type text, item_key text, grid_col int, grid_row int)
+         LEFT JOIN apps a ON cell.item_type = 'app' AND a.slug = cell.item_key
+        WHERE u.username = ANY($1::text[])
+          AND NOT EXISTS (SELECT 1 FROM user_home_layout existing WHERE existing.user_id = u.id)
+          AND (cell.item_type = 'widget' OR a.id IS NOT NULL)
+       ON CONFLICT DO NOTHING
+       RETURNING user_id`,
+      [[config.adminUsername, 'usernode-capture', 'usernode-capture-admin', 'staging-demo-quota-zero'],
+        JSON.stringify(cells)]
     );
-    let seeded = 0;
-    for (const { id: viewerId } of viewerRows) {
-      const { rows: existing } = await pool.query(
-        'SELECT 1 FROM user_home_layout WHERE user_id = $1 LIMIT 1',
-        [viewerId]
-      );
-      if (existing.length) continue; // a tester already arranged this one
-
-      for (const [cols, layout] of [[5, LAYOUT_5], [4, LAYOUT_4]]) {
-        for (const [id, col, row] of layout) {
-          if (id.startsWith('widget:')) {
-            await pool.query(
-              `INSERT INTO user_home_layout
-                 (user_id, cols, item_type, widget_key, grid_col, grid_row)
-               VALUES ($1, $2, 'widget', $3, $4, $5)
-               ON CONFLICT DO NOTHING`,
-              [viewerId, cols, id.slice(7), col, row]
-            );
-          } else {
-            // Sourced from the apps table so a missing fixture skips the row
-            // rather than failing the FK and aborting the whole seed.
-            await pool.query(
-              `INSERT INTO user_home_layout
-                 (user_id, cols, item_type, app_id, grid_col, grid_row)
-               SELECT $1, $2, 'app', id, $4, $5 FROM apps WHERE slug = $3
-               ON CONFLICT DO NOTHING`,
-              [viewerId, cols, id.slice(4), col, row]
-            );
-          }
-        }
-      }
-      seeded += 1;
-    }
-    log.info('db', 'Staging home layouts seeded', { viewers: seeded });
+    log.info('db', 'Staging home layouts seeded', { viewers: new Set(inserted.map(row => row.user_id)).size });
   } catch (err) {
     log.warn('db', 'Staging home-layout seeding failed', { message: err.message });
   }
@@ -6422,21 +6406,22 @@ async function seedStagingLlmUsage(pool) {
   // Per-user spend profile. Cycle platform-only / byok-only / both so the
   // toggles tell different stories; platform base descends with index
   // while byok base ascends, so the two rankings genuinely disagree.
-  for (let i = 0; i < users.length; i++) {
-    const mode = i % 3; // 0 platform-only, 1 byok-only, 2 both
-    const platformBase = mode === 1 ? 0 : (users.length - i) * 6 + 4; // cents/day
-    const byokBase = mode === 0 ? 0 : (i + 1) * 5 + 3;                 // cents/day
-    await pool.query(
-      `INSERT INTO llm_usage (user_id, date, total_cost_cents, byok_cost_cents)
-       SELECT $1,
-              CURRENT_DATE - g,
-              ($2::numeric * (0.5 + (g % 5) * 0.12))::numeric(10,4),
-              ($3::numeric * (0.5 + ((g + 2) % 5) * 0.12))::numeric(10,4)
-         FROM generate_series(0, 29) g
-       ON CONFLICT (user_id, date) DO NOTHING`,
-      [users[i].id, platformBase, byokBase]
-    );
-  }
+  const profiles = users.map((user, i) => ({
+    user_id: user.id, ordinal: i,
+    platform_base: i % 3 === 1 ? 0 : (users.length - i) * 6 + 4,
+    byok_base: i % 3 === 0 ? 0 : (i + 1) * 5 + 3,
+  }));
+  await pool.query(
+    `INSERT INTO llm_usage (user_id, date, total_cost_cents, byok_cost_cents)
+     SELECT p.user_id, CURRENT_DATE - g,
+            (p.platform_base * (0.5 + (g % 5) * 0.12))::numeric(10,4),
+            (p.byok_base * (0.5 + ((g + 2) % 5) * 0.12))::numeric(10,4)
+       FROM jsonb_to_recordset($1::jsonb) AS p(user_id int, ordinal int, platform_base numeric, byok_base numeric)
+       CROSS JOIN generate_series(0, 29) g
+      ORDER BY p.ordinal, g
+     ON CONFLICT (user_id, date) DO NOTHING`,
+    [JSON.stringify(profiles)]
+  );
 
   log.info('db', 'Staging llm_usage fixtures seeded', { users: users.length });
 }
@@ -6543,53 +6528,43 @@ async function seedStagingSpendDistribution(pool) {
       { id: 9300010, name: 'staging-demo-spend-admin-key',tier: 6, key: true,  admin: true },
     ];
 
-    for (const f of fixtures) {
-      // Sentinel password → never an interactive login. Sentinel
-      // anthropic_key_enc (non-null) → "has own key" without a real key;
-      // the chart only tests IS NOT NULL, never decrypts it.
-      await pool.query(
-        `INSERT INTO users (id, username, password, is_admin, anthropic_key_enc, anthropic_key_last4)
-         VALUES ($1, $2, '!staging-fixture-no-login!', $3, $4, $5)
-         ON CONFLICT (id) DO NOTHING`,
-        [f.id, f.name, f.admin,
-         f.key ? 'v1:staging-demo-fake-key' : null,
-         f.key ? 'demo' : null]
-      );
-      // Pin role + key on reboot so a tester flipping them doesn't drift the
-      // intended buckets across container rebuilds.
-      await pool.query(
-        `UPDATE users SET is_admin = $2, anthropic_key_enc = $3, anthropic_key_last4 = $4 WHERE id = $1`,
-        [f.id, f.admin,
-         f.key ? 'v1:staging-demo-fake-key' : null,
-         f.key ? 'demo' : null]
-      );
-      // Backdate signup so every fixture user counts toward the $0
-      // (registered-as-of-day) baseline across the whole 30-day window.
-      await pool.query(
-        `UPDATE users SET created_at = NOW() - INTERVAL '45 days'
-          WHERE id = $1 AND created_at > NOW() - INTERVAL '45 days'`,
-        [f.id]
-      );
-
-      if (f.tier === 0) continue; // no spend rows → stays in the $0 bucket
-
-      // Cents/day for this tier, kept safely inside the bucket bounds and
-      // nudged by the day index (g) so the stacked heights vary day to day.
-      // tier 5/6 → $20+ ; only the own-key tier writes byok_cost_cents.
-      const base = { 1: 250, 2: 750, 3: 1250, 4: 1750, 5: 2200, 6: 2500 }[f.tier];
-      const byokExpr = f.tier === 6 ? '(800 + (g % 5) * 40)' : '0';
-      await pool.query(
-        `INSERT INTO llm_usage (user_id, date, total_cost_cents, byok_cost_cents)
-         SELECT $1,
-                CURRENT_DATE - g,
-                LEAST($2 + (g % 5) * 10, $3)::numeric(10,4),
-                ${byokExpr}::numeric(10,4)
-           FROM generate_series(0, 29) g
-         ON CONFLICT (user_id, date) DO NOTHING`,
-        // Cap the jitter so a tier-4 user never crosses $20 into the top tier.
-        [f.id, base, f.tier === 4 ? 1999 : base + 40]
-      );
-    }
+    const records = fixtures.map(f => ({
+      id: f.id, name: f.name, admin: f.admin,
+      key_enc: f.key ? 'v1:staging-demo-fake-key' : null,
+      key_last4: f.key ? 'demo' : null,
+      base: { 1: 250, 2: 750, 3: 1250, 4: 1750, 5: 2200, 6: 2500 }[f.tier] || 0,
+      tier: f.tier,
+    }));
+    // Sentinel passwords/keys are non-loginable and carry no real secret.
+    await pool.query(
+      `INSERT INTO users (id, username, password, is_admin, anthropic_key_enc, anthropic_key_last4)
+       SELECT f.id, f.name, '!staging-fixture-no-login!', f.admin, f.key_enc, f.key_last4
+         FROM jsonb_to_recordset($1::jsonb) AS f(id int, name text, admin boolean, key_enc text, key_last4 text)
+       ON CONFLICT (id) DO NOTHING`,
+      [JSON.stringify(records)]
+    );
+    // Re-pin roles/keys, and only backdate signups that are too recent.
+    await pool.query(
+      `UPDATE users u SET is_admin = f.admin, anthropic_key_enc = f.key_enc,
+              anthropic_key_last4 = f.key_last4,
+              created_at = CASE WHEN u.created_at > NOW() - INTERVAL '45 days'
+                                THEN NOW() - INTERVAL '45 days' ELSE u.created_at END
+         FROM jsonb_to_recordset($1::jsonb) AS f(id int, admin boolean, key_enc text, key_last4 text)
+        WHERE u.id = f.id`,
+      [JSON.stringify(records)]
+    );
+    await pool.query(
+      `INSERT INTO llm_usage (user_id, date, total_cost_cents, byok_cost_cents)
+       SELECT f.id, CURRENT_DATE - g,
+              LEAST(f.base + (g % 5) * 10, CASE WHEN f.tier = 4 THEN 1999 ELSE f.base + 40 END)::numeric(10,4),
+              (CASE WHEN f.tier = 6 THEN 800 + (g % 5) * 40 ELSE 0 END)::numeric(10,4)
+         FROM jsonb_to_recordset($1::jsonb) AS f(id int, base int, tier int)
+         CROSS JOIN generate_series(0, 29) g
+        WHERE f.tier <> 0
+        ORDER BY f.id, g
+       ON CONFLICT (user_id, date) DO NOTHING`,
+      [JSON.stringify(records)]
+    );
 
     log.info('db', 'Staging spend-distribution fixtures seeded', { users: fixtures.length });
   } catch (err) {
@@ -6913,23 +6888,23 @@ async function seedStagingAnalyticsCharts(pool) {
       { id: 900064, createdDaysAgo: 10, stride: 2 },
       { id: 900065, createdDaysAgo: 4,  stride: 1 },
     ];
-    for (const u of users) {
-      await pool.query(
-        `INSERT INTO users (id, username, password, created_at)
-         VALUES ($1, $2, '!staging-fixture-no-login!', NOW() - ($3::int * INTERVAL '1 day'))
-         ON CONFLICT (id) DO NOTHING`,
-        [u.id, `staging-demo-analytics-${u.id}`, u.createdDaysAgo]
-      );
-      // app_activity on every `stride`-th day from signup to now → the
-      // activityDaysSql surface the General-users + retention queries read.
-      await pool.query(
-        `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
-         SELECT $1, $2, 120, CURRENT_DATE - g
-           FROM generate_series(1, $3, $4) g
-         ON CONFLICT (app_id, user_id, date) DO NOTHING`,
-        [appId, u.id, u.createdDaysAgo, u.stride]
-      );
-    }
+    await pool.query(
+      `INSERT INTO users (id, username, password, created_at)
+       SELECT u.id, 'staging-demo-analytics-' || u.id, '!staging-fixture-no-login!',
+              NOW() - (u."createdDaysAgo" * INTERVAL '1 day')
+         FROM jsonb_to_recordset($1::jsonb) AS u(id int, "createdDaysAgo" int)
+       ON CONFLICT (id) DO NOTHING`,
+      [JSON.stringify(users)]
+    );
+    await pool.query(
+      `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
+       SELECT $1, u.id, 120, CURRENT_DATE - g
+         FROM jsonb_to_recordset($2::jsonb) AS u(id int, "createdDaysAgo" int, stride int)
+         CROSS JOIN LATERAL generate_series(1, u."createdDaysAgo", u.stride) g
+        ORDER BY u.id, g
+       ON CONFLICT (app_id, user_id, date) DO NOTHING`,
+      [appId, JSON.stringify(users)]
+    );
 
     // Power-user events. Per qualifying week: 3 dapp_active_day events (>=3
     // "uses") + 3 developer actions (>=3). Week w (days ago) spans
@@ -6945,26 +6920,24 @@ async function seedStagingAnalyticsCharts(pool) {
       { id: 900063, weeks: 1 },
     ];
     let evId = 90006000;
+    const events = [];
     for (const q of qualWeeks) {
       for (let w = 0; w < q.weeks; w++) {
         for (const d of weekDappDays[w]) {
-          await pool.query(
-            `INSERT INTO events (id, user_id, app_id, event_type, created_at)
-             VALUES ($1, $2, $3, 'dapp_active_day', NOW() - ($4::int * INTERVAL '1 day'))
-             ON CONFLICT (id) DO NOTHING`,
-            [evId++, q.id, appId, d]
-          );
+          events.push({ id: evId++, user_id: q.id, event_type: 'dapp_active_day', days_ago: d });
         }
         for (let i = 0; i < weekDevDays[w].length; i++) {
-          await pool.query(
-            `INSERT INTO events (id, user_id, app_id, event_type, created_at)
-             VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 day'))
-             ON CONFLICT (id) DO NOTHING`,
-            [evId++, q.id, appId, devTypes[i % devTypes.length], weekDevDays[w][i]]
-          );
+          events.push({ id: evId++, user_id: q.id, event_type: devTypes[i % devTypes.length], days_ago: weekDevDays[w][i] });
         }
       }
     }
+    await pool.query(
+      `INSERT INTO events (id, user_id, app_id, event_type, created_at)
+       SELECT e.id, e.user_id, $1, e.event_type, NOW() - (e.days_ago * INTERVAL '1 day')
+         FROM jsonb_to_recordset($2::jsonb) AS e(id int, user_id int, event_type text, days_ago int)
+       ON CONFLICT (id) DO NOTHING`,
+      [appId, JSON.stringify(events)]
+    );
 
     log.info('db', 'Staging analytics-charts fixtures seeded', { appId });
   } catch (err) {
@@ -10392,27 +10365,25 @@ async function seedStagingTopicScrollThreads(pool, config) {
       log.warn('db', 'Staging topic-scroll thread skipped: missing anchor', { threadType });
       return 0;
     }
-    let inserted = 0;
-    for (let i = 0; i < bodies.length; i++) {
-      // Prefix makes each row's content unique per thread, which doubles as
-      // the idempotency key and an obviously-fake "Staging demo" marker.
-      const content = `[Staging demo] ${label} #${i + 1}: ${bodies[i]}`;
-      const { rows: existing } = await pool.query(
-        `SELECT 1 FROM chat_messages
-          WHERE app_id = $1 AND thread_type = $2 AND thread_ref = $3 AND content = $4
-          LIMIT 1`,
-        [appId, threadType, threadRef, content]
-      );
-      if (existing.length) continue;
-      const minutesAgo = (bodies.length - i) * 4; // oldest first, newest last
-      await pool.query(
-        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
-         VALUES ($1, $2, $3, 'message', $4, $5, NOW() - ($6::int * INTERVAL '1 minute'))`,
-        [appId, authorIds[i % authorIds.length], content, threadType, threadRef, minutesAgo]
-      );
-      inserted++;
-    }
-    return inserted;
+    const messages = bodies.map((body, i) => ({
+      user_id: authorIds[i % authorIds.length],
+      content: `[Staging demo] ${label} #${i + 1}: ${body}`,
+      minutes_ago: (bodies.length - i) * 4,
+    }));
+    const result = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+       SELECT $1::int, m.user_id, m.content, 'message', $2::text, $3::int,
+              NOW() - (m.minutes_ago * INTERVAL '1 minute')
+         FROM jsonb_to_recordset($4::jsonb) AS m(user_id int, content text, minutes_ago int)
+        WHERE NOT EXISTS (
+          SELECT 1 FROM chat_messages existing
+           WHERE existing.app_id = $1 AND existing.thread_type = $2
+             AND existing.thread_ref = $3 AND existing.content = m.content
+        )
+        ORDER BY m.minutes_ago DESC`,
+      [appId, threadType, threadRef, JSON.stringify(messages)]
+    );
+    return result.rowCount;
   };
 
   const n1 = await seedThread('issue', issueRef, 'issue thread');
@@ -12312,4 +12283,6 @@ module.exports = {
   migrate, seedStagingTopochain, seedStagingProfileCustomization,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
+  seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
+  seedStagingAnalyticsCharts, seedStagingSpendDistribution,
 };
