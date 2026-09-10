@@ -1475,8 +1475,14 @@ const Home = {
   _maybeOpenShotMenu(listEl) {
     if (Home._shotMenuDone || Home._shotMenuPending) return;
     let shot = null;
-    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    let gesture = null;
+    try {
+      const q = new URLSearchParams(location.search);
+      shot = q.get('shot');
+      gesture = q.get('gesture');
+    } catch (err) { /* ignore */ }
     if (shot !== 'card-menu') return;
+    if (gesture !== 'contextmenu' && gesture !== 'hold') gesture = null;
     if (!listEl || listEl.offsetParent === null) return; // not the visible grid
     Home._shotMenuPending = true;
     // Deferred a frame: the grid was written synchronously just above,
@@ -1505,10 +1511,29 @@ const Home = {
         }
       }
       if (!slug) return;
+      // #1838: the gesture modes drive the REAL listeners rather than calling
+      // openCardMenu, which is the only way a declared check can prove a
+      // mouse can reach the menu instead of proving the menu builder works.
+      // They need the card ELEMENT — the featured-row fallback above hands
+      // back a rect, and a rect cannot receive an event — so leave the
+      // one-shot unspent and let a later repaint with a real launcher tile
+      // have its turn.
+      const el = anchor && typeof anchor.dispatchEvent === 'function' ? anchor : null;
+      if (gesture && !el) return;
       // A genuinely empty Home grid, or a hidden grid that raced Browse, has
       // no target. Consume the one-shot only after a real one exists, so the
       // next data-bearing/visible repaint gets another chance.
       Home._shotMenuDone = true;
+      if (gesture) {
+        Home._dispatchCardMenuGesture(el, gesture);
+        // `hold` opens on the recognizer's own 400ms timer, so the opacity
+        // lock waits for it rather than for the next frame.
+        setTimeout(
+          () => { if (Home._menu) Home._assertMenuOpaque(); },
+          gesture === 'hold' ? 700 : 60,
+        );
+        return;
+      }
       Home.openCardMenu(slug, anchor);
       // openCardMenu is a no-op when the app isn't in Home._apps yet or
       // carries no actions for this viewer; Home._menu is how it reports
@@ -1517,6 +1542,42 @@ const Home = {
       Home._shotMenuDone = true;
       requestAnimationFrame(() => Home._assertMenuOpaque());
     });
+  },
+
+  // Synthesises one of the two MOUSE entry points on a launcher tile, for
+  // `?shot=card-menu&gesture=…`. Everything downstream is the real wiring:
+  // the tile's own React handlers and _wireCardLongPressMenu's timer.
+  _dispatchCardMenuGesture(card, gesture) {
+    const Pointer = typeof window.PointerEvent === 'function' ? window.PointerEvent : MouseEvent;
+    const rect = typeof card.getBoundingClientRect === 'function'
+      ? card.getBoundingClientRect() : null;
+    const down = (button) => {
+      card.dispatchEvent(new Pointer('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        button,
+        buttons: button === 2 ? 2 : 1,
+        pointerId: 1,
+        pointerType: 'mouse',
+        isPrimary: true,
+        clientX: rect ? Math.round(rect.left + rect.width / 2) : 0,
+        clientY: rect ? Math.round(rect.top + rect.height / 2) : 0,
+      }));
+    };
+    if (gesture === 'hold') {
+      // Left button down and left there: no pointerup, no pointermove, so
+      // the 400ms hold runs to completion exactly as a held mouse does.
+      down(0);
+      return;
+    }
+    // Right-click. The pointerdown is what records the pointer type (and,
+    // for a real mouse, what makes the kit dismiss any open menu), so it
+    // has to lead — the same order the browser delivers them in.
+    down(2);
+    card.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true, cancelable: true, composed: true, button: 2, buttons: 2,
+    }));
   },
 
   // Regression lock for #847, and the second reason the deep link above
@@ -2972,6 +3033,11 @@ const Home = {
   // positioning, outside-pointerdown / Escape / scroll / resize
   // dismissal, menu focus handling) on desktop.
   _menu: null,
+  // The element the open menu is anchored to, and what it was at the last
+  // pointerdown — see _wireMenuAnchorSnapshot / #1838.
+  _menuAnchor: null,
+  _menuAnchorAtPress: null,
+  _menuAnchorSnapshotWired: false,
 
   // Pure item builder, separate from the DOM so tests can pin the
   // permission gating. Mutating controls gate on canAdminWrite (full
@@ -3196,6 +3262,7 @@ const Home = {
     headerEl.className = 'card-menu-header';
     headerEl.innerHTML = Home.renderMenuHeaderHtml(app);
     const anchorIsEl = !!(anchor && typeof anchor.getBoundingClientRect === 'function');
+    const anchorEl = anchorIsEl && anchor.nodeType === 1 ? anchor : null;
     const menu = PlatformUI.popover({
       anchorEl: anchorIsEl ? anchor : undefined,
       anchorRect: anchorIsEl ? undefined : anchor,
@@ -3212,15 +3279,43 @@ const Home = {
     });
     if (!menu) return;
     Home._menu = menu;
+    // #1838: which TILE the open menu belongs to. The desktop right-click
+    // path is a toggle, and it can only tell "close this one" from "move to
+    // that one" by comparing anchors.
+    Home._menuAnchor = anchorEl;
     menu.then(() => {
-      if (Home._menu === menu) Home._menu = null;
+      if (Home._menu === menu) {
+        Home._menu = null;
+        Home._menuAnchor = null;
+      }
     });
   },
 
   closeCardMenu() {
     const menu = Home._menu;
     Home._menu = null;
+    Home._menuAnchor = null;
     if (menu && typeof menu.dismiss === 'function') menu.dismiss();
+  },
+
+  // #1838: the kit's popover dismisses itself from a document-level
+  // pointerdown CAPTURE listener it installs when it opens, and resolves its
+  // promise synchronously in there — so by the time `contextmenu` arrives
+  // (a later task) the menu is gone and `_menuAnchor` has already been
+  // cleared. This listener is installed ONCE, before any popover exists, so
+  // for the same node and the same phase it runs FIRST and can snapshot the
+  // anchor the press landed on while it is still true.
+  //
+  // The snapshot is not a stale copy of _menuAnchor: it is re-taken on every
+  // pointerdown, so a menu closed by Escape (or by anything else) leaves a
+  // null snapshot at the NEXT press and the right-click opens as it should.
+  _wireMenuAnchorSnapshot() {
+    if (Home._menuAnchorSnapshotWired) return;
+    if (!document || typeof document.addEventListener !== 'function') return;
+    Home._menuAnchorSnapshotWired = true;
+    document.addEventListener('pointerdown', () => {
+      Home._menuAnchorAtPress = Home._menuAnchor;
+    }, true);
   },
 
   // ── Menu actions ──────────────────────────────────────────────────
@@ -4190,19 +4285,29 @@ const Home = {
     Home._incoming = null;
   },
 
-  // Long-press actions for search/demo tiles and pen input. Placed touch
-  // tiles use the kit's own lift callback above, so only one recognizer
-  // claims a touch. Return teardown for React remounts and view changes.
+  // Press-and-hold actions for search/demo tiles, pen input, and the MOUSE.
+  // Placed touch tiles use the kit's own lift callback above, so only one
+  // recognizer claims a touch. Return teardown for React remounts and view
+  // changes.
+  //
+  // #1838: the mouse always comes through HERE. The kit's own mouse path
+  // only ever arms a drag (it lifts after REORDER_SLOP of movement and has
+  // no hold timer), so before this a stationary mouse hold on a tile was a
+  // no-op — the "can no longer hold press" in the issue.
   _wireCardLongPressMenu(card) {
+    Home._wireMenuAnchorSnapshot();
     let cleanup = () => {};
     const onDown = (e) => {
       cleanup();
-      if ((e.pointerType !== 'touch' && e.pointerType !== 'pen') || e.button !== 0 || e.isPrimary === false) return;
+      if ((e.pointerType !== 'touch' && e.pointerType !== 'pen' && e.pointerType !== 'mouse')
+          || e.button !== 0 || e.isPrimary === false) return;
       if (e.target.closest('.card-menu-btn') || e.target.closest('.retry-btn')) return;
-      // Placed touch tiles share the kit's lift/drag sequence above. Pen and
-      // search/demo tiles have no touch placement recognizer to do the hold.
+      // Placed touch tiles share the kit's lift/drag sequence above. Pen,
+      // mouse and search/demo tiles have no touch placement recognizer to do
+      // the hold.
       if (e.pointerType === 'touch' && card.hasAttribute('data-yours')
           && !card.hasAttribute('data-demo') && Home._placementHandle) return;
+      const isMouse = e.pointerType === 'mouse';
       const startX = e.clientX;
       const startY = e.clientY;
       let opened = false;
@@ -4210,8 +4315,8 @@ const Home = {
         timer = null;
         const g = PlatformUI.gestures();
         if (g && !g.claim(e.pointerType === 'touch' ? 'touch' : e.pointerId, 'home-card-menu')) return;
-        // Eat the synthetic click the browser fires on finger lift so
-        // releasing the long-press doesn't also open the app.
+        // Eat the click the browser fires on finger lift / button release so
+        // ending the press-and-hold doesn't also open the app.
         Home._suppressClick = true;
         opened = true;
         Home.openCardMenu(card.dataset.slug, card);
@@ -4223,7 +4328,13 @@ const Home = {
         window.removeEventListener('pointercancel', onEnd);
         // Arm expiry at RELEASE, so holding for several seconds cannot
         // outlive the click guard. A quick tap on another tile still works.
-        if (opened) setTimeout(() => { Home._suppressClick = false; }, 0);
+        //
+        // #1838: a mouse `click` follows its `pointerup` in the SAME task, so
+        // a 0ms reset clears the flag before the tile's own onClick can read
+        // it and the released hold would also open the app. Leave it armed
+        // for the mouse and let onClick consume it; the timer is only a
+        // safety net for a hold released off the tile, which fires no click.
+        if (opened) setTimeout(() => { Home._suppressClick = false; }, isMouse ? 700 : 0);
       };
       const onMove = (ev) => {
         if (ev.pointerId !== e.pointerId) return;
