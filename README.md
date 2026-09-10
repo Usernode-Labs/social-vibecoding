@@ -13,7 +13,7 @@ Mayor / Claude Code pipeline that produces real PRs.
 - **[EXTRACT-PLAN.md](./EXTRACT-PLAN.md)** — phased plan for moving
   this repo from a monorepo subdirectory to a standalone deploy.
 - **[SELF-HOSTING.md](./SELF-HOSTING.md)** — operational reference
-  for the shipped self-app: DB rename runbook, rollback procedure,
+  for the standalone Docker self-app: DB rename runbook, rollback procedure,
   flag-flip recipes, why each phase exists. The phase numbers here
   are cited from comments throughout the codebase.
 - **[src/prompts/app-conventions.md](./src/prompts/app-conventions.md)**
@@ -27,26 +27,31 @@ Mayor / Claude Code pipeline that produces real PRs.
 
 ## Deployment paths
 
-Kubernetes operators: see [kpack Build retention](docs/kpack-build-retention.md)
-for completed build-Pod cleanup, retention configuration, and dry-run inspection.
+Kubernetes operators: start with [Kubernetes operations](docs/kubernetes-operations.md)
+for runtime inventory, logs, failure reporting and release ownership.
 
-This code ships in two shapes:
+This code supports these deployment paths:
 
-1. **Standalone** (this repo's `docker-compose.yml` + host deployer /
+1. **Kubernetes** — the platform Helm chart and CI-built platform/worker/capture
+   images, Argo CD releases, kpack/Paketo child-app builds, and Kubernetes
+   Deployments, Services, Ingresses, PVCs and Jobs. Cluster foundation and
+   database configuration live in `infra/prototype/bare-metal-platform`.
+2. **Standalone Docker** (this repo's `docker-compose.yml` + host deployer /
    GitHub Actions fallback) — a self-contained stack (Caddy, the
    platform itself as blue/green colors, Postgres, the sidecar chain
    node, MinIO, and acme-dns) that runs on a dedicated VPS. This is the
-   intended long-term home and the target of Phase 3 of
+   supported single-server path and the historical target of Phase 3 of
    `EXTRACT-PLAN.md`.
-2. **Legacy, in the `evanshapi.ro` monorepo** — consumed as a git
+3. **Legacy, in the `evanshapi.ro` monorepo** — consumed as a git
    submodule by the `evanshapi.ro` orchestrator, which generates a
    combined compose file covering all its projects and a shared Caddy.
    Keeps running for backwards compatibility while the standalone
    deploy matures.
 
-Both paths run the same image. The `USERNODE_DOMAIN` env var is what
-keeps them straight — scaffolded-app URLs, Caddy vhosts, and the
-`/claude.md` link in child-app CLAUDE files are all driven from it.
+The Docker paths share their image; Kubernetes uses `Dockerfile.kubernetes`
+and a separate release workflow. `APP_RUNTIME`, `WORKER_RUNTIME` and
+`CAPTURE_RUNTIME` select the backends. Domains and service endpoints come from
+installation configuration; Kubernetes routes through Ingress rather than Caddy.
 
 ## Standalone deployment
 

@@ -1689,7 +1689,7 @@ function _messageHasPrefix(err, prefixes) {
 // the coding agent never started and no code was touched. Exported so the
 // route layer can say that honestly instead of surfacing the raw string.
 function isBootstrapError(err) {
-  return _messageHasPrefix(err, BOOTSTRAP_ERROR_PREFIXES);
+  return err?.bootstrapFailed === true || _messageHasPrefix(err, BOOTSTRAP_ERROR_PREFIXES);
 }
 
 function isRetryableBootstrapError(err) {
@@ -1804,13 +1804,20 @@ async function _bootstrapWarmContainer(sessionId, {
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
   };
   if (usesKubernetesWorkers()) {
-    const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
-      sessionId,
-      env: safeEnv,
-    });
-    containerName = result.runtimeName;
-    log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName });
-    return containerName;
+    try {
+      const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
+        sessionId, env: safeEnv, onProgress,
+      });
+      containerName = result.runtimeName;
+      log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName });
+      return containerName;
+    } catch (err) {
+      Object.defineProperty(err, 'bootstrapFailed', { value: true, configurable: true });
+      log.error('worker', 'Bootstrap failed', { sessionId, containerName,
+        phase: err.bootstrapPhase || null, message: log.redactString(err.message),
+        logTail: err.bootstrapLog?.join('\n') || null });
+      throw attachBootstrapContext(err, { containerName, attempts: 1 });
+    }
   }
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 
@@ -2562,7 +2569,7 @@ async function execInWorker(sessionId, {
     state.modelMaxOutputTokens = agentModelMetadata?.maxOutputTokens ?? null;
     execState = state;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
-    await _consumeJournal(containerName, journal, progress, state, { sessionId });
+    await _consumeJournal(containerName, journal, progress, state, { sessionId, startedAt: providerStartedAt });
     providerTerminalObserved = true;
 
     // Successful, complete turns don't need their journal anymore; failed
@@ -2774,8 +2781,9 @@ async function inspectContainerState(containerName) {
 // The tail itself is a disposable `docker exec`; if it drops while the
 // turn is still running (docker hiccup, etc.) we restart it and skip
 // the lines we already consumed.
-async function _consumeJournal(containerName, journal, progress, state, { sessionId = null } = {}) {
+async function _consumeJournal(containerName, journal, progress, state, { sessionId = null, startedAt = null } = {}) {
   if (usesKubernetesWorkers()) {
+    const since = startedAt || new Date().toISOString();
     let charsConsumed = 0;
     const counters = newWatchdogCounters();
     let lastProbeAt = Date.now();
@@ -2822,7 +2830,13 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
           await readJournal();
           if (state.execExitSeen) return state;
           state.exitCode = state.exitCode ?? -1;
-          state.markerlessCause = verdict.cause;
+          const termination = await kubernetes.inspectWorkerTermination(kubernetesWorkerConfig(), containerName, { since });
+          // A normal terminal journal marker always wins. Pod OOM evidence
+          // must belong to this turn; an earlier restart proves nothing.
+          await readJournal();
+          if (state.execExitSeen) return state;
+          state.markerlessCause = termination?.oomKilled ? 'oom_killed'
+            : termination && termination.status !== 'running' ? 'container_gone' : verdict.cause;
           return state;
         }
       }
@@ -3171,7 +3185,7 @@ async function resumeTurnFromJournal(sessionId, {
   let providerTerminalObserved = false;
   try {
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
-    await _consumeJournal(containerName, journal, progress, state, { sessionId });
+    await _consumeJournal(containerName, journal, progress, state, { sessionId, startedAt: safeStartedAt });
     if (state.rawStdout || state.execExitSeen) state.providerDispatched = true;
     providerTerminalObserved = true;
     // The recovery caller owns required persistence (thread id + ledger)

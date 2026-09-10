@@ -5,6 +5,7 @@ const stream = require('stream');
 const k8s = require('@kubernetes/client-node');
 const log = require('./logger');
 const { collectPodDiagnostics, conditionDetails, boundedText } = require('./kubernetes-diagnostics');
+const { waitForWorkerBootstrap } = require('./kubernetes-worker-bootstrap');
 
 const MANAGED_BY = 'social-vibecoding-runtime';
 const PART_OF = 'social-vibecoding';
@@ -603,8 +604,8 @@ async function getApplicationStatus(config, runtimeName) {
 async function inspectApplication(config, runtimeName) {
   try {
     const deployment = await getClients().apps.readNamespacedDeployment({ name: runtimeName, namespace: config.kubernetes.appNamespace });
-    const status = deployment.status?.availableReplicas >= 1 ? 'running'
-      : deployment.status?.unavailableReplicas ? 'restarting' : 'created';
+    const state = deploymentState(deployment);
+    const status = state === 'creating' ? 'created' : state;
     return { status, labels: deployment.spec?.template?.metadata?.labels || {} };
   } catch (err) {
     if (isNotFound(err)) return { status: 'not_found', labels: {} };
@@ -729,7 +730,7 @@ async function deleteBuildSnapshot(config, build) {
   });
 }
 
-async function ensureWorker(config, { sessionId, env }) {
+async function ensureWorker(config, { sessionId, env, onProgress }) {
   const cfg = config.kubernetes;
   if (!cfg.workerImage?.includes('@sha256:')) throw new Error('KUBERNETES_WORKER_IMAGE must be an immutable digest');
   const namespace = cfg.workerNamespace;
@@ -751,7 +752,7 @@ async function ensureWorker(config, { sessionId, env }) {
     apiVersion: 'v1', kind: 'Secret', metadata: { name: secretName, namespace, labels: resourceLabels }, type: 'Opaque',
     stringData: Object.fromEntries(Object.entries(env || {}).map(([key, value]) => [key, String(value)])),
   });
-  await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, {
+  const deployed = await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, {
     apiVersion: 'apps/v1', kind: 'Deployment', metadata: {
       name, namespace, labels: { ...resourceLabels, ...workerContractLabels },
     },
@@ -783,22 +784,9 @@ async function ensureWorker(config, { sessionId, env }) {
       },
     },
   });
-  await waitForDeployment(namespace, name);
-  const warmDeadline = Date.now() + 5 * 60 * 1000;
-  let warmReady = false;
-  while (Date.now() < warmDeadline) {
-    const pods = await core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${name}` });
-    const pod = pods.items?.[0];
-    if (pod) {
-      const output = await core.readNamespacedPodLog({ name: pod.metadata.name, namespace, container: 'worker' }).catch(() => '');
-      if (output.includes('__USERNODE_PHASE__ warm-ready')) {
-        warmReady = true;
-        break;
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-  }
-  if (!warmReady) throw new Error(`Timed out waiting for worker ${name} warm-ready marker`);
+  await waitForWorkerBootstrap(core, apps, { namespace, name, onProgress,
+    imageRef: cfg.workerImage, environmentChecksum: envChecksum(env),
+    generation: deployed?.metadata?.generation || 0 });
   return { runtimeKind: 'kubernetes', runtimeName: name, pvcName };
 }
 
@@ -819,6 +807,36 @@ async function getWorkerStatus(config, runtimeName) {
     if (isNotFound(err)) return 'not_found';
     throw err;
   }
+}
+
+// Pod termination evidence is separate from readiness: a restarted worker can
+// be ready again after losing the process that owned the current turn.
+async function inspectWorkerTermination(config, runtimeName, { since, timeoutMs = 5000 } = {}) {
+  const namespace = config.kubernetes.workerNamespace;
+  let timer;
+  const operation = async () => {
+    const pods = await getClients().core.listNamespacedPod({ namespace,
+      labelSelector: `social.usernode.io/runtime-name=${runtimeName},app.kubernetes.io/managed-by=${MANAGED_BY}` });
+    if (!pods.items?.length) return { status: 'gone', oomKilled: false };
+    const sinceMs = new Date(since).getTime();
+    let gone = true;
+    for (const pod of pods.items) {
+      const worker = pod.status?.containerStatuses?.find(c => c.name === 'worker');
+      if (!pod.metadata?.deletionTimestamp && worker?.state?.running) gone = false;
+      for (const terminated of [worker?.state?.terminated, worker?.lastState?.terminated]) {
+        if (terminated?.reason === 'OOMKilled' && Number.isFinite(sinceMs)
+            && new Date(terminated.finishedAt).getTime() >= sinceMs) {
+          return { status: 'exited', oomKilled: true };
+        }
+      }
+    }
+    return { status: gone ? 'not_running' : 'running', oomKilled: false };
+  };
+  try {
+    return await Promise.race([operation(), new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Worker termination observation timed out')), timeoutMs);
+    })]);
+  } catch { return null; } finally { clearTimeout(timer); }
 }
 
 async function getWorkerContractVersion(config, runtimeName) {
@@ -854,7 +872,7 @@ async function listWorkers(config) {
   return (deployments.items || []).map((deployment) => ({
     name: deployment.metadata.name,
     sessionId: Number(deployment.metadata.labels?.['social.usernode.io/session-id']),
-    state: deployment.status?.availableReplicas >= 1 ? 'running' : 'created',
+    state: deploymentState(deployment) === 'creating' ? 'created' : deploymentState(deployment),
   })).filter((item) => Number.isFinite(item.sessionId));
 }
 
@@ -864,10 +882,46 @@ function deploymentState(deployment) {
   const available = deployment.status?.availableReplicas || 0;
   const observed = deployment.status?.observedGeneration || 0;
   const generation = deployment.metadata?.generation || 0;
-  if (desired === 0) return 'stopped';
-  if (ready >= desired && available >= desired && observed >= generation) return 'running';
+  if (desired === 0 || deployment.metadata?.deletionTimestamp) return 'stopped';
+  // Old replicas can remain ready while the new image is failing to start.
+  // Use the same completion contract as waitForDeployment before reporting
+  // the desired template as running.
+  if (ready >= desired && available >= desired && observed >= generation
+      && deployment.status?.updatedReplicas === desired
+      && deployment.status?.replicas === desired) return 'running';
   if ((deployment.status?.replicas || 0) > 0 || deployment.status?.unavailableReplicas) return 'restarting';
   return 'creating';
+}
+
+// Read only this installation's platform Deployment. This describes the
+// rollout that Argo has applied; image build/publication remains in Actions.
+async function getPlatformDeployStatus(config, { timeoutMs = 3000 } = {}) {
+  const cfg = config.kubernetes || {};
+  const namespace = cfg.platformNamespace || 'social-platform';
+  const name = cfg.platformDeployment || 'social-vibecoding';
+  let timer;
+  try {
+    const deployment = await Promise.race([
+      getClients().apps.readNamespacedDeployment({ namespace, name }),
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Platform rollout read timed out')), timeoutMs); }),
+    ]);
+    const status = deployment.status || {};
+    const observed = status.observedGeneration >= (deployment.metadata?.generation || 0);
+    const failure = observed && status.conditions?.find(c =>
+      (c.type === 'Progressing' && c.status === 'False') || (c.type === 'ReplicaFailure' && c.status === 'True'));
+    const complete = deploymentState(deployment) === 'running';
+    const stopped = deployment.spec?.replicas === 0 || !!deployment.metadata?.deletionTimestamp;
+    const progressing = status.conditions?.find(c => c.type === 'Progressing');
+    const revision = deployment.spec?.template?.metadata?.annotations?.['social.usernode.io/source-revision'];
+    return { runtimeKind: 'kubernetes', scope: 'rollout',
+      deploying: !complete && !failure && !deployment.spec?.paused && !stopped,
+      failed: !!failure,
+      phase: failure ? 'failed' : stopped ? 'stopped' : deployment.spec?.paused ? 'paused' : complete ? 'complete' : 'rollout',
+      sha: /^[a-f0-9]{40}$/i.test(revision || '') ? revision : null,
+      startedAt: progressing?.lastUpdateTime || progressing?.lastTransitionTime || null,
+      ...(failure ? { message: boundedText([failure.reason, failure.message].filter(Boolean).join(': '), 1000) } : {}),
+    };
+  } finally { clearTimeout(timer); }
 }
 
 function readyPod(pod) {
@@ -1423,7 +1477,7 @@ module.exports = {
   listManagedBuilds, readBuild, deleteBuildSnapshot,
   runCaptureJob, runUnitSuiteJob, execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, deleteWorker, listWorkers, cloneWorkerVolume,
-  listStatusResources, listNamespaceCapacity,
+  listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,
   _buildPhasesFromPodForTest: buildPhasesFromPod,

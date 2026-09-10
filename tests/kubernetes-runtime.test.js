@@ -380,7 +380,12 @@ test('worker runtime reconciles a retained PVC, Secret and warm Deployment', asy
       createNamespacedPersistentVolumeClaim: record('PersistentVolumeClaim'),
       readNamespacedSecret: async () => { throw notFound(); },
       createNamespacedSecret: record('Secret'),
-      listNamespacedPod: async () => ({ items: [{ metadata: { name: 'worker-pod' } }] }),
+      listNamespacedPod: async () => ({ items: [{
+        metadata: { name: 'worker-pod', annotations: { 'social.usernode.io/env-checksum': kubernetes._envChecksumForTest({ WORKER_JWT: 'redacted' }) } },
+        spec: { containers: [{ name: 'worker', image: config().kubernetes.workerImage }] },
+        status: { phase: 'Running', conditions: [{ type: 'Ready', status: 'True' }],
+          containerStatuses: [{ name: 'worker', ready: true, state: { running: {} } }] },
+      }] }),
       readNamespacedPodLog: async () => '__USERNODE_PHASE__ warm-ready',
     },
     apps: {
@@ -548,7 +553,7 @@ test('status inventory normalizes application, preview and worker readiness from
           },
         },
         spec: { replicas: 1, template: { spec: { containers: [{ image: 'example/app@sha256:one' }] } } },
-        status: { observedGeneration: 2, replicas: 1, readyReplicas: 1, availableReplicas: 1 },
+        status: { observedGeneration: 2, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 },
       },
       {
         metadata: {
@@ -573,7 +578,7 @@ test('status inventory normalizes application, preview and worker readiness from
           },
         },
         spec: { replicas: 1, template: { spec: { containers: [{ image: 'example/worker@sha256:three' }] } } },
-        status: { observedGeneration: 1, replicas: 1, readyReplicas: 1, availableReplicas: 1 },
+        status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 },
       },
     ],
   };
