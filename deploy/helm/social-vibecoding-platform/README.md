@@ -16,6 +16,35 @@ rendered manually but are outside Argo's stable version constraint. Cluster
 configuration and SOPS-encrypted secrets remain in the infra repository and
 are applied as external Helm values.
 
+For Gmail delivery with `secrets.create: true`, merge these fields into the
+existing `secrets` block in the infra repository's SOPS-encrypted
+`prototype/bare-metal-platform/clusters/bare-metal-org/workloads/social-vibecoding/values/platform.secrets.sops.yaml`:
+
+```yaml
+secrets:
+  gmailOauthClientId: "<Google OAuth client ID>"
+  gmailOauthClientSecret: "<Google OAuth client secret>"
+  gmailOauthRefreshToken: "<sending mailbox refresh token>"
+```
+
+Use the SOPS editor to supply real values; keep credentials out of plaintext
+values files. These fields map to `GMAIL_OAUTH_CLIENT_ID`,
+`GMAIL_OAUTH_CLIENT_SECRET`, and `GMAIL_OAUTH_REFRESH_TOKEN` in the platform
+Secret, which the Deployment imports into its environment. With
+`secrets.create: false`, supply those environment-variable keys directly in
+`secrets.existingSecret` instead.
+
+All three values are optional for chart installation but must be populated to
+enable Gmail delivery. The refresh token needs the `gmail.send` scope, and its
+mailbox must be authorized to send as `Usernode <no-reply@usernodelabs.org>`
+(the application's default sender). The Kubernetes deployment reads the Secret;
+the Platform variables panel does not populate this chart's values.
+
+Release the updated chart and sync the encrypted values through Argo CD. The
+Deployment's existing secrets checksum triggers a rollout when these values
+change. After rollout, check the admin mail status and verify delivery to a
+mailbox you control.
+
 `config.domain` is the canonical platform hostname (`USERNODE_DOMAIN`).
 `config.appsDomain` optionally sets a separate suffix for generated apps and
 session previews (`USERNODE_APPS_DOMAIN`). When empty, it defaults to

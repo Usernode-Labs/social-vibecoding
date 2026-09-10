@@ -136,6 +136,10 @@ secrets:
   githubBotToken: ""
   anthropicApiKey: ""
   anthropicAdminKey: ""
+  # Optional Gmail sender credentials. Set all three in encrypted external values.
+  gmailOauthClientId: ""
+  gmailOauthClientSecret: ""
+  gmailOauthRefreshToken: ""
 
 ingress:
   enabled: true
