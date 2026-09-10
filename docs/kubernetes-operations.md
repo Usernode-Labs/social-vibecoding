@@ -23,6 +23,24 @@ for configuration and the `infra/prototype/bare-metal-platform` runbooks for
 cluster foundation and database operations. Read the installed image and Argo
 revision when comparing source behavior with a live failure.
 
+## Shared app and preview TLS
+
+Generated apps and previews share the installation-owned TLS Secret named by
+`APP_TLS_SECRET_NAME` (default `social-apps-wildcard-tls`) in `APP_NAMESPACE`.
+Provision a trusted wildcard covering `*.USERNODE_APPS_DOMAIN` before deploying
+this runtime version. The foundation chart owns its Certificate and DNS-01
+renewal. App Ingresses have no certificate issuer annotation; ordinary preview
+rebuilds, failed-start cleanup and idle teardown neither request certificates
+nor delete TLS Secrets. An installation can also supply an existing wildcard
+Secret with the same ownership and coverage contract.
+
+This is a rollout prerequisite, not an optional per-host fallback. Deploying
+the runtime before the Secret is ready can leave new/rebuilt previews without
+working HTTPS even when their Pods are Ready. Existing Ingresses keep their old
+TLS references until reconciled or migrated. The infra runbook
+`docs/23-social-vibecoding-shared-tls.md` includes a read-only migration planner,
+issuance-limit recovery and explicit retirement of legacy Certificates.
+
 ## Read-only inventory and logs
 
 These examples use the organization namespace and Deployment names. Substitute
