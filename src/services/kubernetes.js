@@ -125,6 +125,56 @@ async function deleteBuild(config, name) {
   );
 }
 
+// Source identity changes on every commit, but does not make dependency/launch
+// layers incompatible. Compare the remaining recipe without changing the
+// revision-bearing output tag or its existing fingerprint.
+function reusableBuildEnv(env, { includeRevision = false } = {}) {
+  return JSON.stringify((env || []).filter((entry) => includeRevision || !['GIT_SHA', 'BPE_OVERRIDE_GIT_SHA'].includes(entry.name))
+    .map((entry) => [entry.name, entry.value, entry.valueFrom])
+    .sort((a, b) => a[0].localeCompare(b[0])));
+}
+
+async function compatibleCompletedBuilds(config, body, repository) {
+  // Mutable builder tags cannot establish that two builds used the same recipe.
+  if (!/@sha256:[a-f0-9]{64}$/.test(body.spec.builder.image)) return [];
+  const appId = body.metadata.labels['social.usernode.io/app-id'];
+  if (!appId) return [];
+  try {
+    const builds = await listManagedBuilds(config, { appId });
+    const eligible = builds.filter((build) => {
+      const meta = build.metadata;
+      const spec = build.spec;
+      const status = build.status;
+      const success = status?.conditions?.find((condition) => condition.type === 'Succeeded');
+      return meta?.namespace === body.metadata.namespace && meta.name !== body.metadata.name
+        && !meta.deletionTimestamp && !meta.ownerReferences?.length
+        && meta.labels?.['app.kubernetes.io/managed-by'] === MANAGED_BY
+        && meta.labels?.['social.usernode.io/app-id'] === appId
+        && success?.status === 'True' && Number.isFinite(Date.parse(success.lastTransitionTime))
+        && spec?.builder?.image === body.spec.builder.image
+        && spec.serviceAccountName === body.spec.serviceAccountName
+        && spec.source?.git?.url === body.spec.source.git.url
+        && !spec.source.subPath && !spec.projectDescriptorPath
+        && !spec.services?.length && !spec.cnbBindings?.length
+        && reusableBuildEnv(spec.env) === reusableBuildEnv(body.spec.env)
+        && typeof status.latestImage === 'string'
+        && status.latestImage.startsWith(`${repository}@sha256:`)
+        && /^[a-f0-9]{64}$/.test(status.latestImage.slice(`${repository}@sha256:`.length));
+    });
+    eligible.sort((a, b) => {
+      const finished = (build) => Date.parse(build.status.conditions.find((c) => c.type === 'Succeeded').lastTransitionTime);
+      return finished(b) - finished(a) || a.metadata.name.localeCompare(b.metadata.name);
+    });
+    return eligible;
+  } catch (err) {
+    // Cache discovery is optional; an inventory failure still permits a build.
+    log.warn('kubernetes', 'Previous build image lookup failed; building without image reuse', {
+      appId, err: err.message,
+    });
+    return [];
+  }
+}
+
 // `onProgress(image)` is called as the kpack Build advances: `{ phase,
 // phases: [{ name, ms }], detail }` — which lifecycle phase (init container)
 // is running, how long the finished ones took, and the last line the running
@@ -191,6 +241,21 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
       },
     },
   };
+  const completed = await compatibleCompletedBuilds(config, body, repository);
+  const exact = completed.find((previous) => previous.spec.source.git.revision === revision
+    && reusableBuildEnv(previous.spec.env, { includeRevision: true })
+      === reusableBuildEnv(body.spec.env, { includeRevision: true }));
+  if (exact) {
+    // Session identity affects deployment, not the immutable build artifact.
+    // Borrow only completed images: no ownership changes, shared in-flight
+    // jobs, or cancellation/deletion of another session's build on failure.
+    return {
+      buildRef: `${cfg.buildNamespace}/${exact.metadata.name}`,
+      imageRef: exact.status.latestImage, requestedTag: tag, phases: [], reused: true,
+    };
+  }
+  // A different revision can still supply cached dependency/launch layers.
+  if (completed.length) body.spec.lastBuild = { image: completed[0].status.latestImage };
   const { custom } = getClients();
   const createDeadline = Date.now() + 60000;
   while (true) {
@@ -347,6 +412,30 @@ function containerSecurityContext() {
   return { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] }, readOnlyRootFilesystem: false };
 }
 
+function previewDatabaseAffinity(cfg, environment) {
+  if (environment !== 'staging' || !cfg.previewDatabaseNamespace || !cfg.previewDatabaseCluster) return {};
+  return {
+    affinity: {
+      podAffinity: {
+        // A preference leaves other eligible nodes available immediately.
+        // Select the primary role, not a Pod/node name, so new scheduling
+        // follows CNPG failover without moving already-running previews.
+        preferredDuringSchedulingIgnoredDuringExecution: [{
+          weight: 100,
+          podAffinityTerm: {
+            namespaces: [cfg.previewDatabaseNamespace],
+            labelSelector: { matchLabels: {
+              'cnpg.io/cluster': cfg.previewDatabaseCluster,
+              'cnpg.io/instanceRole': 'primary',
+            } },
+            topologyKey: 'kubernetes.io/hostname',
+          },
+        }],
+      },
+    },
+  };
+}
+
 // `cpus` is the container's CPU LIMIT (a ceiling, not a request — requests
 // stay at 100m so scheduling is unchanged). Staging previews pass
 // docker.STAGING_CPUS through application-runtime.deploy so the capture
@@ -391,6 +480,7 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
           serviceAccountName: cfg.generatedAppServiceAccount,
           automountServiceAccountToken: false,
           securityContext: podSecurityContext(),
+          ...previewDatabaseAffinity(cfg, environment),
           containers: [{
             name: 'app', image: imageRef, imagePullPolicy: 'IfNotPresent',
             ports: [{ name: 'http', containerPort: 3000 }],
@@ -560,12 +650,13 @@ function buildApiParams(config) {
   return { group: 'kpack.io', version: 'v1alpha2', namespace: config.kubernetes.buildNamespace, plural: 'builds' };
 }
 
-async function listManagedBuilds(config) {
+async function listManagedBuilds(config, { appId } = {}) {
   const items = [];
   let next;
   do {
     const page = await getClients().custom.listNamespacedCustomObject({
-      ...buildApiParams(config), labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY}`,
+      ...buildApiParams(config), labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY}`
+        + (appId ? `,social.usernode.io/app-id=${appId}` : ''),
       limit: 500, _continue: next,
     });
     if (!Array.isArray(page?.items)) throw new Error('Invalid kpack Build inventory');
@@ -829,6 +920,17 @@ async function listNamespaceCapacity(config) {
           pods: quotaMetric(quota, 'pods'),
           requestsCpu: quotaMetric(quota, 'requests.cpu'),
           requestsMemory: quotaMetric(quota, 'requests.memory'),
+          limitsCpu: quotaMetric(quota, 'limits.cpu'),
+          limitsMemory: quotaMetric(quota, 'limits.memory'),
+          requestsEphemeralStorage: quotaMetric(quota, 'requests.ephemeral-storage'),
+          limitsEphemeralStorage: quotaMetric(quota, 'limits.ephemeral-storage'),
+          requestsStorage: quotaMetric(quota, 'requests.storage'),
+          persistentVolumeClaims: quotaMetric(quota, 'persistentvolumeclaims'),
+          services: quotaMetric(quota, 'services'),
+          secrets: quotaMetric(quota, 'secrets'),
+          configMaps: quotaMetric(quota, 'configmaps'),
+          jobs: quotaMetric(quota, 'count/jobs.batch'),
+          builds: quotaMetric(quota, 'count/builds.kpack.io'),
         },
       };
     } catch (err) {
@@ -890,11 +992,21 @@ async function cloneWorkerVolume(config, sourceSessionId, targetSessionId) {
 // swallowed: progress is a courtesy, the verdict still comes from the final
 // read below, unchanged.
 async function runCaptureJob(config, options) {
-  return runCheckJob(config, options, 'capture');
+  return runCheckJob(config, { memory: '4g', cpus: '4', ...options }, 'capture');
 }
 
 async function runUnitSuiteJob(config, options) {
   return runCheckJob(config, options, 'unit-suite');
+}
+
+function checkResourceRequest(request, limit, resource) {
+  const limitNumber = quantityNumber(limit);
+  if (limitNumber === null || limitNumber <= 0) {
+    throw new Error(`Invalid check ${resource} limit`);
+  }
+  // Smaller operator overrides must not produce an inadmissible Pod whose
+  // request exceeds its limit. Keep the normal working-set reservation otherwise.
+  return quantityNumber(request) > limitNumber ? limit : request;
 }
 
 async function runCheckJob(config, {
@@ -904,6 +1016,16 @@ async function runCheckJob(config, {
 }, kind) {
   const cfg = config.kubernetes;
   const unitSuite = kind === 'unit-suite';
+  const cpuLimit = String(cpus);
+  const memoryLimit = String(memory).replace(/g$/i, 'Gi').replace(/m$/i, 'Mi');
+  const resources = {
+    requests: {
+      cpu: checkResourceRequest('1', cpuLimit, 'CPU'),
+      memory: checkResourceRequest(unitSuite ? '1Gi' : '3Gi', memoryLimit, 'memory'),
+      'ephemeral-storage': '1Gi',
+    },
+    limits: { cpu: cpuLimit, memory: memoryLimit, 'ephemeral-storage': unitSuite ? '8Gi' : '4Gi' },
+  };
   const image = unitSuite ? cfg.workerImage : cfg.captureImage;
   if (!image?.includes('@sha256:')) throw new Error(`${unitSuite ? 'KUBERNETES_WORKER_IMAGE' : 'KUBERNETES_CAPTURE_IMAGE'} must be an immutable digest`);
   const namespace = cfg.workerNamespace;
@@ -917,16 +1039,12 @@ async function runCheckJob(config, {
     env: Object.entries(env || {}).map(([key, value]) => unitSuite
       ? { name: key, valueFrom: { secretKeyRef: { name: inputSecretName, key } } }
       : { name: key, value: String(value) }),
-    // Eight concurrent Chromium pages need the same memory budget as Docker captures.
-    resources: { requests: { cpu: '250m', memory: '512Mi', 'ephemeral-storage': '1Gi' }, limits: { cpu: '2', memory: '4Gi', 'ephemeral-storage': '4Gi' } },
+    // Captures share Docker's limits and reserve the observed browser working set.
+    resources,
     securityContext: containerSecurityContext(),
   };
   if (unitSuite) {
     container.command = cmd;
-    container.resources = {
-      requests: { cpu: '1', memory: '1Gi', 'ephemeral-storage': '1Gi' },
-      limits: { cpu: String(cpus), memory: String(memory).replace(/g$/i, 'Gi').replace(/m$/i, 'Mi'), 'ephemeral-storage': '8Gi' },
-    };
   }
   const podVolumes = [];
   if (!unitSuite && inputSecretName) {

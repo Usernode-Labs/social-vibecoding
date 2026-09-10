@@ -58,6 +58,23 @@ Resource ordering within the Application is:
 3. Idempotent migration `Sync` hook at wave `-1`.
 4. Platform Deployment, Service and Ingress at wave `0`.
 
+Session capacity and idle cleanup are explicit `config` values:
+`maxGlobalSessions`, `maxUserSessions`, `maxUserPromotedSessions`,
+`maxAdminUserSessions`, `maxAdminUserPromotedSessions`, `workerIdleEvictionMs`,
+`sessionAutopauseIdleMs`, and `stagingIdleTeardownMs`. Defaults match the
+application defaults; cluster values can restore the standalone deployment's
+session ceiling and five-minute worker eviction without changing Docker defaults.
+These values render as explicit environment variables and take precedence over
+the same keys in an imported Secret or ConfigMap. Zero idle-timeout values are
+preserved, including the supported `sessionAutopauseIdleMs: 0` disable switch.
+
+The session ceiling counts logical active/promoted coding sessions, including
+sessions with evicted workers. It does not reserve a worker or preview for each
+session. Raising it requires matching namespace compute/object/PVC budgets,
+working idle eviction and preview cleanup. ResourceQuota can still reject work
+at its memory/request/object ceiling; it is not a job queue or a throughput
+guarantee. Keep per-user caps and observe quota headroom after changes.
+
 The master `enabled` gate is split further into `platform.enabled`,
 `migration.enabled`, and `postgresql.enabled`. All three default to `true` for
 backward compatibility. To use CloudNativePG or another external database, set
@@ -66,6 +83,30 @@ the narrow `postgresql.podSelector`, then let the database-owning deployment
 control ingress to its Pods. This also permits a cutover-ready configuration
 with the platform, migration Job, and ingress disabled until the database is
 writable.
+
+Previews prefer the node hosting the external CloudNativePG primary by default
+(`config.previewFollowDatabasePrimary: true`). The chart derives
+`PREVIEW_DATABASE_CLUSTER` from `postgresql.podSelector["cnpg.io/cluster"]` and
+`PREVIEW_DATABASE_NAMESPACE` from `postgresql.namespace` (or the release
+namespace). Set the flag to `false` to disable the preference. Bundled PostgreSQL
+and external databases without the CNPG cluster selector keep normal placement.
+Installations without Helm can set both environment variables on the platform.
+
+Only staging preview Deployments receive a weight-100 preferred Pod affinity
+term matching that cluster's `cnpg.io/instanceRole: primary` across
+`kubernetes.io/hostname`. Other eligible nodes remain available if the primary's
+node is full, unavailable, or no matching primary exists. This is a scheduler
+preference, not a guarantee: other scheduling scores can outweigh it. It needs
+no node labels beyond the standard hostname, extra runtime RBAC, or node lookup.
+
+After releasing the platform image and chart together, newly created or
+reconciled preview Deployments get this policy. Existing Deployments are not
+patched automatically. Following a database failover, newly scheduled Pods
+prefer the new primary; running previews stay where they are. Opting out affects
+future reconciliation too. Production apps, build Pods, workers and captures
+retain their existing placement. See the
+[Kubernetes affinity documentation](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity)
+and [CloudNativePG labels](https://cloudnative-pg.io/docs/1.28/labels_annotations/).
 
 Platform upgrades use a Kubernetes-native blue/green equivalent: a
 `RollingUpdate` Deployment creates a new ReplicaSet beside the live one,
@@ -104,6 +145,12 @@ helm template social-vibecoding-platform ./social-vibecoding-platform \
 
 
 ## Proposal checks in Kubernetes
+
+Capture Jobs honor the same `CAPTURE_CPUS` and `CAPTURE_MEMORY` limits as
+Docker (four CPUs / 4 GiB by default). Their requests are one CPU / 3 GiB,
+matching the observed browser working set; smaller limit overrides also lower
+the requests so Kubernetes can admit the Pod. Per-job ephemeral storage remains
+1 GiB requested / 4 GiB limited. Changes apply to newly created check Jobs.
 
 Capture Jobs visit the generated app and preview HTTPS ingress hostnames. The
 self-app's production capture uses the canonical platform hostname. Worker

@@ -25,6 +25,10 @@ test('Kubernetes capacity renders quota reservations, not invented live usage', 
   assert.match(source, /data\.runtimeKind === 'kubernetes'/);
   assert.match(source, /CPU requests/);
   assert.match(source, /Memory requests/);
+  for (const label of ['CPU limits', 'Memory limits', 'Ephemeral storage limits',
+    'Persistent storage requests', 'Volume claims', 'Services', 'Secrets', 'Jobs', 'Build records']) {
+    assert.ok(source.includes(label), `capacity must display ${label}`);
+  }
   assert.match(source, /% headroom/);
   assert.doesNotMatch(source, /Kubernetes live (CPU|memory)/i);
   assert.match(source, /d\.runtimeKind === 'kubernetes' \? 'Capacity' : 'Capacity & host'/);

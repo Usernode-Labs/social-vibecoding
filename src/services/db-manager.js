@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
+const { Client } = require('pg');
 const log = require('./logger');
 
 const execFileAsync = promisify(execFile);
@@ -183,7 +184,7 @@ async function createDatabase(dbName) {
 // (none in our model, but defensive).
 // Recreating a clone requires confirmed cleanup. Ordinary teardown remains
 // best-effort, but clone callers must not create a new role after a failed drop.
-async function dropDatabase(dbName, { strict = false } = {}) {
+async function dropDatabase(dbName, { strict = false, execute = execInDb } = {}) {
   log.info('db-manager', 'Dropping database', { dbName });
 
   if (!SAFE_IDENT.test(dbName)) {
@@ -193,12 +194,12 @@ async function dropDatabase(dbName, { strict = false } = {}) {
   }
 
   // Terminate any open connections so DROP DATABASE doesn't error.
-  await execInDb(
+  await execute(
     `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${dbName}' AND pid <> pg_backend_pid()`
   ).catch(() => {});
 
   try {
-    await execInDb(`DROP DATABASE IF EXISTS ${dbName}`);
+    await execute(`DROP DATABASE IF EXISTS ${dbName}`);
   } catch (err) {
     log.warn('db-manager', 'Failed to drop database', { dbName, err: err.message });
     // Don't try to drop the role if the DB drop failed — the role
@@ -210,8 +211,8 @@ async function dropDatabase(dbName, { strict = false } = {}) {
   const role = ownerRoleName(dbName);
   if (!SAFE_IDENT.test(role)) return;
 
-  await execInDb(`DROP OWNED BY ${role} CASCADE`).catch(() => {});
-  await execInDb(`DROP ROLE IF EXISTS ${role}`).catch((err) => {
+  await execute(`DROP OWNED BY ${role} CASCADE`).catch(() => {});
+  await execute(`DROP ROLE IF EXISTS ${role}`).catch((err) => {
     log.warn('db-manager', 'Failed to drop role (may still own objects in another DB)', {
       role, err: err.message,
     });
@@ -614,18 +615,23 @@ async function cloneFromTemplate(templateDb, targetDb) {
     throw new Error(`cloneFromTemplate: unsafe roles ${templateRole}/${targetRole}`);
   }
   const startedAt = Date.now();
-  await dropDatabase(targetDb, { strict: true });
   const password = generatePassword();
-  await execInDb(`CREATE ROLE ${targetRole} LOGIN PASSWORD '${password}'`);
-  await execInDb(`CREATE DATABASE ${targetDb} TEMPLATE ${templateDb} OWNER ${targetRole}`);
-  await execInDb(`REVOKE CONNECT ON DATABASE ${targetDb} FROM PUBLIC`);
-  await execInDb(`GRANT ALL PRIVILEGES ON DATABASE ${targetDb} TO ${targetRole}`);
-  // The copy keeps the template role's ownership of every object; the
-  // preview must ALTER, INSERT and DROP as its own role.
-  await reassignUserObjectsTo(targetDb, templateRole, targetRole);
-  // The redaction guarantee, re-applied (see the header comment).
-  await truncatePrivateTables(targetDb);
-  await scrubPrivateColumns(targetDb);
+  await withDatabaseConnection('usernode', async (execute) => {
+    const admin = (sql, opts) => execute('usernode', sql, opts);
+    await dropDatabase(targetDb, { strict: true, execute: admin });
+    await admin(`CREATE ROLE ${targetRole} LOGIN PASSWORD '${password}'`);
+    await admin(`CREATE DATABASE ${targetDb} TEMPLATE ${templateDb} OWNER ${targetRole}`);
+    await admin(`REVOKE CONNECT ON DATABASE ${targetDb} FROM PUBLIC`);
+    await admin(`GRANT ALL PRIVILEGES ON DATABASE ${targetDb} TO ${targetRole}`);
+  });
+  // One connection for the whole ownership/redaction pass, including discovery.
+  // Never pool it: the caller may need to drop this database immediately on
+  // failure, and a later preview must not inherit an administrative session.
+  await withDatabaseConnection(targetDb, async (execute) => {
+    await reassignUserObjectsTo(targetDb, templateRole, targetRole, execute);
+    await truncatePrivateTables(targetDb, execute);
+    await scrubPrivateColumns(targetDb, execute);
+  });
   log.info('db-manager', 'Database cloned from staging template', {
     templateDb, targetDb, targetRole, durationMs: Date.now() - startedAt,
   });
@@ -662,7 +668,7 @@ async function cloneFromTemplate(templateDb, targetDb) {
 //
 // Names are validated by SAFE_IDENT before being spliced. The DO
 // block uses format(%I) for inner identifiers belt-and-suspenders.
-async function reassignUserObjectsTo(dbName, fromRole, toRole) {
+async function reassignUserObjectsTo(dbName, fromRole, toRole, execute = execInTarget) {
   if (!SAFE_IDENT.test(dbName)) {
     throw new Error(`reassignUserObjectsTo: unsafe dbName ${JSON.stringify(dbName)}`);
   }
@@ -770,7 +776,7 @@ BEGIN
   END LOOP;
 END $$;`;
 
-  await execInTarget(dbName, sql);
+  await execute(dbName, sql);
 }
 
 // One-shot per-app DB adoption used by the boot migration in
@@ -845,15 +851,19 @@ async function ensureRoleExists(dbName, password) {
   await execInDb(`GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${role}`).catch(() => {});
 }
 
-async function databaseExists(dbName) {
-  if (!SAFE_IDENT.test(dbName)) return false;
+async function databaseExists(dbName, { strict = false } = {}) {
+  if (!SAFE_IDENT.test(dbName)) {
+    if (strict) throw new Error('databaseExists: unsafe database name');
+    return false;
+  }
   try {
     const stdout = await execInDb(
       `SELECT 1 FROM pg_database WHERE datname = '${dbName}'`,
       { tuplesOnly: true }
     );
     return (stdout || '').trim() === '1';
-  } catch {
+  } catch (err) {
+    if (strict) throw err;
     return false;
   }
 }
@@ -868,6 +878,57 @@ async function roleExists(roleName) {
     return (stdout || '').trim() === '1';
   } catch {
     return false;
+  }
+}
+
+// Match the existing psql executor's discovery format while reusing a single
+// connection within one clone phase. Other administration keeps its existing
+// one-shot behavior. SQL stays in autocommit: CREATE/DROP DATABASE cannot run
+// inside a transaction, and a failed redaction must not abort later attempts.
+async function withDatabaseConnection(dbName, fn) {
+  if (!SAFE_IDENT.test(dbName)) throw new Error(`Unsafe connection database: ${dbName}`);
+  const url = adminConnection();
+  url.pathname = `/${dbName}`;
+  const client = new Client({
+    connectionString: url.toString(),
+    connectionTimeoutMillis: 30000,
+    statement_timeout: 30000,
+    query_timeout: 30000,
+    application_name: 'social-template-clone',
+  });
+  let lost;
+  let failed = false;
+  client.on('error', (err) => { lost = err; });
+  try {
+    await client.connect();
+    return await fn(async (targetDb, sql, opts = {}) => {
+      if (targetDb !== dbName) throw new Error('Clone connection database mismatch');
+      if (lost) throw lost;
+      let result;
+      try {
+        result = await client.query({ text: sql, rowMode: 'array' });
+      } catch (err) {
+        // A client-side timeout does not confirm server cancellation. Stop
+        // submitting work on this session; finally closes the active query
+        // before fallback can recreate the database. Ordinary SQL failures
+        // remain in autocommit so the redaction pass can collect its errors.
+        if (err.message === 'Query read timeout') lost = err;
+        throw err;
+      }
+      if (!opts.tuplesOnly) return '';
+      return result.rows.map((row) => row.map((value) => value === true ? 't'
+        : value === false ? 'f' : value == null ? '' : String(value)).join('|')).join('\n');
+    });
+  } catch (err) {
+    failed = true;
+    throw err;
+  } finally {
+    try { await client.end(); } catch (err) {
+      // Preserve the original failure so fallback/cleanup diagnostics remain
+      // useful; a close failure on an otherwise successful clone is fatal.
+      if (!failed) throw err;
+      log.warn('db-manager', 'Clone connection close failed', { dbName, err: err.message });
+    }
   }
 }
 
@@ -1085,7 +1146,7 @@ function pgRestoreArgs(targetDb) {
   return ['--exit-on-error', '--no-owner', '--no-privileges', '--dbname', targetDb];
 }
 
-async function truncatePrivateTables(targetDb) {
+async function truncatePrivateTables(targetDb, execute = execInTarget) {
   // Discovery query. obj_description on pg_class returns the comment
   // attached via `COMMENT ON TABLE foo IS '...'`. relkind='r' filters
   // to ordinary tables (not views/indexes/sequences). We exclude
@@ -1102,7 +1163,7 @@ SELECT n.nspname || '.' || c.relname
 
   let stdout;
   try {
-    stdout = await execInTarget(targetDb, discoverySql, { tuplesOnly: true });
+    stdout = await execute(targetDb, discoverySql, { tuplesOnly: true });
   } catch (err) {
     // Discovery failure is fatal: we don't know what's private, so we
     // can't safely ship the staging clone.
@@ -1143,7 +1204,7 @@ SELECT n.nspname || '.' || c.relname
       continue;
     }
     try {
-      await execInTarget(targetDb, `TRUNCATE ${qualified} RESTART IDENTITY CASCADE`);
+      await execute(targetDb, `TRUNCATE ${qualified} RESTART IDENTITY CASCADE`);
       truncated.push(qualified);
     } catch (err) {
       log.error('db-manager', 'TRUNCATE failed', {
@@ -1163,7 +1224,7 @@ SELECT n.nspname || '.' || c.relname
   return { truncated };
 }
 
-async function scrubPrivateColumns(targetDb) {
+async function scrubPrivateColumns(targetDb, execute = execInTarget) {
   // Discovery query mirrors truncatePrivateTables but at the column
   // level. col_description is the column-comment counterpart of
   // obj_description. attnum > 0 filters out system columns; attisdropped
@@ -1192,7 +1253,7 @@ SELECT n.nspname || '.' || c.relname,
 
   let stdout;
   try {
-    stdout = await execInTarget(targetDb, discoverySql, { tuplesOnly: true });
+    stdout = await execute(targetDb, discoverySql, { tuplesOnly: true });
   } catch (err) {
     log.error('db-manager', 'staging:private column discovery failed', {
       targetDb, err: err.message,
@@ -1264,7 +1325,7 @@ SELECT n.nspname || '.' || c.relname,
       value = maxLength != null ? `left(${base}, ${maxLength})` : base;
     }
     try {
-      await execInTarget(targetDb, `UPDATE ${qualified} SET ${column} = ${value}`);
+      await execute(targetDb, `UPDATE ${qualified} SET ${column} = ${value}`);
       scrubbed.push(`${qualified}.${column}`);
     } catch (err) {
       log.error('db-manager', 'staging:private column UPDATE failed', {

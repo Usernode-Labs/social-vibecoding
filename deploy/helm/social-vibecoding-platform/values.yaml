@@ -84,6 +84,10 @@ migration:
       ephemeral-storage: 2Gi
 
 config:
+  # Prefer the external CNPG primary's node for previews, with normal scheduler
+  # fallback. Uses postgresql.namespace and podSelector["cnpg.io/cluster"].
+  # No effect for bundled PostgreSQL or external databases without that label.
+  previewFollowDatabasePrimary: true
   # Canonical platform host for the UI, authentication, and platform API.
   domain: social-vibecoding.example.invalid
   # Empty retains the historical <slug>.<domain> layout.
@@ -102,6 +106,17 @@ config:
   logLevel: INFO
   workerMemory: 2g
   workerCpus: "2"
+  captureMemory: 4g
+  captureCpus: "4"
+  # Match application defaults here; each cluster declares its own capacity.
+  maxGlobalSessions: 25
+  maxUserSessions: 3
+  maxUserPromotedSessions: 5
+  maxAdminUserSessions: 5
+  maxAdminUserPromotedSessions: 8
+  workerIdleEvictionMs: 600000
+  sessionAutopauseIdleMs: 300000
+  stagingIdleTeardownMs: 21600000
 
 secrets:
   create: false

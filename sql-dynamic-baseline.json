@@ -47,13 +47,6 @@
     {
       "source": "src/db/migrate.js",
       "kind": "structural-template",
-      "fingerprint": "7443932f8fa8a6d66a99",
-      "count": 1,
-      "preview": "`INSERT INTO llm_usage (user_id, date, total_cost_cents, byok_cost_cents) SELECT $1, CURRENT_DATE - g, LEAST($2 + (g % 5) * 10, $3)::numeric(10,4), ${byokExpr}:"
-    },
-    {
-      "source": "src/db/migrate.js",
-      "kind": "structural-template",
       "fingerprint": "7ad7a570203416ff9eca",
       "count": 1,
       "preview": "`INSERT INTO user_enrollments (id, user_id, season_id, season_event_id, created_at, updated_at) VALUES (${base}, $1, $2, NULL, NOW(), NOW()), (${base + 1}, $1, "
@@ -78,6 +71,13 @@
       "fingerprint": "ddac26545fc20b07434f",
       "count": 1,
       "preview": "`INSERT INTO token_allocation (id, user_id, season_id, total_points, total_season_tokens, allocated_tokens, description, created_at, updated_at) VALUES (${base}"
+    },
+    {
+      "source": "src/db/reindex-after-host-move.js",
+      "kind": "structural-template",
+      "fingerprint": "fc7626a63bf5115a5be2",
+      "count": 1,
+      "preview": "`REINDEX TABLE ${quoteIdent(table.name)}`"
     },
     {
       "source": "src/middleware/auth.js",
@@ -827,6 +827,13 @@
       "fingerprint": "f2f69da3d22877da7289",
       "count": 1,
       "preview": "`INSERT INTO credentials.user_ai_credentials (user_id, provider, purpose, secret_enc, secret_last4, secret_fingerprint, status, verified_at, revision) VALUES ($"
+    },
+    {
+      "source": "src/services/db-manager.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "cab417dc71282a32b0c6",
+      "count": 1,
+      "preview": "{ text: sql, rowMode: 'array' }"
     },
     {
       "source": "src/services/debug-access.js",

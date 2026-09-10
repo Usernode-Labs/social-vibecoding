@@ -77,6 +77,17 @@ spec:
             - {name: APP_RUNTIME, value: kubernetes}
             - {name: WORKER_RUNTIME, value: kubernetes}
             - {name: CAPTURE_RUNTIME, value: kubernetes}
+            {{- $previewCluster := "" }}
+            {{- $previewNamespace := "" }}
+            {{- if and .Values.config.previewFollowDatabasePrimary (not .Values.postgresql.enabled) }}
+              {{- $previewCluster = index .Values.postgresql.podSelector "cnpg.io/cluster" | default "" }}
+              {{- if $previewCluster }}
+                {{- $previewNamespace = default .Release.Namespace .Values.postgresql.namespace }}
+              {{- end }}
+            {{- end }}
+            # Explicit empty values also override imported config when disabled.
+            - {name: PREVIEW_DATABASE_NAMESPACE, value: {{ $previewNamespace | quote }}}
+            - {name: PREVIEW_DATABASE_CLUSTER, value: {{ $previewCluster | quote }}}
             - {name: RUN_MIGRATIONS_ON_STARTUP, value: "false"}
             # During the rollout overlap both old and new platform Pods serve
             # HTTP, but only the Postgres advisory-lock leader runs singleton
@@ -96,6 +107,16 @@ spec:
             - {name: LOG_LEVEL, value: {{ .Values.config.logLevel | quote }}}
             - {name: WORKER_MEMORY, value: {{ .Values.config.workerMemory | quote }}}
             - {name: WORKER_CPUS, value: {{ .Values.config.workerCpus | quote }}}
+            - {name: CAPTURE_MEMORY, value: {{ .Values.config.captureMemory | quote }}}
+            - {name: CAPTURE_CPUS, value: {{ .Values.config.captureCpus | quote }}}
+            - {name: MAX_GLOBAL_SESSIONS, value: {{ .Values.config.maxGlobalSessions | int64 | quote }}}
+            - {name: MAX_USER_SESSIONS, value: {{ .Values.config.maxUserSessions | int64 | quote }}}
+            - {name: MAX_USER_PROMOTED_SESSIONS, value: {{ .Values.config.maxUserPromotedSessions | int64 | quote }}}
+            - {name: MAX_ADMIN_USER_SESSIONS, value: {{ .Values.config.maxAdminUserSessions | int64 | quote }}}
+            - {name: MAX_ADMIN_USER_PROMOTED_SESSIONS, value: {{ .Values.config.maxAdminUserPromotedSessions | int64 | quote }}}
+            - {name: WORKER_IDLE_EVICTION_MS, value: {{ .Values.config.workerIdleEvictionMs | int64 | quote }}}
+            - {name: SESSION_AUTOPAUSE_IDLE_MS, value: {{ .Values.config.sessionAutopauseIdleMs | int64 | quote }}}
+            - {name: STAGING_IDLE_TEARDOWN_MS, value: {{ .Values.config.stagingIdleTeardownMs | int64 | quote }}}
             - {name: KUBERNETES_WORKER_IMAGE, value: {{ include "social-vibecoding-platform.image" .Values.platform.workerImage | quote }}}
             - {name: KUBERNETES_CAPTURE_IMAGE, value: {{ include "social-vibecoding-platform.image" .Values.platform.captureImage | quote }}}
           ports:
