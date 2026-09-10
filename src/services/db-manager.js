@@ -851,15 +851,19 @@ async function ensureRoleExists(dbName, password) {
   await execInDb(`GRANT ALL PRIVILEGES ON DATABASE ${dbName} TO ${role}`).catch(() => {});
 }
 
-async function databaseExists(dbName) {
-  if (!SAFE_IDENT.test(dbName)) return false;
+async function databaseExists(dbName, { strict = false } = {}) {
+  if (!SAFE_IDENT.test(dbName)) {
+    if (strict) throw new Error('databaseExists: unsafe database name');
+    return false;
+  }
   try {
     const stdout = await execInDb(
       `SELECT 1 FROM pg_database WHERE datname = '${dbName}'`,
       { tuplesOnly: true }
     );
     return (stdout || '').trim() === '1';
-  } catch {
+  } catch (err) {
+    if (strict) throw err;
     return false;
   }
 }
