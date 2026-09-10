@@ -829,6 +829,13 @@
       "preview": "`INSERT INTO credentials.user_ai_credentials (user_id, provider, purpose, secret_enc, secret_last4, secret_fingerprint, status, verified_at, revision) VALUES ($"
     },
     {
+      "source": "src/services/db-manager.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "cab417dc71282a32b0c6",
+      "count": 1,
+      "preview": "{ text: sql, rowMode: 'array' }"
+    },
+    {
       "source": "src/services/debug-access.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "35f1322f2f4f01e6afff",

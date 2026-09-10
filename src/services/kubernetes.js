@@ -125,6 +125,62 @@ async function deleteBuild(config, name) {
   );
 }
 
+// Source identity changes on every commit, but does not make dependency/launch
+// layers incompatible. Compare the remaining recipe without changing the
+// revision-bearing output tag or its existing fingerprint.
+function reusableBuildEnv(env) {
+  return JSON.stringify((env || []).filter((entry) => !['GIT_SHA', 'BPE_OVERRIDE_GIT_SHA'].includes(entry.name))
+    .map((entry) => [entry.name, entry.value, entry.valueFrom])
+    .sort((a, b) => a[0].localeCompare(b[0])));
+}
+
+async function previousBuildImage(config, body, repository) {
+  // Mutable builder tags cannot establish that two builds used the same recipe.
+  if (!/@sha256:[a-f0-9]{64}$/.test(body.spec.builder.image)) return null;
+  const appId = body.metadata.labels['social.usernode.io/app-id'];
+  if (!appId) return null;
+  try {
+    const builds = await listManagedBuilds(config, { appId });
+    const eligible = builds.filter((build) => {
+      const meta = build.metadata;
+      const spec = build.spec;
+      const status = build.status;
+      const success = status?.conditions?.find((condition) => condition.type === 'Succeeded');
+      return meta?.namespace === body.metadata.namespace && meta.name !== body.metadata.name
+        && !meta.deletionTimestamp && !meta.ownerReferences?.length
+        && meta.labels?.['app.kubernetes.io/managed-by'] === MANAGED_BY
+        && meta.labels?.['social.usernode.io/app-id'] === appId
+        && success?.status === 'True' && Number.isFinite(Date.parse(success.lastTransitionTime))
+        && spec?.builder?.image === body.spec.builder.image
+        && spec.serviceAccountName === body.spec.serviceAccountName
+        && spec.source?.git?.url === body.spec.source.git.url
+        && !spec.source.subPath && !spec.projectDescriptorPath
+        && !spec.services?.length && !spec.cnbBindings?.length
+        && reusableBuildEnv(spec.env) === reusableBuildEnv(body.spec.env)
+        && typeof status.latestImage === 'string'
+        && status.latestImage.startsWith(`${repository}@sha256:`)
+        && /^[a-f0-9]{64}$/.test(status.latestImage.slice(`${repository}@sha256:`.length));
+    });
+    eligible.sort((a, b) => {
+      const finished = (build) => Date.parse(build.status.conditions.find((c) => c.type === 'Succeeded').lastTransitionTime);
+      return finished(b) - finished(a) || a.metadata.name.localeCompare(b.metadata.name);
+    });
+    if (!eligible.length) return null;
+    const previous = eligible[0];
+    // The cache remains at its configured per-app tag. Previous image selection
+    // is immutable and safe for concurrent builds; it never rewrites that tag
+    // or makes the prior Build a Kubernetes owner of the new one. Retention
+    // removes Build objects/Pods, not registry images.
+    return { image: previous.status.latestImage };
+  } catch (err) {
+    // Cache discovery is optional; an inventory failure still permits a build.
+    log.warn('kubernetes', 'Previous build image lookup failed; building without image reuse', {
+      appId, err: err.message,
+    });
+    return null;
+  }
+}
+
 // `onProgress(image)` is called as the kpack Build advances: `{ phase,
 // phases: [{ name, ms }], detail }` — which lifecycle phase (init container)
 // is running, how long the finished ones took, and the last line the running
@@ -191,6 +247,8 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
       },
     },
   };
+  const lastBuild = await previousBuildImage(config, body, repository);
+  if (lastBuild) body.spec.lastBuild = lastBuild;
   const { custom } = getClients();
   const createDeadline = Date.now() + 60000;
   while (true) {
@@ -560,12 +618,13 @@ function buildApiParams(config) {
   return { group: 'kpack.io', version: 'v1alpha2', namespace: config.kubernetes.buildNamespace, plural: 'builds' };
 }
 
-async function listManagedBuilds(config) {
+async function listManagedBuilds(config, { appId } = {}) {
   const items = [];
   let next;
   do {
     const page = await getClients().custom.listNamespacedCustomObject({
-      ...buildApiParams(config), labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY}`,
+      ...buildApiParams(config), labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY}`
+        + (appId ? `,social.usernode.io/app-id=${appId}` : ''),
       limit: 500, _continue: next,
     });
     if (!Array.isArray(page?.items)) throw new Error('Invalid kpack Build inventory');
