@@ -1111,7 +1111,7 @@ async function cloneWorkerVolume(config, sourceSessionId, targetSessionId) {
 // swallowed: progress is a courtesy, the verdict still comes from the final
 // read below, unchanged.
 async function runCaptureJob(config, options) {
-  return runCheckJob(config, { memory: '4g', cpus: '4', ...options }, 'capture');
+  return runCheckJob(config, { memory: '4g', cpus: '8', ...options }, 'capture');
 }
 
 async function runUnitSuiteJob(config, options) {

@@ -150,7 +150,9 @@ const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 // — an OOM-kill there loses the whole run, sentinel included, and reads to
 // the platform as a crashed container.
 const CAPTURE_MEMORY = process.env.CAPTURE_MEMORY || '4g';
-const CAPTURE_CPUS = process.env.CAPTURE_CPUS || '4';
+// Eight browser groups saturated the former four-core quota even on an
+// idle node. Allow one core per default group without reducing suite time.
+const CAPTURE_CPUS = process.env.CAPTURE_CPUS || '8';
 
 // Suite bounds handed to the container. Kept here rather than left to the
 // image's own defaults so the platform's timeout arithmetic (below) and the

@@ -80,6 +80,16 @@ ready replica can still serve while the desired image is failing to start.
 ResourceQuota reports reservations and object counts, not measured CPU or
 memory consumption. Do not substitute Docker host statistics for cluster usage.
 
+Capture Jobs default to an 8-CPU / 4Gi limit for eight concurrent browser groups,
+with 1 CPU / 3Gi requested. The foundation worker LimitRange must allow at least
+8 CPUs per container. `CAPTURE_CPUS`, `CAPTURE_MEMORY` and `TEST_CONCURRENCY`
+override these settings on the platform; keep CPU capacity aligned with browser
+concurrency when tuning them. CPU requests are scheduling reservations, so the
+larger limit allows bursts but does not guarantee eight idle cores. Check
+historical CPU throttling as well as completion: a successful Job can still
+produce timing-sensitive assertion failures under CPU contention. Unit-suite
+and coding-worker resource settings are independent.
+
 The authorized `usernode-debug containers` and `usernode-debug logs <name>`
 interfaces accept managed runtime names such as `sv-worker-s42` and
 `sv-preview-7-s42`. Their inventory includes readiness but leaves CPU/memory
