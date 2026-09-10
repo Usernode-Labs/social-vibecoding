@@ -95,7 +95,7 @@ function EmailForm() {
         <div className="rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3 break-words">
           <p>{account.email || 'No email linked'}</p>
           {account.email ? <p className="text-sm text-zinc-500 dark:text-zinc-400">
-            {account.verified ? 'Verified' : 'Not verified — verify it below.'}
+            {account.verified ? 'Verified' : 'Not verified. Verify it below.'}
           </p> : null}
         </div>
         <p className="text-sm text-zinc-500 dark:text-zinc-400">
