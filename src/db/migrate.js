@@ -10,6 +10,7 @@ const { encrypt } = require('../services/secrets');
 // #1037: the draft-card row copy lives with the service that writes real
 // drafts, so the staging fixture can't drift from what production emits.
 const issueDraftSvc = require('../services/issue-draft');
+const { reindexAfterHostMove } = require('./reindex-after-host-move');
 
 async function migrate(config) {
   const pool = getPool(config);
@@ -28,6 +29,14 @@ async function migrate(config) {
   log.info('db', 'Running migrations...');
   await applySchemaWithLockRetry(pool, schema);
   log.info('db', 'Schema up to date');
+
+  // One-off after the 2026-09 database host move: rows written before the
+  // move were no longer findable through their unique text indexes (the
+  // MCP connector's registered client was the first casualty). Runs BEFORE
+  // every seed below because they look rows up by text key and insert when
+  // nothing comes back — against a broken index that manufactures
+  // duplicates. Marker-guarded; see src/db/reindex-after-host-move.js.
+  await reindexAfterHostMove(pool);
 
   await seedAdmin(pool, config);
   await seedCaptureUser(pool);
