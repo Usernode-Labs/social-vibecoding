@@ -14,12 +14,11 @@ const API_SCOPE = 'api:access';
 const AGENT_SCOPE = 'agent:local';
 const REQUIRED_SCOPES = Object.freeze([IDENTITY_SCOPE, API_SCOPE, AGENT_SCOPE]);
 const REQUIRED_SCOPE_TEXT = REQUIRED_SCOPES.join(' ');
-// A self-hosted deployment uses USERNODE_DOMAIN as its canonical origin.
-// Keeping the existing default preserves the current single-server install
-// while allowing the Kubernetes lab to use its own operator-selected domain.
+// MCP and local agents use the hosted platform by default. Self-hosted
+// deployments can still select their canonical origin with USERNODE_DOMAIN.
 const PRODUCTION_ORIGIN = process.env.USERNODE_DOMAIN
   ? `https://${process.env.USERNODE_DOMAIN}`
-  : 'https://social-vibecoding.usernodelabs.org';
+  : 'https://my.onhomeroom.com';
 const LOCAL_ORIGIN = 'http://localhost:3000';
 const DEVICE_TTL_SECONDS = 600;
 const ACCESS_TTL_SECONDS = 30 * 24 * 60 * 60;
