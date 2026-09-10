@@ -117,6 +117,7 @@ async function gatherFull(config) {
   const containers = runtimeQ.resources || [];
   const stats = runtimeQ.stats || {};
   const runtimeKind = runtimeQ.runtimeKind || applicationRuntime.mode(config);
+  const runtimeAvailable = runtimeQ.available !== false;
 
   const byName = Object.fromEntries(containers.map((c) => [c.name, c]));
 
@@ -226,13 +227,15 @@ async function gatherFull(config) {
           status: s.status,
           stagingRuntimeName: stagingName,
           stagingRuntimeKind,
+          runtimeAvailable,
           staging: stagingState !== 'not_found' ? {
             name: stagingName,
             state: stagingState,
             status: staging?.status || stagingState,
             stats: stats[stagingName] || null,
           } : null,
-          stagingDriftWarning: !!(s.staging_runtime_name || s.staging_container_id) && stagingState === 'not_found',
+          stagingDriftWarning: runtimeAvailable
+            && !!(s.staging_runtime_name || s.staging_container_id) && stagingState === 'not_found',
           worker: worker ? {
             name: worker.name,
             state: worker.state,
@@ -263,6 +266,7 @@ async function gatherFull(config) {
       openIssues: parseInt(app.open_issues, 10),
       prodRuntimeName: prodName,
       prodRuntimeKind,
+      runtimeAvailable,
       prod: prodState !== 'not_found' ? {
         name: prodName,
         state: prodState,
@@ -282,7 +286,7 @@ async function gatherFull(config) {
       // free. It sat at the top of the admin status screen while three real
       // worker bootstrap failures went unnoticed below it, which is exactly
       // the failure mode a always-red indicator produces.
-      prodMissing: prodState === 'not_found'
+      prodMissing: runtimeAvailable && prodState === 'not_found'
         && app.status !== 'creating'
         && !app.self_hosted,
       sessions: appSessions,
@@ -309,7 +313,7 @@ async function gatherFull(config) {
   // legacy payload key for clients, but never call this worker liveness.
   const stuckSessions = sessions
     .filter((s) =>
-      s.branch_name &&
+      runtimeAvailable && s.branch_name &&
       !s.staging_url &&
       (s.pr_number || s.staging_build_ref || s.staging_runtime_name || s.staging_container_id) &&
       !s.has_active_turn &&
@@ -427,6 +431,16 @@ async function gatherFull(config) {
     hostLoadAvg1: host?.loadAvg1 ?? null,
     dbPoolWaiting: dbPool ? dbPool.waiting : null,
   };
+  if (!runtimeAvailable) {
+    // Null means unobserved; zero would falsely claim an empty/healthy fleet.
+    for (const key of ['prodRunning', 'prodMissing', 'stagingRunning', 'stagingTotal',
+      'workersRunning', 'workersReady', 'workersTotal', 'workersInFlight',
+      'workersWarmIdle', 'workersBootstrapping', 'workersOrphaned', 'stuckSessions', 'activeTurns']) {
+      summary[key] = null;
+    }
+    capacity.activeTurns = null;
+    capacity.warmIdleWorkers = null;
+  }
 
   return {
     // `now` is replaced at serve time so cached payloads don't show stale
@@ -435,6 +449,7 @@ async function gatherFull(config) {
     now: new Date().toISOString(),
     version: process.env.GIT_SHA || 'dev',
     runtimeKind,
+    runtimeAvailable,
     isAdmin: true, // overridden in redact() based on requester
     deployProgress: await deployStatus.read(config),
     node: nodeStatus.get(),
