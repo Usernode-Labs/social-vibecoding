@@ -3,6 +3,8 @@ const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const { Client } = require('pg');
 const log = require('./logger');
+const { withResourceUse } = require('./build-retention-guard');
+const { STAGING_TEMPLATE_LOCK } = require('./advisory-locks');
 
 const execFileAsync = promisify(execFile);
 
@@ -547,7 +549,10 @@ function stagingTemplateDbName(sourceDb) {
 const _templateChains = new Map();
 function withTemplateLock(key, fn) {
   const prev = _templateChains.get(key) || Promise.resolve();
-  const run = prev.then(fn, fn);
+  // The platform database is the common lock domain, including background
+  // template refreshes. Never lock inside the template database being replaced.
+  const locked = () => withResourceUse({ databaseUrl: process.env.DATABASE_URL }, STAGING_TEMPLATE_LOCK, key, fn);
+  const run = prev.then(locked, locked);
   const tail = run.then(() => {}, () => {});
   _templateChains.set(key, tail);
   tail.then(() => { if (_templateChains.get(key) === tail) _templateChains.delete(key); });
