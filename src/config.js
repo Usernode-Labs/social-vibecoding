@@ -432,6 +432,8 @@ function load() {
     workerRuntime: process.env.WORKER_RUNTIME || appRuntime,
     captureRuntime: process.env.CAPTURE_RUNTIME || appRuntime,
     kubernetes: {
+      platformNamespace: process.env.PLATFORM_NAMESPACE || 'social-platform',
+      platformDeployment: process.env.PLATFORM_DEPLOYMENT || 'social-vibecoding',
       buildNamespace: process.env.BUILD_NAMESPACE || 'social-builds',
       successfulBuildRetentionHours: Number(process.env.KPACK_SUCCESS_RETENTION_HOURS || '48'),
       appNamespace: process.env.APP_NAMESPACE || 'social-apps',
@@ -449,6 +451,7 @@ function load() {
       activeDeadlineSeconds: parseInt(process.env.ACTIVE_DEADLINE_SECONDS || '1800', 10),
       ingressClassName: process.env.INGRESS_CLASS_NAME || 'cilium',
       clusterIssuer: process.env.CLUSTER_ISSUER || 'letsencrypt-public',
+      appTlsSecretName: process.env.APP_TLS_SECRET_NAME || 'social-apps-wildcard-tls',
       appDomain: process.env.USERNODE_APPS_DOMAIN || process.env.USERNODE_DOMAIN || 'apps.example.invalid',
       platformDomain: process.env.USERNODE_DOMAIN || 'apps.example.invalid',
       workerImage: process.env.KUBERNETES_WORKER_IMAGE || '',

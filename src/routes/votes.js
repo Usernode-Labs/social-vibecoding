@@ -1,10 +1,12 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
+const { connectionExhaustionMessage } = require('../db/connection-census');
 const log = require('../services/logger');
 const github = require('../services/github');
 const githubMock = require('../services/github-mock');
 const staging = require('../services/staging');
 const docker = require('../services/docker');
+const applicationRuntime = require('../services/application-runtime');
 const { checkAndResolveConflicts, isResolving } = require('../services/conflict-resolver');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
@@ -573,6 +575,24 @@ function stagingMockProposals(viewer) {
         '[Mock] Checks-error test: the staging build or test run itself broke',
         6, 1, 0, 0, { required: 2 }),
       check_state: 'error',
+      recheckable: true,
+      test_results: [],
+    },
+    // #1771: the same red badge, for the one cause that is NOT the author's
+    // to fix. A staging preview starved of Postgres connections used to
+    // record its 500s as assertion failures against the diff; it is an
+    // 'error' with an attribution sentence now, and this row is how that
+    // sentence is reviewable in a preview. The detail comes from the
+    // function that writes the real ones, so the fixture cannot drift from
+    // the copy an author actually sees.
+    {
+      ...mk(9000045, 900145,
+        '[Mock] Checks-error test: the preview was starved of database connections',
+        4, 1, 0, 1, { required: 2 }),
+      check_state: 'error',
+      check_error_detail: connectionExhaustionMessage(
+        { max: 100, used: 98 }, { where: 'ran its checks' }
+      ),
       recheckable: true,
       test_results: [],
     },
@@ -4056,7 +4076,10 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
           [result.containerId, sha || null, session.pr_number || null, app.id]
         );
       } else {
-        log.info('votes', 'Self-app PR merged; host deployer will roll the harness', {
+        const clusterRuntime = applicationRuntime.mode(config) === 'kubernetes';
+        log.info('votes', clusterRuntime
+          ? 'Self-app PR merged; GitHub Actions publishes the release for Argo CD'
+          : 'Self-app PR merged; host deployer will roll the harness', {
           appId: app.id, prNumber: session.pr_number,
         });
         // Skip the deployer's ~2-min baseline poll: tell it main just
@@ -4065,7 +4088,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         // the baseline poll still delivers the deploy.
         try {
           const { nudgeHostDeployer } = require('../services/deploy-nudge');
-          nudgeHostDeployer({ sha: mergeCommitSha, prNumber: session.pr_number });
+          if (!clusterRuntime) nudgeHostDeployer({ sha: mergeCommitSha, prNumber: session.pr_number });
         } catch (_) { /* never fail a merge over a hint */ }
       }
       // Let every tab watching this app refresh its commit pill without

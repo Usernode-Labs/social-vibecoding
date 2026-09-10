@@ -3,6 +3,8 @@ const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const { Client } = require('pg');
 const log = require('./logger');
+const { withResourceUse } = require('./build-retention-guard');
+const { STAGING_TEMPLATE_LOCK } = require('./advisory-locks');
 
 const execFileAsync = promisify(execFile);
 
@@ -222,6 +224,72 @@ async function dropDatabase(dbName, { strict = false, execute = execInDb } = {})
   log.info('db-manager', 'Database and role dropped', { dbName, role });
 }
 
+// ─── Per-preview connection ceiling (#1771) ─────────────────────────────
+//
+// One Postgres server backs the platform, every production app and every
+// staging preview, and its max_connections is the stock 100. Nothing in the
+// fleet was bounded against that number: each preview container brings its
+// own pg Pool, and a generated app's pool is whatever that app's code says
+// it is — code this platform does not own and cannot cap from here. Twenty
+// previews times a double-digit pool is arithmetic that does not fit, and
+// when it stopped fitting the casualty was not the preview that overran. It
+// was whichever proposal's checks ran next, which recorded the resulting
+// 500s as assertion failures against its own diff.
+//
+// `ALTER DATABASE … CONNECTION LIMIT` is the one bound that does not need
+// the app's cooperation: the server enforces it per clone, whatever the
+// container inside is running. Set generously on purpose. This is a
+// BACKSTOP, not a working budget: it has to sit above what a healthy
+// preview uses under a full check run (capture drives 8 concurrent pages,
+// so 8 concurrent requests, plus the app's own boot/migration connections),
+// because a ceiling that bites during normal work would turn this issue's
+// symptom into a permanent feature. What it buys is that a preview which
+// leaks connections now hits its OWN ceiling and fails locally, with
+// Postgres naming the database in the error, instead of draining the shared
+// budget and breaking the next proposal's checks.
+//
+// STAGING_DB_CONNECTION_LIMIT=0 (or negative) disables the ceiling, which is
+// also what -1 means to Postgres itself.
+const DEFAULT_STAGING_DB_CONNECTION_LIMIT = 12;
+
+function stagingConnectionLimit() {
+  const raw = parseInt(process.env.STAGING_DB_CONNECTION_LIMIT || '', 10);
+  if (!Number.isFinite(raw)) return DEFAULT_STAGING_DB_CONNECTION_LIMIT;
+  return raw > 0 ? raw : -1;   // -1 → unlimited, Postgres's own spelling
+}
+
+// app_<slug>_staging_s<sessionId>_<tag> — the shape stagingDbName() builds.
+// The ceiling is for previews only: cloneDatabase also serves app forks,
+// whose target is a real production database and must stay uncapped.
+const STAGING_CLONE_DB_RE = /^app_[a-z0-9_]+_staging_s\d+_([0-9a-f]{6}|latest)$/;
+
+function isStagingCloneDb(name) {
+  return STAGING_CLONE_DB_RE.test(String(name || ''));
+}
+
+/**
+ * Apply the ceiling to one staging clone. Best-effort by design: a preview
+ * that exists but is uncapped is the status quo, whereas a build that fails
+ * because the cap could not be set is a regression. Returns the limit
+ * applied, or null when nothing was done.
+ */
+async function applyStagingConnectionLimit(dbName, { execute = execInDb } = {}) {
+  if (!SAFE_IDENT.test(dbName)) return null;
+  if (!isStagingCloneDb(dbName)) return null;
+  const limit = stagingConnectionLimit();
+  if (limit < 0) return null;
+  try {
+    await execute(`ALTER DATABASE ${dbName} CONNECTION LIMIT ${limit}`);
+    log.info('db-manager', 'Staging clone connection ceiling applied', { dbName, limit });
+    return limit;
+  } catch (err) {
+    log.warn('db-manager', 'Could not set staging clone connection ceiling', {
+      dbName, limit, err: err.message,
+    });
+    return null;
+  }
+}
+
 // `viaTemplate` (staging previews only): clone from the source's staging
 // template — a redacted copy kept warm on the server and refreshed at most
 // every STAGING_DB_TEMPLATE_MAX_AGE_MS — with a file-level CREATE DATABASE
@@ -257,10 +325,15 @@ async function cloneDatabase(sourceDb, targetDb, { viaTemplate = false } = {}) {
       // up to date now, off the build's critical path, so the next build
       // finds it warm. Serialised behind any clone in flight.
       if (viaTmpl.templateStale) queueTemplateRefresh(sourceDb);
+      await applyStagingConnectionLimit(targetDb);
       return viaTmpl;
     }
   }
   const direct = await cloneDatabaseDirect(sourceDb, targetDb);
+  // Both clone paths converge here so the ceiling is set once, after the
+  // copy rather than before it: pg_restore opens its own connections, and a
+  // ceiling that applied mid-restore would cap the restore itself (#1771).
+  await applyStagingConnectionLimit(targetDb);
   return { ...direct, via: 'direct', templateRefreshed: false };
 }
 
@@ -476,7 +549,10 @@ function stagingTemplateDbName(sourceDb) {
 const _templateChains = new Map();
 function withTemplateLock(key, fn) {
   const prev = _templateChains.get(key) || Promise.resolve();
-  const run = prev.then(fn, fn);
+  // The platform database is the common lock domain, including background
+  // template refreshes. Never lock inside the template database being replaced.
+  const locked = () => withResourceUse({ databaseUrl: process.env.DATABASE_URL }, STAGING_TEMPLATE_LOCK, key, fn);
+  const run = prev.then(locked, locked);
   const tail = run.then(() => {}, () => {});
   _templateChains.set(key, tail);
   tail.then(() => { if (_templateChains.get(key) === tail) _templateChains.delete(key); });
@@ -1353,6 +1429,11 @@ module.exports = {
   dropDatabase,
   cloneDatabase,
   connectionUrl,
+  // Per-preview connection ceiling (#1771).
+  stagingConnectionLimit,
+  isStagingCloneDb,
+  applyStagingConnectionLimit,
+  DEFAULT_STAGING_DB_CONNECTION_LIMIT,
   adoptExistingDatabase,
   ensureRoleExists,
   databaseExists,

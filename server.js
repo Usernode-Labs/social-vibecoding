@@ -314,12 +314,12 @@ app.all('/__mock/*', (_req, res) => {
 //                        when the deploy workflow has flagged a redeploy in
 //                        flight (see services/deploy-status.js + deploy.yml).
 const deployStatus = require('./src/services/deploy-status');
-app.get('/api/version', (_req, res) => {
+app.get('/api/version', async (_req, res) => {
   res.json({
     sha: process.env.GIT_SHA || 'dev',
     name: process.env.USERNODE_PROJECT_NAME || 'usernode',
     repoUrl: config.platformRepoUrl,
-    deployProgress: deployStatus.read(),
+    deployProgress: await deployStatus.read(config),
     // Which environment this build is: 'staging' | 'production' | null.
     // Only used to NAME the no-SHA state in the drawer's "Platform
     // version" row: staging previews of the platform are built without
@@ -2008,7 +2008,7 @@ async function recoverActiveWorkers(config) {
           log.warn('server', 'Orphan adoption paused with durable turn state retained', {
             name: orphan.name, sessionId: orphan.sessionId, err: err.message,
           });
-          scheduleRetainedOrphanRecovery(orphan, deps);
+          scheduleRetainedOrphanRecovery({ ...orphan, retryWorkerRecovery: !!err.retryWorkerRecovery }, deps);
           return;
         }
         log.warn('server', 'Orphan adoption failed', {
@@ -2074,7 +2074,7 @@ function scheduleRetainedOrphanRecovery(orphan, deps) {
     run: async () => {
       const activeTurn = await turnLifecycle.loadActiveTurn(deps.pool, sessionId);
       const action = turnLifecycle.recoveryAction(activeTurn);
-      if (action === 'none') return;
+      if (action === 'none' && !orphan.retryWorkerRecovery) return;
       if (action === 'cleanup') {
         const args = turnCleanupArgs(activeTurn);
         recoveryRetry.requireDurableTurnCleanup(
@@ -2158,7 +2158,12 @@ function recoveredAgentIdentity(session, activeTurn = null) {
 }
 
 async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
-  const { name: containerName, sessionId, state: containerState } = orphan;
+  const { name: containerName, sessionId } = orphan;
+  let containerState = orphan.state;
+  const kubernetesWorker = worker.usesKubernetesWorkers();
+  const retryRuntimeRecovery = (message) => Object.assign(new Error(message), {
+    retainActiveTurn: true, retryWorkerRecovery: true,
+  });
 
   const { rows } = await pool.query(
     // #896: app_self_hosted rides along so the recovered turn's Mayor
@@ -2230,6 +2235,16 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     return;
   }
 
+  if (kubernetesWorker) {
+    // Re-read on every retry: the startup inventory may describe a Pod that
+    // was still starting. An API failure or non-ready Deployment is not death.
+    try { containerState = await worker.getWorkerStatus(containerName); }
+    catch (_) { throw retryRuntimeRecovery('Kubernetes worker state is unavailable'); }
+    if (!['running', 'not_found'].includes(containerState)) {
+      throw retryRuntimeRecovery('Kubernetes worker is not ready for recovery');
+    }
+  }
+
   // Long-lived worker reality check: a *running* container could be
   //   (a) a warm-idle wrapper sitting in `sleep infinity` — clean adopt,
   //       no log scrape needed.
@@ -2265,6 +2280,9 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     }
 
     const busy = await worker.isWorkerExecuting(containerName);
+    if (kubernetesWorker && busy === null) {
+      throw retryRuntimeRecovery('Kubernetes worker liveness is unavailable');
+    }
     if (busy === false) {
       // Nothing is executing and there's no record to resume — normally
       // an idle warm container, correctly adopted in silence.
@@ -2292,7 +2310,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       worker.adoptWarmWorker(sessionId, containerName);
       return;
     }
-    if (busy === true && session.cc_session_id) {
+    if (busy === true && (session.cc_session_id || kubernetesWorker)) {
       // Case (d) conservative recovery: the prior in-flight turn
       // predates the detached contract and is unrecoverable from the
       // host. Kill the orphan exec to free the warm container for
@@ -2464,6 +2482,14 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
         }),
       ]
     ).catch(() => {});
+  }
+
+  // All running Kubernetes workers return above. A positively missing one
+  // has had its durable recovery handled; there are no container logs to
+  // scrape or a legacy result to synthesize.
+  if (kubernetesWorker) {
+    await worker.destroyWorker(containerName);
+    return;
   }
 
   const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -4185,7 +4211,7 @@ function startSessionAutoPauseSweeper(config) {
     try {
       const { rows } = await pool.query(
         // pr_number: a reaped TAIL row names the PR its work landed on.
-        `SELECT id, user_id, app_id, pr_number, active_turn FROM chat_sessions
+        `SELECT id, user_id, app_id, status, pr_number, active_turn FROM chat_sessions
          WHERE active_turn IS NOT NULL
          ORDER BY (active_turn->>'startedAt') ASC NULLS FIRST
          LIMIT 20`
@@ -4232,7 +4258,8 @@ function startSessionAutoPauseSweeper(config) {
           // must not ask for a resend. `phase` in the log tells an operator
           // which one they're looking at.
           const reapCodeLanded = !!reapTail.sha && reapTail.pushOk === true;
-          log.warn('server', 'Reaping orphaned active_turn', {
+          const closedSession = ['archived', 'merged'].includes(row.status);
+          if (!closedSession) log.warn('server', 'Reaping orphaned active_turn', {
             sessionId: row.id, startedAt: row.active_turn?.startedAt || null,
             phase: row.active_turn?.phase || 'exec', codeLanded: reapCodeLanded,
           });
@@ -4264,6 +4291,17 @@ function startSessionAutoPauseSweeper(config) {
               });
               continue;
             }
+          }
+          if (closedSession) {
+            const cleared = await turnLifecycle.clearClosedSessionTurn(pool, {
+              sessionId: row.id, activeTurn: row.active_turn,
+            });
+            if (cleared) log.info('server', 'Cleared obsolete turn from closed session', {
+              sessionId: row.id, status: row.status,
+            });
+            // Housekeeping is not a new interruption. Leave finished-session
+            // transcripts and notifications alone, including after a CAS miss.
+            continue;
           }
           const reaped = await worker.clearActiveTurn(row.id, turnCleanupArgs(row.active_turn));
           if (!reaped) {
@@ -4591,6 +4629,24 @@ function startSessionAutoPauseSweeper(config) {
       }
     } catch (err) {
       log.warn('server', 'Orphan staging-DB sweep failed', { err: err.message });
+    }
+
+    // Pass 9: connection-pressure preview reclaim (#1771). Passes 7 and 8
+    // reclaim previews for what is true about the PREVIEW (stale, orphaned).
+    // This one reclaims healthy previews for what is true about the SERVER:
+    // one Postgres backs the platform, every production app and every
+    // preview, and when its connection budget runs out the failure lands on
+    // whichever proposal's checks run next, recorded as a broken diff.
+    // Does nothing at all until a census says the server is saturated; then
+    // tears down the idle-longest previews, re-censusing after each one and
+    // stopping the moment the pressure is off. Own throttle in the service;
+    // never throws. STAGING_PRESSURE_SWEEP_INTERVAL_MS=0 disables it.
+    try {
+      if (stagingReap.pressureSweepDue()) {
+        await stagingReap.sweepConnectionPressure(config);
+      }
+    } catch (err) {
+      log.warn('server', 'Connection-pressure sweep failed', { err: err.message });
     }
   }, config.sessionSweepIntervalMs).unref();
 }

@@ -76,6 +76,38 @@ test('a retry is not a check of its own', () => {
   assert.equal(out.results[0].index, 0);
 });
 
+test('a full manifest retains late retries without adding result rows', () => {
+  const count = require('../src/services/app-manifest').MAX_DECLARED_TESTS;
+  const primary = Array.from({ length: count }, (_, i) => frame(i, i < 10 ? 'fail' : 'pass'));
+  const retries = Array.from({ length: 30 }, (_, i) => frame(1000000 + i,
+    i % 3 === 2 ? 'pass' : 'fail', { retryOf: Math.floor(i / 3) }));
+  // Runtime output is concurrent, and parseTests sorts retries after all
+  // declarations. Every successful retry is therefore beyond the old cap.
+  const parsed = visuals.parseTests([...retries, ...primary.reverse()].join('\n'));
+  const out = visuals.classifyTests(parsed, count, { dispatched: dispatch(count) });
+  assert.equal(out.state, 'passing');
+  assert.equal(out.results.length, count);
+  assert.equal(out.ranCount, count);
+  for (const row of out.results.slice(0, 10)) {
+    assert.equal(row.passedOnRetry, true);
+    assert.equal(row.flakyRun, true);
+    assert.equal(row.runs, 4);
+    assert.equal(row.passes, 1);
+    assert.equal(row.fails, 3);
+  }
+});
+
+test('an unrelated retry cannot hide a missing declared result', () => {
+  const parsed = visuals.parseTests([
+    frame(0, 'pass'), frame(1000000, 'pass', { retryOf: 99 }),
+    frame(1000001, 'pass', { retryOf: 1 }),
+  ].join('\n'));
+  const out = visuals.classifyTests(parsed, 2, { dispatched: dispatch(2) });
+  assert.equal(out.state, 'error');
+  assert.equal(out.ranCount, 1);
+  assert.match(out.errorDetail, /check 1/);
+});
+
 test('the container asks again, on its own document, within its caps', () => {
   const src = read('capture/capture.js');
   assert.match(src, /const RETRY_INDEX_BASE = 1000000;/,

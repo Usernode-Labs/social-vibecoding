@@ -45,6 +45,32 @@ Deployment's existing secrets checksum triggers a rollout when these values
 change. After rollout, check the admin mail status and verify delivery to a
 mailbox you control.
 
+For GitHub account linking, add both OAuth credentials to the same encrypted
+file's existing `secrets` block using the SOPS editor:
+
+```yaml
+secrets:
+  githubLinkClientId: "<GitHub OAuth client ID>"
+  githubLinkClientSecret: "<GitHub OAuth client secret>"
+```
+
+With `secrets.create: true`, these map to `GITHUB_LINK_CLIENT_ID` and
+`GITHUB_LINK_CLIENT_SECRET` in the platform Secret and reach the process through
+the Deployment's `envFrom`. With `secrets.create: false`, provide those
+environment-variable keys in `secrets.existingSecret`. Both fields default to
+empty strings and remain optional for chart installation. Publish the updated
+chart and sync the encrypted values through Argo CD; the existing secrets
+checksum rolls out credential changes.
+
+For OpenRouter managed keys, set `secrets.openrouterManagementApiKey` in the
+same SOPS-encrypted values file. With `secrets.create: true`, it maps to
+`OPENROUTER_MANAGEMENT_API_KEY` in the platform Secret, imported through the
+Deployment's `envFrom`. The field defaults to an empty string and is optional
+for chart installation. With `secrets.create: false`, supply
+`OPENROUTER_MANAGEMENT_API_KEY` in `secrets.existingSecret` instead. Release the
+updated chart and sync through Argo CD; the secrets checksum triggers a rollout
+when the value changes.
+
 `config.domain` is the canonical platform hostname (`USERNODE_DOMAIN`).
 `config.appsDomain` optionally sets a separate suffix for generated apps and
 session previews (`USERNODE_APPS_DOMAIN`). When empty, it defaults to
@@ -204,3 +230,13 @@ Failed Jobs preserve their exit code and available test output in the check
 result; timeouts remain failures. Checks and earned merge gating are not
 bypassed. Existing previews can be rechecked after the platform release; a
 preview rebuild is not required just to change its capture URL.
+
+## Platform rollout reporting
+
+The platform reads its own Deployment for `/api/version` and admin status.
+The chart binds `social-platform-runtime` to a Role with only `get` on that
+Deployment and injects its namespace and name, including fullname overrides.
+Incomplete rollouts, controller failures, paused rollouts, and unavailable API
+reads remain distinct. This reports Argo-applied rollout state; image build and
+chart publication progress remain in the `Build Kubernetes images` workflow.
+Kubernetes self-app merges do not write the standalone host-deployer nudge.

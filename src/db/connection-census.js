@@ -38,6 +38,48 @@ function isConnectionLimitError(err) {
   return LIMIT_TEXT_RE.test(String(err.message || ''));
 }
 
+// The same wall seen from a LOG BLOB rather than from a thrown error.
+//
+// A staging preview that cannot get a connection does not hand the platform
+// an Error object: it prints Postgres's complaint to stdout and exits, and
+// all the checks pipeline ever holds is that text. Both halves of the wall
+// appear there — the server's own refusal ("sorry, too many clients
+// already"), and the per-database ceiling this issue adds ("too many
+// connections for database"), which is the same event scoped to one
+// preview. The bare SQLSTATE is matched too, for the driver layers that
+// print the code and drop the sentence.
+const LIMIT_LOG_RE = new RegExp([
+  'sorry, too many clients already',
+  'remaining connection slots are reserved',
+  'too many connections for (database|role)',
+  '\\b(53300|53400)\\b',
+].join('|'), 'i');
+
+// True when a log blob (container boot logs, stderr, a capture failure
+// reason) shows the shared Postgres turning a connection away.
+function mentionsConnectionLimit(text) {
+  if (!text) return false;
+  return LIMIT_LOG_RE.test(String(text));
+}
+
+// The one sentence every surface uses to say this. It lands in
+// `chat_sessions.check_error_detail`, which the proposal card and the merge
+// gate both render, so it is user-facing copy: no em dashes, and it leads
+// with the thing the author most needs to know, which is that the diff is
+// not the problem.
+//
+// `census` is optional — the numbers are the evidence when they are to
+// hand, and the sentence has to work without them because a census cannot
+// be taken on a server that is out of connections.
+function connectionExhaustionMessage(census, { where = 'ran' } = {}) {
+  const figures = census && census.max
+    ? ` (${census.used} of ${census.max} server connections in use)`
+    : '';
+  return `Infrastructure problem, not this change: the shared Postgres server `
+    + `ran out of connections${figures} while the preview ${where || 'ran'}. `
+    + `Checks retry automatically once the fleet frees connections.`;
+}
+
 // At or above this share of max_connections, the server is one burst away
 // from refusing work. A single check run opens up to `concurrency` (8)
 // connections against one preview, so the last tenth is not headroom.
@@ -103,6 +145,8 @@ module.exports = {
   CONNECTION_LIMIT_CODES,
   SATURATION_RATIO,
   isConnectionLimitError,
+  mentionsConnectionLimit,
+  connectionExhaustionMessage,
   isSaturated,
   connectionCensus,
 };

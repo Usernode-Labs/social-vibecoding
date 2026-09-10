@@ -3,9 +3,9 @@
 The platform creates standalone kpack Builds. Their completed Pods previously
 remained until app deletion; the Job TTL used by checks does not apply to them.
 
-The leader now previews eligible Builds at startup without deleting anything.
-An hourly sweep then deletes at most 20 unreferenced successful Builds per pass,
-oldest completion first. `KPACK_SUCCESS_RETENTION_HOURS` defaults to `48` and
+The leader previews eligible Builds at startup, then immediately runs a cleanup
+pass. Further sweeps run hourly. Each pass deletes at most 20 unreferenced
+successful Builds, oldest completion first. `KPACK_SUCCESS_RETENTION_HOURS` defaults to `48` and
 must be a finite number of at least `1`. Age is measured from the successful
 condition's `lastTransitionTime`, never from creation time.
 
@@ -46,7 +46,8 @@ Busy periods can delay cleanup beyond the configured retention time.
 Run `node scripts/preview-build-retention.js` in the platform environment to
 print the next batch of candidates without making changes. The startup log
 `kpack retention preview` provides the same read-only preview. Actual sweeps
-begin one hour after leader startup and log every deletion.
+begin after the startup preview completes and log every deletion. This prevents
+frequent releases from continually resetting a one-hour wait before cleanup.
 
 On the first rollout, drain older platform versions before the first scheduled
 deletion: those versions do not participate in the deployment lock. A preview
