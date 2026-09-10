@@ -3300,10 +3300,7 @@
         return false;
       };
 
-      // This call closes the private realm synchronously, before this function
-      // reaches its first await. Native capability probing deliberately waits
-      // until after the server has revoked the HttpOnly session, so a degraded
-      // bridge can never prevent the authoritative logout boundary.
+      // Close native admission before any asynchronous work, including probes.
       let preflight = { nativeTerminal: false };
       try {
         if (window.NativeChrome && NativeChrome.prepareWebLogout) {
@@ -3313,16 +3310,44 @@
         return fail(error);
       }
 
+      // Older apps cannot delete the HttpOnly cookie locally. Only opt into
+      // offline logout when native explicitly guarantees that cleanup.
+      let offlineLogout = false;
+      if (preflight.nativeTerminal) {
+        try {
+          const info = await NativeChrome.getInfo();
+          offlineLogout = info?.degraded !== true &&
+            info?.sessionLifecycleProtocol === 2 &&
+            info?.capabilities?.includes('offlineLogout') === true;
+        } catch (_) {}
+      }
+      let webRevoked = false;
+      let timeout;
+      let controller;
       try {
         if (preflight.webRecoverySettled) await preflight.webRecoverySettled;
-        const response = await fetch('/api/auth/logout', {
+        controller = offlineLogout ? new AbortController() : null;
+        const request = fetch('/api/auth/logout', {
           method: 'POST', credentials: 'same-origin',
+          ...(controller ? { signal: controller.signal } : {}),
         });
+        const response = offlineLogout ? await Promise.race([
+          request,
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => {
+              controller.abort();
+              reject(new Error('Remote sign-out timed out'));
+            }, 2000);
+          }),
+        ]) : await request;
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        webRevoked = true;
       } catch (error) {
-        // Do not tear down native while the HttpOnly web-session cookie can
-        // still restore this participant in the replacement WebView.
-        return fail(error);
+        if (!offlineLogout) return fail(error);
+        // Native owns deletion of the cookie and durable credential. Remote
+        // revocation remains best effort when the API cannot be reached.
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
       }
       // Offline mode (#487): the service worker caches GET /api/* responses
       // per-URL, not per-user — wipe them so the next account on this
@@ -3344,8 +3369,8 @@
       // URL it was on, so a logout from `#settings` (or from `/app/<slug>`)
       // leaves an address that restoreFromHash reads as a remembered deep
       // link and answers with the sign-in form on the next restore. This runs
-      // after the revocation above on purpose: a logout that FAILED must
-      // leave the address still describing the screen the user is looking at.
+      // after remote revocation or an offline-capable native hand-off has
+      // been selected.
       //
       // replaceState is safe on both counts that matter here. NATIVE-BRIDGE.md's
       // trust model binds the privileged capability to the executing JS realm,
@@ -3380,6 +3405,9 @@
           if (timer && typeof timer.unref === 'function') timer.unref();
           return result;
         }, (error) => {
+          // If neither boundary completed, do not reload a possibly live
+          // cookie or claim the user is signed out. Allow cleanup to retry.
+          if (!webRevoked) return fail(error);
           // A rejection leaves the native realm closed and server authority
           // revoked, but this document alive and signed out. Carry the
           // advisory across the navigation (the toast itself would not
