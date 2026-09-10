@@ -2612,6 +2612,14 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS screenshot_device_scale SMALLINT NOT N
 -- and rotates the id only when the committed bytes change (the
 -- /app-icons/:id cache header is immutable, so a new id doubles as
 -- the cache-buster).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS featured_illustration JSONB;
+CREATE TABLE IF NOT EXISTS app_illustrations (
+  app_id INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  id VARCHAR(32) NOT NULL UNIQUE,
+  content_type TEXT NOT NULL,
+  data BYTEA NOT NULL
+);
+
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_emoji VARCHAR(32);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_image_id VARCHAR(32);
 

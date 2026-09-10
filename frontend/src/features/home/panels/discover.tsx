@@ -56,7 +56,7 @@
  * a scroll cancels the press rather than competing with it.
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { CheckIcon, PlusWideIcon } from '@/components/ui/icons';
 
@@ -107,7 +107,16 @@ function CardArt({ icon }: { icon: IconView }) {
  * says nothing rather than padding itself with filler. The name and the art
  * are the floor.
  */
-function DiscoverCard({ tile }: { tile: DiscoverTileView }) {
+function IllustrationArt({ tile }: { tile: DiscoverTileView }) {
+  const [failed, setFailed] = useState(false);
+  const art = tile.illustration;
+  if (!art || failed) return <CardArt icon={tile.icon} />;
+  return <img src={art.url} alt="" draggable={false} className="home-discover-illustration"
+    onError={() => setFailed(true)}
+    style={{ transform: `translate(${art.x}%, ${art.y}%) scale(${art.zoom})` }} />;
+}
+
+export function DiscoverCard({ tile, preview = false }: { tile: DiscoverTileView; preview?: boolean }) {
   const { added } = tile;
   return (
     <div
@@ -117,8 +126,11 @@ function DiscoverCard({ tile }: { tile: DiscoverTileView }) {
       {...(tile.demo ? { 'data-demo': 'true' } : null)}
     >
       <div className="home-discover-art relative">
-        <CardArt icon={tile.icon} />
+        <IllustrationArt key={tile.illustration?.url || 'default'} tile={tile} />
         <button
+          type="button"
+          disabled={preview}
+          tabIndex={preview ? -1 : undefined}
           className={`card-add-btn absolute top-1.5 right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
             added
               ? 'bg-emerald-500 border-emerald-500 text-white'

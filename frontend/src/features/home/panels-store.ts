@@ -49,6 +49,7 @@ export interface DiscoverTileView {
   /** Is this app already in "Your apps"? Drives the badge's whole treatment. */
   added: boolean;
   icon: IconView;
+  illustration?: { url: string; zoom: number; x: number; y: number } | null;
   /**
    * The app's own one-line description, from its manifest — null when it
    * declares none, which is most apps. The card draws nothing in its place.

@@ -2843,7 +2843,9 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   overflow: hidden;
   cursor: pointer;
 }
+.home-discover-illustration { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 .home-discover-art {
+  overflow: hidden;
   height: 7.5rem;
   background: var(--tint-art);
   display: flex;
