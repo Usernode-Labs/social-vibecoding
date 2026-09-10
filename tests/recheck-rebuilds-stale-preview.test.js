@@ -84,7 +84,7 @@ test('liveness still wins: a stopped container rebuilds regardless, an unreadabl
 
 test('kubernetes previews get the same comparison once they are running', async () => {
   const artPath = require.resolve('../src/services/application-runtime');
-  const original = stubModule(artPath, { status: async () => 'running' });
+  const original = stubModule(artPath, { inspect: async () => ({ status: 'running', labels: {} }) });
   const recPath = require.resolve('../src/services/staging-recovery');
   delete require.cache[recPath];
   try {
@@ -164,9 +164,9 @@ test('the build stamps the clone HEAD on the row and teardown clears it', () => 
 test('the preview ceiling is four CPUs on docker and the same figure on kubernetes', () => {
   const docker = require('../src/services/docker');
   assert.equal(docker.STAGING_CPUS, '4');
-  assert.match(read('src/services/application-runtime.js'), /kubernetes\.deployApplication\(config, \{ app, environment, sessionId, imageRef, env, cpus \}\)/);
+  assert.match(read('src/services/application-runtime.js'), /kubernetes\.deployApplication\(config, \{ app, environment, sessionId, imageRef, env, cpus, labels \}\)/);
   const k8s = read('src/services/kubernetes.js');
-  assert.match(k8s, /async function deployApplication\(config, \{ app, environment, sessionId, imageRef, env, cpus = null \}\)/);
+  assert.match(k8s, /async function deployApplication\(config, \{ app, environment, sessionId, imageRef, env, cpus = null, labels: extraLabels = \{\} \}\)/);
   assert.match(k8s, /limits: \{ cpu: String\(cpus \|\| '1'\), memory: '1Gi' \}/, 'production apps pass nothing and keep 1');
   assert.match(read('src/services/staging.js'), /cpus: docker\.STAGING_CPUS,/, 'staging passes the ceiling on every runtime');
 });

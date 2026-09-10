@@ -87,11 +87,11 @@ async function recoverFromScratch(config, pool, app) {
 
   if (app.repo_url && github.isEnabled()) {
     const staging = require('./staging');
-    const { containerId, sha } = await staging.rebuildProduction(config, app);
+    const { containerId, sha, runtimeKind = applicationRuntime.mode(config), runtimeName = containerId } = await staging.rebuildProduction(config, app);
     await pool.query(
-      `UPDATE apps SET container_id = $1, main_sha = $2, last_deploy_at = NOW()
+      `UPDATE apps SET container_id = $1, main_sha = $2, last_deploy_at = NOW(), runtime_kind = $4, runtime_name = $5
        WHERE id = $3`,
-      [containerId, sha || app.main_sha || null, app.id]
+      [runtimeKind === 'docker' ? containerId : null, sha || app.main_sha || null, app.id, runtimeKind, runtimeName]
     );
     try {
       const { broadcastGlobal } = require('./ws');
@@ -114,10 +114,12 @@ async function recoverFromScratch(config, pool, app) {
     // Missing required secrets — unrunnable until a human fixes them.
     throw new Error(`cannot respawn ${app.slug}: missing required secrets`);
   }
-  await docker.waitForHealthy(name, 3000, '/health', 10);
+  const runtimeKind = applicationRuntime.mode(config);
+  // Kubernetes deploy already waits for the replacement replicas' readiness.
+  if (runtimeKind === 'docker') await docker.waitForHealthy(name, 3000, '/health', 10);
   await pool.query(
-    'UPDATE apps SET container_id = $1, last_deploy_at = NOW() WHERE id = $2',
-    [containerId, app.id]
+    'UPDATE apps SET container_id = $1, last_deploy_at = NOW(), runtime_kind = $3, runtime_name = $4 WHERE id = $2',
+    [runtimeKind === 'docker' ? containerId : null, app.id, runtimeKind, containerId]
   );
   log.info('app-heal', 'App respawned from existing image', { slug: app.slug });
   return 'respawned';
@@ -199,11 +201,11 @@ async function provisionMissingRepo(config, pool, app) {
   });
 
   const staging = require('./staging');
-  const { containerId, sha } = await staging.rebuildProduction(config, app);
+  const { containerId, sha, runtimeKind = applicationRuntime.mode(config), runtimeName = containerId } = await staging.rebuildProduction(config, app);
   await pool.query(
-    `UPDATE apps SET container_id = $1, main_sha = $2, last_deploy_at = NOW()
+    `UPDATE apps SET container_id = $1, main_sha = $2, last_deploy_at = NOW(), runtime_kind = $4, runtime_name = $5
      WHERE id = $3`,
-    [containerId, sha || null, app.id]
+    [runtimeKind === 'docker' ? containerId : null, sha || null, app.id, runtimeKind, runtimeName]
   );
   try {
     const { broadcastGlobal } = require('./ws');
@@ -235,6 +237,8 @@ async function provisionMissingRepo(config, pool, app) {
 //   heal_failed     — the attempt threw; cooldown stamped
 async function checkAndHealOne(config, pool, app, { probeRunning = false } = {}) {
   if (app.self_hosted) return { status: 'skipped', slug: app.slug };
+  const runtimeRef = applicationRuntime.productionRef(config, app);
+  config = { ...config, appRuntime: runtimeRef.runtimeKind };
   if (inFlight.has(app.slug)) return { status: 'in_flight', slug: app.slug };
 
   const appDeployStatus = require('./app-deploy-status');
@@ -270,12 +274,13 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false } = {})
     }
   }
 
-  const name = app.runtime_name || containerName(app.slug);
-  const runtimeRef = { runtimeKind: app.runtime_kind || 'docker', runtimeName: name };
+  const name = runtimeRef.runtimeName;
   const state = await applicationRuntime.status(config, runtimeRef);
 
   if (runtimeRef.runtimeKind === 'kubernetes') {
-    if (state === 'running') return { status: 'healthy', slug: app.slug };
+    if (state === 'running' && (!probeRunning || await applicationRuntime.probeHealth(config, runtimeRef))) {
+      return { status: 'healthy', slug: app.slug };
+    }
     if (Date.now() - (healAttempts.get(app.slug) || 0) < cooldownMs(config)) {
       return { status: 'cooldown', slug: app.slug };
     }
@@ -283,9 +288,13 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false } = {})
     inFlight.add(app.slug);
     try {
       if (state !== 'not_found') {
-        await applicationRuntime.restart(config, runtimeRef);
-        healAttempts.delete(app.slug);
-        return { status: 'restarted', slug: app.slug };
+        try {
+          await applicationRuntime.restart(config, runtimeRef);
+          healAttempts.delete(app.slug);
+          return { status: 'restarted', slug: app.slug };
+        } catch (err) {
+          log.warn('app-heal', 'Kubernetes restart failed; escalating to rebuild', { slug: app.slug, err: err.message });
+        }
       }
       const recovered = await recoverFromScratch(config, pool, app);
       healAttempts.delete(app.slug);

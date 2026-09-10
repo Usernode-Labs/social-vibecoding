@@ -159,6 +159,7 @@ test('notifyChecksProgress rides the existing checks_ready event with checkState
 test('the capture run feeds one observer to BOTH transports, throttled, with the done sentinel always flushed', () => {
   const src = read('src/services/visuals.js');
   assert.match(src, /runCaptureJob\(config, \{\n\s+onStdoutLine: progressObserver,/);
+  assert.match(src, /runCaptureJob\(config, \{\s+onStdoutLine: progressObserver,\s+memory: CAPTURE_MEMORY,\s+cpus: CAPTURE_CPUS,/);
   assert.match(src, /runOneShot\(`usernode-capture-\$\{session\.id\}`, \{\n\s+onStdoutLine: progressObserver,/);
   assert.match(src, /if \(urgent \|\| gap >= minGapMs\)/, 'done always flushes; otherwise one snapshot per gap');
   assert.match(src, /onProgress: progress\.observeUnit,/, 'the unit suite reports into the same state');
@@ -225,7 +226,9 @@ test('the suite size is remembered on the apps row and read back as the next den
 
 test('maybeRunUnitSuite observes its container and reports once more at the end', () => {
   const src = read('src/services/unit-suite.js');
-  assert.match(src, /docker\.runOneShot\(`usernode-unit-suite-\$\{sessionId\}`, \{\n\s+onStdoutLine: observe,/);
+  assert.match(src, /const options = \{\n\s+onStdoutLine: observe,/);
+  assert.match(src, /kubernetes\.runUnitSuiteJob\(config, \{ sessionId, \.\.\.options \}\)/);
+  assert.match(src, /docker\.runOneShot\(`usernode-unit-suite-\$\{sessionId\}`, options\)/);
   assert.match(src, /const finalSnap = tracker\.finish\(passed\);\n\s+report\(finalSnap\);/);
   assert.match(src, /echo "\$\{CLONED_SENTINEL\}"\nif \[ -f package-lock\.json \]/, 'the cloned marker precedes npm ci');
   assert.match(src, /\.\.\.\(summary \? \{ summary \} : \{\}\),/, 'the TAP summary rides the row');

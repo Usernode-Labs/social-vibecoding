@@ -102,6 +102,17 @@ config:
   logLevel: INFO
   workerMemory: 2g
   workerCpus: "2"
+  captureMemory: 4g
+  captureCpus: "4"
+  # Match application defaults here; each cluster declares its own capacity.
+  maxGlobalSessions: 25
+  maxUserSessions: 3
+  maxUserPromotedSessions: 5
+  maxAdminUserSessions: 5
+  maxAdminUserPromotedSessions: 8
+  workerIdleEvictionMs: 600000
+  sessionAutopauseIdleMs: 300000
+  stagingIdleTeardownMs: 21600000
 
 secrets:
   create: false
@@ -135,6 +146,8 @@ ingress:
 networkPolicy:
   enabled: true
   ciliumApiServerEgress: true
+  # Must match APP_NAMESPACE in the foundation's social-build-policy ConfigMap.
+  appNamespace: social-apps
   # Optional cross-namespace access to the selected UserNode HTTP endpoint.
   # Keep the Pod selector specific so the platform cannot reach every workload
   # in the network namespace merely because it needs one node's /status API.

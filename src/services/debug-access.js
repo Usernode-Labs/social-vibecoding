@@ -147,8 +147,11 @@ const DEFAULT_LOG_TAIL = 200;
 const MAX_LOG_TAIL = 2000;
 const MAX_LOG_BYTES = 256 * 1024;
 
-function isAllowedLogContainer(name) {
+function isAllowedLogContainer(name, runtimeKind = 'docker') {
   if (typeof name !== 'string' || !name) return false;
+  if (runtimeKind === 'kubernetes') {
+    return name.length <= 63 && /^sv-(?:app-\d+-[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|preview-\d+-s\d+|worker-s\d+)$/.test(name);
+  }
   // Strict charset first so nothing shell/path-shaped gets near docker.
   if (!/^[A-Za-z0-9_.-]+$/.test(name)) return false;
   if (LOG_CONTAINER_EXACT.has(name)) return true;
@@ -432,8 +435,8 @@ async function isEligible(pool, sessionId) {
 function promptBlock() {
   return `PRODUCTION DEBUG ACCESS (admin session on the self-edit app): a read-only helper \`usernode-debug\` is available (run it via Bash) for inspecting the LIVE PRODUCTION deployment of this platform — use it to debug stuck sessions, broken apps, and failed merges from real production state instead of guessing from source:
 - \`usernode-debug sql "SELECT ..."\` — run a read-only SQL query against the production platform database (its schema is this repo's \`src/db/schema.sql\`). Useful starting points: \`chat_sessions\` (incl. \`active_turn\`), \`merge_debug_runs\` / \`merge_debug_steps\` (step-by-step traces of every merge attempt), \`events\`, \`apps\`, \`llm_usage\`.
-- \`usernode-debug containers\` — list production containers with state and memory/CPU usage.
-- \`usernode-debug logs <container> [tail]\` — recent log lines from one container (\`usernode\` is the platform server; also \`usernode-db\`, \`caddy\`, \`usernode-node\`, and \`usernode-app-*\` / \`usernode-staging-*\` / \`usernode-worker-*\` containers).
+- \`usernode-debug containers\` — list runtime workloads with state and available resource information.
+- \`usernode-debug logs <container> [tail]\` — recent log lines using a name returned by the inventory. Kubernetes supports managed \`sv-app-*\`, \`sv-preview-*\` and \`sv-worker-*\` workloads; Docker supports platform services and \`usernode-app-*\` / \`usernode-staging-*\` / \`usernode-worker-*\` containers. Use \`status\` for the platform's recent log events on either runtime.
 - \`usernode-debug status\` — the platform health snapshot (stuck sessions, warm workers, staging, budgets) plus recent platform log events.
 All output is JSON. This access is strictly READ-ONLY — writes are structurally impossible — and credential-bearing tables/columns (passwords, API keys, tokens, app secrets) are excluded at the database-grant level; do not attempt to read secrets or modify production state. Every call is audit-logged.`;
 }
