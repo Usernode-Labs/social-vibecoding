@@ -1332,7 +1332,16 @@ async function execInWorker(config, runtimeName, command, stdinText = null, { ti
       const pods = await api.core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${runtimeName}` });
       if (settled) return;
       const pod = pods.items?.[0];
-      if (!pod) throw new Error(`Worker Pod for ${runtimeName} not found`);
+      if (!pod) {
+        // Missing Pods can mean a starting Deployment. Prove absence through
+        // the API before telling liveness callers that the worker is gone.
+        // This lookup remains inside the exec operation's timeout budget.
+        const workerState = await getWorkerStatus(config, runtimeName);
+        if (settled) return;
+        const error = new Error(`Worker Pod for ${runtimeName} not found`);
+        if (workerState === 'not_found') error.code = 'WORKER_NOT_FOUND';
+        throw error;
+      }
       const exec = api.exec || new k8s.Exec(api.kc);
       socket = await exec.exec(namespace, pod.metadata.name, 'worker', command, stdout, stderr, input, false, value => { status = value; });
       // Keep an error handler even after settling: terminating a late socket

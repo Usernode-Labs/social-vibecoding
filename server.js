@@ -4211,7 +4211,7 @@ function startSessionAutoPauseSweeper(config) {
     try {
       const { rows } = await pool.query(
         // pr_number: a reaped TAIL row names the PR its work landed on.
-        `SELECT id, user_id, app_id, pr_number, active_turn FROM chat_sessions
+        `SELECT id, user_id, app_id, status, pr_number, active_turn FROM chat_sessions
          WHERE active_turn IS NOT NULL
          ORDER BY (active_turn->>'startedAt') ASC NULLS FIRST
          LIMIT 20`
@@ -4258,7 +4258,8 @@ function startSessionAutoPauseSweeper(config) {
           // must not ask for a resend. `phase` in the log tells an operator
           // which one they're looking at.
           const reapCodeLanded = !!reapTail.sha && reapTail.pushOk === true;
-          log.warn('server', 'Reaping orphaned active_turn', {
+          const closedSession = ['archived', 'merged'].includes(row.status);
+          if (!closedSession) log.warn('server', 'Reaping orphaned active_turn', {
             sessionId: row.id, startedAt: row.active_turn?.startedAt || null,
             phase: row.active_turn?.phase || 'exec', codeLanded: reapCodeLanded,
           });
@@ -4290,6 +4291,17 @@ function startSessionAutoPauseSweeper(config) {
               });
               continue;
             }
+          }
+          if (closedSession) {
+            const cleared = await turnLifecycle.clearClosedSessionTurn(pool, {
+              sessionId: row.id, activeTurn: row.active_turn,
+            });
+            if (cleared) log.info('server', 'Cleared obsolete turn from closed session', {
+              sessionId: row.id, status: row.status,
+            });
+            // Housekeeping is not a new interruption. Leave finished-session
+            // transcripts and notifications alone, including after a CAS miss.
+            continue;
           }
           const reaped = await worker.clearActiveTurn(row.id, turnCleanupArgs(row.active_turn));
           if (!reaped) {
