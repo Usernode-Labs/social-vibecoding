@@ -1689,7 +1689,7 @@ function _messageHasPrefix(err, prefixes) {
 // the coding agent never started and no code was touched. Exported so the
 // route layer can say that honestly instead of surfacing the raw string.
 function isBootstrapError(err) {
-  return _messageHasPrefix(err, BOOTSTRAP_ERROR_PREFIXES);
+  return err?.bootstrapFailed === true || _messageHasPrefix(err, BOOTSTRAP_ERROR_PREFIXES);
 }
 
 function isRetryableBootstrapError(err) {
@@ -1804,13 +1804,20 @@ async function _bootstrapWarmContainer(sessionId, {
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
   };
   if (usesKubernetesWorkers()) {
-    const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
-      sessionId,
-      env: safeEnv,
-    });
-    containerName = result.runtimeName;
-    log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName });
-    return containerName;
+    try {
+      const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
+        sessionId, env: safeEnv, onProgress,
+      });
+      containerName = result.runtimeName;
+      log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName });
+      return containerName;
+    } catch (err) {
+      Object.defineProperty(err, 'bootstrapFailed', { value: true, configurable: true });
+      log.error('worker', 'Bootstrap failed', { sessionId, containerName,
+        phase: err.bootstrapPhase || null, message: log.redactString(err.message),
+        logTail: err.bootstrapLog?.join('\n') || null });
+      throw attachBootstrapContext(err, { containerName, attempts: 1 });
+    }
   }
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 

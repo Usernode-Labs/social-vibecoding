@@ -5,6 +5,7 @@ const stream = require('stream');
 const k8s = require('@kubernetes/client-node');
 const log = require('./logger');
 const { collectPodDiagnostics, conditionDetails, boundedText } = require('./kubernetes-diagnostics');
+const { waitForWorkerBootstrap } = require('./kubernetes-worker-bootstrap');
 
 const MANAGED_BY = 'social-vibecoding-runtime';
 const PART_OF = 'social-vibecoding';
@@ -729,7 +730,7 @@ async function deleteBuildSnapshot(config, build) {
   });
 }
 
-async function ensureWorker(config, { sessionId, env }) {
+async function ensureWorker(config, { sessionId, env, onProgress }) {
   const cfg = config.kubernetes;
   if (!cfg.workerImage?.includes('@sha256:')) throw new Error('KUBERNETES_WORKER_IMAGE must be an immutable digest');
   const namespace = cfg.workerNamespace;
@@ -751,7 +752,7 @@ async function ensureWorker(config, { sessionId, env }) {
     apiVersion: 'v1', kind: 'Secret', metadata: { name: secretName, namespace, labels: resourceLabels }, type: 'Opaque',
     stringData: Object.fromEntries(Object.entries(env || {}).map(([key, value]) => [key, String(value)])),
   });
-  await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, {
+  const deployed = await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, {
     apiVersion: 'apps/v1', kind: 'Deployment', metadata: {
       name, namespace, labels: { ...resourceLabels, ...workerContractLabels },
     },
@@ -783,22 +784,9 @@ async function ensureWorker(config, { sessionId, env }) {
       },
     },
   });
-  await waitForDeployment(namespace, name);
-  const warmDeadline = Date.now() + 5 * 60 * 1000;
-  let warmReady = false;
-  while (Date.now() < warmDeadline) {
-    const pods = await core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${name}` });
-    const pod = pods.items?.[0];
-    if (pod) {
-      const output = await core.readNamespacedPodLog({ name: pod.metadata.name, namespace, container: 'worker' }).catch(() => '');
-      if (output.includes('__USERNODE_PHASE__ warm-ready')) {
-        warmReady = true;
-        break;
-      }
-    }
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-  }
-  if (!warmReady) throw new Error(`Timed out waiting for worker ${name} warm-ready marker`);
+  await waitForWorkerBootstrap(core, apps, { namespace, name, onProgress,
+    imageRef: cfg.workerImage, environmentChecksum: envChecksum(env),
+    generation: deployed?.metadata?.generation || 0 });
   return { runtimeKind: 'kubernetes', runtimeName: name, pvcName };
 }
 

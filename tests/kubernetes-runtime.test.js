@@ -380,7 +380,12 @@ test('worker runtime reconciles a retained PVC, Secret and warm Deployment', asy
       createNamespacedPersistentVolumeClaim: record('PersistentVolumeClaim'),
       readNamespacedSecret: async () => { throw notFound(); },
       createNamespacedSecret: record('Secret'),
-      listNamespacedPod: async () => ({ items: [{ metadata: { name: 'worker-pod' } }] }),
+      listNamespacedPod: async () => ({ items: [{
+        metadata: { name: 'worker-pod', annotations: { 'social.usernode.io/env-checksum': kubernetes._envChecksumForTest({ WORKER_JWT: 'redacted' }) } },
+        spec: { containers: [{ name: 'worker', image: config().kubernetes.workerImage }] },
+        status: { phase: 'Running', conditions: [{ type: 'Ready', status: 'True' }],
+          containerStatuses: [{ name: 'worker', ready: true, state: { running: {} } }] },
+      }] }),
       readNamespacedPodLog: async () => '__USERNODE_PHASE__ warm-ready',
     },
     apps: {
