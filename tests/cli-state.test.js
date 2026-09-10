@@ -23,6 +23,31 @@ const {
   makeDeviceCode,
 } = require('../src/services/cli-auth');
 
+test('default profiles use Homeroom and honor explicit self-hosted domains', () => {
+  const { execFileSync } = require('node:child_process');
+  const env = { ...process.env };
+  delete env.USERNODE_DOMAIN;
+  const script = `
+    const state = require('./src/cli/state');
+    const config = state.defaultConfig();
+    process.stdout.write(JSON.stringify({
+      production: state.resolveProfile(config, 'production').origin,
+      local: state.resolveProfile(config, 'local').origin,
+    }));
+  `;
+  const profiles = (childEnv) => JSON.parse(execFileSync(process.execPath, ['-e', script], {
+    cwd: path.resolve(__dirname, '..'), env: childEnv, encoding: 'utf8',
+  }));
+  assert.deepEqual(profiles(env), {
+    production: 'https://my.onhomeroom.com',
+    local: 'http://localhost:3000',
+  });
+  assert.deepEqual(profiles({ ...env, USERNODE_DOMAIN: 'platform.example.test' }), {
+    production: 'https://platform.example.test',
+    local: 'http://localhost:3000',
+  });
+});
+
 test('profile origin normalization and profile grammar are fail closed', () => {
   assert.equal(state.canonicalOrigin('HTTPS://EXAMPLE.COM:443/'), 'https://example.com');
   assert.equal(state.canonicalOrigin('https://example.com:444/'), 'https://example.com:444');

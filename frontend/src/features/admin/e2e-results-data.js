@@ -999,7 +999,7 @@ export const E2E_CASES = Object.freeze([
     "flow": "Connect X → check → disconnect",
     "gate": "user",
     "method": "assist",
-    "notes": "BUG: linking an X / social identity fails (user-confirmed 2026-08-19). Server diagnostics for the x provider report credentialSource=waitlist with sameAppAsWaitlist=FALSE, and callbackUrl https://social-vibecoding.usernodelabs.org/api/me/x/callback - i.e. the platform is using the WAITLIST X OAuth app credentials while the identity-link callback URL is not registered on that same X app. A redirect_uri / app mismatch is the leading hypothesis. github (H8) links fine and reports credentialSource=dedicated, which is the contrast",
+    "notes": "BUG: linking an X / social identity fails (user-confirmed 2026-08-19). Server diagnostics for the x provider report credentialSource=waitlist with sameAppAsWaitlist=FALSE, and callbackUrl /api/me/x/callback on the former platform domain - i.e. the platform is using the WAITLIST X OAuth app credentials while the identity-link callback URL is not registered on that same X app. A redirect_uri / app mismatch is the leading hypothesis. github (H8) links fine and reports credentialSource=dedicated, which is the contrast",
     "status": "fail",
     "area": "H"
   },

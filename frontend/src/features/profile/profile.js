@@ -102,7 +102,7 @@ const Profile = {
   // production-side "before" shot forever) and deliberately not visible to
   // ./profile-edit-sheet.tsx, which reads `_user()` and could save it.
   LONG_BIO_SHOT:
-    'Staging demo bio: https://social-vibecoding.usernodelabs.org/app/'
+    'Staging demo bio: https://my.onhomeroom.com/app/'
     + 'a-very-long-unbroken-link-with-no-spaces-in-it-at-all/dev/proposals/1612'
     + ' and ThisIsOneUnbrokenWordThatIsFarWiderThanTheProfileCardCouldEverBe.',
 

@@ -13001,7 +13001,7 @@ conventions supplied to this run are authoritative and override
 CLAUDE.md if they conflict.
 
 The repo's \`CLAUDE.md\` may reference a hosted copy of the platform
-conventions at \`https://${process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org'}/claude.md\` —
+conventions at \`https://${process.env.USERNODE_DOMAIN || 'my.onhomeroom.com'}/claude.md\` —
 in dev-chat those rules are already supplied by the harness, so ignore
 that instruction here. It's for humans or coding-agent invocations that
 run against this repo outside the harness.${personalFilesNote}

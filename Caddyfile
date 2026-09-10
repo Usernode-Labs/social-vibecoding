@@ -42,11 +42,10 @@
 #     issuer again; the cap is what had forced the ZeroSSL detour.
 #
 # DNS-01 + acme-dns (why we don't write to the real zone):
-#   DNS-01 means Caddy must publish a `_acme-challenge` TXT record. Our zone
-#   is Namecheap-hosted `usernodelabs.org` (production), and Namecheap's only
-#   DNS write API REPLACES the entire host-record set per call — a prod-zone
-#   wipe risk on every renewal. Instead we delegate just
-#   `_acme-challenge.social-vibecoding...` (one static CNAME, added by hand)
+#   DNS-01 means Caddy must publish a `_acme-challenge` TXT record. For a
+#   Namecheap-hosted zone, the DNS write API REPLACES the entire host-record
+#   set per call — a prod-zone wipe risk on every renewal. Instead we
+#   delegate just `_acme-challenge.<domain>` (one static CNAME, added by hand)
 #   to a self-hosted acme-dns server. Caddy sets the challenge TXT there via
 #   acme-dns's internal HTTP API; the production Namecheap records are never
 #   touched. See acme-dns/config.cfg + caddy.Dockerfile (caddy-dns/acmedns).

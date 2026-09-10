@@ -29,7 +29,7 @@ const assert = require('node:assert/strict');
 const Launchpad = require('../public/js/launchpad.js');
 const BuildVenues = require('../public/js/build-venues.js');
 
-const ORIGIN = 'https://social-vibecoding.usernodelabs.org';
+const ORIGIN = 'https://my.onhomeroom.com';
 
 test('the launchpad venues are exactly the ones with no Usernode chat', () => {
   // build-venues.js already answers this, per venue, with `chat`. This

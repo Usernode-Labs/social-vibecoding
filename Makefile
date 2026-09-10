@@ -179,7 +179,7 @@ ps:
 # Override DEPLOY_HOST / NODE_CONTAINER on the command line if you've
 # pointed the dev stack at a different deploy.
 # ---------------------------------------------------------------------------
-DEPLOY_HOST    ?= social-vibecoding.usernodelabs.org
+DEPLOY_HOST    ?= my.onhomeroom.com
 DEPLOY_USER    ?= deploy
 NODE_CONTAINER ?= usernode-node
 TUNNEL_PORT    ?= 3001

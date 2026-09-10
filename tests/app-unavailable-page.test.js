@@ -19,7 +19,7 @@ const http = require('node:http');
 const express = require('express');
 
 // USERNODE_DOMAIN env is unset in tests → services/caddy.js default.
-const DOMAIN = 'social-vibecoding.usernodelabs.org';
+const DOMAIN = 'my.onhomeroom.com';
 const PUB_HOST = `puzzle-chain.${DOMAIN}`;
 const PRIV_HOST = `secretapp.${DOMAIN}`;
 

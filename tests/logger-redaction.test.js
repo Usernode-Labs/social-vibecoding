@@ -37,7 +37,7 @@ test('credential-free URLs are left alone', () => {
   for (const url of [
     'postgres://usernode-postgres:5432/wq_db',
     'http://usernode:3000/api/app-llm',
-    'https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js',
+    'https://my.onhomeroom.com/usernode-bridge/v1/bridge.js',
   ]) {
     assert.equal(log.redactString(`fetching ${url} now`), `fetching ${url} now`);
   }

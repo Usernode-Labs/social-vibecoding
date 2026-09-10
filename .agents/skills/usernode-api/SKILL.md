@@ -7,6 +7,12 @@ description: Inspect or change Usernode app or platform state through the generi
 
 Use `production` unless the user explicitly requests `local`. Perform setup and authentication yourself; ask the user only for browser approval when a device login requires it.
 
+The first-party production origin is `https://my.onhomeroom.com`. Use that
+origin for platform links, API calls, and device-login approval. Hosted apps
+and previews use `onhomeroom.com` as their domain suffix. Keep credentials
+scoped to the origin that issued them; a domain change requires fresh login,
+not copying a credential to the new origin.
+
 ## Choose the route and client
 
 1. Resolve the user-facing route from `src/routes/`.

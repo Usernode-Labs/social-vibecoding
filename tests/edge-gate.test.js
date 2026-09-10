@@ -21,7 +21,7 @@ process.env.EDGE_JWT_SECRET = EDGE_SECRET;
 const keys = require('./platform-keys').setPlatformKeys();
 const platformJwt = require('../src/services/platform-jwt');
 // USERNODE_DOMAIN env is unset in tests → services/caddy.js default.
-const DOMAIN = 'social-vibecoding.usernodelabs.org';
+const DOMAIN = 'my.onhomeroom.com';
 const PUB_HOST = `pubapp.${DOMAIN}`;
 const PRIV_HOST = `privapp.${DOMAIN}`;
 const PRIV_APP_ID = 7;

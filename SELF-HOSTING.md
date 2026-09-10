@@ -1187,7 +1187,7 @@ self-staging from racing the prod platform on shared resources).
 SV hosts the canonical `usernode-bridge.js` at
 `/usernode-bridge/v1/bridge.js`. Every dapp in the production fleet
 loads it directly from
-`https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js`
+`https://my.onhomeroom.com/usernode-bridge/v1/bridge.js`
 rather than vendoring a per-app copy (see
 [src/prompts/app-conventions.md § Bridge — centrally hosted (not vendored)](./src/prompts/app-conventions.md)
 for the consumer-facing rules and versioning policy).
@@ -1199,15 +1199,15 @@ Operational consequences for self-hosting:
   `https://<your-USERNODE_DOMAIN>/usernode-bridge/v1/bridge.js`.
   The auth middleware exempts `/usernode-bridge/` and the static
   handler sets `Cache-Control: no-cache, must-revalidate`.
-- **Fleet dapps point at the upstream production instance.** The
-  four production dapps (echo, lastwin, falling-sands, opinion-
-  market) hard-code `social-vibecoding.usernodelabs.org` as the host.
+- **Fleet dapps may point at the upstream production instance.**
+  The current upstream host is `my.onhomeroom.com`; inspect each
+  dapp's asset URLs for hard-coded hosts from earlier deployments.
   A self-hosted SV fork has three options:
   1. Accept the dependency on upstream prod. Fine for read-only
      mirrors; brittle for forks that want to run offline or against
      a custom bridge build.
   2. Fork each dapp repo and edit the URL to point at the self-hosted
-     instance. Five-character change per dapp; no other coupling.
+     instance. This changes only the asset URL; no other coupling.
   3. Templatize the URL at dapp-deploy time (e.g. read it from a
      `BRIDGE_BASE_URL` env var and string-substitute into
      `index.html`). Not implemented today — comes back as a real
@@ -1684,7 +1684,7 @@ Contributed by **snait** on issue #880, who set up the GitHub side.
    - **Callback URI / Redirect URL:**
      `https://<your-domain>/waitlist/connect/x/callback` — on the
      canonical deployment,
-     `https://social-vibecoding.usernodelabs.org/waitlist/connect/x/callback`.
+     `https://my.onhomeroom.com/waitlist/connect/x/callback`.
      To reuse the same app for daily-credit identity, also register
      `https://<your-domain>/api/me/x/callback`.
      It must match exactly what `callbackUrl()` builds; X validates it at
@@ -1714,7 +1714,7 @@ is a separate GitHub App and is unrelated.
 - **Authorization callback URL:**
   `https://<your-domain>/waitlist/connect/github/callback` — on the
   canonical deployment,
-  `https://social-vibecoding.usernodelabs.org/waitlist/connect/github/callback`.
+  `https://my.onhomeroom.com/waitlist/connect/github/callback`.
 - **Scope: none.** The authorize URL omits the parameter, so the token
   reads public information only; it is used once for `GET /user` to
   resolve the login and then dropped.
@@ -1733,7 +1733,7 @@ call is rejected before any platform code runs.
 - **Authorized redirect URL:**
   `https://<your-domain>/waitlist/connect/linkedin/callback` — on the
   canonical deployment,
-  `https://social-vibecoding.usernodelabs.org/waitlist/connect/linkedin/callback`.
+  `https://my.onhomeroom.com/waitlist/connect/linkedin/callback`.
 - **Scopes: `openid profile`,** and nothing else. `email` is deliberately
   not requested: the waitlist row already has an address. The token is used
   once for `GET /v2/userinfo` to resolve the member's name, then dropped.

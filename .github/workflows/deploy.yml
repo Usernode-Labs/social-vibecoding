@@ -198,7 +198,7 @@ jobs:
         run: |
           cat > "$OUT_FILE" <<'ENVEOF'
           USERNODE_DOMAIN=${{ vars.USERNODE_DOMAIN }}
-          CLI_CANONICAL_ORIGIN=https://social-vibecoding.usernodelabs.org
+          CLI_CANONICAL_ORIGIN=https://my.onhomeroom.com
           ZEROSSL_API_KEY=${{ secrets.ZEROSSL_API_KEY }}
           ZEROSSL_EAB_KID=${{ secrets.ZEROSSL_EAB_KID }}
           ZEROSSL_EAB_HMAC=${{ secrets.ZEROSSL_EAB_HMAC }}
@@ -261,6 +261,7 @@ jobs:
           OPENROUTER_MANAGED_WORKSPACE_ID=${{ vars.OPENROUTER_MANAGED_WORKSPACE_ID || '' }}
           OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=${{ vars.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY || 'false' }}
           OPENROUTER_DEFAULT_CODEX_MODEL=${{ vars.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash' }}
+          OPENROUTER_ORIGIN=https://my.onhomeroom.com
           USERNODE_APP_PUBKEY=${{ secrets.USERNODE_APP_PUBKEY }}
           USERNODE_APP_SECRET_KEY=${{ secrets.USERNODE_APP_SECRET_KEY }}
           LOG_LEVEL=INFO

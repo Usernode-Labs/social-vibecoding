@@ -34,7 +34,7 @@ All paths are relative to the deployment's canonical origin. On the
 hosted platform that is:
 
 ```
-https://social-vibecoding.usernodelabs.org
+https://my.onhomeroom.com
 ```
 
 A self-hosted deployment serves the same paths on its own
@@ -95,7 +95,7 @@ it.
 
 ```http
 GET /api/public/waitlist/options HTTP/1.1
-Host: social-vibecoding.usernodelabs.org
+Host: my.onhomeroom.com
 ```
 
 No headers, no body, no rate limit.
@@ -202,7 +202,7 @@ require a token.
 
 ```http
 POST /api/public/waitlist HTTP/1.1
-Host: social-vibecoding.usernodelabs.org
+Host: my.onhomeroom.com
 Content-Type: application/json
 X-Waitlist-Client-Key: <integrator secret, optional>
 X-Waitlist-Client-IP: <end user address, optional>
@@ -301,7 +301,7 @@ or re-opened link is harmless.
 
 ```http
 GET /api/public/waitlist/confirm/3f6c1a08b2d94e7f5a0c8e1d2b4f6a9c0e3d5b7f1a2c4e6d HTTP/1.1
-Host: social-vibecoding.usernodelabs.org
+Host: my.onhomeroom.com
 ```
 
 **Response `302`**
@@ -329,7 +329,7 @@ client loses the browser's place.
 
 ```http
 POST /api/public/waitlist/confirm HTTP/1.1
-Host: social-vibecoding.usernodelabs.org
+Host: my.onhomeroom.com
 Content-Type: application/json
 ```
 
@@ -387,7 +387,7 @@ Two shapes, selected by the `view` query parameter.
 
 ```http
 GET /api/public/waitlist/more/3f6c1a08b2d94e7f5a0c8e1d2b4f6a9c0e3d5b7f1a2c4e6d HTTP/1.1
-Host: social-vibecoding.usernodelabs.org
+Host: my.onhomeroom.com
 ```
 
 | Query | Values | Notes |
@@ -441,7 +441,7 @@ Host: social-vibecoding.usernodelabs.org
     "instagram": null
   },
   "invite": {
-    "url": "https://social-vibecoding.usernodelabs.org/#waitlist?ref=a1b2c3d4e5",
+    "url": "https://my.onhomeroom.com/#waitlist?ref=a1b2c3d4e5",
     "count": 2,
     "emails": ["gr***@example.com", "jo***@example.net"]
   }
@@ -499,7 +499,7 @@ this route. A signup that never opens the stage-2 form never gets one.
 
 ```http
 GET /api/public/waitlist/more/3f6c1a08b2d94e7f5a0c8e1d2b4f6a9c0e3d5b7f1a2c4e6d?view=status HTTP/1.1
-Host: social-vibecoding.usernodelabs.org
+Host: my.onhomeroom.com
 ```
 
 **Response `200`**
@@ -566,7 +566,7 @@ section while untouched sections keep their previous value.
 
 ```http
 POST /api/public/waitlist/more/3f6c1a08b2d94e7f5a0c8e1d2b4f6a9c0e3d5b7f1a2c4e6d HTTP/1.1
-Host: social-vibecoding.usernodelabs.org
+Host: my.onhomeroom.com
 Content-Type: application/json
 ```
 
@@ -663,7 +663,7 @@ cannot verify that anyone followed anything.
 
 ```http
 GET /waitlist/connect/github?token=3f6c1a08b2d94e7f5a0c8e1d2b4f6a9c0e3d5b7f1a2c4e6d HTTP/1.1
-Host: social-vibecoding.usernodelabs.org
+Host: my.onhomeroom.com
 ```
 
 | Query | Required | Notes |
@@ -878,13 +878,13 @@ An agency running its own signup page, server side.
 **1. Cache the option definitions at boot.**
 
 ```bash
-curl -s https://social-vibecoding.usernodelabs.org/api/public/waitlist/options
+curl -s https://my.onhomeroom.com/api/public/waitlist/options
 ```
 
 **2. Post a visitor's signup, forwarding their address.**
 
 ```bash
-curl -s https://social-vibecoding.usernodelabs.org/api/public/waitlist \
+curl -s https://my.onhomeroom.com/api/public/waitlist \
   -H 'Content-Type: application/json' \
   -H 'X-Waitlist-Client-Key: s3cret-one' \
   -H 'X-Waitlist-Client-IP: 203.0.113.42' \
@@ -908,7 +908,7 @@ there is no token to keep.
 or type the six-digit code into your page and you post it:
 
 ```bash
-curl -s https://social-vibecoding.usernodelabs.org/api/public/waitlist/confirm \
+curl -s https://my.onhomeroom.com/api/public/waitlist/confirm \
   -H 'Content-Type: application/json' \
   -d '{"email":"ada@example.com","code":"409132"}'
 ```
@@ -921,7 +921,7 @@ curl -s https://social-vibecoding.usernodelabs.org/api/public/waitlist/confirm \
 
 ```bash
 curl -s -X POST \
-  https://social-vibecoding.usernodelabs.org/api/public/waitlist/more/3f6c1a08b2d94e7f5a0c8e1d2b4f6a9c0e3d5b7f1a2c4e6d \
+  https://my.onhomeroom.com/api/public/waitlist/more/3f6c1a08b2d94e7f5a0c8e1d2b4f6a9c0e3d5b7f1a2c4e6d \
   -H 'Content-Type: application/json' \
   -d '{"group_name":"North London Weavers","group_size":"10-50","group_role":"organizer"}'
 ```
@@ -933,7 +933,7 @@ curl -s -X POST \
 **5. Show them where they stand.**
 
 ```bash
-curl -s 'https://social-vibecoding.usernodelabs.org/api/public/waitlist/more/3f6c1a08b2d94e7f5a0c8e1d2b4f6a9c0e3d5b7f1a2c4e6d?view=status'
+curl -s 'https://my.onhomeroom.com/api/public/waitlist/more/3f6c1a08b2d94e7f5a0c8e1d2b4f6a9c0e3d5b7f1a2c4e6d?view=status'
 ```
 
 ```json
