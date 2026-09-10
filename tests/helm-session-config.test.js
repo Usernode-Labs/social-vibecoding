@@ -4,7 +4,7 @@ const { execFileSync, spawnSync } = require('node:child_process');
 
 const helmAvailable = spawnSync('helm', ['version', '--short'], { stdio: 'ignore' }).status === 0;
 
-test('Helm session settings reach the runtime as decimal strings, including zero', {
+test('Helm session and capture settings reach the runtime as decimal strings, including zero', {
   skip: !helmAvailable && 'helm is not installed',
 }, () => {
   const args = ['template', 'session-config-test', 'deploy/helm/social-vibecoding-platform',
@@ -14,9 +14,9 @@ test('Helm session settings reach the runtime as decimal strings, including zero
     args.push('--set-string', `platform.${image}.digest=sha256:${'a'.repeat(64)}`);
   }
   for (const [overrides, expected] of [
-    [[], { MAX_GLOBAL_SESSIONS: '25', WORKER_IDLE_EVICTION_MS: '600000', SESSION_AUTOPAUSE_IDLE_MS: '300000' }],
-    [['--set', 'config.maxGlobalSessions=100,config.workerIdleEvictionMs=300000,config.sessionAutopauseIdleMs=0'],
-      { MAX_GLOBAL_SESSIONS: '100', WORKER_IDLE_EVICTION_MS: '300000', SESSION_AUTOPAUSE_IDLE_MS: '0' }],
+    [[], { MAX_GLOBAL_SESSIONS: '25', WORKER_IDLE_EVICTION_MS: '600000', SESSION_AUTOPAUSE_IDLE_MS: '300000', CAPTURE_CPUS: '8' }],
+    [['--set', 'config.maxGlobalSessions=100,config.workerIdleEvictionMs=300000,config.sessionAutopauseIdleMs=0,config.captureCpus=6'],
+      { MAX_GLOBAL_SESSIONS: '100', WORKER_IDLE_EVICTION_MS: '300000', SESSION_AUTOPAUSE_IDLE_MS: '0', CAPTURE_CPUS: '6' }],
   ]) {
     const rendered = execFileSync('helm', [...args, ...overrides], { encoding: 'utf8' });
     const env = Object.fromEntries([...rendered.matchAll(/\{name: ([A-Z_]+), value: "([^"]*)"\}/g)]
