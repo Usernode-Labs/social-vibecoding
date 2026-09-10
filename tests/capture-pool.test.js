@@ -694,6 +694,53 @@ test('a cohort that renders on a hash switch never pays for the fallback', async
     + 'suite that passes, which is every suite that is meant to merge');
 });
 
+for (const lateConsoleError of [false, true]) {
+  test(`cold fallback waits for delayed selector/text${lateConsoleError ? ' and catches late console errors' : ''}`, async () => {
+    const read = collect();
+    let loadedHash = '';
+    let readyAt = Infinity;
+    let timer;
+    const page = makeEventPage({
+      onGoto(p) {
+        loadedHash = new URL(p.gotos.at(-1)).hash;
+        if (loadedHash === '#/b') {
+          readyAt = Date.now() + 250;
+          if (lateConsoleError) timer = setTimeout(() => p.emitError('late hydration error'), 150);
+        }
+      },
+    });
+    page.$ = async (sel) => {
+      if (sel === '#at-#/a' && loadedHash === '#/a') return {};
+      return loadedHash === '#/b' && Date.now() >= readyAt ? {} : null;
+    };
+    const evaluate = page.evaluate;
+    page.evaluate = async (fn, arg) => /location\.hash/.test(String(fn))
+      ? evaluate(fn, arg) : Date.now() >= readyAt;
+    try {
+      await runTestGroup({ newPage: async () => page }, [
+        COLD_ONLY_GROUP[0], { ...COLD_ONLY_GROUP[1], expectText: 'Hydrated screen' },
+      ], { settleQuietMs: 20, settleMaxMs: 40, assertMaxMs: 400, assertPollMs: 20 });
+    } finally { clearTimeout(timer); }
+    const row = read().frames.find((f) => f.index === 1);
+    assert.equal(row.status, lateConsoleError ? 'fail' : 'pass');
+    if (lateConsoleError) assert.match(JSON.stringify(row.consoleErrors), /late hydration error/);
+    assert.deepEqual(page.gotos, ['http://s/dev#/a', 'about:blank', 'http://s/dev#/b']);
+  });
+}
+
+test('cold fallback still fails a missing selector within a bounded window', async () => {
+  const read = collect();
+  const page = makeColdOnlyPage();
+  const group = [COLD_ONLY_GROUP[0], { ...COLD_ONLY_GROUP[1], expectSelector: '#never' }];
+  const started = Date.now();
+  await runTestGroup({ newPage: async () => page }, group,
+    { settleQuietMs: 20, settleMaxMs: 40, assertMaxMs: 100, assertPollMs: 20 });
+  const row = read().frames.find((f) => f.index === 1);
+  assert.equal(row.status, 'fail');
+  assert.match(row.failureReason, /#never/);
+  assert.ok(Date.now() - started < 2000, 'fallback cannot wait indefinitely');
+});
+
 test('the cohort fallback can be switched off, and then the hash verdict stands', async () => {
   const read = collect();
   const page = makeColdOnlyPage();

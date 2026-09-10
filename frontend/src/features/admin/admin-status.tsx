@@ -298,6 +298,9 @@ function nodeStatusMeta(node: any): { label: string; pill: string; tone: Tone } 
 }
 
 function Summary({ s, node, runtimeKind }: { s: StatusData; node: any; runtimeKind?: string }) {
+  if (runtimeKind === 'preview') return (
+    <SummaryCard label="Runtime status" tone="zinc">Unavailable in previews</SummaryCard>
+  );
   const prodTone: Tone = s.prodMissing > 0 ? 'red' : 'green';
   const workerTone: Tone = s.workersOrphaned > 0 ? 'red' : 'zinc';
   const stuckTone: Tone = s.stuckSessions > 0 ? 'yellow' : 'zinc';
@@ -492,8 +495,10 @@ function Node({ node }: { node: any }) {
 }
 
 function SessionRow({ s }: { s: any }) {
-  const stagingState = s.staging?.state || (s.stagingDriftWarning ? 'missing' : 'creating');
-  const stagingLabel = s.staging?.state || (s.stagingDriftWarning ? 'drift' : 'pending');
+  const stagingState = s.runtimeAvailable === false ? 'unknown'
+    : s.staging?.state || (s.stagingDriftWarning ? 'missing' : 'creating');
+  const stagingLabel = s.runtimeAvailable === false ? 'unavailable'
+    : s.staging?.state || (s.stagingDriftWarning ? 'drift' : 'pending');
   const resolve = typeof window !== 'undefined' && typeof (window as any).resolveDevHost === 'function'
     ? (window as any).resolveDevHost
     : (u: string) => u;
@@ -554,10 +559,10 @@ function Apps({ apps }: { apps: any[] }) {
         // otherwise the one app that is definitely up reads as the one app
         // that is down.
         const selfHostedNoContainer = !!a.selfHosted && !a.prod;
-        const prodState = selfHostedNoContainer
+        const prodState = a.runtimeAvailable === false ? 'unknown' : selfHostedNoContainer
           ? 'running'
           : (a.prod?.state || (a.dbStatus === 'creating' ? 'creating' : 'missing'));
-        const prodLabel = selfHostedNoContainer
+        const prodLabel = a.runtimeAvailable === false ? 'unavailable' : selfHostedNoContainer
           ? 'self-hosted'
           : (a.prod?.state || a.dbStatus || 'missing');
         let repoHost = '';
@@ -846,15 +851,15 @@ function StatusSection() {
 
       {/* Deploy-in-progress banner. */}
       <div id="admin-status-deploy-banner"
-        className={`${deploy?.deploying ? '' : 'hidden '}mb-4 rounded-lg border border-violet-300 dark:border-violet-700/50 bg-violet-50 dark:bg-violet-900/20 px-4 py-3`}>
+        className={`${deploy?.deploying || deploy?.failed || deploy?.unavailable || deploy?.phase === 'paused' ? '' : 'hidden '}mb-4 rounded-lg border border-violet-300 dark:border-violet-700/50 bg-violet-50 dark:bg-violet-900/20 px-4 py-3`}>
         <div className="flex items-center gap-3">
           <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping" />
+            {deploy?.deploying ? <span className="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping" /> : null}
             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-violet-500" />
           </span>
           <div className="text-sm">
-            <span className="font-semibold text-violet-800 dark:text-violet-200">Deploy in progress:</span>
-            <span className="text-violet-700 dark:text-violet-300/80"> your changes may take a minute to go live.</span>
+            <span className="font-semibold text-violet-800 dark:text-violet-200">{deploy?.failed ? 'Deployment failed:' : deploy?.unavailable ? 'Deployment status unavailable:' : deploy?.phase === 'paused' ? 'Deployment paused:' : 'Deploy in progress:'}</span>
+            <span className="text-violet-700 dark:text-violet-300/80"> {deploy?.failed ? deploy.message : deploy?.unavailable ? 'the rollout could not be observed.' : deploy?.phase === 'paused' ? 'waiting for the rollout to resume.' : 'your changes may take a minute to go live.'}</span>
           </div>
           <span id="admin-status-deploy-meta" className="ml-auto text-xs mono text-violet-700 dark:text-violet-400">
             {[sha, elapsed && `${elapsed} ago`].filter(Boolean).join(' · ')}
