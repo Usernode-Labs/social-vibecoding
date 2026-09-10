@@ -4,6 +4,7 @@ const path = require('path');
 const stream = require('stream');
 const k8s = require('@kubernetes/client-node');
 const log = require('./logger');
+const { collectPodDiagnostics, conditionDetails, boundedText } = require('./kubernetes-diagnostics');
 
 const MANAGED_BY = 'social-vibecoding-runtime';
 const PART_OF = 'social-vibecoding';
@@ -512,6 +513,16 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   try {
     await waitForDeployment(namespace, name, { generation: deployed?.metadata?.generation });
   } catch (err) {
+    const diagnostics = await collectPodDiagnostics(core, { namespace, runtimeName: name, imageRef,
+      environmentChecksum: envChecksum(env) });
+    err.healthcheckFailed = true;
+    err.containerLogs = boundedText([err.rolloutDetails, diagnostics.details, diagnostics.logs].filter(Boolean).join('\n'));
+    err.containerStatus = 'not_ready';
+    err.infrastructure = diagnostics.infrastructure || /exceeded quota/i.test(err.rolloutDetails || '');
+    err.message = boundedText(err.message);
+    if (diagnostics.unavailable) log.warn('kubernetes', 'Preview failure diagnostics incomplete', {
+      namespace, name, detail: diagnostics.unavailable,
+    });
     // A failed preview has no serving value but its declared CPU limit still
     // consumes ResourceQuota. Production keeps its prior ReplicaSet for a
     // recoverable rollout; previews are disposable and are rebuilt on retry.
@@ -530,10 +541,12 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
 async function waitForDeployment(namespace, name, { timeoutMs = 5 * 60 * 1000, generation = 0 } = {}) {
   const deadline = Date.now() + timeoutMs;
   const { apps } = getClients();
+  let rolloutDetails = '';
   while (Date.now() < deadline) {
     const deployment = await apps.readNamespacedDeployment({ name, namespace });
     const desired = deployment.spec?.replicas ?? 1;
     const status = deployment.status || {};
+    rolloutDetails = boundedText(conditionDetails(status.conditions).join('\n'), 4096);
     // An available OLD replica keeps serving during a rolling update. Wait
     // for the controller to observe our write, replace every old replica,
     // and make the updated replicas ready and available before publishing it.
@@ -543,7 +556,9 @@ async function waitForDeployment(namespace, name, { timeoutMs = 5 * 60 * 1000, g
         && status.readyReplicas >= desired && status.availableReplicas >= desired) return deployment;
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
-  throw new Error(`Timed out waiting for Deployment ${namespace}/${name}`);
+  const err = new Error(`Timed out waiting for Deployment ${namespace}/${name}`);
+  err.rolloutDetails = rolloutDetails;
+  throw err;
 }
 
 async function getApplicationStatus(config, runtimeName) {

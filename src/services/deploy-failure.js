@@ -95,7 +95,7 @@ function stripCommandFailedPrefix(message) {
 // in the message.
 function bootFailureIsInfrastructure(err) {
   if (!err) return false;
-  return mentionsConnectionLimit(err.containerLogs)
+  return err.infrastructure === true || mentionsConnectionLimit(err.containerLogs)
     || mentionsConnectionLimit(err.stderr)
     || mentionsConnectionLimit(err.message);
 }
@@ -110,7 +110,7 @@ function summarizeBootFailure(err) {
   // connection, the most specific error line is the WRONG answer. It is
   // true, it is about this container, and it still sends the author to
   // re-read a diff that was never involved. Say what happened instead.
-  if (bootFailureIsInfrastructure(err)) {
+  if (mentionsConnectionLimit(err?.containerLogs) || mentionsConnectionLimit(err?.stderr) || mentionsConnectionLimit(err?.message)) {
     return capReason(connectionExhaustionMessage(null, { where: 'started' }));
   }
   const logs = (err && err.containerLogs) ? String(err.containerLogs) : '';
