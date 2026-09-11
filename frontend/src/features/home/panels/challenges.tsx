@@ -47,9 +47,10 @@
  * A block of leaderboard rows used to sit under the challenges. It is
  * removed: this area is called Challenges, and a second list with its own
  * label inside one card made the reader work out which list they were looking
- * at before they could read either. The way to the standings is one tap from
- * here — "Open leaderboard", in this section's own heading, which renders in
- * every branch including the between-seasons one.
+ * at before they could read either. The way to the Leaderboard screen is one
+ * tap from here — "Open challenges" (#1916), in this section's own heading,
+ * which renders in every branch including the between-seasons one and lands
+ * on the screen's Challenges tab, one tab from the standings.
  */
 
 import { ProgressRing } from '@/components/ui/progress-ring';
