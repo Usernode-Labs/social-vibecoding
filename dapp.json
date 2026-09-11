@@ -766,7 +766,7 @@
     {
       "name": "...and says why in tags on the meta line above it",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body [data-proposal-row=\"9000050\"] .dev-card-meta > .dev-badge ~ .dev-badge",
+      "expectSelector": "#dev-body [data-proposal-row=\"9000050\"] .dev-card-meta > [data-status-tag=\"checks_failing\"]",
       "expectText": "Checks failing"
     },
     {
@@ -2896,9 +2896,9 @@
       "expectText": "automatic, after 1"
     },
     {
-      "name": "Freshness (#1442): a conflicting proposal shows a blocked pill, not a plain tally",
+      "name": "Freshness (#1442): a conflicting proposal says so in a red tag, and still shows its vote",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
-      "expectSelector": ".gc-vote-count-blocked",
+      "expectSelector": "#gc-thread-head [data-status-tag=\"mergeability_conflict\"]",
       "expectText": "Conflicts with main"
     },
     {
@@ -2914,10 +2914,10 @@
       "expectText": "freshness not measured yet"
     },
     {
-      "name": "Freshness (#1442): behind-but-clean stays a caption and keeps the vote tally visible",
+      "name": "Freshness (#1442): behind-but-clean is an amber tag, and the bar keeps counting the vote",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000033",
-      "expectSelector": "#gc-thread-head .gc-vote-count-attention",
-      "expectText": "Behind main · 8 · 2/3"
+      "expectSelector": "#gc-thread-head .gc-vote-count-progress",
+      "expectText": "2/3"
     },
     {
       "name": "A failed imported preview offers Retry preview (#866)",

@@ -529,12 +529,33 @@ test('the declared checks still describe the row the tags are actually on', () =
   const mine = dapp.tests.filter((t) => /9000050/.test(t.expectSelector || ''));
   assert.equal(mine.length, 2, 'the blocked-proposal pair');
   const bar = mine.find((t) => /dev-status-pill-block/.test(t.expectSelector));
-  const tags = mine.find((t) => /dev-badge/.test(t.expectSelector));
+  const tags = mine.find((t) => /data-status-tag/.test(t.expectSelector));
   assert.ok(bar && tags);
   assert.match(bar.expectSelector, /\.dev-card-status > \.dev-status-pill-block/,
     'the bar check reads the status row');
-  assert.match(tags.expectSelector, /\.dev-card-meta > \.dev-badge/,
-    'the tags check reads the META line, which is where they render now');
+  assert.match(tags.expectSelector, /\.dev-card-meta > \[data-status-tag="[a-z_-]+"\]/,
+    'the tags check reads the META line, and names the tag it wants');
   assert.ok(!/dev-card-facts/.test(tags.expectSelector),
     'and not the facts row they used to be on');
+  // NAMED, not positional. `.dev-card-meta > .dev-badge` matched — but its
+  // first hit on the detail head is an unset attr placeholder ("Set
+  // priority"), which renders before the status tags there and would have
+  // failed the expectText. Every status tag carries data-status-tag so a
+  // check can ask for the one it means.
+  for (const t of dapp.tests.filter((x) => /data-status-tag/.test(x.expectSelector || ''))) {
+    assert.match(t.expectSelector, /\[data-status-tag="[a-z_-]+"\]/, t.name);
+  }
+});
+
+test('every status tag is addressable by name', () => {
+  const AppView = makeAppView();
+  const row = PR({
+    merge_conflict_state: 'failed', resolving: true, check_state: 'failing',
+    test_results: [{ name: 'a', status: 'fail' }], behind_main: 4,
+    console_check_state: 'errors', console_errors: [{ message: 'x' }],
+  });
+  for (const tag of AppView.statusTagSpecs(row, {})) {
+    assert.ok(tag.data && tag.data['data-status-tag'],
+      `${tag.label} carries a data-status-tag`);
+  }
 });
