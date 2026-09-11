@@ -511,7 +511,7 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   // line, the facts row under the status row, and the unclamped title.
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
-  assert.match(byName(/the vote at each row.s bottom-right/).expectSelector, /\.dev-ws-row-main > \.dev-ws-row-band > \.dev-ws-row-trailing > button\.dev-vote-btn/);
+  assert.match(byName(/the vote at each row.s bottom-right/).expectSelector, /\.dev-ws-row\[role="button"\] > \.dev-ws-row-band > \.dev-ws-row-trailing > button\.dev-vote-btn/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);
@@ -548,14 +548,57 @@ test('the message count rides the meta line at both sizes, and only when there i
   const quiet = makeAppView();
   quiet._proposals[0].chat_count = 5;
   const folded = kanbanHtml(quiet);
-  assert.match(folded, /data-proposal-row="34"[\s\S]*?<span class="dev-ws-row-meta">(?:(?!<\/span><span class="dev-ws-row-band">)[\s\S])*?<span class="dev-chat-badge/, 'and on the row, in the same place');
+  assert.match(folded, /data-proposal-row="34"[\s\S]*?<span class="dev-ws-row-meta">(?:(?!<span class="dev-ws-row-band">)[\s\S])*?<span class="dev-chat-badge/, 'and on the row, in the same place');
   // The two sizes share one chrome now, too: the card's r22, its 14/14/12
   // padding with the 4px edge inside it, its 8px glyph gap, its drop shadow,
   // and no hairline border. Pinned value for value against the card's rule.
   const card = CSS.slice(CSS.indexOf('\ndiv:is(.dev-card-dense, .dev-card-topic) {'));
   assert.match(card, /border-radius: 22px;[\s\S]*?padding: 14px 14px 12px;\s*padding-left: calc\(14px \+ var\(--dev-edge-w\)\);/);
-  assert.match(CSS, /\.dev-ws-row \{[^}]*gap: 8px;[^}]*padding: 14px 14px 12px; border-radius: 22px; border: 0;/);
+  assert.match(CSS, /\.dev-ws-row \{[^}]*padding: 14px 14px 12px; border-radius: 22px; border: 0;/);
+  // The 8px glyph gap moved to the head when the row became a column, so the
+  // bar underneath spans the whole row rather than starting past the glyph.
+  assert.match(CSS, /\.dev-ws-row \{[^}]*flex-direction: column; align-items: stretch;/);
+  assert.match(CSS, /\.dev-ws-row-head \{ display: flex; align-items: center; gap: 8px; \}/);
   assert.match(CSS, /\.dev-ws-row \{[^}]*padding-left: calc\(14px \+ var\(--dev-edge-w\)\);[^}]*0 1px 2px rgba\(0, 0, 0, 0\.06\);/);
   assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head \{ gap: 8px;/);
   assert.ok(!/\.dev-ws-row:hover \{ border-color/.test(CSS), 'no border to colour on hover');
+});
+
+// Round 15. Four differences the app's owner spotted on screen, each measured
+// in a browser before and after. The first three are one line of CSS apiece;
+// the fourth is the row's shape.
+test('a press changes the fill and nothing else, and the row is the card minus its button row', () => {
+  // -- The press ------------------------------------------------------
+  // The kit gives every button an instant scale on press. The row carries
+  // role="button" and the open card is a plain div, so the scale reached
+  // exactly one of the two sizes: a pressed folded row drew inset and a
+  // pressed open card did not. Opted out the way this stylesheet already
+  // opts the segmented pills out, keeping the kit's brightness dim.
+  assert.match(CSS, /\.dev-ws-row:active \{ transform: none; \}/);
+  assert.match(CSS, /\.create-mode-pill:active,[\s\S]{0,160}\{\s*transform: none;\s*\}/,
+    'the rule this one follows is still there to follow');
+
+  // -- The three lines, and where each starts -------------------------
+  // The card's anatomy is three siblings: head (glyph + title), meta line,
+  // status row. The row used to be a head beside a two-line text column,
+  // which put both lines below the title 30px in. Measured in Chromium at
+  // 340px, folded then open: title 48/48, meta 48/48, status 18/18.
+  assert.match(FOLD, /<span className="dev-ws-row-head">\s*\{c\.icon \? <CardIcon[\s\S]*?<\/span>\s*\{\/\*[\s\S]*?\*\/\}\s*<span className="dev-ws-row-meta">\{metaLineNodes\(c\)\}<\/span>\s*<RowBand/,
+    'head, meta and band are siblings, in the card’s order');
+  assert.ok(!/dev-ws-row-main/.test(FOLD) && !/\.dev-ws-row-main[\s,{>]/.test(CSS),
+    'the text column that held the meta line and the band 30px in is gone');
+  // The meta line's tab is the CARD's rule, condition and all: 30px, and
+  // only when there is a glyph to tab past.
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) \+ \.dev-card-meta \{ padding-left: 30px; \}/);
+  assert.match(CSS, /\.dev-ws-row-head:has\(> \.dev-card-icon\) \+ \.dev-ws-row-meta \{ padding-left: 30px; \}/);
+
+  // -- The two gaps ---------------------------------------------------
+  // Title to meta: the card stacks them flush, the row carried a 1px column
+  // gap plus a 1px margin, so the same two lines sat 2px apart folded and
+  // 0px open. Meta to status: the card's 8px, the row's 4px+1px.
+  assert.match(CSS, /\.dev-ws-row-meta \{[^}]*margin-top: 0;/);
+  assert.ok(!/\.dev-ws-row-head \{[^}]*row-gap/.test(CSS), 'and no gap standing in for it');
+  assert.match(CSS, /\.dev-ws-row-band \{[^}]*margin-top: 8px;/);
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-badges \{ margin-top: 8px;/,
+    'which is the card’s own');
 });
