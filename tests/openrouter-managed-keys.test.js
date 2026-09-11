@@ -76,7 +76,7 @@ test('an ambiguous create failure is surfaced after exactly one attempt', async 
   assert.equal(calls, 1, 'POST /keys must never be blindly retried');
 });
 
-test('default-open managed provisioning does not require an identity and returns plaintext once', async (t) => {
+test('default-open managed provisioning stores the key internally and returns only safe metadata', async (t) => {
   const originals = {
     withTransaction: credentialStore.withTransaction,
     readMetadata: credentialStore.readMetadata,
@@ -157,8 +157,12 @@ test('default-open managed provisioning does not require an identity and returns
   assert.equal(stored.metadata.source, 'usernode_managed');
   assert.equal(stored.metadata.managedKeyId, 17);
   assert.equal(defaultModel, 'z-ai/glm-5.3-flash');
-  assert.equal(result.apiKey, 'sk-or-v1-issued-once');
-  assert.equal(result.shownOnce, undefined, 'route, not persistence, adds the one-time response marker');
+  assert.equal(result.apiKey, undefined, 'the provisioning result must not expose the credential');
+  assert.equal(result.last4, undefined, 'the claim response does not need credential-shaped data');
+  assert.equal(JSON.stringify(result).includes('sk-or-v1-issued-once'), false);
+  assert.deepEqual(Object.keys(result).sort(), [
+    'defaultModel', 'keyInfo', 'managed', 'revision',
+  ]);
   assert.equal(result.managed.status, 'active');
   assert.equal(notificationsSent, 1);
 });
@@ -307,7 +311,11 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   assert.match(routes, /Cache-Control', 'no-store'/);
   assert.match(admin, /patch\('\/api\/admin\/openrouter-keys\/:id'/);
   assert.match(admin, /delete\('\/api\/admin\/openrouter-keys\/:id'/);
-  assert.match(settingsSection, /Save this key now/);
+  assert.doesNotMatch(routes, /\.\.\.claimed|shownOnce/);
+  assert.doesNotMatch(settingsSection, /settings-openrouter-(?:reveal|revealed-key|copy|dismiss-reveal)/);
+  assert.doesNotMatch(settingsSection, /Save this key now|Copy it if you also want your own backup/);
+  assert.doesNotMatch(settings, /j\.apiKey|_copyManagedOpenRouterKey|_dismissManagedOpenRouterReveal/);
+  assert.match(settings, /Created and selected OpenRouter/);
   assert.match(settingsSection, /GLM 5\.3 Flash/);
   assert.match(settings, /GLM 5\.3 Flash/);
   assert.ok(
