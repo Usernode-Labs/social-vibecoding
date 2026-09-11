@@ -79,6 +79,9 @@ clip() {
 : "${PAT:=}"
 : "${MODE:=warm}"
 
+# This marker belongs to this container's completed bootstrap, never its PVC.
+rm -f /tmp/usernode-worker-ready || die "cannot reset worker readiness"
+
 cd /home/node/workspace || die "no /home/node/workspace"
 
 # Restore CC's main config file from the persistent volume if needed.
@@ -239,6 +242,7 @@ if [ "$MODE" = "warm" ]; then
   # Long-lived path. Wait for `docker exec /usr/local/bin/run-cc.sh`
   # invocations from the host. The phase marker tells the bootstrap
   # log-tailer the container is ready to receive work.
+  touch /tmp/usernode-worker-ready || die "cannot publish worker readiness"
   echo "__USERNODE_PHASE__ warm-ready"
   exec sleep infinity
 fi

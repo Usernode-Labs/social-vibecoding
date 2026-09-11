@@ -168,3 +168,66 @@ test('Kubernetes probes and push proxy preserve Docker operation deadlines', asy
   assert.equal((await worker.execPushFromWorker(70003, 'test-branch')).sha, 'abcdef');
   assert.deepEqual(deadlines, [5000, 12345, 60000]);
 });
+
+
+test('legacy recovery and stop helpers never invoke Docker in Kubernetes mode', async (t) => {
+  const prior = process.env.WORKER_RUNTIME;
+  process.env.WORKER_RUNTIME = 'kubernetes';
+  t.after(() => { if (prior === undefined) delete process.env.WORKER_RUNTIME; else process.env.WORKER_RUNTIME = prior; });
+  const docker = require('../src/services/docker');
+  t.mock.method(docker, 'execFileAsync', async () => assert.fail('must not call Docker'));
+  t.mock.method(docker, 'stopAndRemove', async () => assert.fail('must not call Docker'));
+  const removed = [];
+  t.mock.method(kubernetes, 'deleteWorker', async (cfg, id, options) => removed.push({ id, options }));
+  await assert.rejects(worker.watchWorker('sv-worker-s42'), /requires a turn journal/);
+  await worker.stopWorker('sv-worker-s42');
+  assert.deepEqual(removed, [{ id: 42, options: { deleteVolume: false } }]);
+  await assert.rejects(worker.destroyWorker('unexpected-name'), /Invalid Kubernetes worker name/);
+});
+
+test('legacy Docker stop preserves its existing stop-only behavior', async (t) => {
+  const prior = process.env.WORKER_RUNTIME;
+  process.env.WORKER_RUNTIME = 'docker';
+  t.after(() => { if (prior === undefined) delete process.env.WORKER_RUNTIME; else process.env.WORKER_RUNTIME = prior; });
+  const docker = require('../src/services/docker');
+  const calls = [];
+  t.mock.method(docker, 'execFileAsync', async (...args) => { calls.push(args); });
+  await worker.stopWorker('usernode-worker-42');
+  assert.deepEqual(calls, [['docker', ['stop', 'usernode-worker-42'], { timeout: 15000 }]]);
+});
+
+
+for (const scenario of ['absent', 'starting', 'pod-replacement', 'api-error']) {
+  test(`Kubernetes liveness distinguishes ${scenario} when no Pod is listed`, async (t) => {
+    const prior = process.env.WORKER_RUNTIME;
+    process.env.WORKER_RUNTIME = 'kubernetes';
+    t.after(() => {
+      if (prior === undefined) delete process.env.WORKER_RUNTIME; else process.env.WORKER_RUNTIME = prior;
+      kubernetes._setClientsForTest(null);
+    });
+    kubernetes._setClientsForTest({
+      core: { listNamespacedPod: async () => ({ items: [] }) },
+      apps: { readNamespacedDeployment: async ({ name }) => {
+        assert.equal(name, 'sv-worker-s42');
+        if (scenario === 'absent') throw Object.assign(new Error('not found'), { code: 404 });
+        if (scenario === 'api-error') throw Object.assign(new Error('unavailable'), { code: 503 });
+        return { status: { availableReplicas: scenario === 'starting' ? 0 : 1 } };
+      } },
+    });
+    assert.equal(await worker.isWorkerExecuting('sv-worker-s42'), scenario === 'absent' ? false : null);
+  });
+}
+
+test('the missing-worker existence check shares the exec deadline', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  kubernetes._setClientsForTest({
+    core: { listNamespacedPod: async () => ({ items: [] }) },
+    apps: { readNamespacedDeployment: () => new Promise(() => {}) },
+  });
+  t.after(() => kubernetes._setClientsForTest(null));
+  const rejected = assert.rejects(kubernetes.execInWorker(config, 'sv-worker-s42', ['true'], null,
+    { timeoutMs: 25 }), error => error.code === 'ETIMEDOUT');
+  await flush();
+  t.mock.timers.tick(25);
+  await rejected;
+});

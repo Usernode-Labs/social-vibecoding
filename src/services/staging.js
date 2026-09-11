@@ -1,4 +1,5 @@
-const { withBuildUse } = require('./build-retention-guard');
+const { withResourceUse } = require('./build-retention-guard');
+const { STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK } = require('./advisory-locks');
 const log = require('./logger');
 const docker = require('./docker');
 const applicationRuntime = require('./application-runtime');
@@ -66,9 +67,10 @@ class PrivateSecretMissingStagingDefaultError extends Error {
 // /tmp/usernode-staging-<id> checkout dir, so B's rm -rf could yank A's
 // tree mid-build.
 //
-// Same single-process reasoning as serializeRebuild below: an in-process
-// chain keyed by session id is sufficient. Builds for one session run
-// one-at-a-time; different sessions still build in parallel. As a bonus,
+// The local chain coalesces requests within this process. Kubernetes also
+// takes a database advisory lock for the entire build: old and new platform
+// Pods both serve HTTP during a rollout. Different sessions remain parallel.
+// As a bonus,
 // a caller requesting the SAME commit as the in-flight/queued build joins
 // it and shares the result instead of rebuilding an identical image+clone
 // back-to-back ('latest' never coalesces — it can point at different
@@ -124,8 +126,8 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
   // Run after the predecessor settles either way — a failed build must
   // not block the next one (it's often exactly the retry that heals it).
   const promise = prevTail.then(
-    () => withBuildUse(config, () => buildAndDeployStagingInner(config, session, app, commitHash)),
-    () => withBuildUse(config, () => buildAndDeployStagingInner(config, session, app, commitHash))
+    () => withResourceUse(config, STAGING_BUILD_LOCK, key, () => buildAndDeployStagingInner(config, session, app, commitHash)),
+    () => withResourceUse(config, STAGING_BUILD_LOCK, key, () => buildAndDeployStagingInner(config, session, app, commitHash))
   );
   // The stored tail never rejects, so waiters always run and no unhandled
   // rejection is parked on the chain; callers still get the real result
@@ -791,10 +793,9 @@ async function teardownStaging(session, app) {
 // `stopAndRemove(name)` / `runContainer(name)` calls interleave and the
 // second `docker run` 405s with "container name is already in use"
 // (exactly the failure that left whiteboard #26 merged-on-GitHub but
-// not-marked-merged). The platform is a single Node process, so an
-// in-process promise chain keyed by slug is sufficient: concurrent
-// rebuilds of one app run one-at-a-time, each cloning the latest main
-// and converging on HEAD. Different apps still rebuild in parallel.
+// not-marked-merged). The local promise chain orders calls within a Pod;
+// the Kubernetes advisory lock below extends this across rollout overlap.
+// Each rebuild clones the latest main. Different apps remain parallel.
 const _rebuildChains = new Map(); // slug -> Promise (rejection-swallowing tail)
 
 function serializeRebuild(slug, fn) {
@@ -815,7 +816,8 @@ function serializeRebuild(slug, fn) {
 }
 
 async function rebuildProduction(config, app) {
-  return serializeRebuild(app.slug, () => withBuildUse(config, () => rebuildProductionInner(config, app)));
+  return serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
+    () => rebuildProductionInner(config, app)));
 }
 
 async function rebuildProductionInner(config, app) {

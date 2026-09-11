@@ -3677,6 +3677,18 @@
       "name": "#1808: an admin log line keeps its seconds and gains the day once it is not today's",
       "path": "/?demo=1#admin/status",
       "expectSelector": "#admin-status-root #admin-status-events time[title]"
+    },
+    {
+      "name": "#1771: a starved preview's checks card says it was not this change",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000045",
+      "expectSelector": ".dev-ledger-row[data-note=\"checks\"]",
+      "expectText": "Infrastructure problem, not this change"
+    },
+    {
+      "name": "#1771: an error with no recorded reason still explains itself",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000009",
+      "expectSelector": ".dev-ledger-row[data-note=\"checks\"]",
+      "expectText": "The staging build or the test run itself broke"
     }
   ],
   "governance": {

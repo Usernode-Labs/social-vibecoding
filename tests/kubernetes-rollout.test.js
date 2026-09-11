@@ -4,6 +4,21 @@ const kubernetes = require('../src/services/kubernetes');
 
 test.afterEach(() => kubernetes._setClientsForTest(null));
 
+test('inventory and application inspection report an incomplete rollout despite an old ready replica', async () => {
+  const deployment = { metadata: { name: 'demo', generation: 2 }, spec: { replicas: 1 },
+    status: { observedGeneration: 2, replicas: 2, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+  kubernetes._setClientsForTest({ apps: { async readNamespacedDeployment() { return deployment; } } });
+  assert.equal(kubernetes._normalizeDeploymentForTest(deployment, []).state, 'restarting');
+  assert.equal((await kubernetes.inspectApplication({ kubernetes: { appNamespace: 'apps' } }, 'demo')).status, 'restarting');
+  deployment.status.replicas = 1;
+  deployment.status.updatedReplicas = 0;
+  assert.equal(kubernetes._deploymentStateForTest(deployment), 'restarting');
+  deployment.status.updatedReplicas = 1;
+  assert.equal(kubernetes._deploymentStateForTest(deployment), 'running');
+  deployment.metadata.deletionTimestamp = new Date().toISOString();
+  assert.equal(kubernetes._deploymentStateForTest(deployment), 'stopped');
+});
+
 test('restart waits for its generation, updated replicas and full availability', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const ready = { observedGeneration: 2, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 };

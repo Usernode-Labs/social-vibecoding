@@ -107,7 +107,7 @@ config:
   workerMemory: 2g
   workerCpus: "2"
   captureMemory: 4g
-  captureCpus: "4"
+  captureCpus: "8"
   # Match application defaults here; each cluster declares its own capacity.
   maxGlobalSessions: 25
   maxUserSessions: 3
@@ -134,8 +134,17 @@ secrets:
   githubAppId: ""
   githubPrivateKey: ""
   githubBotToken: ""
+  # Optional GitHub account-linking OAuth credentials. Set both in encrypted external values.
+  githubLinkClientId: ""
+  githubLinkClientSecret: ""
   anthropicApiKey: ""
   anthropicAdminKey: ""
+  # Optional OpenRouter management credential, supplied through encrypted external values.
+  openrouterManagementApiKey: ""
+  # Optional Gmail sender credentials. Set all three in encrypted external values.
+  gmailOauthClientId: ""
+  gmailOauthClientSecret: ""
+  gmailOauthRefreshToken: ""
 
 ingress:
   enabled: true
