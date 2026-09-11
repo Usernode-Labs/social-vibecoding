@@ -11197,6 +11197,39 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   max-width: 900px;
   margin: 0 auto;
 }
+.dev-change-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  flex-shrink: 0;
+}
+.dev-change-tabs [aria-pressed="true"] {
+  background: var(--dc-sheet-fill);
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+}
+.dev-change-overview {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 12px 24px;
+}
+.dev-change-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.dev-change-overview[hidden], .dev-change-workspace[hidden] { display: none; }
+.dev-change-issues {
+  margin: 8px 4px 12px;
+  padding: 12px 14px;
+  background: var(--dc-sheet-fill);
+  border-radius: 16px;
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+}
+.dev-change-issues a { display: block; overflow-wrap: anywhere; margin-top: 4px; }
+.dev-change-overview .dev-topic { width: 100%; }
 .dev-topic-sheet {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
