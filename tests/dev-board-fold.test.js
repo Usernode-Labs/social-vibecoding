@@ -372,7 +372,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 587 → 589: the Workshop's two grouping panes, one check each — the tab
   // strip in its default state, and `?group=stage` drawing the board's own
   // columns under it with the summary strip still above them).
-  assert.equal(DAPP.tests.length, 589);
+  // Two additional checks cover the underway overview and workspace deep link.
+  assert.equal(DAPP.tests.length, 591);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
