@@ -68,7 +68,7 @@ function makeAppView(opts) {
       modelOptionText: (m) => `${m.id} — 40-60%`,
       modelNoteText: (m) => `${m.id} does medium changes`,
       MODEL_GUIDANCE_TOOLTIP: 'How to read these',
-      _openRouterModelOptionLabel: (m) => `${m.id} (openrouter)`,
+      _openRouterModelOptionLabel: (m) => `${m.id} (openrouter)${m.isRecommended ? ' · Recommended' : ''}`,
       _openRouterModelCostSummary: (m) => `${m.id} costs $1/Mtok`,
       _openRouterModelCompatibilitySummary: () => 'Tool use supported',
     },
@@ -169,6 +169,42 @@ test('the OpenRouter branch swaps the copy, the label and the caption source', (
   const html = autoHtml(view);
   assert.match(html, /does not use platform Claude credits/);
   assert.doesNotMatch(html, /headless AI session/);
+});
+
+test('the OpenRouter proposal picker exposes search, favorites, recommendations and freshness', () => {
+  const { AppView, published } = makeAppView();
+  const models = [
+    {
+      id: 'deepseek/deepseek-v4.1-flash',
+      name: 'DeepSeek V4.1 Flash',
+      provider: 'deepseek',
+      canonicalSlug: 'deepseek/deepseek-v4.1-flash',
+      isFavorite: true,
+      isRecommended: true,
+    },
+    { id: 'openai/gpt-6-astra', name: 'GPT-6 Astra', provider: 'openai' },
+  ];
+  AppView._showAutoSessionModal(42, models, models[0].id, {
+    provider: 'openrouter',
+    catalogRefreshedAt: new Date().toISOString(),
+    catalogTotalModels: 317,
+  });
+  const view = lastView(published);
+
+  assert.equal(view.openRouter, true);
+  assert.equal(view.catalogTotalModels, 317);
+  assert.equal(view.options[0].isFavorite, true);
+  assert.equal(view.options[0].isRecommended, true);
+  assert.match(view.options[0].searchText, /DeepSeek V4\.1 Flash deepseek\/deepseek-v4\.1-flash deepseek/);
+
+  const html = autoHtml(view);
+  assert.match(html, /placeholder="Filter by model or provider…"/);
+  assert.match(html, /☆ Favorites/);
+  assert.match(html, />Refresh</);
+  assert.match(html, /★ deepseek\/deepseek-v4\.1-flash \(openrouter\) · Recommended/);
+  assert.match(html, /2 of 317 models · Updated just now/);
+  assert.match(html, /Remove selected model from favorites/);
+  assert.match(html, /OpenRouter filters this catalog for your key and account policies/);
 });
 
 test('no build-venues module leaves the venue line empty rather than broken', () => {

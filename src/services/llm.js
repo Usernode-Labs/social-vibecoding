@@ -1900,7 +1900,12 @@ function parseWorkshopJson(resp, what) {
 // source to its version, so an edit here without a bump fails locally and
 // says which constant to raise, or which hash to re-pin when the edit is
 // cosmetic.
-const WORKSHOP_DISCOVERY_VERSION = 1;
+// 2: 'medium' effort, so the call stops exhausting max_tokens on thinking
+// before it can emit its JSON. The output changes, so the rows have to know —
+// which also means every recently viewed app re-drafts its categories once.
+// That is the intended cost here rather than a side effect: the boards this
+// fixes are the ones whose categories were already frozen by the failure.
+const WORKSHOP_DISCOVERY_VERSION = 2;
 
 async function generateWorkshopThemeDefinitions({ inputJson, appName, itemKeys, apiKey, telemetryContext }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
@@ -1945,7 +1950,20 @@ ${inputJson}`;
       max_tokens: 16000,
       system,
       messages: [{ role: 'user', content: user }],
-      output_config: { format: { type: 'json_schema', schema: WORKSHOP_DISCOVERY_SCHEMA } },
+      // MEDIUM effort, and the only stage not on 'low'. Thinking is charged
+      // against max_tokens, and at DEFAULT effort — which is 'high' — this
+      // call spent its 16000 reasoning and hit the limit before the JSON
+      // finished: the platform's own 130-card board ran 17 hours on
+      // "Workshop discovery response hit the output limit before it
+      // finished", which froze its categories and (before the reconcile
+      // learned to survive it) every stage after this one.
+      //
+      // Not 'low', which placement and the digest use. Those two are told
+      // what the categories ARE; this is the call that decides them, and it
+      // is the one place in the pipeline where the model is doing product
+      // judgment rather than classification. 'medium' is the setting that
+      // buys the budget back without paying for it out of that.
+      output_config: { effort: 'medium', format: { type: 'json_schema', schema: WORKSHOP_DISCOVERY_SCHEMA } },
     },
     telemetryContext,
     defaults: { backend: 'helper', component: 'workshop_themes' },

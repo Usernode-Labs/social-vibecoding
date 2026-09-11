@@ -31,8 +31,11 @@ const STAGES = {
   discovery: {
     constant: 'WORKSHOP_DISCOVERY_VERSION',
     builder: llm.generateWorkshopThemeDefinitions,
-    // version → hash of the builder's source at that version
-    pinned: { 1: '9561f5061d176cc6' },
+    // version → hash of the builder's source at that version.
+    // 2 puts the call on 'medium' effort: at the default ('high') it spent
+    // its 16000 token budget thinking and hit the output limit before its
+    // JSON finished, which froze one board's categories for 17 hours.
+    pinned: { 1: '9561f5061d176cc6', 2: '27d59d0a5d9aa59e' },
   },
   placement: {
     constant: 'WORKSHOP_PLACEMENT_VERSION',

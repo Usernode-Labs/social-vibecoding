@@ -142,6 +142,11 @@
     _connectorLoadId: 0,
     _githubLink: null,
     _openRouterModels: [],
+    _openRouterSelectedModelId: '',
+    _openRouterRecommendedModelId: '',
+    _openRouterCatalogRefreshedAt: null,
+    _openRouterCatalogTotal: 0,
+    _openRouterFavoritesOnly: false,
     _mobilePushPreferences: null,
     _mobilePushLoading: false,
     _mobilePushSaving: false,
@@ -302,6 +307,10 @@
       const orRemove = document.getElementById('settings-openrouter-remove');
       const orSetDefault = document.getElementById('settings-openrouter-set-default');
       const orModel = document.getElementById('settings-openrouter-model');
+      const orModelSearch = document.getElementById('settings-openrouter-model-search');
+      const orFavoritesOnly = document.getElementById('settings-openrouter-favorites-only');
+      const orRefreshModels = document.getElementById('settings-openrouter-refresh-models');
+      const orStarModel = document.getElementById('settings-openrouter-star-model');
       const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
       if (orClaim) orClaim.addEventListener('click', () => this._claimManagedOpenRouterKey());
@@ -309,7 +318,17 @@
       if (orDismissReveal) orDismissReveal.addEventListener('click', () => this._dismissManagedOpenRouterReveal());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
       if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
-      if (orModel) orModel.addEventListener('change', () => this._syncOpenRouterModelDetails());
+      if (orModel) orModel.addEventListener('change', () => {
+        this._openRouterSelectedModelId = orModel.value;
+        this._syncOpenRouterModelDetails();
+      });
+      if (orModelSearch) orModelSearch.addEventListener('input', () => this._renderOpenRouterModelOptions());
+      if (orFavoritesOnly) orFavoritesOnly.addEventListener('click', () => {
+        this._openRouterFavoritesOnly = !this._openRouterFavoritesOnly;
+        this._renderOpenRouterModelOptions();
+      });
+      if (orRefreshModels) orRefreshModels.addEventListener('click', () => this._refreshOpenRouterModelsNow());
+      if (orStarModel) orStarModel.addEventListener('click', () => this._toggleSelectedOpenRouterFavorite());
       if (claudeSetDefault) claudeSetDefault.addEventListener('click', () => this._saveClaudeDefault());
 
       const linkBtn = document.getElementById('wallet-link-btn');
@@ -2802,20 +2821,116 @@
     },
 
     _openRouterModelOptionLabel(model) {
+      const badges = [];
+      if (model?.isFavorite) badges.push('★');
+      if (model?.isRecommended) badges.push('Recommended');
+      if (model?.createdAt) {
+        const age = Date.now() - Date.parse(model.createdAt);
+        if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
+      }
       const compatibility = model?.compatibility === 'verified'
         ? ' · verified'
         : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
-      return `${model?.name || model?.id || 'Unknown model'}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+      const badgeText = badges.length ? ` · ${badges.join(' · ')}` : '';
+      return `${model?.name || model?.id || 'Unknown model'}${badgeText}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+    },
+
+    _openRouterModelsForPicker(models, { query = '', favoritesOnly = false } = {}) {
+      const needle = String(query || '').trim().toLocaleLowerCase();
+      return (Array.isArray(models) ? models : [])
+        .map((model, index) => ({ model, index }))
+        .filter(({ model }) => {
+          if (favoritesOnly && model?.isFavorite !== true) return false;
+          if (!needle) return true;
+          return [model?.name, model?.id, model?.provider, model?.canonicalSlug]
+            .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
+        })
+        .sort((a, b) => {
+          if (!!a.model?.isFavorite !== !!b.model?.isFavorite) return a.model?.isFavorite ? -1 : 1;
+          if (!!a.model?.isRecommended !== !!b.model?.isRecommended) return a.model?.isRecommended ? -1 : 1;
+          return a.index - b.index;
+        })
+        .map(({ model }) => model);
+    },
+
+    _openRouterCatalogAgeText(refreshedAt) {
+      const refreshed = Date.parse(refreshedAt || '');
+      if (!Number.isFinite(refreshed)) return '';
+      const seconds = Math.max(0, Math.round((Date.now() - refreshed) / 1000));
+      if (seconds < 60) return 'Updated just now';
+      const minutes = Math.round(seconds / 60);
+      if (minutes < 60) return `Updated ${minutes}m ago`;
+      return `Updated ${Math.round(minutes / 60)}h ago`;
+    },
+
+    _renderOpenRouterModelOptions() {
+      const select = document.getElementById('settings-openrouter-model');
+      if (!select) return;
+      const search = document.getElementById('settings-openrouter-model-search');
+      const favoritesOnlyButton = document.getElementById('settings-openrouter-favorites-only');
+      const meta = document.getElementById('settings-openrouter-catalog-meta');
+      const visibleModels = this._openRouterModelsForPicker(this._openRouterModels, {
+        query: search?.value || '',
+        favoritesOnly: this._openRouterFavoritesOnly,
+      });
+      select.innerHTML = '';
+      for (const model of visibleModels) {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.textContent = this._openRouterModelOptionLabel(model);
+        select.appendChild(option);
+      }
+      if (!visibleModels.some((model) => model.id === this._openRouterSelectedModelId)) {
+        const fallback = visibleModels.find((model) => model.id === this._openRouterRecommendedModelId)
+          || visibleModels.find((model) => model.isRecommended)
+          || visibleModels[0]
+          || null;
+        if (fallback) this._openRouterSelectedModelId = fallback.id;
+      }
+      select.value = visibleModels.some((model) => model.id === this._openRouterSelectedModelId)
+        ? this._openRouterSelectedModelId
+        : '';
+      select.disabled = visibleModels.length === 0;
+      if (favoritesOnlyButton) {
+        favoritesOnlyButton.setAttribute('aria-pressed', String(this._openRouterFavoritesOnly));
+        favoritesOnlyButton.textContent = this._openRouterFavoritesOnly ? '★ Favorites' : '☆ Favorites';
+      }
+      if (meta) {
+        const age = this._openRouterCatalogAgeText(this._openRouterCatalogRefreshedAt);
+        meta.textContent = visibleModels.length
+          ? `${visibleModels.length} of ${this._openRouterCatalogTotal || this._openRouterModels.length} models${age ? ` · ${age}` : ''}`
+          : `No key-visible models match. Refresh, then check this key's OpenRouter account policies${age ? ` · ${age}` : ''}`;
+      }
+      this._syncOpenRouterModelDetails();
     },
 
     _syncOpenRouterModelDetails() {
       const select = document.getElementById('settings-openrouter-model');
       const effort = document.getElementById('settings-openrouter-reasoning');
       const model = this._openRouterModels.find((item) => item.id === select?.value) || null;
+      const star = document.getElementById('settings-openrouter-star-model');
+      const saveDefault = document.getElementById('settings-openrouter-set-default');
       if (!model) {
         if (select) select.title = 'Models are sorted by average input/output price. Actual spend depends on token usage.';
         if (effort) effort.disabled = true;
+        if (star) {
+          star.disabled = true;
+          star.textContent = '☆';
+          star.setAttribute('aria-pressed', 'false');
+        }
+        if (saveDefault) saveDefault.disabled = true;
         return;
+      }
+      if (saveDefault) saveDefault.disabled = false;
+      if (star) {
+        star.disabled = false;
+        star.textContent = model.isFavorite ? '★' : '☆';
+        star.setAttribute('aria-pressed', String(model.isFavorite === true));
+        const label = model.isFavorite
+          ? 'Remove selected model from favorites'
+          : 'Add selected model to favorites';
+        star.setAttribute('aria-label', label);
+        star.title = label;
       }
       let compatibility = 'Not yet verified for repository coding.';
       if (model.compatibility === 'verified') compatibility = 'Verified for repository coding.';
@@ -2962,41 +3077,95 @@
       if (reveal) reveal.classList.add('hidden');
     },
 
-    async _loadOpenRouterModels() {
+    async _loadOpenRouterModels({ forceRefresh = false } = {}) {
       const sel = document.getElementById('settings-openrouter-model');
       const wrap = document.getElementById('settings-openrouter-models-wrap');
       if (!sel) return;
       try {
-        const r = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', { credentials: 'same-origin' });
-        if (!r.ok) { if (wrap) wrap.classList.add('hidden'); return; }
+        const refresh = forceRefresh ? '&refresh=1' : '';
+        const r = await fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
+          credentials: 'same-origin', cache: 'no-store',
+        });
+        const errorBody = r.ok ? null : await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(errorBody?.error || 'Could not load OpenRouter models.');
         const cat = await r.json();
         const models = Array.isArray(cat.models) ? cat.models : [];
         this._openRouterModels = models;
-        if (!models.length) { if (wrap) wrap.classList.add('hidden'); return; }
-        // Build options with DOM methods, NOT innerHTML (review P2):
-        // OpenRouter model IDs/names are untrusted catalog data and
-        // could inject markup into the authenticated Settings page.
-        sel.innerHTML = '';
-        for (const m of models) {
-          const opt = document.createElement('option');
-          opt.value = m.id;
-          opt.textContent = this._openRouterModelOptionLabel(m);
-          sel.appendChild(opt);
+        this._openRouterRecommendedModelId = cat.recommendedModelId || '';
+        this._openRouterCatalogRefreshedAt = cat.refreshedAt || null;
+        this._openRouterCatalogTotal = Number.isInteger(cat.totalModels) ? cat.totalModels : models.length;
+        if (!models.length) {
+          this._openRouterSelectedModelId = '';
+          this._renderOpenRouterModelOptions();
+          if (wrap) wrap.classList.remove('hidden');
+          return;
         }
         const recommended = models.some((model) => model.id === cat.recommendedModelId)
           ? cat.recommendedModelId
-          : (models.find((model) => model.compatibility === 'verified')?.id || models[0].id);
-        sel.value = recommended;
-        // Restore the previously-saved model/effort if any.
-        const prefs = await (await fetch('/api/me/coding-agent', { credentials: 'same-origin' })).json();
-        const saved = prefs.backends?.codex_openrouter;
-        if (saved?.model && models.some((model) => model.id === saved.model)) sel.value = saved.model;
-        const eff = document.getElementById('settings-openrouter-reasoning');
-        if (eff) eff.value = saved?.reasoningEffort || '';
-        this._syncOpenRouterModelDetails();
+          : (models.find((model) => model.isRecommended)?.id
+            || models.find((model) => model.compatibility === 'verified')?.id
+            || models[0].id);
+        if (!forceRefresh || !models.some((model) => model.id === this._openRouterSelectedModelId)) {
+          this._openRouterSelectedModelId = recommended;
+        }
+        if (!forceRefresh) {
+          // Restore the previously-saved model/effort on the initial load.
+          const prefs = await (await fetch('/api/me/coding-agent', {
+            credentials: 'same-origin', cache: 'no-store',
+          })).json();
+          const saved = prefs.backends?.codex_openrouter;
+          if (saved?.model && models.some((model) => model.id === saved.model)) {
+            this._openRouterSelectedModelId = saved.model;
+          }
+          const eff = document.getElementById('settings-openrouter-reasoning');
+          if (eff) eff.value = saved?.reasoningEffort || '';
+        }
+        this._renderOpenRouterModelOptions();
         if (wrap) wrap.classList.remove('hidden');
-      } catch {
-        this._openRouterModels = [];
+      } catch (err) {
+        if (!this._openRouterModels.length && wrap) wrap.classList.add('hidden');
+        throw err;
+      }
+    },
+
+    async _refreshOpenRouterModelsNow() {
+      const button = document.getElementById('settings-openrouter-refresh-models');
+      if (button) { button.disabled = true; button.textContent = 'Refreshing…'; }
+      this._setOrStatus('Refreshing the key-visible catalog from OpenRouter…', 'info');
+      try {
+        await this._loadOpenRouterModels({ forceRefresh: true });
+        this._setOrStatus(`Loaded ${this._openRouterModels.length} current OpenRouter models.`, 'ok');
+      } catch (err) {
+        this._setOrStatus(err.message || 'Could not refresh OpenRouter models.', 'error');
+      } finally {
+        if (button) { button.disabled = false; button.textContent = 'Refresh'; }
+      }
+    },
+
+    async _toggleSelectedOpenRouterFavorite() {
+      const button = document.getElementById('settings-openrouter-star-model');
+      const model = this._openRouterModels.find(
+        (item) => item.id === this._openRouterSelectedModelId,
+      );
+      if (!model || button?.disabled) return;
+      const favorite = model.isFavorite !== true;
+      if (button) button.disabled = true;
+      try {
+        const r = await fetch('/api/me/coding-agent/models/favorite', {
+          method: 'PATCH', credentials: 'same-origin', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ modelId: model.id, favorite }),
+        });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body.error || 'Could not update that favorite.');
+        model.isFavorite = favorite;
+        this._renderOpenRouterModelOptions();
+        this._setOrStatus(favorite
+          ? `${model.name || model.id} added to favorites.`
+          : `${model.name || model.id} removed from favorites.`, 'ok');
+      } catch (err) {
+        this._setOrStatus(err.message || 'Could not update that favorite.', 'error');
+        if (button) button.disabled = false;
       }
     },
 
@@ -3037,6 +3206,10 @@
         this._setOrStatus('Key removed.' + note, 'ok');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = false;
         this._openRouterModels = [];
+        this._openRouterSelectedModelId = '';
+        this._openRouterRecommendedModelId = '';
+        this._openRouterCatalogRefreshedAt = null;
+        this._openRouterCatalogTotal = 0;
         await this._refreshOpenRouter();
       } catch {
         this._setOrStatus('Failed to remove key.', 'error');
@@ -3047,6 +3220,7 @@
 
     async _saveOpenRouterDefault() {
       const model = document.getElementById('settings-openrouter-model')?.value;
+      if (!model) { this._setOrStatus('Choose an OpenRouter model first.', 'error'); return; }
       const reasoningEffort = document.getElementById('settings-openrouter-reasoning')?.value || null;
       // Preserve the user's existing cost cap across this save (review P3):
       // include it explicitly so an omission can't drop the safety limit,
