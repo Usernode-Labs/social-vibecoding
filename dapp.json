@@ -2436,6 +2436,12 @@
       "expectSelector": "#messages-message-9100101 .messages-message-actions button[aria-label=\"Unsave message\"][aria-pressed=\"true\"]"
     },
     {
+      "name": "The app menu lists Challenges under Discover (#1823)",
+      "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-discover + #switcher-row-challenges[href=\"#leaderboard/challenges\"]",
+      "expectText": "Challenges"
+    },
+    {
       "name": "The chip opens the menu, and it lists Home and Discover (#1443)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #switcher-row-home + #switcher-row-discover"
