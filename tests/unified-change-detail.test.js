@@ -76,6 +76,14 @@ test('owner can sync before review, with busy and fork capabilities respected', 
   assert.equal(sync(av._topicViewFor('session', { ...failing, source: 'imported', imported_pr_head_repo: 'someone/fork', repo_url: 'https://github.com/org/app' })), undefined);
 });
 
+test('underway freshness does not claim an automatic sync or scheduled merge is running', () => {
+  const av = context();
+  const v = av._topicViewFor('session', { ...failing, freshness_behind_by: 2, freshness_checked_at: failing.created_at });
+  assert.equal(row(v, 'checks').label, 'Checks');
+  assert.ok(v.body.details.ledger.some((r) => r.text.includes('2 commits behind main.')));
+  assert.doesNotMatch(JSON.stringify(v.body.details.ledger), /automatic, now|automatic, after|retries the merge/);
+});
+
 test('private changes retain sharing controls and do not pretend to have a public discussion', () => {
   const av = context();
   const v = av._topicViewFor('session', failing);
@@ -88,10 +96,15 @@ test('actual shared component renders the entire card and escapes the issue titl
   av._ghIssues[0].title = '<script>issue</script>';
   const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
   const v = av._topicViewFor('session', failing);
-  const html = renderToHtml(createElement(ChangeDetail, { ...v, item: failing, owner: true }));
+  const html = renderToHtml(createElement(ChangeDetail, { ...v, item: failing, conversation: true }));
   for (const label of ['Where it stands', 'Addresses', 'Testing instructions', 'Screenshots', 'Activity', 'Discussion', 'Expected app, received login']) assert.ok(html.includes(label), label);
   assert.ok(html.includes('&lt;script&gt;issue&lt;/script&gt;'));
   assert.ok(!html.includes('<script>issue</script>'));
+  assert.match(html, /role="tablist" aria-label="Conversation"/);
+  assert.match(html, /role="tab"[^>]+aria-selected="true"[^>]*>Discussion/);
+  assert.ok(html.includes('Agent workspace'));
+  assert.ok(!html.includes('Open discussion'));
+  assert.equal((html.match(/>Activity</g) || []).length, 1, 'Activity is a tab, not a duplicate disclosure');
 });
 
 test('issue and governance topic bodies are not rebuilt as proposals without a session', () => {
@@ -164,7 +177,7 @@ test('the same detail URL resolves native/imported underway work and changes lif
   assert.equal(av._findItem('session', 4073).status, 'promoted', 'legacy shared link still resolves');
 });
 
-test('private change pages do not mount a public thread or load its messages', () => {
+test('all change routes mount the full card, leaving discussion loading to its privacy-aware tab', () => {
   const av = context();
   av._devTopic = { kind: 'proposal', id: failing.id };
   av._mySessions = [{ ...failing }];
@@ -172,14 +185,47 @@ test('private change pages do not mount a public thread or load its messages', (
   const calls = [];
   const c = { AppView: av, document: { getElementById: () => ({}) },
     GroupChat: { mountThread: () => calls.push('public'), unmountThread: () => calls.push('detach') } };
-  av._reactDevBoard = () => ({ mountPrivateTopicHead: () => calls.push('private') });
+  av._reactDevBoard = () => ({ publishTopicHead() {}, mountChangePage: () => calls.push('change') });
   const method = source.slice(source.indexOf('  _mountTopicThread() {'), source.indexOf('\n  // Open a topic full-screen.', source.indexOf('  _mountTopicThread() {'))).trim().replace(/,$/, '');
   vm.runInNewContext(`({ ${method} })._mountTopicThread()`, c);
-  assert.deepEqual(calls, ['detach', 'private']);
+  assert.deepEqual(calls, ['detach', 'change']);
   av._mySessions[0].shared_at = '2026-09-11';
   calls.length = 0;
   vm.runInNewContext(`({ ${method} })._mountTopicThread()`, c);
-  assert.deepEqual(calls, ['public']);
+  assert.deepEqual(calls, ['detach', 'change']);
+});
+
+test('workspace capabilities distinguish owners, published transcripts, private chats and imports', () => {
+  const { workspaceKind, ChangeConversation } = loadTsx('frontend/src/features/dev-board/topic/conversation.tsx');
+  const av = context();
+  const own = av._topicViewFor('session', failing).body;
+  assert.equal(workspaceKind(failing, own), 'owner');
+  assert.equal(workspaceKind({ ...failing, source: 'imported' }, own), 'imported');
+  const other = context({ id: 99 })._topicViewFor('session', { ...failing, shared_at: '2026-09-11' }).body;
+  assert.equal(workspaceKind(failing, other), 'private');
+  assert.equal(workspaceKind(failing, { ...other, transcript: { id: failing.id } }), 'published');
+  const privateHtml = renderToHtml(createElement(ChangeConversation, { item: failing, body: own }));
+  assert.match(privateHtml, /Make this change visible/);
+  assert.doesNotMatch(privateHtml, /data-change-discussion|id="dc-view"/, 'neither controller loads private messages just to display the card');
+});
+
+test('Continue building selects the embedded workspace without navigating away from the card', () => {
+  const av = context();
+  const source = fs.readFileSync('public/js/app-view.js', 'utf8');
+  const method = source.slice(source.indexOf('  openChangeWorkspace(id) {'), source.indexOf('\n  _showExplorePill', source.indexOf('  openChangeWorkspace(id) {'))).trim().replace(/,$/, '');
+  let present = true;
+  const events = [], routes = [];
+  av.openProposalSession = (id) => routes.push(id);
+  const c = { AppView: av, document: { querySelector: () => present ? {} : null },
+    window: { dispatchEvent: (event) => events.push(event) }, CustomEvent: class { constructor(type, opts) { this.type = type; this.detail = opts.detail; } } };
+  const open = vm.runInNewContext(`({ ${method} }).openChangeWorkspace`, c);
+  open(4073);
+  assert.equal(events[0].type, 'change-workspace-open');
+  assert.equal(events[0].detail, 4073);
+  assert.deepEqual(routes, []);
+  present = false;
+  open(4073);
+  assert.deepEqual(routes, [4073], 'callers outside the card retain the session route');
 });
 
 test('Workshop native underway inline details resolve the owner card key', () => {
