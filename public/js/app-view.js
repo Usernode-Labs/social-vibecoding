@@ -12358,6 +12358,8 @@ const AppView = {
     let defaultModel = '';
     let provider = 'claude';
     let reasoningEffort = null;
+    let catalogRefreshedAt = null;
+    let catalogTotalModels = 0;
     try {
       const prefsRes = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
       const prefs = prefsRes.ok ? await prefsRes.json() : {};
@@ -12365,10 +12367,13 @@ const AppView = {
         provider = 'openrouter';
         const catalogRes = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', {
           credentials: 'same-origin',
+          cache: 'no-store',
         });
         if (!catalogRes.ok) throw new Error('Could not load OpenRouter models.');
         const catalog = await catalogRes.json();
         models = Array.isArray(catalog.models) ? catalog.models : [];
+        catalogRefreshedAt = catalog.refreshedAt || null;
+        catalogTotalModels = Number.isInteger(catalog.totalModels) ? catalog.totalModels : models.length;
         const saved = prefs.backends && prefs.backends.codex_openrouter;
         reasoningEffort = (saved && saved.reasoningEffort) || null;
         defaultModel = (saved && models.some((m) => m.id === saved.model) && saved.model)
@@ -12409,7 +12414,9 @@ const AppView = {
       }
     } catch { /* keep the default; the server decides either way */ }
 
-    const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect, { provider, venueId });
+    const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect, {
+      provider, venueId, catalogRefreshedAt, catalogTotalModels,
+    });
     if (!choice) return;
 
     try {
@@ -12576,10 +12583,21 @@ const AppView = {
       && typeof DevChat !== 'undefined' && DevChat.MODEL_GUIDANCE_TOOLTIP
       ? DevChat.MODEL_GUIDANCE_TOOLTIP
       : '');
-    const options = models.map((m) => {
+    const makeOptions = (catalogModels) => catalogModels.map((m) => {
       const note = noteText(m) || '';
-      return { id: m.id, label: optionText(m) || m.id, note, noteTitle: noteTitle(note) };
+      return {
+        id: m.id,
+        // The React picker owns the live star prefix so toggling a favorite
+        // can repaint without rebuilding this whole view model.
+        label: optionText(openRouter ? { ...m, isFavorite: false } : m) || m.id,
+        note,
+        noteTitle: noteTitle(note),
+        searchText: [m.name, m.id, m.provider, m.canonicalSlug].filter(Boolean).join(' '),
+        isFavorite: m.isFavorite === true,
+        isRecommended: m.isRecommended === true,
+      };
     });
+    const options = makeOptions(models);
     const venue = window.BuildVenues ? BuildVenues.venue(modalOptions.venueId || 'usernode-claude') : null;
     const intro = openRouter
       ? 'This sends the issue directly to your selected OpenRouter model. It can inspect the repository, answer with a question, or commit and push a change to its own branch (never a PR or deploy). The run bills your OpenRouter key and does not use platform Claude credits.'
@@ -12593,6 +12611,36 @@ const AppView = {
       pickerLabel: openRouter ? 'OpenRouter model' : 'Chat model',
       options,
       preselect: preselect || (options[0] && options[0].id) || '',
+      openRouter,
+      catalogRefreshedAt: modalOptions.catalogRefreshedAt || null,
+      catalogTotalModels: modalOptions.catalogTotalModels || options.length,
+      onFavorite: openRouter ? async (modelId, favorite) => {
+        if (typeof DevChat !== 'undefined' && DevChat._setOpenRouterModelFavorite) {
+          await DevChat._setOpenRouterModelFavorite(modelId, favorite);
+          return;
+        }
+        const response = await fetch('/api/me/coding-agent/models/favorite', {
+          method: 'PATCH', credentials: 'same-origin', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ modelId, favorite }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || 'Could not update that favorite.');
+      } : undefined,
+      onRefresh: openRouter ? async () => {
+        const response = await fetch(
+          '/api/me/coding-agent/models?backend=codex_openrouter&refresh=1',
+          { credentials: 'same-origin', cache: 'no-store' },
+        );
+        const catalog = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(catalog.error || 'Could not refresh OpenRouter models.');
+        const catalogModels = Array.isArray(catalog.models) ? catalog.models : [];
+        return {
+          options: makeOptions(catalogModels),
+          refreshedAt: catalog.refreshedAt || null,
+          totalModels: Number.isInteger(catalog.totalModels) ? catalog.totalModels : catalogModels.length,
+        };
+      } : undefined,
     });
 
     return new Promise((resolve) => {
