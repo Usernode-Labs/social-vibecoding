@@ -5921,7 +5921,13 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-vote-fill-full { top: 0; width: 100%; height: 100%; }
 .gc-vote-fill-full-yes { background: var(--state-ok-fill); }
 .gc-vote-fill-full-no { background: var(--state-blocked-fill); }
+/* text-primary because a vote pill's fill stripes sweep UNDER the label,
+   and a toned colour on a filled bar is unreadable. A pill with no fill has
+   nothing sweeping under it, and forcing it to text-primary is what made
+   "Checks failing · 3" red on the folded row and near-black on the open
+   card. Where there is no fill the label inherits the tone. */
 .gc-vote-count-label { position: relative; z-index: 1; color: var(--text-primary); }
+.dev-status-pill-block:not(:has(> .gc-vote-fill)) .gc-vote-count-label { color: inherit; }
 /* The pill absorbed the standalone pulsing "Vote" badge, the advisory
    chip and the explicit-approval chip. Their glyphs ride inside the
    label rather than beside the pill. */
@@ -11006,6 +11012,15 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   overflow: hidden;
 }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > [data-folded] { order: 1; }
+/* ── Before the first measurement ──
+   useFoldedActions stamps `data-band-measured` once it has run. Until then
+   every foldable pill sits on the clipped row, which is the steady state in
+   a kanban column. It used to be the opposite: the first paint drew every
+   pill, so a board card opened showing "Create proposal" at the band's left
+   and swapped it for "Open card" a frame later — the flicker reported
+   against #1787 twice. A pill that fits still arrives in the same frame,
+   because the measurement is a layout effect. */
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions:not([data-band-measured]) > [data-fold] { order: 1; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions:empty { display: none; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn {
   height: 28px;
@@ -11786,7 +11801,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    The colour that tile was carrying is not lost: it moved to the left edge
    below, which is where the card carries it. */
 .dev-ws-row > .dev-card-icon {
-  flex-shrink: 0; align-self: flex-start; margin-top: 1px;
+  /* No margin: the card's glyph sits flush on the padding edge, and a 1px
+     nudge here made the two sizes of one item start on different pixels. */
+  flex-shrink: 0; align-self: flex-start;
   width: 22px; height: 22px; background: transparent; border-radius: 0;
 }
 .dev-ws-row > .dev-card-icon > svg { width: 18px; height: 18px; }
@@ -11817,7 +11834,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-row[data-edge="ok"]        { --dev-edge: var(--state-ok); }
 .dev-ws-row[data-edge="neutral"]   { --dev-edge: var(--state-neutral); }
 .dev-ws-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.dev-ws-row-title { font-size: 14px; line-height: 1.3; }
+/* 1.35, the dense card's leading (:is(.dev-card-dense, .dev-card-topic)
+   .dev-card-title above). The row was 1.3, so a two-line title set slightly
+   tighter folded than open — the same words on a different grid. */
+.dev-ws-row-title { font-size: 14px; line-height: 1.35; }
 /* The card's own meta line (dev-card.tsx metaLineNodes), at the card's
    sizes: 12.5px on 21px lines, wrapping, the number a link, the tags and
    the linked-issue chips in the card's chip geometry. Keep these in step
@@ -11837,8 +11857,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 6px;
   min-height: 18px; overflow: hidden; margin-top: 4px;
 }
+/* The bar fills the line, as the card's does. The card's pill is a flex
+   item with basis 0 that grows into whatever the Vote button leaves; the
+   row's chip was inline-block at its natural width, so on a 540px Workshop
+   sheet it ended 221px short of the vote and the two sizes drew the same
+   state at two lengths. */
+.dev-ws-row-band > .dev-ws-row-state { flex: 1 1 0; }
 .dev-ws-row-band > .dev-ws-row-trailing { margin-left: auto; }
-.dev-ws-row-band > .dev-badge { flex: none; }
+/* The card's facts-row geometry (:is(.dev-card-dense, .dev-card-topic)
+   .dev-card-meta > .dev-badge), so "In review" and "@maya" are the same chip
+   at both sizes. Without this they fell back to the base .dev-badge —
+   10.5px on a 20px chip against the card's 11.5px on 19px. */
+.dev-ws-row-band > .dev-badge { flex: none; height: 19px; font-size: 11.5px; }
 /* The composite pill, wearing the tone it has always carried. Tones are
    `statusPillState`'s vocabulary (neutral / ok / attention / blocked /
    progress), not the merge badge's colour names — an unknown one falls
