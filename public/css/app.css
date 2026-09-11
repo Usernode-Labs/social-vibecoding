@@ -11799,6 +11799,32 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    you is not a warning, and the component leaves the class off. */
 .dev-ws-dash-good b { color: var(--state-ok); }
 .dev-ws-dash-warn b { color: var(--state-attention); }
+/* The grouping tabs. A SEGMENTED strip, not two loose chips: the two panes
+   are alternatives over one board, and a shared rail says that where a gap
+   between pills would read as two unrelated toggles. Deliberately NOT
+   .dev-ws-chip — those are the sort order WITHIN the category pane and sit
+   one row below, so the two controls have to look like different kinds of
+   thing or the row reads as five options over one list. */
+.dev-ws-group {
+  display: flex; align-items: stretch; gap: 2px; align-self: flex-start;
+  padding: 3px; border-radius: 999px; background: var(--dc-strip);
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+}
+.dev-ws-group-tab {
+  height: 28px; padding: 0 14px; border: 0; border-radius: 999px;
+  background: transparent; color: var(--text-muted);
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  white-space: nowrap;
+}
+.dev-ws-group-tab[aria-selected="true"] {
+  background: var(--dc-sheet); color: var(--text-primary);
+  box-shadow: 0 1px 2px var(--app-sheet-shadow-near);
+}
+/* The board, nested. It brings its own horizontal scroller (#dev-kanban), so
+   this wrapper only has to stop the columns sitting flush against the strips
+   above them. */
+.dev-ws-board { padding-top: 2px; }
+
 .dev-ws-sort { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 0; flex-wrap: wrap; }
 .dev-ws-sort-opts { display: flex; gap: 4px; }
 .dev-ws-chip {
