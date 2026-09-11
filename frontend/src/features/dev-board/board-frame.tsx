@@ -58,7 +58,8 @@
  * exists on the Dev route. Chunk H (#1085) folds it into the main tree.
  */
 
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import type { ReactNode } from 'react';
 
@@ -67,6 +68,7 @@ import {
   PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
+import { FeaturedIllustrationEditor } from '../apps/featured-illustration-editor';
 import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from './view-mode-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
@@ -75,6 +77,8 @@ import { lockedNoticeStore, type LockedNoticeState } from './locked-notice-store
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
 export interface DevBoardFrameProps {
+  illustrationApp?: any;
+  canManageIllustration?: boolean;
   /** `AppView.appData?.self_hosted` — gates the "Dev" caption and several rows. */
   selfHosted: boolean;
   /** `AppView.readOnly`. */
@@ -158,9 +162,10 @@ const PLUS_SUB_CLS = 'block text-xs text-zinc-500 dark:text-zinc-400';
  * interesting part.
  */
 function PlusRow({
-  'data-plus': action, icon, title, sub, dividerCls = '', titleNode,
+  'data-plus': action, icon, title, sub, dividerCls = '', titleNode, onClick,
 }: {
   'data-plus': string;
+  onClick?: () => void;
   icon: ReactNode;
   title?: string;
   sub: ReactNode;
@@ -171,6 +176,7 @@ function PlusRow({
   return (
     <button
       data-plus={action}
+      onClick={onClick}
       className={PLUS_ROW_CLS + dividerCls}
     >
       {icon}
@@ -300,6 +306,8 @@ function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverC
 }
 
 export function DevBoardFrame({
+  illustrationApp,
+  canManageIllustration,
   selfHosted,
   readOnly,
   canCollaborate,
@@ -307,6 +315,7 @@ export function DevBoardFrame({
   cardCls,
   cardHoverCls,
 }: DevBoardFrameProps) {
+  const [editingIllustration, setEditingIllustration] = useState(false);
   const { locked } = useStoreState<LockedNoticeState>(lockedNoticeStore);
   const bodyInitial = useBodyInitial();
   return (
@@ -343,6 +352,8 @@ export function DevBoardFrame({
           never reconciles inside the host, and the module never writes outside
           it. `_renderKanbanFilterBar()` fills the shared Board/Activity strip.
       */}
+      {/* The native modal reparents its card under body. Portal there too so React's delegated events stay on the card's ancestor. */}
+      {editingIllustration && illustrationApp ? createPortal(<FeaturedIllustrationEditor key={illustrationApp.slug} app={illustrationApp} onClose={() => setEditingIllustration(false)} />, document.body) : null}
       <div id="dev-actions" className="flex items-center gap-2 px-3 pt-2 shrink-0">
         {/*
             Legacy portal host for the filter strip. It ships EMPTY because the
@@ -401,6 +412,13 @@ export function DevBoardFrame({
                   groupKey="settings"
                   divider={canCollaborate}
                 />
+                {canManageIllustration ? <PlusRow
+                  data-plus="featured-illustration"
+                  icon={<PencilSquareIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                  title="Featured illustration"
+                  sub="Preview and adjust the Discover card image"
+                  onClick={() => setEditingIllustration(true)}
+                /> : null}
                 {showsMembers ? (
                   <>
                     {selfHosted ? (

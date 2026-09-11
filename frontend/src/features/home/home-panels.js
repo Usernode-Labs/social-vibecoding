@@ -517,6 +517,7 @@ const HomePanels = {
       demo: !!app.demo,
       added: !!(window.Home && Home.isYours && Home.isYours(app)),
       icon,
+      illustration: app.featured_illustration || null,
       blurb: HomePanels.appBlurb(app),
       contributors: Number(app.contributor_count) || 0,
     };
