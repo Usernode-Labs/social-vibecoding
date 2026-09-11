@@ -214,19 +214,25 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
   useEffect(() => {
     if (workspace) window.DevChat?.restoreSessionScroll?.();
   }, [workspace]);
+  const selectWorkspace = (next: boolean) => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('workspace', next ? '1' : '0');
+    window.history.replaceState(window.history.state, '', url);
+    setWorkspace(next);
+  };
   const showOverview = () => {
     window.DevChat?._resetStagingPanel?.();
     window.DevChat?._publishDevView?.();
-    setWorkspace(false);
+    selectWorkspace(false);
   };
   if (!s.change) return <WorkspaceView s={s} />;
   return <>
     <nav className="dev-change-tabs" aria-label="Change views">
       <button type="button" className="gc-vote-btn" aria-pressed={!workspace} onClick={showOverview}>Change overview</button>
-      <button type="button" className="gc-vote-btn" aria-pressed={workspace} onClick={() => setWorkspace(true)}>Agent workspace · {s.change.item.transcript_shared_at ? 'shared read-only' : 'private'}</button>
+      <button type="button" className="gc-vote-btn" aria-pressed={workspace} onClick={() => selectWorkspace(true)}>Agent workspace · {s.change.item.transcript_shared_at ? 'shared read-only' : 'private'}</button>
     </nav>
     <div className="dev-change-overview platform-safe-scroll" hidden={workspace}>
-      <ChangeDetail key={s.change.item.id} {...s.change} owner />
+      <ChangeDetail key={s.change.item.id} {...s.change} owner active={!workspace} />
     </div>
     <div className="dev-change-workspace" hidden={!workspace}><WorkspaceView s={s} /></div>
   </>;

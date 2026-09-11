@@ -93,3 +93,50 @@ test('actual shared component renders the entire card and escapes the issue titl
   assert.ok(html.includes('&lt;script&gt;issue&lt;/script&gt;'));
   assert.ok(!html.includes('<script>issue</script>'));
 });
+
+test('issue and governance topic bodies are not rebuilt as proposals without a session', () => {
+  const av = context();
+  const v = av._topicViewFor('session', failing);
+  const previousWindow = global.window;
+  global.window = { AppView: { _topicViewFor() { throw new Error('Non-session topic rebuilt as proposal'); } } };
+  try {
+    const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+    const html = renderToHtml(createElement(ChangeDetail, { card: v.card, body: { ...v.body, comments: true }, item: null }));
+    assert.match(html, /id="dev-issue-comments"/);
+  } finally {
+    if (previousWindow === undefined) delete global.window;
+    else global.window = previousWindow;
+  }
+});
+
+test('detail refresh uses the lifecycle endpoint and preserves demo context', async () => {
+  const { readChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  const previousWindow = global.window;
+  const previousFetch = global.fetch;
+  const requests = [];
+  let roster = 0;
+  global.window = { AppView: { appData: { slug: 'example' }, _demoQS: () => '?demo=1',
+    _invalidateVoteRoster() {}, _loadVoteRoster() { roster++; } } };
+  const signal = new AbortController().signal;
+  try {
+    for (const status of ['active', 'paused', 'promoted', 'merging', 'merged']) {
+      const session = { id: 123, status };
+      const review = ['promoted', 'merging', 'merged'].includes(status);
+      global.fetch = async (url, options) => {
+        requests.push(url);
+        assert.equal(options.signal, signal);
+        return { ok: true, json: async () => review ? { proposal: session } : { session } };
+      };
+      assert.deepEqual(await readChangeDetail(session, true, signal), session);
+      assert.equal(requests.at(-1), review ? '/api/apps/example/proposals/123?demo=1' : '/api/sessions/123/details?demo=1');
+    }
+    assert.equal(requests.length, 5, 'one authoritative detail request per refresh');
+    assert.equal(roster, 3);
+    global.fetch = async () => ({ ok: false, json: async () => ({ error: 'Unavailable' }) });
+    await assert.rejects(readChangeDetail({ id: 123, status: 'active' }, true, signal), /Unavailable/);
+  } finally {
+    global.fetch = previousFetch;
+    if (previousWindow === undefined) delete global.window;
+    else global.window = previousWindow;
+  }
+});

@@ -24,7 +24,7 @@
  * public/js/session-transcript.js fills on expand.
  */
 
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import type { MouseEvent, ReactNode } from 'react';
 
 import { useStoreState } from '../../../lib/use-store-state';
@@ -469,19 +469,37 @@ export function TopicHead(): ReactNode {
   return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} />;
 }
 
+/** Refresh from the endpoint that owns this lifecycle's metadata. */
+export async function readChangeDetail(item: any, owner: boolean, signal: AbortSignal) {
+  const id = item.id;
+  const av = (window as any).AppView;
+  const review = ['promoted', 'merging', 'merged'].includes(item.status) && av?.appData?.slug;
+  const url = review ? `/api/apps/${av.appData.slug}/proposals/${id}` : `/api/sessions/${id}/details`;
+  const response = await fetch(`${url}${av?._demoQS?.() || ''}`, { signal });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.error || 'Could not refresh this change.');
+  const session = review ? payload.proposal : payload.session;
+  if (review && !signal.aborted) {
+    if (owner) av._invalidateVoteRoster(id);
+    await av._loadVoteRoster(id);
+  }
+  return session;
+}
+
 /** The same card on the owner session and public review/discussion page.
  * Full public metadata is fetched separately from the lightweight board.
  * This endpoint cannot return private agent messages or credentials.
  */
-export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false }: {
-  card: any; body: TopicBody; item?: any; owner?: boolean;
+export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true }: {
+  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean;
 }): ReactNode {
+  const root = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState<any>(null);
   const [error, setError] = useState('');
   const [revision, setRevision] = useState(0);
   const id = item?.id;
   useEffect(() => {
-    if (!id) return;
+    if (!id || !active) return;
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout>;
     const refresh = (event: Event) => {
@@ -490,22 +508,10 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
     window.addEventListener('change-detail-refresh', refresh);
     async function load() {
       try {
-        const response = await fetch(`/api/sessions/${id}/details`, { signal: abort.signal });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Could not refresh this change.');
-        // Published proposals carry vote counts, the viewer's vote and the
-        // reviewed head pin on their existing public endpoint. Keep those
-        // authoritative even when opened through an owner's session URL.
-        const av = (window as any).AppView;
-        if (['promoted', 'merging', 'merged'].includes(data.session.status) && av?.appData?.slug) {
-          const review = await fetch(`/api/apps/${av.appData.slug}/proposals/${id}`, { signal: abort.signal });
-          if (!review.ok) throw new Error('Could not refresh the review state.');
-          const payload = await review.json();
-          data.session = { ...data.session, ...payload.proposal };
-          if (owner) av._invalidateVoteRoster(id);
-          await av._loadVoteRoster(id);
-        }
-        if (!abort.signal.aborted) { setLoaded(data.session); setError(''); }
+        // These portals can remain mounted while another screen is open.
+        if (!root.current?.getClientRects().length || document.visibilityState === 'hidden') return;
+        const session = await readChangeDetail(item, owner, abort.signal);
+        if (!abort.signal.aborted) { setLoaded(session); setError(''); }
       } catch (err) {
         if (!abort.signal.aborted) setError((err as Error).message);
       } finally {
@@ -514,14 +520,14 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
     }
     void load();
     return () => { abort.abort(); clearTimeout(timer); window.removeEventListener('change-detail-refresh', refresh); };
-  }, [id, revision, owner]);
+  }, [id, revision, owner, active, item?.status]);
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
-  const session = loaded?.id === id ? { ...item, ...loaded } : item;
+  const session = item && loaded?.id === id ? { ...item, ...loaded } : item;
   const built = session && av ? av._topicViewFor(['active', 'paused'].includes(session.status) ? 'session' : 'proposal', session) : null;
   const card = built?.card || initialCard;
   const body: TopicBody = built?.body || initialBody;
   return (
-    <div className="dev-topic">
+    <div ref={root} className="dev-topic">
       {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
       <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
         <DevCard model={card} />
