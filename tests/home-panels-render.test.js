@@ -1142,7 +1142,8 @@ test('the title bar and the footer controls are single-line too', () => {
   // shorten to "Leaderboard" in the one-cell phone shape, and a section's bar
   // fits the full one at every width, so _leaderboardLink takes no flag.
   assert.match(html, /home-panel-lb-browse shrink-0[^"]*whitespace-nowrap/);
-  assert.match(html, /<span class="whitespace-nowrap">Open leaderboard<\/span>/);
+  // #1916: the heading link reads "Open challenges" now, like the footer's.
+  assert.match(html, /home-panel-lb-browse[^>]*>\s*<span class="whitespace-nowrap">Open challenges<\/span>/);
   // Both footer labels — the expand toggle and the "Open challenges" button.
   // Neither may wrap: the footer is a fixed-height flex row, so a wrap would
   // be clipped exactly like a wrapped row.
@@ -2094,18 +2095,24 @@ test('the block draws all four rows, its footer and its toggle — at any width'
   assert.match(html, /home-panel-expand[^>]*data-panel-key="challenges"/);
   assert.match(html, /See all 8 challenges/);
   assert.match(html, /home-panel-open[^>]*aria-label="Open challenges"/,
-    'the footer keeps the Challenges-tab door; the heading carries the leaderboard');
+    'the footer keeps the Challenges-tab door');
   // The leaderboard link (#980) with the LONG label — the compact
   // "Leaderboard" existed only for the one-cell bar. It is in the SECTION
   // HEADING now, which is where every block's chrome went when the title
   // left the card (the ⋮ that once followed it is gone).
   assert.match(html, /home-area-label[\s\S]*?home-panel-lb-browse[\s\S]*?<\/h2>/,
     'inside the heading');
-  assert.match(html, /home-panel-lb-browse[^>]*title="Open the Leaderboard screen"/);
-  assert.match(html, /<span class="whitespace-nowrap">Open leaderboard<\/span>/);
+  // #1916: "Open challenges" with a trailing chevron, landing on the
+  // Leaderboard screen's Challenges tab — the area's name, not a different
+  // thing's.
+  assert.match(html, /home-panel-lb-browse[^>]*title="Go to the Challenges tab on the Leaderboard screen"/);
+  assert.match(html, /home-panel-lb-browse[^>]*aria-label="Open challenges"/);
+  assert.match(html, /home-panel-lb-browse[^>]*>\s*<span class="whitespace-nowrap">Open challenges<\/span>\s*<svg/,
+    'the label is followed by the chevron');
+  assert.doesNotMatch(html, /Open leaderboard/, 'the old label is gone');
   const [, ui] = PANEL_SOURCES.find(([n]) => n.endsWith('ui.tsx'));
-  assert.match(ui, /home-panel-lb-browse[\s\S]{0,700}?goToLeaderboard\?\.\(\)/,
-    'and that control is wired — with NO kind, so it lands on the bare hash');
+  assert.match(ui, /home-panel-lb-browse[\s\S]{0,700}?goToChallenges\?\.\(\)/,
+    'and that control is wired to the Challenges tab');
   assert.doesNotMatch(ui, /'Leaderboard' : 'Open leaderboard'/,
     'the two-label branch went with the shape that needed the short one');
 });
