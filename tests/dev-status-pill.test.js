@@ -517,3 +517,24 @@ test('a governance proposal has no branch, so it has no tags', () => {
   assert.equal(AppView.statusTagSpecs(gov, { kind: 'gov' }).length, 0);
   assert.ok(AppView.statusTagSpecs(gov, {}).length > 0, 'but a code proposal does');
 });
+
+test('the declared checks still describe the row the tags are actually on', () => {
+  // A declared selector is a STRING in dapp.json: nothing local resolves it,
+  // so only the staging gate notices when the markup moves out from under
+  // one. That has already cost a red gate once this week. The tags moved from
+  // the facts row to the meta line; these assert the checks moved with them.
+  const fs2 = require('node:fs');
+  const path2 = require('node:path');
+  const dapp = JSON.parse(fs2.readFileSync(path2.join(__dirname, '..', 'dapp.json'), 'utf8'));
+  const mine = dapp.tests.filter((t) => /9000050/.test(t.expectSelector || ''));
+  assert.equal(mine.length, 2, 'the blocked-proposal pair');
+  const bar = mine.find((t) => /dev-status-pill-block/.test(t.expectSelector));
+  const tags = mine.find((t) => /dev-badge/.test(t.expectSelector));
+  assert.ok(bar && tags);
+  assert.match(bar.expectSelector, /\.dev-card-status > \.dev-status-pill-block/,
+    'the bar check reads the status row');
+  assert.match(tags.expectSelector, /\.dev-card-meta > \.dev-badge/,
+    'the tags check reads the META line, which is where they render now');
+  assert.ok(!/dev-card-facts/.test(tags.expectSelector),
+    'and not the facts row they used to be on');
+});

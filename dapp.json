@@ -764,9 +764,9 @@
       "expectText": "Checks failing"
     },
     {
-      "name": "...and says why in tags on the facts line beside it",
+      "name": "...and says why in tags on the meta line above it",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body [data-proposal-row=\"9000050\"] .dev-card-status ~ .dev-card-badges.dev-card-facts > .dev-badge",
+      "expectSelector": "#dev-body [data-proposal-row=\"9000050\"] .dev-card-meta > .dev-badge ~ .dev-badge",
       "expectText": "Checks failing"
     },
     {

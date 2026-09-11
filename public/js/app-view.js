@@ -13099,7 +13099,7 @@ const AppView = {
     if (p.merge_conflict_state === 'resolving' || p.resolving === true) {
       out.push({
         t: 'chip', key: 'tag-resolving', cls: AppView.STATUS_TAG_CLS.running,
-        label: 'Resolving conflicts…', spinner: true,
+        label: 'Resolving conflicts…', spinner: true, meta: true,
         title: 'Reconciling conflicts with main automatically, then retrying the merge.',
       });
     }
@@ -13110,7 +13110,7 @@ const AppView = {
         out.push({
           t: 'chip', key: `tag-${r.key}`,
           cls: r.soft ? AppView.STATUS_TAG_CLS.soft : AppView.STATUS_TAG_CLS.blocking,
-          label: r.label, title: r.detail || undefined,
+          label: r.label, title: r.detail || undefined, meta: true,
         });
       }
     }
@@ -13124,7 +13124,7 @@ const AppView = {
       out.push({
         t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
         label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
-        spinner: true,
+        spinner: true, meta: true,
         title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
       });
     }

@@ -453,9 +453,17 @@ test('the tags ride the meta line beside the number, on the open card and the fo
   assert.match(CARD, /for \(const b of m\.linked \|\| \[\]\) nodes\.push/);
   assert.match(CARD, /filter\(\(b\) => b && b\.t === 'issueChip'\)\) nodes\.push/, 'a session\u2019s #N chips too');
   assert.match(CARD, /<div className="dev-card-meta">\{metaNodes\}<\/div>/);
-  assert.match(CARD, /const states = chips\.filter\(\(b\) => b\.t !== 'attr' && b\.t !== 'issueChip'\);/);
+  // The STATUS TAGS ride here too, marked `meta` on their spec: the status
+  // band is the vote and its button alone now, and of the two lines this is
+  // the one with room for a list that grows. Both sides of the split are
+  // asserted, because drawing them in both places is the failure mode.
+  assert.match(CARD, /filter\(\(b\) => b && b\.t === 'chip' && b\.meta\)\) nodes\.push/,
+    'the meta line draws them');
+  assert.match(CARD, /const states = chips\.filter\([\s\S]{0,160}!\(b\.t === 'chip' && b\.meta\)\);/,
+    'and the facts row does not draw them again');
   assert.match(FOLD_SRC, /<span className="dev-ws-row-meta">\{metaLineNodes\(c\)\}<\/span>/);
-  assert.match(FOLD_SRC, /filter\(\(b\) => b && b\.t !== 'attr' && b\.t !== 'issueChip'\)\.slice\(0, ROW_BADGE_MAX\)/, 'the row\u2019s last line keeps the states');
+  assert.match(FOLD_SRC, /!\(b\.t === 'chip' && b\.meta\)\)\s*\.slice\(0, ROW_BADGE_MAX\)/,
+    'the row\u2019s last line keeps the remaining states, not the status tags');
   // Rendered: the fixture issue has an assignee, so its chip sits on the
   // meta line at both sizes and its status band holds nothing.
   const open = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));

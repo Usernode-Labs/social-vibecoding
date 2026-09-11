@@ -964,10 +964,12 @@ test('a folded row\'s last line carries the card\'s state, in the tone the pill 
   // chips after the pill at both sizes.
   assert.match(html, /class="dev-ws-row-state dev-ws-row-state-progress"[^>]*>Vote · \d+\/\d+</,
     'the state line carries the vote, in the vote\u2019s tone');
-  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Conflicts with main · 2 files<\/span>/,
-    'and the blocker is a red tag on the same line');
-  assert.ok(html.indexOf('dev-ws-row-state') < html.indexOf('Conflicts with main'),
-    'bar first, then the tags');
+  // The blocker is a red tag on the row's META line — beside the number and
+  // the author, with the item's own tags — not on the band. The band is the
+  // vote and the Vote button, at both sizes.
+  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Conflicts with main · 2 files<\/span>/);
+  assert.ok(html.indexOf('Conflicts with main') < html.indexOf('dev-ws-row-band'),
+    'the tag is above the band, on the meta line');
   assert.ok(!html.includes('dev-ws-row-pill'),
     'it is no longer flattened to plain text in the grey the author\'s name wears');
 
