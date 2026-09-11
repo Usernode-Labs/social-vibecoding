@@ -856,7 +856,7 @@ export function DevCard(
   ) : null;
 
   const actionRow = hasActions ? (
-    <div className="gc-card-actions" ref={folded.ref}>
+    <div className="gc-card-actions" ref={folded.ref} data-band-measured={folded.measured ? '1' : undefined}>
       {bandPrimary.map((a, i) => (
         <ActionButton key={a.key} a={a} fold={a.kudos == null ? i + 1 : undefined} hidden={i >= bandPrimary.length - folded.n} />
       ))}
@@ -941,9 +941,14 @@ export function edgeFor(m: DevCardModel): string {
  */
 function useFoldedActions(
   primary: ActionSpec[], menuKey: string, hasPreview: boolean,
-): { ref: (el: HTMLDivElement | null) => void; n: number } {
+): { ref: (el: HTMLDivElement | null) => void; n: number; measured: boolean } {
   const bandRef = useRef<HTMLDivElement | null>(null);
   const [n, setN] = useState(0);
+  // Until this is true the band renders every foldable pill on the clipped
+  // row (app.css `:not([data-band-measured])`). The alternative — draw them
+  // all and fold after — is what made an opening board card show the wrong
+  // button for a frame.
+  const [measured, setMeasured] = useState(false);
   // Every pill but a kudos host may fold — the first included. The fixed
   // children ("Open card", the hamburger, Preview) sit at the band's right
   // and a narrow column may leave no room before them.
@@ -977,6 +982,7 @@ function useFoldedActions(
         if (i < shown && k.offsetTop > row) { k.setAttribute('data-folded', '1'); shown = i; }
       });
       setN(folds.length - shown);
+      setMeasured(true);
     };
     measure();
     // Re-measure when the band's width changes — and when its CONTENT does:
@@ -1010,5 +1016,5 @@ function useFoldedActions(
     return () => { av._setFoldedCardActions(menuKey, []); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [menuKey, n, primary.map((a) => a.key + a.label).join('|')]);
-  return { ref: (el) => { bandRef.current = el; }, n };
+  return { ref: (el) => { bandRef.current = el; }, n, measured };
 }
