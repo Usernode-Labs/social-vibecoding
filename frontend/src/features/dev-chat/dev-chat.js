@@ -5787,7 +5787,8 @@ const DevChat = {
     // viewports keep today's fullscreen overlay — a side panel doesn't
     // fit there. Mount the slot BEFORE ensureStaging so the docked
     // geometry has something to pin to.
-    const dock = !!(s.id && typeof AppView !== 'undefined'
+    const dock = !!(s.id && !document.querySelector?.('.dev-change-workspace[hidden]')
+      && typeof AppView !== 'undefined'
       && AppView._stagingDockViewport && AppView._stagingDockViewport());
     if (dock) DevChat.openStagingPanel();
     // #439: route through ensure-then-open so a preview torn down while the
@@ -8477,6 +8478,13 @@ const DevChat = {
     const stagingOpen = !!DevChat.stagingPanel.open;
     return {
       kind: 'session',
+      change: window.AppView?._topicViewFor ? {
+        item: DevChat.currentSession,
+        ...AppView._topicViewFor(['active', 'paused'].includes(DevChat.currentSession.status) ? 'session' : 'proposal', DevChat.currentSession),
+        workspace: DevChat._changeWorkspaceRequested === Number(DevChat.currentSession.id)
+          || (typeof location !== 'undefined' && /[?&]shot=/.test(location.search))
+          || (!DevChat.currentSession.checks_commit_sha && !DevChat.currentSession.staging_url && !DevChat.currentSession.pr_number),
+      } : null,
       // #1281: a hand-off venue swaps the composer for the launchpad. The
       // venue dropdown lives in the header, outside the swap, which is what
       // makes it reversible — it is the way back to a chat.

@@ -14,13 +14,13 @@ poolMod.getPool = () => ({ query: async (sql) => {
 const { sessionRoutes } = require('../src/routes/sessions');
 const express = require('express');
 
-async function get(user) {
+async function get(user, endpoint = 'checks') {
   const app = express();
   app.use((req, _res, next) => { req.user = user; next(); });
   app.use(sessionRoutes({}));
   const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
   try {
-    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/sessions/123/checks`);
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/sessions/123/${endpoint}`);
     return { status: response.status, body: await response.json(), cache: response.headers.get('cache-control') };
   } finally { await new Promise((resolve) => server.close(resolve)); }
 }
@@ -71,4 +71,20 @@ test('shared results still require access to their app', async () => {
 test('missing sessions return 404', async () => {
   reset(); session = null;
   assert.equal((await get({ id: 42 })).status, 404);
+});
+
+
+test('change details use the same privacy gate and an explicit public projection', async () => {
+  reset();
+  assert.equal((await get({ id: 99 }, 'details')).status, 404);
+  assert.ok(!queries.some((sql) => sql.includes('cs.pr_summary_md')));
+  reset({ shared_at: '2026-09-11', app_id: 1, linked_issues: [], pr_summary_md: 'Preview authentication fix' });
+  const result = await get({ id: 99 }, 'details');
+  assert.equal(result.status, 200);
+  assert.equal(result.body.session.pr_summary_md, 'Preview authentication fix');
+  assert.equal(result.cache, 'no-store');
+  const projection = queries.find((sql) => sql.includes('cs.pr_summary_md'));
+  assert.match(projection, /cs\.testing_md/);
+  assert.match(projection, /cs\.test_results/);
+  assert.doesNotMatch(projection, /cs\.\*|cs\.spec_md|chat_session_messages|cc_session|api_key/);
 });

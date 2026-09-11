@@ -45,18 +45,20 @@ const modelFallback = require('../services/model-fallback');
 // The ordinary session list deliberately stays lightweight and private, so
 // enrich only imported Underway rows in a second, id-scoped read after the
 // owner/shared visibility query has selected which rows the viewer may see.
-async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId) {
+// The opened detail uses the same public projection for any visible change;
+// `all` is set only AFTER the per-session privacy gate, never on a board list.
+async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { all = false } = {}) {
   const list = Array.isArray(sessions) ? sessions : [];
   const ids = list
-    .filter((s) => s && s.source === 'imported'
-      && (s.status === 'active' || s.status === 'paused'))
+    .filter((s) => s && (all || (s.source === 'imported'
+      && (s.status === 'active' || s.status === 'paused'))))
     .map((s) => Number(s.id))
     .filter((id) => Number.isInteger(id) && id > 0);
   if (!ids.length) return list;
 
   const { rows } = await pool.query(
     `SELECT cs.id, cs.app_id, cs.pr_number, cs.pr_url, cs.pr_title,
-            cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body,
+            cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.proposal_state, cs.branch_name,
             cs.staging_url, cs.testing_md, cs.testing_path, cs.testing_paths,
             cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
             cs.source, cs.imported_pr_author, cs.imported_pr_head_repo,
@@ -84,9 +86,9 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId) {
        FROM chat_sessions cs
        JOIN users u ON u.id = cs.user_id
       WHERE cs.id = ANY($1::int[])
-        AND cs.source = 'imported'
-        AND cs.status IN ('active', 'paused')`,
-    [ids]
+        AND ($2::boolean OR (cs.source = 'imported'
+        AND cs.status IN ('active', 'paused')))`,
+    [ids, all]
   );
 
   const rowsByApp = new Map();
@@ -2562,10 +2564,10 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // Check results are fetched on demand, separately from the private dev
   // transcript and the lightweight board feed. The app view gate above still
   // applies; sharing a session exposes these results, never its messages.
-  router.get('/api/sessions/:id/checks', async (req, res) => {
+  router.get(['/api/sessions/:id/checks', '/api/sessions/:id/details'], async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.session_title, cs.pr_title,
+        `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.transcript_shared_at, cs.session_title, cs.pr_title,
                 cs.check_state, cs.check_phase, cs.check_trigger,
                 cs.check_error_detail, cs.checks_checked_at, cs.checks_commit_sha,
                 cs.checks_progress, cs.test_results, cs.checks_base_sha,
@@ -2580,7 +2582,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         || (session.shared_at && ['active', 'paused'].includes(session.status))
         || ['promoted', 'merging', 'merged'].includes(session.status);
       if (!visible) return res.status(404).json({ error: 'Session not found' });
-      res.set('Cache-Control', 'no-store').json({ session });
+      const detail = req.path.endsWith('/details')
+        ? (await enrichImportedUnderwaySessions(pool, [session], req.user.id, { all: true }))[0]
+        : session;
+      if (req.path.endsWith('/details')) detail.busy = isSessionBusy(Number(session.id));
+      res.set('Cache-Control', 'no-store').json({ session: detail });
     } catch (err) {
       log.error('sessions', 'Failed to read check results', { message: err.message });
       res.status(500).json({ error: 'Could not load check results' });

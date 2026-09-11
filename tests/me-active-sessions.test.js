@@ -171,7 +171,7 @@ test('the Dev board can opt imported active rows into the owner list', async () 
     assert.match(q.sql, /cs\.staging_url/);
     const detail = capturedQueries.find((c) => /WHERE cs\.id = ANY\(\$1::int\[\]\)/.test(c.sql));
     assert.ok(detail, 'imported proposal detail query was issued');
-    assert.deepStrictEqual(detail.params, [[44]]);
+    assert.deepStrictEqual(detail.params, [[44], false]);
     assert.match(detail.sql, /cs\.source = 'imported'/);
     assert.match(detail.sql, /cs\.status IN \('active', 'paused'\)/);
     assert.match(detail.sql, /cs\.pr_summary_md/);

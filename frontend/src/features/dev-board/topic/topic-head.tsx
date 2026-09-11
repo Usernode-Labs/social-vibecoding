@@ -24,7 +24,7 @@
  * public/js/session-transcript.js fills on expand.
  */
 
-import { Fragment } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import type { MouseEvent, ReactNode } from 'react';
 
 import { useStoreState } from '../../../lib/use-store-state';
@@ -464,14 +464,85 @@ function Transcript({ t }: { t: TranscriptSection }): ReactNode {
 }
 
 export function TopicHead(): ReactNode {
-  const { card, body } = useStoreState(topicHeadStore);
+  const { card, body, item } = useStoreState(topicHeadStore);
   if (!card || !body) return null;
+  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} />;
+}
+
+/** The same card on the owner session and public review/discussion page.
+ * Full public metadata is fetched separately from the lightweight board.
+ * This endpoint cannot return private agent messages or credentials.
+ */
+export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false }: {
+  card: any; body: TopicBody; item?: any; owner?: boolean;
+}): ReactNode {
+  const [loaded, setLoaded] = useState<any>(null);
+  const [error, setError] = useState('');
+  const [revision, setRevision] = useState(0);
+  const id = item?.id;
+  useEffect(() => {
+    if (!id) return;
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = (event: Event) => {
+      if ((event as CustomEvent).detail === Number(id)) setRevision((n) => n + 1);
+    };
+    window.addEventListener('change-detail-refresh', refresh);
+    async function load() {
+      try {
+        const response = await fetch(`/api/sessions/${id}/details`, { signal: abort.signal });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Could not refresh this change.');
+        // Published proposals carry vote counts, the viewer's vote and the
+        // reviewed head pin on their existing public endpoint. Keep those
+        // authoritative even when opened through an owner's session URL.
+        const av = (window as any).AppView;
+        if (['promoted', 'merging', 'merged'].includes(data.session.status) && av?.appData?.slug) {
+          const review = await fetch(`/api/apps/${av.appData.slug}/proposals/${id}`, { signal: abort.signal });
+          if (!review.ok) throw new Error('Could not refresh the review state.');
+          const payload = await review.json();
+          data.session = { ...data.session, ...payload.proposal };
+          if (owner) av._invalidateVoteRoster(id);
+          await av._loadVoteRoster(id);
+        }
+        if (!abort.signal.aborted) { setLoaded(data.session); setError(''); }
+      } catch (err) {
+        if (!abort.signal.aborted) setError((err as Error).message);
+      } finally {
+        if (!abort.signal.aborted) timer = setTimeout(load, 10000);
+      }
+    }
+    void load();
+    return () => { abort.abort(); clearTimeout(timer); window.removeEventListener('change-detail-refresh', refresh); };
+  }, [id, revision, owner]);
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  const session = loaded?.id === id ? { ...item, ...loaded } : item;
+  const built = session && av ? av._topicViewFor(['active', 'paused'].includes(session.status) ? 'session' : 'proposal', session) : null;
+  const card = built?.card || initialCard;
+  const body: TopicBody = built?.body || initialBody;
   return (
     <div className="dev-topic">
+      {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
       <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
         <DevCard model={card} />
+        {body.issues?.length ? <aside className="dev-change-issues" aria-label="Issues this change addresses">
+          <h4 className="dev-topic-h">Addresses</h4>
+          {body.issues.map((issue) => <a key={issue.n} href={issue.href} onClick={(event) => {
+            if (!issue.href.startsWith('#') && !issue.href.startsWith('/app/')) return;
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault(); call('openTopic', 'issue', issue.n);
+          }}>#{issue.n} · {issue.title}</a>)}
+        </aside> : body.changeId ? <p className="dev-topic-note">No issue linked yet.</p> : null}
+        {body.workspace && !owner ? <button type="button" className="gc-vote-btn" onClick={() => call('openChangeWorkspace', body.workspace)}>Continue building · private workspace</button> : null}
       </div>
-      <TopicBodySections body={body} />
+      <TopicBodySections body={owner ? { ...body, transcript: null } : body} />
+      {owner && body.changeId ? <section className="dev-topic-sheet">
+        <h4 className="dev-topic-h">Discussion</h4>
+        {body.discussion ? <p className="dev-topic-note">{body.discussion}</p> : <>
+          <p className="dev-topic-note">The group discussion stays with this change when it enters review.</p>
+          <button className="gc-vote-btn" onClick={() => call('openTopic', ['active', 'paused'].includes(session.status) ? 'session' : 'proposal', body.changeId)}>Open discussion</button>
+        </>}
+      </section> : null}
     </div>
   );
 }
@@ -529,6 +600,12 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
             </div>
           ) : null}
           {body.proposalBody ? <ProposalBody b={body.proposalBody} /> : null}
+          {body.testing ? <details className="dev-topic-details">
+            <summary className="dev-topic-details-summary">Testing instructions</summary>
+            {body.testing.html ? <div className="dev-issue-body dev-topic-details-body" dangerouslySetInnerHTML={{ __html: body.testing.html }} />
+              : <p className="dev-topic-note">{body.testing.path ? `Testing instructions are recorded in ${body.testing.path}.` : 'No testing instructions have been added yet.'}</p>}
+          </details> : null}
+          {body.changeId && !tiles ? <details className="dev-topic-details"><summary className="dev-topic-details-summary">Screenshots</summary><p className="dev-topic-note">No screenshots have been captured yet.</p></details> : null}
           {body.note ? <div className="dev-topic-note">{body.note}</div> : null}
         </section>
       ) : null}
@@ -537,6 +614,10 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
           <Transcript t={body.transcript} />
         </section>
       ) : null}
+      {body.activity?.length ? <section className="dev-topic-sheet"><details className="dev-topic-details">
+        <summary className="dev-topic-details-summary">Activity</summary>
+        {body.activity.map((event) => <p key={event.label} className="dev-topic-note">{event.label} · <time dateTime={event.at}>{new Date(event.at).toLocaleString()}</time></p>)}
+      </details></section> : null}
       {/* The GitHub thread's host (issue-comments.tsx mounts into it), last
           so app.css can run it into the Discussion sheet below the head. */}
       {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
