@@ -274,6 +274,60 @@ const AppView = {
     // sets the mode without going through the toggle.
     AppView._reactDevBoard()?.publishViewMode(next);
   },
+
+  // ── How the Workshop groups the board below its summary ─────────────
+  //
+  // Two panes under one tab strip: the model's drafted CATEGORIES (what the
+  // Workshop has always shown) or the board's own STAGES — the kanban
+  // columns, rendered in place. The stage pane is not a second board: it is
+  // the same `<DevKanban/>` reading the same published view model, nested
+  // inside the Workshop's React tree. See
+  // frontend/src/features/dev-board/workshop/group-mode-store.ts.
+  //
+  // ADDITIVE. The Board VIEW MODE and its control in the Improve panel are
+  // untouched — this is a second way to reach those columns, not a
+  // replacement for the first, and the two can never be on screen together
+  // because `_repaintDevBody` gives #dev-body to one surface at a time.
+  //
+  // localStorage, like VIEW_MODE_KEY and unlike the filter bar's
+  // sessionStorage: which way you read the board is a lasting preference,
+  // not a scratch narrowing that should quietly expire.
+  WORKSHOP_GROUP_KEY: 'devWorkshopGroup',
+  WORKSHOP_GROUPS: ['category', 'stage'],
+  // `?group=stage`, mirroring `?view=` above — resolved once and cached, so a
+  // deep link can reach a pane that is otherwise only a click away. It is
+  // what the declared check for the stage pane navigates to: a check run
+  // starts with an empty localStorage and would otherwise always land on
+  // category and assert nothing.
+  _workshopGroupUrlOverride: undefined,
+  _readWorkshopGroupOverride() {
+    if (AppView._workshopGroupUrlOverride !== undefined) return AppView._workshopGroupUrlOverride;
+    try {
+      const v = new URLSearchParams(location.search).get('group');
+      AppView._workshopGroupUrlOverride = AppView.WORKSHOP_GROUPS.includes(v) ? v : null;
+    } catch { AppView._workshopGroupUrlOverride = null; }
+    return AppView._workshopGroupUrlOverride;
+  },
+  _getWorkshopGroup() {
+    try {
+      const override = AppView._readWorkshopGroupOverride();
+      if (override) return override;
+      const stored = window.localStorage.getItem(AppView.WORKSHOP_GROUP_KEY);
+      return AppView.WORKSHOP_GROUPS.includes(stored) ? stored : 'category';
+    } catch { return 'category'; }
+  },
+  _setWorkshopGroup(mode) {
+    const next = AppView.WORKSHOP_GROUPS.includes(mode) ? mode : 'category';
+    // An explicit tap retires the URL override, exactly as `_setViewMode`
+    // does — otherwise `?group=` would keep winning over every later click.
+    AppView._workshopGroupUrlOverride = null;
+    try { window.localStorage.setItem(AppView.WORKSHOP_GROUP_KEY, next); } catch {}
+    // Publish BEFORE the repaint so the pane swaps in the same frame as the
+    // tab's pressed state; `_repaintBoardSurface` then publishes the view
+    // model the newly shown pane reads. Both stores flush synchronously.
+    AppView._reactDevBoard()?.publishWorkshopGroup(next);
+    AppView._repaintBoardSurface();
+  },
   // #482: kanban filter-bar state. The active object always reflects the
   // CURRENT app; it is (re)loaded per slug from sessionStorage whenever the
   // board mounts (_repaintDevBody) and written back on every change
@@ -5950,6 +6004,25 @@ const AppView = {
     if (!el) return;
     const react = AppView._reactDevBoard();
     if (react) {
+      // Seeded on every repaint, not once at mount: `_repaintDevBody` tears
+      // the Workshop host down and rebuilds it on every view-mode change, so
+      // there is no single mount to seed from.
+      const group = AppView._getWorkshopGroup();
+      react.publishWorkshopGroup(group);
+      // The "By stage" pane renders the board's own columns. Built ONLY when
+      // that pane is up: `_kanbanView()` buckets, orders and filters every
+      // card on the board, which is real work to do for a pane nobody is
+      // looking at. `_lastKanbanView` is shared with the standalone board on
+      // purpose — it is what a mobile column tab republishes from, and the
+      // two surfaces are never mounted at the same time.
+      //
+      // BEFORE the mount below, unlike the Workshop's own publish: the board
+      // renders from INSIDE the Workshop's tree, so a kanban store still
+      // holding the previous board would paint one frame of it.
+      if (group === 'stage') {
+        AppView._lastKanbanView = AppView._kanbanView();
+        react.publishKanban(AppView._lastKanbanView);
+      }
       react.mountWorkshop(el);
       react.publishWorkshop(AppView._workshopView());
     }
