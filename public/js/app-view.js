@@ -4673,6 +4673,15 @@ const AppView = {
       AppView._mergedTotal = (typeof mergedData.total === 'number')
         ? mergedData.total
         : merged.length;
+      // #1922: the server's own week counts over the whole history, so the
+      // Workshop can state what shipped this week instead of "20+" whenever
+      // the week outgrew the page. Null on an older server — the dashboard
+      // then falls back to counting the loaded page, as it always did.
+      const shipped = mergedData.shipped;
+      AppView._mergedShipped = shipped
+        && Number.isFinite(shipped.week) && Number.isFinite(shipped.prevWeek)
+        ? { week: shipped.week, prevWeek: shipped.prevWeek }
+        : null;
       // #607: keep the checks-in-progress polling fallback in sync with
       // what this load actually saw.
       AppView._syncChecksPoll(promoted);
@@ -5677,17 +5686,26 @@ const AppView = {
       .filter((e) => e.lane === 'open' && e.kind === 'issue' && AppView._issueUnclaimed(e.item))
       .sort((a, b) => b.t - a.t);
     const named = drawn.filter((t) => !t.ungrouped);
+    // #1922: the server counts both weeks over the WHOLE merged history, so
+    // those numbers are exact whatever the page holds. Without them (an older
+    // server) the loaded page is counted, and `partial` below says it is a
+    // floor.
+    const serverShipped = AppView._mergedShipped || null;
     const dashboard = {
       open: openEntries.length,
       themes: named.length,
       votesWaiting: buckets.inReview.length,
-      shippedWeek: allMerged.filter((m) => mergedAtOf(m) > nowMs - WEEK).length,
+      shippedWeek: serverShipped
+        ? serverShipped.week
+        : allMerged.filter((m) => mergedAtOf(m) > nowMs - WEEK).length,
       // The week before, for a rate rather than a count. Same source as the
       // week above so the two are comparable.
-      shippedPrevWeek: allMerged.filter((m) => {
-        const t = mergedAtOf(m);
-        return t <= nowMs - WEEK && t > nowMs - 2 * WEEK;
-      }).length,
+      shippedPrevWeek: serverShipped
+        ? serverShipped.prevWeek
+        : allMerged.filter((m) => {
+          const t = mergedAtOf(m);
+          return t <= nowMs - WEEK && t > nowMs - 2 * WEEK;
+        }).length,
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
       unclaimed: idle.length,
       busiest: AppView._busiestTheme(named),
@@ -5698,10 +5716,11 @@ const AppView = {
       // same relationship the category grouping has to the drafted themes.
       cards: (tData && tData.digestCards) || null,
       summary: (tData && tData.digest) || null,
-      // The merged history is paged. With more behind it the two week counts
-      // are floors, not totals, and the view has to say so rather than
-      // reporting a page as if it were the whole record.
-      partial: !!AppView._mergedHasMore,
+      // The merged history is paged. With more behind it, page-counted week
+      // numbers are floors, not totals, and the view has to say so rather
+      // than reporting a page as if it were the whole record. Server counts
+      // (#1922) are never partial.
+      partial: !serverShipped && !!AppView._mergedHasMore,
     };
 
     // "Try taking this one next" — the most recently active open issue with

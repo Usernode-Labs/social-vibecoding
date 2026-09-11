@@ -804,6 +804,34 @@ test('the dashboard reads a rate, not just a count, and says when it is a floor'
   assert.equal(AppView._workshopView().dashboard.partial, true);
 });
 
+test('#1922: the server\'s whole-history week counts replace the page count and its "+"', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
+  // A full page with more behind it — the case that used to read "20+".
+  AppView._mergedHasMore = true;
+  AppView._mergedShipped = { week: 34, prevWeek: 27 };
+  const d = AppView._workshopView().dashboard;
+  assert.equal(d.shippedWeek, 34, 'the real number, not what the page holds');
+  assert.equal(d.shippedPrevWeek, 27, 'the week before, from the same count');
+  assert.equal(d.partial, false, 'an exact count is never a floor');
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-dash-cell="shipped"[^>]*><b>34<\/b>/, 'no "+" on the tile');
+  assert.ok(!html.includes('title="At least this many'), 'and no floor tooltip');
+
+  // An older server sends no counts: the page is counted and flagged, as before.
+  AppView._mergedShipped = null;
+  const fallback = AppView._workshopView().dashboard;
+  assert.equal(fallback.partial, true);
+  assert.notEqual(fallback.shippedWeek, 34);
+});
+
+test('#1922: the loader keeps the server\'s week counts, and only well-formed ones', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'public/js/app-view.js'), 'utf8');
+  assert.match(src, /const shipped = mergedData\.shipped;\s*AppView\._mergedShipped = shipped\s*&& Number\.isFinite\(shipped\.week\) && Number\.isFinite\(shipped\.prevWeek\)/);
+  assert.match(src, /partial: !serverShipped && !!AppView\._mergedHasMore,/);
+});
+
 test('"try taking this one next" names an open issue nobody is on', () => {
   const AppView = makeAppView();
   seed(AppView);
