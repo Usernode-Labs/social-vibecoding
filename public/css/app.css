@@ -2,6 +2,10 @@
   --bg-primary: #ffffff;
   --bg-secondary: #f5f5f7;
   --bg-tertiary: #e3e3e6;
+  /* The pressed fill for the dev card at both sizes: one step darker than
+     the hover fill (zinc-50) on the same ramp, so a press reads as more of
+     the same gesture rather than as a new colour. */
+  --dev-press: #eaeaea;
   --bg-code: #f5f5f7;
   --bg-code-header: #e3e3e6;
   --bg-card: rgba(10, 124, 255, 0.06);
@@ -1116,6 +1120,8 @@ html.un-kb .platform-safe-sheet {
   --bg-primary: #0b0b0c;
   --bg-secondary: #1c1c1e;
   --bg-tertiary: #2c2c2e;
+  /* zinc-700, one step up from the dark hover fill (zinc-800). */
+  --dev-press: #3a3a3c;
   /* The ladder above, climbing away from the #0b0d1b wallpaper rather than
      down into it. --dc-sheet takes --bg-secondary's value and --dc-raised
      takes --bg-tertiary's: a card on the sheet has to be one step lighter
@@ -2756,16 +2762,45 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    Dark mode does what the wallpaper does: the same hues, re-tuned to a
    lightness that reads on the inverted ground rather than inverted into
    mud. */
-.home-tint-1 { --tint-bg: #e3efe0; --tint-line: #cfe0ca; --tint-art: #cfe3c7; }
-.home-tint-2 { --tint-bg: #dfeaf6; --tint-line: #c9dcee; --tint-art: #c6dcf0; }
-.home-tint-3 { --tint-bg: #e9e2f2; --tint-line: #d9cfe8; --tint-art: #ded2ef; }
-.home-tint-4 { --tint-bg: #fbe6d5; --tint-line: #f2d5bd; --tint-art: #f7ddc6; }
-.home-tint-5 { --tint-bg: #f8dde8; --tint-line: #eec7d6; --tint-art: #f4d6de; }
-.dark .home-tint-1 { --tint-bg: #1b2a1f; --tint-line: #2c4433; --tint-art: #22331f; }
-.dark .home-tint-2 { --tint-bg: #17263a; --tint-line: #27405e; --tint-art: #1b2f47; }
-.dark .home-tint-3 { --tint-bg: #241f38; --tint-line: #3a3157; --tint-art: #2b2442; }
-.dark .home-tint-4 { --tint-bg: #33231a; --tint-line: #50392a; --tint-art: #3d2a1f; }
-.dark .home-tint-5 { --tint-bg: #331d28; --tint-line: #513043; --tint-art: #3e2231; }
+.home-tint-1, .home-tint-1[data-preview-theme="light"], .dark .home-tint-1[data-preview-theme="light"] { --tint-bg: #e3efe0; --tint-line: #cfe0ca; --tint-art: #cfe3c7; }
+.home-tint-2, .home-tint-2[data-preview-theme="light"], .dark .home-tint-2[data-preview-theme="light"] { --tint-bg: #dfeaf6; --tint-line: #c9dcee; --tint-art: #c6dcf0; }
+.home-tint-3, .home-tint-3[data-preview-theme="light"], .dark .home-tint-3[data-preview-theme="light"] { --tint-bg: #e9e2f2; --tint-line: #d9cfe8; --tint-art: #ded2ef; }
+.home-tint-4, .home-tint-4[data-preview-theme="light"], .dark .home-tint-4[data-preview-theme="light"] { --tint-bg: #fbe6d5; --tint-line: #f2d5bd; --tint-art: #f7ddc6; }
+.home-tint-5, .home-tint-5[data-preview-theme="light"], .dark .home-tint-5[data-preview-theme="light"] { --tint-bg: #f8dde8; --tint-line: #eec7d6; --tint-art: #f4d6de; }
+.dark .home-tint-1, .home-tint-1[data-preview-theme="dark"], .dark .home-tint-1[data-preview-theme="dark"] { --tint-bg: #1b2a1f; --tint-line: #2c4433; --tint-art: #22331f; }
+.dark .home-tint-2, .home-tint-2[data-preview-theme="dark"], .dark .home-tint-2[data-preview-theme="dark"] { --tint-bg: #17263a; --tint-line: #27405e; --tint-art: #1b2f47; }
+.dark .home-tint-3, .home-tint-3[data-preview-theme="dark"], .dark .home-tint-3[data-preview-theme="dark"] { --tint-bg: #241f38; --tint-line: #3a3157; --tint-art: #2b2442; }
+.dark .home-tint-4, .home-tint-4[data-preview-theme="dark"], .dark .home-tint-4[data-preview-theme="dark"] { --tint-bg: #33231a; --tint-line: #50392a; --tint-art: #3d2a1f; }
+.dark .home-tint-5, .home-tint-5[data-preview-theme="dark"], .dark .home-tint-5[data-preview-theme="dark"] { --tint-bg: #331d28; --tint-line: #513043; --tint-art: #3e2231; }
+
+/* Harmonic palette: select tone 50 once. Dark surfaces are computed from
+   that same token, blended into the shell's zinc-950 ground. The fixed 10%,
+   14%, 24% proportions give every hue the same quiet surface hierarchy.
+   These formulas also drive explicit editor previews; no second palette. */
+.home-tone-cream { --tone-50: #fefdf5; --tone-light-line: #f5f0d0; }
+.home-tone-yellow { --tone-50: #fff9de; --tone-light-line: #f0d85c; }
+.home-tone-orange { --tone-50: #fff0e0; --tone-light-line: #e8a878; }
+.home-tone-coral { --tone-50: #fde8e4; --tone-light-line: #e09488; }
+.home-tone-pink { --tone-50: #f8e4ee; --tone-light-line: #d48eb4; }
+.home-tone-purple { --tone-50: #ede4f4; --tone-light-line: #aa92c2; }
+.home-tone-indigo { --tone-50: #e4e8f6; --tone-light-line: #8896c8; }
+.home-tone-blue { --tone-50: #deedf8; --tone-light-line: #6aadd4; }
+.home-tone-teal { --tone-50: #deeeed; --tone-light-line: #72bab2; }
+.home-tone-mint { --tone-50: #e2f2e8; --tone-light-line: #88c49e; }
+.home-tone-sage { --tone-50: #eaf2e4; --tone-light-line: #a9cf97; }
+.home-tone-gray { --tone-50: #f4f3f1; --tone-light-line: #b8b4ac; }
+:is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray) {
+  --tone-dark-bg: color-mix(in srgb, var(--tone-50) 10%, #0b0b0c);
+  --tone-dark-art: color-mix(in srgb, var(--tone-50) 14%, #0b0b0c);
+  --tone-dark-line: color-mix(in srgb, var(--tone-50) 24%, #0b0b0c);
+  --tint-bg: var(--tone-50); --tint-line: var(--tone-light-line); --tint-art: var(--tone-50);
+}
+.dark :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray), :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="dark"] {
+  --tint-bg: var(--tone-dark-bg); --tint-line: var(--tone-dark-line); --tint-art: var(--tone-dark-art);
+}
+.dark :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="light"], :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="light"] {
+  --tint-bg: var(--tone-50); --tint-line: var(--tone-light-line); --tint-art: var(--tone-50);
+}
 
 /* ── Discover: the card rail ────────────────────────────────
    The lane was a GRID of six 40px icon tiles inside the block's white card:
@@ -2843,7 +2878,12 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   overflow: hidden;
   cursor: pointer;
 }
+/* `cover`, not `contain`: the framing editor's zoom bottoms out at the exact
+   cover fit and its pan is clamped to it, so the art fills the block at every
+   legal framing rather than letterboxing itself against the tint. */
+.home-discover-illustration { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .home-discover-art {
+  overflow: hidden;
   height: 7.5rem;
   background: var(--tint-art);
   display: flex;
@@ -5921,7 +5961,13 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-vote-fill-full { top: 0; width: 100%; height: 100%; }
 .gc-vote-fill-full-yes { background: var(--state-ok-fill); }
 .gc-vote-fill-full-no { background: var(--state-blocked-fill); }
+/* text-primary because a vote pill's fill stripes sweep UNDER the label,
+   and a toned colour on a filled bar is unreadable. A pill with no fill has
+   nothing sweeping under it, and forcing it to text-primary is what made
+   "Checks failing · 3" red on the folded row and near-black on the open
+   card. Where there is no fill the label inherits the tone. */
 .gc-vote-count-label { position: relative; z-index: 1; color: var(--text-primary); }
+.dev-status-pill-block:not(:has(> .gc-vote-fill)) .gc-vote-count-label { color: inherit; }
 /* The pill absorbed the standalone pulsing "Vote" badge, the advisory
    chip and the explicit-approval chip. Their glyphs ride inside the
    label rather than beside the pill. */
@@ -6153,7 +6199,7 @@ span.gc-vote-btn-icon { cursor: default; }
 
 .dc-log-msg { color: #e4e4e7; }
 
-.dc-log-log   .dc-log-level { background: #27272a; color: #a1a1aa; }
+.dc-log-log   .dc-log-level { background: #27272a; color: #8e8e93; }
 .dc-log-info  .dc-log-level { background: #1e3a5f; color: #93c5fd; }
 .dc-log-debug .dc-log-level { background: #27272a; color: #6e6e8a; }
 .dc-log-warn  .dc-log-level { background: #78350f; color: #fde68a; }
@@ -11006,6 +11052,15 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   overflow: hidden;
 }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > [data-folded] { order: 1; }
+/* ── Before the first measurement ──
+   useFoldedActions stamps `data-band-measured` once it has run. Until then
+   every foldable pill sits on the clipped row, which is the steady state in
+   a kanban column. It used to be the opposite: the first paint drew every
+   pill, so a board card opened showing "Create proposal" at the band's left
+   and swapped it for "Open card" a frame later — the flicker reported
+   against #1787 twice. A pill that fits still arrives in the same frame,
+   because the measurement is a layout effect. */
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions:not([data-band-measured]) > [data-fold] { order: 1; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions:empty { display: none; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn {
   height: 28px;
@@ -11025,7 +11080,11 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   color: var(--accent);
 }
 /* The menu trigger: a hamburger at the far right of the band, the row's own
-   "more" — that is where the pills that do not fit the line go. */
+   "more" — that is where the pills that do not fit the line go. Preview,
+   when there is one, sits just before it: the pair is pushed to the band's
+   right edge by whichever of the two comes first, and the second keeps the
+   band's gap (the override below), or two auto margins would split the free
+   space between them. */
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn {
   margin-left: auto;
   width: 28px;
@@ -11034,8 +11093,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn svg { width: 16px; height: 16px; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview {
-  /* After the hamburger, which is what pushes the pair to the band's right
-     edge; a second auto margin here would split the free space between them. */
+  margin-left: auto;
   gap: 5px;
   padding: 0 10px 0 9px;
   color: var(--accent);
@@ -11043,6 +11101,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   border-color: transparent;
 }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview:hover { background: var(--accent-tint); border-color: var(--accent-light); }
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview + .dev-card-menu-btn { margin-left: 0; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview svg { width: 16px; height: 16px; }
 /* The two badge states of the preview, in the band at the same height. */
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-checks-running-badge,
@@ -11595,6 +11654,36 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    baseline aligned to the bottom of the ring and the two read as two rows. */
 .dev-ws-strip-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dev-ws-strip-text { margin: 0; font-size: 14px; color: var(--text-primary); }
+/* ── The digest's three cards ────────────────────────────────
+   One paragraph became three, because one paragraph was answering three
+   questions — what landed last week, what has landed this week, what is
+   still open — and a reader scanning for one of them had to parse all of
+   it. Full-width and stacked rather than a three-column row: the lines are
+   sentences, and three sentences side by side at Dev-screen widths wrap to
+   ragged two- and three-line columns that are harder to scan than the
+   paragraph they replaced.
+
+   The title is the parsing aid. It is small, upper-case and muted against a
+   14px body line, so the eye lands on the label first and the sentence
+   second — the opposite weighting to the sentence itself, which is what
+   makes the block scannable rather than just subdivided. It inherits the
+   pane's own line colour, so the cards read as divisions OF the pane rather
+   than as objects sitting on it. */
+.dev-ws-cards { display: flex; flex-direction: column; gap: 8px; }
+.dev-ws-card {
+  border-radius: 12px;
+  padding: 8px 10px;
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+}
+.dev-ws-card-title {
+  margin: 0 0 3px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.dev-ws-card-line { margin: 0; font-size: 14px; color: var(--text-primary); }
 /* ── The Workshop's orientation pane ─────────────────────────
    "Since your last visit" moved inside "Where the app is": the description
    leads, and the personal line sits under it as a footnote to it rather than
@@ -11757,7 +11846,10 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    same title, number and author. Same sheet, border and radius as the entry
    below it now, so opening one GROWS the thing you clicked (#1787). */
 .dev-ws-row {
-  width: 100%; text-align: left; display: flex; align-items: center; gap: 8px;
+  /* A COLUMN, as the card is: the head (glyph + title) on one line and the
+     bar row under it spanning the whole card. It was a single row with the
+     glyph in its own column, which put the bar 30px in. */
+  width: 100%; text-align: left; display: flex; flex-direction: column; align-items: stretch;
   /* The card's own chrome, value for value (`div:is(.dev-card-dense,
      .dev-card-topic)` above): r22, 14px sides and top, 12px bottom, the 8px
      glyph gap, no border, the same soft drop shadow. The row had a hairline
@@ -11775,17 +11867,54 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    tailwind.config.js, so a hex copied from the stock palette would be a
    third grey rather than the card's. Only the border stays here. */
 .dev-ws-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* -- The press ----------------------------------------------
+   Both sizes toggle on a click, and neither said so while the button was
+   down: the hover fill arrived on entry and nothing changed on press, so
+   closing an open card gave no feedback until it had already closed.
+
+   The exclusion list mirrors the two click guards in card/fold.tsx -- the
+   row ignores a press that started on an anchor or a button, and the open
+   card also ignores the thread, the comment list and the detail sections.
+   :active matches every ancestor of the pressed element, so without the
+   :not(:has(...)) a press on the Vote button would tint the whole card
+   behind it, for a press that toggles nothing. */
+/* The kit's scale-press, opted out of — the fourth entry in the list of
+   opt-outs up at `.create-mode-pill:active`, for a different reason. The
+   kit gives every button an instant scale on press; the row carries
+   role="button" so a keyboard can reach it and the open card is a plain
+   div, so the scale landed on ONE of the two sizes. That is the inset a
+   pressed folded row showed and a pressed open card did not. The two sizes
+   are one object: under press the fill changes and nothing else does, at
+   both. The brightness dim stays, as it does for the pills. */
+.dev-ws-row:active { transform: none; }
+.dev-ws-row:active:not(:has(a:active, button:active, input:active, textarea:active, select:active)),
+.dev-ws-rowwrap-open .gc-vote-item:active:not(:has(
+  a:active, button:active, input:active, textarea:active, select:active,
+  .dev-ws-detail:active, .dev-feed-thread:active, .dev-feed-comments:active
+)) {
+  background: var(--dev-press);
+  /* Instant. The open card carries transition-colors, so the press colour
+     eased in over ~150ms while the row snapped to it -- a quick click was
+     released before the card had finished tinting, which is what made the
+     press read as no feedback and the release read as a flash. The return
+     to hover still eases, because that one is not feedback about a gesture. */
+  transition: none;
+}
 /* The row's icon is the CARD's icon, to the pixel: the same 22px box with no
    tile and no fill, and the same 18px glyph. It used to be a 28px tinted
    tile, which was the one part of the folded row that did not appear on the
    card at all — so the two sizes of one item opened on a different mark.
    The colour that tile was carrying is not lost: it moved to the left edge
    below, which is where the card carries it. */
-.dev-ws-row > .dev-card-icon {
-  flex-shrink: 0; align-self: flex-start; margin-top: 1px;
+/* The head: the card's `.dev-card-head`, at the row's gap. */
+.dev-ws-row-head { display: flex; align-items: center; gap: 8px; }
+.dev-ws-row-head > .dev-card-icon {
+  /* No margin: the card's glyph sits flush on the padding edge, and a 1px
+     nudge here made the two sizes of one item start on different pixels. */
+  flex-shrink: 0; align-self: flex-start;
   width: 22px; height: 22px; background: transparent; border-radius: 0;
 }
-.dev-ws-row > .dev-card-icon > svg { width: 18px; height: 18px; }
+.dev-ws-row-head > .dev-card-icon > svg { width: 18px; height: 18px; }
 
 /* ── The row's left edge ──
    The card's own spine (`div:is(.dev-card-dense, .dev-card-topic)[data-edge]`
@@ -11812,13 +11941,27 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-row[data-edge="blocked"]   { --dev-edge: var(--state-blocked); }
 .dev-ws-row[data-edge="ok"]        { --dev-edge: var(--state-ok); }
 .dev-ws-row[data-edge="neutral"]   { --dev-edge: var(--state-neutral); }
-.dev-ws-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.dev-ws-row-title { font-size: 14px; line-height: 1.3; }
+/* The title takes the head's remaining width, as `.dev-card-title` does
+   on the card. It used to sit in a `.dev-ws-row-main` column with the meta
+   line, which is what held the meta line 30px in: the card puts its meta
+   line at the padding edge, under the glyph, not beside it. */
+.dev-ws-row-head > .dev-ws-row-title { flex: 1; min-width: 0; }
+/* 1.35, the dense card's leading (:is(.dev-card-dense, .dev-card-topic)
+   .dev-card-title above). The row was 1.3, so a two-line title set slightly
+   tighter folded than open — the same words on a different grid. */
+.dev-ws-row-title { font-size: 14px; line-height: 1.35; }
 /* The card's own meta line (dev-card.tsx metaLineNodes), at the card's
    sizes: 12.5px on 21px lines, wrapping, the number a link, the tags and
    the linked-issue chips in the card's chip geometry. Keep these in step
    with `:is(.dev-card-dense, .dev-card-topic) .dev-card-meta` above. */
-.dev-ws-row-meta { display: block; font-size: 12.5px; line-height: 21px; color: var(--text-muted); min-width: 0; margin-top: 1px; white-space: normal; }
+/* The card's own tab, by the card's own rule: `:is(.dev-card-dense,
+   .dev-card-topic) .dev-card-head:has(> .dev-card-icon) + .dev-card-meta`
+   above sets the meta line 30px in so it starts under the title rather than
+   under the glyph — and only when there IS a glyph. Same 30px, same
+   condition, so a change to one keeps the other. The status row below takes
+   no tab, at either size: it is the full-width line. */
+.dev-ws-row-head:has(> .dev-card-icon) + .dev-ws-row-meta { padding-left: 30px; }
+.dev-ws-row-meta { display: block; font-size: 12.5px; line-height: 21px; color: var(--text-muted); min-width: 0; margin-top: 0; white-space: normal; }
 .dev-ws-row-meta > .dev-badge { height: 19px; font-size: 11.5px; vertical-align: middle; margin-left: 4px; }
 .dev-ws-row-meta > .dev-badge.font-mono { font-size: 11px; }
 .dev-ws-row-meta > .dev-badge .attr-avatar { width: 14px; height: 14px; }
@@ -11830,25 +11973,80 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    fits loses the surplus whole rather than growing the row and breaking
    the column's rhythm; the state chip ellipsises first. */
 .dev-ws-row-band {
+  /* 8px, the card's own `.dev-card-status` margin. The row had 4px plus a
+     1px column gap, so the gap above the one line that carries the state
+     was 5px folded and 8px open. */
   display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 6px;
-  min-height: 18px; overflow: hidden; margin-top: 4px;
+  min-height: 18px; overflow: hidden; margin-top: 8px;
 }
+/* The bar fills the line, as the card's does. The card's pill is a flex
+   item with basis 0 that grows into whatever the Vote button leaves; the
+   row's chip was inline-block at its natural width, so on a 540px Workshop
+   sheet it ended 221px short of the vote and the two sizes drew the same
+   state at two lengths. */
+.dev-ws-row-band > .dev-ws-row-state { flex: 1 1 0; }
 .dev-ws-row-band > .dev-ws-row-trailing { margin-left: auto; }
-.dev-ws-row-band > .dev-badge { flex: none; }
+/* The card's facts-row geometry (:is(.dev-card-dense, .dev-card-topic)
+   .dev-card-meta > .dev-badge), so "In review" and "@maya" are the same chip
+   at both sizes. Without this they fell back to the base .dev-badge —
+   10.5px on a 20px chip against the card's 11.5px on 19px. */
+.dev-ws-row-band > .dev-badge { flex: none; height: 19px; font-size: 11.5px; }
 /* The composite pill, wearing the tone it has always carried. Tones are
    `statusPillState`'s vocabulary (neutral / ok / attention / blocked /
    progress), not the merge badge's colour names — an unknown one falls
    through to the neutral base rather than rendering unstyled. */
+/* At the card's bar's height and shape (30px, r14, 12.5px — the dense
+   `.dev-status-pill-block` above) rather than a 10px chip: the row's last
+   line is 30px tall whenever it carries the vote button, and a chip that
+   grows into the bar when the card opens was the one thing on that line
+   that still jumped. Content-width, ellipsising, where the card's bar
+   flexes to fill. */
 .dev-ws-row-state {
   display: inline-block; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  font-size: 10px; font-weight: 600; line-height: 1.5; white-space: nowrap;
-  padding: 1px 7px; border-radius: 9999px;
+  height: 30px; line-height: 30px; box-sizing: border-box;
+  font-size: 12.5px; font-weight: 500; white-space: nowrap;
+  padding: 0 10px; border-radius: 14px;
   background: var(--state-neutral-bg); color: var(--state-neutral);
 }
 .dev-ws-row-state-blocked   { background: var(--state-blocked-bg);   color: var(--state-blocked); }
 .dev-ws-row-state-ok        { background: var(--state-ok-bg);        color: var(--state-ok); }
 .dev-ws-row-state-attention { background: var(--state-attention-bg); color: var(--state-attention); }
 .dev-ws-row-state-progress  { background: var(--state-progress-bg);  color: var(--state-progress); }
+/* ── The fold mark ───────────────────────────────────────────
+   Which SIZE the item is at, at the top right of the row and of the card
+   (card/fold.tsx FoldMark). The same two chevrons on both; on the open card
+   they are pushed apart with a bar between them, so the mark stretches when
+   the card does and nothing rotates: a chevron that turns promises a
+   direction (the accordion's down → up, the tree's right → down) and the
+   Vote button's ▾ on this same card already means a menu. Absolutely placed
+   so it takes no width from the row's last line — the Vote button there
+   reaches the right edge, as the card's bar row does — and only the title
+   keeps clear of it. right: 14px puts its right edge over the hamburger's
+   in the band below; top: 15px centres it on the title's first line. */
+.dev-ws-row, .dev-ws-sheet > div:is(.dev-card-dense, .dev-card-topic) { position: relative; }
+.dev-ws-row-title, .dev-ws-sheet .dev-card-title { padding-right: 22px; }
+.dev-fold-mark {
+  position: absolute; top: 15px; right: 14px; width: 16px; height: 16px; display: block;
+  padding: 0; margin: 0; border: 0; background: transparent; color: var(--text-faint); line-height: 0;
+}
+button.dev-fold-mark { cursor: pointer; color: var(--accent); border-radius: 4px; }
+button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-fold-mark > svg { width: 16px; height: 16px; display: block; }
+/* The geometry is transforms on the three paths, in the SVG's own units (a
+   CSS px is one user unit on an SVG element): open, the chevrons sit 2
+   units further out and the bar between them is drawn; closed, the bar is
+   scaled to nothing about its middle. Declared as end states, and ALSO as
+   keyframes on the open card, so the stretch plays once when it mounts. */
+.dev-fold-mark path { transform-box: view-box; transform-origin: 12px 12px; }
+.dev-fold-mark .dev-fold-bar { transform: scaleY(0); }
+.dev-fold-mark[data-open="1"] .dev-fold-top { transform: translateY(-2px); animation: dev-fold-top .15s ease both; }
+.dev-fold-mark[data-open="1"] .dev-fold-bottom { transform: translateY(2px); animation: dev-fold-bottom .15s ease both; }
+.dev-fold-mark[data-open="1"] .dev-fold-bar { transform: scaleY(1); animation: dev-fold-bar .15s ease both; }
+@keyframes dev-fold-top { from { transform: translateY(0); } to { transform: translateY(-2px); } }
+@keyframes dev-fold-bottom { from { transform: translateY(0); } to { transform: translateY(2px); } }
+@keyframes dev-fold-bar { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) { .dev-fold-mark path { animation: none; } }
+
 .dev-ws-new {
   margin-left: 6px; font-size: 10px; font-weight: 700; color: var(--accent); background: var(--accent-tint);
   padding: 1px 5px; border-radius: 6px; vertical-align: middle;
@@ -11907,3 +12105,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    the link to the item's page, so the sheet has no line under the card. */
 #dev-kanban .dev-ws-rowwrap { margin-bottom: 0; }
 .dev-ws-foot-note { font-size: 12px; color: var(--text-muted); text-align: center; padding: 6px 0 2px; }
+
+/* Illustration variants share one frame; only visibility changes with theme. */
+.illustration-dark { display: none; }
+.dark .illustration-light { display: none; }
+.dark .illustration-dark { display: block; }
+.home-discover-card[data-preview-theme="light"] .illustration-light { display: block; }
+.home-discover-card[data-preview-theme="light"] .illustration-dark { display: none; }
+.home-discover-card[data-preview-theme="dark"] .illustration-light { display: none; }
+.home-discover-card[data-preview-theme="dark"] .illustration-dark { display: block; }
+.home-discover-card[data-preview-theme="light"] .home-discover-name { color: #1c1c1e; }
+.home-discover-card[data-preview-theme="light"] :is(.home-discover-blurb, .home-discover-meta) { color: #48484a; }
+.home-discover-card[data-preview-theme="dark"] .home-discover-name { color: #eaeaea; }
+.home-discover-card[data-preview-theme="dark"] :is(.home-discover-blurb, .home-discover-meta) { color: #8e8e93; }
+.home-discover-card[data-preview-theme="light"] .card-add-btn[data-added="false"] { background: white; color: #0062cc; border-color: #e3e3e6; }
+.home-discover-card[data-preview-theme="dark"] .card-add-btn[data-added="false"] { background: #2c2c2e; color: #5aa9ff; border-color: #48484a; box-shadow: none; }

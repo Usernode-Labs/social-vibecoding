@@ -36,7 +36,7 @@ Secret, which the Deployment imports into its environment. With
 
 All three values are optional for chart installation but must be populated to
 enable Gmail delivery. The refresh token needs the `gmail.send` scope, and its
-mailbox must be authorized to send as `Usernode <no-reply@usernodelabs.org>`
+mailbox must be authorized to send as `Usernode <no-reply@onhomeroom.com>`
 (the application's default sender). The Kubernetes deployment reads the Secret;
 the Platform variables panel does not populate this chart's values.
 
@@ -202,7 +202,7 @@ helm template social-vibecoding-platform ./social-vibecoding-platform \
 ## Proposal checks in Kubernetes
 
 Capture Jobs honor the same `CAPTURE_CPUS` and `CAPTURE_MEMORY` limits as
-Docker (four CPUs / 4 GiB by default). Their requests are one CPU / 3 GiB,
+Docker (eight CPUs / 4 GiB by default). Their requests are one CPU / 3 GiB,
 matching the observed browser working set; smaller limit overrides also lower
 the requests so Kubernetes can admit the Pod. Per-job ephemeral storage remains
 1 GiB requested / 4 GiB limited. Changes apply to newly created check Jobs.

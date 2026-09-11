@@ -56,6 +56,20 @@
 // starts every existing install from a known current document. The stable API
 // cache below is deliberately preserved.
 //
+// v10: the first bump made for a change that is not in this file at all.
+// #1985 replaced the Workshop's summary paragraph with three cards, and the
+// whole of that lives in the React bundle and in the document that names its
+// build-scoped URL — exactly the two things a deploy rebuilds and the note
+// below says nothing refreshes. It merged, it deployed, production served the
+// new build, and a browser that already had the app kept drawing the old
+// screen: the change reached nobody who had ever loaded the page before.
+//
+// So the rule this entry is really recording: a change whose user-visible
+// surface is ENTIRELY inside the shell bundle needs a bump in the same
+// proposal, because for those there is no second path to the reader. A
+// change that touches public/js/** or a server response does not — those
+// are fetched per navigation and arrive on their own.
+//
 // This bump is also a deliberate cache retirement, not just a code change
 // (#1673 follow-up).
 //
@@ -81,7 +95,7 @@
 // It is cheap and bounded for the reason the API cache below is NOT
 // versioned: a bump drops only SHELL_CACHE and IMMUTABLE_CACHE, both
 // content-addressed and network-first, and leaves the offline session alone.
-const SW_VERSION = 'v9';
+const SW_VERSION = 'v10';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 

@@ -145,15 +145,17 @@ function assertCardActionContract(AppView, html, expect) {
     if (hasPreview) {
       assert.doesNotMatch(html, /gc-vote-btn-preview[^>]*gc-vote-btn-icon|gc-vote-btn-icon[^>]*gc-vote-btn-preview/,
         'the board preview is the labelled pill, not the icon variant');
-      // It CLOSES the action band, after the hamburger: the band is where
-      // the card's controls are, and the pair sits flush at its right edge.
-      // (It closed the facts line for a round; that seat is empty now.)
+      // It sits at the band's right end, just before the hamburger that
+      // closes the band: the band is where the card's controls are, and the
+      // pair sits flush at its right edge. (It closed the facts line for a
+      // round; that seat is empty now.)
       const band = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
       assert.ok(band && /gc-vote-btn-preview/.test(band[1]), 'the labelled Preview pill is in the action band');
-      assert.match(band[1], /gc-vote-btn-preview[^>]*>[\s\S]*?<\/button>$/, 'and it is the band\'s last child');
       if (menuKeyOf(html)) {
-        assert.ok(band[1].indexOf('data-card-menu') < band[1].indexOf('gc-vote-btn-preview'),
-          'right of the hamburger');
+        assert.match(band[1], /gc-vote-btn-preview[^>]*>[\s\S]*?<\/button><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=[^>]*>[\s\S]*?<\/button>$/,
+          'Preview, then the hamburger closing the band');
+      } else {
+        assert.match(band[1], /gc-vote-btn-preview[^>]*>[\s\S]*?<\/button>$/, 'with no menu, Preview closes the band');
       }
       assert.doesNotMatch(html, /dev-card-status-end[^>]*>[\s\S]*?gc-vote-btn-preview/, 'not on the facts line');
     }

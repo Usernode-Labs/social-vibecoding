@@ -31,7 +31,7 @@ const APP_COLUMNS = {
 // Load status.js against canned DB rows and an EMPTY container inventory —
 // so every app's production container looks missing, which is the whole
 // point: only the self-hosted one should be forgiven for it.
-function loadStatus(appRows, { sessions = [], busy = [], building = [] } = {}) {
+function loadStatus(appRows, { sessions = [], busy = [], building = [], runtimeSnapshot } = {}) {
   const ids = {
     pool: require.resolve('../src/db/pool'),
     activeWorkers: require.resolve('../src/services/active-workers'),
@@ -66,7 +66,7 @@ function loadStatus(appRows, { sessions = [], busy = [], building = [] } = {}) {
   stub(ids.activeWorkers, { isSessionBusy: (id) => busy.includes(id) });
   stub(ids.staging, { hasInFlightBuild: (id) => building.includes(id) });
   stub(ids.runtimeStatus, {
-    snapshot: async () => ({ resources: [], stats: {}, runtimeKind: 'docker' }),
+    snapshot: async () => runtimeSnapshot || ({ resources: [], stats: {}, runtimeKind: 'docker' }),
     listDockerContainers: async () => [],
     getDockerStats: async () => ({}),
   });
@@ -130,6 +130,31 @@ test('a mixed fleet counts only the ordinary app', async () => {
     const data = await status.gather({}, { isAdmin: true });
     assert.equal(data.summary.prodMissing, 1);
     assert.deepEqual(data.driftContainers.map((d) => d.slug), ['ordinary']);
+  } finally { restore(); }
+});
+
+test('unobserved preview inventory cannot report missing production or preview workloads', async () => {
+  const old = new Date(Date.now() - 10 * 60000).toISOString();
+  const { status, restore } = loadStatus([APP_COLUMNS], {
+    runtimeSnapshot: { runtimeKind: 'preview', available: false, resources: [], host: null },
+    sessions: [{ id: 42, app_id: 1, branch_name: 'dev/example', pr_number: 42,
+      staging_runtime_name: 'sv-preview-1-s42', created_at: old, last_activity_at: old }],
+  });
+  try {
+    for (const isAdmin of [true, false]) {
+      const data = await status.gather({}, { isAdmin });
+      assert.equal(data.runtimeKind, 'preview');
+      assert.equal(data.runtimeAvailable, false);
+      for (const key of ['prodRunning', 'prodMissing', 'stagingRunning', 'workersReady', 'stuckSessions']) {
+        assert.equal(data.summary[key], null, `${key} must not claim zero`);
+      }
+      assert.deepEqual(data.driftContainers, []);
+      assert.deepEqual(data.stuckSessions, []);
+      assert.equal(data.apps[0].runtimeAvailable, false);
+      assert.equal(data.apps[0].prodMissing, false);
+      assert.equal(data.apps[0].sessions[0].runtimeAvailable, false);
+      assert.equal(data.apps[0].sessions[0].stagingDriftWarning, false);
+    }
   } finally { restore(); }
 });
 

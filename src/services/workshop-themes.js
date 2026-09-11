@@ -517,7 +517,7 @@ function stagingDemoGrouping(input) {
 const ROW_COLUMNS = `app_id, input_hash, themes_json, placements_json, unplaced_json, source, model,
           generated_at, discovered_at, discovery_key_count, churn_added, churn_removed,
           last_error, last_failed_at, last_viewed_at, reconcile_started_at,
-          digest_text, digest_at, digest_error,
+          digest_text, digest_json, digest_at, digest_error,
           discovery_version, placement_version, digest_version`;
 
 // A version column as the row holds it; absent (a fixture from before the
@@ -548,6 +548,12 @@ function shapeRow(r) {
     lastViewedAt: r.last_viewed_at || null,
     reconcileStartedAt: r.reconcile_started_at || null,
     digest: r.digest_text || null,
+    // The three windowed lines the lander draws as cards. `digest_text`
+    // beside it is the same answer flattened to prose, kept so a row stays
+    // readable to anything that only knows the paragraph — including this
+    // file's own staleness check, which asks whether ANY text was written.
+    digestCards: r.digest_json && typeof r.digest_json === 'object' && !Array.isArray(r.digest_json)
+      ? r.digest_json : null,
     digestAt: r.digest_at || null,
     digestError: r.digest_error || null,
     // The prompt version each stage last ran with (llm.WORKSHOP_*_VERSION).
@@ -622,6 +628,12 @@ async function writeRow(pool, appId, next) {
             -- would put a failing model back on the wire at every single
             -- view, forever. Tried and got nothing is still tried.
             digest_text = COALESCE($12::text, digest_text),
+            -- Written together with the text and by the same rule: a pass
+            -- that produced nothing leaves both standing rather than
+            -- blanking the cards. $19 rather than a slot in the middle
+            -- because tests/workshop-prompt-versions.test.js pins the
+            -- version columns to their placeholder numbers.
+            digest_json = COALESCE($19::jsonb, digest_json),
             digest_at = CASE WHEN $13::boolean THEN NOW() ELSE digest_at END,
             -- The error travels with the clock: a pass that tried records
             -- why it got nothing (or NULL, on success); one that did not try
@@ -645,6 +657,7 @@ async function writeRow(pool, appId, next) {
       next.churnAdded, next.churnRemoved, next.lastError || null, next.digest || null,
       !!next.digestTried, next.digestError || null,
       llm.WORKSHOP_DISCOVERY_VERSION, !!next.placedAll, llm.WORKSHOP_PLACEMENT_VERSION, llm.WORKSHOP_DIGEST_VERSION,
+      next.digestCards ? JSON.stringify(next.digestCards) : null,
     ]
   );
   return shapeRow(rows[0]);
@@ -863,26 +876,147 @@ function digestStale(row, now = Date.now()) {
   return digestDue(row, now) !== null;
 }
 
-/** The merged rows from the last seven days: the "last week" the paragraph opens with. */
-function landedThisWeek(input, now = Date.now()) {
-  const cutoff = now - 7 * 24 * 60 * 60 * 1000;
-  return (input.items || []).filter((i) => {
-    if (i.state !== 'merged') return false;
-    const t = Date.parse(i.at || '');
-    return Number.isFinite(t) && t >= cutoff;
-  });
+// ── The two calendar weeks the cards are drawn for ────────────────────
+//
+// Monday-anchored, in UTC. The digest is cached PER APP and read by
+// everyone, so a viewer's own timezone cannot decide where the week starts
+// without the cached line disagreeing with half the people who read it.
+//
+// These windows are fetched SEPARATELY from the board snapshot, and that
+// separation is the point. The snapshot caps merged rows at MAX_MERGED over
+// MERGED_WINDOW_DAYS, which is right for the themes — they want a bounded
+// sample of what the app is about. It is wrong for a week: on a board
+// merging ~180 changes a week the hundred most recent cover about three
+// days, so the old `landedThisWeek` filtered an already-truncated list and
+// handed the model a partial week labelled as a whole one. The model then
+// did what anyone would with a biased sample and generalised from its top:
+// "mostly reshaped the Workshop and Dev board", written about a week whose
+// largest single block was Kubernetes work it had never been shown.
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+// A week's list is capped too — an unbounded one could blow the prompt on a
+// fleet-scale app — but an order of magnitude above the busiest week this
+// platform has had, and the cap is DISCLOSED per window rather than being a
+// silent slice. Truncation the model is told about is a hedge it can write;
+// truncation it is not told about is the bug above.
+const DIGEST_WEEK_MAX = 400;
+
+/** Midnight UTC on the Monday of the week containing `ms`. */
+function weekStart(ms) {
+  const d = new Date(ms);
+  const dow = (d.getUTCDay() + 6) % 7; // Monday 0 … Sunday 6
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - dow * 86400000;
 }
 
-async function makeDigest({ pool, app, input, themes }) {
+/**
+ * The two windows: `last` is the completed Monday–Sunday just gone, `this`
+ * is Monday up to now and is therefore PARTIAL by construction — which the
+ * prompt is told, so a Tuesday's two-day list does not read as a drought.
+ */
+function weekWindows(now = Date.now()) {
+  const thisStart = weekStart(now);
+  return {
+    lastStart: thisStart - WEEK_MS,
+    lastEnd: thisStart,
+    thisStart,
+    thisEnd: now,
+  };
+}
+
+const iso = (ms) => new Date(ms).toISOString();
+const label = (ms) => iso(ms).slice(0, 10);
+
+/**
+ * Everything that LANDED in `[fromMs, toMs)` — merged proposals and the
+ * issues an applied close-issue proposal closed, the same two sources the
+ * board snapshot folds into its "merged" state. Complete unless it says
+ * otherwise.
+ */
+async function fetchDigestWeek(pool, appId, fromMs, toMs) {
+  const args = [appId, iso(fromMs), iso(toMs), DIGEST_WEEK_MAX + 1];
+  const { rows: merged } = await pool.query(
+    `SELECT cs.pr_number, cs.pr_title, cs.pr_summary_md, u.username, cs.merged_at, cs.created_at
+       FROM chat_sessions cs
+       LEFT JOIN users u ON u.id = cs.user_id
+      WHERE cs.app_id = $1 AND cs.status = 'merged'
+        AND COALESCE(cs.merged_at, cs.created_at) >= $2::timestamptz
+        AND COALESCE(cs.merged_at, cs.created_at) <  $3::timestamptz
+      ORDER BY COALESCE(cs.merged_at, cs.created_at) DESC
+      LIMIT $4`,
+    args
+  );
+  const { rows: closed } = await pool.query(
+    `SELECT i.title, i.payload, i.github_issue_number, u.username AS created_by_username, i.created_at
+       FROM issues i
+       LEFT JOIN users u ON u.id = i.created_by
+      WHERE i.app_id = $1 AND i.kind = 'close_issue' AND i.status = 'closed'
+        AND i.payload ? 'appliedAt'
+        AND i.created_at >= $2::timestamptz
+        AND i.created_at <  $3::timestamptz
+      ORDER BY i.created_at DESC
+      LIMIT $4`,
+    args
+  );
+  const truncated = merged.length > DIGEST_WEEK_MAX || closed.length > DIGEST_WEEK_MAX;
+  const items = [
+    ...merged.slice(0, DIGEST_WEEK_MAX).map((r) => ({
+      kind: 'merged',
+      pr: r.pr_number,
+      title: clip(r.pr_title, TITLE_MAX),
+      // The plain-language summary voters read. It is what the line has to
+      // be written from: a title on this board reads like a headline and
+      // says nothing about what a person using the app will notice.
+      excerpt: excerpt(r.pr_summary_md),
+      by: r.username || null,
+      at: day(r.merged_at || r.created_at),
+    })),
+    ...closed.slice(0, DIGEST_WEEK_MAX).map((r) => {
+      const p = r.payload || {};
+      return {
+        kind: 'closed-issue',
+        title: clip(p.issueTitle || r.title, TITLE_MAX),
+        by: r.created_by_username || null,
+        at: day(p.appliedAt || r.created_at),
+      };
+    }),
+  ];
+  return { items, truncated };
+}
+
+/**
+ * The three lines as one paragraph, for `digest_text`.
+ *
+ * Not a second rendering of the feature — the lander reads the fields. It
+ * keeps the text column meaningful for a reader that predates the cards, and
+ * it is what `digestDue` asks about when it decides whether ANY text has ever
+ * been written for this app (a row with no text and no error is due now).
+ * Joining in window order is the only sensible flattening: it is the order
+ * the cards are drawn in.
+ */
+function flattenDigest(cards) {
+  if (!cards) return null;
+  const text = [cards.lastWeek, cards.thisWeek, cards.open].filter(Boolean).join(' ').trim();
+  return text || null;
+}
+
+async function makeDigest({ pool, app, input, themes, now = Date.now() }) {
   try {
+    const w = weekWindows(now);
+    const [last, cur] = await Promise.all([
+      fetchDigestWeek(pool, app.id, w.lastStart, w.lastEnd),
+      fetchDigestWeek(pool, app.id, w.thisStart, w.thisEnd),
+    ]);
     const out = await llm.generateWorkshopDigest({
       inputJson: JSON.stringify(input),
-      // The week, as its own list. It was left to the model to work out
-      // which of a 30-day merge window counted as "the last week" from the
-      // dates on each row; it now gets that answer instead of the exam.
-      landedJson: JSON.stringify(landedThisWeek(input)),
+      lastWeekJson: JSON.stringify(last.items),
+      thisWeekJson: JSON.stringify(cur.items),
       themesJson: JSON.stringify(themes.map((t) => ({ id: t.id, name: t.name, description: t.description }))),
       appName: app.name || app.slug,
+      windows: {
+        lastWeekLabel: `${label(w.lastStart)} to ${label(w.lastEnd - 1)}`,
+        thisWeekLabel: `${label(w.thisStart)} to today`,
+        lastWeekTruncated: last.truncated,
+        thisWeekTruncated: cur.truncated,
+      },
       telemetryContext: { pool, appId: app.id },
     });
     await recordSpend(pool, app, out.usage, out.model);
@@ -970,6 +1104,9 @@ const dirty = new Set();
 async function reconcile({ pool, app, reason }) {
   const result = {
     reason: reason || null, skipped: null, discovered: false, replaced: false, placed: 0, none: 0, failed: 0, removed: 0,
+    // A draft that was due, attempted and failed. The pass still ran: the
+    // standing categories stood, and placement and the digest used them.
+    discoveryFailed: false,
     // The stages this pass re-ran because their prompt version had moved.
     outdated: [],
   };
@@ -1023,22 +1160,49 @@ async function reconcile({ pool, app, reason }) {
     };
     let toPlace = diff.added;
     let placedAll = false;
+    // A draft that fails is THIS STAGE's failure, not the pass's — the rule
+    // `placeAll` has followed all along, and the one the digest's own comment
+    // states ("a digest that throws is logged, the previous one is kept, and
+    // the pass carries on"). Discovery was the one stage that threw straight
+    // past the outer catch, and the cost of that asymmetry was not
+    // theoretical: on this platform's own board a discovery that could not
+    // fit its output budget aborted every pass for seventeen hours, so the
+    // categories froze, new cards sat in "being placed" indefinitely, and the
+    // digest — which needs the STANDING themes, not a fresh draft — was never
+    // written again. A prompt-version bump on a later stage could not reach
+    // the row at all, because the pass died before it got there.
+    //
+    // So a failed draft keeps the categories the row already has, and the
+    // rest of the pass runs on them. `next.discovered` stays false, so the
+    // discovery clock and version are not stamped and the draft is due again
+    // on the next pass; the error goes to `lastError`, which the footnote
+    // shows and which sets the failure backoff, so a model that cannot answer
+    // is not asked on every view.
+    let discoveryError = null;
     if (why) {
       const previous = row.themes.map((t) => ({ id: t.id, name: t.name, description: t.description }));
-      const disc = await discover({ pool, app, input, previous });
-      themes = disc.themes;
-      model = disc.model;
-      next.placements = {};
-      next.unplaced = new Set();
-      for (const t of themes) for (const k of t.anchors) if (!(k in next.placements)) next.placements[k] = t.id;
-      toPlace = keys.filter((k) => !(k in next.placements));
-      next.discovered = true;
-      next.discoveryKeyCount = keys.length;
-      next.churnAdded = 0;
-      next.churnRemoved = 0;
-      result.discovered = true;
-      placedAll = true;
-      log.info('workshop-themes', 'themes drafted', { app: app.slug, reason: why, themes: themes.length, cards: keys.length });
+      try {
+        const disc = await discover({ pool, app, input, previous });
+        themes = disc.themes;
+        model = disc.model;
+        next.placements = {};
+        next.unplaced = new Set();
+        for (const t of themes) for (const k of t.anchors) if (!(k in next.placements)) next.placements[k] = t.id;
+        toPlace = keys.filter((k) => !(k in next.placements));
+        next.discovered = true;
+        next.discoveryKeyCount = keys.length;
+        next.churnAdded = 0;
+        next.churnRemoved = 0;
+        result.discovered = true;
+        placedAll = true;
+        log.info('workshop-themes', 'themes drafted', { app: app.slug, reason: why, themes: themes.length, cards: keys.length });
+      } catch (err) {
+        discoveryError = `discovery: ${String((err && err.message) || err).slice(0, 120)}`;
+        result.discoveryFailed = true;
+        log.warn('workshop-themes', 'discovery failed; keeping the standing categories', {
+          app: app.slug, reason: why, message: err && err.message,
+        });
+      }
     } else if (replace) {
       // The anchors stay where the draft put them: they are the draft's own
       // examples, not the placer's work. Everything else is placed afresh.
@@ -1052,13 +1216,18 @@ async function reconcile({ pool, app, reason }) {
       log.info('workshop-themes', 'cards re-placed', { app: app.slug, reason: 'version', cards: toPlace.length });
     }
 
-    let lastError = null;
+    // Both stages' failures, not the last one to happen: a pass can now fail
+    // its draft AND a placement batch, and the footnote should name both.
+    let lastError = discoveryError;
     if (toPlace.length) {
       const out = await placeAll({ pool, app, themes, input, keys: toPlace });
       Object.assign(next.placements, out.placed);
       for (const k of out.none) next.unplaced.add(k);
       if (out.model) model = out.model;
-      if (out.error) lastError = `placement: ${String(out.error.message || out.error).slice(0, 160)}`;
+      if (out.error) {
+        const placementError = `placement: ${String(out.error.message || out.error).slice(0, 120)}`;
+        lastError = lastError ? `${lastError}; ${placementError}` : placementError;
+      }
       result.placed = Object.keys(out.placed).length;
       result.none = out.none.length;
       result.failed = out.failed.length;
@@ -1071,11 +1240,15 @@ async function reconcile({ pool, app, reason }) {
       unplaced: [...next.unplaced], model, discovered: next.discovered,
       discoveryKeyCount: next.discoveryKeyCount, churnAdded: next.churnAdded,
       churnRemoved: next.churnRemoved, lastError,
-      digest: dig.digest, digestTried: wantDigest, digestError: dig.error,
+      digest: flattenDigest(dig.digest), digestCards: dig.digest,
+      digestTried: wantDigest, digestError: dig.error,
       placedAll,
     });
     leased = false;
-    notify(app, why ? 'discovery' : 'placement');
+    // What the pass DID, not what it set out to do: a draft that failed
+    // published no new categories, so telling open pages otherwise would have
+    // them re-fetch expecting a grouping that never changed.
+    notify(app, result.discovered ? 'discovery' : 'placement');
     return result;
   } catch (err) {
     log.warn('workshop-themes', 'reconcile failed', { app: app.slug, reason, message: err.message });
@@ -1183,13 +1356,18 @@ async function getThemes({ pool, app }) {
       return {
         themes: stagingDemoGrouping(input), source: 'demo', generatedAt: null, discoveredAt: null,
         stale: true, pending: false, pendingStage: null, lastError: null, coverage: null, unplaced: [],
-        digest: 'Staging demo: the model\u2019s paragraph on what landed last week and what is under way would sit here.',
+        digest: 'Staging demo: the model\u2019s three lines on the two weeks and the open board would sit here.',
+        digestCards: {
+          lastWeek: 'Staging demo: what landed in the completed week just gone would be one line here.',
+          thisWeek: 'Staging demo: what has landed so far this week would be one line here.',
+          open: 'Staging demo: what the open issues and waiting proposals are about would be one line here.',
+        },
         digestError: null,
       };
     }
     return {
       themes: fallbackThemes(input), source: 'category', generatedAt: null, discoveredAt: null,
-      digest: null,
+      digest: null, digestCards: null,
       stale: true, pending, pendingStage: pending ? 'discovery' : null,
       lastError: enabled && row ? row.lastError : null, coverage: null, unplaced: [],
       digestError: null,
@@ -1230,6 +1408,7 @@ async function getThemes({ pool, app }) {
     coverage: { total: keys.length, placed: placedCount, unplaced: unplacedKeys.length, pending: pendingCount },
     unplaced: unplacedKeys,
     digest: row.digest || null,
+    digestCards: row.digestCards || null,
     digestError: row.digestError || null,
   };
 }
@@ -1238,7 +1417,11 @@ module.exports = {
   buildThemeInput, fingerprint, fingerprintKeys, fallbackThemes, stagingDemoGrouping, assignIds, slugify, excerpt,
   needsDiscovery, versionBehind, digestDue, digestStale, diffRow, themesWithItems,
   getCached, getThemes, reconcile, noteBoardChange, sweep, setNotifier,
-  DISCOVERY_MAX_AGE_MS, DIGEST_MAX_AGE_MS, DIGEST_RETRY_MS, landedThisWeek, DRIFT_RATIO, CHANGE_DEBOUNCE_MS, FAILURE_BACKOFF_MS, PLACEMENT_BATCH,
+  DISCOVERY_MAX_AGE_MS, DIGEST_MAX_AGE_MS, DIGEST_RETRY_MS, DRIFT_RATIO, CHANGE_DEBOUNCE_MS, FAILURE_BACKOFF_MS, PLACEMENT_BATCH,
+  // The digest’s own windows, fetched apart from the board snapshot so a
+  // week is never a truncated slice of one. DIGEST_WEEK_MAX is the cap it
+  // discloses rather than hides.
+  weekStart, weekWindows, fetchDigestWeek, flattenDigest, DIGEST_WEEK_MAX,
   _inFlightForTests: inFlight,
   _dirtyForTests: dirty,
   _changeTimersForTests: changeTimers,

@@ -12,6 +12,7 @@ const {
 } = require('./src/services/static-cache');
 const { authMiddleware } = require('./src/middleware/auth');
 const { authRoutes } = require('./src/routes/auth');
+const { illustrationRoutes, illustrationImageRoutes } = require('./src/routes/app-illustrations');
 const { appRoutes } = require('./src/routes/apps');
 const { chatRoutes } = require('./src/routes/chat');
 const { conversationRoutes } = require('./src/routes/conversations');
@@ -481,6 +482,7 @@ app.use(issueImageRoutes(config));
 // tags; access control is the unguessable 32-hex avatar id, and the image
 // is published to other users by design.
 app.use(avatarRoutes(config));
+app.use(illustrationImageRoutes(config));
 
 // Publicly shared locked report snapshots (report-lock-share). Mounted
 // before authMiddleware like visuals: access control is the unguessable
@@ -545,6 +547,7 @@ app.use(mcpBrowserRoutes(config));
 app.use(authRoutes(config));
 app.use(credentialRoutes(config));
 app.use(appRoutes(config));
+app.use(illustrationRoutes(config));
 // Shell relay for usernode.uploadFile()/deleteFile()/getStorageUsage()
 // (#752): session-cookie authed, called only by public/js/app-view.js's
 // storage bridge handler on behalf of the app iframe.
@@ -1185,6 +1188,9 @@ async function start() {
   const server = app.listen(config.port, () => {
     log.info('server', `Listening on :${config.port}`);
   });
+  // Let Envoy retire idle upstream connections at 60s before Node closes them.
+  // Keep a 15s margin for transit and timer scheduling; applies to self-previews too.
+  server.keepAliveTimeout = 75_000;
   httpServer = server;
   shutdownPool = getPool(config);
 

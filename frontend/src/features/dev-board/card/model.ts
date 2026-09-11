@@ -379,10 +379,17 @@ export interface DevWorkshopView {
     /** The merged history is paged; true means the week counts are floors. */
     partial: boolean;
     /**
-     * The model's two sentences on the week just gone and what is in flight,
-     * written on the same reconcile that drafted the themes. Null with no
-     * model, before the first draft, or when that call failed — the fields
-     * above then build the sentence instead.
+     * The model's three windowed lines, drawn as cards under the tiles. A
+     * field is '' when that window held nothing, and its card is then not
+     * drawn at all — which is why these are strings rather than optional.
+     */
+    cards: { lastWeek: string; thisWeek: string; open: string } | null;
+    /**
+     * The same answer flattened to one paragraph. It is what a row last
+     * written under the previous digest prompt holds, so it keeps such a
+     * board saying something until its next pass re-asks for the fields.
+     * Null with no model, before the first draft, or when that call failed —
+     * the counts above then build the sentence instead.
      */
     summary: string | null;
   } | null;

@@ -467,6 +467,7 @@ function load() {
       activeDeadlineSeconds: parseInt(process.env.ACTIVE_DEADLINE_SECONDS || '1800', 10),
       ingressClassName: process.env.INGRESS_CLASS_NAME || 'cilium',
       clusterIssuer: process.env.CLUSTER_ISSUER || 'letsencrypt-public',
+      appTlsSecretName: process.env.APP_TLS_SECRET_NAME || 'social-apps-wildcard-tls',
       appDomain: process.env.USERNODE_APPS_DOMAIN || process.env.USERNODE_DOMAIN || 'apps.example.invalid',
       platformDomain: process.env.USERNODE_DOMAIN || 'apps.example.invalid',
       workerImage: process.env.KUBERNETES_WORKER_IMAGE || '',

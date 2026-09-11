@@ -192,13 +192,13 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(FOLD, /mode === 'page' \? \(\s*href \? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a> : undefined\s*\)/);
   assert.match(FOLD, /\{href && mode === 'inline' \? \(\s*<div className="dev-ws-sheet-actions">/, 'the line under the sheet is the Workshop\u2019s');
   assert.match(FOLD, /detail: placement = 'actions',/, 'and the Workshop, passing nothing, gets the same seat');
-  assert.match(FOLD, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} \/>/);
+  assert.match(FOLD, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/);
   // The seat itself: DevCard renders `actionEnd` after its own pills and
   // before the hamburger and Preview, and the fold measurement counts all
   // three as fixed children (no data-fold).
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
   assert.match(CARD, /const hasActions = bandPrimary\.length > 0 \|\| !!actionEnd \|\| !!menuTrigger \|\| !!bandPreview;/);
-  assert.match(CARD, /\{actionEnd\}\s*\{menuTrigger\}\s*\{bandPreview\}\s*<\/div>/);
+  assert.match(CARD, /\{actionEnd\}\s*\{bandPreview\}\s*\{menuTrigger\}\s*<\/div>/);
   assert.match(CARD, /if \(k\.dataset\.fold\) continue;\s*used \+= k\.offsetWidth/, 'a child without data-fold is counted as used width');
   // A merged card's kudos slot is legacy-filled after every publish; a fold
   // happens between publishes, so the column re-runs the filler.
@@ -268,6 +268,48 @@ test('?shot=board-unfold taps the first folded row, through the real event path'
   assert.match(block, /\(tries \+= 1\) > 40/, 'and it is capped');
 });
 
+test('the fold mark: the same two chevrons at both sizes, stretched open on the card, and the button that folds it', () => {
+  // Folded: every row wears the closed mark — decoration, on a row that is
+  // itself the disclosure control — as the row's last child.
+  const closed = makeAppView();
+  const cards = cardRowsOf(closed._kanbanView());
+  const html = kanbanHtml(closed);
+  const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const GLYPH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    + '<path class="dev-fold-top" d="M8.25 9L12 5.25 15.75 9"></path><path class="dev-fold-bar" d="M12 5.5v13"></path><path class="dev-fold-bottom" d="M8.25 15L12 18.75 15.75 15"></path></svg>';
+  assert.equal(count(html, new RegExp(esc('<span class="dev-fold-mark" aria-hidden="true">' + GLYPH + '</span></div>'), 'g')), cards,
+    'one closed mark per row, closing the row');
+  assert.ok(!html.includes('data-open='), 'nothing folded wears the open mark');
+  // Open: the card wears the SAME three paths, stretched by attribute, as the
+  // button that folds it — at the head's end, before the meta line.
+  const open = makeAppView({ search: '?cards=open&demo=1' });
+  const n = cardRowsOf(open._kanbanView());
+  const openHtml = kanbanHtml(open);
+  assert.equal(count(openHtml, new RegExp(esc('<button type="button" class="dev-fold-mark" data-open="1" aria-expanded="true" aria-label="Fold the card">' + GLYPH + '</button></div><div class="dev-card-meta">'), 'g')), n,
+    'one open mark per card, closing the head');
+  assert.ok(!openHtml.includes('<span class="dev-fold-mark"'), 'and no closed mark beside it');
+  // The button folds through the fold's own toggle: the wrapper's
+  // click-anywhere guard excludes buttons, so the mark must carry it.
+  assert.match(FOLD, /<UnfoldedRow [^>]*onFold=\{onToggle\} \/>/);
+  assert.match(FOLD, /headEnd=\{<FoldMark open onClick=\{onFold\} \/>\}/);
+  // Geometry: absolute, at the same spot at both sizes, so on open the mark
+  // does not move — it stretches — and only the title keeps clear of it.
+  assert.match(CSS, /\.dev-ws-row, \.dev-ws-sheet > div:is\(\.dev-card-dense, \.dev-card-topic\) \{ position: relative; \}/);
+  assert.match(CSS, /\.dev-ws-row-title, \.dev-ws-sheet \.dev-card-title \{ padding-right: 22px; \}/);
+  assert.match(CSS, /\.dev-fold-mark \{\n  position: absolute; top: 15px; right: 14px; width: 16px; height: 16px;/);
+  assert.match(CSS, /\.dev-fold-mark \.dev-fold-bar \{ transform: scaleY\(0\); \}/, 'closed: the bar scaled away');
+  assert.match(CSS, /\.dev-fold-mark\[data-open="1"\] \.dev-fold-top \{ transform: translateY\(-2px\); animation: dev-fold-top \.15s ease both; \}/);
+  assert.match(CSS, /\.dev-fold-mark\[data-open="1"\] \.dev-fold-bottom \{ transform: translateY\(2px\); animation: dev-fold-bottom \.15s ease both; \}/);
+  assert.match(CSS, /\.dev-fold-mark\[data-open="1"\] \.dev-fold-bar \{ transform: scaleY\(1\); animation: dev-fold-bar \.15s ease both; \}/);
+  assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{ \.dev-fold-mark path \{ animation: none; \} \}/);
+  assert.ok(!/dev-fold[^\n]*rotate/.test(CSS), 'nothing on it rotates: what changes is size');
+  // Declared, one check per state, on the board.
+  const checks = DAPP.tests.filter((t) => /fold mark/.test(t.name));
+  assert.equal(checks.length, 2);
+  assert.match(checks[0].expectSelector, /span\.dev-fold-mark\[aria-hidden="true"\]:not\(\[data-open\]\)/);
+  assert.match(checks[1].expectSelector, /button\.dev-fold-mark\[data-open="1"\]\[aria-expanded="true"\]\[aria-label\]/);
+});
+
 test('the declared checks that read a board card’s anatomy run with the cards open; two pin the fold', () => {
   const anatomy = /gc-vote-item|dev-card-|gc-card-actions|data-card-menu|attr-chip|dc-status-spinner|gc-merging-badge|gc-checks-running-badge|dev-badge|dev-status-pill|dev-chat-badge|dev-vote-btn/;
   const board = /#app\/usernode-2d5619\/board|view=kanban|col=(issues|inprogress|inreview|done)/;
@@ -320,8 +362,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // bumps it by exactly that many and says so here (560 → 562: the two #1824
   // challenges-footer checks; 562 → 563: the fifth build step's queued-wait
   // check on the checks card; 563 → 573: the ten #1808 stamp checks, one per
-  // surface whose timestamp changed; 573 → 574: #1841 account email settings).
-  assert.equal(DAPP.tests.length, 574);
+  // surface whose timestamp changed; 573 → 574: #1841 account email settings;
+  // 574 → 576: the two #1771 infrastructure-error checks, added in #1860;
+  // 576 → 578: the two #1838 mouse-gesture card-menu checks;
+  // 578 → 580: the two fold-mark checks, one per state;
+  // 580 → 587: the eight #1876 checks that replace one, two states of the
+  // two-step waitlist confirm errand × its visible half, its hidden half and
+  // its step line, plus step 2's back link and resend).
+  assert.equal(DAPP.tests.length, 587);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
@@ -336,11 +384,11 @@ test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and 
 // ── The card's controls and lines, after the fold (#1787) ─────────────────
 //
 // With both surfaces drawing one card, the card itself was reworked: blue
-// pills, a hamburger at the band's right edge with Preview after it, every
+// pills, a hamburger at the band's right edge with Preview before it, every
 // pill foldable, the tags on the meta line at both sizes, that line tabbed
 // in under the title and snug beneath it, and folded rows 4px apart.
 
-test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds the band’s right edge, Preview after it', () => {
+test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds the band’s right edge, Preview just before it', () => {
   // The neutral grey fill read as a third colour beside the blue Vote and
   // the blue Preview; the pills take `.dev-vote-btn-yes`'s accent on tint.
   const at = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn {');
@@ -353,7 +401,8 @@ test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds 
   // The ⋯ was a well in the card's top-right rail. The menu is where the
   // pills that do not fit the band go, so its trigger is the band's own
   // "more": a hamburger at its far right, and Preview, when there is one,
-  // after it — the hamburger's auto margin pushes the pair to the edge.
+  // just before it. Whichever of the two comes first carries the auto
+  // margin that pushes the pair to the edge; the second keeps the gap.
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
   assert.match(CARD, /<Bars3Icon aria-hidden="true" \/>/);
   assert.ok(!CARD.includes('EllipsisHorizontalIcon'));
@@ -363,7 +412,9 @@ test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds 
   assert.match(CSS.slice(tr, CSS.indexOf('\n}', tr)), /margin-left: auto;/);
   const pv = CSS.indexOf('\n:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview {');
   assert.ok(pv > 0);
-  assert.doesNotMatch(CSS.slice(pv, CSS.indexOf('\n}', pv)), /margin-left/, 'a second auto margin would split the free space');
+  assert.match(CSS.slice(pv, CSS.indexOf('\n}', pv)), /margin-left: auto;/, 'Preview pushes the pair when it is the first of them');
+  assert.match(CSS, /\.gc-card-actions > \.gc-vote-btn-preview \+ \.dev-card-menu-btn \{ margin-left: 0; \}/,
+    'and the hamburger after it keeps the gap, or two auto margins would split the free space');
   assert.ok(!/\n\.dev-card-rail \{/.test(CSS), 'and from app.css');
 });
 
@@ -463,7 +514,7 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   // line, the facts row under the status row, and the unclamped title.
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
-  assert.match(byName(/the vote at each row.s bottom-right/).expectSelector, /\.dev-ws-row-main > \.dev-ws-row-band > \.dev-ws-row-trailing > button\.dev-vote-btn/);
+  assert.match(byName(/the vote at each row.s bottom-right/).expectSelector, /\.dev-ws-row\[role="button"\] > \.dev-ws-row-band > \.dev-ws-row-trailing > button\.dev-vote-btn/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);
@@ -500,14 +551,57 @@ test('the message count rides the meta line at both sizes, and only when there i
   const quiet = makeAppView();
   quiet._proposals[0].chat_count = 5;
   const folded = kanbanHtml(quiet);
-  assert.match(folded, /data-proposal-row="34"[\s\S]*?<span class="dev-ws-row-meta">(?:(?!<\/span><span class="dev-ws-row-band">)[\s\S])*?<span class="dev-chat-badge/, 'and on the row, in the same place');
+  assert.match(folded, /data-proposal-row="34"[\s\S]*?<span class="dev-ws-row-meta">(?:(?!<span class="dev-ws-row-band">)[\s\S])*?<span class="dev-chat-badge/, 'and on the row, in the same place');
   // The two sizes share one chrome now, too: the card's r22, its 14/14/12
   // padding with the 4px edge inside it, its 8px glyph gap, its drop shadow,
   // and no hairline border. Pinned value for value against the card's rule.
   const card = CSS.slice(CSS.indexOf('\ndiv:is(.dev-card-dense, .dev-card-topic) {'));
   assert.match(card, /border-radius: 22px;[\s\S]*?padding: 14px 14px 12px;\s*padding-left: calc\(14px \+ var\(--dev-edge-w\)\);/);
-  assert.match(CSS, /\.dev-ws-row \{[^}]*gap: 8px;[^}]*padding: 14px 14px 12px; border-radius: 22px; border: 0;/);
+  assert.match(CSS, /\.dev-ws-row \{[^}]*padding: 14px 14px 12px; border-radius: 22px; border: 0;/);
+  // The 8px glyph gap moved to the head when the row became a column, so the
+  // bar underneath spans the whole row rather than starting past the glyph.
+  assert.match(CSS, /\.dev-ws-row \{[^}]*flex-direction: column; align-items: stretch;/);
+  assert.match(CSS, /\.dev-ws-row-head \{ display: flex; align-items: center; gap: 8px; \}/);
   assert.match(CSS, /\.dev-ws-row \{[^}]*padding-left: calc\(14px \+ var\(--dev-edge-w\)\);[^}]*0 1px 2px rgba\(0, 0, 0, 0\.06\);/);
   assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head \{ gap: 8px;/);
   assert.ok(!/\.dev-ws-row:hover \{ border-color/.test(CSS), 'no border to colour on hover');
+});
+
+// Round 15. Four differences the app's owner spotted on screen, each measured
+// in a browser before and after. The first three are one line of CSS apiece;
+// the fourth is the row's shape.
+test('a press changes the fill and nothing else, and the row is the card minus its button row', () => {
+  // -- The press ------------------------------------------------------
+  // The kit gives every button an instant scale on press. The row carries
+  // role="button" and the open card is a plain div, so the scale reached
+  // exactly one of the two sizes: a pressed folded row drew inset and a
+  // pressed open card did not. Opted out the way this stylesheet already
+  // opts the segmented pills out, keeping the kit's brightness dim.
+  assert.match(CSS, /\.dev-ws-row:active \{ transform: none; \}/);
+  assert.match(CSS, /\.create-mode-pill:active,[\s\S]{0,160}\{\s*transform: none;\s*\}/,
+    'the rule this one follows is still there to follow');
+
+  // -- The three lines, and where each starts -------------------------
+  // The card's anatomy is three siblings: head (glyph + title), meta line,
+  // status row. The row used to be a head beside a two-line text column,
+  // which put both lines below the title 30px in. Measured in Chromium at
+  // 340px, folded then open: title 48/48, meta 48/48, status 18/18.
+  assert.match(FOLD, /<span className="dev-ws-row-head">\s*\{c\.icon \? <CardIcon[\s\S]*?<\/span>\s*\{\/\*[\s\S]*?\*\/\}\s*<span className="dev-ws-row-meta">\{metaLineNodes\(c\)\}<\/span>\s*<RowBand/,
+    'head, meta and band are siblings, in the card’s order');
+  assert.ok(!/dev-ws-row-main/.test(FOLD) && !/\.dev-ws-row-main[\s,{>]/.test(CSS),
+    'the text column that held the meta line and the band 30px in is gone');
+  // The meta line's tab is the CARD's rule, condition and all: 30px, and
+  // only when there is a glyph to tab past.
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-head:has\(> \.dev-card-icon\) \+ \.dev-card-meta \{ padding-left: 30px; \}/);
+  assert.match(CSS, /\.dev-ws-row-head:has\(> \.dev-card-icon\) \+ \.dev-ws-row-meta \{ padding-left: 30px; \}/);
+
+  // -- The two gaps ---------------------------------------------------
+  // Title to meta: the card stacks them flush, the row carried a 1px column
+  // gap plus a 1px margin, so the same two lines sat 2px apart folded and
+  // 0px open. Meta to status: the card's 8px, the row's 4px+1px.
+  assert.match(CSS, /\.dev-ws-row-meta \{[^}]*margin-top: 0;/);
+  assert.ok(!/\.dev-ws-row-head \{[^}]*row-gap/.test(CSS), 'and no gap standing in for it');
+  assert.match(CSS, /\.dev-ws-row-band \{[^}]*margin-top: 8px;/);
+  assert.match(CSS, /:is\(\.dev-card-dense, \.dev-card-topic\) \.dev-card-badges \{ margin-top: 8px;/,
+    'which is the card’s own');
 });

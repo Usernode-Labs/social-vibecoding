@@ -14,11 +14,13 @@ lives in [CLI-MCP-AUTH-SPEC.md](CLI-MCP-AUTH-SPEC.md).
 
 ## The short version
 
-1. Name the connector **`usernode`** when you add it. The permission rules
+1. Name the connector **`homeroom`** when you add it. The permission rules
    Usernode ships hardcode that name and there is no wildcard for it. They
-   cover **`Usernode`** too, so the capitalised form is safe; any other
-   spelling needs the rules rewritten, which Settings → Connectors will do for
-   you.
+   cover **`Homeroom`** too, so the capitalised form is safe, and they still
+   cover **`usernode`** and **`Usernode`**, the names this connector went by
+   before it was renamed — so a connector you added earlier keeps working and
+   there is nothing to redo. Any other spelling needs the rules rewritten,
+   which Settings → Connectors will do for you.
 2. New app repos are scaffolded with a `.claude/settings.json` that allows the
    read-only connector calls. Accept the workspace trust dialog once and the
    per-call prompts for reads stop.
@@ -42,7 +44,7 @@ lives in [CLI-MCP-AUTH-SPEC.md](CLI-MCP-AUTH-SPEC.md).
 A Claude Code permission rule names the server it applies to:
 
 ```
-mcp__usernode__get_*
+mcp__homeroom__get_*
 ```
 
 The server segment is a **literal**. Glob syntax is accepted only *after* the
@@ -57,9 +59,8 @@ conclude the instructions were wrong.
 
 Two different things could supply it, and they behave differently:
 
-- **The server's own `serverInfo.name`.** Usernode reports `usernode` — the
-  constant is `SERVER_NAME` in `src/services/mcp-connect-constants.js`, and it
-  has always been spelled correctly.
+- **The server's own `serverInfo.name`.** Usernode reports `homeroom` — the
+  constant is `SERVER_NAME` in `src/services/mcp-connect-constants.js`.
 - **What you typed.** Claude.ai's *Settings → Connectors → Add custom
   connector* dialog has a **Name** field, and the client builds tool names from
   the string you put in it.
@@ -70,11 +71,28 @@ which makes it a **name you can fix on your side in ten seconds** rather than a
 platform bug — and it is why the Settings → Connectors panel now tells you the
 canonical name up front instead of leaving the field to chance.
 
-### Why `usernode` (lowercase) is the canonical spelling
+### Why `homeroom` (lowercase) is the canonical spelling
 
 Because it is exactly what `serverInfo.name` reports. A client that derives the
 name from the server and a client where a human typed it then agree, and one
 set of rules works for both. Any other spelling makes those two paths disagree.
+
+### The rename, and what it does not do
+
+This connector was called `usernode` before the platform moved to Homeroom's
+own domain. Renaming `serverInfo.name` is what keeps the agreement above true:
+the docs tell you to type `homeroom`, so the server has to report `homeroom`.
+
+It is **not retroactive**, and it cannot be. A connector already added under
+the old name keeps that name, because the client built its tool names from what
+its user typed and nothing the server reports changes them. The shipped rules
+still cover both old spellings, so that connector goes on working untouched.
+
+The one case that does move is a client that **derives** the name rather than
+taking a typed one. On its next reconnect its tools become `mcp__homeroom__…`,
+and rules written for the old spelling stop matching — silently, the way every
+spelling mismatch does. Re-copying the block from Settings → Connectors fixes
+it, and the block already covers the new name.
 
 ### Read the name off your own tool list
 
@@ -83,14 +101,14 @@ prefix Usernode's tools arrive under **differs by surface**:
 
 | Surface | What the tools are called |
 |---|---|
-| Claude Code (cloud/web session, this one) | `mcp__usernode__whoami` |
-| Claude connector plumbing that namespaces by client | `mcp__claude_ai_usernode__whoami` |
+| Claude Code (cloud/web session, this one) | `mcp__homeroom__whoami` |
+| Claude connector plumbing that namespaces by client | `mcp__claude_ai_homeroom__whoami` |
 
 Guidance that names only one form is wrong for the other half of users, so:
 **look at the tool names you actually see, take the segment between the first
 and last `__`, and use that as the server segment of your rules.** If it is not
-`usernode`, either edit the rules or reconnect the connector under the
-canonical name.
+one of the four spellings the shipped list covers, either edit the rules or
+reconnect the connector under the canonical name.
 
 ### `whoami` hands the model both halves
 
@@ -100,8 +118,8 @@ the other half:
 
 | Field | Value |
 |---|---|
-| `connectorName` | the canonical `usernode`, straight from `SERVER_NAME` |
-| `permissionAllowRules` | the exact six rules Usernode ships — three tools × two spellings — from `READ_ONLY_ALLOW_RULES` |
+| `connectorName` | the canonical `homeroom`, straight from `SERVER_NAME` |
+| `permissionAllowRules` | the exact rules Usernode ships — five entries × four spellings of the name — from `READ_ONLY_ALLOW_RULES` |
 
 Comparing the two is a one-step check any client can make: if the tool it just
 called is not named `mcp__<connectorName>__…`, this connection is registered
@@ -165,12 +183,26 @@ Every app repo Usernode scaffolds gets a `.claude/settings.json`:
 {
   "permissions": {
     "allow": [
+      "mcp__homeroom__get_*",
+      "mcp__homeroom__list_*",
+      "mcp__homeroom__whoami",
+      "mcp__homeroom__notify_awaiting_input",
+      "mcp__homeroom__notify_input_received",
+      "mcp__Homeroom__get_*",
+      "mcp__Homeroom__list_*",
+      "mcp__Homeroom__whoami",
+      "mcp__Homeroom__notify_awaiting_input",
+      "mcp__Homeroom__notify_input_received",
       "mcp__usernode__get_*",
       "mcp__usernode__list_*",
       "mcp__usernode__whoami",
+      "mcp__usernode__notify_awaiting_input",
+      "mcp__usernode__notify_input_received",
       "mcp__Usernode__get_*",
       "mcp__Usernode__list_*",
-      "mcp__Usernode__whoami"
+      "mcp__Usernode__whoami",
+      "mcp__Usernode__notify_awaiting_input",
+      "mcp__Usernode__notify_input_received"
     ]
   }
 }
@@ -202,7 +234,7 @@ The web row is the reason the per-repo copy is offered in the product at all.
 A personal settings file is strictly better where it works, and it does not
 work there.
 
-### Why not `mcp__usernode__*`
+### Why not `mcp__homeroom__*`
 
 Because of where this file lives, not because of what the tools do. It is
 committed into every app repo Usernode scaffolds, so it grants on behalf of
@@ -424,7 +456,7 @@ description assembled from constants is measured as the client sees it.
 ### Why `get_connector_guidance` is named `get_`
 
 The naming contract in `mcp-connect-constants.js` makes `get_`/`list_` mean
-read-only. So the new tool is covered by the `mcp__usernode__get_*` rule
+read-only. So the new tool is covered by the `mcp__homeroom__get_*` rule
 already sitting in every scaffolded repo and every settings file anyone has
 copied — it adds no rule, and it is hint-eligible by the same derivation, so
 the setup tip can ride on the first call of a conversation. A tool that widened
@@ -440,11 +472,12 @@ section it needs.
 
 **Still prompted on every read.**
 Check the server segment first — it is the usual cause. Run a read-only tool and
-look at the name in the prompt: if it is not `mcp__usernode__…` or
-`mcp__Usernode__…`, your connector is registered under a different name and none
-of the shipped rules match it. Paste that spelling into the **"Connector
-registered under a different name?"** field in Settings → Connectors — both copy
-blocks are rewritten for it — or reconnect under `usernode`. Then check you accepted the workspace trust dialog
+look at the name in the prompt: if it is not `mcp__homeroom__…`,
+`mcp__Homeroom__…`, `mcp__usernode__…` or `mcp__Usernode__…`, your connector is
+registered under a different name and none of the shipped rules match it. Paste
+that spelling into the **"Connector registered under a different name?"** field
+in Settings → Connectors — both copy blocks are rewritten for it — or reconnect
+under `homeroom`. Then check you accepted the workspace trust dialog
 for this workspace.
 
 **Prompted on `submit_work` even though I allowed it.**

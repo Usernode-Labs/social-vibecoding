@@ -50,7 +50,7 @@ const NON_SECRET_APP_COLUMNS = [
   'manifest_snapshot', 'last_failure', 'locked', 'self_hosted',
   'collab_visibility', 'view_visibility', 'approver_policy',
   'approvals_required', 'screenshot_device_scale', 'icon_emoji',
-  'icon_image_id', 'forked_from', 'admin_usernames',
+  'icon_image_id', 'featured_illustration', 'forked_from', 'admin_usernames',
   'directory_review_status', 'directory_reviewed_at', 'directory_reviewed_sha',
 ];
 

@@ -538,12 +538,14 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace, {
     apiVersion: 'networking.k8s.io/v1', kind: 'Ingress', metadata: {
       name, namespace, labels: resourceLabels,
-      annotations: { 'cert-manager.io/cluster-issuer': cfg.clusterIssuer },
+      // TLS belongs to the installation, not the disposable app/preview.
+      // No issuer annotation: ingress-shim must not create per-host certificates.
+      annotations: {},
     },
     spec: {
       ingressClassName: cfg.ingressClassName,
       rules: [{ host: hostname, http: { paths: [{ path: '/', pathType: 'Prefix', backend: { service: { name, port: { number: 3000 } } } }] } }],
-      tls: [{ hosts: [hostname], secretName: withSuffix(name, 'tls') }],
+      tls: [{ hosts: [hostname], secretName: cfg.appTlsSecretName || 'social-apps-wildcard-tls' }],
     },
   });
   try {
@@ -606,7 +608,15 @@ async function inspectApplication(config, runtimeName) {
     const deployment = await getClients().apps.readNamespacedDeployment({ name: runtimeName, namespace: config.kubernetes.appNamespace });
     const state = deploymentState(deployment);
     const status = state === 'creating' ? 'created' : state;
-    return { status, labels: deployment.spec?.template?.metadata?.labels || {} };
+    const desired = deployment.spec?.replicas ?? 1;
+    return { status, labels: deployment.spec?.template?.metadata?.labels || {},
+      imageRef: deployment.spec?.template?.spec?.containers?.find(c => c.name === 'app')?.image,
+      rolloutReady: desired > 0 && !deployment.metadata?.deletionTimestamp
+        && deployment.status?.observedGeneration >= deployment.metadata?.generation
+        && deployment.status?.updatedReplicas === desired
+        && deployment.status?.replicas === desired
+        && deployment.status?.readyReplicas >= desired
+        && deployment.status?.availableReplicas >= desired };
   } catch (err) {
     if (isNotFound(err)) return { status: 'not_found', labels: {} };
     throw err;
@@ -663,13 +673,35 @@ async function restartApplication(config, runtimeName) {
 async function deleteApplication(config, runtimeName) {
   const namespace = config.kubernetes.appNamespace;
   const { apps, core, networking } = getClients();
-  await Promise.all([
+  const coordinated = require('./preview-lifecycle').enabled(config);
+  let uid;
+  if (coordinated) {
+    try { uid = (await apps.readNamespacedDeployment({ name: runtimeName, namespace })).metadata.uid; }
+    catch (err) { if (!isNotFound(err)) throw err; }
+  }
+  const deletions = await Promise.allSettled([
     deleteIfPresent(networking, 'deleteNamespacedIngress', runtimeName, namespace),
     deleteIfPresent(core, 'deleteNamespacedService', runtimeName, namespace),
     deleteIfPresent(core, 'deleteNamespacedSecret', withSuffix(runtimeName, 'env'), namespace),
-    deleteIfPresent(core, 'deleteNamespacedSecret', withSuffix(runtimeName, 'tls'), namespace),
-    deleteIfPresent(apps, 'deleteNamespacedDeployment', runtimeName, namespace, { propagationPolicy: 'Foreground' }),
+    // Keep shared and legacy TLS material across rebuilds, idle teardown and
+    // failed rollouts. Certificate retirement is a separate operator action.
+    deleteIfPresent(apps, 'deleteNamespacedDeployment', runtimeName, namespace, {
+      propagationPolicy: 'Foreground', ...(uid ? { body: { preconditions: { uid } } } : {}),
+    }),
   ]);
+  const failed = deletions.find(result => result.status === 'rejected');
+  if (failed) throw failed.reason;
+  if (coordinated && uid) {
+    const deadline = Date.now() + 60000;
+    for (;;) {
+      let deployment;
+      try { deployment = await apps.readNamespacedDeployment({ name: runtimeName, namespace }); }
+      catch (err) { if (isNotFound(err)) break; throw err; }
+      if (deployment.metadata.uid !== uid) throw new Error('Preview was replaced during teardown');
+      if (Date.now() >= deadline) throw new Error('Preview deletion is still pending');
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  }
 }
 
 async function deleteBuilds(config, appId) {
@@ -1108,11 +1140,53 @@ async function cloneWorkerVolume(config, sourceSessionId, targetSessionId) {
 // swallowed: progress is a courtesy, the verdict still comes from the final
 // read below, unchanged.
 async function runCaptureJob(config, options) {
-  return runCheckJob(config, { memory: '4g', cpus: '4', ...options }, 'capture');
+  return runCheckJob(config, { memory: '4g', cpus: '8', ...options }, 'capture');
 }
 
 async function runUnitSuiteJob(config, options) {
   return runCheckJob(config, options, 'unit-suite');
+}
+
+// A DELETE response only acknowledges termination. Keep preview ownership
+// until every consuming Pod has stopped, including Jobs orphaned by a crash.
+async function cancelPreviewChecks(config, sessionId) {
+  const { batch, core } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`;
+  const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
+  await Promise.all((jobs.items || []).map(async job => {
+    const name = job.metadata.name;
+    if (!name.startsWith(`sv-capture-s${sessionId}-`) && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return;
+    const podsStopped = async () => {
+      const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
+      return (pods.items || []).every(pod => ['Succeeded', 'Failed'].includes(pod.status?.phase));
+    };
+    if ((job.status?.succeeded || job.status?.failed) && await podsStopped()) return;
+    await deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, {
+      propagationPolicy: 'Foreground', body: { preconditions: { uid: job.metadata.uid } },
+    });
+    const deadline = Date.now() + 60000;
+    for (;;) {
+      let gone = false;
+      try { await batch.readNamespacedJob({ name, namespace }); }
+      catch (err) { if (isNotFound(err)) gone = true; else throw err; }
+      if (gone && await podsStopped()) break;
+      if (Date.now() >= deadline) throw new Error(`Preview checks still stopping: ${name}`);
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  }));
+}
+
+// Read-only observations may be abandoned on supersession. Creation/deletion
+// requests are always awaited, so a late mutation cannot escape ownership.
+function observeCheck(promise, signal) {
+  if (!signal) return promise;
+  return new Promise((resolve, reject) => {
+    const aborted = () => reject(signal.reason);
+    signal.addEventListener('abort', aborted, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', aborted));
+    if (signal.aborted) aborted();
+  });
 }
 
 function checkResourceRequest(request, limit, resource) {
@@ -1128,7 +1202,7 @@ function checkResourceRequest(request, limit, resource) {
 async function runCheckJob(config, {
   sessionId, env, stdinPayload = null, timeoutMs = 180000,
   onStdoutLine = null, cmd, memory = '2g', cpus = '4', maxBuffer = 64 * 1024 * 1024,
-  salvagePartial = false,
+  salvagePartial = false, signal = null, previewRunId = null,
 }, kind) {
   const cfg = config.kubernetes;
   const unitSuite = kind === 'unit-suite';
@@ -1145,7 +1219,7 @@ async function runCheckJob(config, {
   const image = unitSuite ? cfg.workerImage : cfg.captureImage;
   if (!image?.includes('@sha256:')) throw new Error(`${unitSuite ? 'KUBERNETES_WORKER_IMAGE' : 'KUBERNETES_CAPTURE_IMAGE'} must be an immutable digest`);
   const namespace = cfg.workerNamespace;
-  const name = dnsName(`sv-${kind}-s${sessionId}-${Date.now().toString(36)}`);
+  const name = dnsName(`sv-${kind}-s${sessionId}-${previewRunId || Date.now().toString(36)}`);
   const inputSecretName = !unitSuite && stdinPayload == null ? null : withSuffix(name, 'input');
   if (stdinPayload != null && Buffer.byteLength(String(stdinPayload), 'utf8') > 900 * 1024) {
     throw new Error('Capture stdin payload exceeds the Kubernetes Secret transport limit');
@@ -1179,6 +1253,10 @@ async function runCheckJob(config, {
     template: { metadata: { labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) }, spec: { restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount, automountServiceAccountToken: false, securityContext: nodePodSecurityContext(), containers: [container], ...(podVolumes.length ? { volumes: podVolumes } : {}) } },
   } };
   const { batch, core } = getClients();
+  if (previewRunId) {
+    body.metadata.labels['social.usernode.io/preview-run-id'] = previewRunId;
+    body.spec.template.metadata.labels['social.usernode.io/preview-run-id'] = previewRunId;
+  }
   let inputSecretCreated = false;
   // Follow state lives outside the try so the finally can close the stream.
   let following = false;
@@ -1203,6 +1281,7 @@ async function runCheckJob(config, {
     return bytes.subarray(0, end).toString('utf8');
   };
   try {
+    signal?.throwIfAborted();
     if (inputSecretName) {
       await core.createNamespacedSecret({ namespace, body: {
         apiVersion: 'v1', kind: 'Secret',
@@ -1213,6 +1292,7 @@ async function runCheckJob(config, {
       } });
       inputSecretCreated = true;
     }
+    signal?.throwIfAborted();
     const createdJob = await batch.createNamespacedJob({ namespace, body });
     // A platform restart must not orphan private clone credentials. The Job's
     // TTL also garbage-collects its input Secret if normal cleanup cannot run.
@@ -1238,7 +1318,7 @@ async function runCheckJob(config, {
     let tick = 0;
     const findPod = async () => {
       if (progressPodName) return progressPodName;
-      const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
+      const pods = await observeCheck(core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` }), signal);
       progressPodName = pods.items?.[0]?.metadata?.name || null;
       return progressPodName;
     };
@@ -1268,7 +1348,10 @@ async function runCheckJob(config, {
         // The API refuses a container that has not started ("is waiting to
         // start"); the next tick tries again, and the polled read covers
         // the gap.
-        followAbort = await logApi.log(namespace, progressPodName, kind, sink, { follow: true });
+        followAbort = await observeCheck(logApi.log(namespace, progressPodName, kind, sink, { follow: true }).then(handle => {
+          if (signal?.aborted) handle?.abort();
+          return handle;
+        }), signal);
         following = true;
       } catch { /* the polled read stays in charge */ }
     };
@@ -1276,7 +1359,7 @@ async function runCheckJob(config, {
       if ((!retainPartial && typeof onStdoutLine !== 'function') || following) return;
       try {
         if (!(await findPod())) return;
-        const text = await core.readNamespacedPodLog({ name: progressPodName, namespace, container: kind, limitBytes: maxBuffer });
+        const text = await observeCheck(core.readNamespacedPodLog({ name: progressPodName, namespace, container: kind, limitBytes: maxBuffer }), signal);
         const log = String(text || '');
         if (log.length <= consumed) return;
         const fresh = log.slice(consumed);
@@ -1289,12 +1372,14 @@ async function runCheckJob(config, {
       } catch { /* progress is best-effort */ }
     };
     while (Date.now() < deadline) {
-      const job = await batch.readNamespacedJob({ name, namespace });
+      signal?.throwIfAborted();
+      const job = await observeCheck(batch.readNamespacedJob({ name, namespace }), signal);
+      signal?.throwIfAborted();
       if (job.status?.failed || job.status?.conditions?.some(c => c.type === 'Failed' && c.status === 'True')) {
-        const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
+        const pods = await observeCheck(core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` }), signal);
         const pod = pods.items?.[0];
         const err = new Error(`${kind} Job ${name} failed`);
-        err.stdout = pod ? await core.readNamespacedPodLog({ name: pod.metadata.name, namespace, container: kind, limitBytes: maxBuffer }).catch(() => '') : '';
+        err.stdout = pod ? await observeCheck(core.readNamespacedPodLog({ name: pod.metadata.name, namespace, container: kind, limitBytes: maxBuffer }), signal).catch(() => '') : '';
         const terminated = pod?.status?.containerStatuses?.find(c => c.name === kind)?.state?.terminated;
         err.code = terminated?.exitCode;
         const jobReason = job.status.conditions?.find(c => c.type === 'Failed')?.reason;
@@ -1304,8 +1389,9 @@ async function runCheckJob(config, {
       }
       if (job.status?.succeeded) {
         let stdout;
-        try { stdout = await readOutput(); }
+        try { stdout = await observeCheck(readOutput(), signal); }
         catch (err) { err.captureLogFailed = !unitSuite; throw err; }
+        signal?.throwIfAborted();
         if (!unitSuite && Buffer.byteLength(stdout, 'utf8') > maxBuffer) {
           const err = new Error('Capture output exceeds maxBuffer');
           err.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
@@ -1324,9 +1410,11 @@ async function runCheckJob(config, {
     // Read before deletion: deleting the Job can immediately remove the Pod
     // and the only durable copy of completed capture frames.
     err.stdout = await readOutput().catch(() => '');
-    await deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, { propagationPolicy: 'Background' });
+    // A coordinated owner confirms foreground termination before replacement.
+    if (!signal) await deleteIfPresent(batch, 'deleteNamespacedJob', name, namespace, { propagationPolicy: 'Background' });
     throw err;
   } catch (err) {
+    signal?.throwIfAborted();
     const observed = Buffer.concat(retained).toString('utf8');
     const stdout = boundedOutput(Buffer.byteLength(err.stdout || '', 'utf8') >= retainedBytes ? err.stdout : observed);
     if (retainPartial && stdout && (err.killed || err.captureLogFailed || err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')) {
@@ -1475,7 +1563,7 @@ module.exports = {
   dnsName, withSuffix, labels, appResourceName, createBuild, deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   listManagedBuilds, readBuild, deleteBuildSnapshot,
-  runCaptureJob, runUnitSuiteJob, execInWorker, _getClients: getClients,
+  runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, deleteWorker, listWorkers, cloneWorkerVolume,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,

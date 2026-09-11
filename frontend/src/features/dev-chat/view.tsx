@@ -3,7 +3,7 @@
  * See ./view-store.ts for what it absorbed and what stays legacy-owned.
  */
 
-import { type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 
@@ -11,6 +11,8 @@ import { useStoreState } from '../../lib/use-store-state';
 import { DevChatBanners } from './banners';
 import { DevComposer } from './composer';
 import { SessionHeader } from './session-header';
+import { sessionHeaderStore } from './session-header-store';
+import { SessionChecksPanel } from '../dev-board/modals/session-checks';
 import { SessionList } from './session-list';
 import { SpecViewer } from './spec-viewer';
 import { DevChatTranscript } from './transcript';
@@ -59,6 +61,28 @@ const PANE = {
  */
 function paneStyle(p: PaneView): { width: string } | undefined {
   return p.open && p.width ? { width: `${p.width}px` } : undefined;
+}
+
+/** Keyed by session so switching chats clears results and collapse state. */
+function ChecksSection({ sessionId }: { sessionId: number }): ReactNode {
+  const [open, setOpen] = useState(true);
+  return (
+    <section aria-label="Proposal checks" className="mx-3 mt-3 shrink-0 overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900">
+      <button type="button" aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-sm font-semibold text-zinc-900 dark:text-zinc-100"
+        onClick={() => setOpen(!open)}>
+        <span>Proposal checks</span><span aria-hidden="true">{open ? '▴' : '▾'}</span>
+      </button>
+      {open ? <div className="max-h-[35dvh] overflow-y-auto overscroll-contain px-4 pb-4 sm:px-5 sm:pb-5">
+        <SessionChecksPanel sessionId={sessionId} />
+      </div> : null}
+    </section>
+  );
+}
+
+function DevSessionChecks(): ReactNode {
+  const s = useStoreState(sessionHeaderStore);
+  return s.sessionId && s.pr ? <ChecksSection key={s.sessionId} sessionId={s.sessionId} /> : null;
 }
 
 function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): ReactNode {
@@ -140,6 +164,7 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
             id="dc-launchpad-slot" className="dc-launchpad-slot"
             dangerouslySetInnerHTML={{ __html: s.launchpadHtml }}
           />
+          <DevSessionChecks />
           {/* The element carries the pane's scroll geometry and
               `initScrollTracking` binds click, keydown and scroll on it. */}
           <div id="dc-messages" className="dc-messages-container flex-1 overflow-y-auto py-2">
