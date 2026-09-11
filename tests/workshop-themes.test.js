@@ -1489,6 +1489,20 @@ test('GET workshop-themes 404s on an unknown app', async () => {
   } finally { server.close(); }
 });
 
+test('in ?demo=1 the fixture cards win over a real card set (the staging DB is a prod clone)', () => {
+  const { digestCardsFor, stagingDemoCards } = require('../src/routes/workshop-themes');
+  const real = { lastWeek: 'real last', thisWeek: 'real this', open: 'real open' };
+  // Demo mode: the declared check pins the fixture's lines, so a real set the
+  // clone inherited from production must not displace them.
+  assert.deepEqual(digestCardsFor({ digestCards: real }, true), stagingDemoCards());
+  assert.deepEqual(digestCardsFor({ digestCards: null }, true), stagingDemoCards());
+  assert.match(stagingDemoCards().thisWeek, /^Staging demo: /);
+  // Not demo mode: whatever the row has, and null when it has nothing.
+  assert.deepEqual(digestCardsFor({ digestCards: real }, false), real);
+  assert.equal(digestCardsFor({ digestCards: null }, false), null);
+  assert.equal(digestCardsFor({}, false), null);
+});
+
 test('the staging demo themes name only mock keys', () => {
   for (const t of stagingDemoThemes()) {
     assert.match(t.name, /^\[Mock\]/);

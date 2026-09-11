@@ -46,10 +46,22 @@ function stagingDemoThemes() {
 
 // Staging-only demo cards (?demo=1), for the same reason as the themes
 // above: the three lines are written by the model on a reconcile, and a
-// staging preview has neither a model nor a drafted row, so the Workshop's
-// cards would simply not be drawn and the declared check for them would gate
-// on whether staging happened to have a key. Substituted only when the row
-// has none — a real card set always wins. A no-op in production.
+// staging preview has no model of its own, so the Workshop's cards would
+// otherwise gate the declared check on whether staging happened to have a key.
+//
+// IN DEMO MODE THE DEMO CARDS WIN, even over a real card set. They used to be
+// substituted only when the row had none, but a staging preview runs on a
+// CLONE of the production database, and the moment production's own reconcile
+// wrote real cards (2026-09-11) every preview inherited them: the declared
+// check's pinned demo line vanished and the check failed on every proposal,
+// whatever its diff. `?demo=1` is the fixture mode — the same reasoning as the
+// forced-open lock in routes/votes.js — so it serves the fixture; a plain
+// staging load still shows the clone's real cards. A no-op in production.
+function digestCardsFor(result, demo) {
+  if (demo) return stagingDemoCards();
+  return result.digestCards || null;
+}
+
 function stagingDemoCards() {
   return {
     lastWeek: 'Staging demo: one line on what landed in the completed week just gone.',
@@ -71,7 +83,7 @@ function workshopThemesRoutes(config) {
       const themes = result.themes.slice();
       const demo = IS_STAGING && req.query.demo === '1';
       if (demo) themes.push(...stagingDemoThemes());
-      const digestCards = result.digestCards || (demo ? stagingDemoCards() : null);
+      const digestCards = digestCardsFor(result, demo);
       res.json({
         themes,
         source: result.source,
@@ -113,4 +125,4 @@ function workshopThemesRoutes(config) {
   return router;
 }
 
-module.exports = { workshopThemesRoutes, stagingDemoThemes, stagingDemoCards };
+module.exports = { workshopThemesRoutes, stagingDemoThemes, stagingDemoCards, digestCardsFor };
