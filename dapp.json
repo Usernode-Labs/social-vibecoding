@@ -1451,9 +1451,55 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist code entry without a join can request a code",
+      "name": "Waitlist code entry opens on the address step, with the send promoted (#1876)",
       "path": "/?shot=waitlist-code-entry",
-      "expectSelector": "#waitlist-confirm:not(.hidden) #waitlist-resend",
+      "expectSelector": "#waitlist-confirm-address:not(.hidden) #waitlist-request-code",
+      "expectText": "Email me a code",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist step 1 holds back the code field until a code has been sent (#1876)",
+      "path": "/?shot=waitlist-code-entry",
+      "expectSelector": "#waitlist-confirm-code.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist check-my-status names which step you are on (#1876)",
+      "path": "/?shot=waitlist-code-entry",
+      "expectSelector": "#waitlist-step:not(.hidden)",
+      "expectText": "Step 1 of 2 \u00b7 Your email address",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist step 2 takes the six-digit code (#1876)",
+      "path": "/?shot=waitlist-code-step",
+      "expectSelector": "#waitlist-confirm-code:not(.hidden) #waitlist-code",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist step 2 is done asking for the address (#1876)",
+      "path": "/?shot=waitlist-code-step",
+      "expectSelector": "#waitlist-confirm-address.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist step 2 says so (#1876)",
+      "path": "/?shot=waitlist-code-step",
+      "expectSelector": "#waitlist-step:not(.hidden)",
+      "expectText": "Step 2 of 2 \u00b7 Enter your code",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist step 2 carries a way back to the address (#1876)",
+      "path": "/?shot=waitlist-code-step",
+      "expectSelector": "#waitlist-confirm-code:not(.hidden) #waitlist-change-email",
+      "expectText": "Back to your email address",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist step 2 keeps the fresh-code offer (#1876)",
+      "path": "/?shot=waitlist-code-step",
+      "expectSelector": "#waitlist-confirm-code:not(.hidden) #waitlist-resend",
       "expectText": "Send a new code",
       "allowConsoleErrors": true
     },
@@ -1859,9 +1905,10 @@
       "expectSelector": "#dev-body #dev-kanban-board #dev-kanban .dev-kanban-col .dev-ws-rowwrap > .dev-ws-row[role=\"button\"][aria-expanded=\"false\"][data-issue-row]"
     },
     {
-      "name": "#app/<slug>/workshop is the card area grouped by theme, not the general chat",
+      "name": "#app/<slug>/workshop is the card area grouped by theme, not the general chat, and it leads with the three summary cards",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-cards] > [data-ws-card=\"lastWeek\"] + [data-ws-card=\"thisWeek\"] + [data-ws-card=\"open\"] > .dev-ws-card-line",
+      "expectText": "Staging demo: one line on what has landed so far this week."
     },
     {
       "name": "The Workshop carries the board's search and filter bar, not just the +",
