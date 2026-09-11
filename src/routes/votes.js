@@ -3590,6 +3590,38 @@ function voteRoutes(config) {
       );
       let total = (totalRows[0]?.total || 0) + (closeTotalRows[0]?.close_total || 0);
 
+      // #1922: what shipped in the last 7 days and the 7 before, counted over
+      // the WHOLE history. The Workshop's "shipped this week" used to count
+      // the loaded page, so on any week with more merges than a page holds it
+      // could only say "20+". Same rows and same timestamp as the client's
+      // count (public/js/app-view.js `mergedAtOf`: a PR's merged_at, falling
+      // back to created_at; an applied close-issue proposal's created_at), so
+      // the two agree wherever both can see everything. First page only — it
+      // is a fact about the column, not about the page being fetched. Plain
+      // aliases on purpose: test stubs key on `AS total` and `cs.status`.
+      let shipped = null;
+      if (isFirstPage) {
+        const { rows: shippedRows } = await pool.query(
+          `SELECT COUNT(*) FILTER (WHERE t > now() - interval '7 days')::int AS shipped_week,
+                  COUNT(*) FILTER (WHERE t <= now() - interval '7 days'
+                                     AND t > now() - interval '14 days')::int AS shipped_prev_week
+             FROM (
+               SELECT COALESCE(merged_at, created_at) AS t
+                 FROM chat_sessions
+                WHERE app_id = $1 AND status = 'merged'
+               UNION ALL
+               SELECT created_at AS t
+                 FROM issues
+                WHERE app_id = $1 AND kind = 'close_issue' AND status = 'closed'
+                  AND payload ? 'appliedAt'
+             ) shipped_rows`,
+          [appRows[0].id]
+        );
+        const week = Number(shippedRows[0]?.shipped_week);
+        const prevWeek = Number(shippedRows[0]?.shipped_prev_week);
+        if (Number.isFinite(week) && Number.isFinite(prevWeek)) shipped = { week, prevWeek };
+      }
+
       // Same priority + assigned-person summary on completed proposals, so
       // the read-only chips stay visible after a PR merges.
       const prPageRows = rows.filter((r) => r.row_type !== 'close_issue');
@@ -3674,9 +3706,20 @@ function voteRoutes(config) {
         // DB), so bump the total by however many we injected to keep the
         // demo badge self-consistent with the rows the board renders.
         total += injected.length;
+        // Same for the week counts (#1922), with the client's timestamp rule.
+        if (shipped) {
+          const nowMs = Date.now();
+          const WEEK = 7 * 86400000;
+          for (const m of injected) {
+            const t = new Date(m.merged_at || m.closed_at || m.created_at).getTime();
+            if (!Number.isFinite(t)) continue;
+            if (t > nowMs - WEEK) shipped.week += 1;
+            else if (t > nowMs - 2 * WEEK) shipped.prevWeek += 1;
+          }
+        }
       }
 
-      res.json({ merged: rows, hasMore, total });
+      res.json({ merged: rows, hasMore, total, ...(shipped ? { shipped } : {}) });
     } catch (err) {
       log.error('votes', 'Failed to list merged', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
