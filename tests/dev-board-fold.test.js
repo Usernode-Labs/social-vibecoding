@@ -364,8 +364,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // check on the checks card; 563 → 573: the ten #1808 stamp checks, one per
   // surface whose timestamp changed; 573 → 574: #1841 account email settings;
   // 574 → 576: the two #1771 infrastructure-error checks, added in #1860;
-  // 576 → 578: the two fold-mark checks, one per state).
-  assert.equal(DAPP.tests.length, 578);
+  // 576 → 578: the two #1838 mouse-gesture card-menu checks;
+  // 578 → 580: the two fold-mark checks, one per state).
+  assert.equal(DAPP.tests.length, 580);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

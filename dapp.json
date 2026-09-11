@@ -1344,6 +1344,16 @@
       "expectSelector": ".un-popover .card-menu-header .card-menu-title"
     },
     {
+      "name": "App tile actions open on a right-click (#1838)",
+      "path": "/?demo=1&shot=card-menu&gesture=contextmenu",
+      "expectSelector": ".un-popover .card-menu-header .card-menu-title"
+    },
+    {
+      "name": "App tile actions open on a mouse press-and-hold (#1838)",
+      "path": "/?demo=1&shot=card-menu&gesture=hold",
+      "expectSelector": ".un-popover .card-menu-header .card-menu-title"
+    },
+    {
       "name": "Dev \"+\" menu opens as an action sheet on touch (#929)",
       "path": "/?shot=plus-menu&un-platform=ios#app/usernode-2d5619/dev",
       "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
