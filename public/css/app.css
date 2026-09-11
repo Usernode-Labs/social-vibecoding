@@ -11620,6 +11620,36 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    baseline aligned to the bottom of the ring and the two read as two rows. */
 .dev-ws-strip-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dev-ws-strip-text { margin: 0; font-size: 14px; color: var(--text-primary); }
+/* ── The digest's three cards ────────────────────────────────
+   One paragraph became three, because one paragraph was answering three
+   questions — what landed last week, what has landed this week, what is
+   still open — and a reader scanning for one of them had to parse all of
+   it. Full-width and stacked rather than a three-column row: the lines are
+   sentences, and three sentences side by side at Dev-screen widths wrap to
+   ragged two- and three-line columns that are harder to scan than the
+   paragraph they replaced.
+
+   The title is the parsing aid. It is small, upper-case and muted against a
+   14px body line, so the eye lands on the label first and the sentence
+   second — the opposite weighting to the sentence itself, which is what
+   makes the block scannable rather than just subdivided. It inherits the
+   pane's own line colour, so the cards read as divisions OF the pane rather
+   than as objects sitting on it. */
+.dev-ws-cards { display: flex; flex-direction: column; gap: 8px; }
+.dev-ws-card {
+  border-radius: 12px;
+  padding: 8px 10px;
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+}
+.dev-ws-card-title {
+  margin: 0 0 3px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.dev-ws-card-line { margin: 0; font-size: 14px; color: var(--text-primary); }
 /* ── The Workshop's orientation pane ─────────────────────────
    "Since your last visit" moved inside "Where the app is": the description
    leads, and the personal line sits under it as a footnote to it rather than
