@@ -5808,117 +5808,11 @@ const DevChat = {
     }
   },
 
-  // #558's in-flight state, as the id of the session being proposed.
-  //
-  // It was `btn.disabled` plus a swapped `btn.innerHTML`, written onto the
-  // button the click arrived on — a second author on a node the card renders
-  // now. That is not merely untidy here: `renderMessages` runs on every 3s
-  // status poll, so a repaint mid-request would have restored the label AND
-  // cleared the re-entry guard, which is the double-submit #558 exists to
-  // stop. Keyed by session, so switching sessions mid-flight cannot leave the
-  // next one's card spinning.
-  _proposing: null,
-
+  // Both surfaces submit through the card's controller and per-session lock.
   async promotePR() {
-    // #1602: the rendered completed control has no handler, and the
-    // controller independently refuses a stale/programmatic call after the
-    // authoritative session has crossed into voting.
-    if (!DevChat.currentSession?.id || DevChat.currentSession.status !== 'active') return;
-    const sessionId = DevChat.currentSession.id;
-    // #558: the spinner goes up the moment the button is clicked so a slow
-    // request can't be double-submitted by impatient clicking, and an
-    // in-flight request for THIS session is the re-entry guard.
-    if (Number(DevChat._proposing) === Number(sessionId)) return;
-    DevChat._proposing = sessionId;
-    DevChat._publishTranscript();
-    // Back to a pressable button. Only the failure paths need it — success
-    // re-renders a card that no longer offers Propose at all.
-    const restoreBtn = () => {
-      DevChat._proposing = null;
-      DevChat._publishTranscript();
-    };
-    // #707: the request keeps running through navigation (no abort
-    // signal — the server does the work regardless, so let it finish),
-    // but the completion must be scoped to the session it was made
-    // for. Leaving the app nulls currentSession via reset(), and
-    // switching sessions replaces it; dereferencing it blindly after
-    // the await used to throw into the catch below and surface a
-    // spurious "Network error" alert on whatever page the user had
-    // moved to.
-    const stillCurrent = () => Number(DevChat.currentSession?.id) === Number(sessionId);
-    try {
-      const res = await fetch(`/api/sessions/${sessionId}/promote`, { method: 'POST' });
-      if (res.ok) {
-        // #183: promote may have lazily created the PR (sessions cloned
-        // from a headless auto run arrive PR-less). Fold the returned PR
-        // info into the session so the staging card header flips from
-        // "Changes ready" to the PR link without a refetch.
-        const data = await res.json().catch(() => ({}));
-        if (stillCurrent()) {
-          DevChat.currentSession.status = 'promoted';
-          if (data.prNumber) {
-            DevChat.currentSession.pr_number = data.prNumber;
-            if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
-            if (data.prTitle) {
-              DevChat.currentSession.pr_title = data.prTitle;
-              // #249: server mirrors pr_title into session_title.
-              DevChat.currentSession.session_title = data.prTitle;
-            }
-          }
-          DevChat.renderMessages();
-        } else {
-          // Stale success (user switched sessions mid-flight): never
-          // touch the now-current session. Best-effort fold into the
-          // session list row so its "in vote" pill is right without a
-          // refetch; after a full reset() the list is empty and the
-          // server state lands via loadSessions on re-entry.
-          const row = (DevChat.sessions || []).find((s) => Number(s.id) === Number(sessionId));
-          if (row) {
-            row.status = 'promoted';
-            if (data.prNumber) {
-              row.pr_number = data.prNumber;
-              if (data.prUrl) row.pr_url = data.prUrl;
-              if (data.prTitle) {
-                row.pr_title = data.prTitle;
-                row.session_title = data.prTitle;
-              }
-            }
-          }
-        }
-      } else {
-        // Tolerate non-JSON error bodies (a proxy 502 HTML page) —
-        // res.json() throwing here used to masquerade as "Network error".
-        const data = await res.json().catch(() => ({}));
-        if (stillCurrent()) {
-          const friendly = data.message
-            || (data.error === 'proposal_not_ready'
-              ? 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.'
-              : data.error)
-            || 'Failed to promote';
-          PlatformUI.toast(friendly);
-          restoreBtn();
-        } else {
-          // No context-free popup chasing the user to another page —
-          // the session stays 'active' server-side, so the un-proposed
-          // state is visible and retryable when they return.
-          console.warn('Propose failed after leaving the session:', data.error || `HTTP ${res.status}`);
-        }
-      }
-    } catch (err) {
-      if (stillCurrent()) {
-        PlatformUI.toast('Network error');
-        restoreBtn();
-      } else {
-        // Stale rejection: swallow. The card it belongs to is not on screen.
-        console.warn('Propose request failed after leaving the session:', err?.message || err);
-      }
-    } finally {
-      // Whatever happened, this session is no longer proposing. The REPAINT is
-      // the failure paths' job above (`restoreBtn`), because on success the
-      // card has already been re-rendered without the button; this only makes
-      // sure a stale outcome cannot leave the flag set for a later re-entry.
-      DevChat._proposing = null;
-    }
+    const session = DevChat.currentSession;
+    if (!session || AppView.changeSubmissionState(session).kind !== 'ready') return;
+    return AppView.runChangeAction(session.id, 'promote');
   },
 
   // Append a live agent-suggested platform-report card to the timeline.
@@ -6465,46 +6359,8 @@ const DevChat = {
           // already crossed into group voting. Keep the completed control on
           // every post-proposal state, disabled and handler-free; unrelated
           // terminal states still render no proposal action.
-          let propose = null;
-          if (session?.status === 'active') {
-            if (Number(DevChat._proposing) === Number(session.id)) {
-              propose = { kind: 'pending' };
-            } else if (session.source !== 'cli_handoff' || session.proposal_state === 'ready') {
-              propose = { kind: 'ready' };
-            } else {
-              const blocked = {
-                draft: {
-                  label: 'Not ready to propose',
-                  reason: 'Upload and submit this change before proposing it to the group.',
-                },
-                uploaded: {
-                  label: 'Not ready to propose',
-                  reason: 'Submit the uploaded change for staging and checks before proposing it.',
-                },
-                deploying: {
-                  label: 'Deploying staging…',
-                  reason: 'Staging is still deploying. You can propose after it is ready and checks pass.',
-                },
-                checking: {
-                  label: 'Checks running…',
-                  reason: 'Proposal checks are still running. You can propose after they pass.',
-                },
-                failed: {
-                  label: 'Checks need attention',
-                  reason: 'Resolve the staging or check failure before proposing this change.',
-                },
-              }[session.proposal_state] || {
-                label: 'Not ready to propose',
-                reason: 'This proposal is still being prepared. Try again when staging and checks are ready.',
-              };
-              propose = { kind: 'blocked', ...blocked };
-            }
-          } else if (session
-              && (session.status === 'promoted'
-                || session.status === 'merging'
-                || session.status === 'merged')) {
-            propose = { kind: 'completed' };
-          }
+          const propose = session && ['active', 'promoted', 'merging', 'merged'].includes(session.status)
+            ? AppView.changeSubmissionState(session) : null;
           rows.push({
             t: 'changes', key,
             status: { t: 'status', key: `${key}:s`, icon: 'check', html: msg.content || '', text: msg.content || '', elapsed: null, stamp },

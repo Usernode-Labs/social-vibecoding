@@ -687,7 +687,7 @@
       "name": "Dev board: one composite status pill and a menu trigger per card (card-as-pointer)",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban .gc-vote-item .dev-card-meta > .dev-chat-badge, #dev-kanban .gc-vote-item [data-card-menu]",
-      "expectText": "Create proposal"
+      "expectText": "Start work"
     },
     {
       "name": "Dev board: a card's type icon sits on its title row, not halfway down the card",
@@ -723,7 +723,7 @@
     {
       "name": "Issue page, round three: GitHub ends the meta line, and the Discussion sheet follows the card",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
-      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic .dev-card-meta a.dev-topic-gh) ~ #dev-issue-comments.dev-topic-comments"
+      "expectSelector": "#gc-thread-head .dev-topic > .dev-topic-card:has(.dev-card-topic .dev-card-meta) ~ #dev-issue-comments.dev-topic-comments"
     },
     {
       "name": "Dev board, round three: the vote is one button beside the state bar, with a picker",
@@ -1124,8 +1124,8 @@
     {
       "name": "Issue cards show every action that fits the band, each foldable; the rest fold into the menu behind the hamburger",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectText": "Create proposal",
-      "expectSelector": "#dev-kanban-col-issues .gc-vote-item .gc-card-actions > [data-act=\"createPrForIssue\"][data-fold=\"1\"] ~ [data-card-menu]"
+      "expectText": "Start work",
+      "expectSelector": "#dev-kanban-col-issues .gc-vote-item .gc-card-actions > [data-act=\"chooseIssueWork\"][data-fold=\"1\"] ~ [data-card-menu]"
     },
     {
       "name": "Session/proposal cards render reverse #N issue chips",
@@ -1715,9 +1715,9 @@
       "expectSelector": ".voting-help-btn"
     },
     {
-      "name": "Foreign proposal head offers Explore in dev chat, and no retired Ask AI button (#827)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
-      "expectSelector": "#gc-thread-head .gc-explore-chat-btn[data-proposal-id='9000001']",
+      "name": "Foreign proposal offers Explore in dev chat in More (#827)",
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000001#app/usernode-2d5619/dev/proposals/9000001",
+      "expectSelector": ".dev-card-menu [data-menu-row=\"explore\"]",
       "expectText": "Explore in dev chat"
     },
     {
@@ -3784,9 +3784,9 @@
       "expectText": "The staging build or the test run itself broke"
     },
     {
-      "name": "An underway change opens its full overview before review",
+      "name": "A change opens its full overview with a single action band",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": "#dev-topic-thread .dev-topic-card",
+      "expectSelector": "#dev-topic-thread .dev-topic-card .gc-card-actions [data-card-menu]",
       "expectText": "Testing instructions"
     },
     {
@@ -3796,16 +3796,16 @@
       "expectText": "Change overview"
     },
     {
-      "name": "A full underway change card has Discussion, Agent workspace and Activity tabs",
+      "name": "A full underway change card has Discussion, Build and Activity tabs",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
       "expectSelector": "[data-change-conversation=\"900801\"] [role=\"tablist\"]:has([data-conversation-tab=\"discussion\"][aria-selected=\"true\"]):has([data-conversation-tab=\"workspace\"]):has([data-conversation-tab=\"activity\"])",
-      "expectText": "Agent workspace"
+      "expectText": "Build"
     },
     {
       "name": "The owner workspace tab mounts the real dev session inside its change card",
       "path": "/?conversation=workspace#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": "[data-change-conversation=\"900801\"] [role=\"tabpanel\"]:not([hidden]) #dc-view:has(#dc-messages):has(#dc-quick-replies)",
-      "expectText": "Agent workspace"
+      "expectSelector": "[data-change-conversation=\"900801\"] [role=\"tabpanel\"]:not([hidden]) #dc-view:has(#dc-messages):has(#dc-quick-replies):not(:has(#dc-mode-switch)):not(:has(.dc-pr-card-actions))",
+      "expectText": "Build"
     },
     {
       "name": "A change in review has its group discussion inside the same tabbed card",

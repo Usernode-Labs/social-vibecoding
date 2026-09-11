@@ -88,7 +88,7 @@ test('a question outcome the viewer has NOT cloned: one primary + one ⋯ re-run
   // The band's other pill is the promoted claim toggle, which is not a second
   // way to do this — it is a different action entirely.
   assert.ok(hasAction(model, 'markIssueInProgress', 5));
-  const generate = menuLabels(AppView, model).filter((l) => /^Generate proposal$/.test(l));
+  const generate = menuLabels(AppView, model).filter((l) => /^Start more work$/.test(l));
   assert.equal(generate.length, 1, 'exactly one Generate proposal affordance, in ⋯');
 });
 
@@ -127,7 +127,7 @@ test('every other outcome also yields exactly one primary', () => {
   // …and so does a never-started issue.
   const fresh = AppView._issueCardModel(issue(null));
   assert.equal(primaryCount(fresh), 1);
-  assert.ok(hasAction(fresh, 'createPrForIssue', 5));
+  assert.ok(hasAction(fresh, 'chooseIssueWork', 5));
 });
 
 // ── Where "Answer & regenerate" goes ──────────────────────────────────
@@ -183,11 +183,7 @@ test('the head still offers exactly one Generate affordance, in its detail actio
   const head = AppView._issueCardModel(item, { noNav: true });
   assert.ok(!hasAction(head, 'confirmAutoSession'),
     'the head card must not grow its own re-run — the detail list owns it');
-  // The detail list's pills are merged onto the card's band by
-  // `_topicCard` — Generate proposal stays a ⋯ row there — so what the list
-  // offers is asserted on the model, not on rendered markup.
-  assert.ok(AppView._detailActionsView('issue', item).pills.some((p) => p.label === 'Generate proposal'),
-    'and the detail list does offer it');
-  assert.equal(detailActionsHtml(AppView, 'issue', item).includes('Generate proposal'), false,
-    'and the head does not draw it twice');
+  assert.ok(!AppView._detailActionsView('issue', item).pills.some((p) => p.key === 'generate'),
+    'AI building has one home in the Start work chooser');
+  assert.equal(detailActionsHtml(AppView, 'issue', item).includes('Start AI build'), false);
 });

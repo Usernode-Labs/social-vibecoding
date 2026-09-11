@@ -144,7 +144,7 @@ test('?cards=open draws every card at full size, hooks intact: the board as it w
     'and it sits inside the action band');
   assert.ok(!/dev-card-status-end"[^>]*>(?:(?!<\/span>)[\s\S])*?dev-ws-open-btn/.test(html), 'not on the facts line');
   assert.ok(!/dev-ws-open-btn"[^>]*aria-expanded/.test(html), 'and never the in-place toggle here');
-  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="createPrForIssue">Create proposal<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
+  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="chooseIssueWork">Start work<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
     'the card\u2019s own pills come first, each marked foldable, then the link, then the hamburger');
   // A card with nothing in its status band still drops the band (#1139):
   // the toggle is not in it.
@@ -443,7 +443,7 @@ test('every pill is foldable: the band shows as many as fit its line and the men
   assert.ok(!CARD.includes('ACTION_PRIMARY_MAX'), 'no count cap: the line is the cap');
   assert.ok(!/i > 0 && a\.kudos == null/.test(CARD));
   const html = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
-  assert.match(html, /data-fold="1"[^>]*data-act="createPrForIssue"/, 'the first pill carries a fold index');
+  assert.match(html, /data-fold="1"[^>]*data-act="chooseIssueWork"/, 'the first pill carries a fold index');
 });
 
 test('the tags ride the meta line beside the number, on the open card and the folded row alike', () => {
