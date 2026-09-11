@@ -884,8 +884,7 @@ function internalRoutes(_config) {
     }
   );
 
-  // Container inventory: `docker ps -a` + `docker stats` summaries via
-  // the status service's existing helpers.
+  // Preserve the containers response shape across both runtime inventories.
   router.get(
     '/api/internal/sessions/:sessionId/prod-debug/containers',
     prodDebugAuth,
@@ -893,12 +892,13 @@ function internalRoutes(_config) {
     requireProdDebug,
     async (req, res) => {
       try {
-        const [containers, stats] = await Promise.all([
-          statusSvc.listContainers(_config),
-          statusSvc.getStats(_config),
-        ]);
+        const runtimeKind = applicationRuntime.mode(_config);
+        const [containers, stats] = runtimeKind === 'kubernetes'
+          ? [await kubernetes.listStatusResources(_config), {}]
+          : await Promise.all([statusSvc.listContainers(_config), statusSvc.getStats(_config)]);
         return res.json({
           ok: true,
+          runtimeKind,
           containers: containers.map((c) => ({
             ...c,
             mem: stats[c.name]?.mem || null,
@@ -909,7 +909,7 @@ function internalRoutes(_config) {
         log.error('prod-debug', 'Container list failed', {
           sessionId: req.prodDebug.sessionId, err: err.message,
         });
-        return res.status(500).json({ ok: false, code: 'docker_error' });
+        return res.status(500).json({ ok: false, code: 'runtime_error' });
       }
     }
   );

@@ -308,8 +308,8 @@ The scaffold is a small working demo that proves the plumbing works:
   demo stores button presses in a \`presses\` table.
 - **Live API** — two example routes (\`/api/press\`,
   \`/api/leaderboard\`) read and write through a real Express server.
-- **Styling** — Tailwind CSS, precompiled by the Dockerfile on every
-  deploy, so there is nothing to rebuild by hand.
+- **Styling** — Tailwind CSS, precompiled by \`npm run build\` during
+  image creation with either Kubernetes/Paketo or standalone Docker.
 
 ## Replacing the template
 

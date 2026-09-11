@@ -2066,3 +2066,224 @@ test('movement dismissing an open search menu still suppresses the release click
   h.tick(0);
   assert.equal(h.Home._suppressClick, false);
 });
+
+// ── #1838: the two MOUSE entry points ─────────────────────────────
+//
+// A stationary mouse hold on a tile used to be a total no-op:
+// _wireCardLongPressMenu discarded `pointerType === 'mouse'` on its first
+// line, and the kit's own mouse path only ever arms a DRAG (it lifts after
+// REORDER_SLOP of movement and has no hold timer). So nothing anywhere
+// recognised a held mouse button, which is the "can no longer hold press"
+// evan reported on desktop.
+//
+// The recognizer needs a controllable clock and real window listeners, so
+// these patch the makeHomeEnv sandbox rather than adding a second harness.
+
+function gestureEnv(user = { id: ME, canAdminWrite: true }) {
+  const env = makeHomeEnv(user);
+  const { sandbox } = env;
+  const timers = [];
+  const winListeners = Object.create(null);
+  const docListeners = Object.create(null);
+
+  sandbox.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
+  sandbox.clearTimeout = (id) => { if (timers[id - 1]) timers[id - 1].cancelled = true; };
+  sandbox.addEventListener = (type, fn) => {
+    (winListeners[type] || (winListeners[type] = [])).push(fn);
+  };
+  sandbox.removeEventListener = (type, fn) => {
+    const a = winListeners[type] || [];
+    const i = a.indexOf(fn);
+    if (i >= 0) a.splice(i, 1);
+  };
+  sandbox.document.addEventListener = (type, fn) => {
+    (docListeners[type] || (docListeners[type] = [])).push(fn);
+  };
+  sandbox.PlatformUI = { gestures: () => ({ claim: () => true, release: () => {} }) };
+  // The shared stub's `innerHTML` is getter-only (it exists to assert
+  // escaping); openCardMenu builds its header by writing one.
+  sandbox.document.createElement = () => ({ className: '', innerHTML: '' });
+
+  return {
+    ...env,
+    timers,
+    // Run every live timer armed for exactly `ms`, in order.
+    run: (ms) => {
+      timers.filter((t) => !t.cancelled && !t.done && t.ms === ms)
+        .forEach((t) => { t.done = true; t.fn(); });
+    },
+    pending: (ms) => timers.filter((t) => !t.cancelled && !t.done && t.ms === ms).length,
+    win: (type, ev) => (winListeners[type] || []).slice().forEach((fn) => fn({ type, ...ev })),
+    doc: (type, ev) => (docListeners[type] || []).slice().forEach((fn) => fn({ type, ...ev })),
+  };
+}
+
+function makeCard(over = {}) {
+  const attrs = over.attrs || {};
+  const listeners = Object.create(null);
+  return {
+    nodeType: 1,
+    dataset: { slug: over.slug || 'demo-app' },
+    hasAttribute: (n) => Object.prototype.hasOwnProperty.call(attrs, n),
+    getBoundingClientRect: () => ({
+      left: 10, top: 20, width: 60, height: 60, right: 70, bottom: 80,
+    }),
+    addEventListener(t, fn) { (listeners[t] || (listeners[t] = [])).push(fn); },
+    removeEventListener(t, fn) {
+      const a = listeners[t] || [];
+      const i = a.indexOf(fn);
+      if (i >= 0) a.splice(i, 1);
+    },
+    fire(type, ev) { (listeners[type] || []).slice().forEach((fn) => fn({ type, ...ev })); },
+  };
+}
+
+const press = (over = {}) => ({
+  pointerType: 'mouse',
+  button: 0,
+  isPrimary: true,
+  pointerId: 3,
+  clientX: 40,
+  clientY: 50,
+  target: { closest: () => null },
+  ...over,
+});
+
+test('mouse: a stationary press-and-hold opens the tile menu (#1838)', () => {
+  const env = gestureEnv();
+  const opened = [];
+  env.Home.openCardMenu = (slug, anchor) => { opened.push([slug, anchor]); };
+  const card = makeCard();
+  env.Home._wireCardLongPressMenu(card);
+
+  card.fire('pointerdown', press());
+  assert.deepEqual(opened, [], 'nothing opens on the press itself');
+  env.run(400);
+  assert.deepEqual(opened, [['demo-app', card]],
+    'a held left mouse button opens the menu anchored to the tile');
+  assert.equal(env.Home._suppressClick, true,
+    'the click that follows the release must be eaten');
+});
+
+test('mouse: a press that MOVES becomes a drag, never a menu (#1838)', () => {
+  const env = gestureEnv();
+  const opened = [];
+  env.Home.openCardMenu = (slug) => { opened.push(slug); };
+  const card = makeCard();
+  env.Home._wireCardLongPressMenu(card);
+
+  card.fire('pointerdown', press());
+  // The kit arms a mouse drag at REORDER_SLOP (6px), so movement must give
+  // the drag precedence — the movement bail is what does that.
+  env.win('pointermove', { pointerId: 3, clientX: 40, clientY: 90 });
+  env.run(400);
+  assert.deepEqual(opened, [], 'a moved press is a rearrange, not a menu');
+});
+
+test('mouse: the release leaves the click guard armed for onClick (#1838)', () => {
+  const env = gestureEnv();
+  env.Home.openCardMenu = () => {};
+  const card = makeCard();
+  env.Home._wireCardLongPressMenu(card);
+
+  card.fire('pointerdown', press());
+  env.run(400);
+  env.win('pointerup', { pointerId: 3 });
+
+  assert.equal(env.Home._suppressClick, true,
+    'a mouse `click` follows its pointerup in the SAME task — clearing the'
+    + ' guard at release means the released hold also opens the app');
+  assert.equal(env.pending(0), 0, 'no 0ms reset on the mouse path');
+  assert.equal(env.pending(700), 1, 'a single ~700ms safety net instead');
+  env.run(700);
+  assert.equal(env.Home._suppressClick, false,
+    'a hold released off the tile fires no click, so the guard must expire');
+});
+
+test('touch: release timing and the kit hand-off are unchanged (#1838)', () => {
+  const env = gestureEnv();
+  const opened = [];
+  env.Home.openCardMenu = (slug) => { opened.push(slug); };
+
+  // A plain (search / demo) tile: this recognizer still does the hold, and
+  // still clears the click guard on the next task.
+  const plain = makeCard();
+  env.Home._wireCardLongPressMenu(plain);
+  plain.fire('pointerdown', press({ pointerType: 'touch' }));
+  env.run(400);
+  assert.deepEqual(opened, ['demo-app']);
+  env.win('pointerup', { pointerId: 3 });
+  assert.equal(env.pending(0), 1, 'touch keeps its 0ms release reset');
+  assert.equal(env.pending(700), 0, 'and gains no mouse safety timer');
+
+  // A PLACED tile: the kit's own lift callback owns the touch, so only one
+  // recognizer may claim it.
+  opened.length = 0;
+  env.Home._placementHandle = { detach: () => {} };
+  const placed = makeCard({ attrs: { 'data-yours': true } });
+  env.Home._wireCardLongPressMenu(placed);
+  placed.fire('pointerdown', press({ pointerType: 'touch' }));
+  env.run(400);
+  assert.deepEqual(opened, [], 'a placed touch tile still defers to the kit');
+
+  // ...but the MOUSE always comes through here, because the kit's mouse
+  // path has no hold. This is the whole of #1838.
+  placed.fire('pointerdown', press());
+  env.run(400);
+  assert.deepEqual(opened, ['demo-app'],
+    'a mouse hold on a placed tile must NOT defer to the kit');
+});
+
+test('openCardMenu records the tile it anchored to; closeCardMenu clears it (#1838)', () => {
+  const env = gestureEnv();
+  const { Home, sandbox } = env;
+  Home._apps = [baseApp()];
+  let dismissed = 0;
+  let settle;
+  sandbox.PlatformUI.popover = () => {
+    const p = new Promise((r) => { settle = r; });
+    p.dismiss = () => { dismissed += 1; settle(null); };
+    return p;
+  };
+
+  const card = makeCard();
+  Home.openCardMenu('demo-app', card);
+  assert.equal(Home._menuAnchor, card,
+    'the right-click toggle can only tell "close this" from "move to that"'
+    + ' by comparing anchors');
+
+  Home.closeCardMenu();
+  assert.equal(dismissed, 1);
+  assert.equal(Home._menu, null);
+  assert.equal(Home._menuAnchor, null);
+});
+
+test('the anchor snapshot survives the kit dismissing on pointerdown (#1838)', async () => {
+  const env = gestureEnv();
+  const { Home, sandbox } = env;
+  Home._apps = [baseApp()];
+  let settle;
+  sandbox.PlatformUI.popover = () => {
+    const p = new Promise((r) => { settle = r; });
+    p.dismiss = () => settle(null);
+    return p;
+  };
+  // Installed once, by the tile wiring, so it runs BEFORE the popover's own
+  // document listener and sees the anchor while it is still true.
+  Home._wireCardLongPressMenu(makeCard());
+
+  const card = makeCard();
+  Home.openCardMenu('demo-app', card);
+  env.doc('pointerdown');
+  assert.equal(Home._menuAnchorAtPress, card,
+    'a right-click on the open tile must still be recognisable as a toggle'
+    + ' after the kit has dismissed the menu');
+
+  // The snapshot is re-taken on EVERY press, so a menu closed some other way
+  // (Escape) leaves a null snapshot and the next right-click opens.
+  settle(null);
+  await Promise.resolve();
+  assert.equal(Home._menuAnchor, null);
+  env.doc('pointerdown');
+  assert.equal(Home._menuAnchorAtPress, null);
+});
