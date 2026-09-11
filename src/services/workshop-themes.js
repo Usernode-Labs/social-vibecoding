@@ -1104,6 +1104,9 @@ const dirty = new Set();
 async function reconcile({ pool, app, reason }) {
   const result = {
     reason: reason || null, skipped: null, discovered: false, replaced: false, placed: 0, none: 0, failed: 0, removed: 0,
+    // A draft that was due, attempted and failed. The pass still ran: the
+    // standing categories stood, and placement and the digest used them.
+    discoveryFailed: false,
     // The stages this pass re-ran because their prompt version had moved.
     outdated: [],
   };
@@ -1157,22 +1160,49 @@ async function reconcile({ pool, app, reason }) {
     };
     let toPlace = diff.added;
     let placedAll = false;
+    // A draft that fails is THIS STAGE's failure, not the pass's — the rule
+    // `placeAll` has followed all along, and the one the digest's own comment
+    // states ("a digest that throws is logged, the previous one is kept, and
+    // the pass carries on"). Discovery was the one stage that threw straight
+    // past the outer catch, and the cost of that asymmetry was not
+    // theoretical: on this platform's own board a discovery that could not
+    // fit its output budget aborted every pass for seventeen hours, so the
+    // categories froze, new cards sat in "being placed" indefinitely, and the
+    // digest — which needs the STANDING themes, not a fresh draft — was never
+    // written again. A prompt-version bump on a later stage could not reach
+    // the row at all, because the pass died before it got there.
+    //
+    // So a failed draft keeps the categories the row already has, and the
+    // rest of the pass runs on them. `next.discovered` stays false, so the
+    // discovery clock and version are not stamped and the draft is due again
+    // on the next pass; the error goes to `lastError`, which the footnote
+    // shows and which sets the failure backoff, so a model that cannot answer
+    // is not asked on every view.
+    let discoveryError = null;
     if (why) {
       const previous = row.themes.map((t) => ({ id: t.id, name: t.name, description: t.description }));
-      const disc = await discover({ pool, app, input, previous });
-      themes = disc.themes;
-      model = disc.model;
-      next.placements = {};
-      next.unplaced = new Set();
-      for (const t of themes) for (const k of t.anchors) if (!(k in next.placements)) next.placements[k] = t.id;
-      toPlace = keys.filter((k) => !(k in next.placements));
-      next.discovered = true;
-      next.discoveryKeyCount = keys.length;
-      next.churnAdded = 0;
-      next.churnRemoved = 0;
-      result.discovered = true;
-      placedAll = true;
-      log.info('workshop-themes', 'themes drafted', { app: app.slug, reason: why, themes: themes.length, cards: keys.length });
+      try {
+        const disc = await discover({ pool, app, input, previous });
+        themes = disc.themes;
+        model = disc.model;
+        next.placements = {};
+        next.unplaced = new Set();
+        for (const t of themes) for (const k of t.anchors) if (!(k in next.placements)) next.placements[k] = t.id;
+        toPlace = keys.filter((k) => !(k in next.placements));
+        next.discovered = true;
+        next.discoveryKeyCount = keys.length;
+        next.churnAdded = 0;
+        next.churnRemoved = 0;
+        result.discovered = true;
+        placedAll = true;
+        log.info('workshop-themes', 'themes drafted', { app: app.slug, reason: why, themes: themes.length, cards: keys.length });
+      } catch (err) {
+        discoveryError = `discovery: ${String((err && err.message) || err).slice(0, 120)}`;
+        result.discoveryFailed = true;
+        log.warn('workshop-themes', 'discovery failed; keeping the standing categories', {
+          app: app.slug, reason: why, message: err && err.message,
+        });
+      }
     } else if (replace) {
       // The anchors stay where the draft put them: they are the draft's own
       // examples, not the placer's work. Everything else is placed afresh.
@@ -1186,13 +1216,18 @@ async function reconcile({ pool, app, reason }) {
       log.info('workshop-themes', 'cards re-placed', { app: app.slug, reason: 'version', cards: toPlace.length });
     }
 
-    let lastError = null;
+    // Both stages' failures, not the last one to happen: a pass can now fail
+    // its draft AND a placement batch, and the footnote should name both.
+    let lastError = discoveryError;
     if (toPlace.length) {
       const out = await placeAll({ pool, app, themes, input, keys: toPlace });
       Object.assign(next.placements, out.placed);
       for (const k of out.none) next.unplaced.add(k);
       if (out.model) model = out.model;
-      if (out.error) lastError = `placement: ${String(out.error.message || out.error).slice(0, 160)}`;
+      if (out.error) {
+        const placementError = `placement: ${String(out.error.message || out.error).slice(0, 120)}`;
+        lastError = lastError ? `${lastError}; ${placementError}` : placementError;
+      }
       result.placed = Object.keys(out.placed).length;
       result.none = out.none.length;
       result.failed = out.failed.length;
@@ -1210,7 +1245,10 @@ async function reconcile({ pool, app, reason }) {
       placedAll,
     });
     leased = false;
-    notify(app, why ? 'discovery' : 'placement');
+    // What the pass DID, not what it set out to do: a draft that failed
+    // published no new categories, so telling open pages otherwise would have
+    // them re-fetch expecting a grouping that never changed.
+    notify(app, result.discovered ? 'discovery' : 'placement');
     return result;
   } catch (err) {
     log.warn('workshop-themes', 'reconcile failed', { app: app.slug, reason, message: err.message });
