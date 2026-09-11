@@ -12222,7 +12222,6 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
 .dev-ws-detail .dev-topic-sheet {
   background: transparent; box-shadow: none; border-radius: 0; padding: 0;
 }
-.dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
 .dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
 .dev-ws-theme-more { font-size: 13px; color: var(--text-muted); padding: 4px 10px 0; }
 /* The row's vote button, at the right end of its last line (.dev-ws-row-band). */

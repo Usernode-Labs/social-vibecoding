@@ -2447,8 +2447,8 @@ const AppView = {
       if (e.target.closest('a, button, input, form')) return;
       // A card inside a fold wrapper — the Workshop's rows, and the Board's
       // columns since they fold too (card/fold.tsx) — is the fold's: its own
-      // handler opens and closes it, and "Open on its own page" is the route
-      // out. Both sizes keep their data-*-row hooks so the checks and the
+      // handler opens and closes it, and the open card's "Open page ›" pill
+      // (#1886) is the route out. Both sizes keep their data-*-row hooks so the checks and the
       // lookups below still find the item; this is what stops a click on
       // them opening it full-screen. See _inFoldWrapper for why it reads the
       // event's path rather than the target's ancestors.
@@ -6868,7 +6868,7 @@ const AppView = {
     // The In progress column's own empty note has to come after its rows are
     // built: the archived toggle counts as content even with no cards.
     if (!cols[1].rows.length) cols[1].empty = emptyNote;
-    // `slug` is what the open card's "Open on its own page" link is built
+    // `slug` is what the open card's page link ("Open page ›") is built
     // from; `unfolded` is the ?cards=open state (every card at full size).
     const slug = (AppView.appData && AppView.appData.slug) || App.currentApp || '';
     return {
