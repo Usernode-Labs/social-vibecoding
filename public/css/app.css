@@ -972,6 +972,18 @@ html.un-kb .platform-safe-sheet {
   padding: 8px 8px 8px 12px;
   background: var(--messages-surface);
   box-shadow: var(--messages-disc-shadow);
+  transition: box-shadow 150ms;
+}
+/* #1954: FOCUS LIVES ON THE CARD, as it does on the dev chat's `.dc-card`.
+   The textarea draws no box of its own (`outline: none`, transparent), so a
+   caret was the only sign the field was live; the ring goes around the whole
+   input box instead. `:focus-within` because the card is one control group —
+   the attach and share buttons are still "in the composer". */
+.messages-composer-card:focus-within {
+  box-shadow: var(--messages-disc-shadow), 0 0 0 2px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .messages-composer-card { transition: none; }
 }
 .messages-composer-disabled { padding: 14px 16px; color: var(--text-muted); font-size: 15px; text-align: center; }
 .messages-composer-input {
