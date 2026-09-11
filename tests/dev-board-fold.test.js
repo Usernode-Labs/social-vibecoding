@@ -374,7 +374,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // columns under it with the summary strip still above them).
   // Two additional checks cover the underway overview and workspace deep link.
   // 591 → 594: full-card tabs, embedded owner workspace and review discussion.
-  assert.equal(DAPP.tests.length, 594);
+  // 594 → 595: #1926 repeated conflict notices in card discussions.
+  assert.equal(DAPP.tests.length, 595);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
