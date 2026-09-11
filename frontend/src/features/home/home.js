@@ -162,7 +162,9 @@ const Home = {
       gridStore.set({
         ready: true, view: 'grid', rowTemplate: '', items: [],
         resultsHeading: null, emptyQuery: null,
-        notice: { text: 'Failed to load apps', tone: 'error' },
+        // #1899: the grid draws this as the shared error card
+        // (features/apps/load-error.tsx) with a Retry that re-runs load().
+        notice: { text: "Couldn't load your apps", tone: 'error' },
       });
     }
   },
