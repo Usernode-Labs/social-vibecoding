@@ -70,6 +70,9 @@ const Home = {
       Home._reloadPending = true;
       return;
     }
+    // Establish the initial search position before the catalog request;
+    // later refreshes must preserve the position the user chose.
+    Home._searchReveal.sync();
     if (App.user && !App._sessionFromSnapshot) window.UsernodeReact?.appAllowance?.refresh?.();
     Home._probeShortcutSupport();
     // The header's standing action, from the remembered row, BEFORE the
@@ -1360,6 +1363,7 @@ const Home = {
   // stages compose for free.
   _searchReveal: {
     _pinned: false,
+    _initializedBar: null,
     _scrollWired: false,
     _rafPending: false,
 
@@ -1380,7 +1384,7 @@ const Home = {
     },
 
     // Focused, mid-query, or deep-linked: leave the bar wherever the
-    // user put it. Anything else may be tucked away on the next render.
+    // user put it, including during initial positioning and empty blur.
     isPinned() {
       if (Home._searchReveal._pinned) return true;
       if ((Home._query || '').trim()) return true;
@@ -1390,7 +1394,7 @@ const Home = {
     pin() { Home._searchReveal._pinned = true; },
     unpin() {
       Home._searchReveal._pinned = false;
-      Home._searchReveal.sync();
+      Home._searchReveal.sync({ park: true });
     },
 
     // Stamp the current state on the bar so tests / screenshot checks
@@ -1405,16 +1409,18 @@ const Home = {
       bar.dataset.revealed = revealed ? 'true' : 'false';
     },
 
-    // Called after every render. Tucks the bar away unless it is
-    // pinned — and never yanks a user who has scrolled DOWN past it,
-    // which is what makes WS-driven re-renders safe.
-    sync() {
+    // Park once per mounted, measurable bar. Refreshes only stamp its
+    // current state, preserving even a partially revealed search field.
+    // Empty-field blur can explicitly request parking again.
+    sync({ park = false } = {}) {
       const screen = Home._searchReveal.screenEl();
       const bar = Home._searchReveal.barEl();
       if (!screen || !bar) return;
       Home._searchReveal._wireScroll(screen);
       const h = bar.offsetHeight || 0;
-      if (!Home._searchReveal.isPinned() && h && screen.scrollTop < h) {
+      const initial = Home._searchReveal._initializedBar !== bar;
+      if (h) Home._searchReveal._initializedBar = bar;
+      if ((initial || park) && !Home._searchReveal.isPinned() && h && screen.scrollTop < h) {
         screen.scrollTop = h;
       }
       Home._searchReveal.mark();
