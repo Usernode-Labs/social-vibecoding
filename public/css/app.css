@@ -972,6 +972,18 @@ html.un-kb .platform-safe-sheet {
   padding: 8px 8px 8px 12px;
   background: var(--messages-surface);
   box-shadow: var(--messages-disc-shadow);
+  transition: box-shadow 150ms;
+}
+/* #1954: FOCUS LIVES ON THE CARD, as it does on the dev chat's `.dc-card`.
+   The textarea draws no box of its own (`outline: none`, transparent), so a
+   caret was the only sign the field was live; the ring goes around the whole
+   input box instead. `:focus-within` because the card is one control group —
+   the attach and share buttons are still "in the composer". */
+.messages-composer-card:focus-within {
+  box-shadow: var(--messages-disc-shadow), 0 0 0 2px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .messages-composer-card { transition: none; }
 }
 .messages-composer-disabled { padding: 14px 16px; color: var(--text-muted); font-size: 15px; text-align: center; }
 .messages-composer-input {
@@ -1033,14 +1045,21 @@ html.un-kb .platform-safe-sheet {
   background: var(--accent-tint);
 }
 .messages-pending-object { padding: 8px 12px; background: var(--messages-surface-2); }
+/* #1927: the dismiss × is a 44px tap target, the platform's minimum. The
+   negative block/inline margins let it overhang the strip's own 6–8px
+   padding, so the bigger button does not make the strip any taller. */
 .messages-reply-draft button,
 .messages-pending-object button {
-  margin-left: auto;
-  width: 28px;
-  height: 28px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: -6px -8px -6px auto;
+  width: 44px;
+  height: 44px;
   border-radius: 9999px;
   color: var(--text-muted);
-  font-size: 17px;
+  font-size: 20px;
 }
 .messages-mention-menu {
   position: absolute;
@@ -6513,14 +6532,23 @@ span.gc-vote-btn-icon { cursor: default; }
 
 #gc-reply-preview { margin-bottom: 6px; }
 .gc-reply-preview-body { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; }
+/* #1927: 44px tap target, overhanging the strip's 6px/8px padding so the
+   strip keeps its height. */
 .gc-reply-preview-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -6px -8px -6px 0;
   background: none;
   border: none;
+  border-radius: 9999px;
   cursor: pointer;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1;
-  padding: 4px 6px;
+  padding: 0;
   flex-shrink: 0;
 }
 .gc-reply-preview-x:hover { color: var(--text-primary); }

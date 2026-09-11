@@ -2443,8 +2443,8 @@
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
       "path": "/?demo=1",
-      "expectSelector": "#home-challenges-section > h2.home-area-label .home-panel-lb-browse[aria-label=\"Open leaderboard\"]",
-      "expectText": "Open leaderboard"
+      "expectSelector": "#home-challenges-section > h2.home-area-label .home-panel-lb-browse[aria-label=\"Open challenges\"]",
+      "expectText": "Open challenges"
     },
     {
       "name": "Admin & moderation console page renders at #admin (#818)",
