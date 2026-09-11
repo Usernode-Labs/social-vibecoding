@@ -744,6 +744,12 @@ export function metaLineNodes(m: DevCardModel): ReactNode[] {
     nodes.push(<MetaPartView key={`p${i}`} p={p} />);
   });
   for (const b of (m.badges || []).filter((b) => b && b.t === 'attr')) nodes.push(<Badge key={b.key} b={b} />);
+  // The status tags — checks, conflicts, behind main — ride HERE, beside the
+  // item's own tags, rather than in the facts row under the bar. The line's
+  // rule used to be "what the item IS, not what state it is in"; the state
+  // bar's rule is now narrower still (the vote and nothing else), and of the
+  // two lines this is the one with room for a list that grows.
+  for (const b of (m.badges || []).filter((b) => b && b.t === 'chip' && b.meta)) nodes.push(<Badge key={b.key} b={b} />);
   // A proposal's linkage arrives as `linked`; a session's "#N" chips arrive
   // among its badges. Same chip, same line.
   for (const b of m.linked || []) nodes.push(<Badge key={b.key} b={b} />);
@@ -801,7 +807,9 @@ export function DevCard(
   // So the card is the row plus the bar expanded and the buttons added, and
   // nothing else moves between the two.
   const chips = (m.badges || []).filter(Boolean);
-  const states = chips.filter((b) => b.t !== 'attr' && b.t !== 'issueChip');
+  // `meta` chips are drawn on the meta line above (metaLineNodes), so they
+  // must not be drawn again here.
+  const states = chips.filter((b) => b.t !== 'attr' && b.t !== 'issueChip' && !(b.t === 'chip' && b.meta));
   const kept = m.uncapped ? states : states.slice(0, BADGE_MAX);
 
   // The preview sits at the band's right end just before the hamburger,

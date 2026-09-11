@@ -758,9 +758,12 @@ function stagingMockProposals(viewer) {
       ],
     },
     // ── Card-as-pointer revision fixtures ──
-    // The composite status pill names ONE reason and its tooltip counts the
-    // rest; the detail view enumerates every one. That behaviour needs a row
-    // with several reasons at once, which no existing mock has.
+    // A row with several reasons at once, which no other mock has. It was
+    // added when the status bar named ONE reason and counted the rest in a
+    // tooltip; it proves the opposite now — the bar is the vote, and every
+    // reason is its own tag, colour-coded by whether it blocks the merge. The
+    // three here are deliberately one hard and two soft, so a preview shows
+    // both tints beside a live tally.
     {
       ...mk(9000050, 900150,
         '[Mock] Multi-reason test: behind main AND checks failing AND console errors',
