@@ -49,10 +49,10 @@ test('promotion remains blocked while checks fail, run, or belong to an unready 
   const av = context();
   for (const patch of [{}, { check_state: 'pending' }, { check_state: 'passing' }, { status: 'paused' }, { check_state: 'passing', proposal_state: 'ready', busy: true }, { check_state: 'passing', proposal_state: 'ready', checks_base_verdict: 'superseded' }]) {
     const v = av._topicViewFor('session', { ...failing, ...patch });
-    assert.equal(row(v, 'review').actions[0].disabled, true);
+    assert.equal(v.card.actions.find((a) => a.key === 'propose-change').disabled, true);
   }
   const ready = av._topicViewFor('session', { ...failing, check_state: 'passing', proposal_state: 'ready' });
-  assert.equal(row(ready, 'review').actions[0].disabled, false);
+  assert.equal(ready.card.actions.find((a) => a.key === 'propose-change').disabled, false);
   const review = av._topicViewFor('proposal', { ...failing, status: 'promoted' });
   assert.equal(row(review, 'review'), undefined);
   assert.ok(review.card.actions.some((a) => a.key === 'yes'));
@@ -62,7 +62,7 @@ test('readers cannot promote, sync, or open the private workspace', () => {
   const av = context({ id: 99 });
   const v = av._topicViewFor('session', { ...failing, shared_at: '2026-09-11' });
   assert.equal(v.body.workspace, null);
-  assert.equal(row(v, 'review').actions.length, 0);
+  assert.ok(!v.card.actions.some((a) => a.key === 'propose-change'));
   assert.ok(!v.body.details.ledger.some((r) => r.actions?.some((a) => a.key === 'sync-main')));
   assert.equal(v.body.transcript, null);
 });
@@ -87,7 +87,7 @@ test('underway freshness does not claim an automatic sync or scheduled merge is 
 test('private changes retain sharing controls and do not pretend to have a public discussion', () => {
   const av = context();
   const v = av._topicViewFor('session', failing);
-  assert.ok(v.card.actions.some((a) => a.label === 'Make visible'));
+  assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Make visible'));
   assert.match(v.body.discussion, /workspace stays private/);
 });
 
@@ -231,4 +231,33 @@ test('Continue building selects the embedded workspace without navigating away f
 test('Workshop native underway inline details resolve the owner card key', () => {
   const av = context(); av._mySessions = [failing];
   assert.equal(av._workshopCardBody('my-session:4073').changeId, 4073);
+});
+
+
+test('full card has one submission, one preview, contextual recovery and an independent More menu', () => {
+  const av = context();
+  const item = { ...failing, pr_url: 'https://github.com/example/app/pull/12', check_state: 'passing', proposal_state: 'ready' };
+  const compact = av._mySessionCardModel(item);
+  const compactMenu = av._cardMenuItems(compact.rail.menuKey);
+  const v = av._topicViewFor('session', item);
+  assert.equal(v.card.actions.filter((a) => a.key === 'propose-change').length, 1);
+  assert.equal(v.card.actions.filter((a) => a.preview).length, 1);
+  assert.equal(v.card.rail.preview, null);
+  assert.equal(row(v, 'review').actions, undefined);
+  const menu = av._cardMenuItems(v.card.rail.menuKey);
+  assert.equal(menu.filter((a) => /GitHub/.test(a.label)).length, 1);
+  assert.ok(menu.some((a) => a.label === 'Make visible'));
+  assert.ok(!menu.some((a) => ['View checks', 'Re-run checks', 'Open session'].includes(a.label)));
+  assert.ok(compactMenu.some((a) => a.label === 'View checks'));
+  const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  const html = renderToHtml(createElement(ChangeDetail, { ...v, item, conversation: true }));
+  assert.equal((html.match(/>Submit for review</g) || []).length, 1);
+  assert.doesNotMatch(html, /Continue building|dev-topic-gh/);
+});
+
+test('merged card opens the live app instead of an expired preview', () => {
+  const av = context();
+  const v = av._topicViewFor('proposal', { ...failing, status: 'merged' });
+  assert.ok(v.card.actions.some((a) => a.label === 'Open app'));
+  assert.ok(!v.card.actions.some((a) => a.preview || a.key === 'propose-change'));
 });
