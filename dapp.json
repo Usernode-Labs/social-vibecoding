@@ -1165,61 +1165,61 @@
     },
     {
       "name": "A pill-less reply still shows quick-reply pills (#894 fallback)",
-      "path": "/#app/usernode-2d5619/dev/sessions/900803",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900803",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
       "expectText": "What issues are open right now?"
     },
     {
       "name": "A post-build reply with no pills falls back to the build set (#894)",
-      "path": "/#app/usernode-2d5619/dev/sessions/900801",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900801",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
       "expectText": "Propose it to the group"
     },
     {
       "name": "A post-spec reply with no pills falls back to the spec set (#894)",
-      "path": "/#app/usernode-2d5619/dev/sessions/900802",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900802",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
       "expectText": "Revise the spec"
     },
     {
       "name": "Assistant-authored pills name the change (#1001)",
-      "path": "/#app/usernode-2d5619/dev/sessions/900805",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900805",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
       "expectText": "Preview the Season 1 default"
     },
     {
       "name": "Pills from a forced retry render identically (#1001)",
-      "path": "/#app/usernode-2d5619/dev/sessions/900806",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900806",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
       "expectText": "Build the spec"
     },
     {
       "name": "A wrap-up's pills supersede the dispatch preamble's (#1001)",
-      "path": "/#app/usernode-2d5619/dev/sessions/900807",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900807",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
       "expectText": "Preview the half-height rows"
     },
     {
       "name": "An interrupted turn's tail finishes itself: Changes-ready card lands",
-      "path": "/#app/usernode-2d5619/dev/sessions/900820",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900820",
       "expectSelector": "#dc-pr-card .dc-pr-card-actions .dc-pr-btn-promote",
       "expectText": "Staging deployed!"
     },
     {
       "name": "A tail-recovered turn still gets its wrap-up pills",
-      "path": "/#app/usernode-2d5619/dev/sessions/900820",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900820",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
       "expectText": "Propose it to the group"
     },
     {
       "name": "A background preview rebuild shows a spinning in-progress row",
-      "path": "/#app/usernode-2d5619/dev/sessions/900821",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900821",
       "expectSelector": ".dc-status-line .dc-status-spinner-arc",
       "expectText": "Building staging preview"
     },
     {
       "name": "An unresumable turn whose code landed says so instead of asking for a resend",
-      "path": "/#app/usernode-2d5619/dev/sessions/900822",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900822",
       "expectText": "committed and pushed to PR #36"
     },
     {
@@ -1230,7 +1230,7 @@
     },
     {
       "name": "The code-landed breadcrumb offers Propose, not \"Try that again\"",
-      "path": "/#app/usernode-2d5619/dev/sessions/900822",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900822",
       "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
       "expectText": "Propose it to the group"
     },
@@ -1998,13 +1998,13 @@
     },
     {
       "name": "Dev session start screen leads with the open-issues starter suggestion (#785)",
-      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-quick-replies .dc-quick-pill",
       "expectText": "What issues are open right now?"
     },
     {
       "name": "Stopped composer offers Send, not save — you can just send (#810)",
-      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-form .dc-card-row #dc-send-btn.dc-circle-send[aria-label=\"Send\"]"
     },
     {
@@ -2037,33 +2037,33 @@
     },
     {
       "name": "The circle carries the keystroke the retired hint line named (#920)",
-      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-send-btn[title=\"Send (Ctrl+Enter)\"]"
     },
     {
       "name": "The credit meter and the chat-model picker share one line (#1353)",
-      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": ".dc-card-row > #dc-budget ~ #dc-venue-detail"
     },
     {
       "name": "The suggested replies sit on the ground ABOVE the card (#1353)",
-      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": ".dc-composer-actions:not(:has(#dc-attach-btn)) + #dc-form.dc-card"
     },
     {
       "name": "…and the attach control moved onto the card's own row (#1353)",
-      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-form.dc-card > .dc-card-row > #dc-attach-btn"
     },
     {
       "name": "The model picker opens a sheet, like the venue control above it",
-      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "button#dc-model-select[aria-haspopup=\"menu\"] .dc-model-name",
       "expectText": "Opus 5"
     },
     {
       "name": "…so no native dropdown is left in the composer (#1589 still holds)",
-      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-composer-controls:not(:has(select))"
     },
     {
@@ -2080,13 +2080,13 @@
     },
     {
       "name": "Saved drafts render from the database, with no ?shot param (#940)",
-      "path": "/#app/usernode-2d5619/dev/sessions/990402",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send",
       "expectText": "Staging demo draft: also make the header sticky when scrolling."
     },
     {
       "name": "Dev session start screen keeps the original starter suggestions (#785)",
-      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
       "expectText": "Fix something that's broken"
     },
     {
@@ -3137,24 +3137,24 @@
     },
     {
       "name": "Out of daily credits: the chat offers every way to keep building (#967, #1049, #1086)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "path": "/?demo=1&workspace=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "[data-credits-card] [data-credits-hash=\"#settings/connectors\"]",
       "expectText": "ways to keep building right now"
     },
     {
       "name": "Out of daily credits: the banner says when the allowance comes back (#593)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "path": "/?demo=1&workspace=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "#dc-credits-banner [data-credits-reset]",
       "expectText": "reset at midnight UTC"
     },
     {
       "name": "Out of credits: the routes anyone can follow render first (#1281)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "path": "/?demo=1&workspace=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "#dc-messages .dc-credits-card > .dc-credits-options [data-credits-hash=\"#settings/api-key\"]"
     },
     {
       "name": "Out of credits: the terminal routes sit behind \"Are you a developer?\" (#1281)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "path": "/?demo=1&workspace=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "#dc-messages .dc-credits-card details[data-credits-dev=\"1\"] > summary",
       "expectText": "Are you a developer?"
     },
@@ -3325,12 +3325,12 @@
     },
     {
       "name": "The session bar carries the lifecycle pill's seat beside the back arrow (Streamlined Concept)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "path": "/?demo=1&workspace=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "#platform-header #header-status-pill"
     },
     {
       "name": "A session bar names the app in the chip, with the lifecycle as its subtitle",
-      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990402",
+      "path": "/?demo=1&workspace=1#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "#platform-header #app-switcher-btn #app-switcher-subtitle #header-status-pill .ms-pill"
     },
     {
@@ -3442,7 +3442,7 @@
     },
     {
       "name": "An already-proposed change cannot be proposed twice (#1602)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990406",
+      "path": "/?demo=1&workspace=1#app/usernode-2d5619/dev/sessions/990406",
       "expectSelector": "#dc-pr-card .dc-pr-btn-promote:disabled",
       "expectText": "Already proposed"
     },
@@ -3593,45 +3593,45 @@
     },
     {
       "name": "A failed turn is drawn as a failure, not the pipeline's green tick",
-      "path": "/#app/usernode-2d5619/dev/sessions/990412",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "#dc-messages .dc-failure .dc-failure-text",
       "expectText": "This turn failed: the coding agent exited before writing a result. Send your message again to retry."
     },
     {
       "name": "A stop that landed says what it left behind, and is not painted red",
-      "path": "/#app/usernode-2d5619/dev/sessions/990412",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "#dc-messages .dc-failure-stopped .dc-failure-chips",
       "expectText": "2 changes committed"
     },
     {
       "name": "The questionnaire's numeric group is a stepper, not a row of chips",
-      "path": "/#app/usernode-2d5619/dev/sessions/990413",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990413",
       "expectSelector": "#dc-messages .dc-qa-number .dc-qa-number-field"
     },
     {
       "name": "A chips question offers an escape hatch beside its answers",
-      "path": "/#app/usernode-2d5619/dev/sessions/990413",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990413",
       "expectSelector": "#dc-messages .dc-qa-chip-row .dc-qa-escape"
     },
     {
       "name": "The coding run is a card and its facts are chips",
-      "path": "/#app/usernode-2d5619/dev/sessions/990412",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "details.dc-cc-attached .dc-cc-attached-summary .dc-cc-chips .dc-cc-steps"
     },
     {
       "name": "Capture routes past the first sit behind a disclosure",
-      "path": "/#app/usernode-2d5619/dev/sessions/990412",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "#dc-pr-card .usn-visual-more > .usn-visual-more-summary",
       "expectText": "All 4 screens"
     },
     {
       "name": "A phone-viewport capture is drawn in a device outline (#768)",
-      "path": "/#app/usernode-2d5619/dev/sessions/990412",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "#dc-pr-card .usn-visual-more .usn-visual-phone"
     },
     {
       "name": "A route with no production version renders an empty tile, not one lone tile",
-      "path": "/#app/usernode-2d5619/dev/sessions/990412",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990412",
       "expectSelector": "#dc-pr-card .usn-visual-empty"
     },
     {
@@ -3769,6 +3769,18 @@
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000009",
       "expectSelector": ".dev-ledger-row[data-note=\"checks\"]",
       "expectText": "The staging build or the test run itself broke"
+    },
+    {
+      "name": "An underway change opens its full overview before review",
+      "path": "/#app/usernode-2d5619/dev/sessions/900801",
+      "expectSelector": ".dev-change-overview:not([hidden]) .dev-topic-card",
+      "expectText": "Testing instructions"
+    },
+    {
+      "name": "An underway workspace has a direct link and keeps access to its overview",
+      "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900801",
+      "expectSelector": ".dev-change-workspace:not([hidden]) #dc-quick-replies",
+      "expectText": "Change overview"
     }
   ],
   "governance": {
