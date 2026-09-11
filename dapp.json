@@ -396,7 +396,7 @@
       "group": "AI & coding agents",
       "required": false,
       "default": "deepseek/deepseek-v4.1-flash,z-ai/glm-5.3-flash,openai/gpt-6-astra,moonshotai/kimi-k3,anthropic/claude-opus-5",
-      "description": "Comma-separated exact OpenRouter model ids that receive a Recommended tag in model pickers. Set none to remove all platform recommendations."
+      "description": "Comma-separated exact OpenRouter model ids that receive a Recommended tag and begin starred in model pickers. Each user's explicit star or unstar wins. Set none to remove all platform recommendations."
     },
     {
       "key": "GITHUB_LINK_CLIENT_ID",

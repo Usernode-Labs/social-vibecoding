@@ -72,7 +72,12 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
   const [options, setOptions] = useState(view.options);
   const [chosen, setChosen] = useState(view.preselect);
   const [query, setQuery] = useState('');
-  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  // Open on the short default-favorite list when it contains the selected
+  // model. Preserve an explicitly selected non-favorite by showing All.
+  const [favoritesOnly, setFavoritesOnly] = useState(
+    view.openRouter === true
+      && view.options.find((option) => option.id === view.preselect)?.isFavorite === true,
+  );
   const [favoriteBusy, setFavoriteBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [catalogError, setCatalogError] = useState('');
@@ -221,7 +226,7 @@ export function AutoSessionCard({ view }: { view: AutoSessionModalView }): React
       ) : null}
       {view.openRouter ? (
         <p className="mt-1 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400">
-          OpenRouter filters this catalog for your key and account policies.
+          Platform recommendations start in Favorites. Clear the Favorites filter to browse every model available to this key.
         </p>
       ) : null}
       {catalogError ? (
