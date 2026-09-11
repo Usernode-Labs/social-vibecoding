@@ -214,10 +214,26 @@
     if (s.source === 'imported') return 'own-tools-pr';
     if (s.localAgent) return 'local';
     if (s.buildVenue && venue(s.buildVenue)) return s.buildVenue;
+    if (s.source === 'cli_handoff') return 'local';
     if (s.externalAgent === 'claude-code') return 'web-claude-code';
     if (s.externalAgent === 'codex') return 'web-codex';
     if (s.agentBackend === 'codex_openrouter') return 'usernode-openrouter';
     return 'usernode-claude';
+  }
+
+  // Local proposal provenance is independent of the backend available for
+  // later platform turns. Unknown older handoffs must not claim Claude.
+  function sessionVenue(state) {
+    var s = state || {};
+    var v = venue(s.current || currentVenue(s));
+    if (!v || s.source !== 'cli_handoff' || s.localAgent
+        || (s.buildVenue && venue(s.buildVenue))) return v;
+    var label = s.externalAgent === 'codex' ? 'Codex'
+      : s.externalAgent === 'claude-code' ? 'Claude Code' : 'External agent';
+    return Object.assign({}, v, {
+      label: label,
+      blurb: 'Authored with ' + label + ' on your computer.',
+    });
   }
 
   // Which venues can be somebody's saved default. `own-tools-pr` is not
@@ -706,6 +722,7 @@
     venue: venue,
     venuesFor: venuesFor,
     currentVenue: currentVenue,
+    sessionVenue: sessionVenue,
     CHOICES: CHOICES,
     choice: choice,
     choicesFor: choicesFor,
