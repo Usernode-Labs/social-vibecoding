@@ -11866,50 +11866,55 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    clipping. A `overflow: hidden` here to clip the radius would do both kinds
    of damage at once. */
 .dev-ws-pane {
-  display: flex; flex-direction: column; gap: 8px;
-  background-color: var(--dc-sheet-fill);
-  backdrop-filter: var(--dc-frost);
-  -webkit-backdrop-filter: var(--dc-frost);
+  display: flex; flex-direction: column;
   border-radius: 22px;
-  padding: 8px 10px 12px;
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
   overflow: visible;
 }
-/* The head pins to the top of #dev-forum-scroll while the pane is in view, and
-   releases with it. `top: 0` and not an offset: the scroller's own top IS the
-   top of the reading area — the platform header is outside it.
+/* ── One face, painted by the two PARTS and not by the pane ───────────
+   The pane used to carry the fill and the sticky head carried a second one
+   on top of it. 50% over 50% is ~75%: a lighter band across the controls,
+   measurably (251,251,252 against the body's 250,250,252) and visibly. And
+   because a backdrop-filter makes an element a backdrop root, the head's
+   frost was a SECOND frost applied over the pane's — so the two could not be
+   made equal by tuning the fill either.
 
-   It carries NO FILL OF ITS OWN — only the blur. This is one surface with a
-   part of it pinned, not a separate bar laid over it, and the pane's fill is
-   already behind the head: a second `--dc-sheet-fill` here stacked 50% on 50%
-   and drew a ~75% white band down the middle of a frosted card, which is the
-   "solid white bar" this was twice meant to stop being. What keeps the rows
-   passing under it readable is `--dc-frost` alone — the same 24px blur every
-   sheet in this language lifts on — and blurring a flat colour is a no-op, so
-   the pane's own face comes through unchanged.
+   So the pane paints nothing. Head and body carry the SAME fill over the SAME
+   backdrop — the page — which makes them the same colour by construction
+   rather than by a value chosen to look close. They abut (the pane is a flex
+   column with no gap), so the join does not show.
 
-   The backdrop-filter has to be RE-DECLARED rather than inherited from the
-   pane: a filter applies to what is behind the element it is set on, and what
-   passes under this bar is inside the pane, drawn above the pane's own
-   backdrop. The negative inline margins and the matching padding let the bar
-   span the pane's full width while its content keeps the pane's gutter, so
-   nothing shows through at the edges. */
-.dev-ws-pane-head {
-  position: sticky; top: 0; z-index: 20;
-  display: flex; flex-direction: column; gap: 8px;
-  margin: -8px -10px 0; padding: 8px 10px;
-  border-radius: 22px 22px 0 0;
-  background-color: transparent;
+   The head's frost still does its job: the body is its SIBLING, so the rows
+   scrolling inside the body pass through the head's backdrop and smear.
+
+   `overflow: visible` on the pane is load-bearing: the "+" menu is absolutely
+   positioned in this subtree, and sticky does not work under a clipping
+   ancestor. */
+.dev-ws-pane-head, .dev-ws-pane-body {
+  background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
+/* The head pins to the top of #dev-forum-scroll while the pane is in view and
+   releases with it. `top: 0` and not an offset: the scroller's own top IS the
+   top of the reading area — the platform header is outside it. */
+.dev-ws-pane-head {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 8px 10px;
+  border-radius: 22px 22px 0 0;
+}
+.dev-ws-pane-body {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 8px 10px 12px;
+  border-radius: 0 0 22px 22px;
+}
 /* Where there is no backdrop-filter the fill is all there is, and 50% white
-   with rows sliding CRISPLY under it is the rendering fault the frost is what
-   prevents — not a slightly flatter bar. Every other frosted surface in this
-   file carries the same guard; a pinned one needs it most, because it is the
-   only sheet with moving content behind it. */
+   with rows sliding CRISPLY under the pinned head is the rendering fault the
+   frost prevents — not a slightly flatter bar. Both halves go opaque together,
+   because they must stay the same colour as each other above all. */
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dev-ws-pane-head { background-color: var(--dc-sheet); }
+  .dev-ws-pane-head, .dev-ws-pane-body { background-color: var(--dc-sheet); }
 }
 /* Inside the pane the toolbar is a plain row: the frame's own `px-3 pt-2`
    placed it against the scroller's edge, and here the pane supplies both. */
@@ -11946,7 +11951,13 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    apart rather than as a segmented pair. So the head still spans the pane, as
    a pinned edge must, while what sits IN it keeps the reading column. */
 #dev-workshop:has(.dev-ws-board) .dev-ws-pane-head > * {
-  width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
+  /* 760px is the reading column; the 20px is the head's own left+right
+     padding. Bounding to the column's OUTER width instead made the controls
+     20px wider on By stage than on By category — a toolbar that grew slightly
+     when you switched panes, which is the kind of drift nobody can name but
+     everybody notices. Measured: 740 against 760. */
+  width: 100%; max-width: calc(760px - 20px);
+  margin-left: auto; margin-right: auto;
 }
 /* The board brings its own horizontal scroller (#dev-kanban), so this
    wrapper only has to stop the columns sitting flush against what is

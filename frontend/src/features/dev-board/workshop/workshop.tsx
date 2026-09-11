@@ -868,6 +868,12 @@ export function DevWorkshop(): ReactNode {
             </button>
           </div>
           </div>
+          {/* The pane's face is painted by its two PARTS, not by the pane —
+              see app.css. A fill on the pane with a second one on the sticky
+              head stacked 50% on 50% and drew a lighter band across the
+              controls; giving head and body the same fill on the same
+              backdrop makes them the same colour by construction. */}
+          <div className="dev-ws-pane-body">
           {group === 'stage' ? (
             <div className="dev-ws-board" data-ws-stage="">
               <DevKanban />
@@ -930,6 +936,7 @@ export function DevWorkshop(): ReactNode {
           </div>
           </>
           )}
+          </div>
           </section>
         </>
       ) : null}

@@ -2009,15 +2009,23 @@ test('the pane head pins, and the pane does not clip what must escape it', () =>
   // under stays readable because the frost blurs it — and the filter has to be
   // RE-DECLARED here, not inherited, because a backdrop-filter applies to what
   // is behind the element it is set on, and these rows are inside the pane.
-  // NO fill of its own — only the blur. The pane's fill is already behind the
-  // head, so a second --dc-sheet-fill here stacks 50% on 50% and draws a ~75%
-  // white band down the middle of a frosted card. Blurring a flat colour is a
-  // no-op, so the pane's own face comes through unchanged.
-  assert.match(CSS, /\.dev-ws-pane-head \{[^}]*background-color: transparent/);
-  assert.match(CSS, /\.dev-ws-pane-head \{[^}]*backdrop-filter: var\(--dc-frost\)/);
-  const headBlock = CSS.slice(CSS.indexOf('.dev-ws-pane-head {'),
-    CSS.indexOf('@supports not ((backdrop-filter', CSS.indexOf('.dev-ws-pane-head {')));
-  assert.ok(!/--dc-sheet-fill/.test(headBlock), 'the head never re-states the pane\u2019s fill');
+  // ONE FACE, painted by the two PARTS and not by the pane. A fill on the pane
+  // with a second one on the head stacked 50% on 50% — measurably lighter
+  // across the controls (251,251,252 against the body's 250,250,252) — and
+  // because a backdrop-filter makes an element a backdrop root, the head's
+  // frost was a SECOND frost over the pane's, so the two could not be squared
+  // by tuning the fill either. Head and body now carry the same fill over the
+  // same backdrop, which makes them equal by construction.
+  assert.match(CSS,
+    /\.dev-ws-pane-head, \.dev-ws-pane-body \{[^}]*background-color: var\(--dc-sheet-fill\)[^}]*backdrop-filter: var\(--dc-frost\)/);
+  const paneDecls = CSS.slice(CSS.indexOf('.dev-ws-pane {'),
+    CSS.indexOf('}', CSS.indexOf('.dev-ws-pane {')));
+  assert.ok(!/background|backdrop-filter/.test(paneDecls),
+    'the pane paints nothing itself — that is what stops the two stacking');
+  // The head's frost still works on the rows, because the body is its SIBLING:
+  // what scrolls inside the body passes through the head's backdrop.
+  assert.match(WORKSHOP, /className="dev-ws-pane-head"[\s\S]*?className="dev-ws-pane-body"/,
+    'head and body are siblings, head first');
   for (const token of ['--dc-sheet-fill', '--dc-frost', '--dc-sheet']) {
     assert.ok(CSS.includes(`${token}:`), `${token} is defined`);
   }
@@ -2025,18 +2033,23 @@ test('the pane head pins, and the pane does not clip what must escape it', () =>
   // falls back opaque. 50% white with rows sliding crisply under it is the
   // rendering fault the frost prevents, not a slightly flatter bar. Every
   // other frosted surface in this file carries the same guard.
+  // Both halves go opaque TOGETHER — staying the same colour as each other
+  // matters more here than either one's material.
   assert.match(CSS,
-    /@supports not \(\(backdrop-filter[^{]*\{\s*\.dev-ws-pane-head \{ background-color: var\(--dc-sheet\); \}/,
-    'the pinned head falls back to an opaque fill');
+    /@supports not \(\(backdrop-filter[^{]*\{\s*\.dev-ws-pane-head, \.dev-ws-pane-body \{ background-color: var\(--dc-sheet\); \}/,
+    'head and body fall back to the same opaque fill');
   // On By stage the BAR spans the window — it is a pinned edge, and one that
   // stopped short of the board under it would look like a mistake — but what
-  // sits IN it keeps the reading column. A search field and two tabs stretched
-  // across the whole window are a worse control than the same pair at 760px.
-  assert.match(CSS,
-    /#dev-workshop:has\(\.dev-ws-board\) \.dev-ws-pane-head > \* \{[^}]*max-width: 760px/);
+  // sits IN it keeps the reading column. The exact bound is asserted below,
+  // with the gutter correction that keeps it from growing on the switch.
   // Two things inside this subtree must escape the pane's box: the "+" menu is
   // absolutely positioned, and sticky does not work under a clipping ancestor.
   assert.match(CSS, /\.dev-ws-pane \{[^}]*overflow: visible/);
-  const paneBlock = CSS.slice(CSS.indexOf('.dev-ws-pane {'), CSS.indexOf('.dev-ws-pane-head {'));
-  assert.ok(!/overflow: hidden/.test(paneBlock), 'never clipped to hide the radius');
+  assert.ok(!/overflow: hidden/.test(paneDecls), 'never clipped to hide the radius');
+  // The controls must not GROW when you switch panes. On By stage they are
+  // bounded to the reading column MINUS the head's own gutter — bounding to
+  // the column's outer width made them 20px wider there (740 against 760),
+  // a toolbar that changed size on a tab click.
+  assert.match(CSS,
+    /#dev-workshop:has\(\.dev-ws-board\) \.dev-ws-pane-head > \* \{[\s\S]*?max-width: calc\(760px - 20px\)/);
 });
