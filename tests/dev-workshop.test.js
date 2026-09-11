@@ -1859,6 +1859,12 @@ test('the tab strip is a segmented rail, distinct from the sort chips beside it'
   assert.match(CSS, /\.dev-ws-group \{[^}]*border-radius: 999px/);
   assert.match(CSS, /\.dev-ws-group \{[^}]*background: var\(--dc-strip\)/);
   assert.match(CSS, /\.dev-ws-group-tab\[aria-selected="true"\] \{[^}]*background: var\(--dc-sheet\)/);
+  // Full width of the reading column, split evenly. `flex: 1 1 0`, not
+  // `1 1 auto`: on `auto` the halves would be sized by their labels, so
+  // "By category" would take more of the rail than "By stage".
+  assert.match(CSS, /\.dev-ws-group-tab \{[^}]*flex: 1 1 0/);
+  assert.ok(!/\.dev-ws-group \{[^}]*align-self: flex-start/.test(CSS),
+    'and the rail itself is not shrunk to its content');
   // A token that does not resolve is a silently wrong colour, not an error —
   // and inside a box-shadow list one bad var() voids the whole declaration.
   for (const token of ['--dc-strip', '--dc-sheet', '--text-muted', '--text-primary',
@@ -1883,4 +1889,29 @@ test('?group=stage is a deep link to the pane, and a tap retires it', () => {
   // A junk value is not a pane.
   const junk = makeAppView({ location: { search: '?group=lanes', hash: '', href: 'http://x/' } });
   assert.equal(junk._getWorkshopGroup(), 'category');
+});
+
+test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
+  // #dev-workshop is a 760px reading column, which is right for one-line
+  // rows and wrong for four side-by-side columns: bounded there the board is
+  // a horizontal scroller before it is a board.
+  assert.match(CSS, /#dev-workshop \{ max-width: 760px/, 'the column bound exists');
+  assert.match(CSS, /#dev-workshop:has\(\.dev-ws-board\) \{ max-width: none; \}/,
+    'and comes off when the board is up');
+  // ...and goes back on to every OTHER child, so only the board widens.
+  assert.match(CSS,
+    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > :not\(\.dev-ws-board\) \{[^}]*max-width: 760px/);
+  // The rejected alternative, pinned so it does not come back: 100vw counts
+  // the scrollbar #dev-forum-scroll always has, so a negative-margin
+  // full-bleed overflows by its width and adds a horizontal scrollbar.
+  // Comments stripped first — the block explains WHY 100vw was rejected, and
+  // the prose naming it is not the declaration this forbids.
+  const block = CSS.slice(CSS.indexOf('.dev-ws-group {'), CSS.indexOf('.dev-ws-sort {'))
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/\d+vw/.test(block), 'no viewport-width full-bleed declaration');
+  // #dev-body drops to 4px of side padding for the Workshop, which reads as
+  // a clipped edge once the board spans the window: 4 + 8 restores the 12px
+  // the standalone board gets from #dev-body's own px-3.
+  assert.match(CSS, /#dev-body:has\(> #dev-workshop\) \{ padding: 8px 4px 12px; \}/);
+  assert.match(CSS, /\.dev-ws-board \{ padding: 2px 8px 0; \}/);
 });

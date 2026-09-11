@@ -11806,12 +11806,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    one row below, so the two controls have to look like different kinds of
    thing or the row reads as five options over one list. */
 .dev-ws-group {
-  display: flex; align-items: stretch; gap: 2px; align-self: flex-start;
+  display: flex; align-items: stretch; gap: 2px;
   padding: 3px; border-radius: 999px; background: var(--dc-strip);
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
+/* Full width of the reading column, the two panes splitting it evenly — the
+   same edge-to-edge the General-discussion card above it takes. Shrunk to
+   its labels the strip read as a pair of loose chips floating at the left
+   margin; at full width it reads as one control with two states, which is
+   what it is. `flex: 1 1 0` (not `1 1 auto`) so the halves are equal rather
+   than proportional to their label lengths. */
 .dev-ws-group-tab {
-  height: 28px; padding: 0 14px; border: 0; border-radius: 999px;
+  flex: 1 1 0; height: 32px; padding: 0 14px; border: 0; border-radius: 999px;
   background: transparent; color: var(--text-muted);
   font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
   white-space: nowrap;
@@ -11820,10 +11826,32 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   background: var(--dc-sheet); color: var(--text-primary);
   box-shadow: 0 1px 2px var(--app-sheet-shadow-near);
 }
-/* The board, nested. It brings its own horizontal scroller (#dev-kanban), so
-   this wrapper only has to stop the columns sitting flush against the strips
-   above them. */
-.dev-ws-board { padding-top: 2px; }
+
+/* ── The stage pane runs edge to edge ──────────────────────────────────
+   `#dev-workshop` is a 760px reading column (below), which is right for a
+   list of one-line rows and wrong for four side-by-side columns: bounded to
+   760px the board is a horizontal scroller before it is a board, and the
+   whole point of reading by stage is seeing the stages AT ONCE.
+
+   So when the stage pane is up the column bound comes OFF the workshop and
+   goes back on to every child except the board. The alternative — a
+   `100vw` full-bleed with negative margins — was rejected on purpose:
+   `100vw` counts the scrollbar that `#dev-forum-scroll` always has, so it
+   overflows by its width and adds a horizontal scrollbar to the page.
+   Re-parenting the bound has no such edge. */
+#dev-workshop:has(.dev-ws-board) { max-width: none; }
+#dev-workshop:has(.dev-ws-board) > .dev-ws > :not(.dev-ws-board) {
+  width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
+}
+/* The board brings its own horizontal scroller (#dev-kanban), so this
+   wrapper only has to stop the columns sitting flush against what is
+   around them. The 8px sides are not arbitrary: `#dev-body` drops to 4px
+   of side padding when it holds the Workshop (below), which is right for a
+   760px column centred in far more room than that and reads as a clipped
+   edge once the board spans the window — 4 + 8 restores the 12px the
+   standalone board gets from `#dev-body`'s own `px-3`, so the two surfaces
+   sit on the same gutter. */
+.dev-ws-board { padding: 2px 8px 0; }
 
 .dev-ws-sort { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 0; flex-wrap: wrap; }
 .dev-ws-sort-opts { display: flex; gap: 4px; }
