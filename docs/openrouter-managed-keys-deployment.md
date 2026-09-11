@@ -64,8 +64,9 @@ key remains available.
    verify GitHub or X.
 2. Open **Settings → OpenRouter**. The included-key card should show the
    configured daily limit.
-3. Click **Create my included key** once. Save the displayed key immediately;
-   it cannot be fetched from Usernode or OpenRouter again in plaintext.
+3. Click **Create my included key** once. Confirm it becomes active. The raw
+   company-funded credential is stored internally and is never sent to the
+   user's browser.
 4. Confirm OpenRouter is selected as the user's default and that the model
    picker contains the full key-visible catalog.
 5. As an admin, open **Admin → Users**. The user's row should show the local

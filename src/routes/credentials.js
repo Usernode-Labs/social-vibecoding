@@ -143,9 +143,16 @@ function credentialRoutes(config) {
       const claimed = await managedOpenRouter.provision({
         pool, userId: req.user.id, config,
       });
-      // This is the one and only plaintext response. The browser presents a
-      // copy/save affordance; subsequent GETs return only last4 + metadata.
-      return res.status(201).json({ ok: true, ...claimed, shownOnce: true });
+      // Company-funded credentials stay inside Usernode. Keep this response
+      // allowlisted so a future provisioning detail cannot accidentally
+      // expose credential material to the claimant's browser.
+      return res.status(201).json({
+        ok: true,
+        revision: claimed.revision,
+        defaultModel: claimed.defaultModel,
+        keyInfo: claimed.keyInfo,
+        managed: claimed.managed,
+      });
     } catch (err) {
       if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
         return res.status(err.statusCode).json({ error: err.message, code: err.code });
