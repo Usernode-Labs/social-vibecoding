@@ -11879,17 +11879,27 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    releases with it. `top: 0` and not an offset: the scroller's own top IS the
    top of the reading area — the platform header is outside it.
 
-   The background is opaque-ish rather than inherited: the rows scrolling under
-   a frosted-but-transparent bar were legible through it, which reads as a
-   rendering fault rather than a design. The negative inline margins and the
-   matching padding let the bar span the pane's full width while its content
-   keeps the pane's gutter, so nothing shows through at the edges. */
+   It wears the PANE'S OWN face, not a solid fill: this is one surface with a
+   part of it pinned, not a separate bar laid over it, and a solid white band
+   inside a frosted card announced itself as a second thing. The rows passing
+   under it stay readable because `--dc-frost` blurs them — the same 24px
+   blur every sheet in this language lifts on, and the reason a transparent
+   bar works here at all.
+
+   The backdrop-filter has to be RE-DECLARED rather than inherited from the
+   pane: a filter applies to what is behind the element it is set on, and what
+   passes under this bar is inside the pane, drawn above the pane's own
+   backdrop. The negative inline margins and the matching padding let the bar
+   span the pane's full width while its content keeps the pane's gutter, so
+   nothing shows through at the edges. */
 .dev-ws-pane-head {
   position: sticky; top: 0; z-index: 20;
   display: flex; flex-direction: column; gap: 8px;
   margin: -8px -10px 0; padding: 8px 10px;
   border-radius: 22px 22px 0 0;
-  background-color: var(--dc-sheet);
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
 }
 /* Inside the pane the toolbar is a plain row: the frame's own `px-3 pt-2`
    placed it against the scroller's edge, and here the pane supplies both. */
@@ -11923,7 +11933,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 #dev-workshop:has(.dev-ws-board) .dev-ws-pane-head {
   margin: 0; border-radius: 0;
+  padding-inline: 8px;
   box-shadow: 0 1px 0 var(--app-sheet-line);
+}
+/* The BOARD is what wanted the window, not the controls above it. A search
+   field and two tabs stretched across 1200px are a worse control than the same
+   pair at reading width — the tab strip in particular reads as pulled apart
+   rather than as a segmented pair. So on By stage the bar spans the window
+   (it is a pinned edge, and a bar that stopped short of the board under it
+   would look like a mistake) while what sits IN it keeps the column width the
+   rest of the screen is built on. */
+#dev-workshop:has(.dev-ws-board) .dev-ws-pane-head > * {
+  width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
 }
 /* The board brings its own horizontal scroller (#dev-kanban), so this
    wrapper only has to stop the columns sitting flush against what is

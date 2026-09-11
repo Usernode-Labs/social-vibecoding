@@ -2002,9 +2002,22 @@ test('the toolbar’s props cross roots through a store, not the view model', ()
 test('the pane head pins, and the pane does not clip what must escape it', () => {
   assert.match(CSS, /\.dev-ws-pane-head \{[^}]*position: sticky/);
   assert.match(CSS, /\.dev-ws-pane-head \{[^}]*top: 0/);
-  // The head is opaque on purpose: rows legible THROUGH a frosted bar read as
-  // a rendering fault rather than a design.
-  assert.match(CSS, /\.dev-ws-pane-head \{[^}]*background-color: var\(--dc-sheet\)/);
+  // The head wears the PANE'S OWN face, not a solid fill: this is one surface
+  // with a part of it pinned, not a separate bar laid over it. What passes
+  // under stays readable because the frost blurs it — and the filter has to be
+  // RE-DECLARED here, not inherited, because a backdrop-filter applies to what
+  // is behind the element it is set on, and these rows are inside the pane.
+  assert.match(CSS, /\.dev-ws-pane-head \{[^}]*background-color: var\(--dc-sheet-fill\)/);
+  assert.match(CSS, /\.dev-ws-pane-head \{[^}]*backdrop-filter: var\(--dc-frost\)/);
+  for (const token of ['--dc-sheet-fill', '--dc-frost']) {
+    assert.ok(CSS.includes(`${token}:`), `${token} is defined`);
+  }
+  // On By stage the BAR spans the window — it is a pinned edge, and one that
+  // stopped short of the board under it would look like a mistake — but what
+  // sits IN it keeps the reading column. A search field and two tabs stretched
+  // across the whole window are a worse control than the same pair at 760px.
+  assert.match(CSS,
+    /#dev-workshop:has\(\.dev-ws-board\) \.dev-ws-pane-head > \* \{[^}]*max-width: 760px/);
   // Two things inside this subtree must escape the pane's box: the "+" menu is
   // absolutely positioned, and sticky does not work under a clipping ancestor.
   assert.match(CSS, /\.dev-ws-pane \{[^}]*overflow: visible/);
