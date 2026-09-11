@@ -431,7 +431,7 @@ test('BuildVenues.selectorHtml is retired, and nothing still calls it', () => {
   assert.doesNotMatch(VENUES_SRC, /selectorHtml: selectorHtml/);
   assert.doesNotMatch(DEV_CHAT_SRC, /BuildVenues\.selectorHtml/);
   // The venue LOOKUP it did is what the model reads instead.
-  assert.match(DEV_CHAT_SRC, /BuildVenues\.venue\(DevChat\._currentVenueId\(\)\)/);
+  assert.match(DEV_CHAT_SRC, /BuildVenues\.sessionVenue\(/);
   // noteHtml and chipHtml stay strings — their callers still are.
   assert.match(VENUES_SRC, /function noteHtml/);
   assert.match(VENUES_SRC, /function chipHtml/);

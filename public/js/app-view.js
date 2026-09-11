@@ -6934,11 +6934,12 @@ const AppView = {
   _sessionVenueChipSpec(s) {
     const BV = (typeof window !== 'undefined' && window.BuildVenues) || null;
     if (!BV || !s || s.source === 'imported') return null;
-    const v = BV.venue(BV.currentVenue({
+    const v = BV.sessionVenue({
       source: s.source,
       agentBackend: s.agent_backend,
       externalAgent: s.external_agent,
-    }));
+      buildVenue: s.build_venue,
+    });
     if (!v) return null;
     return { t: 'venue', key: 'venue', label: v.label, title: `${v.label}: ${v.blurb}` };
   },

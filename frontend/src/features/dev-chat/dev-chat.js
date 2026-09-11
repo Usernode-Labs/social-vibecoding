@@ -7704,7 +7704,13 @@ const DevChat = {
   // title sentence is that builder's, moved here whole.
   _headerVenue(session) {
     if (!window.BuildVenues || !BuildVenues.venue) return null;
-    const v = BuildVenues.venue(DevChat._currentVenueId());
+    const v = BuildVenues.sessionVenue({
+      current: DevChat._currentVenueId(),
+      source: session?.source,
+      externalAgent: session?.external_agent,
+      buildVenue: session?.build_venue,
+      localAgent: DevChat._localAgent,
+    });
     if (!v) return null;
     return {
       id: v.id,
