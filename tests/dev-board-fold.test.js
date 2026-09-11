@@ -368,8 +368,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 578 → 580: the two fold-mark checks, one per state;
   // 580 → 587: the eight #1876 checks that replace one, two states of the
   // two-step waitlist confirm errand × its visible half, its hidden half and
-  // its step line, plus step 2's back link and resend).
-  assert.equal(DAPP.tests.length, 587);
+  // its step line, plus step 2's back link and resend;
+  // 587 → 589: the two #1960 checks on the draft-delete shot, one for the
+  // count the trash left behind and one for which draft is still standing).
+  assert.equal(DAPP.tests.length, 589);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

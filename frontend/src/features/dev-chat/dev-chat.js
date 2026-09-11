@@ -3236,6 +3236,9 @@ const DevChat = {
       // `drafts` is null when the session payload's best-effort field
       // failed, which makes _reconcileDrafts fetch the list itself.
       DevChat._reconcileDrafts(session.id, drafts);
+      // #1960: `?shot=draft-delete` stages the reported failure on top of
+      // that list. No-op on every other URL and every other session.
+      DevChat._applyDraftDeleteShot(session.id);
       DevChat._startHeartbeat();
       // Drop any streaming title marker carried over from the previous
       // session. If THIS session is mid-run, the busy check below
@@ -8909,6 +8912,53 @@ const DevChat = {
     } catch { return false; }
   },
 
+  // Screenshot-state deep link `?shot=draft-delete` (#1960).
+  //
+  // "Deleting drafts is broken" turned out to be a RACE, and a race has no
+  // resting state a URL can be pointed at: the draft only came back when
+  // the trash landed while a reconcile's list was already in the air. So
+  // this link does not paint a state, it PERFORMS the report — it starts a
+  // reconcile, trashes a draft while that list is still in flight, then
+  // lets a settled resync run on top of it. What the check reads
+  // afterwards is the only thing that ever mattered to the user: is the
+  // draft still gone.
+  //
+  // Unlike every other `?shot=` link this one WRITES: a real DELETE,
+  // through the real route, against the real table. That is the point — a
+  // delete that only pretends to happen cannot catch a delete that comes
+  // back. It is fenced instead of env-gated, to one seeded staging session
+  // and one seeded draft id (seedStagingDraftDelete in src/db/migrate.js);
+  // neither exists in production, so the link is simply inert there. And
+  // because it names the id it removes rather than "the first row", a
+  // re-run finds it already gone and lands on exactly the same screen.
+  SHOT_DRAFT_DELETE_SESSION: 990414,
+  SHOT_DRAFT_DELETE_ID: 'dropthisdraft',
+
+  async _applyDraftDeleteShot(sessionId) {
+    try {
+      if (new URLSearchParams(location.search).get('shot') !== 'draft-delete') return;
+    } catch { return; }
+    if (Number(sessionId) !== DevChat.SHOT_DRAFT_DELETE_SESSION) return;
+    const victim = DevChat.SHOT_DRAFT_DELETE_ID;
+    const onThisSession = () => DevChat.currentSession
+      && Number(DevChat.currentSession.id) === Number(sessionId);
+
+    // The session payload's drafts field is best-effort, so the list may
+    // not be here yet. Settle it before staging anything.
+    if (!DevChat._getSavedDrafts(sessionId).some((d) => d.id === victim)) {
+      await DevChat._reconcileDrafts(sessionId, null);
+    }
+    if (!onThisSession()) return;
+
+    // A list fetched BEFORE the trash: the snapshot that used to undo it.
+    const inFlight = DevChat._reconcileDrafts(sessionId, null);
+    DevChat._deleteSavedDraft(victim);
+    await inFlight;
+    if (!onThisSession()) return;
+    // …and a resync after it, which is what retires the tombstone.
+    await DevChat.applyDraftsUpdate(sessionId);
+  },
+
   // Any `?shot=` deep link, whichever one. Read by openSession to keep a
   // capture read-only — see the auto-resume above.
   _isShotDeepLink() {
@@ -9038,8 +9088,13 @@ const DevChat = {
 
   // Replace the visible list, preserving the tombstones the mirror carries
   // (they belong to the sync layer, not to the list the user sees).
+  //
+  // Called only by the four local mutators (save / send / edit / trash), so
+  // it is the right place to advance the #1960 mutation clock: any list a
+  // reconcile fetched before this moment is now out of date.
   _setSavedDrafts(sessionId, list) {
     if (!sessionId) return;
+    DevChat._bumpDraftSeq(sessionId);
     const { tombstones } = DevChat._readDraftMirror(sessionId);
     DevChat._writeDraftMirror(sessionId, {
       drafts: (list || []).map(DevChat._normalizeDraft).filter(Boolean),
@@ -9063,6 +9118,7 @@ const DevChat = {
   _addDraftTombstone(sessionId, id) {
     const mirror = DevChat._readDraftMirror(sessionId);
     if (mirror.tombstones.some((t) => t.id === id)) return;
+    DevChat._bumpDraftSeq(sessionId);
     mirror.tombstones.push({ id, at: new Date().toISOString() });
     DevChat._writeDraftMirror(sessionId, mirror);
   },
@@ -9072,6 +9128,41 @@ const DevChat = {
     const tombstones = mirror.tombstones.filter((t) => t.id !== id);
     if (tombstones.length === mirror.tombstones.length) return;
     DevChat._writeDraftMirror(sessionId, { drafts: mirror.drafts, tombstones });
+  },
+
+  _isDraftTombstoned(sessionId, id) {
+    return DevChat._readDraftMirror(sessionId).tombstones.some((t) => t.id === id);
+  },
+
+  // ── #1960: how old is the list I'm holding? ─────────────────────────
+  //
+  // A reconcile fetches the server's drafts and then decides what to keep.
+  // Between those two moments the user can trash a draft, and the list in
+  // hand — fetched BEFORE the delete — still contains it. Nothing in the
+  // snapshot says so, because a REST list carries no clock.
+  //
+  // This counter is that clock. Every local mutation bumps it; a reconcile
+  // reads it before fetching and again after, and a snapshot taken across
+  // a bump is STALE: it may be missing a save and, far worse, may still be
+  // showing a delete. Stale snapshots are still merged (the tombstone set
+  // subtracts what the user removed), they just aren't allowed to retire a
+  // tombstone — that is the one decision that needs a list which postdates
+  // the delete it is being asked to forget.
+  //
+  // In-memory on purpose: it orders events inside one page's lifetime,
+  // which is the only place the two sides of the race can both exist.
+  _draftMutationSeq: Object.create(null),
+
+  _bumpDraftSeq(sessionId) {
+    if (!sessionId) return 0;
+    const key = String(sessionId);
+    DevChat._draftMutationSeq[key] = (DevChat._draftMutationSeq[key] || 0) + 1;
+    return DevChat._draftMutationSeq[key];
+  },
+
+  _draftSeq(sessionId) {
+    if (!sessionId) return 0;
+    return DevChat._draftMutationSeq[String(sessionId)] || 0;
   },
 
   _newDraftId() {
@@ -9089,6 +9180,10 @@ const DevChat = {
   // reconcile flush can re-send freely.
   async _pushDraftAdd(sessionId, draft) {
     if (!sessionId || !draft) return false;
+    // #1960: the user may have trashed this draft before its upload ever
+    // ran (a reconcile flush queues uploads, and the flush is async).
+    // Uploading it now would put back exactly what the delete removed.
+    if (DevChat._isDraftTombstoned(sessionId, draft.id)) return false;
     try {
       const res = await fetch(`/api/sessions/${sessionId}/drafts`, {
         method: 'POST',
@@ -9104,13 +9199,30 @@ const DevChat = {
         }
         return false;
       }
+      // …and it may have been trashed WHILE the POST was in flight, in
+      // which case the delete raced ahead of a row that didn't exist yet
+      // and the server is now holding a draft nobody asked for. Undo it.
+      if (DevChat._isDraftTombstoned(sessionId, draft.id)) {
+        DevChat._pushDraftDelete(sessionId, draft.id);
+        return false;
+      }
       DevChat._markDraftSynced(sessionId, draft.id, true);
       return true;
     } catch { return false; }
   },
 
   // Delete one draft. A tombstone is recorded first by the caller so an
-  // offline delete still replays; success drops it again.
+  // offline delete still replays.
+  //
+  // #1960: a 200 here does NOT retire the tombstone. This function knows
+  // the server has honoured the delete; it does not know whether some
+  // reconcile is still holding a list fetched before it, and retiring the
+  // tombstone hands that reconcile a draft with nothing left to suppress
+  // it — which is how a trashed draft came back, in the list AND in
+  // storage, and got re-uploaded on the reconcile after that. Retiring is
+  // now the reconcile's job, from a snapshot it can prove postdates the
+  // delete (see _reconcileDrafts). The cost is one tombstone living until
+  // the next reconcile; they are capped, and the id is never reused.
   async _pushDraftDelete(sessionId, id) {
     if (!sessionId || !id) return false;
     try {
@@ -9118,9 +9230,7 @@ const DevChat = {
         `/api/sessions/${sessionId}/drafts/${encodeURIComponent(id)}`,
         { method: 'DELETE' }
       );
-      if (!res.ok) return false;
-      DevChat._dropDraftTombstone(sessionId, id);
-      return true;
+      return !!res.ok;
     } catch { return false; }
   },
 
@@ -9140,8 +9250,18 @@ const DevChat = {
   // after that means the network is down: keep the mirror exactly as-is.
   async _reconcileDrafts(sessionId, serverList) {
     if (!sessionId) return;
+    // #1960: how old is this list? Only a snapshot we fetched ourselves,
+    // with no local change across the wait, is recent enough to retire a
+    // tombstone. A caller-supplied array came from some earlier payload
+    // (openSession's session fetch) whose age we cannot see, so it is
+    // treated as unprovable — it is still merged, it just never gets to
+    // decide that a delete has been honoured. The next self-fetching
+    // reconcile (the WS echo, or returning to the tab) does that.
+    const seqAtFetch = DevChat._draftSeq(sessionId);
     let server = serverList;
+    let ownFetch = false;
     if (!Array.isArray(server)) {
+      ownFetch = true;
       try {
         const res = await fetch(`/api/sessions/${sessionId}/drafts`);
         if (!res.ok) return;
@@ -9149,6 +9269,9 @@ const DevChat = {
         server = Array.isArray(data.drafts) ? data.drafts : [];
       } catch { return; }
     }
+    // Did the user change anything while we were waiting? If so this list
+    // predates that change and cannot be trusted to retire tombstones.
+    const snapshotIsCurrent = ownFetch && DevChat._draftSeq(sessionId) === seqAtFetch;
 
     const mirror = DevChat._readDraftMirror(sessionId);
     const tombstoned = new Set(mirror.tombstones.map((t) => t.id));
@@ -9162,8 +9285,15 @@ const DevChat = {
     // tombstones it has already honoured.
     const deletes = [];
     for (const t of mirror.tombstones) {
+      // Still listed: re-issue the DELETE. It is idempotent, so doing this
+      // to a draft the server already dropped costs one request.
       if (serverById.has(t.id)) deletes.push(DevChat._pushDraftDelete(sessionId, t.id));
-      else DevChat._dropDraftTombstone(sessionId, t.id);
+      // Absent from a snapshot that postdates every local change: the
+      // server has honoured it and no in-flight list can resurrect it.
+      else if (snapshotIsCurrent) DevChat._dropDraftTombstone(sessionId, t.id);
+      // Absent from a STALE snapshot proves nothing — this list may simply
+      // have been taken before the draft existed. Keep the tombstone; the
+      // reconcile that follows the delete's own round trip retires it.
     }
 
     // (1) union, minus tombstones. A server row wins on text (it is the
@@ -9229,10 +9359,12 @@ const DevChat = {
   // WS `session_drafts_changed` from another device of the SAME user.
   // No-op unless that session is the one on screen; the next open or
   // visibility-return reconciles anyway, so a dropped socket costs nothing.
+  // Returns the reconcile's promise so a caller (and the tests) can wait
+  // for it; nothing in the app does, the WS dispatch is fire-and-forget.
   applyDraftsUpdate(sessionId) {
-    if (!DevChat.currentSession) return;
-    if (Number(DevChat.currentSession.id) !== Number(sessionId)) return;
-    DevChat._reconcileDrafts(DevChat.currentSession.id, null);
+    if (!DevChat.currentSession) return Promise.resolve();
+    if (Number(DevChat.currentSession.id) !== Number(sessionId)) return Promise.resolve();
+    return DevChat._reconcileDrafts(DevChat.currentSession.id, null);
   },
 
   _toast(msg) {

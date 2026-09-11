@@ -547,7 +547,16 @@ test('#940: saving uploads the draft and marks it synced', async () => {
   assert.equal(mirror.drafts[0].synced, true, 'a landed upload marks the row synced');
 });
 
-test('#940: trashing a draft deletes it server-side and clears its tombstone', async () => {
+test('#940: trashing a draft deletes it server-side, and a later reconcile clears the tombstone', async () => {
+  // CHANGED BY #1960. This used to assert that the tombstone was gone the
+  // moment the DELETE returned 200, which is what _pushDraftDelete did.
+  // That is wrong, and it is the resurrection bug: the DELETE's own 200
+  // says nothing about the GETs already in flight, and dropping the
+  // tombstone leaves a stale one with nothing to suppress the draft it is
+  // still listing. Retirement now belongs to the reconcile — which can
+  // tell a snapshot older than the delete from a newer one — so the
+  // tombstone outlives the round trip by design. The next reconcile is
+  // the one that clears it, and this test now covers both halves.
   const { DevChat, document, storage, net } = makeHarness();
   open(DevChat, { streaming: true });
   const input = document.getElementById('dc-input');
@@ -563,8 +572,16 @@ test('#940: trashing a draft deletes it server-side and clears its tombstone', a
   assert.ok(del, 'trash must DELETE');
   assert.equal(del.url, `/api/sessions/${SESSION_ID}/drafts/${d.id}`);
   assert.deepEqual(net.server, [], 'the server copy is gone');
+  assert.deepEqual(JSON.parse(storage.get(KEY)).tombstones.map((t) => t.id), [d.id],
+    'the tombstone survives the delete round trip');
+
+  // The delete's own WS echo comes back and reconciles. THIS list is newer
+  // than the delete, so it can prove the server has honoured it.
+  await DevChat.applyDraftsUpdate(SESSION_ID);
+  await flush();
   assert.deepEqual(JSON.parse(storage.get(KEY)).tombstones, [],
-    'a confirmed delete drops its tombstone');
+    'a reconcile over a post-delete snapshot retires the tombstone');
+  assert.deepEqual(texts(DevChat), [], 'and the draft stays gone');
 });
 
 test('#940: sending a draft removes it on every device', async () => {
@@ -787,4 +804,226 @@ test('#940: an emptied list still stays empty across a reconcile', () => {
 
   assert.deepEqual(texts(DevChat), [],
     'an explicitly emptied list is never re-seeded by the demo drafts');
+});
+
+// ── #1960: "deleting drafts is broken" ─────────────────────────────────
+//
+// The trash button always worked on a quiet list; what was broken was a
+// delete that landed while a reconcile was in flight. Saving a draft POSTs,
+// the POST fans a `session_drafts_changed` out to every one of that user's
+// sockets INCLUDING the one that sent it, and the echo runs a reconcile —
+// so there is a GET in the air over exactly the seconds the user is reading
+// the row they just saved and deciding to trash it. (Returning to the tab
+// opens the same window, via the visibilitychange reconcile.)
+//
+// That GET was issued before the delete and answers with the draft still
+// listed. The tombstone is what stops a reconcile re-adopting a deleted
+// draft, and _pushDraftDelete used to drop it the instant the DELETE
+// returned 200 — so the stale list arrived with nothing left to suppress
+// it and the reconcile put the draft back in the rendered list, back in
+// localStorage, and re-uploaded it on the pass after that. From the user's
+// side the row reappears a moment after they trash it, and stays.
+//
+// The fix is a mutation counter: a snapshot taken across a local change
+// may still be merged, but it may not retire a tombstone.
+
+// A fetch wrapper that takes the drafts GET's snapshot NOW and delivers it
+// LATER — a list genuinely in flight across whatever the test does next.
+function holdOneGet(sandbox) {
+  const real = sandbox.fetch;
+  let release;
+  const held = new Promise((r) => { release = r; });
+  let armed = true;
+  sandbox.fetch = async (url, opts = {}) => {
+    const method = (opts.method || 'GET').toUpperCase();
+    if (armed && method === 'GET' && /\/drafts$/.test(String(url))) {
+      armed = false;
+      const res = await real(url, opts);
+      const snapshot = await res.json();   // taken before the delete…
+      await held;                          // …delivered after it
+      return { ok: true, status: 200, json: async () => snapshot };
+    }
+    return real(url, opts);
+  };
+  return () => { release(); };
+}
+
+test('#1960: a delete during an in-flight reconcile is not undone', async () => {
+  const { DevChat, document, storage, sandbox, net } = makeHarness();
+  open(DevChat, { streaming: true });
+  const input = document.getElementById('dc-input');
+  input.value = 'regrettable';
+  DevChat._saveComposerDraft();
+  await flush();
+  const [d] = DevChat._getSavedDrafts(SESSION_ID);
+  assert.deepEqual(net.server.map((x) => x.id), [d.id], 'saved and uploaded');
+
+  // The save's own WS echo starts a reconcile. Its GET sees the draft.
+  const deliver = holdOneGet(sandbox);
+  const reconciling = DevChat.applyDraftsUpdate(SESSION_ID);
+  await flush();
+
+  // The user trashes the row while that list is still in the air.
+  DevChat._deleteSavedDraft(d.id);
+  await flush();
+  assert.deepEqual(net.server, [], 'the DELETE lands');
+
+  // Now the stale list arrives, still listing the draft.
+  deliver();
+  await reconciling;
+  await flush();
+
+  assert.deepEqual(texts(DevChat), [], 'the draft does not come back');
+  assert.deepEqual(JSON.parse(storage.get(KEY)).drafts, [],
+    'and it does not come back in storage either');
+  assert.deepEqual(net.server, [], 'nor is it re-uploaded to the server');
+
+  // One more reconcile, this time over a list nobody raced: it is safe to
+  // retire the tombstone, and the draft is still gone.
+  await DevChat.applyDraftsUpdate(SESSION_ID);
+  await flush();
+  assert.deepEqual(texts(DevChat), []);
+  assert.deepEqual(net.server, []);
+  assert.deepEqual(JSON.parse(storage.get(KEY)).tombstones, [],
+    'the tombstone retires once a fresh snapshot confirms the delete');
+});
+
+test('#1960: a snapshot that predates the delete may not retire its tombstone', async () => {
+  // The guard on its own. The server holds nothing, so the in-flight list
+  // is EMPTY — and an empty list looks exactly like "the delete landed".
+  // It isn't: it was taken before the user trashed anything, so its
+  // silence is about a draft that had not been uploaded yet, not about a
+  // delete being honoured. Retiring on it would leave the pending upload
+  // with nothing to stop it.
+  const storage = new Map();
+  storage.set(KEY, JSON.stringify({
+    v: 2,
+    drafts: [{ ...srv('local1', 'typed here', 1), synced: false }],
+    tombstones: [],
+  }));
+  const { DevChat, sandbox, net } = makeHarness(storage, { server: [] });
+  open(DevChat);
+
+  const deliver = holdOneGet(sandbox);
+  const reconciling = DevChat._reconcileDrafts(SESSION_ID, null);
+  await flush();
+
+  DevChat._deleteSavedDraft('local1');
+  await flush();
+
+  deliver();
+  await reconciling;
+  await flush();
+
+  assert.deepEqual(JSON.parse(storage.get(KEY)).tombstones.map((t) => t.id), ['local1'],
+    'the tombstone survives a list that cannot speak to the delete');
+  assert.deepEqual(texts(DevChat), [], 'and the draft stays deleted');
+  assert.deepEqual(net.server, [], 'and is never uploaded by the reconcile flush');
+});
+
+test('#1960: a caller-supplied list never retires a tombstone', async () => {
+  // openSession hands reconcile the drafts from its session payload. That
+  // payload's age is invisible from here, so it is merged but not trusted
+  // to declare a delete honoured — the next self-fetching pass does that.
+  const storage = new Map();
+  const net = { server: [srv('remote1', 'parked elsewhere', 1)] };
+  const { DevChat } = makeHarness(storage, net);
+  open(DevChat);
+  await DevChat._reconcileDrafts(SESSION_ID, net.server.map((x) => ({ ...x })));
+  assert.deepEqual(texts(DevChat), ['parked elsewhere']);
+
+  DevChat._deleteSavedDraft('remote1');
+  await flush();
+  await DevChat._reconcileDrafts(SESSION_ID, []);
+  assert.deepEqual(JSON.parse(storage.get(KEY)).tombstones.map((t) => t.id), ['remote1'],
+    'a payload of unknown age leaves the tombstone alone');
+
+  await DevChat.applyDraftsUpdate(SESSION_ID);
+  await flush();
+  assert.deepEqual(JSON.parse(storage.get(KEY)).tombstones, [],
+    'a fetch of our own retires it');
+  assert.deepEqual(texts(DevChat), []);
+});
+
+test('#1960: a draft trashed before its upload lands does not survive on the server', async () => {
+  // The same race in the other direction: save (POST in flight), trash
+  // (DELETE reaches a server that has no such row yet), then the POST
+  // lands and creates it. Nobody asked for that row, so it is undone.
+  const { DevChat, document, sandbox, net, storage } = makeHarness();
+  open(DevChat, { streaming: true });
+
+  const real = sandbox.fetch;
+  let releasePost;
+  const heldPost = new Promise((r) => { releasePost = r; });
+  sandbox.fetch = async (url, opts = {}) => {
+    if ((opts.method || 'GET').toUpperCase() === 'POST') await heldPost;
+    return real(url, opts);
+  };
+
+  document.getElementById('dc-input').value = 'never mind';
+  DevChat._saveComposerDraft();
+  await flush();
+  const [d] = DevChat._getSavedDrafts(SESSION_ID);
+
+  DevChat._deleteSavedDraft(d.id);
+  await flush();
+  assert.deepEqual(net.server, [], 'the DELETE hit an empty server');
+
+  releasePost();
+  await flush();
+  await flush();
+
+  assert.deepEqual(net.server, [], 'the late POST is undone rather than left behind');
+  assert.deepEqual(texts(DevChat), []);
+  assert.deepEqual(JSON.parse(storage.get(KEY)).drafts, []);
+});
+
+test('#1960: reconcile still re-issues the DELETE for a draft the server kept', async () => {
+  // The tombstone living longer must not stop the replay it exists for.
+  const storage = new Map();
+  const net = { server: [srv('remote1', 'delete me', 1)] };
+  const { DevChat } = makeHarness(storage, net);
+  open(DevChat);
+  await DevChat._reconcileDrafts(SESSION_ID, net.server.map((x) => ({ ...x })));
+
+  net.fail = true;
+  DevChat._deleteSavedDraft('remote1');
+  await flush();
+  net.fail = false;
+
+  // A snapshot that still lists it, twice over: each pass re-sends the
+  // idempotent DELETE rather than adopting the row.
+  await DevChat._reconcileDrafts(SESSION_ID, [srv('remote1', 'delete me', 1)]);
+  assert.deepEqual(texts(DevChat), []);
+  assert.deepEqual(net.server, [], 'the replay reached the server');
+
+  await DevChat.applyDraftsUpdate(SESSION_ID);
+  await flush();
+  assert.deepEqual(JSON.parse(storage.get(KEY)).tombstones, [],
+    'and the tombstone retires once the server agrees');
+});
+
+test('#1960: an ordinary save during a reconcile is still adopted', async () => {
+  // The freshness guard must not make reconcile drop work — only refuse to
+  // retire tombstones. A draft saved mid-reconcile is merged and uploaded.
+  const { DevChat, document, sandbox, net } = makeHarness(new Map(), {
+    server: [srv('remote1', 'from the laptop', 3)],
+  });
+  open(DevChat, { streaming: true });
+
+  const deliver = holdOneGet(sandbox);
+  const reconciling = DevChat._reconcileDrafts(SESSION_ID, null);
+  await flush();
+
+  document.getElementById('dc-input').value = 'from the phone';
+  DevChat._saveComposerDraft();
+  await flush();
+
+  deliver();
+  await reconciling;
+  await flush();
+
+  assert.deepEqual(texts(DevChat).sort(), ['from the laptop', 'from the phone']);
+  assert.deepEqual(net.server.map((x) => x.text).sort(),
+    ['from the laptop', 'from the phone']);
 });

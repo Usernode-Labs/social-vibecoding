@@ -2061,6 +2061,18 @@
       "expectText": "on all your devices"
     },
     {
+      "name": "Trashing a saved draft removes it, and a resync does not bring it back (#1960)",
+      "path": "/?shot=draft-delete#app/usernode-2d5619/dev/sessions/990414",
+      "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row[data-draft-id=\"keepthisdraft\"] .dc-draft-trash",
+      "expectText": "Saved drafts (1)"
+    },
+    {
+      "name": "…and the draft left standing is the one that was not trashed (#1960)",
+      "path": "/?shot=draft-delete#app/usernode-2d5619/dev/sessions/990414",
+      "expectSelector": "#dc-drafts .dc-draft-row[data-draft-id=\"keepthisdraft\"] .dc-draft-text",
+      "expectText": "the one that is still here afterwards"
+    },
+    {
       "name": "Saved drafts render from the database, with no ?shot param (#940)",
       "path": "/#app/usernode-2d5619/dev/sessions/990402",
       "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send",

@@ -66,6 +66,7 @@ async function migrate(config) {
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
   await seedStagingSavedDrafts(pool, config);
+  await seedStagingDraftDelete(pool, config);
   await seedStagingVenueLine(pool, config);
   await seedStagingDevFlowWizard(pool, config);
   await seedStagingSessionOptions(pool, config);
@@ -2786,6 +2787,77 @@ async function seedStagingSavedDrafts(pool, config) {
     appId,
     owner: owner.username,
     sessionId: STAGING_SAVED_DRAFTS_SESSION_ID,
+    sessionInserted: rowCount,
+    draftsInserted: drafts,
+  });
+}
+
+// #1960: the fixture the DELETE check trashes from.
+//
+// A dedicated session, and the reason is the same one 990402 gives for not
+// living on 990401: this check is DESTRUCTIVE. `?shot=draft-delete` really
+// trashes `dropthisdraft` through the real handler, the real route and the
+// real table, because a delete that only pretends to happen cannot catch a
+// delete that comes back. Putting that on 990402 would empty the fixture
+// whose two rows another check asserts by text, and check order is not
+// something a proposal gets to choose.
+//
+// Idempotent on retry as well as on reboot: the shot deletes ONE KNOWN ID,
+// so a second run finds it already gone and the surviving row is the same
+// either way. The two texts are deliberately self-describing, because the
+// only thing the check can see is which of them is on screen.
+//
+// 990414 continues the 9904xx dev-session block (990401-990413 are taken).
+const STAGING_DRAFT_DELETE_SESSION_ID = 990414;
+
+const STAGING_DRAFT_DELETE_DRAFTS = [
+  { id: 'dropthisdraft', text: 'Staging demo draft: the one this check trashes.', minutesAgo: 6 },
+  { id: 'keepthisdraft', text: 'Staging demo draft: the one that is still here afterwards.', minutesAgo: 5 },
+];
+
+async function seedStagingDraftDelete(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging draft-delete fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const owner = await getStagingCheckViewer(pool, 'Staging draft-delete fixture');
+  if (!owner) return;
+
+  const { rowCount } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_title, session_title, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/draft-delete', NULL,
+             '[staging fixture] Trashing a saved draft', 'active',
+             NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '4 minutes')
+     ON CONFLICT (id) DO UPDATE SET user_id = EXCLUDED.user_id`,
+    [STAGING_DRAFT_DELETE_SESSION_ID, appId, owner.id]
+  );
+
+  let drafts = 0;
+  for (const d of STAGING_DRAFT_DELETE_DRAFTS) {
+    const { rowCount: added } = await pool.query(
+      `INSERT INTO chat_session_drafts (session_id, user_id, draft_id, content, saved_at)
+       VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 minute'))
+       ON CONFLICT (session_id, draft_id) DO UPDATE SET user_id = EXCLUDED.user_id`,
+      [STAGING_DRAFT_DELETE_SESSION_ID, owner.id, d.id, d.text, d.minutesAgo]
+    );
+    drafts += added;
+  }
+
+  log.info('db', 'Staging draft-delete fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId: STAGING_DRAFT_DELETE_SESSION_ID,
     sessionInserted: rowCount,
     draftsInserted: drafts,
   });
