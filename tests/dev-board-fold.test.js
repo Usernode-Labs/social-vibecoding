@@ -374,8 +374,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // columns under it with the summary strip still above them;
   // 589 → 590: the Workshop's working pane, pinning that the search, filters
   // and "+" render in its sticky head directly above those tabs rather than
-  // in the frame's chrome two strips away).
-  assert.equal(DAPP.tests.length, 590);
+  // in the frame's chrome two strips away;
+  // 590 → 592: two additional checks cover the underway overview and
+  // workspace deep link.
+  assert.equal(DAPP.tests.length, 592);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

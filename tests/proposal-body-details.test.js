@@ -131,13 +131,13 @@ test('an imported Underway topic reuses proposal details without opening voting'
   assert.equal(promoted.roster.phase, 'loading');
 });
 
-test('the imported session topic renders summary, PR body and check details in order', () => {
+test('every underway session topic renders summary, PR body and check details in order', () => {
   const sessionBranch = APP_VIEW_SRC.slice(
     APP_VIEW_SRC.indexOf("} else if (t.kind === 'session')"),
     APP_VIEW_SRC.indexOf('\n    } else {', APP_VIEW_SRC.indexOf("} else if (t.kind === 'session')") + 1)
   );
   assert.match(sessionBranch,
-    /body = imported[\s\S]*?summaryHtml: AppView\._proposalSummaryHtml\(item\),[\s\S]*?proposalBody: AppView\._proposalBodyView\(item\),[\s\S]*?details: AppView\._proposalDetailsView\(item\),/);
+    /body = \{[\s\S]*?summaryHtml: AppView\._proposalSummaryHtml\(item\),[\s\S]*?proposalBody: AppView\._proposalBodyView\(item\),[\s\S]*?details: AppView\._proposalDetailsView\(item\),/);
   assert.doesNotMatch(sessionBranch, /castVote|_cardVoteButtonSpecs|voteButtonsHtml/,
     'metadata reuse must not pull voting controls into Underway');
 });
