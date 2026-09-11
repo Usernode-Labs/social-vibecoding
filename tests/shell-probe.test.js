@@ -35,7 +35,7 @@ test('classify: 401/403 are gated', () => {
 
 test('classify: off-origin redirect is gated (bounce to the platform)', () => {
   assert.equal(
-    classifyResponse(302, 'https://social-vibecoding.usernodelabs.org/#login', 'http://a:3000/'),
+    classifyResponse(302, 'https://my.onhomeroom.com/#login', 'http://a:3000/'),
     'gated'
   );
 });

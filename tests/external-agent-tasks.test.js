@@ -2160,7 +2160,7 @@ test('a username printed into the notice cannot carry markup or an instruction',
 });
 
 test('the notice degrades to fit the guidance budget, never overflows it', () => {
-  const long = `https://social-vibecoding.usernodelabs.org/#app/${'x'.repeat(40)}/dev/sessions/3140`;
+  const long = `https://my.onhomeroom.com/#app/${'x'.repeat(40)}/dev/sessions/3140`;
   const many = (mine) => [
     { proposalId: 3140, mine, author: 'a'.repeat(64), webPath: long },
     ...[1, 2, 3, 4].map((i) => ({ proposalId: i, mine: false, author: 'b', webPath: long })),

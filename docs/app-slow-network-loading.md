@@ -58,7 +58,7 @@ So:
 ### 1. Keep the bridge tag
 
 ```html
-<script src="https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js"></script>
+<script src="https://my.onhomeroom.com/usernode-bridge/v1/bridge.js"></script>
 ```
 
 Required whether or not the app calls a single `usernode.*` API: it is how

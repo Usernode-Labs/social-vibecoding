@@ -11,7 +11,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
-process.env.USERNODE_DOMAIN = process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org';
+process.env.USERNODE_DOMAIN = process.env.USERNODE_DOMAIN || 'my.onhomeroom.com';
 const DOMAIN = process.env.USERNODE_DOMAIN;
 
 const { isKnownHost } = require('../src/routes/internal');

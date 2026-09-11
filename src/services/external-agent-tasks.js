@@ -1188,9 +1188,9 @@ function buildWorkOrder({
 // the diagnosis ("this is your container, not your code") is specific to an
 // agent working offline and belongs nowhere else.
 const HOSTED_ASSETS = Object.freeze([
-  'https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js',
-  'https://social-vibecoding.usernodelabs.org/usernode-native/v1/native.css',
-  'https://social-vibecoding.usernodelabs.org/usernode-tailwind/v1/tailwind.js',
+  'https://my.onhomeroom.com/usernode-bridge/v1/bridge.js',
+  'https://my.onhomeroom.com/usernode-native/v1/native.css',
+  'https://my.onhomeroom.com/usernode-tailwind/v1/tailwind.js',
 ]);
 
 function hostedAssetWarning(webPath) {

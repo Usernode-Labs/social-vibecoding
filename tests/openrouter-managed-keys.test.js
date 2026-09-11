@@ -35,7 +35,7 @@ test('management client creates one daily-limited child key in the configured wo
   const result = await managementClient.createKey({
     apiKey: 'sk-or-v1-management',
     baseUrl: 'https://openrouter.ai/api/v1',
-    origin: 'https://usernode.dev',
+    origin: 'https://my.onhomeroom.com',
     name: 'usernode-user-7',
     limit: 1.5,
     workspaceId: 'workspace-123',
@@ -143,7 +143,7 @@ test('default-open managed provisioning does not require an identity and returns
     config: {
       openrouterManagementApiKey: 'sk-or-v1-management',
       openrouterApiBase: 'https://openrouter.ai/api/v1',
-      openrouterOrigin: 'https://usernode.dev',
+      openrouterOrigin: 'https://my.onhomeroom.com',
       openrouterManagedDailyLimitUsd: 1,
       openrouterManagedWorkspaceId: 'workspace-123',
       openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash',
@@ -336,7 +336,7 @@ test('configured GLM 5.3 Flash is preferred without filtering the remaining mode
     apiKey: 'sk-or-v1-test',
     config: {
       openrouterApiBase: 'https://openrouter.ai/api/v1',
-      openrouterOrigin: 'https://usernode.dev',
+      openrouterOrigin: 'https://my.onhomeroom.com',
       openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash',
     },
   });

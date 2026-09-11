@@ -797,9 +797,10 @@ server-side session while the server is unreachable or queue a later retry.
 
 ## Offline / App-Bound Domains
 
-The app's iOS webview opts into App-Bound Domains
-(`WKAppBoundDomains` = `usernodelabs.org`, `evanshapiro.dev`, `localhost`),
-which unlocks service workers — SV's PWA offline mode works inside the app.
+The app's iOS webview opts into App-Bound Domains. `WKAppBoundDomains`
+must include `onhomeroom.com` for the current production deployment;
+development deployments also need their own hostnames, such as `localhost`.
+This unlocks service workers — SV's PWA offline mode works inside the app.
 Consequences:
 
 - The webview cannot navigate to non-bound domains; external links must go

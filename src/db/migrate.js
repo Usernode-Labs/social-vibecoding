@@ -9113,7 +9113,7 @@ async function seedStagingHeadlessFixtures(pool, config) {
         statusText: 'Staging preview built',
         metadata: {
           changesReady: true,
-          stagingUrl: `https://staging-fixture-code-ok.${process.env.USERNODE_APPS_DOMAIN || process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org'}`,
+          stagingUrl: `https://staging-fixture-code-ok.${process.env.USERNODE_APPS_DOMAIN || process.env.USERNODE_DOMAIN || 'my.onhomeroom.com'}`,
           prNumber: null,
         },
         // The #647 review target: inherited history (collapsed) + the
@@ -9142,7 +9142,7 @@ async function seedStagingHeadlessFixtures(pool, config) {
         statusText: 'Staging preview built',
         metadata: {
           changesReady: true,
-          stagingUrl: `https://staging-fixture-code-legacy.${process.env.USERNODE_APPS_DOMAIN || process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org'}`,
+          stagingUrl: `https://staging-fixture-code-legacy.${process.env.USERNODE_APPS_DOMAIN || process.env.USERNODE_DOMAIN || 'my.onhomeroom.com'}`,
           prNumber: null,
         },
         inherited: true,

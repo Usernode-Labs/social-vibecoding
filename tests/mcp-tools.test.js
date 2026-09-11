@@ -24,7 +24,7 @@ const SRC = fs.readFileSync(
   path.join(__dirname, '../src/services/mcp-tools.js'), 'utf8'
 );
 
-const ORIGIN = 'https://social-vibecoding.usernodelabs.org';
+const ORIGIN = 'https://my.onhomeroom.com';
 
 // One tool's whole registerTool(...) block, from its name to the next tool's.
 function registration(name) {

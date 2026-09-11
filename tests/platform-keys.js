@@ -50,8 +50,8 @@ function setPlatformKeys(overrides = {}) {
     // mode or sets a different self-hosted domain after this helper runs.
     // dotenv will not overwrite these values.
     USERNODE_LOCAL_DEV: '0',
-    USERNODE_DOMAIN: 'social-vibecoding.usernodelabs.org',
-    CLI_CANONICAL_ORIGIN: 'https://social-vibecoding.usernodelabs.org',
+    USERNODE_DOMAIN: 'my.onhomeroom.com',
+    CLI_CANONICAL_ORIGIN: 'https://my.onhomeroom.com',
   };
   const out = {};
   for (const [k, v] of Object.entries({ ...defaults, ...overrides })) {

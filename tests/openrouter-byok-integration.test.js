@@ -145,7 +145,7 @@ test('catalog exposes every key-visible model and sorts known prices low to high
     apiKey: 'sk-or-v1-test',
     config: {
       openrouterApiBase: 'https://openrouter.ai/api/v1',
-      openrouterOrigin: 'https://usernode.dev',
+      openrouterOrigin: 'https://my.onhomeroom.com',
       // Regression: the old implementation hid all non-verified models
       // when this flag was false. It is intentionally ignored now.
       openrouterExperimentalModels: false,
@@ -194,7 +194,7 @@ test('resolveModelPricing preserves the sanitized per-million catalog prices', a
     modelId: 'openai/test-codex',
     config: {
       openrouterApiBase: 'https://openrouter.ai/api/v1',
-      openrouterOrigin: 'https://usernode.dev',
+      openrouterOrigin: 'https://my.onhomeroom.com',
       openrouterExperimentalModels: false,
     },
   });

@@ -163,7 +163,7 @@ test('the browser-session routes are CSRF-checked against the configured origin'
 });
 
 test('the service worker hard-bypasses every connector path', () => {
-  const origin = 'https://social-vibecoding.usernodelabs.org';
+  const origin = 'https://my.onhomeroom.com';
   for (const p of [
     '/mcp',
     '/api/connect/oauth/token',

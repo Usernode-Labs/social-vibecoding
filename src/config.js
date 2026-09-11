@@ -319,7 +319,7 @@ function load() {
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
     openrouterApiBase,
     openrouterAllowInsecureBase: String(process.env.OPENROUTER_ALLOW_INSECURE_BASE || 'false') === 'true',
-    openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://usernode.dev',
+    openrouterOrigin: process.env.OPENROUTER_ORIGIN || 'https://my.onhomeroom.com',
     // Management credentials stay in the platform process only. They create
     // and administer limited child keys; unlike child keys, a management key
     // cannot be used for model inference.

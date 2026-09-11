@@ -80,7 +80,7 @@ function rawUpgradeRequest(path, extraHeaders = '') {
     const sock = net.connect(port, '127.0.0.1', () => {
       sock.write(
         `GET ${path} HTTP/1.1\r\n` +
-        'Host: chatapp--s1.social-vibecoding.usernodelabs.org\r\n' +
+        'Host: chatapp--s1.my.onhomeroom.com\r\n' +
         'Connection: Upgrade\r\n' +
         'Upgrade: websocket\r\n' +
         'Sec-WebSocket-Version: 13\r\n' +

@@ -19,7 +19,7 @@ set -euo pipefail
 # Staging clones (app_*_staging_*) are intentionally skipped — they're
 # ephemeral and get recreated on next chat turn.
 
-REMOTE_HOST="${DEPLOY_HOST:-social-vibecoding.usernodelabs.org}"
+REMOTE_HOST="${DEPLOY_HOST:-my.onhomeroom.com}"
 REMOTE_USER="${DEPLOY_USER:-deploy}"
 # Container names match the `container_name:` fields in the compose
 # files: docker-compose.yml's `usernode-db` service for prod, and

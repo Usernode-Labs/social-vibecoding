@@ -114,7 +114,7 @@ const { cliAuthGate, cliPreAuthRoutes } = require('../src/routes/cli-auth');
 
 const config = {
   cliAuthEnabled: true,
-  cliAuthOrigin: 'https://social-vibecoding.usernodelabs.org',
+  cliAuthOrigin: 'https://my.onhomeroom.com',
   cliDeviceCreateRatePerMinute: 10,
   cliDeviceCreateBurst: 20,
   cliDeviceLivePerIp: 10,

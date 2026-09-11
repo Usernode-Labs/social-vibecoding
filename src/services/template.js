@@ -79,7 +79,7 @@ const DEV_CONSOLE_FORWARDER = `
 // reference its `/claude.md` URL. Driven by USERNODE_DOMAIN env so a
 // fork running at a different domain templates the right URL into its
 // child apps. Fallback is the canonical standalone deploy.
-const PLATFORM_DOMAIN = process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org';
+const PLATFORM_DOMAIN = process.env.USERNODE_DOMAIN || 'my.onhomeroom.com';
 const PLATFORM_BASE_URL = `https://${PLATFORM_DOMAIN}`;
 
 // The hosted connector's canonical name and the read-only allow rules built

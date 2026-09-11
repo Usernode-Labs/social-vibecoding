@@ -19,7 +19,7 @@ const MODELS_TIMEOUT_MS = 20000;
 // Attribution headers OpenRouter recommends (and uses for rankings).
 function platformHeaders(origin) {
   return {
-    'HTTP-Referer': origin || 'https://usernode.dev',
+    'HTTP-Referer': origin || 'https://my.onhomeroom.com',
     'X-OpenRouter-Title': 'Usernode',
   };
 }

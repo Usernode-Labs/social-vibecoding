@@ -21,7 +21,7 @@ function headers(apiKey, origin) {
   return {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
-    'HTTP-Referer': origin || 'https://usernode.dev',
+    'HTTP-Referer': origin || 'https://my.onhomeroom.com',
     'X-OpenRouter-Title': 'Usernode',
   };
 }

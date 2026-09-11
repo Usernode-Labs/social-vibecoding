@@ -158,7 +158,7 @@ test('a fully-projected row still resolves normally', async () => {
 });
 
 test('parseAppHost maps hosts to app slugs', () => {
-  const D = 'social-vibecoding.usernodelabs.org'; // services/caddy.js default
+  const D = 'my.onhomeroom.com'; // services/caddy.js default
   assert.equal(appAccess.parseAppHost(`myapp.${D}`)?.slug, 'myapp');
   assert.equal(appAccess.parseAppHost(`MyApp.${D}:443`)?.slug, 'myapp');
   // Staging previews (current + legacy hash suffix) inherit the prod slug.

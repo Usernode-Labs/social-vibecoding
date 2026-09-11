@@ -1741,7 +1741,7 @@ that is **not vendored**. It is served as a single canonical copy
 from the Usernode Social Vibecoding platform itself:
 
 ```
-https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js
+https://my.onhomeroom.com/usernode-bridge/v1/bridge.js
 ```
 
 Canonical source: `social-vibecoding/public/usernode-bridge/v1/bridge.js`.
@@ -1750,7 +1750,7 @@ Every dapp's HTML shell loads this URL directly. Cross-origin
 `<script>` tags are allowed by default; no CORS dance is needed:
 
 ```html
-<script src="https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js"></script>
+<script src="https://my.onhomeroom.com/usernode-bridge/v1/bridge.js"></script>
 ```
 
 Rules:
@@ -1774,8 +1774,8 @@ Rules:
   reachable for bridge-touching paths. App-logic iteration still
   works offline; only paths that actually exercise the bridge
   (`getNodeAddress`, `sendTransaction`, etc.) depend on SV being up.
-- **Self-hosting caveat.** All dapps in the production fleet
-  hard-code the `social-vibecoding.usernodelabs.org` host. Forks
+- **Self-hosting caveat.** The current upstream host is
+  `my.onhomeroom.com`; existing dapps may hard-code an earlier host. Forks
   running their own SV instance either accept that their dapps load
   the bridge from upstream prod, or fork the dapps and edit the URL.
   See [SELF-HOSTING.md](../../SELF-HOSTING.md) for details.
@@ -1973,8 +1973,8 @@ not a requirement.
 Like the bridge, it is centrally hosted — never vendor it:
 
 ```html
-<link rel="stylesheet" href="https://social-vibecoding.usernodelabs.org/usernode-native/v1/native.css">
-<script src="https://social-vibecoding.usernodelabs.org/usernode-native/v1/native.js"></script>
+<link rel="stylesheet" href="https://my.onhomeroom.com/usernode-native/v1/native.css">
+<script src="https://my.onhomeroom.com/usernode-native/v1/native.js"></script>
 ```
 
 Canonical source: `social-vibecoding/public/usernode-native/v1/`. The
@@ -2445,13 +2445,13 @@ the platform serves a pinned copy of the Tailwind browser engine from its
 own origin — exactly like the bridge and the native UI kit:
 
 ```
-https://social-vibecoding.usernodelabs.org/usernode-tailwind/v1/tailwind.js
+https://my.onhomeroom.com/usernode-tailwind/v1/tailwind.js
 ```
 
 Canonical source: `social-vibecoding/public/usernode-tailwind/v1/tailwind.js`.
 
 ```html
-<script src="https://social-vibecoding.usernodelabs.org/usernode-tailwind/v1/tailwind.js"></script>
+<script src="https://my.onhomeroom.com/usernode-tailwind/v1/tailwind.js"></script>
 <script>tailwind.config = { darkMode: 'class' }</script>
 ```
 
@@ -2482,8 +2482,8 @@ Rules:
   be used in production" notice. It is a `warn`, not an error, so it does
   not affect proposal checks — it is kept because the file is verbatim
   upstream, which is what makes its digest verifiable. Nothing to chase.
-- **Self-hosting caveat.** Fleet apps hard-code the
-  `social-vibecoding.usernodelabs.org` host; newly scaffolded apps derive
+- **Self-hosting caveat.** Fleet apps may hard-code an upstream host
+  (currently `my.onhomeroom.com`); newly scaffolded apps derive
   the platform origin from the deployment's own `USERNODE_DOMAIN`, so forks
   get their own. See [SELF-HOSTING.md](../../SELF-HOSTING.md).
 

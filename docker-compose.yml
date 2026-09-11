@@ -212,7 +212,7 @@ services:
           cpus: "0.5"
 
   # Self-hosted DNS server that answers ONLY the ACME DNS-01 challenge for our
-  # wildcard cert. We delegate `_acme-challenge.social-vibecoding...` to it via
+  # wildcard cert. We delegate `_acme-challenge.<domain>` to it via
   # a single static CNAME so Caddy's DNS-01 writes never touch the production
   # Namecheap zone (whose only write API replaces the whole zone per call).
   # Only :53 is public (for CA challenge lookups); the HTTP API (:8081) is

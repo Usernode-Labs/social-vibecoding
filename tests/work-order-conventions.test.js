@@ -160,7 +160,7 @@ test('the work order names all three hosted assets and the full document URL', (
   assert.equal(svc.HOSTED_ASSETS.length, 3);
   for (const url of svc.HOSTED_ASSETS) {
     assert.ok(order.includes(url), `the work order names ${url}`);
-    assert.match(url, /^https:\/\/social-vibecoding\.usernodelabs\.org\//);
+    assert.match(url, /^https:\/\/my\.onhomeroom\.com\//);
   }
   assert.ok(svc.HOSTED_ASSETS.some((u) => u.includes('usernode-bridge')));
   assert.ok(svc.HOSTED_ASSETS.some((u) => u.includes('usernode-native')));

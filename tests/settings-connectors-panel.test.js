@@ -65,7 +65,7 @@ function harness(payload) {
   const nodes = new Map(PANEL_IDS.map((id) => [id, node(id)]));
   const context = vm.createContext({
     window: {
-      location: { search: '', origin: 'https://social-vibecoding.usernodelabs.org' },
+      location: { search: '', origin: 'https://my.onhomeroom.com' },
     },
     document: {
       addEventListener() {},
