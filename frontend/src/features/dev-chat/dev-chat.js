@@ -773,10 +773,60 @@ const DevChat = {
   },
 
   _openRouterModelOptionLabel(model) {
+    const badges = [];
+    if (model?.isFavorite) badges.push('★');
+    if (model?.isRecommended) badges.push('Recommended');
+    if (model?.createdAt) {
+      const age = Date.now() - Date.parse(model.createdAt);
+      if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
+    }
     const compatibility = model?.compatibility === 'verified'
       ? ' · verified'
       : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
-    return `${model?.name || model?.id || 'Unknown model'}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+    const badgeText = badges.length ? ` · ${badges.join(' · ')}` : '';
+    return `${model?.name || model?.id || 'Unknown model'}${badgeText}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+  },
+
+  _openRouterModelsForPicker(models, { query = '', favoritesOnly = false } = {}) {
+    const needle = String(query || '').trim().toLocaleLowerCase();
+    return (Array.isArray(models) ? models : [])
+      .map((model, index) => ({ model, index }))
+      .filter(({ model }) => {
+        if (favoritesOnly && model?.isFavorite !== true) return false;
+        if (!needle) return true;
+        return [model?.name, model?.id, model?.provider, model?.canonicalSlug]
+          .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
+      })
+      .sort((a, b) => {
+        if (!!a.model?.isFavorite !== !!b.model?.isFavorite) return a.model?.isFavorite ? -1 : 1;
+        if (!!a.model?.isRecommended !== !!b.model?.isRecommended) return a.model?.isRecommended ? -1 : 1;
+        return a.index - b.index;
+      })
+      .map(({ model }) => model);
+  },
+
+  _openRouterCatalogAgeText(refreshedAt) {
+    const refreshed = Date.parse(refreshedAt || '');
+    if (!Number.isFinite(refreshed)) return '';
+    const seconds = Math.max(0, Math.round((Date.now() - refreshed) / 1000));
+    if (seconds < 60) return 'Updated just now';
+    const minutes = Math.round(seconds / 60);
+    if (minutes < 60) return `Updated ${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    return `Updated ${hours}h ago`;
+  },
+
+  async _setOpenRouterModelFavorite(modelId, favorite) {
+    const response = await fetch('/api/me/coding-agent/models/favorite', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ modelId, favorite }),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.error || 'Could not update that favorite.');
+    return body;
   },
 
   _openRouterModelCompatibilitySummary(model) {
@@ -789,7 +839,7 @@ const DevChat = {
       || 'OpenRouter exposes this model, but it may lack repository tools or enough context; the turn may fail.';
   },
 
-  async _loadCodingAgentChoiceData() {
+  async _loadCodingAgentChoiceData({ forceRefresh = false } = {}) {
     const data = {
       defaultBackend: 'claude_code',
       backends: {},
@@ -797,6 +847,9 @@ const DevChat = {
       credentialConfigured: false,
       models: [],
       recommendedModelId: null,
+      refreshedAt: null,
+      totalModels: 0,
+      catalogLoaded: false,
       loadError: null,
       catalogError: null,
     };
@@ -830,13 +883,18 @@ const DevChat = {
     if (!data.codexAvailable || !data.credentialConfigured) return data;
 
     try {
-      const modelsRes = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', {
+      const refresh = forceRefresh ? '&refresh=1' : '';
+      const modelsRes = await fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
         credentials: 'same-origin',
+        cache: 'no-store',
       });
       const catalog = await modelsRes.json().catch(() => ({}));
       if (!modelsRes.ok) throw new Error(catalog.error || 'Could not load OpenRouter models.');
+      data.catalogLoaded = true;
       data.models = Array.isArray(catalog.models) ? catalog.models : [];
       data.recommendedModelId = catalog.recommendedModelId || null;
+      data.refreshedAt = catalog.refreshedAt || null;
+      data.totalModels = Number.isInteger(catalog.totalModels) ? catalog.totalModels : data.models.length;
       if (!data.models.length) data.catalogError = 'No OpenRouter models are available under this key.';
     } catch (err) {
       data.catalogError = err.message || 'Could not load OpenRouter models.';
@@ -856,7 +914,7 @@ const DevChat = {
       selectedBackend = 'claude_code';
     }
     const openRouterModelOnly = fixedBackend === 'codex_openrouter';
-    const availableIds = new Set(data.models.map((m) => m.id));
+    let availableIds = new Set(data.models.map((m) => m.id));
     const recommendedModel = availableIds.has(data.recommendedModelId)
       ? data.recommendedModelId
       : (data.models.find((m) => m.compatibility === 'verified')?.id || data.models[0]?.id || '');
@@ -890,8 +948,17 @@ const DevChat = {
         </div>
         <div id="dc-agent-choice-codex-options" class="mt-4 hidden rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
           <label for="dc-agent-choice-model" class="block text-xs font-medium text-zinc-700 dark:text-zinc-300">OpenRouter model</label>
-          <select id="dc-agent-choice-model" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"></select>
-          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">All models exposed by your OpenRouter key, sorted by average input/output token price. Rates are per 1M tokens; actual spend depends on usage.</p>
+          <div class="mt-1 flex flex-wrap gap-2">
+            <input id="dc-agent-choice-model-search" type="search" autocomplete="off" placeholder="Filter by model or provider…" class="min-w-0 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500">
+            <button type="button" id="dc-agent-choice-favorites-only" aria-pressed="false" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">☆ Favorites</button>
+            <button type="button" id="dc-agent-choice-refresh-models" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 disabled:opacity-50">Refresh</button>
+          </div>
+          <div class="mt-2 flex items-stretch gap-2">
+            <select id="dc-agent-choice-model" class="min-w-0 flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500"></select>
+            <button type="button" id="dc-agent-choice-star-model" aria-pressed="false" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-lg leading-none text-zinc-700 dark:text-zinc-300 disabled:opacity-50" aria-label="Add selected model to favorites" title="Add selected model to favorites">☆</button>
+          </div>
+          <p id="dc-agent-choice-catalog-meta" class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
+          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">Favorites appear first, followed by platform recommendations and then average input/output token price. OpenRouter filters this catalog for your key and account policies. Rates are per 1M tokens; actual spend depends on usage.</p>
           <label for="dc-agent-choice-effort" class="mt-3 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Reasoning effort</label>
           <select id="dc-agent-choice-effort" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
             <option value="">Default</option>
@@ -915,23 +982,56 @@ const DevChat = {
     const codexButton = overlay.querySelector('#dc-agent-choice-codex');
     const codexOptions = overlay.querySelector('#dc-agent-choice-codex-options');
     const modelSelect = overlay.querySelector('#dc-agent-choice-model');
+    const modelSearch = overlay.querySelector('#dc-agent-choice-model-search');
+    const favoritesOnlyButton = overlay.querySelector('#dc-agent-choice-favorites-only');
+    const refreshModelsButton = overlay.querySelector('#dc-agent-choice-refresh-models');
+    const starModelButton = overlay.querySelector('#dc-agent-choice-star-model');
+    const catalogMeta = overlay.querySelector('#dc-agent-choice-catalog-meta');
     const effortSelect = overlay.querySelector('#dc-agent-choice-effort');
     const status = overlay.querySelector('#dc-agent-choice-status');
     const settingsButton = overlay.querySelector('#dc-agent-choice-settings');
     const applyButton = overlay.querySelector('#dc-agent-choice-apply');
 
-    for (const model of data.models) {
-      const option = document.createElement('option');
-      option.value = model.id;
-      option.textContent = this._openRouterModelOptionLabel(model);
-      modelSelect.appendChild(option);
-    }
-    modelSelect.value = selectedModel;
+    let favoritesOnly = false;
     effortSelect.value = selectedEffort;
 
     const cardClass = (selected) => `rounded-lg border p-3 text-left transition-colors ${selected
       ? 'border-violet-500 bg-violet-500/5 ring-1 ring-violet-500'
       : 'border-zinc-300 dark:border-zinc-700 hover:border-violet-400'}`;
+
+    const renderModelOptions = () => {
+      const visibleModels = this._openRouterModelsForPicker(data.models, {
+        query: modelSearch.value,
+        favoritesOnly,
+      });
+      modelSelect.innerHTML = '';
+      for (const model of visibleModels) {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.textContent = this._openRouterModelOptionLabel(model);
+        modelSelect.appendChild(option);
+      }
+      if (visibleModels.some((model) => model.id === selectedModel)) {
+        modelSelect.value = selectedModel;
+      } else {
+        selectedModel = visibleModels[0]?.id || '';
+        modelSelect.value = selectedModel;
+      }
+      modelSelect.disabled = visibleModels.length === 0;
+      favoritesOnlyButton.setAttribute('aria-pressed', String(favoritesOnly));
+      favoritesOnlyButton.textContent = favoritesOnly ? '★ Favorites' : '☆ Favorites';
+      const age = this._openRouterCatalogAgeText(data.refreshedAt);
+      catalogMeta.textContent = visibleModels.length
+        ? `${visibleModels.length} of ${data.totalModels || data.models.length} models${age ? ` · ${age}` : ''}`
+        : `No key-visible models match. Refresh, then check this key's OpenRouter account policies${age ? ` · ${age}` : ''}`;
+      if (!visibleModels.length) {
+        starModelButton.disabled = true;
+        starModelButton.textContent = '☆';
+        starModelButton.setAttribute('aria-pressed', 'false');
+        effortSelect.disabled = true;
+        effortSelect.value = '';
+      }
+    };
 
     const render = () => {
       const codex = selectedBackend === 'codex_openrouter';
@@ -975,6 +1075,21 @@ const DevChat = {
         return;
       }
       const model = data.models.find((item) => item.id === selectedModel) || null;
+      if (!model) {
+        status.textContent = "No key-visible models match. Refresh, then check this key's OpenRouter account policies.";
+        applyButton.disabled = true;
+        starModelButton.disabled = true;
+        starModelButton.textContent = '☆';
+        starModelButton.setAttribute('aria-pressed', 'false');
+        return;
+      }
+      starModelButton.disabled = false;
+      starModelButton.textContent = model.isFavorite ? '★' : '☆';
+      starModelButton.setAttribute('aria-pressed', String(model.isFavorite === true));
+      starModelButton.setAttribute('aria-label', model.isFavorite
+        ? 'Remove selected model from favorites'
+        : 'Add selected model to favorites');
+      starModelButton.title = starModelButton.getAttribute('aria-label');
       const supportsReasoning = model?.supportsReasoning === true;
       effortSelect.disabled = !supportsReasoning;
       if (supportsReasoning) {
@@ -991,6 +1106,59 @@ const DevChat = {
     claudeButton.addEventListener('click', () => { selectedBackend = 'claude_code'; render(); });
     codexButton.addEventListener('click', () => { selectedBackend = 'codex_openrouter'; render(); });
     modelSelect.addEventListener('change', () => { selectedModel = modelSelect.value; render(); });
+    modelSearch.addEventListener('input', () => { renderModelOptions(); render(); });
+    favoritesOnlyButton.addEventListener('click', () => {
+      favoritesOnly = !favoritesOnly;
+      renderModelOptions();
+      render();
+    });
+    starModelButton.addEventListener('click', async () => {
+      const model = data.models.find((item) => item.id === selectedModel);
+      if (!model || starModelButton.disabled) return;
+      const favorite = model.isFavorite !== true;
+      starModelButton.disabled = true;
+      try {
+        await this._setOpenRouterModelFavorite(model.id, favorite);
+        model.isFavorite = favorite;
+        renderModelOptions();
+        render();
+      } catch (err) {
+        status.textContent = err.message || 'Could not update that favorite.';
+        starModelButton.disabled = false;
+      }
+    });
+    refreshModelsButton.addEventListener('click', async () => {
+      refreshModelsButton.disabled = true;
+      refreshModelsButton.textContent = 'Refreshing…';
+      try {
+        const fresh = await this._loadCodingAgentChoiceData({ forceRefresh: true });
+        if (fresh.loadError || (!fresh.catalogLoaded && fresh.catalogError)) {
+          throw new Error(fresh.loadError || fresh.catalogError);
+        }
+        data.codexAvailable = fresh.codexAvailable;
+        data.credentialConfigured = fresh.credentialConfigured;
+        data.catalogError = fresh.catalogError;
+        data.models = fresh.models;
+        data.recommendedModelId = fresh.recommendedModelId;
+        data.refreshedAt = fresh.refreshedAt;
+        data.totalModels = fresh.totalModels;
+        availableIds = new Set(data.models.map((model) => model.id));
+        const nextRecommended = availableIds.has(data.recommendedModelId)
+          ? data.recommendedModelId
+          : (data.models.find((model) => model.isRecommended)?.id
+            || data.models.find((model) => model.compatibility === 'verified')?.id
+            || data.models[0]?.id
+            || '');
+        if (!availableIds.has(selectedModel)) selectedModel = nextRecommended;
+        renderModelOptions();
+        render();
+      } catch (err) {
+        status.textContent = err.message || 'Could not refresh OpenRouter models.';
+      } finally {
+        refreshModelsButton.disabled = false;
+        refreshModelsButton.textContent = 'Refresh';
+      }
+    });
     effortSelect.addEventListener('change', () => { selectedEffort = effortSelect.value; });
 
     return new Promise((resolve) => {
@@ -1022,15 +1190,16 @@ const DevChat = {
         }
         finish({
           backend: selectedBackend,
-          model: selectedBackend === 'codex_openrouter' ? modelSelect.value : null,
+          model: selectedBackend === 'codex_openrouter' ? selectedModel : null,
           reasoningEffort: selectedBackend === 'codex_openrouter'
             ? (effortSelect.value || null)
             : null,
         });
       });
+      renderModelOptions();
       render();
       (openRouterModelOnly
-        ? modelSelect
+        ? modelSearch
         : (selectedBackend === 'codex_openrouter' ? codexButton : claudeButton)).focus();
     });
   },
@@ -7704,7 +7873,13 @@ const DevChat = {
   // title sentence is that builder's, moved here whole.
   _headerVenue(session) {
     if (!window.BuildVenues || !BuildVenues.venue) return null;
-    const v = BuildVenues.venue(DevChat._currentVenueId());
+    const v = BuildVenues.sessionVenue({
+      current: DevChat._currentVenueId(),
+      source: session?.source,
+      externalAgent: session?.external_agent,
+      buildVenue: session?.build_venue,
+      localAgent: DevChat._localAgent,
+    });
     if (!v) return null;
     return {
       id: v.id,

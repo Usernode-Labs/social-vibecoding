@@ -122,6 +122,11 @@ test('native notification invalidations bypass stale API-cache fallbacks', () =>
   assert.equal(classify('GET', '/api/notifications?limit=100'), 'api');
 });
 
+test('the key-filtered OpenRouter catalog always reaches the network', () => {
+  assert.equal(classify('GET', '/api/me/coding-agent/models?backend=codex_openrouter'), 'bypass');
+  assert.equal(classify('GET', '/api/me/coding-agent/models?backend=codex_openrouter&refresh=1'), 'bypass');
+});
+
 test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/js/app.js'), 'shell');
   assert.equal(classify('GET', '/css/app.css'), 'shell');

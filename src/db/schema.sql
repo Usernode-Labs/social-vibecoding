@@ -6195,6 +6195,22 @@ CREATE TABLE IF NOT EXISTS user_agent_preferences (
 CREATE UNIQUE INDEX IF NOT EXISTS user_agent_preferences_one_default
   ON user_agent_preferences (user_id) WHERE is_default = TRUE;
 
+-- Small, durable shortlist for the otherwise very large OpenRouter catalog.
+-- A favorite survives catalog churn and key replacement: if a model vanishes
+-- under the current key it is simply absent from the picker, and is starred
+-- again if OpenRouter later exposes the same id. One row per user/model keeps
+-- toggles atomic and lets every device see the same list.
+CREATE TABLE IF NOT EXISTS user_agent_model_favorites (
+  user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  backend     VARCHAR(32) NOT NULL,
+  model_id    VARCHAR(255) NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, backend, model_id),
+  CONSTRAINT user_agent_model_favorites_backend_check
+    CHECK (backend IN ('codex_openrouter'))
+);
+COMMENT ON TABLE user_agent_model_favorites IS 'staging:private';
+
 -- Durable per-turn ledger for multi-provider usage, retries, and proxy
 -- settlement. Idempotent settlement keys on the turn id.
 CREATE TABLE IF NOT EXISTS agent_turns (
@@ -7099,3 +7115,17 @@ CREATE TABLE IF NOT EXISTS account_email_verifications (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE account_email_verifications IS 'staging:private';
+
+-- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
+CREATE TABLE IF NOT EXISTS preview_operations (
+  session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  desired_revision TEXT NOT NULL,
+  run_id UUID,
+  revision TEXT,
+  phase TEXT,
+  state TEXT NOT NULL DEFAULT 'queued',
+  result JSONB,
+  finished_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE preview_operations IS 'staging:private';
