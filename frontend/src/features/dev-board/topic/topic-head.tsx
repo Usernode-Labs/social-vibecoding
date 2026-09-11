@@ -538,7 +538,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
             if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
             event.preventDefault(); call('openTopic', 'issue', issue.n);
           }}>#{issue.n} · {issue.title}</a>)}
-        </aside> : body.changeId ? <p className="dev-topic-note">No issue linked yet.</p> : null}
+        </aside> : null}
         <DevCard model={card} />
       </div>
       <TopicBodySections body={conversation ? { ...body, transcript: null, activity: [] } : owner ? { ...body, transcript: null } : body} />

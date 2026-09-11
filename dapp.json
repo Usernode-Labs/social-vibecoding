@@ -3784,16 +3784,16 @@
       "expectText": "Change overview"
     },
     {
-      "name": "A full underway change card has Discussion, Agent workspace and Activity tabs",
+      "name": "A full underway change card has Discussion, Build and Activity tabs",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
       "expectSelector": "[data-change-conversation=\"900801\"] [role=\"tablist\"]:has([data-conversation-tab=\"discussion\"][aria-selected=\"true\"]):has([data-conversation-tab=\"workspace\"]):has([data-conversation-tab=\"activity\"])",
-      "expectText": "Agent workspace"
+      "expectText": "Build"
     },
     {
       "name": "The owner workspace tab mounts the real dev session inside its change card",
       "path": "/?conversation=workspace#app/usernode-2d5619/dev/proposals/900801",
       "expectSelector": "[data-change-conversation=\"900801\"] [role=\"tabpanel\"]:not([hidden]) #dc-view:has(#dc-messages):has(#dc-quick-replies):not(:has(#dc-mode-switch)):not(:has(.dc-pr-card-actions))",
-      "expectText": "Agent workspace"
+      "expectText": "Build"
     },
     {
       "name": "A change in review has its group discussion inside the same tabbed card",

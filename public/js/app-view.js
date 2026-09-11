@@ -7354,6 +7354,16 @@ const AppView = {
   // lifecycle transition.
   _importedUnderwayMenuItems(s) {
     const items = AppView._attrMenuItems('proposal', s.id, s);
+    if (!AppView.readOnly && Number(s.user_id) === Number(App.user?.id)
+        && ['active', 'paused'].includes(s.status)) {
+      items.push({ label: 'Archive PR', icon: 'archive', danger: true,
+        title: 'Close this imported pull request and archive its card',
+        act: async () => {
+          if (!await AppView._archiveSession(s.id, s.pr_title || `PR #${s.pr_number}`, true)) return;
+          await AppView._loadDevFeed();
+          AppView._renderTopicHead();
+        } });
+    }
     if (s.pr_url) {
       items.push({
         label: 'View PR on GitHub',
@@ -7528,7 +7538,7 @@ const AppView = {
     const imported = s.source === 'imported';
     const author = s.imported_pr_author || 'unknown author';
     const preview = AppView._cardPreviewSpec(s, { kind: 'shared-session', sessionId: s.id });
-    const menu = imported && !noNav ? AppView._importedUnderwayMenuItems(s) : [];
+    const menu = imported ? AppView._importedUnderwayMenuItems(s).filter((a) => !noNav || a.icon === 'archive') : [];
     menu.push({ label: 'View checks', icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
     const recheck = AppView._recheckAction(s);
     if (recheck && !recheck.disabled) {
@@ -7841,11 +7851,11 @@ const AppView = {
   // session block) then POST /api/sessions/:id/archive. Owner-scoped
   // server-side. Returns true on success so callers can re-render. Used
   // by the pinned session cards' Archive button (delegated handler).
-  async _archiveSession(sessionId, name) {
+  async _archiveSession(sessionId, name, imported = false) {
     if (!sessionId) return false;
     const ok = await ConfirmModal.show({
       title: `Archive "${name}"?`,
-      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
+      message: imported ? "This closes the imported pull request on GitHub and archives its card. The source branch is kept." : "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
       confirmLabel: 'Archive',
       danger: true,
     });
