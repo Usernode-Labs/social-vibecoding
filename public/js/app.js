@@ -926,6 +926,7 @@ const App = {
     if (App._shotHash === location.hash) return;
     App._shotHash = location.hash;
     App._applyImproveShot();
+    App._applyDevTerminalShot();
     App._applyPlatformUpdateShot();
     App._applyLaunchShot();
     App._applyOfflineAppShot();
@@ -1042,6 +1043,62 @@ const App = {
         // what says whether it took.
         const panel = document.getElementById('improve-panel');
         if (panel && panel.hasAttribute('data-open')) return;
+      } catch (err) { /* ignore */ }
+      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+    };
+    setTimeout(attempt, 50);
+  },
+
+  // Screenshot-state deep links `?shot=dev-terminal` and
+  // `?shot=dev-terminal-open`: the Improve panel with its "Developer
+  // terminal" row showing, and the same row already actioned.
+  //
+  // Neither state is otherwise reachable by a URL. The row is conditional on
+  // DevConsole's own visibility signal — an app iframe on screen, plus either
+  // "always show" in Settings or an error already forwarded from that frame —
+  // so a plain route renders the panel WITHOUT it, and what the row does when
+  // pressed is behind a tap that no still frame and no declared check can
+  // perform. #1967 shipped a row that did nothing for exactly as long as that
+  // was true, so the fix is locked in by a link rather than by a screenshot.
+  //
+  // No server state: the availability signal is published into DevConsole's
+  // own in-memory state and the console renders from the buffer it already
+  // has. Nothing is fetched and no row is written, so this is deliberately
+  // NOT env-gated — same reasoning as ?shot=improve above, and the "before"
+  // shot needs it to work in production too. The one thing it does persist is
+  // the viewer's own "always show dev console" preference, which setMode()
+  // stores: that is the same switch Settings flips, it is what makes the row
+  // exist at all, and it is undone from Settings like any other.
+  _applyDevTerminalShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'dev-terminal' && shot !== 'dev-terminal-open') return;
+    const openIt = shot === 'dev-terminal-open';
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      try {
+        // Stand in for the app frame that normally publishes this. All three
+        // calls are needed: _refreshButtonVisibility() shows the row only when
+        // there is an app slug AND an iframe on screen AND one of
+        // always-mode / a logged error / an already-open panel. A fresh
+        // browser has no localStorage and no errors, so without the mode call
+        // the row is correctly absent and the link would capture a panel with
+        // nothing in it to press.
+        const slug = App.currentApp;
+        if (slug && window.DevConsole) {
+          window.DevConsole.setCurrentApp(slug);
+          window.DevConsole.setButtonVisible(true);
+          window.DevConsole.setMode(window.DevConsole.MODE_ALWAYS);
+        }
+        window.Improve?.open();
+        const panel = document.getElementById('improve-panel');
+        const row = document.getElementById('improve-row-terminal');
+        if (panel && panel.hasAttribute('data-open') && row) {
+          // The panel closes on the way, so the row has to be pressed once
+          // and only once — a repeat would reopen nothing and re-hide this.
+          if (openIt) row.click();
+          return;
+        }
       } catch (err) { /* ignore */ }
       if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
     };

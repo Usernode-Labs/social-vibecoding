@@ -1663,11 +1663,19 @@
       // and the fallback for an empty or unusable field.
       const canonical = blocks[0].textContent;
       let suffixes = [];
+      let covered = new Set();
       try {
         const allow = JSON.parse(canonical)?.permissions?.allow || [];
         suffixes = [...new Set(allow.map((rule) => rule.slice(rule.indexOf('__', 5) + 2)))];
+        // The spellings the shipped block ALREADY covers, read out of the
+        // block itself for the same reason the suffixes are: a second copy
+        // of the list here would be the thing that drifts. Typing any of
+        // them means there is nothing to rewrite — including the spellings
+        // that predate the rename, which a long-connected user is still on.
+        covered = new Set(allow.map((rule) => rule.split('__')[1].toLowerCase()));
       } catch {
         suffixes = [];
+        covered = new Set();
       }
 
       const render = () => {
@@ -1676,7 +1684,7 @@
         // rule for a different tool — those characters are dropped, not
         // escaped, and the result is shown so the user can see what happened.
         const name = String(field.value || '').trim().replace(/[^A-Za-z0-9.-]/g, '');
-        const custom = name && name.toLowerCase() !== 'usernode' && suffixes.length;
+        const custom = name && !covered.has(name.toLowerCase()) && suffixes.length;
         const text = custom
           ? JSON.stringify(
             { permissions: { allow: suffixes.map((s) => `mcp__${name}__${s}`) } }, null, 2

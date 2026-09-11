@@ -56,24 +56,44 @@ const REGISTER_RATE_PER_MINUTE = 6;
 //
 // #1218: an account had the connector registered as `Uesrnode`, so its
 // tools arrived as `mcp__Uesrnode__whoami`. That string is NOT ours — it
-// never appears in this repository, and the value below has always been
-// correctly spelled. Claude.ai's "Add custom connector" dialog takes a
-// Name the human types, and the client builds tool names from THAT, not
-// from `serverInfo.name`. So the typo was user-entered, and the fix is to
-// recommend the canonical name at connect time (the Settings → Connectors
-// copy does) rather than to change anything here.
+// never appears in this repository. Claude.ai's "Add custom connector"
+// dialog takes a Name the human types, and the client builds tool names
+// from THAT, not from `serverInfo.name`. So the typo was user-entered, and
+// the fix is to recommend the canonical name at connect time (the
+// Settings → Connectors copy does) rather than to change anything here.
 //
-// Why lowercase `usernode` is the canonical one: a client that derives the
-// name from the server gets exactly this string, so a client where the
-// user typed it agrees with a client where it did not. Any other spelling
-// makes the two paths disagree.
+// Why lowercase: a client that derives the name from the server gets
+// exactly this string, so a client where the user typed it agrees with a
+// client where it did not. Any other spelling makes the two paths
+// disagree — which is the whole reason the value below is stated once,
+// here, and read by the docs, the scaffold and the Settings copy rather
+// than retyped in each.
 //
 // It matters because a Claude Code permission rule names the server as a
-// LITERAL: `mcp__usernode__get_*` is legal, `mcp__*__get_*` is not. A rule
+// LITERAL: `mcp__homeroom__get_*` is legal, `mcp__*__get_*` is not. A rule
 // aimed at a differently-named connector fails SILENTLY — no error, the
 // user just keeps getting prompted. Hence: recommend the name, and tell
 // people to read it off their own tool list (see MCP-CONNECTOR.md).
-const SERVER_NAME = 'usernode';
+//
+// ── Why this says `homeroom` and not `usernode` ────────────────────────
+//
+// The platform is reached at Homeroom's own domain now, and that is the
+// name people are told to type when they add the connector. Leaving the
+// server reporting `usernode` would break the agreement above in the one
+// way it exists to prevent: the docs would say type one thing while
+// `serverInfo.name` reported another, so a client that derives the name
+// and a client where a human typed it would disagree by construction.
+//
+// The rename is NOT retroactive, and cannot be. A connector already added
+// as `usernode` keeps that name — the client built its tool names from
+// what its user typed, and nothing the server reports changes them — so
+// existing rules go on matching. What does move is a client that derives
+// the name: on its next reconnect its tools become `mcp__homeroom__…` and
+// rules written for the old spelling stop matching, silently, exactly as
+// above. That is what keeps both legacy spellings in
+// ALLOW_RULE_SERVER_NAMES below: the shipped list has to cover the name a
+// user is on today as well as the one they will be on tomorrow.
+const SERVER_NAME = 'homeroom';
 
 // ── The build the handshake reports ────────────────────────────────────
 //
@@ -143,13 +163,29 @@ const SERVER_VERSION = serverVersionFor(process.env.GIT_SHA);
 // as a default.
 //
 // So the shipped rules cover BOTH spellings rather than only the canonical
-// one. Six rules instead of three, which costs nothing — a rule that matches
+// one. Twice the rules for a name, which costs nothing — a rule that matches
 // no tool is inert — and removes the most common silent failure. Anything
-// beyond these two (a real typo, a renamed connector) still needs the user's
-// own spelling, which is what the setup tip, whoami and the Settings panel's
-// rewrite field are all for: this list is the two spellings worth guessing,
-// not an attempt to guess them all.
-const ALLOW_RULE_SERVER_NAMES = Object.freeze([SERVER_NAME, 'Usernode']);
+// beyond these still needs the user's own spelling, which is what the setup
+// tip, whoami and the Settings panel's rewrite field are all for: this list
+// is the spellings worth guessing, not an attempt to guess them all.
+//
+// ── Why the list carries two names and not one ─────────────────────────
+//
+// `homeroom` and `Homeroom` are the guess pair for the name people are told
+// to type today. `usernode` and `Usernode` are not guesses at all: they are
+// the name the connector was called before the rename, so they are what an
+// account connected before it is REGISTERED AS, and a rule aimed at the new
+// spelling would miss every one of them. Both pairs ship until the old ones
+// are gone from the connector list, because the alternative is telling a
+// user whose connector works today that their rules stopped matching for a
+// reason they cannot see.
+//
+// Order matters only for what a person reads first: the canonical spelling
+// leads, so the block someone copies opens with the name the docs told them
+// to use rather than the one being retired.
+const ALLOW_RULE_SERVER_NAMES = Object.freeze([
+  SERVER_NAME, 'Homeroom', 'usernode', 'Usernode',
+]);
 
 // ── Allow-listed, but NOT reads (#1405) ────────────────────────────────
 //
@@ -176,7 +212,7 @@ const SELF_SCOPED_ALLOW_TOOLS = Object.freeze([
 
 // The read-only allow rules Usernode ships in the app scaffold and
 // documents. Two globs plus one literal per covered spelling, and
-// deliberately NOT the whole-server `mcp__usernode__*`.
+// deliberately NOT the whole-server `mcp__homeroom__*`.
 //
 // The reason is the SCAFFOLD, not the tools. These rules are committed into
 // every app repo Usernode creates, and a repo that grants a connector blanket

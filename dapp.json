@@ -295,8 +295,8 @@
     {
       "key": "PLATFORM_MAIL_FROM",
       "group": "Platform mail",
-      "default": "Usernode <no-reply@usernodelabs.org>",
-      "description": "The From address on every platform mail. Defaults to Usernode <no-reply@usernodelabs.org>, which is the single sender for all platform mail, so a fresh deploy needs no edit here. The mailbox behind GMAIL_OAUTH_* must be authorised to send as this address (a Workspace alias or a 'send mail as' identity) or every send is rejected upstream. Not secret — it is in the header of every mail we send."
+      "default": "Usernode <no-reply@onhomeroom.com>",
+      "description": "The From address on every platform mail. Defaults to Usernode <no-reply@onhomeroom.com>, which is the single sender for all platform mail, so a fresh deploy needs no edit here. The mailbox behind GMAIL_OAUTH_* must be authorised to send as this address (a Workspace alias or a 'send mail as' identity) or every send is rejected upstream. Not secret — it is in the header of every mail we send."
     },
     {
       "key": "GMAIL_OAUTH_CLIENT_ID",
@@ -925,7 +925,7 @@
       "name": "Each allow-rules block spans the panel under its own Copy row (#1290)",
       "path": "/?demo=connectors-claude#settings/connectors",
       "expectSelector": "#connector-case-cc-local > pre#connector-allow-rules",
-      "expectText": "mcp__usernode__whoami"
+      "expectText": "mcp__homeroom__whoami"
     },
     {
       "name": "A ChatGPT-only connection hides Claude Code's settings-file advice (#1219)",
