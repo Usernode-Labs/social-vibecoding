@@ -7600,6 +7600,18 @@ span.gc-vote-btn-icon { cursor: default; }
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
+/* #1943: the session strip keeps THIS surface when the chat scrolls.
+   attachScreenFx (dev-chat.js) makes #dc-session-header a
+   `.platform-chat-header`, and the kit adds `.un-scrolled` once the
+   transcript moves; `.platform-chat-header.un-scrolled` (near the top of
+   this file) is more specific than `.dc-lift-strip` and repainted the strip
+   with the nav-bar white — the bar visibly turned white on scroll. The id
+   outranks it; the hairline it adds is the scroll cue and stays. */
+#dc-session-header.un-scrolled {
+  background-color: var(--dc-strip-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
 /* NO BLUR, NO GLASS. Without backdrop-filter the same alphas leave the star
    and the three washes sitting UNBLURRED behind body text, which is worse
    than the flat surface this replaced — the effect depends on the blur, not
@@ -7609,6 +7621,7 @@ span.gc-vote-btn-icon { cursor: default; }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dc-lift-strip { background-color: var(--dc-strip); }
   .dc-lift-session { background-color: var(--dc-sheet); }
+  #dc-session-header.un-scrolled { background-color: var(--dc-strip); }
 }
 
 /* ── THE THIRD SURFACE: a lift that CASTS its own scrim ────────────────
@@ -10487,9 +10500,10 @@ body.is-offline [data-offline-disabled] {
   opacity: 0.7;
 }
 
-/* Secondary session controls live in Details only below Tailwind's sm.
-   Two lines give the name room without letting a very long title consume the
-   chat. The full name is always readable in Details. */
+/* Below Tailwind's sm the session name may take two lines, so a long name
+   has room beside the provider and the PR link without a very long title
+   consuming the chat. (#1940 put those controls back inline at every width;
+   the full branch name stays on the title's tooltip.) */
 @media (max-width: 639px) {
   #dc-session-header > .dc-session-title {
     white-space: normal;
@@ -10499,16 +10513,6 @@ body.is-offline [data-offline-disabled] {
     -webkit-line-clamp: 2;
   }
 }
-.dc-venue-select.dc-venue-details-select {
-  width: 100%;
-  max-width: none;
-  min-height: 44px;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.875rem;
-  flex-wrap: wrap;
-}
-.dc-venue-details-select .dc-venue-name { white-space: normal; overflow-wrap: anywhere; }
-.dc-venue-details-select .dc-venue-busy { font-size: 0.75rem; }
 
 .dc-venue-busy {
   display: inline-flex;
@@ -10681,6 +10685,20 @@ body.is-offline [data-offline-disabled] {
 }
 #dev-workshop .dev-feed-entry + .dev-feed-entry {
   margin-top: 4px;
+}
+/* #1885: THE CARD SITS FLUSH in its sheet. The sheet's padding is for what
+   hangs UNDER the card — the thread, its reply box, "Open on its own page" —
+   and those keep it (their own margins are measured from it). The card itself
+   is pulled out to the sheet's edges, so opening a row no longer drops it into
+   a frosted frame, and it takes the sheet's corners so the two outlines are
+   one. With nothing under it the card is the whole sheet. */
+#dev-workshop .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):first-child {
+  width: calc(100% + 20px);
+  margin: -10px -10px 0;
+  border-radius: inherit;
+}
+#dev-workshop .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):only-child {
+  margin-bottom: -12px;
 }
 /* A reading column. The stream is one column of cards each with a thread
    under it; past ~760px a card's meta line and its bubbles were sentences
