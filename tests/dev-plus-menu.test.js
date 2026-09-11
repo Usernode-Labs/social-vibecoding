@@ -112,7 +112,7 @@ function makeViewHarness(els = {}) {
 // The seam between the two — that renderDevView computes the predicate and the
 // component consumes it — is asserted once, explicitly, below.
 const FRAME_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'board-frame.tsx'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'actions-row.tsx'),
   'utf8'
 );
 
@@ -317,4 +317,32 @@ test('index.html has no Members & visibility drawer row', () => {
 
 test('app.js no longer wires or gates the drawer members row', () => {
   assert.ok(!APP_SRC.includes("getElementById('drawer-row-members')"), 'all drawer-row-members lookups removed');
+});
+
+test('the ?shot=plus-menu hook waits for a button that now arrives late', () => {
+  // It was one setTimeout(300) and a `?.click()`. That was sound while
+  // #dev-plus-btn lived in the frame's chrome, which mounts with
+  // #app-content — the button existed long before 300ms.
+  //
+  // The button moved into the Workshop's pane, and #dev-workshop is created
+  // by _repaintDevBody AFTER _loadDevFeed's fetches. At 300ms it may not
+  // exist, and optional chaining on a missing node does nothing SILENTLY: the
+  // capture shot a board with no menu and the declared check read "text not
+  // found". That is how this reached a gate rather than a test.
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
+  const i = src.indexOf("if (shot === 'plus-menu')");
+  assert.ok(i > 0, 'the hook exists');
+  const block = src.slice(i, src.indexOf("if (shot === 'card-menu')", i));
+  assert.match(block, /setInterval\(/, 'it retries rather than firing once');
+  assert.ok(!/setTimeout\(/.test(block), 'and no single-shot timeout is left');
+  // Bounded, so a capture that never gets a button stops trying.
+  assert.match(block, /tries \+= 1\) > \d+/, 'the window is bounded');
+  // Re-asserted across repaints: each dismisses an open menu by design, so
+  // stopping at the first success would leave the shot empty.
+  assert.match(block, /dev-plus-menu[\s\S]{0,200}classList\.contains\('hidden'\)/,
+    'it re-opens a menu a repaint dismissed');
+  // ...and a human's first real gesture ends it, so a person following one of
+  // these links does not get a menu put back under them.
+  assert.match(block, /e\.isTrusted\) done\(\)/);
 });

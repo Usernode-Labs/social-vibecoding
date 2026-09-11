@@ -958,8 +958,18 @@ test('a folded row\'s last line carries the card\'s state, in the tone the pill 
 
   assert.match(html, /<span class="dev-ws-row-band">/,
     'the row has a last line of its own: the card\'s status row and facts row in one');
-  assert.match(html, /class="dev-ws-row-state dev-ws-row-state-blocked"[^>]*>Conflicts with main · 2 files</,
-    'the composite pill keeps its label AND spends the tone it carries');
+  // The row's state line is the BAR, and the bar is the vote. The fact that
+  // decides whether it can land at all rides beside it as a red tag — which
+  // the row already had a seat for, because RowBand draws the card's state
+  // chips after the pill at both sizes.
+  assert.match(html, /class="dev-ws-row-state dev-ws-row-state-progress"[^>]*>Vote · \d+\/\d+</,
+    'the state line carries the vote, in the vote\u2019s tone');
+  // The blocker is a red tag on the row's META line — beside the number and
+  // the author, with the item's own tags — not on the band. The band is the
+  // vote and the Vote button, at both sizes.
+  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Conflicts with main · 2 files<\/span>/);
+  assert.ok(html.indexOf('Conflicts with main') < html.indexOf('dev-ws-row-band'),
+    'the tag is above the band, on the meta line');
   assert.ok(!html.includes('dev-ws-row-pill'),
     'it is no longer flattened to plain text in the grey the author\'s name wears');
 
@@ -1197,11 +1207,16 @@ test('a folded row wears the card\u2019s own edge, number and glyph, and no chev
   const html = workshopHtml(AppView);
 
   // The EDGE, from the card's own edgeFor: an issue with no state wears its
-  // type's amber, a proposal mid-checks wears its bar's tone. The row used to
-  // carry that colour as a tinted icon tile the card does not have, so one
-  // item opened on a different mark at each size.
+  // type's amber, a proposal wears its BAR's tone. The row used to carry that
+  // colour as a tinted icon tile the card does not have, so one item opened
+  // on a different mark at each size.
+  //
+  // This proposal is mid-checks and used to wear `neutral`, because the bar
+  // said "Checks starting…". The bar is the vote now, so the edge follows the
+  // vote — which is the edge doing its job, not a regression: the colour down
+  // the side of a row answers the same question the bar does.
   assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-edge="attention"[^>]*data-ws-row="issue:12"/);
-  assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-edge="neutral"[^>]*data-ws-row="proposal:34"/);
+  assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-edge="vote"[^>]*data-ws-row="proposal:34"/);
   assert.match(CSS, /\.dev-ws-row\[data-edge="vote"\]\s+\{ --dev-edge: var\(--accent\); \}/);
   assert.match(CSS, /\.dev-ws-row \{[^}]*inset var\(--dev-edge-w\) 0 0 color-mix/,
     'drawn as the card draws it: an inset shadow at the same width, not a border');
@@ -1926,9 +1941,20 @@ test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
   assert.match(CSS, /#dev-workshop \{ max-width: 760px/, 'the column bound exists');
   assert.match(CSS, /#dev-workshop:has\(\.dev-ws-board\) \{ max-width: none; \}/,
     'and comes off when the board is up');
-  // ...and goes back on to every OTHER child, so only the board widens.
+  // ...and goes back on to every OTHER child, so only the working PANE widens
+  // — the toolbar, the tabs and the board travel together now, so the pane is
+  // the unit that grows rather than the board wrapper inside it.
   assert.match(CSS,
-    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > :not\(\.dev-ws-board\) \{[^}]*max-width: 760px/);
+    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > :not\(\.dev-ws-pane\) \{[^}]*max-width: 760px/);
+  // Widening it must not DISSOLVE it. An earlier cut stripped the pane's sheet,
+  // radius and padding on By stage, on the argument that a card face is a
+  // frame drawn around the whole window; what that produced was the pane
+  // vanishing and the sticky head's fill left behind as a bare rectangle over
+  // the controls alone, with the board below belonging to no pane at all.
+  const stageRules = CSS.slice(CSS.indexOf('#dev-workshop:has(.dev-ws-board) { max-width: none; }'),
+    CSS.indexOf('.dev-ws-sort {'));
+  assert.ok(!/\.dev-ws-pane \{[^}]*(border-radius: 0|background: none|padding: 0)/.test(stageRules),
+    'the pane keeps its card face at every width');
   // The rejected alternative, pinned so it does not come back: 100vw counts
   // the scrollbar #dev-forum-scroll always has, so a negative-margin
   // full-bleed overflows by its width and adds a horizontal scrollbar.
@@ -1942,4 +1968,157 @@ test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
   // the standalone board gets from #dev-body's own px-3.
   assert.match(CSS, /#dev-body:has\(> #dev-workshop\) \{ padding: 8px 4px 12px; \}/);
   assert.match(CSS, /\.dev-ws-board \{ padding: 2px 8px 0; \}/);
+});
+
+// ── The working pane: the controls, the switch, and what they act on ─────
+
+test('the toolbar renders inside the Workshop pane, above the tabs', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([
+    { id: 't1', title: 'Voting', items: [{ kind: 'issue', number: 12 }] },
+  ]);
+  const html = workshopHtml(AppView);
+  const pane = html.indexOf('data-ws-pane');
+  const head = html.indexOf('dev-ws-pane-head');
+  const actions = html.indexOf('id="dev-actions"');
+  const tabs = html.indexOf('data-ws-group="category"');
+  const themesList = html.indexOf('dev-ws-themes');
+  assert.ok(pane > 0, 'the pane renders');
+  assert.ok(pane < head && head < tabs, 'the sticky head is the pane’s first child');
+  // THE TABS LEAD. They decide what the search is searching, so the control
+  // that sets the scope comes before the one that acts within it; the other
+  // way round the pane had to be read bottom-up.
+  assert.ok(tabs < actions, 'the tab strip sits above the toolbar');
+  assert.ok(actions < themesList, 'and both above what they act on');
+  // The two controls the toolbar exists for.
+  assert.ok(html.includes('id="dev-kanban-filterbar"'), 'the filter host comes with it');
+  assert.ok(html.includes('id="dev-plus-btn"'), 'and the "+"');
+  // Everything ABOVE the pane stays outside it: those strips are facts about
+  // the app, not things the search narrows.
+  assert.ok(html.indexOf('data-ws-dashboard') < pane, 'the summary strip is above the pane');
+  assert.ok(html.indexOf('data-discussion-row') < pane, 'and so is the discussion');
+});
+
+test('exactly one surface draws the toolbar, so its ids stay unique', () => {
+  // #dev-actions, #dev-plus-btn and #dev-plus-menu are ids. Two copies on
+  // screen would break _wirePlusMenu, which looks both up by getElementById.
+  const FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
+  assert.match(FRAME, /mode === 'workshop' \? null : \(\s*<DevActionsRow/,
+    'the frame draws none on the Workshop');
+  assert.match(WORKSHOP, /<DevActionsRow/, 'and the Workshop draws its own');
+  // Neither file spells the markup itself any more.
+  const ACTIONS = read('frontend/src/features/dev-board/actions-row.tsx');
+  assert.match(ACTIONS, /id="dev-actions"/, 'the markup has one home');
+  assert.ok(!FRAME.includes('id="dev-actions"'), 'not the frame');
+  assert.ok(!WORKSHOP.includes('id="dev-actions"'), 'and not the Workshop');
+});
+
+test('the "+" is re-wired when the toolbar changes surface', () => {
+  // _wirePlusMenu ran ONCE, from renderDevView, because the row never moved.
+  // It has two homes now, so a view switch unmounts one button and mounts
+  // another and the listeners are left on a node that is gone — a "+" that
+  // silently stops opening.
+  assert.match(APP_VIEW_SRC, /_rewirePlusMenu\(\) \{/, 'there is a re-wire');
+  const body = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _repaintDevBody() {'));
+  const scoped = body.slice(0, body.indexOf('\n  _renderLockedNotice('));
+  assert.equal((scoped.match(/AppView\._rewirePlusMenu\(\)/g) || []).length, 2,
+    'called on BOTH branches — either switch can move the row');
+  // Idempotent by construction: it aborts the previous controller first.
+  assert.match(APP_VIEW_SRC, /AppView\._plusMenuAbort\?\.abort\(\);/);
+});
+
+test('the toolbar’s props cross roots through a store, not the view model', () => {
+  // The Workshop is a separate React root from the frame that receives those
+  // props, so they are published once at mountBoard.
+  const MOUNT = read('frontend/src/features/dev-board/mount.ts');
+  const STORE = read('frontend/src/features/dev-board/actions-store.ts');
+  assert.match(MOUNT, /publishDevActions\(\{/, 'seeded where the frame is mounted');
+  assert.match(WORKSHOP, /useDevActions\(\)/, 'and read by the Workshop');
+  // Identity-cached: mountBoard runs on every navigation back onto the Dev
+  // screen, and a fresh object each time would re-render the "+" menu for no
+  // change. (A snapshot that is !== the last one is what re-renders.)
+  assert.match(STORE, /if \(same\) return;/, 'unchanged props publish nothing');
+  // NOT folded into _workshopView(): those are app permissions, and that view
+  // model is rebuilt from the card caches on every repaint.
+  assert.ok(!/canCollaborate/.test(APP_VIEW_SRC.slice(
+    APP_VIEW_SRC.indexOf('  _workshopView()'),
+    APP_VIEW_SRC.indexOf('  _workshopView()') + 4000)),
+    'the workshop view model carries no permission flags');
+});
+
+test('the pane head pins, and the pane does not clip what must escape it', () => {
+  assert.match(CSS, /\.dev-ws-pane-head \{[^}]*position: sticky/);
+  assert.match(CSS, /\.dev-ws-pane-head \{[^}]*top: 0/);
+  // The head wears the PANE'S OWN face, not a solid fill: this is one surface
+  // with a part of it pinned, not a separate bar laid over it. What passes
+  // under stays readable because the frost blurs it — and the filter has to be
+  // RE-DECLARED here, not inherited, because a backdrop-filter applies to what
+  // is behind the element it is set on, and these rows are inside the pane.
+  // ONE FACE, painted by the two PARTS and not by the pane. A fill on the pane
+  // with a second one on the head stacked 50% on 50% — measurably lighter
+  // across the controls (251,251,252 against the body's 250,250,252) — and
+  // because a backdrop-filter makes an element a backdrop root, the head's
+  // frost was a SECOND frost over the pane's, so the two could not be squared
+  // by tuning the fill either. Head and body now carry the same fill over the
+  // same backdrop, which makes them equal by construction.
+  assert.match(CSS,
+    /\.dev-ws-pane-head, \.dev-ws-pane-body \{[^}]*background-color: var\(--dc-sheet-fill\)[^}]*backdrop-filter: var\(--dc-frost\)/);
+  const paneDecls = CSS.slice(CSS.indexOf('.dev-ws-pane {'),
+    CSS.indexOf('}', CSS.indexOf('.dev-ws-pane {')));
+  assert.ok(!/background|backdrop-filter/.test(paneDecls),
+    'the pane paints nothing itself — that is what stops the two stacking');
+  // The head's frost still works on the rows, because the body is its SIBLING:
+  // what scrolls inside the body passes through the head's backdrop.
+  assert.match(WORKSHOP, /className="dev-ws-pane-head"[\s\S]*?className="dev-ws-pane-body"/,
+    'head and body are siblings, head first');
+  for (const token of ['--dc-sheet-fill', '--dc-frost', '--dc-sheet']) {
+    assert.ok(CSS.includes(`${token}:`), `${token} is defined`);
+  }
+  // ...and where there is no backdrop-filter the fill is ALL there is, so it
+  // falls back opaque. 50% white with rows sliding crisply under it is the
+  // rendering fault the frost prevents, not a slightly flatter bar. Every
+  // other frosted surface in this file carries the same guard.
+  // Both halves go opaque TOGETHER — staying the same colour as each other
+  // matters more here than either one's material.
+  assert.match(CSS,
+    /@supports not \(\(backdrop-filter[^{]*\{\s*\.dev-ws-pane-head, \.dev-ws-pane-body \{ background-color: var\(--dc-sheet\); \}/,
+    'head and body fall back to the same opaque fill');
+  // On By stage the BAR spans the window — it is a pinned edge, and one that
+  // stopped short of the board under it would look like a mistake — but what
+  // sits IN it keeps the reading column. The exact bound is asserted below,
+  // with the gutter correction that keeps it from growing on the switch.
+  // Two things inside this subtree must escape the pane's box: the "+" menu is
+  // absolutely positioned, and sticky does not work under a clipping ancestor.
+  assert.match(CSS, /\.dev-ws-pane \{[^}]*overflow: visible/);
+  assert.ok(!/overflow: hidden/.test(paneDecls), 'never clipped to hide the radius');
+  // The controls must not GROW when you switch panes. On By stage they are
+  // bounded to the reading column MINUS the head's own gutter — bounding to
+  // the column's outer width made them 20px wider there (740 against 760),
+  // a toolbar that changed size on a tab click.
+  assert.match(CSS,
+    /#dev-workshop:has\(\.dev-ws-board\) \.dev-ws-pane-head > \* \{[\s\S]*?max-width: calc\(760px - 20px\)/);
+});
+
+test('the declared stage check still describes the pane it has to walk', () => {
+  // It broke once, and silently: the check merged with the grouping tabs, and
+  // the working pane then moved `.dev-ws-board` inside `.dev-ws-pane-body`
+  // while the selector still read `.dev-ws-group + .dev-ws-board` — an
+  // adjacency that only held while both were direct children of `.dev-ws`.
+  // Nothing locally noticed, because a declared selector is a STRING here and
+  // only the staging gate resolves it.
+  //
+  // So this asserts the chain against the same source the checks walk: every
+  // class in it must be one the component actually renders, in the nesting
+  // order it renders them.
+  const dapp = JSON.parse(read('dapp.json'));
+  const check = dapp.tests.find((t) => /group=stage/.test(t.path || '')
+    && /dev-ws-board/.test(t.expectSelector || ''));
+  assert.ok(check, 'the stage check exists');
+  assert.ok(!/\.dev-ws-group \+ \.dev-ws-board/.test(check.expectSelector),
+    'the retired adjacency is gone');
+  assert.match(check.expectSelector, /\[data-ws-pane\] > \.dev-ws-pane-body > \.dev-ws-board/,
+    'it walks head-and-body pane, as the component renders it');
+  // ...and the component really does nest them that way.
+  assert.match(WORKSHOP, /className="dev-ws-pane-body"[\s\S]{0,400}className="dev-ws-board"/);
 });
