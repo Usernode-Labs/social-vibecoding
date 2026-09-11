@@ -257,8 +257,9 @@ async function storeExpectedTests(pool, appId, total) {
 // the checks run then proceeds exactly as before this feature existed.
 // `onProgress(snapshot)` is called with the tracker's snapshot each time a
 // stdout line changes it, and once more with phase 'done' when the run
-// ends; the caller owns any throttling. Never throws.
-async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null }) {
+// ends; the caller owns any throttling. Normal failures become check rows;
+// explicit cancellation propagates to the preview lifecycle owner.
+async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null }) {
   if (!isEnabled() || !github.isEnabled() || !repoOwner || !repoName || !ref) return null;
 
   let rawPkg = null;
@@ -305,6 +306,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     const cloneUrl = await github.getCloneUrl(repoOwner, repoName);
     const options = {
       onStdoutLine: observe,
+      signal, previewRunId,
       image: UNIT_SUITE_IMAGE,
       cmd: ['bash', '-c', RUN_SCRIPT],
       env: {
@@ -326,6 +328,7 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     readSummary(result?.stdout);
     passed = true;
   } catch (err) {
+    if (signal?.aborted) throw signal.reason;
     readSummary(err.stdout);
     const timedOut = err.killed === true || err.signal === 'SIGTERM' || err.signal === 'SIGKILL';
     reason = failureDetail(err.stdout, err.stderr, { timedOut });

@@ -844,8 +844,24 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
     // pass must stay invisible in host I/O next to live staging restores.
     for (const dbName of batch) {
       try {
-        await dbManager.dropDatabase(dbName);
-        summary.dropped++;
+        const lifecycle = require('./preview-lifecycle');
+        if (lifecycle.enabled(config)) {
+          const sessionId = Number(STAGING_DB_NAME_RE.exec(dbName)[1]);
+          await require('./build-retention-guard').withResourceUse(config,
+            require('./advisory-locks').PREVIEW_LIFECYCLE_LOCK, sessionId, async () => {
+              // The census predates lock acquisition. Recheck durable ownership
+              // and connections after every competing build/capture has stopped.
+              const { rows } = await pool.query(`SELECT 1 FROM chat_sessions
+                WHERE id = $1 AND staging_url IS NOT NULL
+                UNION ALL SELECT 1 FROM pg_stat_activity WHERE datname = $2`, [sessionId, dbName]);
+              if (rows.length) return;
+              await dbManager.dropDatabase(dbName);
+              summary.dropped++;
+            });
+        } else {
+          await dbManager.dropDatabase(dbName);
+          summary.dropped++;
+        }
       } catch (err) {
         summary.failed++;
         log.warn('staging-reap', 'Orphan staging-DB drop failed', {
