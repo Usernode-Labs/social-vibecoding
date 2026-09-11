@@ -371,8 +371,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // its step line, plus step 2's back link and resend;
   // 587 → 589: the Workshop's two grouping panes, one check each — the tab
   // strip in its default state, and `?group=stage` drawing the board's own
-  // columns under it with the summary strip still above them).
-  assert.equal(DAPP.tests.length, 589);
+  // columns under it with the summary strip still above them);
+  // 589 → 590: #1823's Challenges row in the app menu, under Discover.
+  assert.equal(DAPP.tests.length, 590);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
