@@ -5184,6 +5184,17 @@ const AppView = {
   // the finished grouping up.
   WORKSHOP_POLL_MS: [6000, 10000, 15000, 20000, 30000, 30000, 30000, 30000],
 
+  // One digest card set, or null. Each field is a string the server wrote:
+  // a missing or non-string field becomes '' rather than being dropped, so
+  // the renderer only ever asks "is this line empty", never "is this line
+  // there".
+  _workshopCards(v) {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+    const line = (x) => (typeof x === 'string' ? x.trim() : '');
+    const cards = { lastWeek: line(v.lastWeek), thisWeek: line(v.thisWeek), open: line(v.open) };
+    return (cards.lastWeek || cards.thisWeek || cards.open) ? cards : null;
+  },
+
   // Fetch the themes, and re-fetch on the schedule above while a
   // regeneration is pending server-side so a freshly grouped board arrives
   // without a reload. Throttled per slug: the board's WS-driven reloads call
@@ -5219,6 +5230,29 @@ const AppView = {
         pending: !!data.pending,
         pendingStage: data.pendingStage === 'discovery' || data.pendingStage === 'placement' ? data.pendingStage : null,
         lastError: typeof data.lastError === 'string' && data.lastError ? data.lastError : null,
+        // The model's paragraph itself. `_workshopView` reads it as
+        // `tData.digest` for the dashboard's `summary`, and the pane falls
+        // back to a sentence derived from the counts when that is null
+        // (workshop.tsx `summarise`) — so a field dropped HERE is
+        // indistinguishable on screen from a model that has never run.
+        //
+        // Which is what it was. #1803 added the consumer and the route's
+        // `digest`, and this normaliser — the only thing that writes the
+        // cache in a browser — never carried it, so no reader has ever seen
+        // the written paragraph: not after #1820 rewrote the prompt around
+        // what a user notices, not after #1821 made a row with no text due
+        // now rather than in a day. Both were fixes to a pipeline whose last
+        // mile was missing. The footnote's "the model writes one on the next
+        // pass" was true of every pass and false of every render.
+        digest: typeof data.digest === 'string' && data.digest ? data.digest : null,
+        // The three lines, as cards. Normalised field by field like
+        // everything else here, and for the reason this very function
+        // taught: a response field the normaliser does not name is
+        // `undefined` at the render, and the pane's fallback makes that
+        // indistinguishable from a model that never ran. An empty string
+        // survives as an empty string — it is how the server says that
+        // window held nothing, and it is what stops the card being drawn.
+        digestCards: AppView._workshopCards(data.digestCards),
         // Why the model's paragraph is missing, when it is: the footnote says
         // so instead of leaving the derived sentence up there unexplained.
         digestError: typeof data.digestError === 'string' && data.digestError ? data.digestError : null,
@@ -5657,9 +5691,12 @@ const AppView = {
       people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
       unclaimed: idle.length,
       busiest: AppView._busiestTheme(named),
-      // The model's two sentences, when there are any. The derived sentence
-      // the client can always build stays the fallback — same relationship
-      // the category grouping has to the drafted themes.
+      // The model's three windowed lines, when there are any: the Workshop
+      // draws them as cards. The flattened paragraph below is what a row
+      // written under the previous digest prompt still has, and the derived
+      // sentence the client can always build stays the last resort — the
+      // same relationship the category grouping has to the drafted themes.
+      cards: (tData && tData.digestCards) || null,
       summary: (tData && tData.digest) || null,
       // The merged history is paged. With more behind it the two week counts
       // are floors, not totals, and the view has to say so rather than

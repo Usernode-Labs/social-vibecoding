@@ -94,7 +94,7 @@ test('gmail without a sender address is refused', () => {
 });
 
 test('the committed default sender is the single platform address', () => {
-  assert.equal(select.DEFAULT_FROM, 'Usernode <no-reply@usernodelabs.org>');
+  assert.equal(select.DEFAULT_FROM, 'Usernode <no-reply@onhomeroom.com>');
   // A fresh deploy that set nothing still has a correct From.
   assert.equal(select.resolveFrom({}), select.DEFAULT_FROM);
   // PLATFORM_MAIL_FROM wins; TOPOCHAIN_MAIL_FROM is the legacy fallback.
@@ -568,12 +568,12 @@ test('base64url output is URL-safe and unpadded', () => {
 
 test('the raw message is CRLF multipart/alternative with the right headers', () => {
   const raw = gmail.buildRaw({
-    from: 'Usernode <no-reply@usernodelabs.org>',
+    from: 'Usernode <no-reply@onhomeroom.com>',
     to: 'a@b.invalid',
     message: { subject: 'Your Usernode login code', text: 'code 123456', html: '<p>hi</p>' },
     boundary: 'bnd',
   });
-  assert.match(raw, /^From: Usernode <no-reply@usernodelabs\.org>\r\n/);
+  assert.match(raw, /^From: Usernode <no-reply@onhomeroom\.com>\r\n/);
   assert.match(raw, /\r\nTo: a@b\.invalid\r\n/);
   assert.match(raw, /Content-Type: multipart\/alternative; boundary="bnd"/);
   // text part before html part: clients pick the LAST part they can render.
@@ -823,7 +823,7 @@ test('dapp.json declares every Platform mail variable, credentials private', () 
   }
   // The sender default is committed, so a fresh deploy has a correct From.
   assert.equal(byKey.get('PLATFORM_MAIL_FROM').default,
-    'Usernode <no-reply@usernodelabs.org>');
+    'Usernode <no-reply@onhomeroom.com>');
   // ...and code and manifest agree on it.
   assert.equal(byKey.get('PLATFORM_MAIL_FROM').default, select.DEFAULT_FROM);
 });

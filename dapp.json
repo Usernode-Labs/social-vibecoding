@@ -295,8 +295,8 @@
     {
       "key": "PLATFORM_MAIL_FROM",
       "group": "Platform mail",
-      "default": "Usernode <no-reply@usernodelabs.org>",
-      "description": "The From address on every platform mail. Defaults to Usernode <no-reply@usernodelabs.org>, which is the single sender for all platform mail, so a fresh deploy needs no edit here. The mailbox behind GMAIL_OAUTH_* must be authorised to send as this address (a Workspace alias or a 'send mail as' identity) or every send is rejected upstream. Not secret — it is in the header of every mail we send."
+      "default": "Usernode <no-reply@onhomeroom.com>",
+      "description": "The From address on every platform mail. Defaults to Usernode <no-reply@onhomeroom.com>, which is the single sender for all platform mail, so a fresh deploy needs no edit here. The mailbox behind GMAIL_OAUTH_* must be authorised to send as this address (a Workspace alias or a 'send mail as' identity) or every send is rejected upstream. Not secret — it is in the header of every mail we send."
     },
     {
       "key": "GMAIL_OAUTH_CLIENT_ID",
@@ -925,7 +925,7 @@
       "name": "Each allow-rules block spans the panel under its own Copy row (#1290)",
       "path": "/?demo=connectors-claude#settings/connectors",
       "expectSelector": "#connector-case-cc-local > pre#connector-allow-rules",
-      "expectText": "mcp__usernode__whoami"
+      "expectText": "mcp__homeroom__whoami"
     },
     {
       "name": "A ChatGPT-only connection hides Claude Code's settings-file advice (#1219)",
@@ -1451,9 +1451,55 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Waitlist code entry without a join can request a code",
+      "name": "Waitlist code entry opens on the address step, with the send promoted (#1876)",
       "path": "/?shot=waitlist-code-entry",
-      "expectSelector": "#waitlist-confirm:not(.hidden) #waitlist-resend",
+      "expectSelector": "#waitlist-confirm-address:not(.hidden) #waitlist-request-code",
+      "expectText": "Email me a code",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist step 1 holds back the code field until a code has been sent (#1876)",
+      "path": "/?shot=waitlist-code-entry",
+      "expectSelector": "#waitlist-confirm-code.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist check-my-status names which step you are on (#1876)",
+      "path": "/?shot=waitlist-code-entry",
+      "expectSelector": "#waitlist-step:not(.hidden)",
+      "expectText": "Step 1 of 2 \u00b7 Your email address",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist step 2 takes the six-digit code (#1876)",
+      "path": "/?shot=waitlist-code-step",
+      "expectSelector": "#waitlist-confirm-code:not(.hidden) #waitlist-code",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist step 2 is done asking for the address (#1876)",
+      "path": "/?shot=waitlist-code-step",
+      "expectSelector": "#waitlist-confirm-address.hidden",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist step 2 says so (#1876)",
+      "path": "/?shot=waitlist-code-step",
+      "expectSelector": "#waitlist-step:not(.hidden)",
+      "expectText": "Step 2 of 2 \u00b7 Enter your code",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist step 2 carries a way back to the address (#1876)",
+      "path": "/?shot=waitlist-code-step",
+      "expectSelector": "#waitlist-confirm-code:not(.hidden) #waitlist-change-email",
+      "expectText": "Back to your email address",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist step 2 keeps the fresh-code offer (#1876)",
+      "path": "/?shot=waitlist-code-step",
+      "expectSelector": "#waitlist-confirm-code:not(.hidden) #waitlist-resend",
       "expectText": "Send a new code",
       "allowConsoleErrors": true
     },
@@ -1859,9 +1905,10 @@
       "expectSelector": "#dev-body #dev-kanban-board #dev-kanban .dev-kanban-col .dev-ws-rowwrap > .dev-ws-row[role=\"button\"][aria-expanded=\"false\"][data-issue-row]"
     },
     {
-      "name": "#app/<slug>/workshop is the card area grouped by theme, not the general chat",
+      "name": "#app/<slug>/workshop is the card area grouped by theme, not the general chat, and it leads with the three summary cards",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-cards] > [data-ws-card=\"lastWeek\"] + [data-ws-card=\"thisWeek\"] + [data-ws-card=\"open\"] > .dev-ws-card-line",
+      "expectText": "Staging demo: one line on what has landed so far this week."
     },
     {
       "name": "The Workshop carries the board's search and filter bar, not just the +",
@@ -1882,7 +1929,7 @@
     {
       "name": "The Workshop pins the proposals waiting on the viewer's vote above the themes, the vote at each row's bottom-right",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-votes] [data-ws-lane=\"votes\"] .dev-ws-row[role=\"button\"] > .dev-ws-row-main > .dev-ws-row-band > .dev-ws-row-trailing > button.dev-vote-btn",
+      "expectSelector": "#dev-workshop [data-ws-votes] [data-ws-lane=\"votes\"] .dev-ws-row[role=\"button\"] > .dev-ws-row-band > .dev-ws-row-trailing > button.dev-vote-btn",
       "expectText": "Needs your vote"
     },
     {

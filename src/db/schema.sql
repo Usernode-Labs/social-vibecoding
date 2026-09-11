@@ -6406,6 +6406,14 @@ ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS reconcile_started_at TI
 -- drafted against. Empty when no model is configured or the call failed: the
 -- client falls back to a sentence derived from the counts.
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_text TEXT;
+-- The same answer as three windowed one-line fields — { lastWeek, thisWeek,
+-- open } — which is what the lander draws, as three cards under the number
+-- tiles. digest_text above is kept as the flattened prose form: it is what a
+-- row written under digest prompt version 2 holds, and the fields here cannot
+-- be recovered from it, so a v2 row serves its paragraph until the version
+-- bump re-asks the model. An empty string in a field means that window was
+-- genuinely empty and its card is not drawn.
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_json JSONB;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_at TIMESTAMPTZ;
 -- Why the last digest attempt got nothing, or NULL when it succeeded. Read by
 -- the lander's footnote, and it picks the retry window (an hour after a
