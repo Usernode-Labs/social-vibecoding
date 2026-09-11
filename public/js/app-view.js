@@ -8115,7 +8115,14 @@ const AppView = {
     // The pill absorbs the tally, the pulsing "Vote" badge, the merge-state
     // badge, the checks badge, the console-errors badge, the advisory chip
     // and the explicit-approval chip. Unset metadata chips don't render.
-    const badges = AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: !noNav });
+    // The status TAGS lead, then the metadata chips. Order matters twice
+    // over: the card caps its state chips at BADGE_MAX, and statusTagSpecs is
+    // severity-ordered, so what a cap drops is always the least serious thing
+    // wrong with the change rather than whichever chip happened to sort last.
+    const badges = [
+      ...AppView.statusTagSpecs(pr, {}),
+      ...AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: !noNav }),
+    ];
     // The pill LEADS the status band as a flexible bar. The detail head
     // keeps the inline capsule — it already has a wide header, and a bar
     // that wide there would just read as a rule.
@@ -13057,6 +13064,73 @@ const AppView = {
   // The pill's derived state, separated from its markup so the precedence
   // itself is unit-testable: { tier, key, label, tone, spinner, dot, fill,
   // yes, no, majority, suffix, reasons, lock, advisory }.
+  // ── The status TAGS: everything the bar stopped saying ──────────────
+  //
+  // The bar is the vote (statusPillState below). Everything else a proposal
+  // can be — blocked, stale, mid-check, mid-merge-resolution — is a tag on
+  // the card's facts line, and EVERY tag that applies is drawn rather than
+  // only the most severe one. That is the point of the move: a change can be
+  // behind main AND failing checks, and a single-slot bar could only ever
+  // admit one of them.
+  //
+  // Three tones, and they mean different things to a reader:
+  //   red     stops it merging, and somebody has to do something
+  //   amber   worth knowing, does not stop it landing (`soft` in blockReasons)
+  //   neutral in flight, nobody has to act — the only one that spins
+  //
+  // Ordering is blockReasons' own severity order, then the in-flight states,
+  // so the first tag on the line is the most serious thing wrong with it.
+  STATUS_TAG_CLS: {
+    blocking: 'dev-badge bg-red-500/10 text-red-700 dark:text-red-400',
+    soft: 'dev-badge bg-amber-500/10 text-amber-800 dark:text-amber-400',
+    running: 'dev-badge bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+  },
+  statusTagSpecs(item, opts) {
+    if (!item) return [];
+    const p = item;
+    const o = opts || {};
+    // A governance proposal has no branch, no staging build and no checks, so
+    // none of this applies to it — the same guard statusPillState carries.
+    if ((o.kind || 'proposal') === 'gov') return [];
+    const out = [];
+    const isOpenRow = p.status !== 'merged' && p.status !== 'merging';
+    // Merge-conflict resolution: in flight, nobody need act, so it reads like
+    // a running check rather than like a problem.
+    if (p.merge_conflict_state === 'resolving' || p.resolving === true) {
+      out.push({
+        t: 'chip', key: 'tag-resolving', cls: AppView.STATUS_TAG_CLS.running,
+        label: 'Resolving conflicts…', spinner: true,
+        title: 'Reconciling conflicts with main automatically, then retrying the merge.',
+      });
+    }
+    // Every reason, not just the top one. `soft` is blockReasons' own word for
+    // "worth knowing, does not stop it landing".
+    if (isOpenRow) {
+      for (const r of AppView.blockReasons(p)) {
+        out.push({
+          t: 'chip', key: `tag-${r.key}`,
+          cls: r.soft ? AppView.STATUS_TAG_CLS.soft : AppView.STATUS_TAG_CLS.blocking,
+          label: r.label, title: r.detail || undefined,
+        });
+      }
+    }
+    // Checks in flight. The live counts ride the label exactly as they did in
+    // the bar: a board of cards should say how far each run is, not just that
+    // it is running.
+    if (p.check_state === 'pending'
+      || (!p.check_state && p.status === 'promoted' && !p.console_check_state)) {
+      const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
+      const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
+      out.push({
+        t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
+        label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
+        spinner: true,
+        title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
+      });
+    }
+    return out;
+  },
+
   statusPillState(item, opts) {
     // No row, no pill. The guard used to sit in `statusPillHtml`, which is
     // retired with the rest of the card markup — leaving it out here would
@@ -13090,56 +13164,32 @@ const AppView = {
       return { ...base, tier: 1, key: 'merging', label: 'Merging…', tone: 'progress', spinner: true, lock: false, advisory: 0,
         title: 'This change is being merged into the app and production is rebuilding.' };
     }
-    if (p.merge_conflict_state === 'resolving' || p.resolving === true) {
-      return { ...base, tier: 1, key: 'resolving', label: 'Resolving conflicts…', tone: 'progress', spinner: true,
-        title: 'Reconciling conflicts with main automatically, then retrying the merge.' };
-    }
-    // 2 — blocked. The single most severe reason is the label; the rest ride
-    // in the tooltip and are enumerated in full in the detail view.
-    // `soft` reasons (behind main / console errors) are `attention`.
-    // blockReasons is severity-ordered, so reasons[0] IS the label. `soft`
-    // reasons (behind main, console errors) render `attention` and keep the
-    // tally riding along in the label — they don't stop the thing landing, so
-    // the vote is still the other half of the story. A HARD reason drops the
-    // tally: the count isn't what matters when it can't merge either way.
     // opts.kind ∈ 'proposal' (default) | 'gov'. A governance proposal has no
-    // branch, no staging build and no checks, so every checks/conflict state
-    // below is inapplicable to it — including the #607 "no verdict recorded
-    // yet" branch, which would otherwise label every gov row "Checks
-    // starting…" purely because it has no check_state to record.
+    // branch, no staging build and no checks, so the block reasons below are
+    // inapplicable to it.
+    //
+    // ── The bar is the VOTE, and only the vote ─────────────────────────
+    //
+    // It used to lead with whatever was most wrong. A merge conflict, failing
+    // checks, a dead preview, "Behind main", "Checks running… 4/12" — each
+    // took the bar, and a HARD one dropped the tally outright, on the
+    // reasoning that a count does not matter when the thing cannot land
+    // either way.
+    //
+    // That reasoning is sound about MERGING and wrong about the bar. The bar
+    // is what a reader looks at to answer "where has this got to, and does it
+    // want me?", and the answer to that is the vote — which stays true while
+    // a check is red. Meanwhile the states that took the bar are not one
+    // thing at all: some block, some are advisory, one is merely in flight.
+    // Ranking them into a single slot meant a card could only ever say one of
+    // them, so "Behind main" hid "Checks failing", and either hid the vote.
+    //
+    // They are TAGS now — every one that applies, side by side, colour-coded
+    // by severity (statusTagSpecs below) — and the bar always carries the
+    // vote. `reasons` still rides along on the pill, because the detail view
+    // enumerates them and the tooltip is where "and N more" is spelled out.
     const isCode = (o.kind || 'proposal') !== 'gov';
     const reasons = isCode ? AppView.blockReasons(p) : [];
-    if (reasons.length && isOpenRow) {
-      const top = reasons[0];
-      const soft = !!top.soft;
-      return {
-        ...base,
-        tier: 2,
-        key: top.key,
-        label: soft ? `${top.label} · ${yes}/${maj}` : top.label,
-        tone: soft ? 'attention' : 'blocked',
-        fill: soft,
-        // A HARD block drops the tally, so the advisory surplus has no
-        // tally to be a surplus OF — appending it there reads as part of
-        // the reason ('Merge conflict+1'). Soft reasons keep it.
-        advisory: soft ? advisory : 0,
-        reasons,
-      };
-    }
-    // Checks still running / not yet started / skipped: not blocked in the
-    // "someone must fix this" sense, but merge is gated, so it outranks the
-    // vote states — neutral, with a spinner while genuinely in flight.
-    if (isCode && (p.check_state === 'pending'
-      || (!p.check_state && p.status === 'promoted' && !p.console_check_state))) {
-      // The live counts ride the label when the run has any: a board of
-      // cards should say how far each run is, not just that it is running.
-      const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
-      const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
-      return { ...base, tier: 2, key: 'checks_running',
-        label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
-        tone: 'neutral', spinner: true, reasons, advisory: 0,
-        title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.' };
-    }
     // 3 — contested: the timed path is off, it needs a straight majority.
     if (isOpenRow && p.contested) {
       return { ...base, tier: 3, key: 'contested', label: `Needs a conversation · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,

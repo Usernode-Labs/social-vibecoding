@@ -958,8 +958,16 @@ test('a folded row\'s last line carries the card\'s state, in the tone the pill 
 
   assert.match(html, /<span class="dev-ws-row-band">/,
     'the row has a last line of its own: the card\'s status row and facts row in one');
-  assert.match(html, /class="dev-ws-row-state dev-ws-row-state-blocked"[^>]*>Conflicts with main · 2 files</,
-    'the composite pill keeps its label AND spends the tone it carries');
+  // The row's state line is the BAR, and the bar is the vote. The fact that
+  // decides whether it can land at all rides beside it as a red tag — which
+  // the row already had a seat for, because RowBand draws the card's state
+  // chips after the pill at both sizes.
+  assert.match(html, /class="dev-ws-row-state dev-ws-row-state-progress"[^>]*>Vote · \d+\/\d+</,
+    'the state line carries the vote, in the vote\u2019s tone');
+  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Conflicts with main · 2 files<\/span>/,
+    'and the blocker is a red tag on the same line');
+  assert.ok(html.indexOf('dev-ws-row-state') < html.indexOf('Conflicts with main'),
+    'bar first, then the tags');
   assert.ok(!html.includes('dev-ws-row-pill'),
     'it is no longer flattened to plain text in the grey the author\'s name wears');
 
@@ -1197,11 +1205,16 @@ test('a folded row wears the card\u2019s own edge, number and glyph, and no chev
   const html = workshopHtml(AppView);
 
   // The EDGE, from the card's own edgeFor: an issue with no state wears its
-  // type's amber, a proposal mid-checks wears its bar's tone. The row used to
-  // carry that colour as a tinted icon tile the card does not have, so one
-  // item opened on a different mark at each size.
+  // type's amber, a proposal wears its BAR's tone. The row used to carry that
+  // colour as a tinted icon tile the card does not have, so one item opened
+  // on a different mark at each size.
+  //
+  // This proposal is mid-checks and used to wear `neutral`, because the bar
+  // said "Checks starting…". The bar is the vote now, so the edge follows the
+  // vote — which is the edge doing its job, not a regression: the colour down
+  // the side of a row answers the same question the bar does.
   assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-edge="attention"[^>]*data-ws-row="issue:12"/);
-  assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-edge="neutral"[^>]*data-ws-row="proposal:34"/);
+  assert.match(html, /class="dev-ws-row[^"]*"[^>]*data-edge="vote"[^>]*data-ws-row="proposal:34"/);
   assert.match(CSS, /\.dev-ws-row\[data-edge="vote"\]\s+\{ --dev-edge: var\(--accent\); \}/);
   assert.match(CSS, /\.dev-ws-row \{[^}]*inset var\(--dev-edge-w\) 0 0 color-mix/,
     'drawn as the card draws it: an inset shadow at the same width, not a border');
