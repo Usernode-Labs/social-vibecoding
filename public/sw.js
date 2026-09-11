@@ -114,7 +114,7 @@
 // alongside the old in-task model list.
 // Card-action cleanup: retire cached shells so existing previews receive
 // the Build tab, its author default, and the simplified full-card controls.
-const SW_VERSION = 'v13-card-actions-4121';
+const SW_VERSION = 'v14';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
