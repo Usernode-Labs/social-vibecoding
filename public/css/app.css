@@ -11244,6 +11244,61 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 }
 .dev-change-issues a { display: block; overflow-wrap: anywhere; margin-top: 4px; }
 .dev-change-overview .dev-topic { width: 100%; }
+.dev-conversation { min-width: 0; scroll-margin-top: 12px; }
+.dev-conversation-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 12px;
+  border-radius: 999px;
+  background: var(--bg-tertiary);
+}
+.dev-conversation-tabs [role="tab"] {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--text-muted);
+}
+.dev-conversation-tabs [aria-selected="true"] {
+  color: var(--text-primary);
+  background: var(--dc-sheet);
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+}
+.dev-conversation-tabs [role="tab"]:focus-visible,
+.dev-conversation-panel:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-conversation-panel { min-width: 0; }
+.dev-conversation-panel[hidden] { display: none; }
+.dev-conversation-audience { margin: 0 4px 8px; }
+.dev-conversation-chat { height: clamp(300px, 50dvh, 540px); }
+.dev-conversation-workspace {
+  display: flex;
+  flex-direction: column;
+  height: clamp(440px, 72dvh, 760px);
+  min-width: 0;
+  overflow: hidden;
+  border-radius: 18px;
+}
+.dev-conversation .dev-thread { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.dev-conversation .dev-thread::before, .dev-conversation .dev-thread::after { content: none; }
+#dev-topic-thread .dev-conversation #gc-thread-messages {
+  margin: 0;
+  padding: 0;
+  max-width: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+#dev-topic-thread .dev-conversation #gc-thread-messages::before { content: none; }
+.dev-conversation-activity { display: flex; flex-direction: column; gap: 16px; padding: 8px 4px; }
+.dev-conversation-activity li { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; }
+.dev-conversation-activity time { color: var(--text-muted); }
 .dev-topic-sheet {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -11920,6 +11975,71 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   box-shadow: 0 1px 2px var(--app-sheet-shadow-near);
 }
 
+/* ── The working pane ──────────────────────────────────────────────────
+   The controls, the switch and the thing they act on, as one card — the same
+   sheet the "Where the app is" and "What needs you" strips above it wear, so
+   the page reads as a stack of panes rather than a pane, two loose control
+   rows and a list.
+
+   `overflow: visible` is load-bearing: the "+" menu is absolutely positioned
+   inside this subtree and the sticky head below depends on no ancestor
+   clipping. A `overflow: hidden` here to clip the radius would do both kinds
+   of damage at once. */
+.dev-ws-pane {
+  display: flex; flex-direction: column;
+  border-radius: 22px;
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+  overflow: visible;
+}
+/* ── One face, painted by the two PARTS and not by the pane ───────────
+   The pane used to carry the fill and the sticky head carried a second one
+   on top of it. 50% over 50% is ~75%: a lighter band across the controls,
+   measurably (251,251,252 against the body's 250,250,252) and visibly. And
+   because a backdrop-filter makes an element a backdrop root, the head's
+   frost was a SECOND frost applied over the pane's — so the two could not be
+   made equal by tuning the fill either.
+
+   So the pane paints nothing. Head and body carry the SAME fill over the SAME
+   backdrop — the page — which makes them the same colour by construction
+   rather than by a value chosen to look close. They abut (the pane is a flex
+   column with no gap), so the join does not show.
+
+   The head's frost still does its job: the body is its SIBLING, so the rows
+   scrolling inside the body pass through the head's backdrop and smear.
+
+   `overflow: visible` on the pane is load-bearing: the "+" menu is absolutely
+   positioned in this subtree, and sticky does not work under a clipping
+   ancestor. */
+.dev-ws-pane-head, .dev-ws-pane-body {
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+/* The head pins to the top of #dev-forum-scroll while the pane is in view and
+   releases with it. `top: 0` and not an offset: the scroller's own top IS the
+   top of the reading area — the platform header is outside it. */
+.dev-ws-pane-head {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 8px 10px;
+  border-radius: 22px 22px 0 0;
+}
+.dev-ws-pane-body {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 8px 10px 12px;
+  border-radius: 0 0 22px 22px;
+}
+/* Where there is no backdrop-filter the fill is all there is, and 50% white
+   with rows sliding CRISPLY under the pinned head is the rendering fault the
+   frost prevents — not a slightly flatter bar. Both halves go opaque together,
+   because they must stay the same colour as each other above all. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dev-ws-pane-head, .dev-ws-pane-body { background-color: var(--dc-sheet); }
+}
+/* Inside the pane the toolbar is a plain row: the frame's own `px-3 pt-2`
+   placed it against the scroller's edge, and here the pane supplies both. */
+.dev-ws-pane .dev-ws-pane-head #dev-actions { padding: 0; }
+
 /* ── The stage pane runs edge to edge ──────────────────────────────────
    `#dev-workshop` is a 760px reading column (below), which is right for a
    list of one-line rows and wrong for four side-by-side columns: bounded to
@@ -11933,8 +12053,31 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    overflows by its width and adds a horizontal scrollbar to the page.
    Re-parenting the bound has no such edge. */
 #dev-workshop:has(.dev-ws-board) { max-width: none; }
-#dev-workshop:has(.dev-ws-board) > .dev-ws > :not(.dev-ws-board) {
+#dev-workshop:has(.dev-ws-board) > .dev-ws > :not(.dev-ws-pane) {
   width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
+}
+/* On By stage the pane WIDENS AND STAYS A PANE. An earlier cut stripped its
+   sheet, radius and padding here, on the argument that a card face is a frame
+   drawn around the whole window. What that actually produced was the pane
+   vanishing and the head's own fill left behind as a bare rectangle sitting
+   over the controls alone — the board below it belonging to no pane at all.
+   The pane is the unit; widening it must not dissolve it. So nothing is
+   stripped: the same sheet, the same 22px, the same gutter, around a wider
+   box, with the board filling it.
+
+   The BOARD is what wanted the window, not the controls above it: a search
+   field and a two-tab strip stretched across 1200px are a worse control than
+   the same pair at reading width — the strip in particular reads as pulled
+   apart rather than as a segmented pair. So the head still spans the pane, as
+   a pinned edge must, while what sits IN it keeps the reading column. */
+#dev-workshop:has(.dev-ws-board) .dev-ws-pane-head > * {
+  /* 760px is the reading column; the 20px is the head's own left+right
+     padding. Bounding to the column's OUTER width instead made the controls
+     20px wider on By stage than on By category — a toolbar that grew slightly
+     when you switched panes, which is the kind of drift nobody can name but
+     everybody notices. Measured: 740 against 760. */
+  width: 100%; max-width: calc(760px - 20px);
+  margin-left: auto; margin-right: auto;
 }
 /* The board brings its own horizontal scroller (#dev-kanban), so this
    wrapper only has to stop the columns sitting flush against what is
