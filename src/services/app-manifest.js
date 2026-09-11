@@ -144,7 +144,22 @@ const MANIFEST_FILENAME = 'dapp.json';
 // ~293s of ideal work, so TESTS_DEADLINE_MS goes 570s → 590s to keep the 2x
 // margin (clears it by ~5s), and RUN_TIMEOUT_MS 690s → 710s to stay the
 // required 120s above it. The step buys 38 slots over the 562 declared here.
-const MAX_DECLARED_TESTS = 600;
+//
+// Raised 600 → 630 by #1876, which splits the waitlist confirm errand into two
+// screens and so declares eight checks where one stood: there are two states
+// now, they cannot be photographed at once, and each needs its visible half,
+// its hidden half and its step line asserted. That put the manifest at 587
+// against a 580 floor. Sixth crossing, and the first one caused by a
+// proposal's own checks rather than by finding the floor already met — which
+// is the same lesson from the other side: a floor cleared by seven is a floor
+// the next feature crosses.
+//
+// Same arithmetic, same coupled move: 630 checks at ~3.9s over a pool of 8 is
+// ~307s of ideal work, so TESTS_DEADLINE_MS goes 590s → 620s to keep the 2x
+// margin (clears it by ~6s), and RUN_TIMEOUT_MS 710s → 740s to stay the
+// required 120s above it. The step is 30 again, and buys 23 slots over the 587
+// declared here.
+const MAX_DECLARED_TESTS = 630;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
