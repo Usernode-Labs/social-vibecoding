@@ -580,6 +580,7 @@ export function DevWorkshop(): ReactNode {
   // list the strip was already showing the top of.
   const [allVotes, setAllVotes] = useState(false);
   const [allMine, setAllMine] = useState(false);
+  const [allNext, setAllNext] = useState(false);
   // Which pane is under the tabs. Lives in a module-global store rather than
   // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
   // the kanban view model only when the stage pane is up. See
@@ -799,6 +800,30 @@ export function DevWorkshop(): ReactNode {
                 open={openRows.next === nextUp.key}
                 onToggle={() => toggleRow('next', nextUp.key)}
               />
+              {/* #1934: the rest of the free-to-take issues, on request — the
+                  same toggle the two lanes above use. One suggestion stays the
+                  default; the list is there for someone who wants to choose. */}
+              {allNext ? (v.nextMore || []).map((row) => (row.t === 'card' ? (
+                <CardRowView
+                  key={row.key}
+                  row={row}
+                  slug={slug}
+                  canPost={canPost}
+                  open={openRows.next === row.key}
+                  onToggle={() => toggleRow('next', row.key)}
+                />
+              ) : null)) : null}
+              {(v.nextMore || []).length ? (
+                <button
+                  type="button"
+                  className="gc-vote-btn dev-ws-lane-btn"
+                  aria-expanded={allNext}
+                  data-ws-next-more=""
+                  onClick={() => setAllNext(!allNext)}
+                >
+                  {allNext ? 'Show fewer' : `Show ${(v.nextMore || []).length} more`}
+                </button>
+              ) : null}
             </div>
           ) : null}
         </section>

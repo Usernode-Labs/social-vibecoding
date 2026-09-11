@@ -871,6 +871,38 @@ test('"try taking this one next" names an open issue nobody is on', () => {
   assert.equal(AppView._workshopView().dashboard.unclaimed, 0);
 });
 
+test('#1934: the rest of the unclaimed issues sit behind a "Show more" under the suggestion', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12', 'issue:13'] }]);
+  const v = AppView._workshopView();
+  // Two unclaimed issues: 12 is offered, 13 is the "more".
+  assert.equal(v.nextUp.key, 'next:issue:12');
+  // Joined: the arrays come from the AppView sandbox's own realm.
+  assert.equal(v.nextMore.map((r) => r.key).join(','), 'next:issue:13', 'same order, same next: keys');
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-lane="next"[\s\S]*?data-ws-next-more=""[^>]*>Show 1 more</,
+    'the toggle sits in the suggestion lane, collapsed by default');
+  assert.match(html, /data-ws-next-more=""[^>]*aria-expanded="false"|aria-expanded="false"[^>]*data-ws-next-more=""/);
+
+  // Capped like a theme lane.
+  assert.match(require('fs').readFileSync(require('path').join(__dirname, '..', 'public/js/app-view.js'), 'utf8'),
+    /idle\.slice\(1, 1 \+ AppView\.WORKSHOP_LANE_MAX\)/);
+
+  // One unclaimed issue → no toggle at all.
+  AppView._ghIssues[1].assignee = { top: 'erin' };
+  const one = AppView._workshopView();
+  assert.equal(one.nextMore.length, 0);
+  assert.doesNotMatch(workshopHtml(AppView), /data-ws-next-more/);
+});
+
+test('#1934: a filter drops the "more" along with the suggestion', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'dark' };
+  assert.equal(AppView._workshopView().nextMore.length, 0);
+});
+
 test('an issue already being worked on is never the one offered', () => {
   const AppView = makeAppView();
   seed(AppView);
