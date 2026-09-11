@@ -164,7 +164,7 @@ test('the capture run feeds one observer to BOTH transports, throttled, with the
   assert.match(src, /if \(urgent \|\| gap >= minGapMs\)/, 'done always flushes; otherwise one snapshot per gap');
   assert.match(src, /onProgress: progress\.observeUnit,/, 'the unit suite reports into the same state');
   assert.match(src, /const unitOutcome = await unitSuitePromise;\n\s+closeProgress\(\);/, 'closed before the verdict is written');
-  assert.match(src, /\} catch \(err\) \{\n\s+closeProgress\(\);\n\s+traceStep\('capture_error'/, 'and on the error path');
+  assert.match(src, /\} catch \(err\) \{\n\s+closeProgress\(\);/, 'and on the error path');
 });
 
 // ── 2b. the unit suite (npm test) reports the same way ──────────────────

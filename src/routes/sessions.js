@@ -7109,6 +7109,24 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         } catch {}
       }
 
+      // Manual deployment can discover a newer branch head. Claim it before
+      // entering the coordinator, but never regress a concurrently changed pin.
+      if (require('../services/preview-lifecycle').enabled(config) && commitHash !== 'latest') {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          const claim = await client.query(`SELECT id FROM chat_sessions
+            WHERE id = $1 AND checks_commit_sha IS NOT DISTINCT FROM $2::text
+            FOR UPDATE`, [session.id, session.checks_commit_sha || null]);
+          if (!claim.rows.length) throw require('../services/preview-lifecycle').cancelled();
+          await visuals.setChecksPending(client, session.id, commitHash, 'building', 'manual-recheck');
+          await client.query('COMMIT');
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
+        } finally { client.release(); }
+      }
+
       // Build and deploy staging (async — respond immediately)
       res.json({ ok: true, status: 'deploying' });
 
