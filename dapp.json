@@ -1113,7 +1113,7 @@
       "name": "Issue cards show every action that fits the band, each foldable; the rest fold into the menu behind the hamburger",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
       "expectText": "Start work",
-      "expectSelector": "#dev-kanban-col-issues .gc-vote-item .gc-card-actions > [data-act=\"createPrForIssue\"][data-fold=\"1\"] ~ [data-card-menu]"
+      "expectSelector": "#dev-kanban-col-issues .gc-vote-item .gc-card-actions > [data-act=\"chooseIssueWork\"][data-fold=\"1\"] ~ [data-card-menu]"
     },
     {
       "name": "Session/proposal cards render reverse #N issue chips",
@@ -1703,9 +1703,9 @@
       "expectSelector": ".voting-help-btn"
     },
     {
-      "name": "Foreign proposal head offers Explore in dev chat, and no retired Ask AI button (#827)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
-      "expectSelector": "#gc-thread-head .gc-explore-chat-btn[data-proposal-id='9000001']",
+      "name": "Foreign proposal offers Explore in dev chat in More (#827)",
+      "path": "/?demo=1&shot=card-menu&card=proposal:9000001#app/usernode-2d5619/dev/proposals/9000001",
+      "expectSelector": ".dev-card-menu [data-menu-row=\"explore\"]",
       "expectText": "Explore in dev chat"
     },
     {
@@ -3772,9 +3772,9 @@
       "expectText": "The staging build or the test run itself broke"
     },
     {
-      "name": "An underway change opens its full overview before review",
+      "name": "A change opens its full overview with a single action band",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": "#dev-topic-thread .dev-topic-card .gc-card-actions [data-act=\"runChangeAction\"]",
+      "expectSelector": "#dev-topic-thread .dev-topic-card .gc-card-actions [data-card-menu]",
       "expectText": "Testing instructions"
     },
     {

@@ -737,7 +737,7 @@ const AppView = {
         const asked = /^(session|proposal|issue|gov|merged)(:\d+)?$/.exec(q.get('card') || '');
         const kind = asked ? asked[1] : null;
         const want = kind
-          ? (asked[2] ? `[data-card-menu="${asked[0]}"]` : `[data-card-menu^="${kind}:"]`)
+          ? (asked[2] ? `[data-card-menu="${asked[0]}"], [data-card-menu="detail:${asked[0]}"]` : `[data-card-menu^="${kind}:"], [data-card-menu^="detail:${kind}:"]`)
           : '[data-card-menu]';
         // Fixed grammar, same as `card=` — a named UI state, never a
         // query-string-injected selector.
@@ -12058,7 +12058,7 @@ const AppView = {
       if (h?.status === 'ready' && !h.mySessionId) items.push({
         label: 'Start more work', icon: 'generate', act: () => AppView.chooseIssueWork(n),
       });
-      // "Pledge kudos disables once the viewer has an open bounty here or
+      // "Pledge kudos" disables once the viewer has an open bounty here or
       // has spent their shared weekly allowance.
       const budgetSpent = meta.myRemaining === 0;
       const kudosReason = issue.my_bounty
