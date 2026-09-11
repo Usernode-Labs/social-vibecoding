@@ -1942,9 +1942,12 @@ test('the toolbar renders inside the Workshop pane, above the tabs', () => {
   const tabs = html.indexOf('data-ws-group="category"');
   const themesList = html.indexOf('dev-ws-themes');
   assert.ok(pane > 0, 'the pane renders');
-  assert.ok(pane < head && head < actions, 'the sticky head is the pane’s first child');
-  assert.ok(actions < tabs, 'the toolbar sits above the tab strip');
-  assert.ok(tabs < themesList, 'and both above what they act on');
+  assert.ok(pane < head && head < tabs, 'the sticky head is the pane’s first child');
+  // THE TABS LEAD. They decide what the search is searching, so the control
+  // that sets the scope comes before the one that acts within it; the other
+  // way round the pane had to be read bottom-up.
+  assert.ok(tabs < actions, 'the tab strip sits above the toolbar');
+  assert.ok(actions < themesList, 'and both above what they act on');
   // The two controls the toolbar exists for.
   assert.ok(html.includes('id="dev-kanban-filterbar"'), 'the filter host comes with it');
   assert.ok(html.includes('id="dev-plus-btn"'), 'and the "+"');

@@ -1918,9 +1918,9 @@
       "expectText": "Staging demo: one line on what has landed so far this week."
     },
     {
-      "name": "The Workshop's search, filters and + sit in its own pane, directly above the grouping tabs",
+      "name": "The Workshop's grouping tabs lead its own pane, with the search, filters and + under them",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > #dev-actions + .dev-ws-group",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > .dev-ws-group + #dev-actions",
       "expectText": "By category"
     },
     {

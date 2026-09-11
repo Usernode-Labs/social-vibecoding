@@ -835,16 +835,15 @@ export function DevWorkshop(): ReactNode {
               "which grouping" and "narrowed to what" are one question asked
               twice. Both pin together: filtering a long list is exactly what
               you are doing when you are scrolled down, and a tab strip that
-              scrolled away would leave no way back to the other pane. */}
+              scrolled away would leave no way back to the other pane.
+
+              THE TABS LEAD, and the order is the argument: they decide what
+              the search is searching. With the search above them the control
+              that sets the scope sat under the control that acts within it,
+              and the pane had to be read bottom-up to be understood. Leading
+              with the switch also gives the head a title bar — the two-state
+              choice, then the tools for whichever state you picked. */}
           <div className="dev-ws-pane-head">
-            <DevActionsRow
-              illustrationApp={actions.illustrationApp}
-              canManageIllustration={actions.canManageIllustration}
-              selfHosted={actions.selfHosted}
-              readOnly={actions.readOnly}
-              canCollaborate={actions.canCollaborate}
-              showsMembers={actions.showsMembers}
-            />
           <div className="dev-ws-group" role="tablist" aria-label="Group the board by">
             <button
               type="button"
@@ -867,6 +866,14 @@ export function DevWorkshop(): ReactNode {
               By stage
             </button>
           </div>
+            <DevActionsRow
+              illustrationApp={actions.illustrationApp}
+              canManageIllustration={actions.canManageIllustration}
+              selfHosted={actions.selfHosted}
+              readOnly={actions.readOnly}
+              canCollaborate={actions.canCollaborate}
+              showsMembers={actions.showsMembers}
+            />
           </div>
           {/* The pane's face is painted by its two PARTS, not by the pane —
               see app.css. A fill on the pane with a second one on the sticky
