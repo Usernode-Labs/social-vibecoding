@@ -5,15 +5,21 @@ import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { DiscoverCard } from '../home/panels/discover';
 import type { DiscoverTileView } from '../home/panels-store';
 import { prepareIllustration } from '../../lib/prepare-illustration';
+import {
+  DEFAULT_FRAME, centreOf, clampFrame, panFrame, spreadOf, wheelZoomFactor, zoomFrame,
+} from '../../lib/illustration-framing';
 
 type Art = NonNullable<DiscoverTileView['illustration']>;
-const DEFAULT_FRAME = { zoom: 1, x: 0, y: 0 };
-const clamp = (n: number) => Math.max(-100, Math.min(100, n));
+// Keyboard equivalents for the gestures, so framing is not mouse-only now
+// that the sliders are gone.
+const KEY_PAN = 3;
+const KEY_ZOOM = 1.08;
 
 export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose: () => void }) {
   const root = useRef<HTMLDivElement>(null);
   const card = useRef<HTMLDivElement>(null);
   const file = useRef<HTMLInputElement>(null);
+  const surface = useRef<HTMLDivElement>(null);
   const generation = useRef(0);
   const close = useRef(onClose);
   useIsomorphicLayoutEffect(() => { close.current = onClose; }, [onClose]);
@@ -22,7 +28,9 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const drag = useRef<{ px: number; py: number; x: number; y: number; width: number; height: number } | null>(null);
+  // Live pointers, in insertion order: one is a drag, two or more a pinch.
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const [dragging, setDragging] = useState(false);
   const endpoint = `/api/apps/${encodeURIComponent(app.slug)}/featured-illustration`;
   useEffect(() => {
     const controller = new AbortController();
@@ -30,7 +38,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not load the illustration. Reopen the editor to try again.');
       if (controller.signal.aborted) return;
-      setArt(data.illustration); setLoading(false);
+      setArt(data.illustration ? { ...data.illustration, ...clampFrame(data.illustration) } : null); setLoading(false);
     }).catch(err => { if (!controller.signal.aborted) setError(err.message); });
     return () => { controller.abort(); generation.current++; };
   }, [endpoint]);
@@ -44,6 +52,41 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
       adoptedOn: root.current, home: 'placeholder', gate: 'kit', onDismiss: () => { adoption = null; close.current(); } });
     return () => { if (adoption) { adoption.restore(); adoption.dismiss(); } };
   }, []);
+  const interactive = !!art && !busy && !loading;
+  // The art block, not the whole card: the name and blurb below it are not a
+  // framing surface, and its box is what every gesture is measured against.
+  const artRect = () => {
+    const rect = surface.current?.querySelector('.home-discover-art')?.getBoundingClientRect();
+    return rect && rect.width && rect.height ? rect : null;
+  };
+  // A native listener, because React's onWheel is passive at the root and so
+  // cannot preventDefault — without which a zoom scrolls the dialog too.
+  useEffect(() => {
+    const el = surface.current;
+    if (!el || !interactive) return undefined;
+    const onWheel = (event: WheelEvent) => {
+      const rect = artRect();
+      if (!rect || event.clientY > rect.bottom) return;
+      event.preventDefault();
+      setArt(a => a ? { ...a, ...zoomFrame(a, wheelZoomFactor(event.deltaY, event.deltaMode),
+        (event.clientX - rect.left) / rect.width, (event.clientY - rect.top) / rect.height) } : a);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [interactive]);
+  useEffect(() => { if (!interactive) { pointers.current.clear(); setDragging(false); } }, [interactive]);
+  const endPointer = (id: number) => {
+    pointers.current.delete(id);
+    if (!pointers.current.size) setDragging(false);
+  };
+  const nudge = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!interactive || !art) return;
+    const pan = { ArrowLeft: [-KEY_PAN, 0], ArrowRight: [KEY_PAN, 0], ArrowUp: [0, -KEY_PAN], ArrowDown: [0, KEY_PAN] }[event.key];
+    const zoom = event.key === '+' || event.key === '=' ? KEY_ZOOM : event.key === '-' || event.key === '_' ? 1 / KEY_ZOOM : 0;
+    if (!pan && !zoom) return;
+    event.preventDefault();
+    setArt(a => a ? { ...a, ...(pan ? panFrame(a, pan[0] / 100, pan[1] / 100) : zoomFrame(a, zoom)) } : a);
+  };
   const chooseFile = async (chosen?: File) => {
     if (!chosen) return;
     const current = ++generation.current;
@@ -61,7 +104,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     setBusy(true); setError('');
     try {
       const blob = pendingBlob.current;
-      const framing = art ? { zoom: art.zoom, x: art.x, y: art.y } : null;
+      const framing = art ? clampFrame(art) : null;
       const query = blob && framing ? `?${new URLSearchParams(Object.entries(framing).map(([k, v]) => [k, String(v)]))}` : '';
       const res = await fetch(endpoint + query, { method: !art ? 'DELETE' : blob ? 'POST' : 'PATCH',
         headers: { 'Content-Type': blob && art ? 'application/octet-stream' : 'application/json' },
@@ -92,19 +135,49 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
       <h2 className="text-lg font-bold pt-3 pb-4">Featured illustration</h2>
       <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">Preview on Discover</p>
       <div className="flex justify-center mb-4">
-        <div style={{ touchAction: art && !busy ? 'none' : 'auto', cursor: art ? 'grab' : 'default' }}
+        <div ref={surface} data-framing-surface={art ? 'true' : 'false'} role="group"
+          aria-label="Illustration framing: drag to move, scroll or pinch to zoom, arrow keys to nudge"
+          tabIndex={interactive ? 0 : -1}
+          className="rounded-2xl focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-violet-500"
+          // touchAction so a pan is a pan and not a page scroll; userSelect
+          // because otherwise a drag across the card selects the name and
+          // blurb under it, which on touch leaves them highlighted blue.
+          style={{ touchAction: interactive ? 'none' : 'auto', userSelect: 'none', WebkitUserSelect: 'none',
+            cursor: !interactive ? 'default' : dragging ? 'grabbing' : 'grab' }}
+          onKeyDown={nudge}
           onPointerDown={event => {
-            if (!art || busy || loading) return;
-            const rect = event.currentTarget.querySelector('.home-discover-art')!.getBoundingClientRect();
-            if (event.clientY > rect.bottom) return;
+            if (!interactive) return;
+            const rect = artRect();
+            if (!rect || event.clientY > rect.bottom) return;
             event.currentTarget.setPointerCapture(event.pointerId);
-            drag.current = { px: event.clientX, py: event.clientY, x: art.x, y: art.y, width: rect.width, height: rect.height };
+            pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            setDragging(true);
           }}
           onPointerMove={event => {
-            const d = drag.current;
-            if (d) setArt(a => a ? { ...a, x: clamp(d.x + (event.clientX - d.px) / d.width * 100), y: clamp(d.y + (event.clientY - d.py) / d.height * 100) } : a);
+            const live = pointers.current;
+            if (!live.has(event.pointerId)) return;
+            const rect = artRect();
+            if (!rect) return;
+            // Incremental: one step per move event, clamped each time, so a
+            // pinch that hits the zoom ceiling simply stops instead of
+            // banking travel it later replays.
+            const before = [...live.values()];
+            live.set(event.pointerId, { x: event.clientX, y: event.clientY });
+            const after = [...live.values()];
+            const from = centreOf(before), to = centreOf(after);
+            const was = spreadOf(before), now = spreadOf(after);
+            setArt(a => {
+              if (!a) return a;
+              let next: Art = a;
+              if (was > 0 && now > 0) {
+                next = { ...next, ...zoomFrame(next, now / was,
+                  (to.x - rect.left) / rect.width, (to.y - rect.top) / rect.height) };
+              }
+              return { ...next, ...panFrame(next, (to.x - from.x) / rect.width, (to.y - from.y) / rect.height) };
+            });
           }}
-          onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}>
+          onPointerUp={event => endPointer(event.pointerId)}
+          onPointerCancel={event => endPointer(event.pointerId)}>
           <DiscoverCard tile={tile} preview />
         </div>
       </div>
@@ -112,16 +185,11 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
         aria-label="Upload featured illustration" onChange={e => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />
       <fieldset disabled={busy || loading} className="flex flex-col gap-3">
         <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => file.current?.click()}>{art ? 'Replace image' : 'Upload image'}</Button>
-        <p className="text-xs text-zinc-500 dark:text-zinc-400">PNG, JPEG or WebP, up to 20 MB. {art ? 'Drag the image to position it.' : ''}</p>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400">PNG, JPEG or WebP, up to 20 MB.</p>
         {art ? <>
-          {([{ key: 'zoom', label: 'Size', min: 0.5, max: 3, step: 0.01 },
-            { key: 'x', label: 'Horizontal position', min: -100, max: 100, step: 1 },
-            { key: 'y', label: 'Vertical position', min: -100, max: 100, step: 1 }] as const).map(control =>
-            <label key={control.key} className="flex flex-col gap-1 text-sm">
-              <span>{control.label} <span className="text-zinc-500">{Math.round(art[control.key] * (control.key === 'zoom' ? 100 : 1))}%</span></span>
-              <input type="range" min={control.min} max={control.max} step={control.step} value={art[control.key]}
-                className="w-full min-h-[44px] accent-violet-600" onChange={e => setArt({ ...art, [control.key]: Number(e.target.value) })} />
-            </label>)}
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            Drag the card to move the image. Scroll or pinch to zoom. Zoom <span data-zoom-readout>{Math.round(art.zoom * 100)}%</span>.
+          </p>
           <div className="flex gap-3">
             <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => setArt({ ...art, ...DEFAULT_FRAME })}>Reset position</Button>
             <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { setArt(null); pendingBlob.current = null; }}>Use app icon</Button>

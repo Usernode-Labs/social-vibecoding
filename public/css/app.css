@@ -2843,7 +2843,10 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   overflow: hidden;
   cursor: pointer;
 }
-.home-discover-illustration { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+/* `cover`, not `contain`: the framing editor's zoom bottoms out at the exact
+   cover fit and its pan is clamped to it, so the art fills the block at every
+   legal framing rather than letterboxing itself against the tint. */
+.home-discover-illustration { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .home-discover-art {
   overflow: hidden;
   height: 7.5rem;

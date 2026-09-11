@@ -60,6 +60,8 @@ import { useEffect, useRef, useState } from 'react';
 
 import { CheckIcon, PlusWideIcon } from '@/components/ui/icons';
 
+import { clampFrame } from '../../../lib/illustration-framing';
+
 import type { IconView } from '../grid-store';
 import type { DiscoverTileView, DiscoverView } from '../panels-store';
 import { PanelShell, tintOf } from './ui';
@@ -111,9 +113,14 @@ function IllustrationArt({ tile }: { tile: DiscoverTileView }) {
   const [failed, setFailed] = useState(false);
   const art = tile.illustration;
   if (!art || failed) return <CardArt icon={tile.icon} />;
+  // Re-clamped on render, not trusted as stored: the art `cover`s the block,
+  // so a zoom under 1 or an offset past the cover limit would open a gutter
+  // of tint along one edge. The editor cannot produce one; the API's framing
+  // range is wider than the editor's, so the card does not assume it.
+  const frame = clampFrame(art);
   return <img src={art.url} alt="" draggable={false} className="home-discover-illustration"
     onError={() => setFailed(true)}
-    style={{ transform: `translate(${art.x}%, ${art.y}%) scale(${art.zoom})` }} />;
+    style={{ transform: `translate(${frame.x}%, ${frame.y}%) scale(${frame.zoom})` }} />;
 }
 
 export function DiscoverCard({ tile, preview = false }: { tile: DiscoverTileView; preview?: boolean }) {
