@@ -7600,6 +7600,18 @@ span.gc-vote-btn-icon { cursor: default; }
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
+/* #1943: the session strip keeps THIS surface when the chat scrolls.
+   attachScreenFx (dev-chat.js) makes #dc-session-header a
+   `.platform-chat-header`, and the kit adds `.un-scrolled` once the
+   transcript moves; `.platform-chat-header.un-scrolled` (near the top of
+   this file) is more specific than `.dc-lift-strip` and repainted the strip
+   with the nav-bar white — the bar visibly turned white on scroll. The id
+   outranks it; the hairline it adds is the scroll cue and stays. */
+#dc-session-header.un-scrolled {
+  background-color: var(--dc-strip-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
 /* NO BLUR, NO GLASS. Without backdrop-filter the same alphas leave the star
    and the three washes sitting UNBLURRED behind body text, which is worse
    than the flat surface this replaced — the effect depends on the blur, not
@@ -7609,6 +7621,7 @@ span.gc-vote-btn-icon { cursor: default; }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dc-lift-strip { background-color: var(--dc-strip); }
   .dc-lift-session { background-color: var(--dc-sheet); }
+  #dc-session-header.un-scrolled { background-color: var(--dc-strip); }
 }
 
 /* ── THE THIRD SURFACE: a lift that CASTS its own scrim ────────────────
