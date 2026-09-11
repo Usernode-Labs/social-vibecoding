@@ -519,6 +519,47 @@ test('the model\'s paragraph is what the pane says, when there is one', () => {
   assert.ok(!failed.includes('the model writes one on the next pass'), 'not also the neutral line');
 });
 
+test('the digest survives the fetch that loads it', async () => {
+  // The seam every test above steps over. They seed `_workshopThemes` with
+  // the CACHE shape directly, so `_loadWorkshopThemes` — the only thing that
+  // writes that cache in a browser — is never on the path, and the field it
+  // dropped was the one field the pane degrades silently on. #1803 shipped
+  // the consumer (`tData.digest`) without the producer, and the derived
+  // sentence made a paragraph that never arrived look exactly like a model
+  // that had not run yet, through two rounds of fixes to the stages above.
+  //
+  // So this one asserts ACROSS the normaliser, not beside it: the response
+  // body goes in, the rendered pane comes out.
+  const digest = 'In the last week, alice finished the sign-in work. Bob is on the mail templates now.';
+  const body = {
+    themes: [{ id: 't', name: 'Theming', items: ['issue:12'] }],
+    source: 'ai', generatedAt: '2026-09-06T00:00:00Z', discoveredAt: '2026-09-06T00:00:00Z',
+    stale: false, pending: false, pendingStage: null, lastError: null,
+    coverage: null, unplaced: [], digest, digestError: null,
+  };
+  const AppView = makeAppView({ fetch: async () => ({ ok: true, json: async () => body }) });
+  seed(AppView);
+  // The load repaints the live surface on the way out; this test is about
+  // what it CACHED and what the pane makes of it, not about the DOM.
+  AppView._repaintBoardSurface = () => {};
+  await AppView._loadWorkshopThemes('demo-app');
+
+  assert.equal(AppView._workshopThemes.digest, digest, 'the normaliser keeps it');
+  const html = workshopHtml(AppView);
+  assert.match(html, /alice finished the sign-in work/);
+  assert.ok(!html.includes('open items across'), 'and the derived sentence stands down');
+  assert.match(html, /The summary at the top was written by the model on the same pass\./);
+
+  // A response with no paragraph still reads as one: null, not undefined,
+  // so the footnote picks the neutral line rather than the failure one.
+  const empty = makeAppView({ fetch: async () => ({ ok: true, json: async () => ({ ...body, digest: null }) }) });
+  seed(empty);
+  empty._repaintBoardSurface = () => {};
+  await empty._loadWorkshopThemes('demo-app');
+  assert.equal(empty._workshopThemes.digest, null);
+  assert.match(workshopHtml(empty), /3 open items across 1 category\./);
+});
+
 test('themes all start collapsed, and a deep link is what opens one', () => {
   const AppView = makeAppView();
   seed(AppView);

@@ -5215,6 +5215,21 @@ const AppView = {
         pending: !!data.pending,
         pendingStage: data.pendingStage === 'discovery' || data.pendingStage === 'placement' ? data.pendingStage : null,
         lastError: typeof data.lastError === 'string' && data.lastError ? data.lastError : null,
+        // The model's paragraph itself. `_workshopView` reads it as
+        // `tData.digest` for the dashboard's `summary`, and the pane falls
+        // back to a sentence derived from the counts when that is null
+        // (workshop.tsx `summarise`) — so a field dropped HERE is
+        // indistinguishable on screen from a model that has never run.
+        //
+        // Which is what it was. #1803 added the consumer and the route's
+        // `digest`, and this normaliser — the only thing that writes the
+        // cache in a browser — never carried it, so no reader has ever seen
+        // the written paragraph: not after #1820 rewrote the prompt around
+        // what a user notices, not after #1821 made a row with no text due
+        // now rather than in a day. Both were fixes to a pipeline whose last
+        // mile was missing. The footnote's "the model writes one on the next
+        // pass" was true of every pass and false of every render.
+        digest: typeof data.digest === 'string' && data.digest ? data.digest : null,
         // Why the model's paragraph is missing, when it is: the footnote says
         // so instead of leaving the derived sentence up there unexplained.
         digestError: typeof data.digestError === 'string' && data.digestError ? data.digestError : null,
