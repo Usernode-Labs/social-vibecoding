@@ -280,6 +280,12 @@ export interface TranscriptSection {
 
 /** Everything under the card, by topic kind. */
 export interface TopicBody {
+  changeId?: number;
+  issues?: { n: number; title: string; href: string }[];
+  testing?: { html: string | null; path: string | null };
+  activity?: { label: string; at: string }[];
+  workspace?: number | null;
+  discussion?: string | null;
   /**
    * The detail actions. The PILLS are merged onto the card's own action band
    * by `_renderTopicHead` (one action line, as on the board); the head draws

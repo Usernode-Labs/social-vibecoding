@@ -392,7 +392,10 @@ test('the app frame is the SAME element and the SAME document across every state
     ['surface → app', () => AppView._setSurface('app')],
     ['surface → app (no-op)', () => AppView._setSurface('app')],
     // A staging preview opening over the top, and closing again.
-    ['staging preview open', () => AppView.swapToStaging('https://preview.example', null, { verified: true })],
+    ['staging preview open', () => {
+      AppView._tokenFresh = { slug: SLUG, token: 'tok-1', at: Date.now() };
+      return AppView.swapToStaging('https://preview.example', null, { verified: true });
+    }],
     ['staging docked', () => AppView._setStagingMode('docked')],
     ['staging preview close', () => AppView.closeStagingOverlay()],
     // Park/activate through the seam directly (what App.switchTab reaches).

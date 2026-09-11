@@ -375,8 +375,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 589 → 591: the status bar becoming the vote alone — one check that a
   // BLOCKED proposal still draws a vote bar, one that its reasons are tags on
   // the facts line beside it. Two, because those two facts sit on sibling
-  // rows and no single selector can assert both).
-  assert.equal(DAPP.tests.length, 591);
+  // rows and no single selector can assert both;
+  // 591 → 593: two additional checks cover the underway overview and
+  // workspace deep link;
+  // 593 → 594: the Workshop's working pane, pinning that the search, filters
+  // and "+" render in its sticky head directly above those tabs rather than
+  // in the frame's chrome two strips away;
+  // 594 → 597: full-card tabs, embedded owner workspace and review discussion.
+  assert.equal(DAPP.tests.length, 597);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

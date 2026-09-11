@@ -199,19 +199,29 @@ test('#dev-body tap opens the proposal topic on a bare merged-row click', async 
   assert.deepEqual(opened, [], 'inner button/link taps do not open the topic');
 });
 
-test('_mountTopicThread mounts a merged proposal with a LIVE editable composer', () => {
+test('the merged change card keeps a LIVE editable discussion in its own tab', () => {
   const threadSlot = makeEl('dev-topic-thread');
   const { AppView, sandbox } = makeAppView({ thread: threadSlot });
   AppView._devTopic = { kind: 'proposal', id: 55 };
   AppView._proposals = [];
   AppView._merged = [mergedPr()];
 
+  let pageHost;
+  AppView._reactDevBoard = () => ({ publishTopicHead() {}, mountChangePage: (host) => { pageHost = host; } });
   AppView._mountTopicThread();
-
+  assert.equal(pageHost, threadSlot);
+  assert.equal(AppView._topicViewFor('proposal', AppView._merged[0]).body.discussion, null);
+  const { loadTsx } = require('./lib/render-tsx');
+  const { mountChangeDiscussion } = loadTsx('frontend/src/features/dev-board/topic/conversation.tsx');
+  const previousWindow = global.window;
+  global.window = { GroupChat: sandbox.GroupChat };
+  try { mountChangeDiscussion(threadSlot, 55, !!AppView.readOnly); }
+  finally { if (previousWindow === undefined) delete global.window; else global.window = previousWindow; }
   const opts = sandbox.__mountOpts;
   assert.ok(opts, 'GroupChat.mountThread was called');
   assert.equal(opts.type, 'session', 'proposal maps to a session thread');
   assert.equal(opts.ref, 55);
+  assert.equal(opts.withHeader, false, 'the change card is not repeated inside the discussion');
   assert.ok(!opts.readOnly, 'no read-only lock on a merged proposal');
   assert.ok(!opts.notice, 'no "voting closed" notice');
 });

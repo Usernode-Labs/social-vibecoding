@@ -103,11 +103,16 @@
 // surface is entirely inside the bundle, which is the case the v10 entry
 // above names.
 //
+// v13: the Workshop's working pane — the search, filters and "+" move out of
+// the frame's chrome into a sticky head above the grouping tabs. The toolbar
+// is React's on both surfaces and the pane is entirely in the shell bundle, so
+// a stale shell would draw the old chrome row and no pane at all.
+//
 // v11: refresh the task-time OpenRouter picker. Its controls live in the main
 // shell bundle, while Settings lives in a lazy chunk; without retiring the
 // cached shell, an existing installation could show the new Settings picker
 // alongside the old in-task model list.
-const SW_VERSION = 'v12';
+const SW_VERSION = 'v13';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
