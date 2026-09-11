@@ -373,7 +373,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // strip in its default state, and `?group=stage` drawing the board's own
   // columns under it with the summary strip still above them).
   // Two additional checks cover the underway overview and workspace deep link.
-  assert.equal(DAPP.tests.length, 591);
+  // 591 → 594: full-card tabs, embedded owner workspace and review discussion.
+  assert.equal(DAPP.tests.length, 594);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
