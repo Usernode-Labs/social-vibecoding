@@ -1568,12 +1568,23 @@ test('whoami hands the model the canonical name and the exact shipped rules', ()
     'the canonical name comes from the constant, never a re-typed literal');
   assert.match(body, /permissionAllowRules: \[\.\.\.READ_ONLY_ALLOW_RULES\]/,
     'the rules come from the constant, and are copied so a caller cannot mutate the frozen array');
-  assert.equal(SERVER_NAME, 'usernode');
+  assert.equal(SERVER_NAME, 'homeroom');
   // Two globs and three literals per spelling. The two `notify_*` entries are
   // #1405's self-scoped pair — writes, but only into the caller's own
   // notification feed, which is why they are literals here and not a widening
-  // of the globs.
+  // of the globs. Four spellings: the canonical pair, and the pre-rename pair
+  // an already-connected account is still registered under.
   assert.deepEqual([...READ_ONLY_ALLOW_RULES], [
+    'mcp__homeroom__get_*',
+    'mcp__homeroom__list_*',
+    'mcp__homeroom__whoami',
+    'mcp__homeroom__notify_awaiting_input',
+    'mcp__homeroom__notify_input_received',
+    'mcp__Homeroom__get_*',
+    'mcp__Homeroom__list_*',
+    'mcp__Homeroom__whoami',
+    'mcp__Homeroom__notify_awaiting_input',
+    'mcp__Homeroom__notify_input_received',
     'mcp__usernode__get_*',
     'mcp__usernode__list_*',
     'mcp__usernode__whoami',
