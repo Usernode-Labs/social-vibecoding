@@ -321,7 +321,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // challenges-footer checks; 562 → 563: the fifth build step's queued-wait
   // check on the checks card; 563 → 573: the ten #1808 stamp checks, one per
   // surface whose timestamp changed; 573 → 574: #1841 account email settings;
-  // 574 → 576: #1771 infrastructure-error checks cards, added in #1860).
+  // 574 → 576: the two #1771 infrastructure-error checks, added in #1860).
   assert.equal(DAPP.tests.length, 576);
 });
 
