@@ -45,18 +45,20 @@ const modelFallback = require('../services/model-fallback');
 // The ordinary session list deliberately stays lightweight and private, so
 // enrich only imported Underway rows in a second, id-scoped read after the
 // owner/shared visibility query has selected which rows the viewer may see.
-async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId) {
+// The opened detail uses the same public projection for any visible change;
+// `all` is set only AFTER the per-session privacy gate, never on a board list.
+async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { all = false } = {}) {
   const list = Array.isArray(sessions) ? sessions : [];
   const ids = list
-    .filter((s) => s && s.source === 'imported'
-      && (s.status === 'active' || s.status === 'paused'))
+    .filter((s) => s && (all || (s.source === 'imported'
+      && (s.status === 'active' || s.status === 'paused'))))
     .map((s) => Number(s.id))
     .filter((id) => Number.isInteger(id) && id > 0);
   if (!ids.length) return list;
 
   const { rows } = await pool.query(
     `SELECT cs.id, cs.app_id, cs.pr_number, cs.pr_url, cs.pr_title,
-            cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body,
+            cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.branch_name,
             cs.staging_url, cs.testing_md, cs.testing_path, cs.testing_paths,
             cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
             cs.source, cs.imported_pr_author, cs.imported_pr_head_repo,
@@ -84,9 +86,9 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId) {
        FROM chat_sessions cs
        JOIN users u ON u.id = cs.user_id
       WHERE cs.id = ANY($1::int[])
-        AND cs.source = 'imported'
-        AND cs.status IN ('active', 'paused')`,
-    [ids]
+        AND ($2::boolean OR (cs.source = 'imported'
+        AND cs.status IN ('active', 'paused')))`,
+    [ids, all]
   );
 
   const rowsByApp = new Map();
@@ -420,6 +422,65 @@ const recheckInFlight = new Set();
 // staging that they do NOT render in the read-only view. Because the mock
 // goes through sanitizeTranscript exactly like a real read, that check
 // exercises the real allowlist rather than a hand-written "safe" payload.
+function stagingMockSharedSessions() {
+  return [
+          {
+            id: 990001, session_title: '[Mock] Busy shared session — spinner state',
+            pr_title: null, branch_name: 'mock/shared-busy', status: 'active',
+            // Reverse "#N" issue chip demo: links to mock issue 900001,
+            // which stagingMockIssues serves, so the round trip works.
+            linked_issues: [900001],
+            staging_url: null, can_preview: false, user_id: 0, username: 'staging-demo-user',
+            shared_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+            last_activity_at: new Date().toISOString(),
+            chat_count: 0, last_message_at: null, busy: true,
+            // Visible but chat NOT published — no "Read chat" chip. Kept
+            // false on two of the three rows so the demo board shows both
+            // states side by side.
+            transcript_shared: false, message_count: 0,
+          },
+          {
+            id: 990002, session_title: '[Mock] Paused shared session with a preview',
+            pr_title: null, branch_name: 'mock/shared-preview', status: 'paused',
+            linked_issues: [],
+            staging_url: 'https://example.invalid', can_preview: true, user_id: 0, username: 'staging-demo-user',
+            shared_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+            chat_count: 3, last_message_at: new Date().toISOString(), busy: false,
+            // The one demo row with a readable chat: its "Read chat" chip
+            // opens the topic page and stagingMockTranscript serves the
+            // matching id, so the round trip works in a demo preview.
+            transcript_shared: true, message_count: 8,
+          },
+          // #689: preview asleep (staging GC'd the container) but the
+          // branch has pushed changes — the pill still renders and routes
+          // through ensure-staging. Clicking it in a demo 404s (fake id)
+          // into the "could not be rebuilt" loader, same as 990002.
+          //
+          // Worth knowing: this row modelled a state a REAL share-only
+          // session could not be in. `can_preview: true` with no
+          // staging_url was reachable only for a session with a pull
+          // request, because the derivation above was `pr_number IS NOT
+          // NULL` — so the demo board showed a rebuild affordance that the
+          // thing it demonstrates never got. The fixture was right and the
+          // derivation was wrong; the derivation now also reads
+          // checks_commit_sha, and this row is honest.
+          {
+            id: 990003, session_title: '[Mock] Shared session, preview asleep (rebuild on click)',
+            pr_title: null, branch_name: 'mock/shared-preview-asleep', status: 'paused',
+            linked_issues: [],
+            staging_url: null, can_preview: true, user_id: 0, username: 'staging-demo-user',
+            shared_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+            chat_count: 1, last_message_at: new Date().toISOString(), busy: false,
+            transcript_shared: false, message_count: 0,
+          }
+  ];
+}
+
 const STAGING_MOCK_TRANSCRIPT_IDS = new Set([990002]);
 
 // (#1012) Read-only mock spec version for the group-chat spec panel. Same
@@ -1895,62 +1956,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // viewer or a real session; opening their discussion just shows an
       // empty thread (validateThread rejects posts on nonexistent rows).
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
-        sessions.push(
-          {
-            id: 990001, session_title: '[Mock] Busy shared session — spinner state',
-            pr_title: null, branch_name: 'mock/shared-busy', status: 'active',
-            // Reverse "#N" issue chip demo: links to mock issue 900001,
-            // which stagingMockIssues serves, so the round trip works.
-            linked_issues: [900001],
-            staging_url: null, can_preview: false, user_id: 0, username: 'staging-demo-user',
-            shared_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-            created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-            last_activity_at: new Date().toISOString(),
-            chat_count: 0, last_message_at: null, busy: true,
-            // Visible but chat NOT published — no "Read chat" chip. Kept
-            // false on two of the three rows so the demo board shows both
-            // states side by side.
-            transcript_shared: false, message_count: 0,
-          },
-          {
-            id: 990002, session_title: '[Mock] Paused shared session with a preview',
-            pr_title: null, branch_name: 'mock/shared-preview', status: 'paused',
-            linked_issues: [],
-            staging_url: 'https://example.invalid', can_preview: true, user_id: 0, username: 'staging-demo-user',
-            shared_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-            created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
-            chat_count: 3, last_message_at: new Date().toISOString(), busy: false,
-            // The one demo row with a readable chat: its "Read chat" chip
-            // opens the topic page and stagingMockTranscript serves the
-            // matching id, so the round trip works in a demo preview.
-            transcript_shared: true, message_count: 8,
-          },
-          // #689: preview asleep (staging GC'd the container) but the
-          // branch has pushed changes — the pill still renders and routes
-          // through ensure-staging. Clicking it in a demo 404s (fake id)
-          // into the "could not be rebuilt" loader, same as 990002.
-          //
-          // Worth knowing: this row modelled a state a REAL share-only
-          // session could not be in. `can_preview: true` with no
-          // staging_url was reachable only for a session with a pull
-          // request, because the derivation above was `pr_number IS NOT
-          // NULL` — so the demo board showed a rebuild affordance that the
-          // thing it demonstrates never got. The fixture was right and the
-          // derivation was wrong; the derivation now also reads
-          // checks_commit_sha, and this row is honest.
-          {
-            id: 990003, session_title: '[Mock] Shared session, preview asleep (rebuild on click)',
-            pr_title: null, branch_name: 'mock/shared-preview-asleep', status: 'paused',
-            linked_issues: [],
-            staging_url: null, can_preview: true, user_id: 0, username: 'staging-demo-user',
-            shared_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
-            created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-            last_activity_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
-            chat_count: 1, last_message_at: new Date().toISOString(), busy: false,
-            transcript_shared: false, message_count: 0,
-          }
-        );
+        sessions.push(...stagingMockSharedSessions());
       }
 
       res.json({ sessions });
@@ -2562,10 +2568,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // Check results are fetched on demand, separately from the private dev
   // transcript and the lightweight board feed. The app view gate above still
   // applies; sharing a session exposes these results, never its messages.
-  router.get('/api/sessions/:id/checks', async (req, res) => {
+  router.get(['/api/sessions/:id/checks', '/api/sessions/:id/details'], async (req, res) => {
     try {
+      if (req.path.endsWith('/details') && process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        const mock = stagingMockSharedSessions().find((s) => s.id === Number(req.params.id));
+        if (mock) return res.set('Cache-Control', 'no-store').json({ session: mock });
+      }
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.session_title, cs.pr_title,
+        `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.transcript_shared_at, cs.session_title, cs.pr_title,
                 cs.check_state, cs.check_phase, cs.check_trigger,
                 cs.check_error_detail, cs.checks_checked_at, cs.checks_commit_sha,
                 cs.checks_progress, cs.test_results, cs.checks_base_sha,
@@ -2580,7 +2590,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         || (session.shared_at && ['active', 'paused'].includes(session.status))
         || ['promoted', 'merging', 'merged'].includes(session.status);
       if (!visible) return res.status(404).json({ error: 'Session not found' });
-      res.set('Cache-Control', 'no-store').json({ session });
+      const detail = req.path.endsWith('/details')
+        ? (await enrichImportedUnderwaySessions(pool, [session], req.user.id, { all: true }))[0]
+        : session;
+      if (req.path.endsWith('/details')) {
+        detail.busy = isSessionBusy(Number(session.id));
+        if (detail.source === 'cli_handoff') {
+          const { rows: handoffs } = await pool.query(`SELECT handoff_head_sha, handoff_uploaded_sha, handoff_upload_checked_sha, handoff_base_sha FROM chat_sessions WHERE id = $1`, [session.id]);
+          detail.proposal_state = require('./proposal-handoff').publicSessionStatus({ ...detail, ...handoffs[0] }).state;
+        }
+      }
+      res.set('Cache-Control', 'no-store').json({ session: detail });
     } catch (err) {
       log.error('sessions', 'Failed to read check results', { message: err.message });
       res.status(500).json({ error: 'Could not load check results' });
