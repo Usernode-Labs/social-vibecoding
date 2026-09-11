@@ -48,6 +48,8 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 
+import { FoldMarkIcon } from '@/components/ui/icons';
+
 import { Badge, CardIcon, DevCard, edgeFor, metaLineNodes, VoteButton } from './dev-card';
 import { FeedThread } from './feed-thread';
 import type { ActionSpec, BadgeSpec, DevCardModel, ListRow } from './model';
@@ -169,6 +171,37 @@ export function RowBand({ card, trailing }: { card: DevCardModel; trailing?: Rea
 }
 
 /**
+ * The fold mark: which SIZE the item is at, at the top right of both.
+ *
+ * The same glyph at both sizes — two chevrons pointing apart — and on the
+ * open card it is STRETCHED: the chevrons pushed outward with a bar drawn
+ * between them, so the mark itself gets taller when the card does. Nothing
+ * rotates and nothing swaps. A chevron that turns promises a direction
+ * (down → up is the accordion's, right → down the tree's) and the Vote
+ * button's ▾ on this same card already means a menu; what changes here is
+ * size, so the mark changes size.
+ *
+ * On a row it is decoration: the row is the disclosure control and carries
+ * `aria-expanded`. On the open card it is a real button, the one
+ * keyboard-reachable way to fold the card again — the wrapper's click folds
+ * it, and a click was all there was.
+ *
+ * One SVG with three paths (icons.tsx `FoldMarkIcon`). The state is a
+ * `data-open` attribute and the geometry is CSS transforms (app.css
+ * `.dev-fold-mark`), which is what lets the open state play as a 150ms
+ * stretch when the card mounts.
+ */
+export function FoldMark({ open, onClick }: { open: boolean; onClick?: () => void }): ReactNode {
+  const glyph = <FoldMarkIcon aria-hidden="true" />;
+  if (!open) return <span className="dev-fold-mark" aria-hidden="true">{glyph}</span>;
+  return (
+    <button type="button" className="dev-fold-mark" data-open="1" aria-expanded="true" aria-label="Fold the card" onClick={onClick}>
+      {glyph}
+    </button>
+  );
+}
+
+/**
  * One folded row: a disclosure. It carries the item's own hooks
  * (`data-issue-row` and its siblings), and the delegated card-open handler
  * leaves it alone because it sits inside a `.dev-ws-rowwrap` — see the
@@ -216,21 +249,37 @@ export function FoldedRow({
         if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); }
       }}
     >
-      {c.icon ? <CardIcon spec={{ ...c.icon, small: true }} /> : null}
-      <span className="dev-ws-row-main">
+      {/* The card's anatomy, line for line, as three SIBLINGS — which is how
+          the card arranges them: a head (glyph + title), the meta line, then
+          the bar row. The head holds the glyph and the title and nothing
+          else, so the two lines below it start where the card's start: the
+          meta line tabbed 30px in under the title (app.css mirrors the
+          card's own `.dev-card-head:has(> .dev-card-icon) + .dev-card-meta`
+          rule), and the bar row full-width on the padding edge.
+
+          Both of those used to live in a text column beside the glyph, which
+          started the bar row 30px in — so the one line that carries the
+          state drew at two different lengths and two different left edges
+          depending on which size you were looking at, and in a kanban column
+          it ran out of room and ellipsised to a letter or two. The two sizes
+          now differ only by the button row the card adds underneath. */}
+      <span className="dev-ws-row-head">
+        {c.icon ? <CardIcon spec={{ ...c.icon, small: true }} /> : null}
         <span className="dev-ws-row-title">
           {c.title.text}
           {row.fresh ? <span className="dev-ws-new">new</span> : null}
           {row.placing ? <span className="dev-ws-placing" title="Being placed into a category">placing…</span> : null}
         </span>
-        {/* The card's own meta line, node for node: number · author · when,
-            the tags, the linked-issue chips. */}
-        <span className="dev-ws-row-meta">{metaLineNodes(c)}</span>
-        <RowBand card={c} trailing={trailing} />
       </span>
-      {/* No chevron. It promises a destination, and this row has none: the
-          whole surface is a toggle that unfolds the card in place. A theme
-          header still wears one, because that is what it does. */}
+      {/* The card's own meta line, node for node: number · author · when,
+          the tags, the linked-issue chips. */}
+      <span className="dev-ws-row-meta">{metaLineNodes(c)}</span>
+      <RowBand card={c} trailing={trailing} />
+      {/* The fold mark, not a chevron: a chevron promises a destination, and
+          this row has none — the whole surface is a toggle that unfolds the
+          card in place. A theme header still wears one, because that is
+          what it does. */}
+      <FoldMark open={false} />
     </div>
   );
 }
@@ -247,8 +296,12 @@ export function FoldedRow({
  * card whole rather than growing a chimera.
  */
 export function UnfoldedRow({
-  row, slug, canPost, detail: placement = 'actions', expand: mode = 'inline',
-}: { row: CardRow; slug: string; canPost: boolean; detail?: DetailPlacement; expand?: OpenMode }): ReactNode {
+  row, slug, canPost, detail: placement = 'actions', expand: mode = 'inline', onFold,
+}: {
+  row: CardRow; slug: string; canPost: boolean; detail?: DetailPlacement; expand?: OpenMode;
+  /** Folds the card back to its row: what the fold mark at the card's top right does. */
+  onFold?: () => void;
+}): ReactNode {
   // ── "Open card" opens it HERE ──────────────────────────────────────
   //
   // It was a link out to the item's own screen, which meant the lander's
@@ -303,6 +356,8 @@ export function UnfoldedRow({
   // card's right edge, and inside a fold a click on the card FOLDS it; the
   // way out is the link under the card. The row it folds to wears none
   // either, so nothing on the item promises a destination it does not have.
+  // What both wear instead is the fold mark (`FoldMark`): stretched open
+  // here, and the button that folds the card.
   const card: DevCardModel = { ...row.card, rail: { ...row.card.rail, chevron: false } };
   const openBtn = !placement ? undefined : mode === 'page' ? (
     href ? <a className="gc-vote-btn dev-ws-open-btn" href={href} data-ws-open-card={row.key}>Open card</a> : undefined
@@ -317,7 +372,7 @@ export function UnfoldedRow({
   );
   return (
     <div className="dev-feed-entry dev-ws-sheet" data-ws-sheet={row.key}>
-      <DevCard model={card} actionEnd={placement ? openBtn : undefined} />
+      <DevCard model={card} actionEnd={placement ? openBtn : undefined} headEnd={<FoldMark open onClick={onFold} />} />
       {detail ? (
         <div className="dev-ws-detail" data-ws-detail={row.key}>
           <TopicBodySections body={detail} />
@@ -394,7 +449,7 @@ export function CardRowView({
       } : undefined}
     >
       {open ? (
-        <UnfoldedRow row={row} slug={slug} canPost={canPost} detail={detail} expand={expand} />
+        <UnfoldedRow row={row} slug={slug} canPost={canPost} detail={detail} expand={expand} onFold={onToggle} />
       ) : (
         <FoldedRow row={row} open={open} onToggle={onToggle} />
       )}

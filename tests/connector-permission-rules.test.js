@@ -50,7 +50,7 @@ const scaffold = () => {
 // ── 1. The name ────────────────────────────────────────────────────────
 
 test('the canonical connector name is what the server actually reports', () => {
-  assert.equal(constants.SERVER_NAME, 'usernode');
+  assert.equal(constants.SERVER_NAME, 'homeroom');
   // serverInfo.name in the initialize response is built from that one
   // constant, so a client that derives the name and a user who types it
   // land on the same string — which is the whole reason the rules below
@@ -95,20 +95,38 @@ test('the connect flow recommends the canonical name where it is typed', () => {
 // ── 2. The shipped allow rules ─────────────────────────────────────────
 
 test('the shipped allow rules are two globs and three literals, per spelling of the name', () => {
-  // Six, not three: the same three rules under each spelling of the server
-  // name Usernode can guess. A permission rule names the server LITERALLY —
-  // there is no `mcp__*__` — so a user whose client registered the connector
-  // as `Usernode` matched none of the three this shipped with, saw a prompt
-  // on every read, and got no error to explain it. Shipping both spellings
-  // costs two lines of JSON and covers the one variation the platform can
+  // The same five rules under each spelling of the server name Usernode can
+  // guess. A permission rule names the server LITERALLY — there is no
+  // `mcp__*__` — so a user whose client registered the connector as
+  // `Usernode` matched none of the rules this shipped with, saw a prompt on
+  // every read, and got no error to explain it. Shipping every spelling
+  // costs a few lines of JSON and covers the variations the platform can
   // predict; anything else is what the Settings field rewrites.
-  assert.deepEqual([...constants.ALLOW_RULE_SERVER_NAMES], ['usernode', 'Usernode']);
+  //
+  // Four spellings, not two. `homeroom`/`Homeroom` are the guess pair for
+  // the name people are told to type. `usernode`/`Usernode` are not guesses:
+  // they are what this connector was called before the rename, so they are
+  // what an account connected before it is still REGISTERED AS, and a rule
+  // aimed only at the new name would miss every one of them.
+  assert.deepEqual([...constants.ALLOW_RULE_SERVER_NAMES], [
+    'homeroom', 'Homeroom', 'usernode', 'Usernode',
+  ]);
   // #1405 added the two `notify_*` literals. They are WRITES, and they are
   // here anyway because the only thing they touch is the caller's own
   // notification feed — the reasoning lives beside SELF_SCOPED_ALLOW_TOOLS.
   // Literals, never a `notify_*` glob: a glob promises something about every
   // future tool that happens to start that way.
   assert.deepEqual([...constants.READ_ONLY_ALLOW_RULES], [
+    'mcp__homeroom__get_*',
+    'mcp__homeroom__list_*',
+    'mcp__homeroom__whoami',
+    'mcp__homeroom__notify_awaiting_input',
+    'mcp__homeroom__notify_input_received',
+    'mcp__Homeroom__get_*',
+    'mcp__Homeroom__list_*',
+    'mcp__Homeroom__whoami',
+    'mcp__Homeroom__notify_awaiting_input',
+    'mcp__Homeroom__notify_input_received',
     'mcp__usernode__get_*',
     'mcp__usernode__list_*',
     'mcp__usernode__whoami',
@@ -121,13 +139,21 @@ test('the shipped allow rules are two globs and three literals, per spelling of 
     'mcp__Usernode__notify_input_received',
   ]);
   // Grouped by spelling, not by tool, so the block reads as "these five, and
-  // the same five again" rather than as ten unrelated rules.
+  // the same five again" rather than as twenty unrelated rules.
   assert.deepEqual(
     constants.READ_ONLY_ALLOW_RULES.map((r) => r.split('__')[1]),
     [
+      'homeroom', 'homeroom', 'homeroom', 'homeroom', 'homeroom',
+      'Homeroom', 'Homeroom', 'Homeroom', 'Homeroom', 'Homeroom',
       'usernode', 'usernode', 'usernode', 'usernode', 'usernode',
       'Usernode', 'Usernode', 'Usernode', 'Usernode', 'Usernode',
     ]
+  );
+  // The retired spellings come LAST, so the block a person copies opens with
+  // the name the docs told them to type rather than the one being retired.
+  assert.deepEqual(
+    [...constants.ALLOW_RULE_SERVER_NAMES].slice(2), ['usernode', 'Usernode'],
+    'the pre-rename spellings stay, and stay at the end'
   );
   // And the canonical spelling is the configured one — the second is the
   // variant, and the order matters because the hint names them in it.
@@ -229,8 +255,8 @@ test('.claude is kept out of the app image', () => {
 
 test('the connector doc names both tool-name prefixes', () => {
   // Guidance naming only one form is wrong for half of users, silently.
-  assert.match(CONNECTOR_DOC, /mcp__usernode__whoami/);
-  assert.match(CONNECTOR_DOC, /mcp__claude_ai_usernode__whoami/);
+  assert.match(CONNECTOR_DOC, new RegExp(`mcp__${constants.SERVER_NAME}__whoami`));
+  assert.match(CONNECTOR_DOC, new RegExp(`mcp__claude_ai_${constants.SERVER_NAME}__whoami`));
   assert.match(CONNECTOR_DOC, /read the name off your own tool list/i);
 });
 
@@ -431,8 +457,13 @@ test('a user whose connector has some other name has a field, not a paragraph', 
   assert.match(CONNECTORS_TSX, /Connector registered under a different name\?/);
   // It tells them where to look, and names both spellings that need no fix.
   const field = CONNECTORS_TSX.slice(CONNECTORS_TSX.indexOf('connector-name-spelling'));
-  assert.match(field, /mcp__usernode__whoami/);
+  assert.match(field, new RegExp(`mcp__${constants.SERVER_NAME}__whoami`));
   assert.match(field, /both blocks above are rewritten/);
+  // Every spelling the shipped block covers is named as one that needs no
+  // fix — a user on the pre-rename name must not be told to retype it.
+  for (const name of constants.ALLOW_RULE_SERVER_NAMES) {
+    assert.match(field, new RegExp(`>${name}</code>`), `${name} is named as already covered`);
+  }
 
   // And it is wired: the field rewrites the two rendered blocks in place, so
   // the copy button they already have picks up the corrected rules.
@@ -446,9 +477,12 @@ test('a user whose connector has some other name has a field, not a paragraph', 
   // A server segment is a bare name; anything that could break the JSON or
   // smuggle a glob into it is dropped rather than rendered.
   assert.match(handler, /replace\(\/\[\^A-Za-z0-9\.-\]\/g, ''\)/);
-  // And typing the canonical name back puts the shipped block back, rather
-  // than leaving a rewritten copy that happens to say the same thing.
-  assert.match(handler, /toLowerCase\(\) !== 'usernode'/);
+  // And typing back a name the shipped block already covers puts that block
+  // back, rather than leaving a rewritten copy narrowed to one spelling. The
+  // covered set is derived from the rendered block for the same reason the
+  // suffixes are: a second copy of the name list here is what would drift.
+  assert.match(handler, /covered\.has\(name\.toLowerCase\(\)\)/);
+  assert.match(handler, /allow\.map\(\(rule\) => rule\.split\('__'\)\[1\]\.toLowerCase\(\)\)/);
 });
 
 test('both copy buttons copy their own block', () => {

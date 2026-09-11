@@ -83,6 +83,74 @@ export function tintOf(key: string): string {
 }
 
 /**
+ * THE WHOLE CARD-COLOUR VOCABULARY, as data.
+ *
+ * Two sets, and the difference between them is who chooses:
+ *
+ *   TONES are CHOSEN. Twelve tone-50 colours from the HIG-muted palette
+ *   (`.home-tone-cream` … `-gray` in app.css), offered in the featured
+ *   illustration editor so an author can put their artwork on a colour that
+ *   suits it. Named rather than numbered: `blue` survives the palette being
+ *   reordered or a thirteenth hue being added, where an index does not, and
+ *   the name is what the row is actually called in the palette.
+ *
+ *   LEGACY_TINTS are HASHED. The five `.home-tint-N` the launcher has always
+ *   assigned from a card's own identity (see `tintOf`). They were also, very
+ *   briefly, what the editor offered, so a handful of illustrations carry one
+ *   as a stored number. They stay valid values — an author who picked one
+ *   still sees it — but they are no longer offered.
+ *
+ * Both sets define the same three custom properties, so a card renders one
+ * way whichever it wears. The class strings are complete literals, because
+ * Tailwind's extractor is a regex over source text and the CSS here is
+ * hand-written for the same reason.
+ */
+export const TONES = [
+  'cream', 'yellow', 'orange', 'coral', 'pink', 'purple',
+  'indigo', 'blue', 'teal', 'mint', 'sage', 'gray',
+] as const;
+export type Tone = (typeof TONES)[number];
+
+export const LEGACY_TINTS = [1, 2, 3, 4, 5] as const;
+export type LegacyTint = (typeof LEGACY_TINTS)[number];
+
+const TONE_CLASS: Record<Tone, string> = {
+  cream: 'home-tone-cream', yellow: 'home-tone-yellow', orange: 'home-tone-orange',
+  coral: 'home-tone-coral', pink: 'home-tone-pink', purple: 'home-tone-purple',
+  indigo: 'home-tone-indigo', blue: 'home-tone-blue', teal: 'home-tone-teal',
+  mint: 'home-tone-mint', sage: 'home-tone-sage', gray: 'home-tone-gray',
+};
+
+const TINT_CLASS: Record<LegacyTint, string> = {
+  1: 'home-tint-1', 2: 'home-tint-2', 3: 'home-tint-3', 4: 'home-tint-4', 5: 'home-tint-5',
+};
+
+/** A tone's own name, title-cased for a label. */
+export function toneLabel(tone: Tone): string {
+  return tone.charAt(0).toUpperCase() + tone.slice(1);
+}
+
+/**
+ * The class for a stored card colour, or null for anything that is neither a
+ * tone name nor one of the five legacy tints. Null is the signal to fall back,
+ * so an unreadable value paints the card's own default rather than nothing.
+ */
+export function cardTintClass(value: unknown): string | null {
+  if (typeof value === 'string') return TONE_CLASS[value as Tone] || null;
+  return LEGACY_TINTS.includes(value as LegacyTint) ? TINT_CLASS[value as LegacyTint] : null;
+}
+
+/**
+ * What a card actually wears: the colour chosen with its illustration when
+ * there is one, otherwise the hash of its own identity. Deliberately one
+ * function, because the fallback is the thing that has to match between the
+ * server prerender and the client.
+ */
+export function cardTint(key: string, tint?: unknown): string {
+  return cardTintClass(tint) || tintOf(key);
+}
+
+/**
  * A home-screen area's LABEL, and the controls that act on the block below it.
  *
  * ── Why the title moved back out of the card ──────────────────────────

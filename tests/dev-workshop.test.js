@@ -519,6 +519,160 @@ test('the model\'s paragraph is what the pane says, when there is one', () => {
   assert.ok(!failed.includes('the model writes one on the next pass'), 'not also the neutral line');
 });
 
+test('the digest survives the fetch that loads it', async () => {
+  // The seam every test above steps over. They seed `_workshopThemes` with
+  // the CACHE shape directly, so `_loadWorkshopThemes` — the only thing that
+  // writes that cache in a browser — is never on the path, and the field it
+  // dropped was the one field the pane degrades silently on. #1803 shipped
+  // the consumer (`tData.digest`) without the producer, and the derived
+  // sentence made a paragraph that never arrived look exactly like a model
+  // that had not run yet, through two rounds of fixes to the stages above.
+  //
+  // So this one asserts ACROSS the normaliser, not beside it: the response
+  // body goes in, the rendered pane comes out.
+  const digest = 'In the last week, alice finished the sign-in work. Bob is on the mail templates now.';
+  const body = {
+    themes: [{ id: 't', name: 'Theming', items: ['issue:12'] }],
+    source: 'ai', generatedAt: '2026-09-06T00:00:00Z', discoveredAt: '2026-09-06T00:00:00Z',
+    stale: false, pending: false, pendingStage: null, lastError: null,
+    coverage: null, unplaced: [], digest, digestError: null,
+  };
+  const AppView = makeAppView({ fetch: async () => ({ ok: true, json: async () => body }) });
+  seed(AppView);
+  // The load repaints the live surface on the way out; this test is about
+  // what it CACHED and what the pane makes of it, not about the DOM.
+  AppView._repaintBoardSurface = () => {};
+  await AppView._loadWorkshopThemes('demo-app');
+
+  assert.equal(AppView._workshopThemes.digest, digest, 'the normaliser keeps it');
+  const html = workshopHtml(AppView);
+  assert.match(html, /alice finished the sign-in work/);
+  assert.ok(!html.includes('open items across'), 'and the derived sentence stands down');
+  assert.match(html, /The summary at the top was written by the model on the same pass\./);
+
+  // A response with no paragraph still reads as one: null, not undefined,
+  // so the footnote picks the neutral line rather than the failure one.
+  const empty = makeAppView({ fetch: async () => ({ ok: true, json: async () => ({ ...body, digest: null }) }) });
+  seed(empty);
+  empty._repaintBoardSurface = () => {};
+  await empty._loadWorkshopThemes('demo-app');
+  assert.equal(empty._workshopThemes.digest, null);
+  assert.match(workshopHtml(empty), /3 open items across 1 category\./);
+});
+
+// ── the three digest cards ───────────────────────────────────────────
+
+/** A workshop-themes response body, with whatever digest shape a test wants. */
+const responseBody = (over) => ({
+  themes: [{ id: 't', name: 'Theming', items: ['issue:12'] }],
+  source: 'ai', generatedAt: '2026-09-06T00:00:00Z', discoveredAt: '2026-09-06T00:00:00Z',
+  stale: false, pending: false, pendingStage: null, lastError: null,
+  coverage: null, unplaced: [], digest: null, digestCards: null, digestError: null,
+  ...(over || {}),
+});
+
+async function loadWith(body) {
+  const AppView = makeAppView({ fetch: async () => ({ ok: true, json: async () => body }) });
+  seed(AppView);
+  AppView._repaintBoardSurface = () => {};
+  await AppView._loadWorkshopThemes('demo-app');
+  return AppView;
+}
+
+test('the three cards are what the pane draws, titled and in window order', async () => {
+  const cards = {
+    lastWeek: 'Kubernetes deploys, staging previews and email recovery, plus a Workshop pass.',
+    thisWeek: 'The Workshop summary became three cards and mail now sends from a no-reply address.',
+    open: 'Mostly mobile layout, the voting flow and a long tail of preview reliability.',
+  };
+  const AppView = await loadWith(responseBody({ cards: undefined, digestCards: cards }));
+  assert.deepEqual(plain(AppView._workshopThemes.digestCards), cards, 'the normaliser keeps all three');
+
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-cards/);
+  for (const [key, line] of Object.entries(cards)) {
+    assert.ok(html.includes(`data-ws-card="${key}"`), `${key} is drawn`);
+    assert.ok(html.includes(line), `${key}'s line is its own`);
+  }
+  // Window order, and the titles that make the block scannable: the whole
+  // point of three cards over one paragraph is that a reader looking for one
+  // window does not have to parse the other two.
+  const order = [...html.matchAll(/data-ws-card="([a-zA-Z]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(order, ['lastWeek', 'thisWeek', 'open']);
+  const titles = [...html.matchAll(/dev-ws-card-title[^>]*>([^<]+)</g)].map((m) => m[1]);
+  assert.deepEqual(titles, ['Last week', 'This week', 'Open']);
+
+  // The tiles stay: the cards answer "what", the tiles still answer "how
+  // much", and neither is a restatement of the other.
+  assert.match(html, /data-ws-dash-cell="open"/);
+  // And the cards sit IMMEDIATELY after the tiles inside the pane. That
+  // adjacency is not decoration: dapp.json's declared check for this screen
+  // selects `.dev-ws-dash + [data-ws-cards]`, and a wrapper slipped between
+  // them would break the gate in staging with nothing here to say why.
+  assert.match(html, /class="dev-ws-dash"[^>]*>.*?<\/div><div class="dev-ws-cards"/s,
+    'the declared check selects the cards as the tiles\u2019 next sibling');
+  // And the derived sentence stands down, as it does for the paragraph.
+  assert.ok(!html.includes('open items across'), 'no count sentence beside the cards');
+  assert.match(html, /The summary at the top was written by the model on the same pass\./);
+});
+
+test('an empty window draws no card at all', async () => {
+  // The "(if any)" of the design. An empty string is how the server says the
+  // window held nothing — a Monday morning, a board with nothing open — and
+  // a card saying "nothing landed" is worse than no card, because it takes
+  // the same space to say less.
+  const AppView = await loadWith(responseBody({
+    digestCards: { lastWeek: 'Kubernetes deploys and staging previews.', thisWeek: '', open: '' },
+  }));
+  const html = workshopHtml(AppView);
+  assert.match(html, /data-ws-card="lastWeek"/);
+  assert.ok(!html.includes('data-ws-card="thisWeek"'), 'no card for a week with nothing in it');
+  assert.ok(!html.includes('data-ws-card="open"'));
+  assert.ok(!html.includes('open items across'), 'and still no derived sentence');
+
+  // All three empty is not a card set at all, so the pane falls through
+  // rather than rendering an empty box with three titles in it.
+  const none = await loadWith(responseBody({ digestCards: { lastWeek: '', thisWeek: '', open: '' } }));
+  assert.equal(none._workshopThemes.digestCards, null);
+  assert.ok(!workshopHtml(none).includes('data-ws-cards'));
+  assert.match(workshopHtml(none), /3 open items across 1 category\./, 'the derived sentence is back');
+});
+
+test('a row written before the cards still says its paragraph', async () => {
+  // The rolling-deploy state, and it lasts until each app's next reconcile:
+  // the digest prompt version bump is what re-asks for the fields, and they
+  // cannot be recovered from the prose, so `digest` alone has to keep
+  // working. Paragraph over derived sentence, cards over paragraph.
+  const AppView = await loadWith(responseBody({
+    digest: 'In the last week, alice finished the sign-in work. Bob is on the mail templates now.',
+  }));
+  const html = workshopHtml(AppView);
+  assert.ok(!html.includes('data-ws-cards'), 'no cards to draw');
+  assert.match(html, /alice finished the sign-in work/);
+  assert.match(html, /The summary at the top was written by the model on the same pass\./);
+
+  // And when a row has both, the cards win — that is the direction of the
+  // upgrade, and the paragraph is only ever the flattened same answer.
+  const both = await loadWith(responseBody({
+    digest: 'The flattened paragraph.',
+    digestCards: { lastWeek: 'The last-week line.', thisWeek: '', open: '' },
+  }));
+  const bothHtml = workshopHtml(both);
+  assert.match(bothHtml, /The last-week line\./);
+  assert.ok(!bothHtml.includes('The flattened paragraph.'), 'the prose form is not drawn beside them');
+});
+
+test('a malformed digestCards is no cards, not a broken pane', async () => {
+  // Everything the server sends is normalised field by field here, and this
+  // is the reason: a shape the renderer did not expect must degrade to the
+  // paragraph, never throw inside the pane.
+  for (const bad of ['a string', 42, [], { lastWeek: 7 }, { nope: 'x' }]) {
+    const AppView = await loadWith(responseBody({ digestCards: bad, digest: 'The paragraph.' }));
+    assert.equal(AppView._workshopThemes.digestCards, null, `${JSON.stringify(bad)} is not a card set`);
+    assert.match(workshopHtml(AppView), /The paragraph\./);
+  }
+});
+
 test('themes all start collapsed, and a deep link is what opens one', () => {
   const AppView = makeAppView();
   seed(AppView);
@@ -744,7 +898,7 @@ test('a folded row\'s last line carries the card\'s state, in the tone the pill 
 
 test('an open row IS the Board\'s card, not a headless copy under a row', () => {
   const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
-  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} \/>/);
+  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/);
 
   // #1799 kept the compressed row as a head and hid the card's head, meta and
   // status band so they would not repeat it — which made the open state a
@@ -982,8 +1136,8 @@ test('a folded row wears the card\u2019s own edge, number and glyph, and no chev
   assert.match(FOLD, /closest\('a, button'\)\) return;/, 'a click on the link is the link\'s, not the row\'s');
 
   // The GLYPH. Same 22px box, no tile, same 18px mark as the card's.
-  assert.match(CSS, /\.dev-ws-row > \.dev-card-icon \{[^}]*width: 22px;[^}]*background: transparent/);
-  assert.match(CSS, /\.dev-ws-row > \.dev-card-icon > svg \{ width: 18px; height: 18px; \}/);
+  assert.match(CSS, /\.dev-ws-row-head > \.dev-card-icon \{[^}]*width: 22px;[^}]*background: transparent/);
+  assert.match(CSS, /\.dev-ws-row-head > \.dev-card-icon > svg \{ width: 18px; height: 18px; \}/);
 
   // And no chevron: it promises a destination the row does not have.
   const rows = html.split('data-ws-row="').slice(1);
@@ -1347,7 +1501,7 @@ test('an unfolded row is the Activity entry: the sheet, the card, the slot, the 
   // entry wrapper and its three children, in the order the feed drew them.
   const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
   assert.match(unfolded, /className="dev-feed-entry dev-ws-sheet"/, 'the sheet wrapper the feed used');
-  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} \/>/, 'the same card builder');
+  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/, 'the same card builder');
   // Minus the rail chevron: inside a fold a click on the card folds it, so the
   // Board's "this opens" mark would promise a destination the card no longer
   // has. Everything else on the model is the Board's, untouched.
@@ -1448,6 +1602,21 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   // and was already at that working ceiling, so a new entry would have failed
   // the check-count guard. Same intent, one level deeper.
   assert.match(lands.expectSelector, /\[data-ws-dash-cell="open"\]/);
+  // The three summary cards ride the ROUTE check rather than a slot of their
+  // own: the manifest keeps 20 of its 580 clear and was already at that
+  // working ceiling, so a new entry would fail the check-count guard in
+  // tests/proposal-tests-manifest.test.js. Deepening the check that already
+  // owns "this route lands on the lander" is the same claim, further in.
+  //
+  // A PLAIN CHAIN, deliberately. The `:has()` note below is not about that
+  // one selector — it is the standing rule for this manifest, learned from
+  // six straight gate failures against a selector that resolved perfectly in
+  // this repo's own Chromium.
+  const route = byName(/is the card area grouped by theme/);
+  assert.ok(route && /\[data-ws-card="lastWeek"\] \+ \[data-ws-card="thisWeek"\] \+ \[data-ws-card="open"\]/
+    .test(route.expectSelector), 'the three cards, in window order');
+  assert.ok(!route.expectSelector.includes(':has('), 'no :has() on a gate that blocks merge');
+
   const themesCheck = byName(/renders its themes into #dev-workshop/);
   assert.ok(themesCheck && /\.dev-ws-row\[role="button"\]\[aria-expanded\]/.test(themesCheck.expectSelector));
   const demo = byName(/A demo theme names the mock rows/);
@@ -1466,13 +1635,13 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   assert.ok(!unfolded.expectSelector.includes('data-ws-open-card'));
 
   // The preview moved to the facts line and then back to the action band —
-  // after the hamburger, closing it — and the declared check moved with it
-  // each time. This is the sweep that was missed the first time: the unit
+  // at its right end, just before the hamburger — and the declared check
+  // moved with it each time. This is the sweep that was missed the first time: the unit
   // tests for the new position were all updated and dapp.json was not, so
   // the gate found it instead.
   const preview = byName(/Preview is a labelled pill/);
   assert.ok(preview, 'the board still pins where the preview lives');
-  assert.match(preview.expectSelector, /\.gc-card-actions > \.dev-card-menu-btn\[data-card-menu\] ~ \.gc-vote-btn-preview:last-child:not\(\.gc-vote-btn-icon\)/);
+  assert.match(preview.expectSelector, /\.gc-card-actions > \.gc-vote-btn-preview:not\(\.gc-vote-btn-icon\) \+ \.dev-card-menu-btn\[data-card-menu\]:last-child/);
   for (const t of dapp.tests) {
     assert.ok(!/dev-card-status-end[^,]*gc-vote-btn-preview/.test(t.expectSelector || ''),
       `${t.name}: no check still looks for the preview on the facts line`);
