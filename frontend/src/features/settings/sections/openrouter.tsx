@@ -30,15 +30,6 @@ export function OpenRouterSection() {
           Create my included key
         </Button>
       </div>
-      <div id="settings-openrouter-reveal" className="hidden rounded-lg border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 px-3 py-3 mb-3">
-        <div className="text-sm font-semibold text-amber-900 dark:text-amber-100">Save this key now. It is shown only once</div>
-        <p className="mt-1 text-xs text-amber-800 dark:text-amber-200">It is already encrypted and selected for your Usernode sessions. Copy it if you also want your own backup.</p>
-        <div className="mt-2 flex gap-2">
-          <Input id="settings-openrouter-revealed-key" type="text" readOnly width="flex" className="font-mono" />
-          <Button id="settings-openrouter-copy" layout="shrink" size="narrow">Copy</Button>
-          <Button id="settings-openrouter-dismiss-reveal" layout="shrink" variant="neutral" ink="neutral" size="narrow">Done</Button>
-        </div>
-      </div>
       <div id="settings-openrouter-key-display" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-300 mb-2">
         sk-or-&hellip;<span id="settings-openrouter-key-last4"></span>
       </div>
@@ -106,7 +97,7 @@ export function OpenRouterSection() {
         </div>
         <p id="settings-openrouter-catalog-meta" className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
         <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-          Favorites appear first, followed by platform recommendations and then price. OpenRouter filters this catalog for your key and account policies.
+          Platform recommendations start starred. Your changes override those defaults on every device. OpenRouter filters this catalog for your key and account policies.
         </p>
         <Label className="mt-2 mb-1" htmlFor="settings-openrouter-reasoning">
           Reasoning effort
