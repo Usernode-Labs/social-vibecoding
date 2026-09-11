@@ -4800,6 +4800,7 @@ const AppView = {
         AppView._renderKanbanFilterBar();
       }
       AppView._repaintKanbanBoard();
+      AppView._rewirePlusMenu();
       return;
     }
     // Workshop mode: ONE container. The retired List mode built a two-node
@@ -4835,7 +4836,23 @@ const AppView = {
     }
     AppView._renderKanbanFilterBar();
     AppView._rerenderWorkshop();
+    AppView._rewirePlusMenu();
     AppView._reanchorCardMenu();
+  },
+
+  // `#dev-actions` — the filter strip and the "+" — has TWO homes now: the
+  // frame's chrome on the Board, and the Workshop's own pane on the Workshop
+  // (features/dev-board/actions-row.tsx). Exactly one renders at a time, so a
+  // view-mode switch UNMOUNTS one button and mounts another, and the listeners
+  // `_wirePlusMenu` attached on entry are left pointing at a node that is gone.
+  //
+  // It was called once, from `renderDevView`, because the row never moved.
+  // Re-running it is cheap and idempotent — it aborts its previous
+  // AbortController before attaching — and `_repaintDevBody` is the one place
+  // every switch already funnels through.
+  _rewirePlusMenu() {
+    const content = document.getElementById('app-content');
+    if (content) AppView._wirePlusMenu(content);
   },
 
   // Locked-app banner at the very top of the card list (above the

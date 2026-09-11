@@ -1898,9 +1898,18 @@ test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
   assert.match(CSS, /#dev-workshop \{ max-width: 760px/, 'the column bound exists');
   assert.match(CSS, /#dev-workshop:has\(\.dev-ws-board\) \{ max-width: none; \}/,
     'and comes off when the board is up');
-  // ...and goes back on to every OTHER child, so only the board widens.
+  // ...and goes back on to every OTHER child, so only the working PANE widens
+  // — the toolbar, the tabs and the board travel together now, so the pane is
+  // the unit that grows rather than the board wrapper inside it.
   assert.match(CSS,
-    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > :not\(\.dev-ws-board\) \{[^}]*max-width: 760px/);
+    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > :not\(\.dev-ws-pane\) \{[^}]*max-width: 760px/);
+  // Full-bleed means the card face comes OFF: a radius and side padding drawn
+  // around the whole window only inset the board from the edges it was just
+  // widened to reach.
+  assert.match(CSS,
+    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > \.dev-ws-pane \{[^}]*border-radius: 0/);
+  assert.match(CSS,
+    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > \.dev-ws-pane \{[^}]*padding: 0/);
   // The rejected alternative, pinned so it does not come back: 100vw counts
   // the scrollbar #dev-forum-scroll always has, so a negative-margin
   // full-bleed overflows by its width and adds a horizontal scrollbar.
@@ -1914,4 +1923,91 @@ test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
   // the standalone board gets from #dev-body's own px-3.
   assert.match(CSS, /#dev-body:has\(> #dev-workshop\) \{ padding: 8px 4px 12px; \}/);
   assert.match(CSS, /\.dev-ws-board \{ padding: 2px 8px 0; \}/);
+});
+
+// ── The working pane: the controls, the switch, and what they act on ─────
+
+test('the toolbar renders inside the Workshop pane, above the tabs', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([
+    { id: 't1', title: 'Voting', items: [{ kind: 'issue', number: 12 }] },
+  ]);
+  const html = workshopHtml(AppView);
+  const pane = html.indexOf('data-ws-pane');
+  const head = html.indexOf('dev-ws-pane-head');
+  const actions = html.indexOf('id="dev-actions"');
+  const tabs = html.indexOf('data-ws-group="category"');
+  const themesList = html.indexOf('dev-ws-themes');
+  assert.ok(pane > 0, 'the pane renders');
+  assert.ok(pane < head && head < actions, 'the sticky head is the pane’s first child');
+  assert.ok(actions < tabs, 'the toolbar sits above the tab strip');
+  assert.ok(tabs < themesList, 'and both above what they act on');
+  // The two controls the toolbar exists for.
+  assert.ok(html.includes('id="dev-kanban-filterbar"'), 'the filter host comes with it');
+  assert.ok(html.includes('id="dev-plus-btn"'), 'and the "+"');
+  // Everything ABOVE the pane stays outside it: those strips are facts about
+  // the app, not things the search narrows.
+  assert.ok(html.indexOf('data-ws-dashboard') < pane, 'the summary strip is above the pane');
+  assert.ok(html.indexOf('data-discussion-row') < pane, 'and so is the discussion');
+});
+
+test('exactly one surface draws the toolbar, so its ids stay unique', () => {
+  // #dev-actions, #dev-plus-btn and #dev-plus-menu are ids. Two copies on
+  // screen would break _wirePlusMenu, which looks both up by getElementById.
+  const FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
+  assert.match(FRAME, /mode === 'workshop' \? null : \(\s*<DevActionsRow/,
+    'the frame draws none on the Workshop');
+  assert.match(WORKSHOP, /<DevActionsRow/, 'and the Workshop draws its own');
+  // Neither file spells the markup itself any more.
+  const ACTIONS = read('frontend/src/features/dev-board/actions-row.tsx');
+  assert.match(ACTIONS, /id="dev-actions"/, 'the markup has one home');
+  assert.ok(!FRAME.includes('id="dev-actions"'), 'not the frame');
+  assert.ok(!WORKSHOP.includes('id="dev-actions"'), 'and not the Workshop');
+});
+
+test('the "+" is re-wired when the toolbar changes surface', () => {
+  // _wirePlusMenu ran ONCE, from renderDevView, because the row never moved.
+  // It has two homes now, so a view switch unmounts one button and mounts
+  // another and the listeners are left on a node that is gone — a "+" that
+  // silently stops opening.
+  assert.match(APP_VIEW_SRC, /_rewirePlusMenu\(\) \{/, 'there is a re-wire');
+  const body = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _repaintDevBody() {'));
+  const scoped = body.slice(0, body.indexOf('\n  _renderLockedNotice('));
+  assert.equal((scoped.match(/AppView\._rewirePlusMenu\(\)/g) || []).length, 2,
+    'called on BOTH branches — either switch can move the row');
+  // Idempotent by construction: it aborts the previous controller first.
+  assert.match(APP_VIEW_SRC, /AppView\._plusMenuAbort\?\.abort\(\);/);
+});
+
+test('the toolbar’s props cross roots through a store, not the view model', () => {
+  // The Workshop is a separate React root from the frame that receives those
+  // props, so they are published once at mountBoard.
+  const MOUNT = read('frontend/src/features/dev-board/mount.ts');
+  const STORE = read('frontend/src/features/dev-board/actions-store.ts');
+  assert.match(MOUNT, /publishDevActions\(\{/, 'seeded where the frame is mounted');
+  assert.match(WORKSHOP, /useDevActions\(\)/, 'and read by the Workshop');
+  // Identity-cached: mountBoard runs on every navigation back onto the Dev
+  // screen, and a fresh object each time would re-render the "+" menu for no
+  // change. (A snapshot that is !== the last one is what re-renders.)
+  assert.match(STORE, /if \(same\) return;/, 'unchanged props publish nothing');
+  // NOT folded into _workshopView(): those are app permissions, and that view
+  // model is rebuilt from the card caches on every repaint.
+  assert.ok(!/canCollaborate/.test(APP_VIEW_SRC.slice(
+    APP_VIEW_SRC.indexOf('  _workshopView()'),
+    APP_VIEW_SRC.indexOf('  _workshopView()') + 4000)),
+    'the workshop view model carries no permission flags');
+});
+
+test('the pane head pins, and the pane does not clip what must escape it', () => {
+  assert.match(CSS, /\.dev-ws-pane-head \{[^}]*position: sticky/);
+  assert.match(CSS, /\.dev-ws-pane-head \{[^}]*top: 0/);
+  // The head is opaque on purpose: rows legible THROUGH a frosted bar read as
+  // a rendering fault rather than a design.
+  assert.match(CSS, /\.dev-ws-pane-head \{[^}]*background-color: var\(--dc-sheet\)/);
+  // Two things inside this subtree must escape the pane's box: the "+" menu is
+  // absolutely positioned, and sticky does not work under a clipping ancestor.
+  assert.match(CSS, /\.dev-ws-pane \{[^}]*overflow: visible/);
+  const paneBlock = CSS.slice(CSS.indexOf('.dev-ws-pane {'), CSS.indexOf('.dev-ws-pane-head {'));
+  assert.ok(!/overflow: hidden/.test(paneBlock), 'never clipped to hide the radius');
 });

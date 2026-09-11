@@ -112,7 +112,7 @@ function makeViewHarness(els = {}) {
 // The seam between the two — that renderDevView computes the predicate and the
 // component consumes it — is asserted once, explicitly, below.
 const FRAME_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'board-frame.tsx'),
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-board', 'actions-row.tsx'),
   'utf8'
 );
 

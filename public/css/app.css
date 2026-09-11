@@ -11855,6 +11855,46 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   box-shadow: 0 1px 2px var(--app-sheet-shadow-near);
 }
 
+/* ── The working pane ──────────────────────────────────────────────────
+   The controls, the switch and the thing they act on, as one card — the same
+   sheet the "Where the app is" and "What needs you" strips above it wear, so
+   the page reads as a stack of panes rather than a pane, two loose control
+   rows and a list.
+
+   `overflow: visible` is load-bearing: the "+" menu is absolutely positioned
+   inside this subtree and the sticky head below depends on no ancestor
+   clipping. A `overflow: hidden` here to clip the radius would do both kinds
+   of damage at once. */
+.dev-ws-pane {
+  display: flex; flex-direction: column; gap: 8px;
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+  border-radius: 22px;
+  padding: 8px 10px 12px;
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+  overflow: visible;
+}
+/* The head pins to the top of #dev-forum-scroll while the pane is in view, and
+   releases with it. `top: 0` and not an offset: the scroller's own top IS the
+   top of the reading area — the platform header is outside it.
+
+   The background is opaque-ish rather than inherited: the rows scrolling under
+   a frosted-but-transparent bar were legible through it, which reads as a
+   rendering fault rather than a design. The negative inline margins and the
+   matching padding let the bar span the pane's full width while its content
+   keeps the pane's gutter, so nothing shows through at the edges. */
+.dev-ws-pane-head {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; flex-direction: column; gap: 8px;
+  margin: -8px -10px 0; padding: 8px 10px;
+  border-radius: 22px 22px 0 0;
+  background-color: var(--dc-sheet);
+}
+/* Inside the pane the toolbar is a plain row: the frame's own `px-3 pt-2`
+   placed it against the scroller's edge, and here the pane supplies both. */
+.dev-ws-pane .dev-ws-pane-head #dev-actions { padding: 0; }
+
 /* ── The stage pane runs edge to edge ──────────────────────────────────
    `#dev-workshop` is a 760px reading column (below), which is right for a
    list of one-line rows and wrong for four side-by-side columns: bounded to
@@ -11868,8 +11908,22 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    overflows by its width and adds a horizontal scrollbar to the page.
    Re-parenting the bound has no such edge. */
 #dev-workshop:has(.dev-ws-board) { max-width: none; }
-#dev-workshop:has(.dev-ws-board) > .dev-ws > :not(.dev-ws-board) {
+#dev-workshop:has(.dev-ws-board) > .dev-ws > :not(.dev-ws-pane) {
   width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
+}
+/* On By stage the pane itself is what widens, and it goes FULL-BLEED: the card
+   face is right around a reading column and wrong as a frame drawn around the
+   whole window, where its radius and side padding only inset the board from
+   the edges it was just widened to reach. So the sheet, the radius and the
+   gutter all come off, and the head keeps only its top rule to separate it
+   from what scrolls under it. */
+#dev-workshop:has(.dev-ws-board) > .dev-ws > .dev-ws-pane {
+  background: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+  border-radius: 0; box-shadow: none; padding: 0;
+}
+#dev-workshop:has(.dev-ws-board) .dev-ws-pane-head {
+  margin: 0; border-radius: 0;
+  box-shadow: 0 1px 0 var(--app-sheet-line);
 }
 /* The board brings its own horizontal scroller (#dev-kanban), so this
    wrapper only has to stop the columns sitting flush against what is
