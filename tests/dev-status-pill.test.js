@@ -559,3 +559,63 @@ test('every status tag is addressable by name', () => {
       `${tag.label} carries a data-status-tag`);
   }
 });
+
+// ── Declared checks are pinned against the REAL staging fixtures ────────
+//
+// Every declared selector this change owns is asserted here against the rows
+// `stagingMockProposals` actually serves, not against a hand-made row. Three
+// gate failures came from guessing those values: a fixture with a merge
+// window reaches `merge_countdown` once the soft block stops intercepting it,
+// so the bar is `ok` and counts down — not the `progress` tally I predicted.
+
+function stagingRows() {
+  const fs2 = require('node:fs');
+  const vm2 = require('node:vm');
+  const src = fs2.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf8');
+  const start = src.indexOf('function stagingMockProposals(viewer)');
+  let depth = 0; let end = -1;
+  for (let j = src.indexOf('{', start); j < src.length; j++) {
+    if (src[j] === '{') depth += 1;
+    else if (src[j] === '}') { depth -= 1; if (depth === 0) { end = j + 1; break; } }
+  }
+  const ctx = { module: {}, console, connectionExhaustionMessage: () => '' };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
+  return ctx.__rows('me');
+}
+
+test('the declared checks match what the real staging fixtures render', () => {
+  const AppView = makeAppView();
+  const rows = stagingRows();
+  const row = (id) => JSON.parse(JSON.stringify(rows.find((r) => r.id === id)));
+
+  // 9000033 — behind main, clean, inside its merge window.
+  const clean = row(9000033);
+  const cleanPill = AppView.statusPillState(clean);
+  assert.equal(cleanPill.key, 'merge_countdown',
+    'the soft block no longer intercepts, so the countdown is reached');
+  assert.equal(cleanPill.tone, 'ok');
+  assert.equal(AppView.statusTagSpecs(clean, {}).map((t) => t.data['data-status-tag']).join(), 'behind');
+
+  // 9000034 — behind AND predicted to conflict.
+  const conflict = row(9000034);
+  assert.equal(AppView.statusPillState(conflict).key, 'needs_vote');
+  assert.equal(AppView.statusTagSpecs(conflict, {}).map((t) => t.data['data-status-tag']).join(),
+    'mergeability_conflict,behind');
+
+  // 9000050 — the multi-reason card the board checks read.
+  const multi = row(9000050);
+  assert.equal(AppView.statusTagSpecs(multi, {}).map((t) => t.data['data-status-tag']).join(),
+    'checks_failing,console_errors');
+
+  // ...and every declared selector naming one of these rows asks for a tag
+  // those rows actually produce.
+  const dapp = JSON.parse(require('node:fs').readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'));
+  const produced = new Set([...AppView.statusTagSpecs(clean, {}), ...AppView.statusTagSpecs(conflict, {}),
+    ...AppView.statusTagSpecs(multi, {})].map((t) => t.data['data-status-tag']));
+  for (const t of dapp.tests) {
+    const m = /\[data-status-tag="([a-z_-]+)"\]/.exec(t.expectSelector || '');
+    if (m) assert.ok(produced.has(m[1]), `${t.name} asks for a tag the fixtures produce: ${m[1]}`);
+  }
+});
