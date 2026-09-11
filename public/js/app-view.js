@@ -2819,9 +2819,8 @@ const AppView = {
     // survives renderThread()'s message-list rewrites and WS-driven refreshes.
     if (!t) return;
     const item = AppView._findTopicItem();
-    if (item && AppView._topicPrivate !== AppView._isPrivateChange(item)) AppView._mountTopicThread();
-    const head = document.getElementById('gc-thread-head')
-      || (AppView._topicPrivate ? document.getElementById('dev-topic-thread') : null);
+    const changePage = t.kind === 'session' || t.kind === 'proposal';
+    const head = document.getElementById('gc-thread-head');
     if (!head) return;
     // Closed / merged away mid-view: keep the last render readable.
     if (!item) return;
@@ -2853,8 +2852,9 @@ const AppView = {
       // Mounted per paint, into the host the thread panel owns. The store
       // flushes synchronously, so the head is in the DOM for the loads below
       // — exactly as it was after the innerHTML assignment this replaced.
-      if (AppView._topicPrivate) react.mountPrivateTopicHead(head);
-      else react.mountTopicHead(head);
+      // Change pages own their whole card, including the conversation tabs.
+      // Only issue/governance topics still live inside a thread's header host.
+      if (!changePage) react.mountTopicHead(head);
       react.publishTopicHead({ card, body, item: t.kind === 'session' || t.kind === 'proposal' ? item : null });
     }
     // The Explore pills read `aiEnabledStore` now, so the DOM pass that used
@@ -2865,7 +2865,7 @@ const AppView = {
     if (t.kind === 'proposal' && ['promoted', 'merging'].includes(item.status)) AppView._loadVoteRoster(item.id);
     // An auto-expanded transcript (arrived via "Read chat") loads straight
     // away; every other one loads when it is opened.
-    if (body.transcript && body.transcript.expanded) {
+    if (!changePage && body.transcript && body.transcript.expanded) {
       AppView._loadSessionTranscript(body.transcript.id);
     }
   },
@@ -3070,6 +3070,12 @@ const AppView = {
     if (underway) {
       const checks = rows.find((r) => r.key === 'checks');
       if (item.check_state === 'failing' && checks) checks.text = ['Required checks need attention before this change can be proposed.'];
+      if (main.key === 'behind') {
+        const behind = item.freshness_behind_by ?? item.behind_main ?? main.count;
+        main.label = 'Main';
+        main.sub = null;
+        main.text = [behind > 0 ? `${behind} commit${behind === 1 ? '' : 's'} behind main.` : 'Main has moved ahead.'];
+      }
       body.details.pathSteps = null;
       body.details.pathLeft = null;
       rows.forEach((r) => { delete r.step; delete r.stepDone; });
@@ -3110,6 +3116,10 @@ const AppView = {
   },
 
   openChangeWorkspace(id) {
+    if (document.querySelector(`[data-change-conversation="${Number(id)}"]`)) {
+      window.dispatchEvent(new CustomEvent('change-workspace-open', { detail: Number(id) }));
+      return;
+    }
     AppView.openProposalSession(id);
   },
 
@@ -3899,20 +3909,19 @@ const AppView = {
     return AppView._aiAvailabilityPromise;
   },
 
-  _isPrivateChange(item) {
-    return !!(['session', 'proposal'].includes(AppView._devTopic?.kind) && item && ['active', 'paused'].includes(item.status) && !item.shared_at);
-  },
-
   _mountTopicThread() {
     const t = AppView._devTopic;
     const slot = document.getElementById('dev-topic-thread');
-    if (!t || !slot || typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
-    AppView._topicPrivate = AppView._isPrivateChange(AppView._findTopicItem());
-    if (AppView._topicPrivate) {
-      GroupChat.unmountThread();
-      AppView._reactDevBoard()?.mountPrivateTopicHead(slot);
+    if (!t || !slot) return;
+    if (t.kind === 'session' || t.kind === 'proposal') {
+      if (typeof GroupChat !== 'undefined') GroupChat.unmountThread();
+      // The full change page owns separate discussion/workspace hosts. It
+      // mounts the group thread only when the change is publicly visible.
+      AppView._reactDevBoard()?.publishTopicHead({ card: null, body: null, item: null });
+      AppView._reactDevBoard()?.mountChangePage(slot);
       return;
     }
+    if (typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
     // 'session' (a shared in-flight dev session) uses the same 'session'
     // thread namespace as promoted proposals — the thread key is the
     // chat_sessions id either way, which is exactly what makes comments
@@ -8759,6 +8768,10 @@ const AppView = {
   // Row KEYS are never touched here. A row's key is its `data-note`, and
   // dapp.json's declared checks address rows by it.
   _topicLedgerPath(pr, rows) {
+    // Underway changes are not in the automatic merge queue. Keep their
+    // actual check verdicts and manual actions, without promising a sync
+    // or a retry of a merge that has not been proposed yet.
+    if (['active', 'paused'].includes(pr?.status)) return rows;
     const at = (k) => rows.findIndex((r) => r.key === k);
     const iConflict = Math.max(at('mergeability'), at('conflict'));
     const iBehind = at('behind');
