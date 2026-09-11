@@ -539,9 +539,10 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
             event.preventDefault(); call('openTopic', 'issue', issue.n);
           }}>#{issue.n} · {issue.title}</a>)}
         </aside> : body.changeId ? <p className="dev-topic-note">No issue linked yet.</p> : null}
-        {body.workspace && !owner ? <button type="button" className="gc-vote-btn" onClick={() => call('openChangeWorkspace', body.workspace)}>Continue building · private workspace</button> : null}
+        {body.workspace && !owner ? <button type="button" className="gc-vote-btn" onClick={() => call('openChangeWorkspace', body.workspace)}>Continue building</button> : null}
       </div>
       <TopicBodySections body={owner ? { ...body, transcript: null } : body} />
+      {!owner && body.discussion ? <section className="dev-topic-sheet"><h4 className="dev-topic-h">Discussion</h4><p className="dev-topic-note">{body.discussion}</p></section> : null}
       {owner && body.changeId ? <section className="dev-topic-sheet">
         <h4 className="dev-topic-h">Discussion</h4>
         {body.discussion ? <p className="dev-topic-note">{body.discussion}</p> : <>
