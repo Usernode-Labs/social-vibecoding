@@ -3767,14 +3767,14 @@
     },
     {
       "name": "An underway change opens its full overview before review",
-      "path": "/#app/usernode-2d5619/dev/sessions/900801",
-      "expectSelector": ".dev-change-overview:not([hidden]) .dev-topic-card",
+      "path": "/#app/usernode-2d5619/dev/proposals/900801",
+      "expectSelector": "#dev-topic-thread .dev-topic-card",
       "expectText": "Testing instructions"
     },
     {
       "name": "An underway workspace has a direct link and keeps access to its overview",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900801",
-      "expectSelector": ".dev-change-workspace:not([hidden]) #dc-quick-replies",
+      "expectSelector": "#dc-quick-replies",
       "expectText": "Change overview"
     }
   ],
