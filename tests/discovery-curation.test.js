@@ -82,7 +82,21 @@ test('directory renders reviewed apps first, leaves unreviewed visible, and disc
   assert.doesNotMatch(expanded, /data-demo="true"/, 'real demo apps retain their navigation and Add actions');
 });
 
-test('search and explicit sorts render all supplied results without disclosure', () => {
+test('#1912: a metric sort is one list in its own order, and still discloses the rest', () => {
+  // Supplied in "sort order" with an unreviewed app FIRST: ungrouped keeps it
+  // there instead of lifting the reviewed one above it under a heading.
+  const ordered = [rows[1], rows[0], rows[2], rows[3], rows[4]];
+  const html = render({ rows: ordered, grouped: false });
+  assert.ok(html.indexOf('data-slug="unreviewed"') < html.indexOf('data-slug="ready"'), 'the sort order holds');
+  assert.doesNotMatch(html, /<h2[^>]*>(Reviewed working apps|Not yet reviewed)</, 'no tier headings');
+  assert.match(render(), /<h2[^>]*>Reviewed working apps</, 'while Recommended keeps them');
+  assert.match(html, /Show more \(3\)/, 'the same disclosure as Recommended');
+  for (const slug of ['demo-only', 'broken', 'iconless']) assert.ok(!html.includes(`data-slug="${slug}"`));
+  const expanded = render({ rows: ordered, grouped: false, moreExpanded: true });
+  for (const slug of ['demo-only', 'broken', 'iconless']) assert.ok(expanded.includes(`data-slug="${slug}"`));
+});
+
+test('search renders all supplied results without disclosure', () => {
   const html = render({ curated: false });
   for (const { slug } of rows) assert.ok(html.includes(`data-slug="${slug}"`));
   assert.doesNotMatch(html, /Show more|browse-more-apps/);
