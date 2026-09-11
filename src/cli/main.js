@@ -2093,6 +2093,8 @@ async function runMcp(args, launcherPath) {
       title: z.string().min(1).max(256),
       spec: z.string().min(1).max(32768),
       history: proposalHistorySchema.min(1),
+      external_agent: z.enum(['codex', 'claude-code', 'external']).optional()
+        .describe('The agent authoring this local proposal. Pass codex for Codex, claude-code for Claude Code, or external when unknown. This is provenance, not the platform execution backend.'),
       linked_issues: z.array(z.number().int().positive()).max(50).optional(),
       supersedes_session_id: sessionIdSchema.optional(),
       profile: apiProfileSchema,
@@ -2100,12 +2102,13 @@ async function runMcp(args, launcherPath) {
     outputSchema: apiOutputSchema,
     annotations: proposalAnnotations,
   }, async ({ app_slug: appSlug, request_id: requestId, base_sha: baseSha,
-    title, spec, history, linked_issues: linkedIssues,
+    title, spec, history, external_agent: externalAgent, linked_issues: linkedIssues,
     supersedes_session_id: supersedesSessionId, profile }) => mcpApiRequest({
     method: 'POST',
     target: `/api/apps/${encodeURIComponent(appSlug)}/proposal-handoffs`,
     body: {
       schemaVersion: 1, requestId, baseSha, title, spec, history,
+      ...(externalAgent === undefined ? {} : { externalAgent }),
       ...(linkedIssues === undefined ? {} : { linkedIssues }),
       ...(supersedesSessionId === undefined ? {} : { supersedesSessionId }),
     },
