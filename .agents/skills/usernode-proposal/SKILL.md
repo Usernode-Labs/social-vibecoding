@@ -26,27 +26,15 @@ Treat the request ID and returned session ID as the permanent identity of this w
 
 ## Link the originating issues
 
-For issue-originated work, pass the app's issue numbers in `linked_issues`
-to `proposal_start`, or `linkedIssues` in the HTTP body sent to
-`POST /api/apps/:slug/proposal-handoffs`. For example, work requested on issue
-1952 uses `linked_issues: [1952]` (MCP) or `linkedIssues: [1952]` (HTTP).
-Mentions in the title, spec, history, or PR description do not populate this
-association; it supplies the card's issue context and closing metadata.
-Link only issues the proposal actually addresses, not issues cited as
-background. A direct request with no originating issue may omit the field
-or send an empty array; do not invent an issue to fill it.
+For issue-originated work, supply `linked_issues` to `proposal_start`
+(`linkedIssues` in the HTTP body). Link only issues the work addresses;
+background references and issue-less requests need no link. Prose mentions
+in a title or spec do not create the association.
 
-After start, including when resuming an existing session, use `api_read`
-(`api GET` in the CLI) on `/api/sessions/:id` and verify that
-`session.linked_issues` contains the intended issue numbers. Investigate
-unexpected links as well. Record the verified association in durable history.
-Do not treat a successful start or a title containing `#N` as verification.
-
-If the association is missing or wrong, resolve it before implementing or
-submitting more work. Keep the same session and request ID: replaying start
-with different metadata is not an edit operation. Use a supported link-update
-operation if available; otherwise report the mismatch and the API limitation.
-Do not create a replacement proposal or import a PR to repair metadata.
+Before implementation, read `GET /api/sessions/:id` and verify
+`session.linked_issues`. If it is wrong, correct it through a supported
+update or report the limitation. Keep the same session; replaying start
+with changed metadata is not an edit.
 
 ## Preserve durable context
 
