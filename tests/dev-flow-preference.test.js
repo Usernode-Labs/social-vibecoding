@@ -314,10 +314,11 @@ test('the "+" menu asks nothing about venue', () => {
 test('the "+" menu is two named groups, not one flat list', () => {
   const appView = read('public/js/app-view.js');
   // #1084 chunk G converted the menu to JSX: the two headings are
-  // <PlusMenuHeading> elements in the board frame now, not
+  // <PlusMenuHeading> elements in the toolbar row now (actions-row.tsx, split
+  // out of the board frame when the Workshop gained its own copy), not
   // AppView._plusMenuHeading() calls. #1490 leaves import as the only build
   // action here, since a new change starts in Improve.
-  const frame = read('frontend/src/features/dev-board/board-frame.tsx');
+  const frame = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.match(frame, /label="Import a change" groupKey="build" divider=\{false\}/);
   assert.match(frame, /label="Settings &amp; rules"[\s\S]{0,80}groupKey="settings"[\s\S]{0,40}divider/);
   // A heading must not be a <button>: _wirePlusMenu collects
