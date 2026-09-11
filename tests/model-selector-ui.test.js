@@ -424,7 +424,8 @@ test('OpenRouter sessions show their pinned model and never show the Claude mode
   assert.match(html, /id="dc-openrouter-model"/);
   assert.match(html, /anthropic\/claude-sonnet-4\.5/);
   assert.match(html, /id="dc-openrouter-model-change"/);
-  assert.match(html, /Change model/);
+  assert.match(html, /Browse models/);
+  assert.match(html, /aria-label="Browse and filter OpenRouter models"/);
   assert.match(html, /All chat and coding in this session use anthropic\/claude-sonnet-4\.5 through OpenRouter and bill your OpenRouter key\./);
 
   assert.doesNotMatch(html, /Chat model:/);
@@ -453,7 +454,7 @@ test('the OpenRouter model button opens the provider-locked catalog', () => {
     'the button renders');
   h.DevChat._onOpenRouterModelChange();
 
-  assert.ok(calledWith, 'the Change model button was not wired');
+  assert.ok(calledWith, 'the Browse models button was not wired');
   assert.equal(calledWith[0], null);
   assert.equal(calledWith[1].fixedBackend, 'codex_openrouter');
 });
