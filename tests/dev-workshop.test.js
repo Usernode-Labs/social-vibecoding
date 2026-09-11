@@ -1136,8 +1136,8 @@ test('a folded row wears the card\u2019s own edge, number and glyph, and no chev
   assert.match(FOLD, /closest\('a, button'\)\) return;/, 'a click on the link is the link\'s, not the row\'s');
 
   // The GLYPH. Same 22px box, no tile, same 18px mark as the card's.
-  assert.match(CSS, /\.dev-ws-row > \.dev-card-icon \{[^}]*width: 22px;[^}]*background: transparent/);
-  assert.match(CSS, /\.dev-ws-row > \.dev-card-icon > svg \{ width: 18px; height: 18px; \}/);
+  assert.match(CSS, /\.dev-ws-row-head > \.dev-card-icon \{[^}]*width: 22px;[^}]*background: transparent/);
+  assert.match(CSS, /\.dev-ws-row-head > \.dev-card-icon > svg \{ width: 18px; height: 18px; \}/);
 
   // And no chevron: it promises a destination the row does not have.
   const rows = html.split('data-ws-row="').slice(1);
