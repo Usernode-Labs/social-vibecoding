@@ -140,3 +140,49 @@ test('detail refresh uses the lifecycle endpoint and preserves demo context', as
     else global.window = previousWindow;
   }
 });
+
+test('Open card links use one detail route regardless of ownership or origin', () => {
+  const { openHref } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
+  for (const hook of ['data-session-chip', 'data-shared-session-row', 'data-proposal-row']) {
+    assert.equal(openHref('example', { attrs: { [hook]: '4073' } }), '#app/example/dev/proposals/4073');
+  }
+});
+
+test('the same detail URL resolves native/imported underway work and changes lifecycle after promotion', () => {
+  const av = context();
+  av._mySessions = [{ ...failing }];
+  av._sharedSessions = [{ ...failing, id: 4074, user_id: 99, source: 'imported', shared_at: '2026-09-11' }];
+  for (const id of [4073, 4074]) {
+    const item = av._findItem('proposal', id);
+    assert.equal(item.id, id);
+    assert.ok(row(av._topicViewFor('proposal', item), 'review'), 'underway readiness, not review voting');
+  }
+  av._proposals = [{ ...failing, status: 'promoted' }];
+  assert.equal(av._findItem('proposal', 4073).status, 'promoted');
+  assert.equal(row(av._topicViewFor('proposal', av._findItem('proposal', 4073)), 'review'), undefined);
+  av._mySessions = [];
+  assert.equal(av._findItem('session', 4073).status, 'promoted', 'legacy shared link still resolves');
+});
+
+test('private change pages do not mount a public thread or load its messages', () => {
+  const av = context();
+  av._devTopic = { kind: 'proposal', id: failing.id };
+  av._mySessions = [{ ...failing }];
+  const source = fs.readFileSync('public/js/app-view.js', 'utf8');
+  const calls = [];
+  const c = { AppView: av, document: { getElementById: () => ({}) },
+    GroupChat: { mountThread: () => calls.push('public'), unmountThread: () => calls.push('detach') } };
+  av._reactDevBoard = () => ({ mountPrivateTopicHead: () => calls.push('private') });
+  const method = source.slice(source.indexOf('  _mountTopicThread() {'), source.indexOf('\n  // Open a topic full-screen.', source.indexOf('  _mountTopicThread() {'))).trim().replace(/,$/, '');
+  vm.runInNewContext(`({ ${method} })._mountTopicThread()`, c);
+  assert.deepEqual(calls, ['detach', 'private']);
+  av._mySessions[0].shared_at = '2026-09-11';
+  calls.length = 0;
+  vm.runInNewContext(`({ ${method} })._mountTopicThread()`, c);
+  assert.deepEqual(calls, ['public']);
+});
+
+test('Workshop native underway inline details resolve the owner card key', () => {
+  const av = context(); av._mySessions = [failing];
+  assert.equal(av._workshopCardBody('my-session:4073').changeId, 4073);
+});
