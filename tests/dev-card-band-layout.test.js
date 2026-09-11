@@ -523,16 +523,18 @@ test('the kudos pill hugs its wrapper inside the capped action band', () => {
   assert.doesNotMatch(CSS, /\n\.kudos-wrap \{[^}]*inline-flex/);
 });
 
-test('the band\'s controls: the hamburger takes the right edge, Preview after it, and no rail rule remains', () => {
-  // The hamburger's auto margin is what pushes the pair to the band's right
-  // edge, so a column of cards shows every preview on one vertical line; a
-  // second auto margin on the preview would split the free space between
+test('the band\'s controls: Preview then the hamburger hold the right edge, and no rail rule remains', () => {
+  // Whichever of the pair comes first carries the auto margin that pushes
+  // both to the band's right edge, so a column of cards shows every
+  // preview on one vertical line; the hamburger directly after a preview
+  // drops its own, or two auto margins would split the free space between
   // them. The right-hand rail that used to hold the ⋯ up top and the eye at
   // the bottom has no rule left to fight either.
   const trigger = rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn');
   assert.match(trigger, /margin-left: auto/);
   const preview = rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview');
-  assert.doesNotMatch(preview, /margin-left/);
+  assert.match(preview, /margin-left: auto/);
+  assert.match(rule(':is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview + .dev-card-menu-btn'), /margin-left: 0/);
   assert.doesNotMatch(CSS, /\.dev-card-rail\s*[{>]/, 'no rail rule remains');
   assert.match(CARD_TSX, /gc-vote-btn gc-vote-btn-icon dev-card-menu-btn/,
     'the trigger is the icon pill variant, so it never outsizes a text pill');
@@ -544,7 +546,7 @@ test('the band\'s controls: the hamburger takes the right edge, Preview after it
     'the band itself stays a plain left-aligned flex row');
 });
 
-test('the band ends with the hamburger, then Preview; the chevron stands alone on the right edge', () => {
+test('the band ends with Preview, then the hamburger; the chevron stands alone on the right edge', () => {
   const AppView = makeAppView();
   const key = AppView._registerCardMenu('k:1', [{ label: 'Withdraw', act: () => {} }]);
   const eye = { state: 'live', sessionId: 1, url: 'u', title: 'p', iconOnly: true };
@@ -552,14 +554,14 @@ test('the band ends with the hamburger, then Preview; the chevron stands alone o
   // Round three took the preview out of the rail and made it a LABELLED pill
   // (the corner eye was the hardest thing on the card to hit); #1787 round
   // four moved it onto the facts line; this round seats it where the card's
-  // other controls are — the END of the action band, after the hamburger,
-  // which took the ⋯'s place at the band's right edge. The rail column went
+  // other controls are — the right end of the action band, just before the
+  // hamburger that took the ⋯'s place at the edge. The rail column went
   // with both: `rail.preview` — which the builders still hand over — is
   // drawn in the band, and the chevron is the card's only right-edge child.
   const full = BANDS({ rail: { menuKey: key, chevron: true, preview: eye } });
   assert.doesNotMatch(full, /dev-card-rail/);
-  assert.match(bandOf(full), /<button [^>]*dev-card-menu-btn" data-card-menu="k:1"[^>]*>[\s\S]*?<\/button><button [^>]*class="gc-vote-btn gc-vote-btn-preview"[^>]*>[\s\S]*?Preview<\/button>$/,
-    'the hamburger, then the labelled Preview, closing the band');
+  assert.match(bandOf(full), /<button [^>]*class="gc-vote-btn gc-vote-btn-preview"[^>]*>[\s\S]*?Preview<\/button><button [^>]*dev-card-menu-btn" data-card-menu="k:1"[^>]*>[\s\S]*?<\/button>$/,
+    'the labelled Preview, then the hamburger closing the band');
   assert.doesNotMatch(full, /dev-card-status-end/, 'nothing on the facts line');
   assert.doesNotMatch(full, /gc-vote-btn-preview[^>]*gc-vote-btn-icon/, 'never the icon variant on a board card');
   assert.match(full, /<\/div><\/div><svg [^>]*class="w-4 h-4/, 'the chevron after the content column');

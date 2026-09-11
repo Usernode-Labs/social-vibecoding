@@ -296,6 +296,14 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // prerenders on every password field. Only the slash below stays absent.
     // PencilSquareIcon — the author-only inline title edit on a topic head.
     'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z',
+    // FoldMarkIcon — the fold mark at the top right of a folded row and its
+    // open card (card/fold.tsx FoldMark): the two chevrons and the bar
+    // between them, three paths so app.css can stretch them apart. Same
+    // family, same reason: it renders inside the Dev route's fold, never
+    // in the static document.
+    'M8.25 9L12 5.25 15.75 9',
+    'M12 5.5v13',
+    'M8.25 15L12 18.75 15.75 15',
     // ── The dev chat's banner glyphs ────────────────────────────────
     // All four render inside `#dc-banners`, which `renderChatView` writes on
     // the dev-chat route — not in <Shell/> — and each is additionally behind
