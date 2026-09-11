@@ -286,8 +286,10 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
       )}
     >
       {view.season ? <SeasonRing view={view.season} /> : null}
+      {/* #1915: padded on BOTH sides. With `pb-3` alone the line sat flush
+          against the season ring's bottom hairline above it. */}
       {view.onboardingNote ? (
-        <p className="px-1 pb-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">
+        <p className="px-1 py-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">
           {view.onboardingNote}
         </p>
       ) : null}
