@@ -41,6 +41,19 @@ TLS references until reconciled or migrated. The infra runbook
 `docs/23-social-vibecoding-shared-tls.md` includes a read-only migration planner,
 issuance-limit recovery and explicit retirement of legacy Certificates.
 
+## HTTP keep-alive ordering
+
+The platform server (including self-previews) and newly scaffolded Node apps
+set `server.keepAliveTimeout` to 75 seconds. This gives the ingress's 60-second
+upstream idle timeout a 15-second margin to retire unused connections before
+Node closes them. Preserve this ordering if the ingress timeout changes.
+Node's default keep-alive buffer remains in effect; request and header timeouts
+are separate and unchanged.
+
+The platform setting takes effect when the updated server is deployed. Existing
+child-app repositories and previews built from older commits retain their own
+server code; changing the scaffold does not retrofit them.
+
 ## Read-only inventory and logs
 
 These examples use the organization namespace and Deployment names. Substitute
