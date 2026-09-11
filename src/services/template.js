@@ -643,7 +643,9 @@ async function start() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   \`);
-  app.listen(port, () => console.log(\`Listening on :\${port}\`));
+  const server = app.listen(port, () => console.log(\`Listening on :\${port}\`));
+  // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
+  server.keepAliveTimeout = 75_000;
 }
 
 start().catch(err => { console.error(err); process.exit(1); });
