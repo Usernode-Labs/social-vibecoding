@@ -297,28 +297,32 @@ export function PanelShell({
 }
 
 /**
- * THE LEADERBOARD LINK (#980). `BrowseLink` verbatim — same violet 12px link,
- * same icon-then-label shape, same seat in the section heading — because it
- * answers the same question on the same screen. It renders in EVERY branch and
- * at every width: between seasons, where the block draws no footer at all, it
- * is the only control the area has.
+ * THE AREA'S WAY IN (#980, renamed #1916). `BrowseLink` verbatim — same 12px
+ * link, same seat in the section heading — because it answers the same
+ * question on the same screen. It renders in EVERY branch and at every width:
+ * between seasons, where the block draws no footer at all, it is the only
+ * control the area has.
+ *
+ * It reads "Open challenges" and lands on the Challenges tab of the
+ * Leaderboard screen (#1916): the area is called Challenges, so a link out of
+ * it that named a different thing read as a way somewhere else. It is still
+ * the home screen's door to that screen — the standings are one tab over —
+ * and the trailing chevron marks it as navigation rather than an action.
  */
 export function LeaderboardLink() {
   return (
     <button
       type="button"
       className="home-panel-lb-browse shrink-0 flex items-center gap-1 text-[14px] font-semibold text-[color:var(--brand-ink)] hover:underline whitespace-nowrap"
-      title="Open the Leaderboard screen"
-      aria-label="Open leaderboard"
+      title="Go to the Challenges tab on the Leaderboard screen"
+      aria-label="Open challenges"
       onClick={(e) => {
         e.stopPropagation();
-        // No kind: this is the area's door to the leaderboard SCREEN, and
-        // since the standings preview was removed from the card it is the
-        // only thing here that goes there.
-        panels()?.goToLeaderboard?.();
+        panels()?.goToChallenges?.();
       }}
     >
-      <span className="whitespace-nowrap">Open leaderboard</span>
+      <span className="whitespace-nowrap">Open challenges</span>
+      <ChevronRightIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
     </button>
   );
 }
@@ -327,11 +331,12 @@ export function LeaderboardLink() {
  * The Challenges footer: the expand/collapse toggle on the left, the way out
  * to the Challenges tab on the right.
  *
- * That right-hand control says "Open challenges", not "Go to leaderboard"
- * (#980) — it lands on `#leaderboard/challenges` while the bar's link lands on
- * the bare `#leaderboard`, and two affordances one card apart both reading
- * "leaderboard" but opening different tabs is worse than the ambiguity the
- * label was written to fix.
+ * That right-hand control says "Open challenges" and lands on
+ * `#leaderboard/challenges` — the same label and the same destination as the
+ * heading's link since #1916, so the two never disagree about where they go
+ * (#980 was two controls one card apart reading alike but opening different
+ * tabs). The footer copy is the one under the rows, for a reader who has just
+ * scrolled past them.
  *
  * THE TOGGLE IS CONDITIONAL (#1824). It used to render whenever the block had
  * any rows, so a season with three challenges drew "See all 3 challenges"

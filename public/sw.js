@@ -95,7 +95,19 @@
 // It is cheap and bounded for the reason the API cache below is NOT
 // versioned: a bump drops only SHELL_CACHE and IMMUTABLE_CACHE, both
 // content-addressed and network-first, and leaves the offline session alone.
-const SW_VERSION = 'v10';
+//
+// v12: the Workshop's grouping tabs and the board pane under them. The
+// control, both panes and their CSS class names are all in the React shell
+// bundle — app-view.js gains only the preference and the publish, and on a
+// stale shell there is no tab strip for it to drive. So the user-visible
+// surface is entirely inside the bundle, which is the case the v10 entry
+// above names.
+//
+// v11: refresh the task-time OpenRouter picker. Its controls live in the main
+// shell bundle, while Settings lives in a lazy chunk; without retiring the
+// cached shell, an existing installation could show the new Settings picker
+// alongside the old in-task model list.
+const SW_VERSION = 'v12';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 

@@ -972,6 +972,18 @@ html.un-kb .platform-safe-sheet {
   padding: 8px 8px 8px 12px;
   background: var(--messages-surface);
   box-shadow: var(--messages-disc-shadow);
+  transition: box-shadow 150ms;
+}
+/* #1954: FOCUS LIVES ON THE CARD, as it does on the dev chat's `.dc-card`.
+   The textarea draws no box of its own (`outline: none`, transparent), so a
+   caret was the only sign the field was live; the ring goes around the whole
+   input box instead. `:focus-within` because the card is one control group —
+   the attach and share buttons are still "in the composer". */
+.messages-composer-card:focus-within {
+  box-shadow: var(--messages-disc-shadow), 0 0 0 2px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .messages-composer-card { transition: none; }
 }
 .messages-composer-disabled { padding: 14px 16px; color: var(--text-muted); font-size: 15px; text-align: center; }
 .messages-composer-input {
@@ -1033,14 +1045,21 @@ html.un-kb .platform-safe-sheet {
   background: var(--accent-tint);
 }
 .messages-pending-object { padding: 8px 12px; background: var(--messages-surface-2); }
+/* #1927: the dismiss × is a 44px tap target, the platform's minimum. The
+   negative block/inline margins let it overhang the strip's own 6–8px
+   padding, so the bigger button does not make the strip any taller. */
 .messages-reply-draft button,
 .messages-pending-object button {
-  margin-left: auto;
-  width: 28px;
-  height: 28px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: -6px -8px -6px auto;
+  width: 44px;
+  height: 44px;
   border-radius: 9999px;
   color: var(--text-muted);
-  font-size: 17px;
+  font-size: 20px;
 }
 .messages-mention-menu {
   position: absolute;
@@ -6513,14 +6532,23 @@ span.gc-vote-btn-icon { cursor: default; }
 
 #gc-reply-preview { margin-bottom: 6px; }
 .gc-reply-preview-body { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; }
+/* #1927: 44px tap target, overhanging the strip's 6px/8px padding so the
+   strip keeps its height. */
 .gc-reply-preview-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -6px -8px -6px 0;
   background: none;
   border: none;
+  border-radius: 9999px;
   cursor: pointer;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1;
-  padding: 4px 6px;
+  padding: 0;
   flex-shrink: 0;
 }
 .gc-reply-preview-x:hover { color: var(--text-primary); }
@@ -7572,6 +7600,18 @@ span.gc-vote-btn-icon { cursor: default; }
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
+/* #1943: the session strip keeps THIS surface when the chat scrolls.
+   attachScreenFx (dev-chat.js) makes #dc-session-header a
+   `.platform-chat-header`, and the kit adds `.un-scrolled` once the
+   transcript moves; `.platform-chat-header.un-scrolled` (near the top of
+   this file) is more specific than `.dc-lift-strip` and repainted the strip
+   with the nav-bar white — the bar visibly turned white on scroll. The id
+   outranks it; the hairline it adds is the scroll cue and stays. */
+#dc-session-header.un-scrolled {
+  background-color: var(--dc-strip-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
 /* NO BLUR, NO GLASS. Without backdrop-filter the same alphas leave the star
    and the three washes sitting UNBLURRED behind body text, which is worse
    than the flat surface this replaced — the effect depends on the blur, not
@@ -7581,6 +7621,7 @@ span.gc-vote-btn-icon { cursor: default; }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dc-lift-strip { background-color: var(--dc-strip); }
   .dc-lift-session { background-color: var(--dc-sheet); }
+  #dc-session-header.un-scrolled { background-color: var(--dc-strip); }
 }
 
 /* ── THE THIRD SURFACE: a lift that CASTS its own scrim ────────────────
@@ -10459,9 +10500,10 @@ body.is-offline [data-offline-disabled] {
   opacity: 0.7;
 }
 
-/* Secondary session controls live in Details only below Tailwind's sm.
-   Two lines give the name room without letting a very long title consume the
-   chat. The full name is always readable in Details. */
+/* Below Tailwind's sm the session name may take two lines, so a long name
+   has room beside the provider and the PR link without a very long title
+   consuming the chat. (#1940 put those controls back inline at every width;
+   the full branch name stays on the title's tooltip.) */
 @media (max-width: 639px) {
   #dc-session-header > .dc-session-title {
     white-space: normal;
@@ -10471,16 +10513,6 @@ body.is-offline [data-offline-disabled] {
     -webkit-line-clamp: 2;
   }
 }
-.dc-venue-select.dc-venue-details-select {
-  width: 100%;
-  max-width: none;
-  min-height: 44px;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.875rem;
-  flex-wrap: wrap;
-}
-.dc-venue-details-select .dc-venue-name { white-space: normal; overflow-wrap: anywhere; }
-.dc-venue-details-select .dc-venue-busy { font-size: 0.75rem; }
 
 .dc-venue-busy {
   display: inline-flex;
@@ -10653,6 +10685,20 @@ body.is-offline [data-offline-disabled] {
 }
 #dev-workshop .dev-feed-entry + .dev-feed-entry {
   margin-top: 4px;
+}
+/* #1885: THE CARD SITS FLUSH in its sheet. The sheet's padding is for what
+   hangs UNDER the card — the thread, its reply box, "Open on its own page" —
+   and those keep it (their own margins are measured from it). The card itself
+   is pulled out to the sheet's edges, so opening a row no longer drops it into
+   a frosted frame, and it takes the sheet's corners so the two outlines are
+   one. With nothing under it the card is the whole sheet. */
+#dev-workshop .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):first-child {
+  width: calc(100% + 20px);
+  margin: -10px -10px 0;
+  border-radius: inherit;
+}
+#dev-workshop .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):only-child {
+  margin-bottom: -12px;
 }
 /* A reading column. The stream is one column of cards each with a thread
    under it; past ~760px a card's meta line and its bubbles were sentences
@@ -11151,6 +11197,39 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   max-width: 900px;
   margin: 0 auto;
 }
+.dev-change-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 14px;
+  flex-shrink: 0;
+}
+.dev-change-tabs [aria-pressed="true"] {
+  background: var(--dc-sheet-fill);
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+}
+.dev-change-overview {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 12px 24px;
+}
+.dev-change-workspace {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.dev-change-overview[hidden], .dev-change-workspace[hidden] { display: none; }
+.dev-change-issues {
+  margin: 8px 4px 12px;
+  padding: 12px 14px;
+  background: var(--dc-sheet-fill);
+  border-radius: 16px;
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+}
+.dev-change-issues a { display: block; overflow-wrap: anywhere; margin-top: 4px; }
+.dev-change-overview .dev-topic { width: 100%; }
 .dev-topic-sheet {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -11688,25 +11767,45 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    ON the pane rather than another wash of the same surface. */
 .dev-ws-card {
   display: flex;
-  align-items: baseline;
+  /* CENTRE, not baseline. On the one card whose sentence wraps to two rows,
+     a baseline-aligned label sits against the FIRST row and reads as if it
+     were floating above its own text; centred, it holds the block. */
+  align-items: center;
   gap: 6px;
   border-radius: 10px;
   padding: 7px 10px;
   background-color: var(--dc-sheet);
-  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+  /* The hairline plus a real lift. `--dc-sheet` is #ffffff and the strip
+     behind it is `--dc-sheet-fill` at 50% white, so on a light page the
+     inset line was the ONLY thing separating card from pane and the block
+     read flat. Screenshots, not the diff, are what showed that.
+     CAUTION: one invalid var() anywhere in this list voids the WHOLE
+     declaration, hairline included — a missing token here renders as a
+     card with no outline at all, which is exactly how it failed in
+     preview. */
+  box-shadow:
+    0 0 0 1px var(--app-sheet-line) inset,
+    0 1px 2px var(--app-sheet-shadow-near),
+    0 4px 10px var(--app-sheet-shadow-far);
 }
 .dev-ws-card-title {
   margin: 0;
   flex: none;
-  font-size: 12px;
+  /* A fixed COLUMN, so all three sentences share a left edge. "Last week",
+     "This week" and "Open" are different widths, so without it the text
+     started at three different x-positions — which defeats the point of the
+     one-line layout, where you read down the labels and across only where
+     you want the detail. 84px clears the longest of the three at 13.5px.
+     A fourth window with a longer name would need this revisited. */
+  width: 84px;
+  font-size: 13.5px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
+  letter-spacing: 0.01em;
+  /* The accent, so the label separates from its sentence by colour as well
+     as by column. It is not interactive; nothing else in this pane is
+     either, so the blue is not competing with a real affordance. */
+  color: var(--accent);
 }
-/* The separator is the label's, not an element of its own: a real node
-   between them would land inside the `.dev-ws-card-title + .dev-ws-card-line`
-   chain dapp.json's declared check selects on. */
-.dev-ws-card-title::after { content: '\00B7'; margin-left: 6px; }
 .dev-ws-card-line { margin: 0; flex: 1 1 auto; font-size: 14px; color: var(--text-primary); }
 /* ── The Workshop's orientation pane ─────────────────────────
    "Since your last visit" moved inside "Where the app is": the description
@@ -11761,7 +11860,13 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-dash-cell {
   display: flex; flex-direction: column; gap: 1px;
   padding: 8px 10px; border-radius: 14px;
-  background: var(--dc-sheet); box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+  /* Same surface and the same lift as the cards below them: the tiles sit on
+     the same translucent strip and had the same flatness problem. */
+  background: var(--dc-sheet);
+  box-shadow:
+    0 0 0 1px var(--app-sheet-line) inset,
+    0 1px 2px var(--app-sheet-shadow-near),
+    0 4px 10px var(--app-sheet-shadow-far);
   font-size: 11.5px; color: var(--text-muted); line-height: 1.25;
 }
 .dev-ws-dash-cell b {
@@ -11773,6 +11878,60 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    you is not a warning, and the component leaves the class off. */
 .dev-ws-dash-good b { color: var(--state-ok); }
 .dev-ws-dash-warn b { color: var(--state-attention); }
+/* The grouping tabs. A SEGMENTED strip, not two loose chips: the two panes
+   are alternatives over one board, and a shared rail says that where a gap
+   between pills would read as two unrelated toggles. Deliberately NOT
+   .dev-ws-chip — those are the sort order WITHIN the category pane and sit
+   one row below, so the two controls have to look like different kinds of
+   thing or the row reads as five options over one list. */
+.dev-ws-group {
+  display: flex; align-items: stretch; gap: 2px;
+  padding: 3px; border-radius: 999px; background: var(--dc-strip);
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+}
+/* Full width of the reading column, the two panes splitting it evenly — the
+   same edge-to-edge the General-discussion card above it takes. Shrunk to
+   its labels the strip read as a pair of loose chips floating at the left
+   margin; at full width it reads as one control with two states, which is
+   what it is. `flex: 1 1 0` (not `1 1 auto`) so the halves are equal rather
+   than proportional to their label lengths. */
+.dev-ws-group-tab {
+  flex: 1 1 0; height: 32px; padding: 0 14px; border: 0; border-radius: 999px;
+  background: transparent; color: var(--text-muted);
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  white-space: nowrap;
+}
+.dev-ws-group-tab[aria-selected="true"] {
+  background: var(--dc-sheet); color: var(--text-primary);
+  box-shadow: 0 1px 2px var(--app-sheet-shadow-near);
+}
+
+/* ── The stage pane runs edge to edge ──────────────────────────────────
+   `#dev-workshop` is a 760px reading column (below), which is right for a
+   list of one-line rows and wrong for four side-by-side columns: bounded to
+   760px the board is a horizontal scroller before it is a board, and the
+   whole point of reading by stage is seeing the stages AT ONCE.
+
+   So when the stage pane is up the column bound comes OFF the workshop and
+   goes back on to every child except the board. The alternative — a
+   `100vw` full-bleed with negative margins — was rejected on purpose:
+   `100vw` counts the scrollbar that `#dev-forum-scroll` always has, so it
+   overflows by its width and adds a horizontal scrollbar to the page.
+   Re-parenting the bound has no such edge. */
+#dev-workshop:has(.dev-ws-board) { max-width: none; }
+#dev-workshop:has(.dev-ws-board) > .dev-ws > :not(.dev-ws-board) {
+  width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
+}
+/* The board brings its own horizontal scroller (#dev-kanban), so this
+   wrapper only has to stop the columns sitting flush against what is
+   around them. The 8px sides are not arbitrary: `#dev-body` drops to 4px
+   of side padding when it holds the Workshop (below), which is right for a
+   760px column centred in far more room than that and reads as a clipped
+   edge once the board spans the window — 4 + 8 restores the 12px the
+   standalone board gets from `#dev-body`'s own `px-3`, so the two surfaces
+   sit on the same gutter. */
+.dev-ws-board { padding: 2px 8px 0; }
+
 .dev-ws-sort { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 0; flex-wrap: wrap; }
 .dev-ws-sort-opts { display: flex; gap: 4px; }
 .dev-ws-chip {

@@ -199,12 +199,13 @@ test('the OpenRouter proposal picker exposes search, favorites, recommendations 
 
   const html = autoHtml(view);
   assert.match(html, /placeholder="Filter by model or provider…"/);
-  assert.match(html, /☆ Favorites/);
+  assert.match(html, /★ Favorites/, 'a recommended preselection opens the short list');
   assert.match(html, />Refresh</);
   assert.match(html, /★ deepseek\/deepseek-v4\.1-flash \(openrouter\) · Recommended/);
-  assert.match(html, /2 of 317 models · Updated just now/);
+  assert.doesNotMatch(html, /openai\/gpt-6-astra/, 'non-favorites stay behind the All-models toggle');
+  assert.match(html, /1 of 317 models · Updated just now/);
   assert.match(html, /Remove selected model from favorites/);
-  assert.match(html, /OpenRouter filters this catalog for your key and account policies/);
+  assert.match(html, /Platform recommendations start in Favorites/);
 });
 
 test('no build-venues module leaves the venue line empty rather than broken', () => {

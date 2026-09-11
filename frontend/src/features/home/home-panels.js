@@ -687,12 +687,13 @@ const HomePanels = {
     location.hash = '#leaderboard/challenges';
   },
 
-  // The Challenges heading's "Open leaderboard". The Topochain standings ARE
-  // the Leaderboard screen's primary tab, so they address as the bare hash;
-  // `kind` survives because the ⋮ menu's own row still passes one, and it is
-  // the same real hash navigation as goToChallenges, so the device back
-  // gesture returns home. (It used to be the standings PREVIEW's destination
-  // too, on whichever board that preview had drawn; the preview is gone.)
+  // The Leaderboard screen's standings tab. The Topochain standings ARE the
+  // screen's primary tab, so they address as the bare hash; `kind` survives
+  // because the ⋮ menu's own row still passes one, and it is the same real
+  // hash navigation as goToChallenges, so the device back gesture returns
+  // home. (The Challenges heading's link used to come here as "Open
+  // leaderboard"; since #1916 it reads "Open challenges" and goes through
+  // goToChallenges instead.)
   goToLeaderboard(kind) {
     location.hash = kind === 'kudos' ? '#leaderboard/users' : '#leaderboard';
   },

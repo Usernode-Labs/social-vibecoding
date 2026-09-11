@@ -3,7 +3,7 @@
  * See ./view-store.ts for what it absorbed and what stays legacy-owned.
  */
 
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 
@@ -85,7 +85,7 @@ function DevSessionChecks(): ReactNode {
   return s.sessionId && s.pr ? <ChecksSection key={s.sessionId} sessionId={s.sessionId} /> : null;
 }
 
-function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): ReactNode {
+function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): ReactNode {
   return (
     <>
       {/* #194: the one-shot "what a proposal is" hint, above everything. */}
@@ -164,7 +164,7 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
             id="dc-launchpad-slot" className="dc-launchpad-slot"
             dangerouslySetInnerHTML={{ __html: s.launchpadHtml }}
           />
-          <DevSessionChecks />
+          {!s.change ? <DevSessionChecks /> : null}
           {/* The element carries the pane's scroll geometry and
               `initScrollTracking` binds click, keydown and scroll on it. */}
           <div id="dc-messages" className="dc-messages-container flex-1 overflow-y-auto py-2">
@@ -206,6 +206,19 @@ function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): 
   );
 }
 
+/** Session URLs are the workspace; Open card has its own topic destination. */
+function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): ReactNode {
+  useEffect(() => { window.DevChat?.restoreSessionScroll?.(); }, []);
+  if (!s.change) return <WorkspaceView s={s} />;
+  return <>
+    <nav className="dev-change-tabs" aria-label="Change views">
+      <button type="button" className="gc-vote-btn" onClick={() => (window as any).AppView?.openTopic('proposal', s.change!.item.id)}>Change overview</button>
+      <span className="dev-topic-note">Agent workspace</span>
+    </nav>
+    <WorkspaceView s={s} />
+  </>;
+}
+
 export function DevChatViewView({ s }: { s: DevViewState }): ReactNode {
   if (s.kind === 'none') {
     return (
@@ -218,7 +231,7 @@ export function DevChatViewView({ s }: { s: DevViewState }): ReactNode {
       </div>
     );
   }
-  return <SessionView s={s} />;
+  return <SessionView key={s.change?.item.id} s={s} />;
 }
 
 export function DevChatView(): ReactNode {

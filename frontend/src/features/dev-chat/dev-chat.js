@@ -360,7 +360,7 @@ const DevChat = {
     DevChat._publishComposer();
   },
 
-  /** The OpenRouter row's "Change model", likewise. */
+  /** The OpenRouter row's "Browse models", likewise. */
   _onOpenRouterModelChange() {
     DevChat._switchCurrentCodingAgent(null, { fixedBackend: 'codex_openrouter' });
   },
@@ -805,6 +805,16 @@ const DevChat = {
       .map(({ model }) => model);
   },
 
+  // A task picker should start with the useful shortlist, while preserving a
+  // current non-favorite selection. The latter matters when somebody picked
+  // an uncommon model deliberately: merely opening the dialog must not move
+  // them to the first recommended model.
+  _openRouterFavoritesOnlyByDefault(models, selectedModel) {
+    const selected = (Array.isArray(models) ? models : [])
+      .find((model) => model?.id === selectedModel);
+    return selected?.isFavorite === true;
+  },
+
   _openRouterCatalogAgeText(refreshedAt) {
     const refreshed = Date.parse(refreshedAt || '');
     if (!Number.isFinite(refreshed)) return '';
@@ -958,7 +968,7 @@ const DevChat = {
             <button type="button" id="dc-agent-choice-star-model" aria-pressed="false" class="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-lg leading-none text-zinc-700 dark:text-zinc-300 disabled:opacity-50" aria-label="Add selected model to favorites" title="Add selected model to favorites">☆</button>
           </div>
           <p id="dc-agent-choice-catalog-meta" class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
-          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">Favorites appear first, followed by platform recommendations and then average input/output token price. OpenRouter filters this catalog for your key and account policies. Rates are per 1M tokens; actual spend depends on usage.</p>
+          <p class="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">Platform recommendations start in Favorites. Clear the Favorites filter to browse the complete key-visible catalog. Rates are per 1M tokens; actual spend depends on usage.</p>
           <label for="dc-agent-choice-effort" class="mt-3 block text-xs font-medium text-zinc-700 dark:text-zinc-300">Reasoning effort</label>
           <select id="dc-agent-choice-effort" class="mt-1 w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
             <option value="">Default</option>
@@ -992,7 +1002,11 @@ const DevChat = {
     const settingsButton = overlay.querySelector('#dc-agent-choice-settings');
     const applyButton = overlay.querySelector('#dc-agent-choice-apply');
 
-    let favoritesOnly = false;
+    // New/default OpenRouter tasks land on the curated recommended favorites
+    // instead of making the user scan the whole provider catalog. If the
+    // session is already on a non-favorite, keep All models visible so merely
+    // opening this dialog never changes the pinned selection.
+    let favoritesOnly = this._openRouterFavoritesOnlyByDefault(data.models, selectedModel);
     effortSelect.value = selectedEffort;
 
     const cardClass = (selected) => `rounded-lg border p-3 text-left transition-colors ${selected
@@ -4838,7 +4852,7 @@ const DevChat = {
     // `_headerVenue`'s `disabled` now, so this republishes the strip rather
     // than writing the attribute React would overwrite on its next paint.
     DevChat._repaintSessionHeader();
-    // The OpenRouter row's "Change model" is guarded by the same rule and
+    // The OpenRouter row's "Browse models" is guarded by the same rule and
     // rides in on the publish above — it used to be a `disabled` written by
     // hand here, which is a write React would clobber on its next paint.
     DevChat._syncSaveDraftBtn();
@@ -5773,7 +5787,8 @@ const DevChat = {
     // viewports keep today's fullscreen overlay — a side panel doesn't
     // fit there. Mount the slot BEFORE ensureStaging so the docked
     // geometry has something to pin to.
-    const dock = !!(s.id && typeof AppView !== 'undefined'
+    const dock = !!(s.id && !document.querySelector?.('.dev-change-workspace[hidden]')
+      && typeof AppView !== 'undefined'
       && AppView._stagingDockViewport && AppView._stagingDockViewport());
     if (dock) DevChat.openStagingPanel();
     // #439: route through ensure-then-open so a preview torn down while the
@@ -8463,6 +8478,11 @@ const DevChat = {
     const stagingOpen = !!DevChat.stagingPanel.open;
     return {
       kind: 'session',
+      change: window.AppView?._topicViewFor ? {
+        item: DevChat.currentSession,
+        ...AppView._topicViewFor(['active', 'paused'].includes(DevChat.currentSession.status) ? 'session' : 'proposal', DevChat.currentSession),
+
+      } : null,
       // #1281: a hand-off venue swaps the composer for the launchpad. The
       // venue dropdown lives in the header, outside the swap, which is what
       // makes it reversible — it is the way back to a chat.

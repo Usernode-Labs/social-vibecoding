@@ -49,6 +49,7 @@ import { DevSessionShell } from './session-frame';
 import { VotingHelp, type VotingHelpProps } from './voting-help';
 import { DevTopicSubView } from './topic-frame';
 import { publishViewMode } from './view-mode-store';
+import { publishWorkshopGroup } from './workshop/group-mode-store';
 import {
   aiEnabledStore,
   cardNowStore,
@@ -105,6 +106,7 @@ export interface DevBoardBridge {
   mountKanban(host: Element | null): void;
   publishKanban(view: DevKanbanView): void;
   mountTopicHead(host: Element | null): void;
+  mountPrivateTopicHead(host: Element | null): void;
   publishTopicHead(state: TopicHeadState): void;
   mountAutoSessionModal(host: Element | null, view: AutoSessionModalView): void;
   mountSessionChecks(host: Element | null, props: SessionChecksProps): void;
@@ -113,6 +115,7 @@ export interface DevBoardBridge {
   publishCardNow(now: number): void;
   publishAiEnabled(enabled: boolean): void;
   publishViewMode(mode: string): void;
+  publishWorkshopGroup(mode: string): void;
   unmount(host: Element | null): void;
   unmountAll(): void;
   /** Live portal count — the leak assertion in tests reads this. */
@@ -293,6 +296,10 @@ export const devBoardBridge: DevBoardBridge = {
     mountLegacyPortal(host, createElement(TopicHead));
   },
 
+  mountPrivateTopicHead(host) {
+    mountLegacyPortal(host, createElement('div', { className: 'dev-change-overview platform-safe-scroll h-full' }, createElement(TopicHead)));
+  },
+
   publishTopicHead(state) {
     topicHeadStore.set(state);
   },
@@ -332,6 +339,7 @@ export const devBoardBridge: DevBoardBridge = {
   },
 
   publishViewMode,
+  publishWorkshopGroup,
   unmount: unmountLegacyPortal,
   unmountAll: unmountAllLegacyPortals,
   rootCount: legacyPortalCount,
