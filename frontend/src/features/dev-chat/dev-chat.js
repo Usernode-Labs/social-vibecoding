@@ -3321,7 +3321,8 @@ const DevChat = {
   // session's unread completion server-side, so only the former forwards
   // ?opened=1 — otherwise the turn's own reconcile fetch clears the
   // completion it just produced and the cog's green badge never shows.
-  async openSession(sessionId, { userOpened = false } = {}) {
+  async openSession(sessionId, { userOpened = false, signal } = {}) {
+    if (signal?.aborted) return false;
     // #161: opening a DIFFERENT session while the current one is
     // mid-turn counts as leaving it — arm its completion notification.
     // (Returning to the SAME session needs no client call: the server's
@@ -3379,9 +3380,10 @@ const DevChat = {
       // auto-resume below skips one: `?shot=` names a state to RENDER, and
       // silently resolving the session's notification is a mutation.
       const asUser = userOpened && !DevChat._isShotDeepLink();
-      const res = await fetch(`/api/sessions/${sessionId}${asUser ? '?opened=1' : ''}`);
-      if (!res.ok) return;
+      const res = await fetch(`/api/sessions/${sessionId}${asUser ? '?opened=1' : ''}`, { signal });
+      if (!res.ok) return false;
       const { session, messages, drafts } = await res.json();
+      if (signal?.aborted) return false;
 
       // Auto-resume on open: opening a paused session transparently
       // resumes it (the backend applies the per-user LRU + global cap
@@ -3399,7 +3401,7 @@ const DevChat = {
       // has nothing to do with what it asserts.
       if (session.status === 'paused' && DevChat._ownsSession(session) && !DevChat._isShotDeepLink()) {
         try {
-          const rr = await fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST' });
+          const rr = await fetch(`/api/sessions/${sessionId}/resume`, { method: 'POST', signal });
           if (rr.ok) {
             session.status = 'active';
           } else {
@@ -3409,6 +3411,7 @@ const DevChat = {
         } catch { /* network blip — fall through; session stays paused */ }
       }
 
+      if (signal?.aborted) return false;
       DevChat.currentSession = session;
       DevChat._publishPreview();
       // #940: reconcile this session's saved drafts against the server copy
@@ -3626,9 +3629,10 @@ const DevChat = {
 
       // Check if Claude Code is running for this session
       try {
-        const statusRes = await fetch(`/api/sessions/${sessionId}/status${DevChat._demoQS()}`);
+        const statusRes = await fetch(`/api/sessions/${sessionId}/status${DevChat._demoQS()}`, { signal });
         if (statusRes.ok) {
           const statusPayload = await statusRes.json();
+          if (signal?.aborted || Number(DevChat.currentSession?.id) !== Number(sessionId)) return false;
           const { busy, progress, phase, sync, stopping, stopRequestedAt, stoppable } = statusPayload;
           // #907: restore the Run-on selector / chip from the server, so a
           // reload of a session with a machine attached does not silently
@@ -3714,7 +3718,8 @@ const DevChat = {
           }
         }
       } catch {}
-    } catch {}
+      return !signal?.aborted;
+    } catch { return false; }
   },
 
   // ── Streaming + send ─────────────────────────────────────
@@ -8478,6 +8483,7 @@ const DevChat = {
     const stagingOpen = !!DevChat.stagingPanel.open;
     return {
       kind: 'session',
+      embedded: !!document.getElementById('dc-view')?.dataset?.changeWorkspace,
       change: window.AppView?._topicViewFor ? {
         item: DevChat.currentSession,
         ...AppView._topicViewFor(['active', 'paused'].includes(DevChat.currentSession.status) ? 'session' : 'proposal', DevChat.currentSession),
@@ -8562,6 +8568,10 @@ const DevChat = {
   renderChatView() {
     const content = document.getElementById('dc-view');
     if (!content) return;
+    // A lazy workspace host can exist while its session is still loading.
+    // Never let an earlier session's background poll fill that empty host.
+    if (content.dataset?.changeWorkspace
+      && Number(content.dataset.changeWorkspace) !== Number(DevChat.currentSession?.id)) return;
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react || !react.mountDevView) return;

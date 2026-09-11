@@ -127,7 +127,7 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
       <div id="dc-banners" className="contents"><DevChatBanners /></div>
       <div className="dc-session-body flex-1 flex min-h-0 dc-lift dc-lift-session">
         <div id="dc-tab-chat" className="dc-chat-pane flex-1 flex flex-col min-h-0">
-          {s.returnHint ? (
+          {s.returnHint && !s.embedded ? (
             <aside
               id="dc-return-hint" aria-label="Returning to dev chat"
               className="mx-3 mt-3 mb-1 flex flex-wrap items-center gap-3 rounded-xl bg-violet-500/10 p-3 text-sm text-zinc-700 dark:text-zinc-200 shrink-0"
@@ -209,7 +209,7 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
 /** Session URLs are the workspace; Open card has its own topic destination. */
 function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): ReactNode {
   useEffect(() => { window.DevChat?.restoreSessionScroll?.(); }, []);
-  if (!s.change) return <WorkspaceView s={s} />;
+  if (!s.change || s.embedded) return <WorkspaceView s={s} />;
   return <>
     <nav className="dev-change-tabs" aria-label="Change views">
       <button type="button" className="gc-vote-btn" onClick={() => (window as any).AppView?.openTopic('proposal', s.change!.item.id)}>Change overview</button>
