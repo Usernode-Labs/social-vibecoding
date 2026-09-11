@@ -72,19 +72,24 @@ function credentialRoutes(config) {
     return { catalog, hasCredential: true };
   }
 
-  async function favoriteOpenRouterModelIds(userId) {
+  async function openRouterFavoriteOverrides(userId) {
     const { rows } = await pool.query(
-      `SELECT model_id FROM user_agent_model_favorites
+      `SELECT model_id, is_favorite FROM user_agent_model_favorites
         WHERE user_id = $1 AND backend = 'codex_openrouter'`,
       [userId],
     );
-    return new Set(rows.map((row) => row.model_id));
+    return new Map(rows.map((row) => [row.model_id, row.is_favorite === true]));
   }
 
-  function decorateCatalogFavorites(catalog, favorites) {
+  function decorateCatalogFavorites(catalog, overrides) {
     const models = (catalog.models || []).map((model) => ({
       ...model,
-      isFavorite: favorites.has(model.id),
+      // Recommendations are the useful first-run shortlist. A stored TRUE or
+      // FALSE always wins, so starring and unstarring are both durable.
+      isFavorite: overrides.has(model.id)
+        ? overrides.get(model.id)
+        : model.isRecommended === true,
+      isDefaultFavorite: !overrides.has(model.id) && model.isRecommended === true,
     }));
     return { ...catalog, totalModels: models.length, models };
   }
@@ -416,11 +421,11 @@ function credentialRoutes(config) {
     if (backend !== 'codex_openrouter') return res.json({ backend, models: [] });
     if (!betaAllowed(req.user.id)) return res.status(403).json({ error: 'Not available' });
     try {
-      const [{ catalog }, favorites] = await Promise.all([
+      const [{ catalog }, favoriteOverrides] = await Promise.all([
         openRouterCatalogForUser(req.user.id, { forceRefresh: req.query.refresh === '1' }),
-        favoriteOpenRouterModelIds(req.user.id),
+        openRouterFavoriteOverrides(req.user.id),
       ]);
-      res.json(decorateCatalogFavorites(catalog, favorites));
+      res.json(decorateCatalogFavorites(catalog, favoriteOverrides));
     } catch (err) {
       const msg = err.code === 'invalid_key' ? 'OpenRouter rejected the key.' : 'Failed to load models.';
       log.warn('credentials', 'model catalog failed', { userId: req.user.id, err: err.message });
@@ -428,9 +433,10 @@ function credentialRoutes(config) {
     }
   });
 
-  // Persist one star independently of the selected/default model. Adding is
-  // validated against the same key-filtered catalog as selection; removing a
-  // stale favorite remains possible after OpenRouter withdraws a model.
+  // Persist one star independently of the selected/default model. TRUE is
+  // validated against the same key-filtered catalog as selection; FALSE is
+  // also stored, rather than deleting the row, so a platform-recommended
+  // model a user unstarred does not reappear as a favorite on the next read.
   router.patch('/api/me/coding-agent/models/favorite', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     res.setHeader('Cache-Control', 'private, no-store');
@@ -453,18 +459,34 @@ function credentialRoutes(config) {
         if (!(catalog.models || []).some((model) => model.id === modelId)) {
           return res.status(400).json({ error: 'That model is not available under your OpenRouter key.' });
         }
+      }
+      if (favorite) {
         await pool.query(
-          `INSERT INTO user_agent_model_favorites (user_id, backend, model_id)
-           VALUES ($1, 'codex_openrouter', $2)
-           ON CONFLICT (user_id, backend, model_id) DO NOTHING`,
+          `INSERT INTO user_agent_model_favorites (user_id, backend, model_id, is_favorite)
+           VALUES ($1, 'codex_openrouter', $2, TRUE)
+           ON CONFLICT (user_id, backend, model_id)
+           DO UPDATE SET is_favorite = TRUE`,
           [req.user.id, modelId],
         );
       } else {
-        await pool.query(
-          `DELETE FROM user_agent_model_favorites
+        const updated = await pool.query(
+          `UPDATE user_agent_model_favorites SET is_favorite = FALSE
             WHERE user_id = $1 AND backend = 'codex_openrouter' AND model_id = $2`,
           [req.user.id, modelId],
         );
+        // A default favorite has no row yet. Persist the negative override;
+        // arbitrary non-recommended ids cannot manufacture unbounded rows.
+        const recommended = Array.isArray(config.openrouterRecommendedModels)
+          && config.openrouterRecommendedModels.includes(modelId);
+        if (!updated.rowCount && recommended) {
+          await pool.query(
+            `INSERT INTO user_agent_model_favorites (user_id, backend, model_id, is_favorite)
+             VALUES ($1, 'codex_openrouter', $2, FALSE)
+             ON CONFLICT (user_id, backend, model_id)
+             DO UPDATE SET is_favorite = FALSE`,
+            [req.user.id, modelId],
+          );
+        }
       }
       res.json({ ok: true, modelId, favorite });
     } catch (err) {
