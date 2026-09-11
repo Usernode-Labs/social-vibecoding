@@ -50,10 +50,12 @@ import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
 import { devWorkshopStore } from '../card/cards-store';
 import { DevCard } from '../card/dev-card';
+import { DevKanban } from '../card/dev-kanban';
 import { CardRowView, callAppView } from '../card/fold';
 import type { DevWorkshopView, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
+import { useWorkshopGroup } from './group-mode-store';
 
 type SortKey = 'people' | 'activity' | 'open';
 
@@ -578,6 +580,11 @@ export function DevWorkshop(): ReactNode {
   // list the strip was already showing the top of.
   const [allVotes, setAllVotes] = useState(false);
   const [allMine, setAllMine] = useState(false);
+  // Which pane is under the tabs. Lives in a module-global store rather than
+  // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
+  // the kanban view model only when the stage pane is up. See
+  // ./group-mode-store.ts.
+  const group = useWorkshopGroup();
 
   const themes = useMemo(() => sortThemes(v.themes, sortKey), [v.themes, sortKey]);
   // Named categories only — "Not yet grouped" is a holding pen, not one of
@@ -803,6 +810,45 @@ export function DevWorkshop(): ReactNode {
 
       {themes.length ? (
         <>
+          {/* ── The two ways to read the same board ──────────────────────
+              The eyebrow here used to say "12 categories" and nothing else:
+              a count of a grouping the viewer had no say in. The grouping is
+              a CHOICE, so it is a control. "By stage" is not a second board
+              — it renders the very same <DevKanban/> the Board view mode
+              does, from the same published view model (../card/cards-store),
+              nested under the summary rather than replacing it. Everything
+              above stays put under either tab, which is the whole point:
+              the tiles, the three summary lines, the votes waiting on you
+              and the general discussion are facts about the app, not about
+              how you happen to be sorting it. */}
+          <div className="dev-ws-group" role="tablist" aria-label="Group the board by">
+            <button
+              type="button"
+              role="tab"
+              className="dev-ws-group-tab"
+              data-ws-group="category"
+              aria-selected={group === 'category'}
+              onClick={() => callAppView('_setWorkshopGroup', 'category')}
+            >
+              By category
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className="dev-ws-group-tab"
+              data-ws-group="stage"
+              aria-selected={group === 'stage'}
+              onClick={() => callAppView('_setWorkshopGroup', 'stage')}
+            >
+              By stage
+            </button>
+          </div>
+          {group === 'stage' ? (
+            <div className="dev-ws-board" data-ws-stage="">
+              <DevKanban />
+            </div>
+          ) : (
+          <>
           <div className="dev-ws-sort">
             <span className="dev-ws-eyebrow">
               {`${countOfThemes} ${countOfThemes === 1 ? 'category' : 'categories'}`}
@@ -857,6 +903,8 @@ export function DevWorkshop(): ReactNode {
                     ? `The last attempt to draft categories failed (${v.meta.lastError}). Items stay grouped by their voted category until the next attempt.`
                     : 'No AI model is configured, so items are grouped by their voted category.'}
           </div>
+          </>
+          )}
         </>
       ) : null}
     </div>

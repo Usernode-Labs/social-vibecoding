@@ -1474,7 +1474,7 @@
       "name": "Waitlist check-my-status names which step you are on (#1876)",
       "path": "/?shot=waitlist-code-entry",
       "expectSelector": "#waitlist-step:not(.hidden)",
-      "expectText": "Step 1 of 2 \u00b7 Your email address",
+      "expectText": "Step 1 of 2 · Your email address",
       "allowConsoleErrors": true
     },
     {
@@ -1493,7 +1493,7 @@
       "name": "Waitlist step 2 says so (#1876)",
       "path": "/?shot=waitlist-code-step",
       "expectSelector": "#waitlist-step:not(.hidden)",
-      "expectText": "Step 2 of 2 \u00b7 Enter your code",
+      "expectText": "Step 2 of 2 · Enter your code",
       "allowConsoleErrors": true
     },
     {
@@ -1916,6 +1916,17 @@
       "path": "/?demo=1#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-cards] > [data-ws-card=\"lastWeek\"] + [data-ws-card=\"thisWeek\"] + [data-ws-card=\"open\"] > .dev-ws-card-line",
       "expectText": "Staging demo: one line on what has landed so far this week."
+    },
+    {
+      "name": "The Workshop offers the two groupings as tabs under the summary, on category by default",
+      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-group[role=\"tablist\"] > .dev-ws-group-tab[data-ws-group=\"category\"][aria-selected=\"true\"] + .dev-ws-group-tab[data-ws-group=\"stage\"][aria-selected=\"false\"]",
+      "expectText": "By stage"
+    },
+    {
+      "name": "?group=stage swaps that pane for the board's own columns, the summary strip still above them",
+      "path": "/?demo=1&group=stage#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] ~ .dev-ws-group + .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-row"
     },
     {
       "name": "The Workshop carries the board's search and filter bar, not just the +",
