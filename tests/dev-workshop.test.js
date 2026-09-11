@@ -1903,13 +1903,15 @@ test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
   // the unit that grows rather than the board wrapper inside it.
   assert.match(CSS,
     /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > :not\(\.dev-ws-pane\) \{[^}]*max-width: 760px/);
-  // Full-bleed means the card face comes OFF: a radius and side padding drawn
-  // around the whole window only inset the board from the edges it was just
-  // widened to reach.
-  assert.match(CSS,
-    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > \.dev-ws-pane \{[^}]*border-radius: 0/);
-  assert.match(CSS,
-    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > \.dev-ws-pane \{[^}]*padding: 0/);
+  // Widening it must not DISSOLVE it. An earlier cut stripped the pane's sheet,
+  // radius and padding on By stage, on the argument that a card face is a
+  // frame drawn around the whole window; what that produced was the pane
+  // vanishing and the sticky head's fill left behind as a bare rectangle over
+  // the controls alone, with the board below belonging to no pane at all.
+  const stageRules = CSS.slice(CSS.indexOf('#dev-workshop:has(.dev-ws-board) { max-width: none; }'),
+    CSS.indexOf('.dev-ws-sort {'));
+  assert.ok(!/\.dev-ws-pane \{[^}]*(border-radius: 0|background: none|padding: 0)/.test(stageRules),
+    'the pane keeps its card face at every width');
   // The rejected alternative, pinned so it does not come back: 100vw counts
   // the scrollbar #dev-forum-scroll always has, so a negative-margin
   // full-bleed overflows by its width and adds a horizontal scrollbar.
@@ -2007,8 +2009,15 @@ test('the pane head pins, and the pane does not clip what must escape it', () =>
   // under stays readable because the frost blurs it — and the filter has to be
   // RE-DECLARED here, not inherited, because a backdrop-filter applies to what
   // is behind the element it is set on, and these rows are inside the pane.
-  assert.match(CSS, /\.dev-ws-pane-head \{[^}]*background-color: var\(--dc-sheet-fill\)/);
+  // NO fill of its own — only the blur. The pane's fill is already behind the
+  // head, so a second --dc-sheet-fill here stacks 50% on 50% and draws a ~75%
+  // white band down the middle of a frosted card. Blurring a flat colour is a
+  // no-op, so the pane's own face comes through unchanged.
+  assert.match(CSS, /\.dev-ws-pane-head \{[^}]*background-color: transparent/);
   assert.match(CSS, /\.dev-ws-pane-head \{[^}]*backdrop-filter: var\(--dc-frost\)/);
+  const headBlock = CSS.slice(CSS.indexOf('.dev-ws-pane-head {'),
+    CSS.indexOf('@supports not ((backdrop-filter', CSS.indexOf('.dev-ws-pane-head {')));
+  assert.ok(!/--dc-sheet-fill/.test(headBlock), 'the head never re-states the pane\u2019s fill');
   for (const token of ['--dc-sheet-fill', '--dc-frost', '--dc-sheet']) {
     assert.ok(CSS.includes(`${token}:`), `${token} is defined`);
   }

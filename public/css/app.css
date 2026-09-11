@@ -11879,12 +11879,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    releases with it. `top: 0` and not an offset: the scroller's own top IS the
    top of the reading area — the platform header is outside it.
 
-   It wears the PANE'S OWN face, not a solid fill: this is one surface with a
-   part of it pinned, not a separate bar laid over it, and a solid white band
-   inside a frosted card announced itself as a second thing. The rows passing
-   under it stay readable because `--dc-frost` blurs them — the same 24px
-   blur every sheet in this language lifts on, and the reason a transparent
-   bar works here at all.
+   It carries NO FILL OF ITS OWN — only the blur. This is one surface with a
+   part of it pinned, not a separate bar laid over it, and the pane's fill is
+   already behind the head: a second `--dc-sheet-fill` here stacked 50% on 50%
+   and drew a ~75% white band down the middle of a frosted card, which is the
+   "solid white bar" this was twice meant to stop being. What keeps the rows
+   passing under it readable is `--dc-frost` alone — the same 24px blur every
+   sheet in this language lifts on — and blurring a flat colour is a no-op, so
+   the pane's own face comes through unchanged.
 
    The backdrop-filter has to be RE-DECLARED rather than inherited from the
    pane: a filter applies to what is behind the element it is set on, and what
@@ -11897,7 +11899,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   display: flex; flex-direction: column; gap: 8px;
   margin: -8px -10px 0; padding: 8px 10px;
   border-radius: 22px 22px 0 0;
-  background-color: var(--dc-sheet-fill);
+  background-color: transparent;
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
@@ -11929,28 +11931,20 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 #dev-workshop:has(.dev-ws-board) > .dev-ws > :not(.dev-ws-pane) {
   width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
 }
-/* On By stage the pane itself is what widens, and it goes FULL-BLEED: the card
-   face is right around a reading column and wrong as a frame drawn around the
-   whole window, where its radius and side padding only inset the board from
-   the edges it was just widened to reach. So the sheet, the radius and the
-   gutter all come off, and the head keeps only its top rule to separate it
-   from what scrolls under it. */
-#dev-workshop:has(.dev-ws-board) > .dev-ws > .dev-ws-pane {
-  background: none; backdrop-filter: none; -webkit-backdrop-filter: none;
-  border-radius: 0; box-shadow: none; padding: 0;
-}
-#dev-workshop:has(.dev-ws-board) .dev-ws-pane-head {
-  margin: 0; border-radius: 0;
-  padding-inline: 8px;
-  box-shadow: 0 1px 0 var(--app-sheet-line);
-}
-/* The BOARD is what wanted the window, not the controls above it. A search
-   field and two tabs stretched across 1200px are a worse control than the same
-   pair at reading width — the tab strip in particular reads as pulled apart
-   rather than as a segmented pair. So on By stage the bar spans the window
-   (it is a pinned edge, and a bar that stopped short of the board under it
-   would look like a mistake) while what sits IN it keeps the column width the
-   rest of the screen is built on. */
+/* On By stage the pane WIDENS AND STAYS A PANE. An earlier cut stripped its
+   sheet, radius and padding here, on the argument that a card face is a frame
+   drawn around the whole window. What that actually produced was the pane
+   vanishing and the head's own fill left behind as a bare rectangle sitting
+   over the controls alone — the board below it belonging to no pane at all.
+   The pane is the unit; widening it must not dissolve it. So nothing is
+   stripped: the same sheet, the same 22px, the same gutter, around a wider
+   box, with the board filling it.
+
+   The BOARD is what wanted the window, not the controls above it: a search
+   field and a two-tab strip stretched across 1200px are a worse control than
+   the same pair at reading width — the strip in particular reads as pulled
+   apart rather than as a segmented pair. So the head still spans the pane, as
+   a pinned edge must, while what sits IN it keeps the reading column. */
 #dev-workshop:has(.dev-ws-board) .dev-ws-pane-head > * {
   width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
 }
