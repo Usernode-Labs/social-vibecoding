@@ -106,7 +106,7 @@ export function OpenRouterSection() {
         </div>
         <p id="settings-openrouter-catalog-meta" className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
         <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
-          Favorites appear first, followed by platform recommendations and then price. OpenRouter filters this catalog for your key and account policies.
+          Platform recommendations start starred. Your changes override those defaults on every device. OpenRouter filters this catalog for your key and account policies.
         </p>
         <Label className="mt-2 mb-1" htmlFor="settings-openrouter-reasoning">
           Reasoning effort
