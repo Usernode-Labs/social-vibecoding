@@ -29,7 +29,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-const { workshopHtml } = require('./lib/dev-card-html');
+const { workshopHtml, kanbanHtml } = require('./lib/dev-card-html');
 const { tokenize } = require('./helpers/html-tokens');
 
 const root = path.join(__dirname, '..');
@@ -1729,4 +1729,189 @@ test('no declared check asserts a card\'s text at the lander\'s own route', () =
     .map((t) => `${t.name} (${t.path})`);
   assert.deepEqual(offenders, [],
     'these assert one card\'s text where only the first theme\'s rows render — address the Board route');
+});
+
+// ── The grouping tabs: the same board, two ways ──────────────────────────
+//
+// The eyebrow here used to be a bare "12 categories" — a count of a grouping
+// the viewer had no say in. These cover the control it became, and the one
+// thing that makes the stage pane cheap: it renders the SAME <DevKanban/> the
+// Board view mode does, from the same published view model, so nothing about
+// the board is re-derived or duplicated.
+
+test('the grouping is a two-tab control, and category is what an untouched Workshop shows', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([
+    { id: 't1', title: 'Voting', items: [{ kind: 'issue', number: 12 }] },
+  ]);
+  assert.equal(AppView._getWorkshopGroup(), 'category');
+  const html = workshopHtml(AppView);
+  const cat = html.indexOf('data-ws-group="category"');
+  const stage = html.indexOf('data-ws-group="stage"');
+  assert.ok(cat > 0 && stage > cat, 'both tabs render, category first');
+  assert.match(html.slice(cat, cat + 400), /aria-selected="true"/,
+    'the category tab is the selected one by default');
+  assert.ok(html.includes('By category') && html.includes('By stage'), 'the labels');
+  // The tabs sit UNDER the general discussion and the summary strip, which is
+  // the whole arrangement: those are facts about the app, not about how you
+  // are sorting it, so they do not move when the pane does.
+  assert.ok(html.indexOf('data-ws-dashboard') < cat,
+    'the summary strip is above the tabs');
+  // ...and the category pane is unchanged: its own sort chips and its themes.
+  assert.ok(html.includes('dev-ws-themes'), 'the theme list still renders');
+  assert.ok(html.includes('dev-ws-sort-opts'), 'and its sort chips');
+});
+
+test('"By stage" swaps the pane for the board\'s own columns, and keeps everything above it', () => {
+  const store = { devWorkshopGroup: 'stage' };
+  const AppView = makeAppView({ localStorage: store });
+  seed(AppView);
+  AppView._workshopThemes = themes([
+    { id: 't1', title: 'Voting', items: [{ kind: 'issue', number: 12 }] },
+  ]);
+  assert.equal(AppView._getWorkshopGroup(), 'stage');
+  const html = workshopHtml(AppView);
+  // The board, rendered INSIDE the Workshop — the same node ids the standalone
+  // Board mode draws, because it is the same component.
+  assert.ok(html.includes('id="dev-kanban"'), 'the board renders in the pane');
+  assert.ok(html.includes('data-ws-stage'), 'inside the stage wrapper');
+  const stage = html.indexOf('data-ws-group="stage"');
+  assert.match(html.slice(stage, stage + 400), /aria-selected="true"/,
+    'and the stage tab is the selected one');
+  // The category pane is GONE, not merely hidden: two groupings of one board
+  // on screen at once is the thing the tabs exist to stop.
+  assert.ok(!html.includes('dev-ws-themes'), 'no theme list under the stage tab');
+  assert.ok(!html.includes('dev-ws-sort-opts'), 'and no category sort chips');
+  // Everything above the tabs stays. This is the whole point of the change:
+  // the tiles, the summary lines and the discussion are not category-pane
+  // furniture, so switching how you read the board must not cost them.
+  assert.ok(html.includes('data-ws-dashboard'), 'the summary strip stays');
+  assert.ok(html.includes('data-discussion-row'), 'the general discussion stays');
+  assert.ok(html.indexOf('data-ws-dashboard') < stage, 'both still above the tabs');
+});
+
+test('the stage pane is the SAME board component, not a second one', () => {
+  const AppView = makeAppView({ localStorage: { devWorkshopGroup: 'stage' } });
+  seed(AppView);
+  AppView._workshopThemes = themes([
+    { id: 't1', title: 'Voting', items: [{ kind: 'issue', number: 12 }] },
+  ]);
+  // Rendered standalone (the Board view mode) and nested (the stage pane), the
+  // columns are byte-identical — so every card action, the mobile column tabs
+  // and the filter bar work on both without a line of their own.
+  const nested = workshopHtml(AppView);
+  const standalone = kanbanHtml(AppView);
+  const board = standalone.slice(standalone.indexOf('<div id="dev-kanban"'));
+  assert.ok(board.length > 200, 'the standalone board rendered something');
+  assert.ok(nested.includes(board), 'the nested pane contains it verbatim');
+  // And the source says so: one import of the board component, no re-derived
+  // columns of the Workshop's own.
+  assert.match(WORKSHOP, /import \{ DevKanban \} from '\.\.\/card\/dev-kanban'/);
+});
+
+test('the board view model is built only for the pane that shows it', () => {
+  // `_kanbanView()` buckets, orders and filters every card on the board.
+  // Doing that on every Workshop repaint for a pane nobody is looking at is
+  // the regression this guards.
+  const src = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _rerenderWorkshop()'));
+  const body = src.slice(0, src.indexOf('\n  _fmtCountdown('));
+  const call = body.indexOf('AppView._kanbanView()');
+  assert.ok(call > 0, '_rerenderWorkshop publishes the board');
+  const guard = body.lastIndexOf("if (group === 'stage')", call);
+  assert.ok(guard > 0 && guard < call, 'behind the stage guard');
+  // Published BEFORE the Workshop mounts: the board draws from inside the
+  // Workshop's tree, so a store still holding the previous board would paint
+  // one frame of it.
+  assert.ok(call < body.indexOf('react.mountWorkshop('),
+    'and published before the mount');
+});
+
+test('the tabs are additive: the Board view mode and its control are untouched', () => {
+  // #1995-era decision, recorded here because the next change to this screen
+  // is the one that would quietly drop the standalone board.
+  assert.ok(APP_VIEW_SRC.includes("VIEW_MODES: ['workshop', 'kanban']")
+    || /VIEW_MODES:\s*\['workshop', 'kanban'\]/.test(APP_VIEW_SRC),
+    'both dev view modes still exist');
+  assert.match(VIEW_TABS, /board/i, 'the Improve panel still offers the Board row');
+  // The two surfaces can never be on screen together — `_repaintDevBody`
+  // gives #dev-body to exactly one of them — which is why both can render
+  // #dev-kanban without a duplicate id.
+  assert.match(APP_VIEW_SRC, /body\.innerHTML = '<div id="dev-kanban-board"><\/div>'/);
+  assert.match(APP_VIEW_SRC, /body\.innerHTML = '<div id="dev-workshop"><\/div>'/);
+});
+
+test('the grouping preference lasts, and an unknown stored value is category', () => {
+  const store = {};
+  const AppView = makeAppView({ localStorage: store });
+  AppView._setWorkshopGroup('stage');
+  assert.equal(store.devWorkshopGroup, 'stage', 'persisted, and to localStorage');
+  assert.equal(AppView._getWorkshopGroup(), 'stage');
+  AppView._setWorkshopGroup('nonsense');
+  assert.equal(AppView._getWorkshopGroup(), 'category', 'an unknown mode falls back');
+  store.devWorkshopGroup = 'themes';
+  assert.equal(AppView._getWorkshopGroup(), 'category', 'and so does an unknown stored one');
+});
+
+test('the tab strip is a segmented rail, distinct from the sort chips beside it', () => {
+  // Both controls sit two rows apart over one list. If they look alike the
+  // row reads as five options over the same thing, which is the mistake.
+  assert.match(CSS, /\.dev-ws-group \{[^}]*border-radius: 999px/);
+  assert.match(CSS, /\.dev-ws-group \{[^}]*background: var\(--dc-strip\)/);
+  assert.match(CSS, /\.dev-ws-group-tab\[aria-selected="true"\] \{[^}]*background: var\(--dc-sheet\)/);
+  // Full width of the reading column, split evenly. `flex: 1 1 0`, not
+  // `1 1 auto`: on `auto` the halves would be sized by their labels, so
+  // "By category" would take more of the rail than "By stage".
+  assert.match(CSS, /\.dev-ws-group-tab \{[^}]*flex: 1 1 0/);
+  assert.ok(!/\.dev-ws-group \{[^}]*align-self: flex-start/.test(CSS),
+    'and the rail itself is not shrunk to its content');
+  // A token that does not resolve is a silently wrong colour, not an error —
+  // and inside a box-shadow list one bad var() voids the whole declaration.
+  for (const token of ['--dc-strip', '--dc-sheet', '--text-muted', '--text-primary',
+    '--app-sheet-line', '--app-sheet-shadow-near']) {
+    assert.ok(CSS.includes(`${token}:`), `${token} is defined`);
+  }
+});
+
+test('?group=stage is a deep link to the pane, and a tap retires it', () => {
+  const store = {};
+  const AppView = makeAppView({
+    localStorage: store,
+    location: { search: '?group=stage', hash: '', href: 'http://localhost/?group=stage' },
+  });
+  assert.equal(AppView._getWorkshopGroup(), 'stage', 'the URL wins over the empty preference');
+  // The preference still wins once the viewer states one — otherwise ?group=
+  // would keep overriding every later tap, which is the bug `_setViewMode`
+  // already carries a comment about.
+  AppView._setWorkshopGroup('category');
+  assert.equal(AppView._getWorkshopGroup(), 'category', 'a tap retires the override');
+  assert.equal(store.devWorkshopGroup, 'category');
+  // A junk value is not a pane.
+  const junk = makeAppView({ location: { search: '?group=lanes', hash: '', href: 'http://x/' } });
+  assert.equal(junk._getWorkshopGroup(), 'category');
+});
+
+test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
+  // #dev-workshop is a 760px reading column, which is right for one-line
+  // rows and wrong for four side-by-side columns: bounded there the board is
+  // a horizontal scroller before it is a board.
+  assert.match(CSS, /#dev-workshop \{ max-width: 760px/, 'the column bound exists');
+  assert.match(CSS, /#dev-workshop:has\(\.dev-ws-board\) \{ max-width: none; \}/,
+    'and comes off when the board is up');
+  // ...and goes back on to every OTHER child, so only the board widens.
+  assert.match(CSS,
+    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > :not\(\.dev-ws-board\) \{[^}]*max-width: 760px/);
+  // The rejected alternative, pinned so it does not come back: 100vw counts
+  // the scrollbar #dev-forum-scroll always has, so a negative-margin
+  // full-bleed overflows by its width and adds a horizontal scrollbar.
+  // Comments stripped first — the block explains WHY 100vw was rejected, and
+  // the prose naming it is not the declaration this forbids.
+  const block = CSS.slice(CSS.indexOf('.dev-ws-group {'), CSS.indexOf('.dev-ws-sort {'))
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  assert.ok(!/\d+vw/.test(block), 'no viewport-width full-bleed declaration');
+  // #dev-body drops to 4px of side padding for the Workshop, which reads as
+  // a clipped edge once the board spans the window: 4 + 8 restores the 12px
+  // the standalone board gets from #dev-body's own px-3.
+  assert.match(CSS, /#dev-body:has\(> #dev-workshop\) \{ padding: 8px 4px 12px; \}/);
+  assert.match(CSS, /\.dev-ws-board \{ padding: 2px 8px 0; \}/);
 });
