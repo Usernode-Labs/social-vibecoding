@@ -66,7 +66,48 @@ export function OpenRouterSection() {
         <Label className="mb-1" htmlFor="settings-openrouter-model">
           Codex model
         </Label>
-        <Select id="settings-openrouter-model"></Select>
+        <div className="flex flex-wrap gap-2 mb-2">
+          <Input
+            id="settings-openrouter-model-search"
+            type="search"
+            autoComplete="off"
+            placeholder="Filter by model or provider…"
+            aria-label="Filter OpenRouter models"
+            width="flex"
+          />
+          <button
+            id="settings-openrouter-favorites-only"
+            type="button"
+            aria-pressed="false"
+            className="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300"
+          >
+            ☆ Favorites
+          </button>
+          <button
+            id="settings-openrouter-refresh-models"
+            type="button"
+            className="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 disabled:opacity-50"
+          >
+            Refresh
+          </button>
+        </div>
+        <div className="flex items-stretch gap-2">
+          <Select id="settings-openrouter-model" className="min-w-0 flex-1"></Select>
+          <button
+            id="settings-openrouter-star-model"
+            type="button"
+            aria-pressed="false"
+            aria-label="Add selected model to favorites"
+            title="Add selected model to favorites"
+            className="shrink-0 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-3 py-2 text-lg leading-none text-zinc-700 dark:text-zinc-300 disabled:opacity-50"
+          >
+            ☆
+          </button>
+        </div>
+        <p id="settings-openrouter-catalog-meta" className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400"></p>
+        <p className="mt-1 text-[11px] leading-relaxed text-zinc-500 dark:text-zinc-400">
+          Favorites appear first, followed by platform recommendations and then price. OpenRouter filters this catalog for your key and account policies.
+        </p>
         <Label className="mt-2 mb-1" htmlFor="settings-openrouter-reasoning">
           Reasoning effort
         </Label>
