@@ -2455,15 +2455,15 @@ const AppView = {
       if (AppView._inFoldWrapper(e)) return;
       const sessionChip = e.target.closest('[data-session-chip]');
       if (sessionChip) {
-        // Own session → the owner's dev chat, exactly as the old strip.
-        App.switchTab('dev', parseInt(sessionChip.dataset.sessionChip, 10), 'sessions');
+        // Open card always reads the change; building is a separate action.
+        AppView.openTopic('proposal', parseInt(sessionChip.dataset.sessionChip, 10));
         return;
       }
       const sharedRow = e.target.closest('[data-shared-session-row]');
       if (sharedRow) {
         // Someone else's shared session → its public discussion topic
         // (never their dev chat — that stays owner-scoped server-side).
-        AppView.openTopic('session', parseInt(sharedRow.dataset.sharedSessionRow, 10));
+        AppView.openTopic('proposal', parseInt(sharedRow.dataset.sharedSessionRow, 10));
         return;
       }
       // The general discussion's feed row. It is not a topic — the chat is a
@@ -2497,9 +2497,9 @@ const AppView = {
       if (!el) return;
       ev.preventDefault();
       if (el.dataset.sessionChip) {
-        App.switchTab('dev', parseInt(el.dataset.sessionChip, 10), 'sessions');
+        AppView.openTopic('proposal', parseInt(el.dataset.sessionChip, 10));
       } else {
-        AppView.openTopic('session', parseInt(el.dataset.sharedSessionRow, 10));
+        AppView.openTopic('proposal', parseInt(el.dataset.sharedSessionRow, 10));
       }
     }, { signal: devBodySignal });
 
@@ -2592,7 +2592,7 @@ const AppView = {
     // rows live in the very same keyset-paginated Completed stream, and
     // _govProposals only ever holds OPEN governance rows — so every settled
     // close proposal outside the freshly-reset first page was a dead click.
-    if (ok && (ref.kind === 'proposal' || ref.kind === 'gov')
+    if (ok && (ref.kind === 'proposal' || ref.kind === 'session' || ref.kind === 'gov')
         && !AppView._findTopicItem()) {
       if (ref.kind === 'gov') await AppView._fetchGovProposalById(ref.id);
       else await AppView._fetchProposalById(ref.id);
@@ -2649,6 +2649,8 @@ const AppView = {
       // from beyond the cached Completed page) — checked last, and keyed by
       // id so a stale one from a previous topic never resolves.
       return (AppView._proposals || []).find((p) => p.id === t.id)
+        || (AppView._mySessions || []).find((p) => p.id === t.id)
+        || (AppView._sharedSessions || []).find((p) => p.id === t.id)
         || (AppView._merged || []).find((p) => p.id === t.id)
         || (AppView._topicProposal && AppView._topicProposal.id === t.id
             ? AppView._topicProposal : null)
@@ -2661,7 +2663,7 @@ const AppView = {
       // → miss → the topic view falls back to the card list.
       return (AppView._sharedSessions || []).find((s) => s.id === t.id)
         || (AppView._mySessions || []).find((s) => s.id === t.id)
-        || null;
+        || AppView._findItem('proposal', t.id);
     }
     // Open governance proposals first; APPLIED close-issue proposals live
     // on in the Completed stream (row_type='close_issue' rows in _merged)
@@ -2815,9 +2817,12 @@ const AppView = {
     // #363: the topic card/body lives inside the thread's unified scroll
     // region (#gc-thread-head), a sibling of #gc-thread-messages, so it
     // survives renderThread()'s message-list rewrites and WS-driven refreshes.
-    const head = document.getElementById('gc-thread-head');
-    if (!t || !head) return;
+    if (!t) return;
     const item = AppView._findTopicItem();
+    if (item && AppView._topicPrivate !== AppView._isPrivateChange(item)) AppView._mountTopicThread();
+    const head = document.getElementById('gc-thread-head')
+      || (AppView._topicPrivate ? document.getElementById('dev-topic-thread') : null);
+    if (!head) return;
     // Closed / merged away mid-view: keep the last render readable.
     if (!item) return;
 
@@ -2848,7 +2853,8 @@ const AppView = {
       // Mounted per paint, into the host the thread panel owns. The store
       // flushes synchronously, so the head is in the DOM for the loads below
       // — exactly as it was after the innerHTML assignment this replaced.
-      react.mountTopicHead(head);
+      if (AppView._topicPrivate) react.mountPrivateTopicHead(head);
+      else react.mountTopicHead(head);
       react.publishTopicHead({ card, body, item: t.kind === 'session' || t.kind === 'proposal' ? item : null });
     }
     // The Explore pills read `aiEnabledStore` now, so the DOM pass that used
@@ -2856,7 +2862,7 @@ const AppView = {
     AppView._refreshAiAvailability();
     AppView._fillKudosHosts(head);
     if (t.kind === 'issue') AppView._loadIssueComments(item);
-    if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
+    if (t.kind === 'proposal' && ['promoted', 'merging'].includes(item.status)) AppView._loadVoteRoster(item.id);
     // An auto-expanded transcript (arrived via "Read chat") loads straight
     // away; every other one loads when it is opened.
     if (body.transcript && body.transcript.expanded) {
@@ -2880,6 +2886,8 @@ const AppView = {
    */
   _topicViewFor(kind, item) {
     if (!item) return null;
+    // The URL identifies the change; its live status determines its controls.
+    if (kind === 'proposal' || kind === 'session') kind = ['active', 'paused'].includes(item.status) ? 'session' : 'proposal';
     const t = { kind };
     let card;
     let body;
@@ -3102,7 +3110,6 @@ const AppView = {
   },
 
   openChangeWorkspace(id) {
-    if (typeof DevChat !== 'undefined') DevChat._changeWorkspaceRequested = Number(id);
     AppView.openProposalSession(id);
   },
 
@@ -3147,9 +3154,9 @@ const AppView = {
       const isMerged = item.status === 'merged';
       if (mine && item.source !== 'imported') {
         pills.push({
-          key: 'session', cls: 'gc-vote-btn', label: 'Open the dev session behind this',
+          key: 'session', cls: 'gc-vote-btn', label: 'Continue building',
           title: 'Open the dev session behind this proposal',
-          act: { fn: 'openProposalSession', args: [item.id] },
+          act: { fn: 'openChangeWorkspace', args: [item.id] },
         });
       }
       // _showExplorePill, not `!mine`: the viewer's own IMPORTED proposal has
@@ -3892,10 +3899,20 @@ const AppView = {
     return AppView._aiAvailabilityPromise;
   },
 
+  _isPrivateChange(item) {
+    return !!(['session', 'proposal'].includes(AppView._devTopic?.kind) && item && ['active', 'paused'].includes(item.status) && !item.shared_at);
+  },
+
   _mountTopicThread() {
     const t = AppView._devTopic;
     const slot = document.getElementById('dev-topic-thread');
     if (!t || !slot || typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
+    AppView._topicPrivate = AppView._isPrivateChange(AppView._findTopicItem());
+    if (AppView._topicPrivate) {
+      GroupChat.unmountThread();
+      AppView._reactDevBoard()?.mountPrivateTopicHead(slot);
+      return;
+    }
     // 'session' (a shared in-flight dev session) uses the same 'session'
     // thread namespace as promoted proposals — the thread key is the
     // chat_sessions id either way, which is exactly what makes comments
@@ -5537,7 +5554,8 @@ const AppView = {
   _workshopCardBody(key) {
     const at = String(key || '').indexOf(':');
     if (at < 0) return null;
-    const kind = key.slice(0, at);
+    const rawKind = key.slice(0, at);
+    const kind = ['my-session', 'shared-session'].includes(rawKind) ? 'session' : rawKind;
     const rest = key.slice(at + 1);
     const id = kind === 'issue' ? Number(rest) : Number(rest);
     if (!Number.isFinite(id)) return null;
@@ -14750,7 +14768,6 @@ const AppView = {
     }
 
     DevChat.renderChatView();
-    DevChat._changeWorkspaceRequested = null;
 
     // #194: one-shot hint set by the "+" menu's "Propose a change" —
     // proposals are PRs, so the path runs through a session.

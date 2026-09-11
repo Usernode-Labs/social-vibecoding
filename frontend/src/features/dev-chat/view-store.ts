@@ -59,7 +59,7 @@ export type DevViewState =
   | { kind: 'none' }
   | {
     kind: 'session';
-    change?: { item: any; card: any; body: import('../dev-board/topic/model').TopicBody; workspace: boolean } | null;
+    change?: { item: any; card: any; body: import('../dev-board/topic/model').TopicBody } | null;
     /** #1281's hand-off launchpad: `Launchpad`/`DevFlowSelect`'s markup. */
     launchpadHtml: string;
     /**

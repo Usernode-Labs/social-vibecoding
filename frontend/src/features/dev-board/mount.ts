@@ -107,6 +107,7 @@ export interface DevBoardBridge {
   mountKanban(host: Element | null): void;
   publishKanban(view: DevKanbanView): void;
   mountTopicHead(host: Element | null): void;
+  mountPrivateTopicHead(host: Element | null): void;
   publishTopicHead(state: TopicHeadState): void;
   mountAutoSessionModal(host: Element | null, view: AutoSessionModalView): void;
   mountSessionChecks(host: Element | null, props: SessionChecksProps): void;
@@ -305,6 +306,10 @@ export const devBoardBridge: DevBoardBridge = {
   // thread panel owns; the previous entry is swept as detached.
   mountTopicHead(host) {
     mountLegacyPortal(host, createElement(TopicHead));
+  },
+
+  mountPrivateTopicHead(host) {
+    mountLegacyPortal(host, createElement('div', { className: 'dev-change-overview platform-safe-scroll h-full' }, createElement(TopicHead)));
   },
 
   publishTopicHead(state) {
