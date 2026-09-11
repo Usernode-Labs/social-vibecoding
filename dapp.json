@@ -1918,6 +1918,12 @@
       "expectText": "Staging demo: one line on what has landed so far this week."
     },
     {
+      "name": "The Workshop's grouping tabs lead its own pane, with the search, filters and + under them",
+      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > .dev-ws-group + #dev-actions",
+      "expectText": "By category"
+    },
+    {
       "name": "The Workshop offers the two groupings as tabs under the summary, on category by default",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop .dev-ws-group[role=\"tablist\"] > .dev-ws-group-tab[data-ws-group=\"category\"][aria-selected=\"true\"] + .dev-ws-group-tab[data-ws-group=\"stage\"][aria-selected=\"false\"]",
@@ -1926,7 +1932,7 @@
     {
       "name": "?group=stage swaps that pane for the board's own columns, the summary strip still above them",
       "path": "/?demo=1&group=stage#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] ~ .dev-ws-group + .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-row"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] ~ [data-ws-pane] > .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-row"
     },
     {
       "name": "The Workshop carries the board's search and filter bar, not just the +",

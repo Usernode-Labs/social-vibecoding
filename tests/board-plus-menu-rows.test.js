@@ -26,7 +26,7 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const FRAME = fs.readFileSync(
-  path.join(ROOT, 'frontend/src/features/dev-board/board-frame.tsx'), 'utf8');
+  path.join(ROOT, 'frontend/src/features/dev-board/actions-row.tsx'), 'utf8');
 const APP_VIEW = fs.readFileSync(path.join(ROOT, 'public/js/app-view.js'), 'utf8');
 const CHIP_SHEET = fs.readFileSync(
   path.join(ROOT, 'frontend/src/features/app-context/app-context-sheet.tsx'), 'utf8');
