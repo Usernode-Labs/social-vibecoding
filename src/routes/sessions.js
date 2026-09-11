@@ -1335,7 +1335,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
                 cs.check_state, cs.check_phase, cs.check_error_detail,
                 cs.test_results,
-                cs.agent_backend, cs.agent_model,
+                cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name,
                 a.icon_emoji AS app_icon_emoji,
@@ -1744,7 +1744,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // has a defaulted agent_backend that no turn ever ran through.
       const { rows } = await pool.query(
         `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
-                created_from_issue_number, agent_backend, agent_model, source, external_agent,
+                created_from_issue_number, agent_backend, agent_model, source, external_agent, build_venue,
                 (spec_md IS NOT NULL AND spec_md <> '') AS has_spec,
                 -- The same derivation the shared-session list uses, so the
                 -- owner's own card and everyone else's card agree about
@@ -1859,6 +1859,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 (cs.pr_number IS NOT NULL OR cs.checks_commit_sha IS NOT NULL)
                   AS can_preview,
                 cs.linked_issues, cs.source, cs.imported_pr_author,
+                cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
                 cs.check_state, cs.check_phase,
                 (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
                 (SELECT COUNT(*)::int FROM chat_session_messages m

@@ -191,10 +191,15 @@ function parseTests(value) {
 function parseStartBody(body) {
   exactKeys(body, [
     'schemaVersion', 'requestId', 'baseSha', 'title', 'spec', 'history',
-    'linkedIssues', 'supersedesSessionId',
+    'linkedIssues', 'supersedesSessionId', 'externalAgent',
   ], 'body');
   if (body.schemaVersion !== 1) throw new ValidationError('schemaVersion must be 1');
+  if (body.externalAgent !== undefined
+      && !['codex', 'claude-code', 'external'].includes(body.externalAgent)) {
+    throw new ValidationError('externalAgent must be codex, claude-code, or external');
+  }
   return {
+    externalAgent: body.externalAgent || 'external',
     requestId: parseRequestId(body.requestId),
     baseSha: parseSha(body.baseSha, 'baseSha'),
     title: boundedText(body.title, { label: 'title', min: 1, max: 256, trim: true }),
@@ -461,6 +466,10 @@ function startRequestFingerprint(app, input) {
     linkedIssues: [...input.linkedIssues].sort((a, b) => a - b),
     supersedesSessionId: input.supersedesSessionId || null,
   };
+  // Keep fingerprints from older clients stable when identity is unknown.
+  if (input.externalAgent && input.externalAgent !== 'external') {
+    normalized.externalAgent = input.externalAgent;
+  }
   return crypto.createHash('sha256')
     .update(`proposal-start-v1\u0000${JSON.stringify(normalized)}`)
     .digest('hex');
@@ -479,6 +488,7 @@ function matchesStartRequest(session, app, input) {
     : [];
   const requestedIssues = [...input.linkedIssues].sort((a, b) => a - b);
   return Number(session?.app_id) === Number(app?.id)
+    && (session?.external_agent || 'external') === (input.externalAgent || 'external')
     && session?.handoff_base_sha === input.baseSha
     && session?.session_title === input.title
     && session?.spec_md === input.spec
@@ -621,6 +631,7 @@ function publicSessionStatus(session, options = {}) {
   return {
     sessionId: Number(session.id),
     source: session.source,
+    externalAgent: session.external_agent || 'external',
     state,
     status: session.status,
     ...(session.status === 'promoted' ? { revisionState } : {}),
@@ -1173,26 +1184,21 @@ function proposalHandoffRoutes(config) {
             }
           }
           const { rows } = await client.query(
-            // external_agent = 'external': this session's turns run on the
+            // This session's turns run on the
             // caller's own machine, in whatever tool they chose — Usernode
-            // never dispatched an agent for it. Without the stamp the
-            // resulting proposal card was indistinguishable from one built
-            // by the platform's own backend, which is the provenance
-            // question the card exists to answer. 'external' is the
-            // deliberately unspecific member of the closed AGENTS
-            // vocabulary (external-agent-tasks.js): the handoff protocol
-            // does not know, and must not guess, which tool it was.
+            // never dispatched an agent for it. Preserve the caller's explicit
+            // authoring identity without changing the platform execution backend.
             `INSERT INTO chat_sessions
                (app_id, user_id, branch_name, status, source, handoff_request_id,
                 handoff_base_sha, handoff_request_fingerprint,
                 session_title, spec_md, linked_issues, external_agent,
                 handoff_supersedes_session_id)
-             VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, 'external', $11)
+             VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10, $12, $11)
              RETURNING *`,
             [app.id, req.user.id, branchName, SOURCE, input.requestId,
               input.baseSha, startRequestFingerprint(app, input),
               input.title, input.spec, input.linkedIssues,
-              replacementSession ? replacementSession.id : null]
+              replacementSession ? replacementSession.id : null, input.externalAgent]
           );
           created = rows[0];
           await snapshotSpec(client, created.id, input.spec);
