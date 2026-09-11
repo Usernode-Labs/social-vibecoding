@@ -2,6 +2,10 @@
   --bg-primary: #ffffff;
   --bg-secondary: #f5f5f7;
   --bg-tertiary: #e3e3e6;
+  /* The pressed fill for the dev card at both sizes: one step darker than
+     the hover fill (zinc-50) on the same ramp, so a press reads as more of
+     the same gesture rather than as a new colour. */
+  --dev-press: #eaeaea;
   --bg-code: #f5f5f7;
   --bg-code-header: #e3e3e6;
   --bg-card: rgba(10, 124, 255, 0.06);
@@ -1116,6 +1120,8 @@ html.un-kb .platform-safe-sheet {
   --bg-primary: #0b0b0c;
   --bg-secondary: #1c1c1e;
   --bg-tertiary: #2c2c2e;
+  /* zinc-700, one step up from the dark hover fill (zinc-800). */
+  --dev-press: #3a3a3c;
   /* The ladder above, climbing away from the #0b0d1b wallpaper rather than
      down into it. --dc-sheet takes --bg-secondary's value and --dc-raised
      takes --bg-tertiary's: a card on the sheet has to be one step lighter
@@ -11794,6 +11800,30 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    tailwind.config.js, so a hex copied from the stock palette would be a
    third grey rather than the card's. Only the border stays here. */
 .dev-ws-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* -- The press ----------------------------------------------
+   Both sizes toggle on a click, and neither said so while the button was
+   down: the hover fill arrived on entry and nothing changed on press, so
+   closing an open card gave no feedback until it had already closed.
+
+   The exclusion list mirrors the two click guards in card/fold.tsx -- the
+   row ignores a press that started on an anchor or a button, and the open
+   card also ignores the thread, the comment list and the detail sections.
+   :active matches every ancestor of the pressed element, so without the
+   :not(:has(...)) a press on the Vote button would tint the whole card
+   behind it, for a press that toggles nothing. */
+.dev-ws-row:active:not(:has(a:active, button:active, input:active, textarea:active, select:active)),
+.dev-ws-rowwrap-open .gc-vote-item:active:not(:has(
+  a:active, button:active, input:active, textarea:active, select:active,
+  .dev-ws-detail:active, .dev-feed-thread:active, .dev-feed-comments:active
+)) {
+  background: var(--dev-press);
+  /* Instant. The open card carries transition-colors, so the press colour
+     eased in over ~150ms while the row snapped to it -- a quick click was
+     released before the card had finished tinting, which is what made the
+     press read as no feedback and the release read as a flash. The return
+     to hover still eases, because that one is not feedback about a gesture. */
+  transition: none;
+}
 /* The row's icon is the CARD's icon, to the pixel: the same 22px box with no
    tile and no fill, and the same 18px glyph. It used to be a 28px tinted
    tile, which was the one part of the folded row that did not appear on the
