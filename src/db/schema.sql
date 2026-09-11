@@ -6195,20 +6195,24 @@ CREATE TABLE IF NOT EXISTS user_agent_preferences (
 CREATE UNIQUE INDEX IF NOT EXISTS user_agent_preferences_one_default
   ON user_agent_preferences (user_id) WHERE is_default = TRUE;
 
--- Small, durable shortlist for the otherwise very large OpenRouter catalog.
--- A favorite survives catalog churn and key replacement: if a model vanishes
--- under the current key it is simply absent from the picker, and is starred
--- again if OpenRouter later exposes the same id. One row per user/model keeps
--- toggles atomic and lets every device see the same list.
+-- Per-model favorite overrides for the otherwise very large OpenRouter
+-- catalog. Platform recommendations begin starred when no override exists;
+-- storing both TRUE and FALSE is what lets a user keep either choice after
+-- the recommendation list changes or the model temporarily leaves the
+-- key-filtered catalog. One row per user/model keeps toggles atomic and lets
+-- every device see the same list.
 CREATE TABLE IF NOT EXISTS user_agent_model_favorites (
   user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   backend     VARCHAR(32) NOT NULL,
   model_id    VARCHAR(255) NOT NULL,
+  is_favorite BOOLEAN NOT NULL DEFAULT TRUE,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (user_id, backend, model_id),
   CONSTRAINT user_agent_model_favorites_backend_check
     CHECK (backend IN ('codex_openrouter'))
 );
+ALTER TABLE user_agent_model_favorites
+  ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT TRUE;
 COMMENT ON TABLE user_agent_model_favorites IS 'staging:private';
 
 -- Durable per-turn ledger for multi-provider usage, retries, and proxy

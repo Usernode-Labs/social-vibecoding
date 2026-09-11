@@ -302,8 +302,6 @@
       // off server-side (the section markup stays, the controls no-op).
       const orSave = document.getElementById('settings-openrouter-save');
       const orClaim = document.getElementById('settings-openrouter-claim');
-      const orCopy = document.getElementById('settings-openrouter-copy');
-      const orDismissReveal = document.getElementById('settings-openrouter-dismiss-reveal');
       const orRemove = document.getElementById('settings-openrouter-remove');
       const orSetDefault = document.getElementById('settings-openrouter-set-default');
       const orModel = document.getElementById('settings-openrouter-model');
@@ -314,8 +312,6 @@
       const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
       if (orClaim) orClaim.addEventListener('click', () => this._claimManagedOpenRouterKey());
-      if (orCopy) orCopy.addEventListener('click', () => this._copyManagedOpenRouterKey());
-      if (orDismissReveal) orDismissReveal.addEventListener('click', () => this._dismissManagedOpenRouterReveal());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
       if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
       if (orModel) orModel.addEventListener('change', () => {
@@ -3043,38 +3039,14 @@
           await this._refreshOpenRouter();
           return;
         }
-        const reveal = document.getElementById('settings-openrouter-reveal');
-        const key = document.getElementById('settings-openrouter-revealed-key');
-        if (key) key.value = j.apiKey || '';
-        if (reveal) reveal.classList.remove('hidden');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
-        this._setOrStatus(`Created and selected OpenRouter${j.defaultModel ? ` with ${j.defaultModel}` : ''} as your default. Save the displayed key now.`, 'ok');
+        this._setOrStatus(`Created and selected OpenRouter${j.defaultModel ? ` with ${j.defaultModel}` : ''} as your default.`, 'ok');
         await this._refreshOpenRouter();
       } catch (err) {
         this._setOrStatus(`Network error: ${err.message}`, 'error');
       } finally {
         if (btn) btn.disabled = false;
       }
-    },
-
-    async _copyManagedOpenRouterKey() {
-      const key = document.getElementById('settings-openrouter-revealed-key');
-      if (!key?.value) return;
-      try {
-        await navigator.clipboard.writeText(key.value);
-        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
-      } catch {
-        key.select();
-        document.execCommand('copy');
-        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
-      }
-    },
-
-    _dismissManagedOpenRouterReveal() {
-      const reveal = document.getElementById('settings-openrouter-reveal');
-      const key = document.getElementById('settings-openrouter-revealed-key');
-      if (key) key.value = '';
-      if (reveal) reveal.classList.add('hidden');
     },
 
     async _loadOpenRouterModels({ forceRefresh = false } = {}) {
