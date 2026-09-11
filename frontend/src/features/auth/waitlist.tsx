@@ -108,6 +108,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { ChevronLeftIcon } from '@/components/ui/icons';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -807,13 +808,24 @@ export function WaitlistScreen() {
     >
       {mounted ? (
         <>
+      {/*
+          #1875: the Back control SCROLLS WITH THE PAGE. It was a `fixed`,
+          transparent "← Back" text link, so on a phone the step label, the
+          heading and the form all slid underneath it and the two texts
+          painted over each other. `absolute` inside the screen's own scroller
+          keeps it at the top-left corner above the content and lets it leave
+          with the rest of the page — nothing can pass under it. It takes the
+          sign-in and register screens' 44px round chevron, so it is a real
+          tap target and the three auth screens share one Back.
+      */}
       <a
         href="#landing"
         data-auth-back=""
-        className="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400"
-        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 1rem)' }}
+        className="absolute left-4 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
+        aria-label="Back"
       >
-        &larr; Back
+        <ChevronLeftIcon className="w-6 h-6" aria-hidden="true" />
       </a>
       <div className="max-w-2xl mx-auto px-6 py-16">
         {/*
