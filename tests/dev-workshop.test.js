@@ -616,6 +616,58 @@ test('the three cards are what the pane draws, titled and in window order', asyn
   assert.match(html, /The summary at the top was written by the model on the same pass\./);
 });
 
+test('a card is one line: an aligned label column and its sentence, no separator', async () => {
+  const AppView = await loadWith(responseBody({
+    digestCards: {
+      lastWeek: 'the Dev screen became a styled Workshop, alongside many bug fixes.',
+      thisWeek: 'summary cards got shorter, plus preview and sign-in work.',
+      open: 'mostly QA triage, with older proposals still awaiting votes.',
+    },
+  }));
+  const html = workshopHtml(AppView);
+
+  // The title and the line are ADJACENT siblings. dapp.json's declared check
+  // selects `.dev-ws-card-title + .dev-ws-card-line`, so anything rendered
+  // between them would pass locally and fail the gate.
+  assert.match(html, /<h4 class="dev-ws-card-title">Last week<\/h4><p class="dev-ws-card-line">/,
+    'nothing rendered between the label and the sentence');
+
+  // NO separator, in either form. It was a CSS middot; with the labels in a
+  // fixed column it was a second separator doing the column's job, and on the
+  // short "Open" label it left a dot floating away from its word.
+  const block = html.slice(html.indexOf('data-ws-cards'), html.indexOf('</div>', html.indexOf('data-ws-cards')));
+  assert.ok(block.includes('data-ws-card="lastWeek"'), 'found the cards block');
+  assert.ok(!block.includes('\u00B7'), 'no separator in the markup');
+  assert.ok(!/\.dev-ws-card-title::(after|before)/.test(CSS), 'and none in the stylesheet either');
+
+  // The fixed column is what makes the three sentences share a left edge —
+  // the whole reason the one-line layout is worth having.
+  assert.match(CSS, /\.dev-ws-card-title \{[^}]*width: 84px;/, 'a column, not shrink-to-fit');
+  assert.match(CSS, /\.dev-ws-card-title \{[^}]*color: var\(--accent\);/);
+  assert.match(CSS, /\.dev-ws-card-title \{[^}]*font-size: 13\.5px;/);
+  // Centred, not baseline: the label holds a two-row sentence rather than
+  // sitting against its first line.
+  assert.match(CSS, /\.dev-ws-card \{[^}]*align-items: center;/);
+
+  // The lift, on the cards AND the four tiles. Both sit on the translucent
+  // strip; --dc-sheet is #ffffff, so the inset hairline alone read flat.
+  for (const sel of ['dev-ws-card', 'dev-ws-dash-cell']) {
+    const rule = CSS.slice(CSS.indexOf(`.${sel} {`));
+    const body = rule.slice(0, rule.indexOf('}'));
+    assert.ok(/var\(--app-sheet-line\) inset/.test(body), `${sel} keeps its hairline`);
+    assert.ok(/var\(--app-sheet-shadow-near\)/.test(body) && /var\(--app-sheet-shadow-far\)/.test(body),
+      `${sel} is lifted off the strip`);
+  }
+  // Both tokens must EXIST: one invalid var() voids the whole box-shadow,
+  // hairline included, and the card renders with no outline at all.
+  assert.match(CSS, /--app-sheet-shadow-near:/);
+  assert.match(CSS, /--app-sheet-shadow-far:/);
+  assert.match(CSS, /--accent:/);
+
+  // Still a white card on a theme-aware token, not a literal.
+  assert.match(CSS, /\.dev-ws-card \{[^}]*background-color: var\(--dc-sheet\);/);
+  assert.match(CSS, /--dc-sheet: #ffffff;/);
+});
 test('an empty window draws no card at all', async () => {
   // The "(if any)" of the design. An empty string is how the server says the
   // window held nothing — a Monday morning, a board with nothing open — and

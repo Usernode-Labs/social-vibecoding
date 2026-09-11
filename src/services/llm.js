@@ -2069,14 +2069,15 @@ const WORKSHOP_DIGEST_SCHEMA = {
  * any)" in the design, and it has to survive the sanitiser.
  *
  * The cap is a backstop against a runaway generation, not the word limit —
- * that is the prompt's job, at 25 words. 300 characters leaves a long line
- * room to be long rather than guillotining it mid-clause, which is what a cap
- * set near the target does.
+ * that is the prompt's job, now at about 12 words (~80 characters). 180 still
+ * leaves a long line room to be long rather than guillotining it mid-clause,
+ * which is what a cap set near the target does; it just no longer leaves room
+ * for the paragraph-length answers the 25-word prompt used to produce.
  */
 function sanitizeWorkshopDigest(parsed) {
   const line = (v) => {
     const raw = String(v == null ? '' : v).replace(/\s+/g, ' ').trim();
-    return raw.length < 12 ? '' : raw.slice(0, 300);
+    return raw.length < 12 ? '' : raw.slice(0, 180);
   };
   const out = {
     lastWeek: line(parsed && parsed.lastWeek),
@@ -2090,7 +2091,14 @@ function sanitizeWorkshopDigest(parsed) {
 // 3 splits it into the three windowed lines the lander draws as cards, and
 // adds the breadth rule. Every row written under 2 holds a paragraph these
 // fields cannot be recovered from, so they are re-asked for, never migrated.
-const WORKSHOP_DIGEST_VERSION = 3;
+// 4 halves the length and replaces "name the breadth" with two rules that
+// survive it: two clauses rather than a list, and lead by COUNT rather than
+// by visibility. 3 produced lines like "Last week reshaped the Dev screen
+// and shell into a widget-styled Workshop, alongside waitlist country and
+// confirmation fixes and boot-reliability work" — accurate, but an inventory,
+// and leading on a redesign in a week whose waitlist and home work were each
+// just as large. Both faults are the same one: visible beats numerous.
+const WORKSHOP_DIGEST_VERSION = 4;
 
 async function generateWorkshopDigest({
   inputJson, lastWeekJson, thisWeekJson, themesJson, appName, windows, apiKey, telemetryContext,
@@ -2121,13 +2129,15 @@ async function generateWorkshopDigest({
 
 You are given the changes that landed LAST WEEK and the changes that landed THIS WEEK — each with a title and a plain-language summary of what it does for a person using the app — plus the whole BOARD as a JSON snapshot and the CATEGORIES the work is grouped into.
 
-Answer with exactly three fields, each ONE sentence of at most 25 words:
+Answer with exactly three fields, each ONE sentence of about 12 words — 15 at the very most:
 
 - "lastWeek": what landed in the completed week just gone.
 - "thisWeek": what has landed in the current week so far.
 - "open": what the app's open, unfinished work is about — the issues nobody has closed and the proposals waiting on votes, as themes rather than as a list.
 
-NAME THE BREADTH, NOT A HEADLINE. This is the rule a single line most often breaks. A week that touched eight areas is not "mostly" any one of them, and a reader who worked on the other seven can see that at a glance. COUNT the entries by area before you write, then name the two or three largest and say there was more: "Kubernetes deploys, staging previews and email recovery, plus a Workshop pass" is right. "Mostly reshaped the Workshop and Dev board" — written about a week whose largest block was infrastructure — is the failure this instruction exists to prevent. Say "mostly" only when one area really is more than half the list.
+TWO CLAUSES, NOT A LIST. At twelve words you cannot enumerate, and you should not try — an inventory of five areas at this length is a worse sentence than a shape a reader takes in at once. Write ONE clause naming the single largest area, then ONE clause acknowledging the rest in general terms: "the Dev screen became a styled Workshop, alongside many bug fixes and reliability work" is the target register. The tail clause is what carries breadth; it does not need to name what is in it.
+
+COUNT BEFORE YOU LEAD. Which area is "largest" is a matter of how many items it has, NOT of how visible it is. This is the rule the line most often breaks: a redesign is easy to see and easy to lead with, so it gets written up as the story of a week whose issue and reliability work was bigger. Tally the entries by area first, and if the largest is unglamorous, lead with it anyway. Say "mostly" only when one area really is more than half the list.
 
 STATE NO COUNTS. The dashboard directly above these cards shows how many items are open, how many wait on votes, how many landed and how many have nobody on them. Write what a number cannot. "Many issues related to X" has said nothing a tile did not; "X now survives a refresh" has earned its place.
 
