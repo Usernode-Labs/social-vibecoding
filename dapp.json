@@ -295,8 +295,8 @@
     {
       "key": "PLATFORM_MAIL_FROM",
       "group": "Platform mail",
-      "default": "Usernode <no-reply@usernodelabs.org>",
-      "description": "The From address on every platform mail. Defaults to Usernode <no-reply@usernodelabs.org>, which is the single sender for all platform mail, so a fresh deploy needs no edit here. The mailbox behind GMAIL_OAUTH_* must be authorised to send as this address (a Workspace alias or a 'send mail as' identity) or every send is rejected upstream. Not secret — it is in the header of every mail we send."
+      "default": "Usernode <no-reply@onhomeroom.com>",
+      "description": "The From address on every platform mail. Defaults to Usernode <no-reply@onhomeroom.com>, which is the single sender for all platform mail, so a fresh deploy needs no edit here. The mailbox behind GMAIL_OAUTH_* must be authorised to send as this address (a Workspace alias or a 'send mail as' identity) or every send is rejected upstream. Not secret — it is in the header of every mail we send."
     },
     {
       "key": "GMAIL_OAUTH_CLIENT_ID",
