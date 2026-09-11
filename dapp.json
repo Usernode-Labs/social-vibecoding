@@ -1264,15 +1264,15 @@
       "expectText": "Chat shared. Stop sharing"
     },
     {
-      "name": "A published chat arrives expanded on the shared session’s own page",
+      "name": "A published chat opens in the workspace tab on the shared session’s page",
       "path": "/?demo=1#app/usernode-2d5619/dev/shared/990002",
-      "expectSelector": "[data-transcript-section] [data-transcript-toggle][aria-expanded=\"true\"] ~ [data-transcript-body]",
+      "expectSelector": "[data-change-conversation]:has([data-conversation-tab=\"workspace\"][aria-selected=\"true\"]) [role=\"tabpanel\"]:not([hidden]) [data-transcript-body]",
       "expectText": "read-only"
     },
     {
-      "name": "Shared session page renders the read-only dev-chat section, open",
+      "name": "Shared workspace keeps the published author attribution and group discussion tab",
       "path": "/?demo=1#app/usernode-2d5619/dev/shared/990002",
-      "expectSelector": "[data-transcript-section] [data-transcript-toggle]",
+      "expectSelector": "[data-change-conversation]:has([data-conversation-tab=\"discussion\"]) [data-transcript-section]",
       "expectText": "Dev chat by staging-demo-user"
     },
     {
@@ -3782,6 +3782,24 @@
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/900801",
       "expectSelector": "#dc-quick-replies",
       "expectText": "Change overview"
+    },
+    {
+      "name": "A full underway change card has Discussion, Agent workspace and Activity tabs",
+      "path": "/#app/usernode-2d5619/dev/proposals/900801",
+      "expectSelector": "[data-change-conversation=\"900801\"] [role=\"tablist\"]:has([data-conversation-tab=\"discussion\"][aria-selected=\"true\"]):has([data-conversation-tab=\"workspace\"]):has([data-conversation-tab=\"activity\"])",
+      "expectText": "Agent workspace"
+    },
+    {
+      "name": "The owner workspace tab mounts the real dev session inside its change card",
+      "path": "/?conversation=workspace#app/usernode-2d5619/dev/proposals/900801",
+      "expectSelector": "[data-change-conversation=\"900801\"] [role=\"tabpanel\"]:not([hidden]) #dc-view:has(#dc-messages):has(#dc-quick-replies)",
+      "expectText": "Agent workspace"
+    },
+    {
+      "name": "A change in review has its group discussion inside the same tabbed card",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
+      "expectSelector": "[data-change-conversation] [role=\"tabpanel\"]:not([hidden]) [data-change-discussion] #gc-thread-input",
+      "expectText": "Visible to the group"
     }
   ],
   "governance": {
