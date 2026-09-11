@@ -20,6 +20,13 @@ Use the matching skill whenever its description fits:
 Claude Code, Codex, and OpenCode load the full workflow bodies only when a task
 selects a skill.
 
+When proposal work originates from an issue, preserve its structured link:
+pass `linked_issues` to `proposal_start` (`linkedIssues` in the HTTP body),
+then read back `session.linked_issues` before implementing. Mentioning the
+issue in the title, spec, or history does not link the card. Link only issues
+the work actually addresses; a background reference is not a closing claim.
+The `usernode-proposal` skill describes verification and mismatch handling.
+
 ## Know your base commit and create its work branch before you write code
 
 - **This checkout can be a fork whose `main` is far behind the platform

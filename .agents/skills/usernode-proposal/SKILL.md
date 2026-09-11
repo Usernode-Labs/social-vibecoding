@@ -11,7 +11,7 @@ Use `production` unless the user explicitly requests `local`. Read `../usernode-
 
 1. Resolve the app, repository, and exact proposal base commit through Usernode.
 2. Reuse a local checkout only when its `HEAD` is that exact base commit. If downloading the repository, use `git clone --depth 1` only when the remote default `HEAD` is the base commit. Otherwise initialize an empty repository, add the remote, run `git fetch --depth=1 origin <base-sha>`, and detach-checkout `FETCH_HEAD`. Verify `git rev-parse HEAD` equals the proposal base SHA. Deepen only when the work genuinely requires older history.
-3. Inspect the checkout, write the complete Markdown spec, choose a stable request ID, and call `proposal_start` with the base commit, spec, and durable history.
+3. Inspect the checkout, write the complete Markdown spec, choose a stable request ID, and call `proposal_start` with the base commit, spec, durable history, and the issue numbers this work addresses. Verify the saved issue links as described below before implementation.
 4. Implement and test in the same checkout, then commit locally. Do not use personal GitHub credentials for the bot-owned platform branch and do not dispatch a web coding agent merely to obtain push access.
 5. Call `proposal_push_commit` with the local commit and repository path. Execute its exact returned host `argv`, then use the returned bot-owned `headSha`. Upload multiple local commits oldest-first. Local and bot commit SHAs may differ, but their Git trees must match; do not rebase merely because the SHAs differ.
 6. Call `proposal_submit_build` with the returned head SHA, new durable history, and structured local test results.
@@ -23,6 +23,30 @@ If a protected proposal tool returns `host_execution_required`, never retry that
 The returned `webPath` is an optional continuation surface, not a required step. Local and web turns may alternate on the shared branch; always continue from its current head.
 
 Treat the request ID and returned session ID as the permanent identity of this work. Retrying, rebasing, pushing, or recovering stalled checks never authorizes another `proposal_start` with a new request ID. If start reports `proposal_already_started`, continue the returned session. Supply `supersedes_session_id` only after the user explicitly asks to replace that named pre-vote proposal; replacement archives it.
+
+## Link the originating issues
+
+For issue-originated work, pass the app's issue numbers in `linked_issues`
+to `proposal_start`, or `linkedIssues` in the HTTP body sent to
+`POST /api/apps/:slug/proposal-handoffs`. For example, work requested on issue
+1952 uses `linked_issues: [1952]` (MCP) or `linkedIssues: [1952]` (HTTP).
+Mentions in the title, spec, history, or PR description do not populate this
+association; it supplies the card's issue context and closing metadata.
+Link only issues the proposal actually addresses, not issues cited as
+background. A direct request with no originating issue may omit the field
+or send an empty array; do not invent an issue to fill it.
+
+After start, including when resuming an existing session, use `api_read`
+(`api GET` in the CLI) on `/api/sessions/:id` and verify that
+`session.linked_issues` contains the intended issue numbers. Investigate
+unexpected links as well. Record the verified association in durable history.
+Do not treat a successful start or a title containing `#N` as verification.
+
+If the association is missing or wrong, resolve it before implementing or
+submitting more work. Keep the same session and request ID: replaying start
+with different metadata is not an edit operation. Use a supported link-update
+operation if available; otherwise report the mismatch and the API limitation.
+Do not create a replacement proposal or import a PR to repair metadata.
 
 ## Preserve durable context
 
