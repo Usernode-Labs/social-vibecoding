@@ -417,6 +417,49 @@ function DashTiles({ d }: { d: Dash }): ReactNode {
   );
 }
 
+/**
+ * The three cards: what landed last week, what has landed this week, what
+ * the open work is about — one model-written line each, under a title.
+ *
+ * They replaced a single paragraph that was answering all three questions at
+ * once, and answering them badly: asked to cover a week, its meaning and the
+ * work in flight inside 100 words, the model picked a headline and
+ * generalised from the top of its list. Three fields give each window its own
+ * sentence and its own budget, and — the half that actually fixed the
+ * accuracy — its own complete input, fetched per calendar week rather than
+ * filtered out of a board snapshot that was capped at a hundred merges.
+ *
+ * A window that held nothing gets no card, which is what the empty string
+ * from the server means. All three empty is not a card set at all (the
+ * client's normaliser returns null), so the pane falls through to the
+ * paragraph and then to the derived sentence, and never renders an empty box.
+ */
+const DIGEST_CARDS: { key: keyof NonNullable<Dash['cards']>; title: string }[] = [
+  { key: 'lastWeek', title: 'Last week' },
+  { key: 'thisWeek', title: 'This week' },
+  { key: 'open', title: 'Open' },
+];
+
+function DigestCards({ cards }: { cards: NonNullable<Dash['cards']> }): ReactNode {
+  const drawn = DIGEST_CARDS.filter((c) => cards[c.key]);
+  if (!drawn.length) return null;
+  return (
+    <div className="dev-ws-cards" data-ws-cards="">
+      {drawn.map((c) => (
+        <article key={c.key} className="dev-ws-card" data-ws-card={c.key}>
+          <h4 className="dev-ws-card-title">{c.title}</h4>
+          <p className="dev-ws-card-line">{cards[c.key]}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The paragraph, for a board whose row predates the cards. `d.summary` is the
+ * three lines flattened, which is all a row last written under the previous
+ * digest prompt has; `describe` is the derived sentence under that again.
+ */
 function summarise(d: Dash): string {
   return d.summary || describe(d);
 }
@@ -621,9 +664,11 @@ export function DevWorkshop(): ReactNode {
               : null}
           </div>
           <DashTiles d={v.dashboard} />
-          {summarise(v.dashboard)
-            ? <p className="dev-ws-strip-text">{summarise(v.dashboard)}</p>
-            : null}
+          {v.dashboard.cards
+            ? <DigestCards cards={v.dashboard.cards} />
+            : summarise(v.dashboard)
+              ? <p className="dev-ws-strip-text">{summarise(v.dashboard)}</p>
+              : null}
           {v.since ? (
             <p className="dev-ws-since-line">
               <span>{`Since your last visit, ${relTime(v.since.baseline)}: ${sinceWords(v.since)}`}</span>
@@ -803,7 +848,7 @@ export function DevWorkshop(): ReactNode {
               of the board it holds. */}
           <div className="dev-ws-foot-note">
             {v.meta.source === 'ai'
-              ? aiFootnote(v.meta, !!(v.dashboard && v.dashboard.summary))
+              ? aiFootnote(v.meta, !!(v.dashboard && (v.dashboard.cards || v.dashboard.summary)))
               : v.meta.source === 'demo'
                 ? 'Staging demo grouping: in production the categories are drafted by the model from the board.'
                 : v.meta.pending

@@ -43,8 +43,12 @@ const STAGES = {
     constant: 'WORKSHOP_DIGEST_VERSION',
     builder: llm.generateWorkshopDigest,
     // 1 was the two-sentence prompt the columns grandfather; 2 is the
-    // rewrite around what a user notices (#1820), and the first bump.
-    pinned: { 2: '14c1ca1864a4fb96' },
+    // rewrite around what a user notices (#1820), and the first bump; 3
+    // splits the paragraph into the three windowed lines the lander draws as
+    // cards and adds the breadth rule, after a week of 268 commits across
+    // eight areas was summarised as "mostly reshaped the Workshop and Dev
+    // board" (#1921).
+    pinned: { 2: '14c1ca1864a4fb96', 3: '98f17a8ffee59b3b' },
   },
 };
 

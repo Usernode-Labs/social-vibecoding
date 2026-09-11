@@ -1859,9 +1859,10 @@
       "expectSelector": "#dev-body #dev-kanban-board #dev-kanban .dev-kanban-col .dev-ws-rowwrap > .dev-ws-row[role=\"button\"][aria-expanded=\"false\"][data-issue-row]"
     },
     {
-      "name": "#app/<slug>/workshop is the card area grouped by theme, not the general chat",
+      "name": "#app/<slug>/workshop is the card area grouped by theme, not the general chat, and it leads with the three summary cards",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-cards] > [data-ws-card=\"lastWeek\"] + [data-ws-card=\"thisWeek\"] + [data-ws-card=\"open\"] > .dev-ws-card-line",
+      "expectText": "Staging demo: one line on what has landed so far this week."
     },
     {
       "name": "The Workshop carries the board's search and filter bar, not just the +",
