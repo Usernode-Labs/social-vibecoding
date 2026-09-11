@@ -8476,16 +8476,12 @@ const DevChat = {
     if (!DevChat.currentSession) return { kind: 'none' };
     const viewerOpen = !!DevChat.specViewer.open;
     const stagingOpen = !!DevChat.stagingPanel.open;
-    const viewPreference = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('workspace') : null;
     return {
       kind: 'session',
       change: window.AppView?._topicViewFor ? {
         item: DevChat.currentSession,
         ...AppView._topicViewFor(['active', 'paused'].includes(DevChat.currentSession.status) ? 'session' : 'proposal', DevChat.currentSession),
-        workspace: DevChat._changeWorkspaceRequested === Number(DevChat.currentSession.id)
-          || (viewPreference === '0' || viewPreference === '1' ? viewPreference === '1'
-            : (typeof location !== 'undefined' && /[?&](?:shot|flow)=/.test(location.search))
-              || (!DevChat.currentSession.checks_commit_sha && !DevChat.currentSession.staging_url && !DevChat.currentSession.pr_number)),
+
       } : null,
       // #1281: a hand-off venue swaps the composer for the launchpad. The
       // venue dropdown lives in the header, outside the swap, which is what
