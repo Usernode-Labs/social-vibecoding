@@ -925,7 +925,7 @@
       "name": "Each allow-rules block spans the panel under its own Copy row (#1290)",
       "path": "/?demo=connectors-claude#settings/connectors",
       "expectSelector": "#connector-case-cc-local > pre#connector-allow-rules",
-      "expectText": "mcp__usernode__whoami"
+      "expectText": "mcp__homeroom__whoami"
     },
     {
       "name": "A ChatGPT-only connection hides Claude Code's settings-file advice (#1219)",

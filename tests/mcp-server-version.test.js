@@ -90,7 +90,7 @@ test('the exported constant is derived, not written down', () => {
 // ── 2. Caution one: the NAME must not vary ─────────────────────────────
 
 test('the connector name is still a fixed literal', () => {
-  assert.equal(SERVER_NAME, 'usernode');
+  assert.equal(SERVER_NAME, 'homeroom');
   const line = CONSTANTS_SRC
     .split('\n')
     .find((l) => l.startsWith('const SERVER_NAME'));
