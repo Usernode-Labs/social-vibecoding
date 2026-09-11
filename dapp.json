@@ -725,10 +725,20 @@
       "expectText": "Vote"
     },
     {
-      "name": "Dev board: Preview is a labelled pill closing the action band, after the card's other controls",
+      "name": "Dev board: Preview is a labelled pill at the band's right end, just before the hamburger that closes it",
       "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-kanban .gc-vote-item .gc-card-actions > .dev-card-menu-btn[data-card-menu] ~ .gc-vote-btn-preview:last-child:not(.gc-vote-btn-icon), #dev-kanban .gc-vote-item .gc-card-actions > .dev-ws-open-btn ~ .gc-vote-btn-preview:last-child:not(.gc-vote-btn-icon)",
+      "expectSelector": "#dev-kanban .gc-vote-item .gc-card-actions > .gc-vote-btn-preview:not(.gc-vote-btn-icon) + .dev-card-menu-btn[data-card-menu]:last-child, #dev-kanban .gc-vote-item .gc-card-actions > .dev-ws-open-btn ~ .gc-vote-btn-preview:not(.gc-vote-btn-icon)",
       "expectText": "Preview"
+    },
+    {
+      "name": "Dev board: every folded row wears the fold mark, closed — two chevrons apart, the bar between them drawn but scaled away",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .dev-ws-rowwrap > .dev-ws-row[aria-expanded=\"false\"] > span.dev-fold-mark[aria-hidden=\"true\"]:not([data-open]) > svg > path.dev-fold-top + path.dev-fold-bar + path.dev-fold-bottom"
+    },
+    {
+      "name": "Dev board: the open card's fold mark is the same glyph stretched open, and the button that folds the card",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item .dev-card-head > button.dev-fold-mark[data-open=\"1\"][aria-expanded=\"true\"][aria-label] > svg > path.dev-fold-bar"
     },
     {
       "name": "Dev board, round three: every card wears a tone-keyed left edge, and a glyph where the tile was",
@@ -1331,6 +1341,16 @@
     {
       "name": "Home card actions stay anchored to the tile on touch (#1616)",
       "path": "/?demo=1&shot=card-menu&un-platform=ios",
+      "expectSelector": ".un-popover .card-menu-header .card-menu-title"
+    },
+    {
+      "name": "App tile actions open on a right-click (#1838)",
+      "path": "/?demo=1&shot=card-menu&gesture=contextmenu",
+      "expectSelector": ".un-popover .card-menu-header .card-menu-title"
+    },
+    {
+      "name": "App tile actions open on a mouse press-and-hold (#1838)",
+      "path": "/?demo=1&shot=card-menu&gesture=hold",
       "expectSelector": ".un-popover .card-menu-header .card-menu-title"
     },
     {
@@ -3667,6 +3687,18 @@
       "name": "#1808: an admin log line keeps its seconds and gains the day once it is not today's",
       "path": "/?demo=1#admin/status",
       "expectSelector": "#admin-status-root #admin-status-events time[title]"
+    },
+    {
+      "name": "#1771: a starved preview's checks card says it was not this change",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000045",
+      "expectSelector": ".dev-ledger-row[data-note=\"checks\"]",
+      "expectText": "Infrastructure problem, not this change"
+    },
+    {
+      "name": "#1771: an error with no recorded reason still explains itself",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000009",
+      "expectSelector": ".dev-ledger-row[data-note=\"checks\"]",
+      "expectText": "The staging build or the test run itself broke"
     }
   ],
   "governance": {

@@ -120,15 +120,19 @@ function start(config) {
     return;
   }
   const run = (dryRun) => {
-    if (inFlight) return;
+    if (inFlight) return inFlight;
     inFlight = sweep(config, { dryRun, shouldStop: () => timer === null })
       .then((result) => log.info('build-retention', dryRun ? 'kpack retention preview' : 'kpack retention sweep', result))
       .catch((err) => log.warn('build-retention', 'kpack retention sweep stopped', { err: err.message }))
       .finally(() => { inFlight = null; });
+    return inFlight;
   };
-  run(true);
   timer = setInterval(() => run(false), INTERVAL_MS);
   timer.unref();
+  // Releases frequently replace the leader before its first hourly tick.
+  // Preview first, then perform the same bounded, lock-protected sweep so
+  // restarts cannot indefinitely postpone deletion of eligible records.
+  run(true).then(() => { if (timer) run(false); });
 }
 
 async function stop() {

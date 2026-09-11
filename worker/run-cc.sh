@@ -65,6 +65,12 @@ die() {
   exit 1
 }
 
+# A container can restart after the platform's readiness read. Refuse to
+# inspect or reset its Git checkout until this incarnation finishes bootstrap.
+if [ "${USERNODE_WORKER_REQUIRE_READY:-0}" = "1" ] && [ ! -f /tmp/usernode-worker-ready ]; then
+  die "worker bootstrap is not ready; retry after the worker finishes starting"
+fi
+
 : "${PROMPT_FILE:?PROMPT_FILE required}"
 [ -s "$PROMPT_FILE" ] || die "prompt file missing or empty: $PROMPT_FILE"
 : "${BRANCH:?BRANCH required}"

@@ -233,6 +233,27 @@ function demoIconApps(curation = false) {
       name: 'Staging demo photo album and journal',
       icon_emoji: '📔',
     },
+    // #1838: the ONE demo row that lands in "Your apps". Every other row
+    // here inherits is_favorited/is_collaborator false from `base`, so
+    // Home.isYours excludes them all and the launcher grid under ?demo=1
+    // holds only whatever the checks clone happens to have — which is why
+    // the card-menu deep link carries a featured-row fallback at all. The
+    // gesture-driven variants of that link have to dispatch onto a real
+    // launcher tile, so seed one deterministically.
+    //
+    // favorite_order 99 sorts it LAST inside Your apps, so the existing
+    // shot=home-apps / shot=home-grid expectations keep their leading tiles;
+    // demo:true keeps it out of the kit's placement selector
+    // (.app-card[data-yours]:not([data-demo])) so no drag shot changes.
+    {
+      ...base,
+      id: 900013,
+      slug: 'staging-demo-your-app',
+      name: 'Staging demo your app',
+      icon_emoji: '🏠',
+      is_favorited: true,
+      favorite_order: 99,
+    },
     // Four more featured rows so the Discover widget's curated lane is
     // reviewable AT ITS CAP (#949): the lane holds six tiles — one per
     // Home.FEATURED_LIMIT slot — and the whole point of the six-track grid

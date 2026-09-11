@@ -188,8 +188,26 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
       onContextMenu={(e) => {
         if ((e.target as HTMLElement).closest('.retry-btn')) return;
         e.preventDefault();
-        // Mobile browsers may emit contextmenu during the same held touch.
-        if (!controller()?._menu) controller()?.openCardMenu?.(app.slug, e.currentTarget);
+        const N = controller();
+        if (!N) return;
+        // Mobile browsers (Android Chrome) emit contextmenu during the same
+        // held touch, so touch keeps the bail verbatim — it is the only thing
+        // stopping a mid-hold double-open, and #1838 changes nothing here.
+        if (N._cardPointerType === 'touch') {
+          if (!N._menu) N.openCardMenu?.(app.slug, e.currentTarget);
+          return;
+        }
+        // #1838: a mouse needs this idempotent — same tile toggles closed, a
+        // different tile moves the menu in one action. Decide from the anchor
+        // snapshot taken at pointerdown, NOT from whether a menu happens to
+        // still be open: the kit dismisses on the right button's pointerdown,
+        // and some platforms deliver contextmenu on mouse UP, so `_menu` says
+        // nothing useful by the time we get here.
+        if ((N._menuAnchor || N._menuAnchorAtPress) === e.currentTarget) {
+          N.closeCardMenu?.();
+          return;
+        }
+        N.openCardMenu?.(app.slug, e.currentTarget);
       }}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return;

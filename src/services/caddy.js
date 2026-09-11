@@ -176,7 +176,10 @@ function probeEdge(hostname, {
     let req;
     try {
       req = https.request({
-        host: process.env.CADDY_HOST || 'caddy',
+        // Kubernetes exposes the preview through its public ingress; the
+        // Compose-only `caddy` service does not exist there. Keep an explicit
+        // connect-host override while preserving the preview's TLS SNI/Host.
+        host: process.env.CADDY_HOST || (process.env.APP_RUNTIME === 'kubernetes' ? hostname : 'caddy'),
         port: 443,
         method: 'GET',
         path: '/',

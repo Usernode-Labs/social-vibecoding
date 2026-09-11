@@ -1783,3 +1783,130 @@ test('?shot=discover-drag enters the incoming state, not a lookalike of it', () 
   // And a real gesture always wins over the screenshot state.
   assert.match(shot, /if \(Home\._dragActive\) return;/);
 });
+
+// ── #1838: the gesture-driven card-menu deep links ────────────────
+//
+// `?shot=card-menu` alone proves the menu BUILDER works: it calls
+// openCardMenu directly, so it would have stayed green through the whole of
+// #1838 — a desktop right-click was a no-op and a held mouse button was
+// discarded before the timer was ever armed, and no declared check could
+// tell. The two gesture variants exist to close that: they synthesise the
+// mouse input and let the tile's own handlers and the hold recognizer do
+// everything else.
+
+// rAF is setTimeout(fn, 0) in this sandbox, and setImmediate (flush) can win
+// the race against a pending timer — so wait on a timer registered AFTER it.
+const frame = () => new Promise((r) => setTimeout(r, 0));
+
+function shotMenuEnv(search) {
+  const env = makeHome();
+  const { Home, sandbox } = env;
+  const dispatched = [];
+  const opened = [];
+  sandbox.location.search = search;
+  sandbox.PointerEvent = class PointerEvent {
+    constructor(type, init) { Object.assign(this, { type }, init); }
+  };
+  sandbox.MouseEvent = class MouseEvent {
+    constructor(type, init) { Object.assign(this, { type }, init); }
+  };
+  Home.openCardMenu = (slug, anchor) => { opened.push([slug, anchor]); };
+
+  const card = {
+    nodeType: 1,
+    dataset: { slug: 'demo-app' },
+    getBoundingClientRect: () => ({ left: 10, top: 20, width: 60, height: 40 }),
+    dispatchEvent: (e) => { dispatched.push(e); return true; },
+  };
+  const listEl = {
+    offsetParent: {},
+    querySelector: (sel) => (sel === '.app-card[data-slug]' ? card : null),
+  };
+  return { ...env, card, listEl, dispatched, opened };
+}
+
+test('shot=card-menu with no gesture still opens the menu directly (#1838)', async () => {
+  const env = shotMenuEnv('?demo=1&shot=card-menu');
+  env.Home._maybeOpenShotMenu(env.listEl);
+  await frame();
+  assert.deepEqual(env.opened, [['demo-app', env.card]],
+    'the plain link is unchanged — it is what pins the menu builder');
+  assert.deepEqual(env.dispatched, [], 'and it synthesises no input');
+});
+
+test('shot=card-menu&gesture=contextmenu right-clicks the real tile (#1838)', async () => {
+  const env = shotMenuEnv('?demo=1&shot=card-menu&gesture=contextmenu');
+  env.Home._maybeOpenShotMenu(env.listEl);
+  await frame();
+
+  assert.deepEqual(env.opened, [],
+    'the point of this variant is that NOTHING calls openCardMenu — the'
+    + ' tile’s own onContextMenu has to reach it');
+  assert.deepEqual(env.dispatched.map((e) => e.type), ['pointerdown', 'contextmenu'],
+    'pointerdown leads, the way a browser delivers them: it is what records'
+    + ' the pointer type the handler branches on');
+  assert.equal(env.dispatched[0].button, 2);
+  assert.equal(env.dispatched[0].pointerType, 'mouse');
+  assert.equal(env.dispatched[0].bubbles, true,
+    'the handler is a React prop, so the event has to reach the root');
+  // Centre of the tile, so the kit's flip/clamp placement has a sane anchor.
+  assert.equal(env.dispatched[0].clientX, 40);
+  assert.equal(env.dispatched[0].clientY, 40);
+  assert.equal(env.Home._shotMenuDone, true, 'still a one-shot');
+});
+
+test('shot=card-menu&gesture=hold holds the left button down (#1838)', async () => {
+  const env = shotMenuEnv('?demo=1&shot=card-menu&gesture=hold');
+  env.Home._maybeOpenShotMenu(env.listEl);
+  await frame();
+
+  assert.deepEqual(env.opened, []);
+  assert.deepEqual(env.dispatched.map((e) => e.type), ['pointerdown'],
+    'no pointerup and no pointermove — a released or moved press is exactly'
+    + ' what must NOT open the menu, so the hold has to run to its timer');
+  assert.equal(env.dispatched[0].button, 0);
+  assert.equal(env.dispatched[0].pointerType, 'mouse');
+  assert.equal(env.dispatched[0].isPrimary, true);
+  assert.equal(env.Home._shotMenuDone, true);
+
+  // Spent: a later repaint must not fire a second press.
+  env.Home._maybeOpenShotMenu(env.listEl);
+  await frame();
+  assert.equal(env.dispatched.length, 1);
+});
+
+test('a gesture link leaves the one-shot unspent when only a rect resolves (#1838)', async () => {
+  const env = shotMenuEnv('?demo=1&shot=card-menu&gesture=contextmenu');
+  const { Home, sandbox } = env;
+  // #929's featured-row fallback hands back a RECT, and a rect cannot
+  // receive an event. Rather than dispatch nowhere, wait for a repaint that
+  // has a real launcher tile — which is what the seeded demo tile is for.
+  const featuredCard = {
+    dataset: { slug: 'featured-app' },
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 60, height: 40 }),
+  };
+  sandbox.document.getElementById = (id) => (id === 'home-featured-list'
+    ? { offsetParent: {}, querySelector: () => featuredCard }
+    : null);
+  const emptyList = { offsetParent: {}, querySelector: () => null };
+
+  Home._maybeOpenShotMenu(emptyList);
+  await frame();
+  assert.deepEqual(env.dispatched, []);
+  assert.deepEqual(env.opened, []);
+  assert.equal(Home._shotMenuDone, false,
+    'the link must still fire on a later paint that has a real tile');
+
+  Home._maybeOpenShotMenu(env.listEl);
+  await frame();
+  assert.deepEqual(env.dispatched.map((e) => e.type), ['pointerdown', 'contextmenu']);
+  assert.equal(Home._shotMenuDone, true);
+});
+
+test('an unknown gesture value falls back to the direct open (#1838)', async () => {
+  const env = shotMenuEnv('?demo=1&shot=card-menu&gesture=wiggle');
+  env.Home._maybeOpenShotMenu(env.listEl);
+  await frame();
+  assert.deepEqual(env.opened, [['demo-app', env.card]]);
+  assert.deepEqual(env.dispatched, []);
+});
