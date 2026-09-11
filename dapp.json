@@ -1932,7 +1932,7 @@
     {
       "name": "?group=stage swaps that pane for the board's own columns, the summary strip still above them",
       "path": "/?demo=1&group=stage#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] ~ .dev-ws-group + .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-row"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] ~ [data-ws-pane] > .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-row"
     },
     {
       "name": "The Workshop carries the board's search and filter bar, not just the +",

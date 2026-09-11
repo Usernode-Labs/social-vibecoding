@@ -2084,3 +2084,26 @@ test('the pane head pins, and the pane does not clip what must escape it', () =>
   assert.match(CSS,
     /#dev-workshop:has\(\.dev-ws-board\) \.dev-ws-pane-head > \* \{[\s\S]*?max-width: calc\(760px - 20px\)/);
 });
+
+test('the declared stage check still describes the pane it has to walk', () => {
+  // It broke once, and silently: the check merged with the grouping tabs, and
+  // the working pane then moved `.dev-ws-board` inside `.dev-ws-pane-body`
+  // while the selector still read `.dev-ws-group + .dev-ws-board` — an
+  // adjacency that only held while both were direct children of `.dev-ws`.
+  // Nothing locally noticed, because a declared selector is a STRING here and
+  // only the staging gate resolves it.
+  //
+  // So this asserts the chain against the same source the checks walk: every
+  // class in it must be one the component actually renders, in the nesting
+  // order it renders them.
+  const dapp = JSON.parse(read('dapp.json'));
+  const check = dapp.tests.find((t) => /group=stage/.test(t.path || '')
+    && /dev-ws-board/.test(t.expectSelector || ''));
+  assert.ok(check, 'the stage check exists');
+  assert.ok(!/\.dev-ws-group \+ \.dev-ws-board/.test(check.expectSelector),
+    'the retired adjacency is gone');
+  assert.match(check.expectSelector, /\[data-ws-pane\] > \.dev-ws-pane-body > \.dev-ws-board/,
+    'it walks head-and-body pane, as the component renders it');
+  // ...and the component really does nest them that way.
+  assert.match(WORKSHOP, /className="dev-ws-pane-body"[\s\S]{0,400}className="dev-ws-board"/);
+});
