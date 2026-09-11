@@ -663,9 +663,37 @@ const AppView = {
       // itself, so whichever idiom the platform picks (kit action sheet on
       // touch, the anchored #dev-plus-menu dropdown on desktop) is the one
       // a check sees. Pure UI state, no writes, not env-gated.
+      // It RETRIES, like the card menu below and for what is now the same
+      // reason. This was one `setTimeout(300)` and a `?.click()`, which was
+      // sound while `#dev-plus-btn` lived in the frame's chrome: that mounts
+      // with `#app-content`, so the button existed long before 300ms.
+      //
+      // The button moved into the Workshop's own pane, and `#dev-workshop` is
+      // created by `_repaintDevBody` AFTER `_loadDevFeed`'s fetches. At 300ms
+      // it may not exist, and `?.click()` on a missing node does nothing
+      // SILENTLY — the capture then shoots a board with no menu on it and the
+      // check reads "text not found", which is what it did.
+      //
+      // Same shape as the card menu's: re-asserted across the repaints those
+      // fetches trigger (each dismisses an open menu by design), bounded, and
+      // ended by a human's first real gesture so a person following one of
+      // these links does not get a menu put back under them.
       if (shot === 'plus-menu') {
-        setTimeout(() => {
-          if (App.currentApp !== slug) return;
+        let tries = 0;
+        const done = () => {
+          clearInterval(tick);
+          document.removeEventListener('pointerdown', onUserInput, true);
+          document.removeEventListener('keydown', onUserInput, true);
+        };
+        const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
+        document.addEventListener('pointerdown', onUserInput, true);
+        document.addEventListener('keydown', onUserInput, true);
+        const tick = setInterval(() => {
+          if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
+          const menu = document.getElementById('dev-plus-menu');
+          // Already up: nothing to do this tick, but keep the window open so a
+          // repaint that dismisses it gets it back.
+          if (menu && !menu.classList.contains('hidden')) return;
           document.getElementById('dev-plus-btn')?.click();
         }, 300);
       }
@@ -4926,6 +4954,7 @@ const AppView = {
         AppView._renderKanbanFilterBar();
       }
       AppView._repaintKanbanBoard();
+      AppView._rewirePlusMenu();
       return;
     }
     // Workshop mode: ONE container. The retired List mode built a two-node
@@ -4961,7 +4990,23 @@ const AppView = {
     }
     AppView._renderKanbanFilterBar();
     AppView._rerenderWorkshop();
+    AppView._rewirePlusMenu();
     AppView._reanchorCardMenu();
+  },
+
+  // `#dev-actions` — the filter strip and the "+" — has TWO homes now: the
+  // frame's chrome on the Board, and the Workshop's own pane on the Workshop
+  // (features/dev-board/actions-row.tsx). Exactly one renders at a time, so a
+  // view-mode switch UNMOUNTS one button and mounts another, and the listeners
+  // `_wirePlusMenu` attached on entry are left pointing at a node that is gone.
+  //
+  // It was called once, from `renderDevView`, because the row never moved.
+  // Re-running it is cheap and idempotent — it aborts its previous
+  // AbortController before attaching — and `_repaintDevBody` is the one place
+  // every switch already funnels through.
+  _rewirePlusMenu() {
+    const content = document.getElementById('app-content');
+    if (content) AppView._wirePlusMenu(content);
   },
 
   // Locked-app banner at the very top of the card list (above the

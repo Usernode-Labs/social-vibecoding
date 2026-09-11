@@ -49,6 +49,7 @@ import { DevSessionShell } from './session-frame';
 import { VotingHelp, type VotingHelpProps } from './voting-help';
 import { DevTopicSubView } from './topic-frame';
 import { publishViewMode } from './view-mode-store';
+import { publishDevActions } from './actions-store';
 import { publishWorkshopGroup } from './workshop/group-mode-store';
 import {
   aiEnabledStore,
@@ -182,6 +183,17 @@ export const devBoardBridge: DevBoardBridge = {
     // Seed before the first render so a cold `?view=kanban` deep link paints
     // kanban immediately rather than list-then-kanban.
     publishViewMode(options.viewMode);
+    // The toolbar's six flags, for the Workshop's separate root — see
+    // ./actions-store.ts. Published BEFORE the frame renders, so whichever
+    // surface draws the row has them on its first paint.
+    publishDevActions({
+      illustrationApp: options.illustrationApp,
+      canManageIllustration: options.canManageIllustration,
+      selfHosted: options.selfHosted,
+      readOnly: options.readOnly,
+      canCollaborate: options.canCollaborate,
+      showsMembers: options.showsMembers,
+    });
     // `viewMode` seeds the store and is not a frame prop — the frame draws no
     // Kanban|Feed control any more (the choice lives under the Improve panel's
     // Board row), so it is dropped here rather than forwarded.
