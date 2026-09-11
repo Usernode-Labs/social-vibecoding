@@ -1687,7 +1687,7 @@ function mergedRowSelect() {
            -- actually landed instead of when it was started. NULL on rows
            -- merged before the column existed — consumers must keep the
            -- created_at fallback forever.
-           cs.merged_at, cs.promoted_at,
+           cs.merged_at, cs.promoted_at, cs.shared_at, cs.session_title,
            cs.revert_of_session_id,
            -- Transcript sharing: true when this proposal's owner published
            -- the dev chat that produced it, so the proposal page can offer
@@ -3755,7 +3755,9 @@ function voteRoutes(config) {
       const { rows } = await pool.query(
         `${mergedRowSelect()}
          WHERE cs.app_id = $1 AND cs.id = $3
-           AND cs.status IN ('promoted', 'merging', 'merged')
+           AND (cs.status IN ('promoted', 'merging', 'merged')
+             OR (cs.status IN ('active', 'paused')
+               AND (cs.user_id = $2 OR cs.shared_at IS NOT NULL)))
          LIMIT 1`,
         [gatedApp.id, userId, id]
       );

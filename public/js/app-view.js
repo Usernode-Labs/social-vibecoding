@@ -508,6 +508,7 @@ const AppView = {
   // Iframe tokens are signed for 1h. Refresh at 45min so the child app never
   // sees an expired JWT during a long reading/editing session.
   TOKEN_REFRESH_MS: 45 * 60 * 1000,
+  TOKEN_REQUEST_TIMEOUT_MS: 15000,
 
   /**
    * Load an app's record and stand its view up.
@@ -663,9 +664,37 @@ const AppView = {
       // itself, so whichever idiom the platform picks (kit action sheet on
       // touch, the anchored #dev-plus-menu dropdown on desktop) is the one
       // a check sees. Pure UI state, no writes, not env-gated.
+      // It RETRIES, like the card menu below and for what is now the same
+      // reason. This was one `setTimeout(300)` and a `?.click()`, which was
+      // sound while `#dev-plus-btn` lived in the frame's chrome: that mounts
+      // with `#app-content`, so the button existed long before 300ms.
+      //
+      // The button moved into the Workshop's own pane, and `#dev-workshop` is
+      // created by `_repaintDevBody` AFTER `_loadDevFeed`'s fetches. At 300ms
+      // it may not exist, and `?.click()` on a missing node does nothing
+      // SILENTLY — the capture then shoots a board with no menu on it and the
+      // check reads "text not found", which is what it did.
+      //
+      // Same shape as the card menu's: re-asserted across the repaints those
+      // fetches trigger (each dismisses an open menu by design), bounded, and
+      // ended by a human's first real gesture so a person following one of
+      // these links does not get a menu put back under them.
       if (shot === 'plus-menu') {
-        setTimeout(() => {
-          if (App.currentApp !== slug) return;
+        let tries = 0;
+        const done = () => {
+          clearInterval(tick);
+          document.removeEventListener('pointerdown', onUserInput, true);
+          document.removeEventListener('keydown', onUserInput, true);
+        };
+        const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
+        document.addEventListener('pointerdown', onUserInput, true);
+        document.addEventListener('keydown', onUserInput, true);
+        const tick = setInterval(() => {
+          if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
+          const menu = document.getElementById('dev-plus-menu');
+          // Already up: nothing to do this tick, but keep the window open so a
+          // repaint that dismisses it gets it back.
+          if (menu && !menu.classList.contains('hidden')) return;
           document.getElementById('dev-plus-btn')?.click();
         }, 300);
       }
@@ -922,6 +951,7 @@ const AppView = {
   },
 
   close() {
+    if (AppView._staging().isOpen()) AppView.closeStagingOverlay();
     AppView.stopActivityTracking();
     AppView.stopTokenRefresh();
     AppView._issueStateSource = null;
@@ -991,8 +1021,10 @@ const AppView = {
     const inflight = AppView._tokenInflight[slug];
     if (inflight) return inflight;
     const p = (async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), AppView.TOKEN_REQUEST_TIMEOUT_MS);
       try {
-        const res = await fetch(`/api/iframe-token?app=${encodeURIComponent(slug)}`);
+        const res = await fetch(`/api/iframe-token?app=${encodeURIComponent(slug)}`, { signal: controller.signal });
         if (!res.ok) return null;
         const { token } = await res.json();
         if (!token) return null;
@@ -1001,6 +1033,7 @@ const AppView = {
       } catch {
         return null;
       } finally {
+        clearTimeout(timer);
         delete AppView._tokenInflight[slug];
       }
     })();
@@ -2455,15 +2488,15 @@ const AppView = {
       if (AppView._inFoldWrapper(e)) return;
       const sessionChip = e.target.closest('[data-session-chip]');
       if (sessionChip) {
-        // Own session → the owner's dev chat, exactly as the old strip.
-        App.switchTab('dev', parseInt(sessionChip.dataset.sessionChip, 10), 'sessions');
+        // Open card always reads the change; building is a separate action.
+        AppView.openTopic('proposal', parseInt(sessionChip.dataset.sessionChip, 10));
         return;
       }
       const sharedRow = e.target.closest('[data-shared-session-row]');
       if (sharedRow) {
         // Someone else's shared session → its public discussion topic
         // (never their dev chat — that stays owner-scoped server-side).
-        AppView.openTopic('session', parseInt(sharedRow.dataset.sharedSessionRow, 10));
+        AppView.openTopic('proposal', parseInt(sharedRow.dataset.sharedSessionRow, 10));
         return;
       }
       // The general discussion's feed row. It is not a topic — the chat is a
@@ -2497,9 +2530,9 @@ const AppView = {
       if (!el) return;
       ev.preventDefault();
       if (el.dataset.sessionChip) {
-        App.switchTab('dev', parseInt(el.dataset.sessionChip, 10), 'sessions');
+        AppView.openTopic('proposal', parseInt(el.dataset.sessionChip, 10));
       } else {
-        AppView.openTopic('session', parseInt(el.dataset.sharedSessionRow, 10));
+        AppView.openTopic('proposal', parseInt(el.dataset.sharedSessionRow, 10));
       }
     }, { signal: devBodySignal });
 
@@ -2592,7 +2625,7 @@ const AppView = {
     // rows live in the very same keyset-paginated Completed stream, and
     // _govProposals only ever holds OPEN governance rows — so every settled
     // close proposal outside the freshly-reset first page was a dead click.
-    if (ok && (ref.kind === 'proposal' || ref.kind === 'gov')
+    if (ok && (ref.kind === 'proposal' || ref.kind === 'session' || ref.kind === 'gov')
         && !AppView._findTopicItem()) {
       if (ref.kind === 'gov') await AppView._fetchGovProposalById(ref.id);
       else await AppView._fetchProposalById(ref.id);
@@ -2649,6 +2682,8 @@ const AppView = {
       // from beyond the cached Completed page) — checked last, and keyed by
       // id so a stale one from a previous topic never resolves.
       return (AppView._proposals || []).find((p) => p.id === t.id)
+        || (AppView._mySessions || []).find((p) => p.id === t.id)
+        || (AppView._sharedSessions || []).find((p) => p.id === t.id)
         || (AppView._merged || []).find((p) => p.id === t.id)
         || (AppView._topicProposal && AppView._topicProposal.id === t.id
             ? AppView._topicProposal : null)
@@ -2661,7 +2696,7 @@ const AppView = {
       // → miss → the topic view falls back to the card list.
       return (AppView._sharedSessions || []).find((s) => s.id === t.id)
         || (AppView._mySessions || []).find((s) => s.id === t.id)
-        || null;
+        || AppView._findItem('proposal', t.id);
     }
     // Open governance proposals first; APPLIED close-issue proposals live
     // on in the Completed stream (row_type='close_issue' rows in _merged)
@@ -2815,9 +2850,11 @@ const AppView = {
     // #363: the topic card/body lives inside the thread's unified scroll
     // region (#gc-thread-head), a sibling of #gc-thread-messages, so it
     // survives renderThread()'s message-list rewrites and WS-driven refreshes.
-    const head = document.getElementById('gc-thread-head');
-    if (!t || !head) return;
+    if (!t) return;
     const item = AppView._findTopicItem();
+    const changePage = t.kind === 'session' || t.kind === 'proposal';
+    const head = document.getElementById('gc-thread-head');
+    if (!head) return;
     // Closed / merged away mid-view: keep the last render readable.
     if (!item) return;
 
@@ -2848,7 +2885,9 @@ const AppView = {
       // Mounted per paint, into the host the thread panel owns. The store
       // flushes synchronously, so the head is in the DOM for the loads below
       // — exactly as it was after the innerHTML assignment this replaced.
-      react.mountTopicHead(head);
+      // Change pages own their whole card, including the conversation tabs.
+      // Only issue/governance topics still live inside a thread's header host.
+      if (!changePage) react.mountTopicHead(head);
       react.publishTopicHead({ card, body, item: t.kind === 'session' || t.kind === 'proposal' ? item : null });
     }
     // The Explore pills read `aiEnabledStore` now, so the DOM pass that used
@@ -2856,10 +2895,10 @@ const AppView = {
     AppView._refreshAiAvailability();
     AppView._fillKudosHosts(head);
     if (t.kind === 'issue') AppView._loadIssueComments(item);
-    if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
+    if (t.kind === 'proposal' && ['promoted', 'merging'].includes(item.status)) AppView._loadVoteRoster(item.id);
     // An auto-expanded transcript (arrived via "Read chat") loads straight
     // away; every other one loads when it is opened.
-    if (body.transcript && body.transcript.expanded) {
+    if (!changePage && body.transcript && body.transcript.expanded) {
       AppView._loadSessionTranscript(body.transcript.id);
     }
   },
@@ -2880,6 +2919,8 @@ const AppView = {
    */
   _topicViewFor(kind, item) {
     if (!item) return null;
+    // The URL identifies the change; its live status determines its controls.
+    if (kind === 'proposal' || kind === 'session') kind = ['active', 'paused'].includes(item.status) ? 'session' : 'proposal';
     const t = { kind };
     let card;
     let body;
@@ -3062,6 +3103,12 @@ const AppView = {
     if (underway) {
       const checks = rows.find((r) => r.key === 'checks');
       if (item.check_state === 'failing' && checks) checks.text = ['Required checks need attention before this change can be proposed.'];
+      if (main.key === 'behind') {
+        const behind = item.freshness_behind_by ?? item.behind_main ?? main.count;
+        main.label = 'Main';
+        main.sub = null;
+        main.text = [behind > 0 ? `${behind} commit${behind === 1 ? '' : 's'} behind main.` : 'Main has moved ahead.'];
+      }
       body.details.pathSteps = null;
       body.details.pathLeft = null;
       rows.forEach((r) => { delete r.step; delete r.stepDone; });
@@ -3102,7 +3149,10 @@ const AppView = {
   },
 
   openChangeWorkspace(id) {
-    if (typeof DevChat !== 'undefined') DevChat._changeWorkspaceRequested = Number(id);
+    if (document.querySelector(`[data-change-conversation="${Number(id)}"]`)) {
+      window.dispatchEvent(new CustomEvent('change-workspace-open', { detail: Number(id) }));
+      return;
+    }
     AppView.openProposalSession(id);
   },
 
@@ -3147,9 +3197,9 @@ const AppView = {
       const isMerged = item.status === 'merged';
       if (mine && item.source !== 'imported') {
         pills.push({
-          key: 'session', cls: 'gc-vote-btn', label: 'Open the dev session behind this',
+          key: 'session', cls: 'gc-vote-btn', label: 'Continue building',
           title: 'Open the dev session behind this proposal',
-          act: { fn: 'openProposalSession', args: [item.id] },
+          act: { fn: 'openChangeWorkspace', args: [item.id] },
         });
       }
       // _showExplorePill, not `!mine`: the viewer's own IMPORTED proposal has
@@ -3895,7 +3945,16 @@ const AppView = {
   _mountTopicThread() {
     const t = AppView._devTopic;
     const slot = document.getElementById('dev-topic-thread');
-    if (!t || !slot || typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
+    if (!t || !slot) return;
+    if (t.kind === 'session' || t.kind === 'proposal') {
+      if (typeof GroupChat !== 'undefined') GroupChat.unmountThread();
+      // The full change page owns separate discussion/workspace hosts. It
+      // mounts the group thread only when the change is publicly visible.
+      AppView._reactDevBoard()?.publishTopicHead({ card: null, body: null, item: null });
+      AppView._reactDevBoard()?.mountChangePage(slot);
+      return;
+    }
+    if (typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
     // 'session' (a shared in-flight dev session) uses the same 'session'
     // thread namespace as promoted proposals — the thread key is the
     // chat_sessions id either way, which is exactly what makes comments
@@ -4900,6 +4959,7 @@ const AppView = {
         AppView._renderKanbanFilterBar();
       }
       AppView._repaintKanbanBoard();
+      AppView._rewirePlusMenu();
       return;
     }
     // Workshop mode: ONE container. The retired List mode built a two-node
@@ -4935,7 +4995,23 @@ const AppView = {
     }
     AppView._renderKanbanFilterBar();
     AppView._rerenderWorkshop();
+    AppView._rewirePlusMenu();
     AppView._reanchorCardMenu();
+  },
+
+  // `#dev-actions` — the filter strip and the "+" — has TWO homes now: the
+  // frame's chrome on the Board, and the Workshop's own pane on the Workshop
+  // (features/dev-board/actions-row.tsx). Exactly one renders at a time, so a
+  // view-mode switch UNMOUNTS one button and mounts another, and the listeners
+  // `_wirePlusMenu` attached on entry are left pointing at a node that is gone.
+  //
+  // It was called once, from `renderDevView`, because the row never moved.
+  // Re-running it is cheap and idempotent — it aborts its previous
+  // AbortController before attaching — and `_repaintDevBody` is the one place
+  // every switch already funnels through.
+  _rewirePlusMenu() {
+    const content = document.getElementById('app-content');
+    if (content) AppView._wirePlusMenu(content);
   },
 
   // Locked-app banner at the very top of the card list (above the
@@ -5520,7 +5596,8 @@ const AppView = {
   _workshopCardBody(key) {
     const at = String(key || '').indexOf(':');
     if (at < 0) return null;
-    const kind = key.slice(0, at);
+    const rawKind = key.slice(0, at);
+    const kind = ['my-session', 'shared-session'].includes(rawKind) ? 'session' : rawKind;
     const rest = key.slice(at + 1);
     const id = kind === 'issue' ? Number(rest) : Number(rest);
     if (!Number.isFinite(id)) return null;
@@ -8750,6 +8827,10 @@ const AppView = {
   // Row KEYS are never touched here. A row's key is its `data-note`, and
   // dapp.json's declared checks address rows by it.
   _topicLedgerPath(pr, rows) {
+    // Underway changes are not in the automatic merge queue. Keep their
+    // actual check verdicts and manual actions, without promising a sync
+    // or a retry of a merge that has not been proposed yet.
+    if (['active', 'paused'].includes(pr?.status)) return rows;
     const at = (k) => rows.findIndex((r) => r.key === k);
     const iConflict = Math.max(at('mergeability'), at('conflict'));
     const iBehind = at('behind');
@@ -14742,7 +14823,6 @@ const AppView = {
     }
 
     DevChat.renderChatView();
-    DevChat._changeWorkspaceRequested = null;
 
     // #194: one-shot hint set by the "+" menu's "Propose a change" —
     // proposals are PRs, so the path runs through a session.
@@ -14925,6 +15005,7 @@ const AppView = {
   //                see DevChat.previewStaging / openStagingPanel).
   async ensureStaging(sessionId, fallbackUrl, testing, opts) {
     const staging = AppView._staging();
+    const slug = AppView.appData?.slug;
     const jump = !!(opts && opts.jump);
     const dock = !!(opts && opts.dock);
     // Streamlined Concept: every preview open funnels through here (#439),
@@ -14937,7 +15018,7 @@ const AppView = {
     // collab-gated) — open the last-known staging URL directly. If it was
     // GC'd they see the dead-preview page rather than a rebuild spinner.
     if (AppView.readOnly) {
-      if (fallbackUrl) AppView.swapToStaging(fallbackUrl, testing, { jump, dock });
+      if (fallbackUrl) return AppView.swapToStaging(fallbackUrl, testing, { jump, dock });
       // Nothing opened — take the optimistic publish above back.
       else window.Improve?.setPreviewActive?.(false);
       return;
@@ -14982,7 +15063,7 @@ const AppView = {
       return;
     }
     // Backed out while we waited on the POST.
-    if (loadId !== AppView._stagingLoadId) return;
+    if (loadId !== AppView._stagingLoadId || slug !== AppView.appData?.slug) return;
 
     if (data.status === 'ready') {
       // #816: `verified` means the server just watched the container answer
@@ -14991,12 +15072,11 @@ const AppView = {
       // `checksRunning` says the post-build screenshot/checks pass is still
       // hitting the same container, which is the one honest reason a live
       // preview's first load can be slow.
-      AppView.swapToStaging(data.url || fallbackUrl, testing, {
+      return AppView.swapToStaging(data.url || fallbackUrl, testing, {
         jump,
         verified: !!data.verified,
         checksRunning: !!data.checksRunning,
       });
-      return;
     }
     if (data.status === 'unavailable') {
       AppView._showStagingUnavailable(
@@ -15018,7 +15098,7 @@ const AppView = {
       sub: 'The preview was paused after a while of inactivity. Rebuilding it '
         + 'from the session’s latest changes. This usually takes 20–60 seconds.',
     });
-    AppView._pendingStagingPreview = { sessionId, jump, testing, dock, loadId };
+    AppView._pendingStagingPreview = { sessionId, slug, jump, testing, dock, loadId };
     if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
     AppView._stagingRebuildTimer = setTimeout(() => {
       if (loadId !== AppView._stagingLoadId) return;
@@ -15049,7 +15129,7 @@ const AppView = {
   onStagingRebuildResult(sessionId, { url, failed, error } = {}) {
     const pending = AppView._pendingStagingPreview;
     if (!pending || pending.sessionId !== sessionId) return;
-    if (pending.loadId !== AppView._stagingLoadId) { AppView._pendingStagingPreview = null; return; }
+    if (pending.loadId !== AppView._stagingLoadId || pending.slug !== AppView.appData?.slug) { AppView._pendingStagingPreview = null; return; }
     if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
     AppView._pendingStagingPreview = null;
     if (failed) {
@@ -15059,7 +15139,7 @@ const AppView = {
       });
       return;
     }
-    if (url) AppView.swapToStaging(url, pending.testing, { jump: pending.jump });
+    if (url) return AppView.swapToStaging(url, pending.testing, { jump: pending.jump });
   },
 
   // Open staging in the overlay (fullscreen, or docked beside dev chat).
@@ -15082,8 +15162,10 @@ const AppView = {
   // and the iframe is pointed at the preview immediately.
   // `opts.checksRunning` adds one line explaining a legitimately slower
   // first load while the post-build checks pass runs.
-  swapToStaging(stagingUrl, testing, opts) {
+  async swapToStaging(stagingUrl, testing, opts) {
     const staging = AppView._staging();
+    const slug = AppView.appData?.slug;
+    const selfHosted = !!(AppView.appData && AppView.appData.self_hosted);
 
     if (opts && typeof opts.dock === 'boolean') {
       if (opts.dock && document.getElementById('dc-staging-panel')) {
@@ -15106,20 +15188,50 @@ const AppView = {
     const testingMd = testing && typeof testing.md === 'string' && testing.md.trim() ? testing.md : null;
     AppView._stagingTesting = (safePath || testingMd) ? { md: testingMd, path: safePath } : null;
 
+    staging.setUrlLabel(resolved);
+    staging.open();
+    AppView._updateStagingModeUi();
+    if (window.DevConsole) DevConsole.setButtonVisible(true);
+    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay(), onRetry: null });
+    staging.setTestBtn({ hidden: true });
+    staging.setTestPanelHidden(true);
+    staging.clearSrc();
+    const loadId = ++AppView._stagingLoadId;
+    const current = () => loadId === AppView._stagingLoadId && slug === AppView.appData?.slug;
+    AppView._setStagingLoader(true, { title: 'Signing in to the preview…', sub: '' });
+
+    // Join the app's in-flight mint (or its fresh cache entry). Capture this
+    // result locally: a different app's later refresh must never choose the
+    // identity attached to this preview, including its testing deep links.
+    let token = null;
+    try { token = await AppView._mintToken(slug); } catch { /* retry below */ }
+    if (!current()) return;
+    if (!token) {
+      staging.setHandlers({ onRetry: () => {
+        if (current()) return AppView.swapToStaging(stagingUrl, testing, opts);
+      } });
+      AppView._setStagingLoader(true, {
+        title: 'Could not sign in to the preview',
+        sub: 'Check your connection, then try again.',
+        retry: true,
+      });
+      return;
+    }
+
     // Build iframe URLs with the URL API so a deep link carrying its own
     // query string composes with the token param (no '?token=' concat).
     // The URL API also keeps any remaining self-app fragment route after the
     // token query; clean `/app/...` testing paths stay in the pathname.
     const buildSrc = (path) => {
-      const visit = AppView.appData && AppView.appData.self_hosted
+      const visit = selfHosted
         ? AppView._selfAppHashPath(path)
         : path;
       let url;
-      try { url = new URL(visit || '/', resolved); } catch { return resolved; }
-      // App-scoped token (see refreshToken): only attach it when it was
-      // minted for the app this staging preview belongs to.
-      const token = AppView.tokenForSlug(AppView.appData && AppView.appData.slug);
-      if (token) url.searchParams.set('token', token);
+      try {
+        url = new URL(visit || '/', resolved);
+        if (url.origin !== new URL(resolved).origin) url = new URL('/', resolved);
+      } catch { return null; }
+      url.searchParams.set('token', token);
       return url.toString();
     };
     const jump = !!(opts && opts.jump) && !!safePath;
@@ -15127,18 +15239,7 @@ const AppView = {
     // retargets the pending load instead of being clobbered by it.
     const pending = { src: buildSrc(jump ? safePath : null) };
 
-    staging.setUrlLabel(resolved);
-    staging.open();
-    // #771: the toggle's visibility depends on the overlay being open.
-    AppView._updateStagingModeUi();
-    if (window.DevConsole) DevConsole.setButtonVisible(true);
-
     AppView._renderTestingControls(buildSrc, pending, jump);
-
-    staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
-
-    staging.clearSrc();
-    const loadId = ++AppView._stagingLoadId;
     const checksRunning = !!(opts && opts.checksRunning);
 
     // #816: FAST PATH. The server verified this container answered its
@@ -15166,9 +15267,9 @@ const AppView = {
     // spinner rather than a browser error page. (The probe always targets
     // the origin root, not the deep link — readiness is a host property,
     // and the deep path may be app-routed or auth-gated.)
-    AppView._waitForStagingReady(resolved, loadId, { checksRunning }).then((ready) => {
+    return AppView._waitForStagingReady(resolved, loadId, { checksRunning }).then((ready) => {
       // A newer swap (or a close) superseded this one — drop the result.
-      if (loadId !== AppView._stagingLoadId) return;
+      if (!current()) return;
       if (!ready) return;
       // Keep the spinner up across the render, same as the fast path.
       AppView._setStagingLoader(true, { title: 'Loading the preview…', sub: '' });
@@ -15564,7 +15665,8 @@ const AppView = {
       el.style.height = `${Math.round(rect.height)}px`;
     },
     setUrlLabel(text) { this._setText('staging-url-label', text || ''); },
-    setLoader(visible, { title, sub } = {}) {
+    setLoader(visible, { title, sub, retry = false } = {}) {
+      this._setHidden('staging-retry-btn', !visible || !retry);
       this._setHidden('staging-loader', !visible);
       if (title !== undefined) this._setText('staging-loader-title', title);
       if (sub !== undefined) this._setText('staging-loader-sub', sub);
@@ -15612,6 +15714,7 @@ const AppView = {
         };
       };
       bind('staging-back', 'onBack');
+      bind('staging-retry-btn', 'onRetry');
       bind('staging-dock-close', 'onDockClose');
       bind('staging-fullscreen-btn', 'onFullscreen');
       bind('staging-test-btn', 'onTest');
@@ -15698,8 +15801,8 @@ const AppView = {
   // it alone. The old truthiness check made '' a no-op, which would leave a
   // previous state's sub-line (the rebuild estimate, the checks note)
   // stranded under a title that no longer matches it.
-  _setStagingLoader(visible, { title, sub } = {}) {
-    AppView._staging().setLoader(visible, { title, sub });
+  _setStagingLoader(visible, { title, sub, retry = false } = {}) {
+    AppView._staging().setLoader(visible, { title, sub, retry });
   },
 
   // #816: retry schedule for the fallback readiness poll below.
