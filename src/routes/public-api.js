@@ -63,11 +63,14 @@ const HIDDEN_APP_STATUSES = ['error', 'creating', 'awaiting_secrets'];
 // rule, which is what actually enforces it; the real per-address decision
 // is never reported here. The message is conditional in its wording for
 // the same reason the body is not: it has to be true whichever branch ran.
+// It no longer says "still needs confirming" (#1538): a confirmed address
+// now gets a status code too, so that clause would be false for the very
+// branch the check-my-status flow runs.
 const RESEND_RESPONSE = Object.freeze({
   ok: true,
   cooldown_seconds: 60,
-  message: 'If that address is on our waitlist and still needs confirming, '
-    + 'a new code is on its way. It works for 15 minutes.',
+  message: 'If that address is on our waitlist, a six-digit code is on its '
+    + 'way. It works for 15 minutes.',
 });
 
 // `?include_wallets=0` (exactly the string '0') opts addresses out;
@@ -163,7 +166,7 @@ function publicApiRoutes(config) {
           icon_emoji: a.icon_emoji || null,
           icon_url: a.icon_image_id ? `/app-icons/${a.icon_image_id}` : null,
           active_users: parseInt(a.active_users, 10) || 0,
-          // From the anonymous-shell probe (services/shell-probe.js):
+          // From the anonymous shell + API-gate probe (services/shell-probe.js):
           // anything not positively classified 'public' is presented as
           // account-required — 'unknown' fails safe to gated, matching
           // the scaffold's default behavior.
@@ -291,9 +294,16 @@ function publicApiRoutes(config) {
     }
   });
 
-  // Mint a fresh code for an address and mail it, or — when the address is
-  // already confirmed — mail the "nothing left to do" shape instead. Shared
-  // by POST /resend and by the re-join branch above so the two cannot drift.
+  // Mint a fresh code for an address and mail it. Shared by POST /resend
+  // and by the re-join branch above so the two cannot drift.
+  //
+  // A CONFIRMED row gets a code too (#1538). It used to get the
+  // "nothing left to do" mail carrying its more_token LINK, which is
+  // exactly backwards for check-my-status: the person who wants to read
+  // their status is by definition already confirmed, so the one
+  // population the flow exists for was the one that never got a code.
+  // The mail differs (a status code, not a confirmation code) but the
+  // minting does not, so there is one code lifecycle and one throttle.
   //
   // Returns nothing and tells the caller nothing: every branch is silent,
   // including "not on the list", because the only way a caller could learn
@@ -304,20 +314,29 @@ function publicApiRoutes(config) {
     // Not on the list. No row to confirm, so no code and no mail — sending
     // one would tell a stranger's inbox that somebody typed it here.
     if (!row) return;
-    if (row.confirmed_at) {
-      // Already confirmed. No code is minted (there is nothing to consume)
-      // and the mail says so. This is the ONE place the platform discloses
-      // confirmation state, and it discloses it only to the address itself.
-      sendWaitlistCodeMail(config, email, { code: null, moreToken: row.more_token || null });
-      return;
-    }
+    const confirmed = !!row.confirmed_at;
     // Issuing deletes every unconsumed code for the address first, so the
     // previous one dies here: exactly one code is live at a time and a
     // forwarded older mail is already dead. That is what makes "use the
     // newest email" true rather than advice.
     const code = await waitlist.issueVerificationCode(pool, email).catch(() => null);
-    if (!code) return;
-    sendWaitlistCodeMail(config, email, { code, moreToken: row.more_token || null });
+    if (!code) {
+      // Minting failed. For a confirmed row the old link mail is still a
+      // true thing to say — there is nothing to type — so it stays as the
+      // degradation rather than leaving the address with silence.
+      if (confirmed) {
+        sendWaitlistCodeMail(config, email, { code: null, moreToken: row.more_token || null });
+      }
+      return;
+    }
+    sendWaitlistCodeMail(config, email, {
+      code,
+      moreToken: row.more_token || null,
+      // Picks the mail shape: a status code leads to "check my status"
+      // and carries no capability token, a confirmation code leads to
+      // "confirm my email".
+      confirmed,
+    });
   }
 
   // POST /api/public/waitlist/resend — a new six-digit code for an address
@@ -403,6 +422,11 @@ function publicApiRoutes(config) {
   // A wrong code and an address that was never on the list get the SAME
   // 422, so this cannot be used to test whether an email is on the
   // waitlist — the same non-enumeration contract the join endpoint keeps.
+  //
+  // It is also the read half of check-my-status (#1538): an
+  // already-confirmed row is a normal caller, its confirmed_at is left
+  // alone by the COALESCE, and the response carries where that row
+  // actually stands.
   router.post('/api/public/waitlist/confirm', waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistTokenLimiter, async (req, res) => {
     const email = waitlist.normalizeEmail(req.body?.email);
     const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
@@ -415,7 +439,16 @@ function publicApiRoutes(config) {
         return res.status(422).json({ error: 'That code is wrong or has expired. Ask for a new one.' });
       }
       log.info('public-api', 'Waitlist email confirmed by code', {});
-      return res.json({ ok: true, more_token: row.more_token || null });
+      // The status block rides along (#1538) so "check my status" is one
+      // round trip, not two, and so this surface and /more/:token cannot
+      // describe the same row differently — both derive from signupStatus.
+      const status = signupStatus(row);
+      return res.json({
+        ok: true,
+        more_token: row.more_token || null,
+        admitted: status.admitted,
+        status,
+      });
     } catch (err) {
       log.error('public-api', 'waitlist code confirm failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });

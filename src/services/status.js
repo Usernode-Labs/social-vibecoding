@@ -1,4 +1,5 @@
 const { getPool } = require('../db/pool');
+const { connectionCensus } = require('../db/connection-census');
 const log = require('./logger');
 const workerProgress = require('./worker-progress');
 const deployStatus = require('./deploy-status');
@@ -8,6 +9,8 @@ const nodeStatus = require('./node-status');
 const workerSvc = require('./worker');
 const applicationRuntime = require('./application-runtime');
 const runtimeStatus = require('./runtime-status');
+const activeWorkers = require('./active-workers');
+const stagingSvc = require('./staging');
 
 const WORKER_PREFIX = 'usernode-worker-';
 const APP_PREFIX = 'usernode-app-';
@@ -21,7 +24,7 @@ const STAGING_PREFIX = 'usernode-staging-';
 const MAX_STAGING_GLOBAL = 25;
 const MAX_STAGING_PER_USER = 3;
 const WORKER_ORPHAN_THRESHOLD_MS = 20 * 60 * 1000;
-const STUCK_SESSION_THRESHOLD_MS = 2 * 60 * 1000;
+const MISSING_PREVIEW_THRESHOLD_MS = 2 * 60 * 1000;
 
 // Match sessions.js LLM caps so the dashboard shows the same numbers.
 const USER_DAILY_LIMIT_CENTS = 2500;
@@ -70,6 +73,7 @@ async function gatherFull(config) {
     pool.query(
       `SELECT cs.id, cs.app_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
               cs.session_title, cs.staging_container_id, cs.staging_url, cs.status, cs.created_at,
+              cs.active_turn IS NOT NULL AS has_active_turn, cs.last_activity_at,
               cs.staging_image_ref, cs.staging_build_ref, cs.staging_runtime_kind, cs.staging_runtime_name,
               u.username, u.id AS user_id, a.slug AS app_slug
        FROM chat_sessions cs
@@ -113,6 +117,7 @@ async function gatherFull(config) {
   const containers = runtimeQ.resources || [];
   const stats = runtimeQ.stats || {};
   const runtimeKind = runtimeQ.runtimeKind || applicationRuntime.mode(config);
+  const runtimeAvailable = runtimeQ.available !== false;
 
   const byName = Object.fromEntries(containers.map((c) => [c.name, c]));
 
@@ -222,13 +227,15 @@ async function gatherFull(config) {
           status: s.status,
           stagingRuntimeName: stagingName,
           stagingRuntimeKind,
+          runtimeAvailable,
           staging: stagingState !== 'not_found' ? {
             name: stagingName,
             state: stagingState,
             status: staging?.status || stagingState,
             stats: stats[stagingName] || null,
           } : null,
-          stagingDriftWarning: !!(s.staging_runtime_name || s.staging_container_id) && stagingState === 'not_found',
+          stagingDriftWarning: runtimeAvailable
+            && !!(s.staging_runtime_name || s.staging_container_id) && stagingState === 'not_found',
           worker: worker ? {
             name: worker.name,
             state: worker.state,
@@ -259,6 +266,7 @@ async function gatherFull(config) {
       openIssues: parseInt(app.open_issues, 10),
       prodRuntimeName: prodName,
       prodRuntimeKind,
+      runtimeAvailable,
       prod: prodState !== 'not_found' ? {
         name: prodName,
         state: prodState,
@@ -278,7 +286,7 @@ async function gatherFull(config) {
       // free. It sat at the top of the admin status screen while three real
       // worker bootstrap failures went unnoticed below it, which is exactly
       // the failure mode a always-red indicator produces.
-      prodMissing: prodState === 'not_found'
+      prodMissing: runtimeAvailable && prodState === 'not_found'
         && app.status !== 'creating'
         && !app.self_hosted,
       sessions: appSessions,
@@ -299,13 +307,19 @@ async function gatherFull(config) {
     }
   }
 
-  // Sessions that have a branch but no staging URL for > 2 min — the exact
-  // drift state the server-side recoverSessions() scans for on startup.
+  // A branch alone does not promise a preview: first coding turns and CLI
+  // handoffs normally have one before submitting anything. Report missing
+  // previews only after a PR/build exists and work has stopped. Keep the
+  // legacy payload key for clients, but never call this worker liveness.
   const stuckSessions = sessions
     .filter((s) =>
-      s.branch_name &&
+      runtimeAvailable && s.branch_name &&
       !s.staging_url &&
-      Date.now() - new Date(s.created_at).getTime() > STUCK_SESSION_THRESHOLD_MS
+      (s.pr_number || s.staging_build_ref || s.staging_runtime_name || s.staging_container_id) &&
+      !s.has_active_turn &&
+      !activeWorkers.isSessionBusy(s.id) &&
+      !stagingSvc.hasInFlightBuild(s.id) &&
+      Date.now() - new Date(s.last_activity_at || s.created_at).getTime() > MISSING_PREVIEW_THRESHOLD_MS
     )
     .map((s) => ({
       id: s.id,
@@ -351,7 +365,13 @@ async function gatherFull(config) {
   //                           /proc, so freemem reflects the whole box,
   //                           not just the platform container).
   //   db                    — pg pool saturation; `waiting > 0` means
-  //                           handlers are queuing on connections.
+  //                           handlers are queuing on connections. `server`
+  //                           is the figure the pool is competing FOR
+  //                           (#1771): one Postgres backs the platform,
+  //                           every app and every preview, and its
+  //                           max_connections is the stock 100. A pool
+  //                           reporting `total: 3, max: 60` looks healthy
+  //                           right up to the server refusing the fourth.
   const sc = sessionCountsQ.rows[0] || {};
   const num = (v) => parseInt(v, 10) || 0;
   const globalCap = config.maxGlobalSessions || MAX_STAGING_GLOBAL;
@@ -380,6 +400,9 @@ async function gatherFull(config) {
       idle: pool.idleCount,
       waiting: pool.waitingCount,
       max: config.dbPoolMax || 10,
+      // Null when the census could not run — including, pointedly, when it
+      // could not run because the server had no connection left to give.
+      server: await connectionCensus(pool),
     };
   } catch { /* pg internals not present — leave null */ }
 
@@ -408,6 +431,16 @@ async function gatherFull(config) {
     hostLoadAvg1: host?.loadAvg1 ?? null,
     dbPoolWaiting: dbPool ? dbPool.waiting : null,
   };
+  if (!runtimeAvailable) {
+    // Null means unobserved; zero would falsely claim an empty/healthy fleet.
+    for (const key of ['prodRunning', 'prodMissing', 'stagingRunning', 'stagingTotal',
+      'workersRunning', 'workersReady', 'workersTotal', 'workersInFlight',
+      'workersWarmIdle', 'workersBootstrapping', 'workersOrphaned', 'stuckSessions', 'activeTurns']) {
+      summary[key] = null;
+    }
+    capacity.activeTurns = null;
+    capacity.warmIdleWorkers = null;
+  }
 
   return {
     // `now` is replaced at serve time so cached payloads don't show stale
@@ -416,8 +449,9 @@ async function gatherFull(config) {
     now: new Date().toISOString(),
     version: process.env.GIT_SHA || 'dev',
     runtimeKind,
+    runtimeAvailable,
     isAdmin: true, // overridden in redact() based on requester
-    deployProgress: deployStatus.read(),
+    deployProgress: await deployStatus.read(config),
     node: nodeStatus.get(),
     explorer: nodeStatus.getExplorer(),
     limits: {

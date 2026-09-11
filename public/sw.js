@@ -56,6 +56,20 @@
 // starts every existing install from a known current document. The stable API
 // cache below is deliberately preserved.
 //
+// v10: the first bump made for a change that is not in this file at all.
+// #1985 replaced the Workshop's summary paragraph with three cards, and the
+// whole of that lives in the React bundle and in the document that names its
+// build-scoped URL — exactly the two things a deploy rebuilds and the note
+// below says nothing refreshes. It merged, it deployed, production served the
+// new build, and a browser that already had the app kept drawing the old
+// screen: the change reached nobody who had ever loaded the page before.
+//
+// So the rule this entry is really recording: a change whose user-visible
+// surface is ENTIRELY inside the shell bundle needs a bump in the same
+// proposal, because for those there is no second path to the reader. A
+// change that touches public/js/** or a server response does not — those
+// are fetched per navigation and arrive on their own.
+//
 // This bump is also a deliberate cache retirement, not just a code change
 // (#1673 follow-up).
 //
@@ -81,7 +95,12 @@
 // It is cheap and bounded for the reason the API cache below is NOT
 // versioned: a bump drops only SHELL_CACHE and IMMUTABLE_CACHE, both
 // content-addressed and network-first, and leaves the offline session alone.
-const SW_VERSION = 'v9';
+//
+// v11: refresh the task-time OpenRouter picker. Its controls live in the main
+// shell bundle, while Settings lives in a lazy chunk; without retiring the
+// cached shell, an existing installation could show the new Settings picker
+// alongside the old in-task model list.
+const SW_VERSION = 'v11';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
@@ -467,6 +486,11 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   }
   if (p === '/api/me/github' || p.startsWith('/api/me/github/')) return 'bypass';
   if (p === '/api/me/x' || p.startsWith('/api/me/x/')) return 'bypass';
+  // The OpenRouter catalog is private, key-filtered, and has its own short
+  // server cache plus an explicit refresh control. Replaying the PWA's much
+  // longer offline copy can hide newly released models and account-policy
+  // changes, while an offline picker cannot start a usable run anyway.
+  if (p === '/api/me/coding-agent/models') return 'bypass';
   if (p.startsWith('/.well-known/oauth-')) return 'bypass';
   // Auth endpoints are online-only — EXCEPT /api/auth/me, which is cached
   // so the SPA's boot check succeeds offline for a logged-in user.

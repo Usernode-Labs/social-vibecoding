@@ -14,6 +14,12 @@
 // already confirmed is disclosed in the MAIL instead, which only the address
 // itself receives.
 //
+// #1538 widened what the mail is FOR without touching any of that. A
+// confirmed address used to get no code at all, which made "check my
+// status" impossible from a device that had never joined: the only thing
+// this endpoint would send it was a stage-2 survey link. Every branch now
+// mints, and the four bodies are still one frozen object.
+//
 // Harness style follows tests/waitlist-rate-limit.test.js: swap src/db/pool
 // for an in-memory mock, drop the rate-limits and public-api modules from
 // require.cache so each test gets fresh limiter stores, mount
@@ -116,7 +122,12 @@ test('every branch answers with the same status and the same bytes', async () =>
     const body = JSON.parse(seen[0].body);
     assert.equal(body.ok, true);
     assert.equal(body.cooldown_seconds, 60);
-    assert.match(body.message, /new code is on its way/i);
+    assert.match(body.message, /six-digit code is on its way/i);
+    // It must not claim the address "still needs confirming" (#1538): a
+    // confirmed address is now a first-class caller here, so that clause
+    // would be false for the very branch check-my-status runs, and a false
+    // clause in a shared body is a hint about which branch answered.
+    assert.doesNotMatch(body.message, /needs confirming/i);
     // The words must not resolve the question either. "If that address" is
     // load-bearing copy, not hedging.
     assert.match(body.message, /if that address/i);
@@ -144,9 +155,15 @@ test('a malformed address is refused before any lookup happens', async () => {
   });
 });
 
-test('a pending address is mailed a fresh code; a confirmed one is mailed none', async () => {
+test('both a pending and a confirmed address are mailed a fresh code (#1538)', async () => {
   // The mail is the ONLY channel that distinguishes the two, and it goes to
   // the address itself, so it discloses nothing to a third party.
+  //
+  // The confirmed branch is the one #1538 fixed. It used to return before
+  // minting anything and mail a stage-2 survey link instead, which is
+  // backwards: anyone asking to read their status is by definition already
+  // confirmed, so the branch that most needs a code was the only one that
+  // never got one.
   const seen = [];
   await withPublicApi(async (base) => {
     await resend(base, PENDING);
@@ -155,13 +172,82 @@ test('a pending address is mailed a fresh code; a confirmed one is mailed none',
   }, { mailTransport: { send: async (m) => { seen.push(m); } } });
 
   assert.equal(seen.length, 2, 'an address that is not on the list is mailed nothing');
+
+  // Unconfirmed: a code plus the one-click confirm link, unchanged.
   assert.equal(seen[0].kind, 'waitlist_code');
+  assert.equal(seen[0].confirmed, false);
   assert.match(seen[0].code, /^[0-9]{6}$/);
   assert.match(seen[0].confirmUrl, /\/api\/public\/waitlist\/confirm\/a{48}$/);
 
+  // Confirmed: a code as well, flagged so the template picks the
+  // status-code wording, and NO confirm link — there is nothing left to
+  // confirm, and a capability token in a mail nobody asked for is a
+  // capability handed to whoever the mailbox forwards to.
   assert.equal(seen[1].kind, 'waitlist_code');
-  assert.equal(seen[1].code, null, 'a confirmed address gets no code, because none is minted');
-  assert.match(seen[1].statusUrl, /#more\/a{48}$/);
+  assert.equal(seen[1].confirmed, true);
+  assert.match(seen[1].code, /^[0-9]{6}$/);
+  assert.equal(seen[1].confirmUrl, null);
+  // The status URL is a query spelling, never a fragment: the link
+  // rewriters mail providers apply drop everything after the `#` (#1545).
+  assert.match(seen[1].statusUrl, /\/\?status=1$/);
+  assert.doesNotMatch(seen[1].statusUrl, /#/);
+
+  // And the two codes are different values, because each call mints its
+  // own and deletes any predecessor.
+  assert.notEqual(seen[0].code, seen[1].code);
+});
+
+test('a confirmed address falls back to the survey link only when minting fails', async () => {
+  // The degradation, kept from the old behaviour: if the code cannot be
+  // written we still send something the address can act on rather than
+  // going silent. It is the fallback now, not the rule.
+  const seen = [];
+  const poolPath = require.resolve('../src/db/pool');
+  const publicApiPath = require.resolve('../src/routes/public-api');
+  const rateLimitsPath = require.resolve('../src/middleware/rate-limits');
+  const originalPool = require.cache[poolPath];
+  const base = makeMockPool();
+  const brokenMint = {
+    async query(sql, params) {
+      if (/INSERT INTO waitlist_verification_codes/.test(sql)) {
+        throw new Error('codes table is on fire');
+      }
+      return base.query(sql, params);
+    },
+  };
+  require.cache[poolPath] = {
+    exports: { getPool: () => brokenMint },
+    loaded: true, id: poolPath, filename: poolPath,
+    paths: originalPool ? originalPool.paths : [],
+  };
+  delete require.cache[rateLimitsPath];
+  delete require.cache[publicApiPath];
+  let server;
+  try {
+    const { publicApiRoutes } = require('../src/routes/public-api');
+    const app = express();
+    app.use(express.json());
+    app.use(publicApiRoutes({
+      databaseUrl: 'postgres://fake/fake',
+      env: 'test',
+      mailTransport: { send: async (m) => { seen.push(m); } },
+    }));
+    server = app.listen(0);
+    await new Promise((resolve) => server.once('listening', resolve));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    assert.equal((await resend(origin, CONFIRMED)).status, 200);
+    assert.equal((await resend(origin, PENDING)).status, 200);
+  } finally {
+    if (server) server.close();
+    if (originalPool) require.cache[poolPath] = originalPool;
+    else delete require.cache[poolPath];
+    delete require.cache[rateLimitsPath];
+    delete require.cache[publicApiPath];
+  }
+
+  assert.equal(seen.length, 1, 'only the confirmed branch has a fallback to send');
+  assert.equal(seen[0].code, null);
+  assert.match(seen[0].statusUrl, /#more\/a{48}$/);
 });
 
 test('the resend limiter is keyed per address, not shared across them', async () => {

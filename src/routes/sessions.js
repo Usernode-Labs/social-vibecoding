@@ -736,21 +736,45 @@ async function loadSessionCheckContext(pool, sessionId) {
   };
 }
 
-function buildFailingChecksBlock(checkState, testResults) {
-  if (checkState !== 'failing') return '';
+// The failing checks as DATA rather than prose, capped the same way.
+//
+// #1766: the coding agent has been told exactly which checks fail, with
+// names, paths and reasons, since buildFailingChecksBlock below started
+// injecting them into its prompt. The person watching the card got a number.
+// So the board renders these same rows now, and both callers derive from one
+// function — an agent and a human reading different answers about the same
+// run is the failure this shape prevents.
+function summarizeFailingChecks(checkState, testResults, max = FAILING_CHECKS_MAX) {
+  if (checkState !== 'failing') return { total: 0, blocking: 0, rows: [] };
   const failing = (Array.isArray(testResults) ? testResults : [])
     .filter((r) => r && r.status !== 'pass');
-  if (!failing.length) return '';
+  return {
+    total: failing.length,
+    // Advisory rows report but do not block, so a reviewer counting them as
+    // reasons the merge is held up would be reading a blocker that is not
+    // one. Same distinction MergeStatus.lifecycle already draws for the pill.
+    blocking: failing.filter((r) => !r.advisory).length,
+    rows: failing.slice(0, max).map((r) => ({
+      name: String(r.name || 'unnamed check').slice(0, 160),
+      path: String(r.path || '').slice(0, 160) || null,
+      reason: String(r.failureReason || 'failed').slice(0, 300),
+      advisory: !!r.advisory,
+      consoleError: Array.isArray(r.consoleErrors) && r.consoleErrors[0]
+        ? String(r.consoleErrors[0].message || '').slice(0, 200)
+        : null,
+    })),
+  };
+}
 
-  const blocking = failing.filter((r) => !r.advisory);
-  const lines = failing.slice(0, FAILING_CHECKS_MAX).map((r) => {
-    const name = String(r.name || 'unnamed check').slice(0, 160);
-    const p = String(r.path || '').slice(0, 160);
-    const reason = String(r.failureReason || 'failed').slice(0, 300);
-    const firstConsole = Array.isArray(r.consoleErrors) && r.consoleErrors[0]
-      ? ` · first console error: ${String(r.consoleErrors[0].message || '').slice(0, 200)}`
-      : '';
-    return `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${name}"${p ? ` (path: ${p})` : ''} — ${reason}${firstConsole}`;
+function buildFailingChecksBlock(checkState, testResults) {
+  const summary = summarizeFailingChecks(checkState, testResults);
+  const failing = { length: summary.total };
+  if (!summary.total) return '';
+
+  const blocking = { length: summary.blocking };
+  const lines = summary.rows.map((r) => {
+    const firstConsole = r.consoleError ? ` · first console error: ${r.consoleError}` : '';
+    return `- [${r.advisory ? 'advisory' : 'BLOCKING'}] "${r.name}"${r.path ? ` (path: ${r.path})` : ''} — ${r.reason}${firstConsole}`;
   });
   const more = failing.length > FAILING_CHECKS_MAX
     ? `\n(+${failing.length - FAILING_CHECKS_MAX} more failing)` : '';
@@ -1304,13 +1328,14 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // is a branch in the APP repository, and only comparing the two repos
       // separates that from a genuine fork.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
+        `SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
                 cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
                 cs.transcript_shared_at, cs.created_at, cs.source,
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
                 cs.check_state, cs.check_phase, cs.check_error_detail,
-                cs.agent_backend, cs.agent_model,
+                cs.test_results,
+                cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name,
                 a.icon_emoji AS app_icon_emoji,
@@ -1468,6 +1493,22 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
             app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+          },
+          // #1808: the row PAST the relative form's seven-day floor. Every
+          // other mock here is minutes or hours old, so the session rows'
+          // stamp read "5m ago" on all of them and the branch that prints a
+          // real date was unreachable in a preview. A session parked a
+          // fortnight ago is also the case the old code got worst: it
+          // bucketed at thirty days and then months, so this row read "0mo
+          // ago" once and "5mo ago" later, neither of which is a day.
+          {
+            id: 990108, branch_name: 'mock/my-session-stale', pr_number: null,
+            pr_url: null, pr_title: null,
+            session_title: '[Mock] Your session from a couple of weeks ago',
+            status: 'active', linked_issues: [], shared_at: null,
+            created_at: new Date(Date.now() - 15 * 24 * 3600 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 14 * 24 * 3600 * 1000).toISOString(),
+            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
           }
         );
       }
@@ -1507,6 +1548,31 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       }
       // Per-viewer denominators for the "(x/y)" header — full admins get
       // the raised caps. Cheap (pure function on req.user, no query).
+      // #1766: name the failing checks, and drop the raw results.
+      //
+      // The card could already say "Checks failing · 3"; it could not say
+      // WHICH three, so the owner's only route to that was reading
+      // test_results out of the API by hand. Meanwhile the coding agent has
+      // been handed the full list, with reasons, in its prompt.
+      //
+      // Bounded on purpose: test_results holds a row per declared check (500+
+      // today) and this endpoint is polled. summarizeFailingChecks caps the
+      // rows and carries the totals separately, so the card can say "3 of 528
+      // failing" and list the first few without the feed growing with the
+      // manifest.
+      //
+      // IMPORTED rows keep the raw column, because they already had it:
+      // enrichImportedUnderwaySessions has been sending it for them since
+      // they became proposal-shaped, and me-active-sessions.test.js pins it.
+      // Dropping it there would be a silent breaking change to an existing
+      // contract in the name of a new one. Everything else selected it only
+      // so this summary could be built, so it goes back off the wire.
+      for (const row of sessions) {
+        if (!row) continue;
+        const summary = summarizeFailingChecks(row.check_state, row.test_results);
+        if (row.source !== 'imported') delete row.test_results;
+        if (summary.total) row.failing_checks = summary;
+      }
       res.json({
         sessions, totals, externalTasks, caps: effectiveSessionCaps(config, req.user),
       });
@@ -1678,7 +1744,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // has a defaulted agent_backend that no turn ever ran through.
       const { rows } = await pool.query(
         `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
-                created_from_issue_number, agent_backend, agent_model, source, external_agent,
+                created_from_issue_number, agent_backend, agent_model, source, external_agent, build_venue,
                 (spec_md IS NOT NULL AND spec_md <> '') AS has_spec,
                 -- The same derivation the shared-session list uses, so the
                 -- owner's own card and everyone else's card agree about
@@ -1793,6 +1859,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
                 (cs.pr_number IS NOT NULL OR cs.checks_commit_sha IS NOT NULL)
                   AS can_preview,
                 cs.linked_issues, cs.source, cs.imported_pr_author,
+                cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
                 cs.check_state, cs.check_phase,
                 (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
                 (SELECT COUNT(*)::int FROM chat_session_messages m
@@ -2489,6 +2556,34 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     } catch (err) {
       log.error('sessions', 'Failed to clone headless session', { message: err.message, stack: err.stack });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Check results are fetched on demand, separately from the private dev
+  // transcript and the lightweight board feed. The app view gate above still
+  // applies; sharing a session exposes these results, never its messages.
+  router.get('/api/sessions/:id/checks', async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.session_title, cs.pr_title,
+                cs.check_state, cs.check_phase, cs.check_trigger,
+                cs.check_error_detail, cs.checks_checked_at, cs.checks_commit_sha,
+                cs.checks_progress, cs.test_results, cs.checks_base_sha,
+                cs.checks_base_verdict, cs.checks_base_behind_by
+           FROM chat_sessions cs
+          WHERE cs.id = $1`,
+        [parseInt(req.params.id, 10)]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      const session = rows[0];
+      const visible = session.user_id === req.user.id || req.user.isAdmin
+        || (session.shared_at && ['active', 'paused'].includes(session.status))
+        || ['promoted', 'merging', 'merged'].includes(session.status);
+      if (!visible) return res.status(404).json({ error: 'Session not found' });
+      res.set('Cache-Control', 'no-store').json({ session });
+    } catch (err) {
+      log.error('sessions', 'Failed to read check results', { message: err.message });
+      res.status(500).json({ error: 'Could not load check results' });
     }
   });
 
@@ -6762,12 +6857,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
           .finally(() => { handle.confirming = false; });
       }
     } else if (handle.workerName) {
-      // Legacy single-shot fallback: no in-flight turn to signal, so we
-      // SIGTERM the whole container. `docker stop` gives it ~10s
-      // before SIGKILL — fine for the legacy path because the wrapper
-      // IS the per-turn workload there.
-      docker.execFileAsync('docker', ['stop', handle.workerName], { timeout: 15000 })
-        .catch((err) => log.warn('sessions', 'docker stop failed', { err: err.message }));
+      // Legacy single-shot fallback: stop the whole worker through its
+      // runtime. Kubernetes removes the Deployment and retains the workspace;
+      // Docker keeps the existing stop-only behavior.
+      worker.stopWorker(handle.workerName)
+        .catch((err) => log.warn('sessions', 'Worker stop failed', { err: err.message }));
     }
 
     try { handle.abort.abort(); } catch {}
@@ -6891,6 +6985,58 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         aiEnabled: true,
         resetsAt: reset.toISOString(),
         lowBalancePct: 80,
+        // #1788: which window these three figures describe. The daily cap
+        // is the one that bound here, which is what ?demo=1 has always
+        // meant — stated explicitly now that it is not the only answer.
+        capWindow: 'daily',
+        windowLabel: 'Today',
+        resetLabel: 'midnight UTC',
+        dailyApplies: true,
+        dailyLimitCents: 2000,
+        dailySpentCents: 2000,
+        weeklyApplies: false,
+        weeklyLimitCents: 0,
+        weeklySpentCents: 0,
+        demo: true,
+      });
+    }
+    // #1788: the weekly sibling. A spent WEEKLY allowance is even less
+    // reachable on a preview than a spent daily one — it would take seven
+    // days of seeded spend — and its copy differs everywhere the boundary
+    // is named ("this week", "Resets Monday 00:00 UTC"), so it gets its own
+    // fixture rather than a flag on the one above. The daily cap still has
+    // headroom here, so the weekly cap is unambiguously the one binding.
+    if (process.env.USERNODE_ENV === 'staging' && req.query.demo === 'weekly-out') {
+      // Next Monday 00:00 UTC, inline for the same reason as above: this
+      // branch stays provably free of any service call.
+      const weekReset = new Date();
+      weekReset.setUTCDate(weekReset.getUTCDate() + (((8 - weekReset.getUTCDay()) % 7) || 7));
+      weekReset.setUTCHours(0, 0, 0, 0);
+      return res.json({
+        spentCents: 17500,
+        limitCents: 17500,
+        remainingCents: 0,
+        creditPolicy: 'legacy',
+        tier: 'legacy',
+        limitSource: 'default',
+        verificationRequired: false,
+        entitlementAvailable: true,
+        tierLimitCents: 1000,
+        globalSpentCents: 4000,
+        globalLimitCents: 100000,
+        byokSpentCents: 0,
+        aiEnabled: true,
+        resetsAt: weekReset.toISOString(),
+        lowBalancePct: 80,
+        capWindow: 'weekly',
+        windowLabel: 'This week',
+        resetLabel: 'Monday 00:00 UTC',
+        dailyApplies: true,
+        dailyLimitCents: 2000,
+        dailySpentCents: 900,
+        weeklyApplies: true,
+        weeklyLimitCents: 17500,
+        weeklySpentCents: 17500,
         demo: true,
       });
     }
@@ -6962,6 +7108,24 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
             commitHash = ref.object.sha;
           }
         } catch {}
+      }
+
+      // Manual deployment can discover a newer branch head. Claim it before
+      // entering the coordinator, but never regress a concurrently changed pin.
+      if (require('../services/preview-lifecycle').enabled(config) && commitHash !== 'latest') {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          const claim = await client.query(`SELECT id FROM chat_sessions
+            WHERE id = $1 AND checks_commit_sha IS NOT DISTINCT FROM $2::text
+            FOR UPDATE`, [session.id, session.checks_commit_sha || null]);
+          if (!claim.rows.length) throw require('../services/preview-lifecycle').cancelled();
+          await visuals.setChecksPending(client, session.id, commitHash, 'building', 'manual-recheck');
+          await client.query('COMMIT');
+        } catch (err) {
+          await client.query('ROLLBACK');
+          throw err;
+        } finally { client.release(); }
       }
 
       // Build and deploy staging (async — respond immediately)
@@ -7066,14 +7230,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         // short of a new commit. Attaching it here is idempotent, one
         // `docker inspect` on the already-aliased path, and never throws.
         const stagingName = `usernode-staging-${session.app_slug}--${sessionId}`;
-        await docker.ensureNetworkAlias(
-          stagingName,
-          applicationRuntime.dnsAlias({ environment: 'staging', sessionId })
-        ).catch(() => false);
-        const verified = await docker.probeHealthOnce(
-          stagingName, 3000, '/health',
-          { timeoutMs: 3000 }
-        ).catch(() => false);
+        const runtimeKind = session.staging_runtime_kind || applicationRuntime.mode(config);
+        if (runtimeKind === 'docker') {
+          await docker.ensureNetworkAlias(
+            stagingName,
+            applicationRuntime.dnsAlias({ environment: 'staging', sessionId })
+          ).catch(() => false);
+        }
+        const verified = await applicationRuntime.probeHealth(config, {
+          runtimeKind,
+          runtimeName: session.staging_runtime_name || (runtimeKind === 'docker' ? stagingName : null),
+        }, { timeoutMs: 3000 }).catch(() => false);
         if (!verified) {
           log.warn('sessions', 'ensure-staging: preview is live but did not answer its healthcheck', {
             sessionId, appSlug: session.app_slug,
@@ -10110,6 +10277,7 @@ const SUGGEST_REPLIES_TOOL = {
     + QUICK_REPLY_RULES_TEXT,
   input_schema: {
     type: 'object',
+    additionalProperties: false,
     properties: {
       replies: {
         type: 'array',
@@ -14715,4 +14883,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { BUILD_VENUES, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, advanceSharedReviewAfterSync, advanceReviewAfterPlatformSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildCodingAgentBuildGuidance, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

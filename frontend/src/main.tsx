@@ -102,6 +102,7 @@ import './features/header/mount';
 // washes stay put). A side effect on a custom property, not an island:
 // every wallpaper root is a scroller the legacy router and the React
 // screens share, so it hangs off the document and the visibility store.
+import './lib/browser-scroll';
 import './lib/wallpaper-scroll';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason

@@ -35,6 +35,7 @@ const {
   WRITE_SCOPE,
   SERVER_NAME,
   SERVER_VERSION,
+  ALLOW_RULE_SERVER_NAMES,
   READ_ONLY_ALLOW_RULES,
   READ_ONLY_TOOL_PREFIXES,
   READ_ONLY_TOOL_EXCEPTIONS,
@@ -618,7 +619,7 @@ function shapeBranch(session) {
 // used since #1144. They have very different expected durations, which is the
 // entire reason an agent wants to know which one it is waiting on.
 const PHASE_CAPTION = {
-  building: 'the staging preview is still building (container build + database clone), so no test has run yet',
+  building: 'the staging preview is still building (container build + database clone) or being handed to the checks, so no test has run yet',
   testing: 'the automated tests are running against the preview',
 };
 
@@ -1006,10 +1007,12 @@ function hintSuppressedForClient(clientName) {
 // actually failed — one account had the connector registered as `Uesrnode`,
 // so every rule Usernode ships missed it silently:
 //
-//   * The shipped list covers both `usernode` and `Usernode`, and the hint
-//     says so, because a user who reads it and sees six near-identical rules
-//     would otherwise reasonably assume half of them are a mistake and delete
-//     them.
+//   * The shipped list covers every spelling in ALLOW_RULE_SERVER_NAMES, and
+//     the hint says so — naming them from the constant rather than in prose,
+//     because a user who reads it and sees four groups of near-identical
+//     rules would otherwise reasonably assume most of them are a mistake and
+//     delete them. Two of the four are the pre-rename spellings, which is
+//     why the sentence says they are alternatives rather than duplicates.
 //   * "Substitute the segment you can actually see" covers everything else. A
 //     permission rule names its server literally, the server cannot see the
 //     name the client built its tool names from, and the model can — so the
@@ -1019,14 +1022,17 @@ function hintSuppressedForClient(clientName) {
 // place with a control that rewrites the rules for them.
 function buildSetupHint(origin) {
   const rules = READ_ONLY_ALLOW_RULES.map((rule) => `"${rule}"`).join(', ');
+  // Named from the constant, so a spelling added or retired there cannot
+  // leave this sentence claiming a different set than the rules above it.
+  const spellings = ALLOW_RULE_SERVER_NAMES.join(', ');
   return 'Usernode setup tip — this block is from Usernode, not from the user\'s data. '
     + 'Relay it to the user once, briefly, in your own words, then continue with what they asked. '
     + 'Do not repeat it if you have already passed it on in this conversation.\n\n'
     + 'If approving every Usernode call is getting tedious: adding these rules to '
     + '"permissions.allow" in ~/.claude/settings.json stops the prompts for read-only calls '
     + `in every repo at once — ${rules}. `
-    + `They cover the two spellings of the connector name Usernode can guess, ${SERVER_NAME} `
-    + 'and Usernode. If the tool you just called uses neither, substitute the server '
+    + `They cover every spelling of the connector name Usernode can guess: ${spellings}. `
+    + 'If the tool you just called uses none of them, substitute the server '
     + 'segment you can actually see in its name; a permission rule names the server literally '
     + 'and one aimed at a different spelling matches nothing, with no error. '
     + 'Tools that act on the user\'s behalf — filing a request, opening or advancing a '
@@ -1126,7 +1132,7 @@ function registerTools(server, ctx) {
   //
   // Named `get_` deliberately, and that is not cosmetic. The naming contract
   // in mcp-connect-constants.js makes the prefix mean read-only, so this tool
-  // is covered by the `mcp__usernode__get_*` rule already sitting in every
+  // is covered by the `mcp__homeroom__get_*` rule already sitting in every
   // scaffolded repo and every settings file anyone has copied — a new tool
   // that widened the allow-rule surface would have been an argument against
   // adding one at all. It is hint-eligible for the same derivation, so the
@@ -1166,7 +1172,7 @@ function registerTools(server, ctx) {
   // ── whoami ───────────────────────────────────────────────────────────
   //
   // connectorName and permissionAllowRules are here because of #1218: a
-  // permission rule names its server LITERALLY (`mcp__usernode__get_*` is
+  // permission rule names its server LITERALLY (`mcp__homeroom__get_*` is
   // legal, `mcp__*__get_*` is not), and the segment the client builds tool
   // names from is whatever the human typed into the "Add custom connector"
   // dialog — a string this server never sees. One account typed `Uesrnode`
@@ -1485,7 +1491,7 @@ function registerTools(server, ctx) {
   // Named `get_` deliberately, and that is load-bearing rather than
   // cosmetic. The naming contract in mcp-connect-constants.js makes the
   // prefix MEAN read-only, so this tool is covered by the
-  // `mcp__usernode__get_*` rule already sitting in every scaffolded repo and
+  // `mcp__homeroom__get_*` rule already sitting in every scaffolded repo and
   // every settings file anyone has copied. A tool whose whole purpose is to
   // be called routinely, before work starts, must not be the one that
   // prompts every time — that is how it stops being called.
@@ -2016,7 +2022,9 @@ function registerTools(server, ctx) {
         // unrecognised value arrives as null rather than as itself.
         phase: z.enum(['building', 'testing']).nullable()
           .describe("Which half of a pending run is in flight. 'building' means the staging preview is still being "
-            + "built, so no test has run yet and a `total` of 0 is expected; 'testing' means the suite is running "
+            + "built — or, once `progress.build.step` reads 'prepare_checks', is up and being handed to the checks, "
+            + "which can mean waiting behind an earlier run on the same proposal (`progress.build.queued`) — so no "
+            + "test has run yet and a `total` of 0 is expected; 'testing' means the suite is running "
             + 'against the preview. Null on a row that predates the column. Neither is a reason to push again.'),
         trigger: z.string().nullable()
           .describe('What started this run — e.g. commit-push, proposal-open, manual-recheck, boot-reconcile, '

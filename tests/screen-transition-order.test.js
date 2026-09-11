@@ -93,8 +93,8 @@ test('_showOnlyScreen hides every other root, reveals one, resets the chevron', 
   // React store for a React-owned root and falls back to the class otherwise.
   assert.match(body, /App\._setScreenVisible\(id, false\)/, 'the rest are hidden');
   assert.match(body, /App\._setScreenVisible\(revealId, true\)/, 'the target is revealed');
-  assert.match(body, /App\.setBackIcon\('home'\)/,
-    "the back chevron goes back to meaning 'home' on every swap");
+  assert.match(body, /App\.setBackIcon\(revealId === 'home-screen' \|\| revealId === 'browse-screen' \? 'none' : 'home'\)/,
+    'Home/Browse share their root header; secondary screens keep a Home button');
   // The comment is load-bearing: the ordering rule is invisible from the
   // call sites, so it must be stated where the primitive lives.
   const doc = appJs.slice(appJs.indexOf('  SCREEN_IDS:') - 1400,

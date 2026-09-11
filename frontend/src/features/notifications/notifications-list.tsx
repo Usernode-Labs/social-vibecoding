@@ -178,7 +178,8 @@ function Saved({ view, touch }: { view: SavedView; touch: boolean }): ReactNode 
           <span className="font-bold text-zinc-900 dark:text-zinc-100">{view.who}</span>
           {' in '}
           <span>{view.appName}</span>
-          <span>{` · ${view.time}`}</span>
+          {' · '}
+          <time title={view.timeTitle}>{view.time}</time>
         </div>
         <div className="text-sm leading-snug text-zinc-900 dark:text-zinc-100 line-clamp-2">{view.text}</div>
       </button>
@@ -246,8 +247,8 @@ function Invite({ view, touch }: { view: InviteView; touch: boolean }): ReactNod
         <span className="font-bold">{view.appName}</span>
       </div>
       <div className="text-xs text-zinc-500 dark:text-zinc-400">
-        <span aria-hidden="true">{view.icon}</span>
-        {` ${view.time}`}
+        <span aria-hidden="true">{`${view.icon} `}</span>
+        <time title={view.timeTitle}>{view.time}</time>
       </div>
       <div className="flex gap-2 mt-2">
         <Button

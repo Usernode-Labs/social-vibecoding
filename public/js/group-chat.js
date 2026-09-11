@@ -13,6 +13,7 @@ const GroupChat = {
   typingTimeout: null,
   oldestMessageId: null,
   hasMore: true,
+  _historyLoad: null,
   // Scroll-position memory. `_lockedToBottom` drives "should new incoming
   // messages auto-scroll?". `_savedScrollTop` is the last observed scroll
   // offset so we can restore it when the tab is re-mounted (group-chat DOM
@@ -165,7 +166,7 @@ const GroupChat = {
   // (#gc-messages) plus at most one mounted thread (#gc-thread-messages,
   // inside an Issues/Proposals accordion). Per-thread history caches
   // live in `threads`, keyed by `${type}:${ref}`.
-  threads: new Map(),       // key -> { messages, oldestId, hasMore, loaded }
+  threads: new Map(),       // key -> { messages, oldestId, hasMore, loaded, loading }
   activeThread: null,       // { type, ref } | null — the mounted thread
   _threadTypingTimer: null,
 
@@ -176,7 +177,7 @@ const GroupChat = {
   _threadState(type, ref) {
     const key = GroupChat.threadKey(type, ref);
     if (!GroupChat.threads.has(key)) {
-      GroupChat.threads.set(key, { messages: [], oldestId: null, hasMore: true, loaded: false });
+      GroupChat.threads.set(key, { messages: [], oldestId: null, hasMore: true, loaded: false, loading: false });
     }
     return GroupChat.threads.get(key);
   },
@@ -330,6 +331,7 @@ const GroupChat = {
   },
 
   disconnect() {
+    GroupChat._historyLoad = null;
     if (GroupChat._reconnectTimer) {
       clearTimeout(GroupChat._reconnectTimer);
       GroupChat._reconnectTimer = null;
@@ -356,13 +358,25 @@ const GroupChat = {
     GroupChat._pendingOutgoing.length = 0;
   },
 
+  // History can overlap messages already delivered over the socket. Keep the
+  // server's chronological positions, but prefer the live cached version.
+  _mergeHistory(messages, current) {
+    const byId = new Map();
+    for (const message of [...messages, ...current]) {
+      byId.set(String(message.id), message);
+    }
+    return [...byId.values()];
+  },
+
   async loadHistory() {
-    if (!GroupChat.appSlug) return;
+    if (!GroupChat.appSlug || GroupChat._historyLoad) return;
+    const load = {};
+    GroupChat._historyLoad = load;
     try {
       const isFirstLoad = !GroupChat.oldestMessageId;
       const url = GroupChat.oldestMessageId
         ? `/api/apps/${GroupChat.appSlug}/messages?before=${GroupChat.oldestMessageId}&limit=50`
-        : `/api/apps/${GroupChat.appSlug}/messages?limit=50`;
+        : `/api/apps/${GroupChat.appSlug}/messages?limit=50${GroupChat._demoParam()}`;
 
       // Preserve scroll anchor when prepending older history so the viewport
       // doesn't jump to the top.
@@ -373,11 +387,13 @@ const GroupChat = {
       const res = await fetch(url);
       if (!res.ok) return;
       const { messages } = await res.json();
+      // Disconnect invalidates this request, even if we return to the same app.
+      if (GroupChat._historyLoad !== load) return;
 
       if (messages.length < 50) GroupChat.hasMore = false;
 
       if (messages.length > 0) {
-        GroupChat.messages = [...messages, ...GroupChat.messages];
+        GroupChat.messages = GroupChat._mergeHistory(messages, GroupChat.messages);
         GroupChat.oldestMessageId = messages[0].id;
       }
 
@@ -390,7 +406,9 @@ const GroupChat = {
         const newScrollHeight = container.scrollHeight;
         container.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
       }
-    } catch {}
+    } catch {} finally {
+      if (GroupChat._historyLoad === load) GroupChat._historyLoad = null;
+    }
   },
 
   handleIncoming(msg) {
@@ -588,12 +606,13 @@ const GroupChat = {
     const editedAt = msg.editedAt || msg.edited_at;
     const q = meta.quote;
     const atts = meta.attachments;
+    const stamp = GroupChat._stamp(msg.createdAt || msg.created_at);
     return {
       id: msg.id == null ? null : Number(msg.id),
       kind,
       username,
-      time: new Date(msg.createdAt || msg.created_at)
-        .toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      time: stamp.text,
+      timeTitle: stamp.title,
       bodyHtml: kind === 'message' ? renderMessageBody(msg.content) : '',
       systemText: kind === 'message' ? '' : String(msg.content == null ? '' : msg.content),
       mine: msg.userId === App.user?.id || msg.user_id === App.user?.id,
@@ -820,16 +839,22 @@ const GroupChat = {
     const slug = GroupChat.appSlug;
     if (!slug) return;
     const st = GroupChat._threadState(type, ref);
+    // A topic repaint can mount this thread again before its first fetch
+    // finishes. Only one initial/page request may own this cache at a time.
+    if (st.loading) return;
+    st.loading = true;
     const beforeParam = st.oldestId ? `&before=${st.oldestId}` : '';
     try {
       const res = await fetch(
-        `/api/apps/${slug}/messages?thread_type=${encodeURIComponent(type)}&thread_ref=${encodeURIComponent(ref)}&limit=50${beforeParam}`
+        `/api/apps/${slug}/messages?thread_type=${encodeURIComponent(type)}&thread_ref=${encodeURIComponent(ref)}`
+        + `&limit=50${beforeParam}${beforeParam ? '' : GroupChat._demoParam()}`
       );
       if (!res.ok) return;
       const { messages } = await res.json();
+      if (GroupChat.threads.get(GroupChat.threadKey(type, ref)) !== st) return;
       if (messages.length < 50) st.hasMore = false;
       if (messages.length > 0) {
-        st.messages = [...messages, ...st.messages];
+        st.messages = GroupChat._mergeHistory(messages, st.messages);
         st.oldestId = messages[0].id;
       }
       st.loaded = true;
@@ -837,7 +862,9 @@ const GroupChat = {
       if (a && a.type === type && Number(a.ref) === Number(ref)) {
         GroupChat.renderThread();
       }
-    } catch { /* transient — re-open retries */ }
+    } catch { /* transient — re-open retries */ } finally {
+      st.loading = false;
+    }
   },
 
   // #363: the element that actually scrolls a mounted thread. In the unified
@@ -1313,15 +1340,51 @@ const GroupChat = {
     return !!(window.matchMedia && window.matchMedia('(hover: none)').matches);
   },
 
-  // Full-precision timestamp for the "edited" marker's tooltip, e.g.
-  // "edited Jun 16, 2026, 2:41 PM". Reuses the same locale approach as the
-  // per-message time.
-  _editedTitle(ts) {
-    const d = new Date(ts);
-    if (isNaN(d.getTime())) return 'edited';
-    const date = d.toLocaleDateString([], { year: 'numeric', month: 'short', day: 'numeric' });
+  // When a message was posted, in the two forms a row needs (#1808).
+  //
+  // The transcript used to stamp the time of day alone, so a row read
+  // "02:41 PM" whether it landed ten minutes ago or in March, and scrolling
+  // a discussion back answered everything except when. The date is added
+  // once it stops being today's, and the year once it stops being this
+  // one — spending words only where they carry information, because a date
+  // repeated down every row is noise the eye learns to skip.
+  //
+  //   today             02:41 PM
+  //   earlier this year Jun 16, 02:41 PM
+  //   an earlier year   Jun 16, 2025, 02:41 PM
+  //
+  // `title` never elides, so an abbreviated row is one hover from certain.
+  //
+  // frontend/src/lib/timestamp.ts carries the same table for the React
+  // surfaces; this file is a legacy IIFE outside that bundle and cannot
+  // import it. tests/message-timestamp.test.js pins the two together.
+  _stamp(ts, now) {
+    // An optimistic row reaches here before the server has stamped it, and
+    // neither "Invalid Date" nor a 1970 date belongs in front of a reader —
+    // `new Date(null)` is the epoch rather than an invalid date, so the
+    // nullish case is turned away before parsing.
+    const d = new Date(ts == null ? NaN : ts);
+    if (isNaN(d.getTime())) return { text: '', title: '' };
+    const today = now || new Date();
     const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    return `edited ${date}, ${time}`;
+    const title = d.toLocaleString([], {
+      year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    });
+    const sameDay = d.getFullYear() === today.getFullYear()
+      && d.getMonth() === today.getMonth()
+      && d.getDate() === today.getDate();
+    if (sameDay) return { text: time, title };
+    const date = d.toLocaleDateString([], d.getFullYear() === today.getFullYear()
+      ? { month: 'short', day: 'numeric' }
+      : { year: 'numeric', month: 'short', day: 'numeric' });
+    return { text: `${date}, ${time}`, title };
+  },
+
+  // Full-precision timestamp for the "edited" marker's tooltip, e.g.
+  // "edited Jun 16, 2026, 02:41 PM".
+  _editedTitle(ts) {
+    const { title } = GroupChat._stamp(ts);
+    return title ? `edited ${title}` : 'edited';
   },
 
   // `_renderEditBtn` lived here — the desktop hover pencil for your own
@@ -2187,10 +2250,10 @@ const GroupChat = {
     const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown
       ? (str) => DevChat.renderMarkdown(str)
       : null;
-    const built = meta.builtAt
-      ? new Date(meta.builtAt).toLocaleString([],
-        { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-      : null;
+    // #1808: composed from `_stamp` rather than spelling its own options
+    // table, which had no `year` — a spec built last June read "Jun 16,
+    // 02:41 PM", exactly like one built this June.
+    const built = GroupChat._stamp(meta.builtAt).text || null;
     return {
       title: meta.title || `Spec v${meta.version}`,
       // The preview title the panel header shows while the fetch is in
@@ -2305,7 +2368,8 @@ const GroupChat = {
       panel._gcKeyHandler = onKey;
     }
 
-    const builtStr = builtAt ? new Date(builtAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '';
+    // Same table as the share card above, from the same helper (#1808).
+    const builtStr = GroupChat._stamp(builtAt).text;
     const subtitleParts = [];
     if (version != null) subtitleParts.push(`v${version}`);
     if (builtStr) subtitleParts.push(builtStr);
@@ -2395,6 +2459,19 @@ const GroupChat = {
   // (see stagingMockSpecVersion in src/routes/sessions.js) so the panel —
   // and its copy button — are reviewable in a staging preview. Honoured by
   // the server ONLY in staging; a no-op in production.
+  // #1808: the same ?demo=1 passthrough for the TRANSCRIPT reads. A declared
+  // check renders against a fresh, empty staging database, so both the
+  // general stream and a topic's Discussion thread came back with nothing to
+  // stamp; the server answers a first page of `[Mock]` rows spanning all
+  // three branches (see stagingMockGroupChat in src/routes/chat.js). Only on
+  // a first page — a `before` cursor is paging past what is already on
+  // screen — and honoured by the server ONLY in staging.
+  _demoParam() {
+    try {
+      return new URLSearchParams(location.search).get('demo') === '1' ? '&demo=1' : '';
+    } catch { return ''; }
+  },
+
   _specDemoQS() {
     try {
       return new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';

@@ -2,6 +2,10 @@
   --bg-primary: #ffffff;
   --bg-secondary: #f5f5f7;
   --bg-tertiary: #e3e3e6;
+  /* The pressed fill for the dev card at both sizes: one step darker than
+     the hover fill (zinc-50) on the same ramp, so a press reads as more of
+     the same gesture rather than as a new colour. */
+  --dev-press: #eaeaea;
   --bg-code: #f5f5f7;
   --bg-code-header: #e3e3e6;
   --bg-card: rgba(10, 124, 255, 0.06);
@@ -968,6 +972,18 @@ html.un-kb .platform-safe-sheet {
   padding: 8px 8px 8px 12px;
   background: var(--messages-surface);
   box-shadow: var(--messages-disc-shadow);
+  transition: box-shadow 150ms;
+}
+/* #1954: FOCUS LIVES ON THE CARD, as it does on the dev chat's `.dc-card`.
+   The textarea draws no box of its own (`outline: none`, transparent), so a
+   caret was the only sign the field was live; the ring goes around the whole
+   input box instead. `:focus-within` because the card is one control group —
+   the attach and share buttons are still "in the composer". */
+.messages-composer-card:focus-within {
+  box-shadow: var(--messages-disc-shadow), 0 0 0 2px var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .messages-composer-card { transition: none; }
 }
 .messages-composer-disabled { padding: 14px 16px; color: var(--text-muted); font-size: 15px; text-align: center; }
 .messages-composer-input {
@@ -1029,14 +1045,21 @@ html.un-kb .platform-safe-sheet {
   background: var(--accent-tint);
 }
 .messages-pending-object { padding: 8px 12px; background: var(--messages-surface-2); }
+/* #1927: the dismiss × is a 44px tap target, the platform's minimum. The
+   negative block/inline margins let it overhang the strip's own 6–8px
+   padding, so the bigger button does not make the strip any taller. */
 .messages-reply-draft button,
 .messages-pending-object button {
-  margin-left: auto;
-  width: 28px;
-  height: 28px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: -6px -8px -6px auto;
+  width: 44px;
+  height: 44px;
   border-radius: 9999px;
   color: var(--text-muted);
-  font-size: 17px;
+  font-size: 20px;
 }
 .messages-mention-menu {
   position: absolute;
@@ -1116,6 +1139,8 @@ html.un-kb .platform-safe-sheet {
   --bg-primary: #0b0b0c;
   --bg-secondary: #1c1c1e;
   --bg-tertiary: #2c2c2e;
+  /* zinc-700, one step up from the dark hover fill (zinc-800). */
+  --dev-press: #3a3a3c;
   /* The ladder above, climbing away from the #0b0d1b wallpaper rather than
      down into it. --dc-sheet takes --bg-secondary's value and --dc-raised
      takes --bg-tertiary's: a card on the sheet has to be one step lighter
@@ -1591,6 +1616,125 @@ html, body {
      platform's scrollers — keep mobile Chrome's native page-refresh
      from competing for the same drag. */
   overscroll-behavior-y: none;
+}
+
+/* #1518: browser toolbars follow document scrolling. The bridge selects one
+   pageable surface at a time; native/installed apps, chats and app iframes
+   retain the bounded shell above. Clip horizontal hit-area overhang without
+   making these pages into nested vertical scroll containers again. */
+html[data-browser-scroller] {
+  height: auto;
+  min-height: 100%;
+  overflow-x: clip;
+  overflow-y: auto;
+}
+html[data-browser-scroller] body {
+  --browser-banner-h: 0px;
+  height: auto !important; /* the generated body's fixed-shell inline height */
+  min-height: 100dvh;
+  overflow: visible;
+  isolation: isolate;
+  background: var(--home-ground) !important;
+}
+/* Body padding reserves these fixed strips at the start of a page. Sticky
+   headers must keep reserving them after that padding scrolls away. */
+html[data-browser-scroller] body.has-install-strip {
+  --browser-banner-h: var(--install-strip-h);
+}
+html[data-browser-scroller] body.is-offline {
+  --browser-banner-h: var(--offline-strip-h);
+}
+html[data-browser-scroller] body.is-offline.has-install-strip {
+  --browser-banner-h: calc(var(--offline-strip-h) + var(--install-strip-h));
+}
+/* Keep the ambient wallpaper viewport-sized as the document grows. Its star
+   continues to track the active scroller via wallpaper-scroll.ts. A fixed
+   layer also works on iOS, where background-attachment: fixed does not. */
+html[data-browser-scroller] body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--home-wallpaper);
+}
+html[data-browser-scroller="home-screen"] #home-screen,
+html[data-browser-scroller="browse-screen"] #browse-screen,
+html[data-browser-scroller="leaderboard-screen"] #leaderboard-screen,
+html[data-browser-scroller="profile-screen"] #profile-screen,
+html[data-browser-scroller="settings-screen"] #settings-screen,
+html[data-browser-scroller="auth-landing-scroll"] #auth-landing-scroll,
+html[data-browser-scroller="dev-forum-scroll"] #dev-forum-scroll,
+html[data-browser-scroller="auth-login-screen"] #auth-login-screen,
+html[data-browser-scroller="auth-register-screen"] #auth-register-screen,
+html[data-browser-scroller="auth-waiting-screen"] #auth-waiting-screen,
+html[data-browser-scroller="auth-waitlist-screen"] #auth-waitlist-screen,
+html[data-browser-scroller="auth-more-screen"] #auth-more-screen {
+  flex: none;
+  height: auto;
+  overflow-x: clip;
+  overflow-y: visible;
+}
+html[data-browser-scroller^="auth-"] body :is(
+  #auth-landing-screen, #auth-login-screen, #auth-register-screen,
+  #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen
+):not(.hidden) {
+  position: relative;
+  inset: auto;
+  min-height: calc(100dvh - var(--browser-banner-h));
+}
+/* The anonymous overlay covered the signed-in shell, including any screen
+   painted from the last-session snapshot. In document flow those roots must
+   leave the layout too, so visitors see only the anonymous page. */
+html[data-browser-scroller^="auth-"] :is(
+  #platform-header, #home-screen, #browse-screen, #leaderboard-screen,
+  #profile-screen, #settings-screen, #messages-screen, #admin-screen, #app-view
+) {
+  display: none;
+}
+html[data-browser-scroller] :is(#platform-header, #landing-header) {
+  position: sticky;
+  top: var(--browser-banner-h);
+  z-index: 30;
+  background: color-mix(in srgb, var(--home-ground) 92%, transparent) !important;
+  backdrop-filter: blur(12px);
+}
+html[data-browser-scroller="browse-screen"] #browse-search-bar {
+  top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top));
+}
+html[data-browser-scroller^="auth-"] :is(
+  #auth-login-screen, #auth-register-screen, #auth-waiting-screen
+) > .min-h-full {
+  min-height: calc(100dvh - var(--browser-banner-h));
+}
+/* These screens are already below the strips in document flow. The bounded
+   shell's separate offset on the corner Back link would count them twice. */
+html[data-browser-scroller^="auth-"] body.is-offline [data-auth-back] {
+  top: calc(env(safe-area-inset-top, 0px) + 1rem) !important;
+}
+html[data-browser-scroller="dev-forum-scroll"] :is(#app-view, #app-content),
+html[data-browser-scroller="dev-forum-scroll"] #app-content > div {
+  flex: none !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+/* During a tile zoom the outgoing page remains in document flow until the
+   animation ends. Give the incoming app its final viewport bounds while
+   both are painted, rather than measuring a zero-height flex child. */
+html[data-browser-scroller]:not([data-browser-scroller="dev-forum-scroll"]) #app-view {
+  position: fixed;
+  top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top) - .5rem);
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: auto !important;
+}
+html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
+  position: fixed;
+  top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top));
+  bottom: 0;
+  left: 0;
+  right: 0;
 }
 
 /* The home feed scroller: contain overscroll so a pull that starts on
@@ -2637,16 +2781,45 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    Dark mode does what the wallpaper does: the same hues, re-tuned to a
    lightness that reads on the inverted ground rather than inverted into
    mud. */
-.home-tint-1 { --tint-bg: #e3efe0; --tint-line: #cfe0ca; --tint-art: #cfe3c7; }
-.home-tint-2 { --tint-bg: #dfeaf6; --tint-line: #c9dcee; --tint-art: #c6dcf0; }
-.home-tint-3 { --tint-bg: #e9e2f2; --tint-line: #d9cfe8; --tint-art: #ded2ef; }
-.home-tint-4 { --tint-bg: #fbe6d5; --tint-line: #f2d5bd; --tint-art: #f7ddc6; }
-.home-tint-5 { --tint-bg: #f8dde8; --tint-line: #eec7d6; --tint-art: #f4d6de; }
-.dark .home-tint-1 { --tint-bg: #1b2a1f; --tint-line: #2c4433; --tint-art: #22331f; }
-.dark .home-tint-2 { --tint-bg: #17263a; --tint-line: #27405e; --tint-art: #1b2f47; }
-.dark .home-tint-3 { --tint-bg: #241f38; --tint-line: #3a3157; --tint-art: #2b2442; }
-.dark .home-tint-4 { --tint-bg: #33231a; --tint-line: #50392a; --tint-art: #3d2a1f; }
-.dark .home-tint-5 { --tint-bg: #331d28; --tint-line: #513043; --tint-art: #3e2231; }
+.home-tint-1, .home-tint-1[data-preview-theme="light"], .dark .home-tint-1[data-preview-theme="light"] { --tint-bg: #e3efe0; --tint-line: #cfe0ca; --tint-art: #cfe3c7; }
+.home-tint-2, .home-tint-2[data-preview-theme="light"], .dark .home-tint-2[data-preview-theme="light"] { --tint-bg: #dfeaf6; --tint-line: #c9dcee; --tint-art: #c6dcf0; }
+.home-tint-3, .home-tint-3[data-preview-theme="light"], .dark .home-tint-3[data-preview-theme="light"] { --tint-bg: #e9e2f2; --tint-line: #d9cfe8; --tint-art: #ded2ef; }
+.home-tint-4, .home-tint-4[data-preview-theme="light"], .dark .home-tint-4[data-preview-theme="light"] { --tint-bg: #fbe6d5; --tint-line: #f2d5bd; --tint-art: #f7ddc6; }
+.home-tint-5, .home-tint-5[data-preview-theme="light"], .dark .home-tint-5[data-preview-theme="light"] { --tint-bg: #f8dde8; --tint-line: #eec7d6; --tint-art: #f4d6de; }
+.dark .home-tint-1, .home-tint-1[data-preview-theme="dark"], .dark .home-tint-1[data-preview-theme="dark"] { --tint-bg: #1b2a1f; --tint-line: #2c4433; --tint-art: #22331f; }
+.dark .home-tint-2, .home-tint-2[data-preview-theme="dark"], .dark .home-tint-2[data-preview-theme="dark"] { --tint-bg: #17263a; --tint-line: #27405e; --tint-art: #1b2f47; }
+.dark .home-tint-3, .home-tint-3[data-preview-theme="dark"], .dark .home-tint-3[data-preview-theme="dark"] { --tint-bg: #241f38; --tint-line: #3a3157; --tint-art: #2b2442; }
+.dark .home-tint-4, .home-tint-4[data-preview-theme="dark"], .dark .home-tint-4[data-preview-theme="dark"] { --tint-bg: #33231a; --tint-line: #50392a; --tint-art: #3d2a1f; }
+.dark .home-tint-5, .home-tint-5[data-preview-theme="dark"], .dark .home-tint-5[data-preview-theme="dark"] { --tint-bg: #331d28; --tint-line: #513043; --tint-art: #3e2231; }
+
+/* Harmonic palette: select tone 50 once. Dark surfaces are computed from
+   that same token, blended into the shell's zinc-950 ground. The fixed 10%,
+   14%, 24% proportions give every hue the same quiet surface hierarchy.
+   These formulas also drive explicit editor previews; no second palette. */
+.home-tone-cream { --tone-50: #fefdf5; --tone-light-line: #f5f0d0; }
+.home-tone-yellow { --tone-50: #fff9de; --tone-light-line: #f0d85c; }
+.home-tone-orange { --tone-50: #fff0e0; --tone-light-line: #e8a878; }
+.home-tone-coral { --tone-50: #fde8e4; --tone-light-line: #e09488; }
+.home-tone-pink { --tone-50: #f8e4ee; --tone-light-line: #d48eb4; }
+.home-tone-purple { --tone-50: #ede4f4; --tone-light-line: #aa92c2; }
+.home-tone-indigo { --tone-50: #e4e8f6; --tone-light-line: #8896c8; }
+.home-tone-blue { --tone-50: #deedf8; --tone-light-line: #6aadd4; }
+.home-tone-teal { --tone-50: #deeeed; --tone-light-line: #72bab2; }
+.home-tone-mint { --tone-50: #e2f2e8; --tone-light-line: #88c49e; }
+.home-tone-sage { --tone-50: #eaf2e4; --tone-light-line: #a9cf97; }
+.home-tone-gray { --tone-50: #f4f3f1; --tone-light-line: #b8b4ac; }
+:is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray) {
+  --tone-dark-bg: color-mix(in srgb, var(--tone-50) 10%, #0b0b0c);
+  --tone-dark-art: color-mix(in srgb, var(--tone-50) 14%, #0b0b0c);
+  --tone-dark-line: color-mix(in srgb, var(--tone-50) 24%, #0b0b0c);
+  --tint-bg: var(--tone-50); --tint-line: var(--tone-light-line); --tint-art: var(--tone-50);
+}
+.dark :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray), :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="dark"] {
+  --tint-bg: var(--tone-dark-bg); --tint-line: var(--tone-dark-line); --tint-art: var(--tone-dark-art);
+}
+.dark :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="light"], :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="light"] {
+  --tint-bg: var(--tone-50); --tint-line: var(--tone-light-line); --tint-art: var(--tone-50);
+}
 
 /* ── Discover: the card rail ────────────────────────────────
    The lane was a GRID of six 40px icon tiles inside the block's white card:
@@ -2724,7 +2897,12 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   overflow: hidden;
   cursor: pointer;
 }
+/* `cover`, not `contain`: the framing editor's zoom bottoms out at the exact
+   cover fit and its pan is clamped to it, so the art fills the block at every
+   legal framing rather than letterboxing itself against the tint. */
+.home-discover-illustration { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .home-discover-art {
+  overflow: hidden;
   height: 7.5rem;
   background: var(--tint-art);
   display: flex;
@@ -2989,6 +3167,10 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   min-height: 100%;
   padding-bottom: var(--platform-safe-bottom);
 }
+html[data-browser-scroller="home-screen"] .home-body-fill {
+  /* The header overlaps its content by .5rem (its rounded lower edge). */
+  min-height: calc(100dvh - var(--browser-banner-h) - var(--platform-header-h) - var(--platform-safe-top) + .5rem);
+}
 
 /* NOTE: .home-bottom-anchor is gone with the two trailing sections it
    existed for ("Featured apps" and "Create an app", which pushed to the
@@ -3028,6 +3210,25 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 /* Neutral, not --bg-card: that token is an accent TINT, so a plain hover read
    as a selected/highlighted row once the accent turned blue. */
 .browse-row:hover { background-color: var(--bg-secondary); }
+
+/* #1617: on phones, the name gets the whole width above metadata + Add.
+   One DOM tree keeps the explicit add/remove action and row navigation intact.
+   Desktop boxes and all other ListRow users retain their existing layout. */
+@media (max-width: 639px) {
+  .browse-row.browse-row {
+    display: grid;
+    grid-template-columns: 2.75rem minmax(0, 1fr) auto;
+    column-gap: 1rem;
+    row-gap: 0.25rem;
+  }
+  .browse-row > .app-icon-tile { grid-column: 1; grid-row: 1 / 3; }
+  .browse-row .browse-row-content { display: contents; }
+  .browse-row .browse-row-title { grid-column: 2 / 4; grid-row: 1; white-space: normal; }
+  .browse-row .browse-row-name { white-space: normal; overflow-wrap: anywhere; }
+  .browse-row .browse-row-meta { grid-column: 2; grid-row: 2; min-width: 0; }
+  .browse-row > .browse-add-btn { grid-column: 3; grid-row: 2; min-height: 44px; }
+  .browse-row .browse-row-title > span { align-items: baseline; }
+}
 
 /* Phone: a single hairline BETWEEN consecutive rows, INSET to the text column.
    The rows sit in one white card now (#browse-list carries the card classes
@@ -5346,7 +5547,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    rather than showing a strip of half-height pills. The band holds its row
    open even with no buttons in it (the settled close-issue row has none),
    which is what keeps a column of cards the same height. */
-.dev-card-status + .gc-card-actions {
+:is(.dev-card-status, .dev-card-facts) + .gc-card-actions {
   min-height: 24px;
   max-height: 24px;
   overflow: hidden;
@@ -5360,7 +5561,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
    button instead of a line box; the popover is absolute, so it stays out of
    the flex sizing. Scoped to the dense band: the detail view's kudos button
    sits in an uncapped row where the phantom 1.5px is harmless. */
-.dev-card-status + .gc-card-actions .kudos-wrap {
+:is(.dev-card-status, .dev-card-facts) + .gc-card-actions .kudos-wrap {
   display: inline-flex;
   align-items: center;
 }
@@ -5395,11 +5596,10 @@ span.gc-vote-btn-icon { cursor: default; }
    the meta line has moved out there is nothing left below the title for
    `center` to drift toward.
 
-   The ⋯ trigger is not in here: it lives in the card's TOP-RIGHT rail
-   (.dev-card-rail), because the corner is where "more about this card"
-   belongs and it keeps the action row to the one or two things you'd
-   actually do. Its own flex column means it can never collide with the
-   💬 badge or the drag grip (a gutter outside the card entirely). */
+   The menu trigger is not in here either: it is the hamburger at the right
+   edge of the action band, with Preview after it — the band is where the
+   card's controls are, and the menu is where the pills that do not fit the
+   band go. */
 .dev-card-head {
   display: flex;
   align-items: center;
@@ -5412,46 +5612,13 @@ span.gc-vote-btn-icon { cursor: default; }
   flex: 1 1 auto;
   min-width: 0;
 }
-/* The right-edge rail: ⋯ pinned to the card's top-right corner, the icon
-   Preview pinned to its bottom-right one, and the chevron centred in whatever
-   height is left between them. One column for all three, because a kanban
-   column only gives a card ~175px of text width and a separate flex slot for
-   the ⋯ cost 30px of it.
-
-   Pinning the eye HERE rather than at the end of the action band is what puts
-   it in one vertical line down a whole column of cards: the band's trailing
-   pill moves left and right with the width of the vote/claim pills before it,
-   the rail's bottom does not. It also keeps the eye out of the band's
-   `max-height: 24px` clip, so a card whose pills already fill that row can no
-   longer hide its preview.
-
-   The centring rule matches `> svg` — i.e. the chevron and nothing else, since
-   the ⋯ trigger is a <button> and the preview a <button>/<span>. So the same
-   two auto margins do all three jobs: with a preview they centre the chevron
-   BETWEEN the two pills, and without one they centre it in the space below the
-   ⋯ exactly as before, reserving no empty slot for a preview that isn't there. */
-.dev-card-rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  align-self: stretch;
-  flex: none;
-  gap: 4px;
-}
-.dev-card-rail > svg {
-  margin-top: auto;
-  margin-bottom: auto;
-}
-/* Both pills keep their 24px box in a column that may be shorter than their
-   sum — flex-shrink applies to HEIGHT here, and a squashed eye would clip its
-   own border the way the kudos wrapper once did. */
-.dev-card-rail > .gc-vote-btn-icon {
-  flex: none;
-}
+/* The card's right edge is the tap-through chevron alone now. The column
+   that held the ⋯ up top and the preview eye at the bottom (.dev-card-rail)
+   is gone with them: both live in the action band. */
 .dev-card-menu-btn {
   flex: none;
   color: var(--text-faint);
-  /* No border: it is a corner affordance, not one of the action pills. */
+  /* No border: it is the band's "more", not one of the action pills. */
   border-color: transparent;
 }
 .dev-card-menu-btn:hover { border-color: var(--accent-light); }
@@ -5465,37 +5632,11 @@ span.gc-vote-btn-icon { cursor: default; }
   color: var(--text-primary);
   overflow-wrap: break-word;
 }
-/* ── The dense (board) title: exactly two lines ────────────
-   Two lines, always — clamped at two and RESERVING both. A board title used
-   to run to however many lines it needed, which pushed the meta line, the
-   status band and the actions of that one card out of step with every card
-   beside it; a column of cards then had no shared rhythm and the eye had to
-   re-find the status band on every row. Two lines is what the observed
-   titles need (a PR title or an issue title wraps to two at kanban width and
-   very rarely to three), so clamping there loses almost nothing and the
-   `title` attribute on this element carries the full text regardless.
-
-   -webkit-line-clamp is the only mechanism that truncates at a LINE count
-   with an ellipsis; it needs the -webkit-box display and vertical orient to
-   act, and those are still how every current engine implements it. The
-   unprefixed `line-clamp` is listed after it for engines that have shipped
-   the standard property.
-
-   min-height reserves the second line when the title only fills one, so a
-   one-line title and a two-line title put their meta lines at the same y.
-   2 x 1.35 x 13.5px = 36.45px.
-
-   The detail head keeps the unclamped .dev-card-title: it has nothing to
-   align against, and its author-only inline title editor must not be inside
-   a -webkit-box. */
-.dev-card-title-clamp {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-  min-height: 36.45px;
-}
+/* ── The title wraps in full ──
+   It was clamped at two lines and reserved both, so a column of open cards
+   kept one rhythm. A column holds one open card among folded rows now, and
+   the row's title has always wrapped in full; the card's does the same, so
+   the two sizes of one item never disagree about what it is called. */
 /* ── The meta line, full width ─────────────────────────────
    "PR#123 · author · 2h ago" — the title's subtitle, and a band of its own
    below the head rather than a second line inside the icon's indent. It
@@ -5839,7 +5980,13 @@ span.gc-vote-btn-icon { cursor: default; }
 .gc-vote-fill-full { top: 0; width: 100%; height: 100%; }
 .gc-vote-fill-full-yes { background: var(--state-ok-fill); }
 .gc-vote-fill-full-no { background: var(--state-blocked-fill); }
+/* text-primary because a vote pill's fill stripes sweep UNDER the label,
+   and a toned colour on a filled bar is unreadable. A pill with no fill has
+   nothing sweeping under it, and forcing it to text-primary is what made
+   "Checks failing · 3" red on the folded row and near-black on the open
+   card. Where there is no fill the label inherits the tone. */
 .gc-vote-count-label { position: relative; z-index: 1; color: var(--text-primary); }
+.dev-status-pill-block:not(:has(> .gc-vote-fill)) .gc-vote-count-label { color: inherit; }
 /* The pill absorbed the standalone pulsing "Vote" badge, the advisory
    chip and the explicit-approval chip. Their glyphs ride inside the
    label rather than beside the pill. */
@@ -6071,7 +6218,7 @@ span.gc-vote-btn-icon { cursor: default; }
 
 .dc-log-msg { color: #e4e4e7; }
 
-.dc-log-log   .dc-log-level { background: #27272a; color: #a1a1aa; }
+.dc-log-log   .dc-log-level { background: #27272a; color: #8e8e93; }
 .dc-log-info  .dc-log-level { background: #1e3a5f; color: #93c5fd; }
 .dc-log-debug .dc-log-level { background: #27272a; color: #6e6e8a; }
 .dc-log-warn  .dc-log-level { background: #78350f; color: #fde68a; }
@@ -6385,14 +6532,23 @@ span.gc-vote-btn-icon { cursor: default; }
 
 #gc-reply-preview { margin-bottom: 6px; }
 .gc-reply-preview-body { display: flex; flex-direction: column; min-width: 0; flex: 1; gap: 1px; }
+/* #1927: 44px tap target, overhanging the strip's 6px/8px padding so the
+   strip keeps its height. */
 .gc-reply-preview-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -6px -8px -6px 0;
   background: none;
   border: none;
+  border-radius: 9999px;
   cursor: pointer;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1;
-  padding: 4px 6px;
+  padding: 0;
   flex-shrink: 0;
 }
 .gc-reply-preview-x:hover { color: var(--text-primary); }
@@ -10331,6 +10487,29 @@ body.is-offline [data-offline-disabled] {
   opacity: 0.7;
 }
 
+/* Secondary session controls live in Details only below Tailwind's sm.
+   Two lines give the name room without letting a very long title consume the
+   chat. The full name is always readable in Details. */
+@media (max-width: 639px) {
+  #dc-session-header > .dc-session-title {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+}
+.dc-venue-select.dc-venue-details-select {
+  width: 100%;
+  max-width: none;
+  min-height: 44px;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  flex-wrap: wrap;
+}
+.dc-venue-details-select .dc-venue-name { white-space: normal; overflow-wrap: anywhere; }
+.dc-venue-details-select .dc-venue-busy { font-size: 0.75rem; }
+
 .dc-venue-busy {
   display: inline-flex;
   align-items: center;
@@ -10707,23 +10886,52 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 :is(.dev-card-dense, .dev-card-topic) .dev-card-head > .dev-card-icon > svg { width: 18px; height: 18px; }
 
 /* ── Two type sizes ──
-   14px title, 12.5px for the meta line, the bar, the facts, the pills. The
-   reserved heights follow: 2 x 1.35 x 14 = 37.8 for the title's two lines,
-   1.4 x 12.5 = 17.5 for the one-line meta. */
+   14px title, 12.5px for the meta line, the bar, the facts, the pills — the
+   row's sizes, so the two sizes of one card share one typography. */
 :is(.dev-card-dense, .dev-card-topic) .dev-card-title { font-size: 14px; }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-title-clamp { min-height: 37.8px; }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-meta { font-size: 12.5px; min-height: 17.5px; max-height: 17.5px; }
+:is(.dev-card-dense, .dev-card-topic) .dev-card-meta {
+  font-size: 12.5px;
+  /* The tags (priority, assignee, category) ride here beside the number and
+     the author, and the line may wrap to a second one for them: the old
+     one-line clamp (min/max 17.5px) is gone. 21px lines so a 19px chip sits
+     on the line without pushing it. */
+  min-height: 21px; max-height: none; line-height: 21px;
+  white-space: normal; overflow: visible; text-overflow: clip;
+}
+:is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge {
+  height: 19px; font-size: 11.5px; vertical-align: middle; margin-left: 4px;
+}
+/* Tabbed in under the title, as the folded row's meta line is: the row keeps
+   its icon in a column of its own and the title and meta share the next, so
+   the two sizes of one card put the number and the tags on the same left
+   edge (#1787). The indent is the head's — the 22px glyph plus its 8px gap
+   — and only a head that has a glyph earns it. The bands below stay at the
+   padding edge: the bar wants the card's full width beside its vote button,
+   and the pills already fold to fit. */
+:is(.dev-card-dense, .dev-card-topic) .dev-card-head:has(> .dev-card-icon) + .dev-card-meta { padding-left: 30px; }
+:is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge.font-mono { font-size: 11px; }
+:is(.dev-card-dense, .dev-card-topic) .dev-card-meta > .dev-badge .attr-avatar { width: 14px; height: 14px; }
 
-/* ── The status band: the bar row, then the facts as one line ──
-   Two rows at most — the bar with the vote button beside it, then the
-   facts — and the clip cap follows: 30 + 4 + 18. A card with only facts is
-   one row; a card with nothing keeps the #1139 data-empty rule. */
+/* ── The status row, then the facts row ──
+   Two rows, each its own element (card/dev-card.tsx), where one wrapping
+   band with a break in it used to hold both. The status row is the bar with
+   the vote button at its right end, spanning the card — the row's mini of
+   it is a chip with the vote at the row's bottom-right. The facts row under
+   it — the state chips and the message count — is tabbed in with the meta
+   line, as the row's last line is, and clips at its one line. */
 :is(.dev-card-dense, .dev-card-topic) .dev-card-badges { margin-top: 8px; gap: 4px 6px; }
 :is(.dev-card-dense, .dev-card-topic) .dev-card-badges.dev-card-status {
   min-height: 0;
-  max-height: 52px;
+  max-height: 30px;
+  flex-wrap: nowrap;
 }
-.dev-card-band-break { flex-basis: 100%; height: 0; }
+:is(.dev-card-dense, .dev-card-topic) .dev-card-badges.dev-card-facts {
+  margin-top: 6px;
+  min-height: 0;
+  max-height: 22px;
+  flex-wrap: nowrap;
+}
+:is(.dev-card-dense, .dev-card-topic) .dev-card-head:has(> .dev-card-icon) ~ .dev-card-facts { padding-left: 30px; }
 /* The bar: 30px, r14, no outline (the wash is the surface), and its label
    at the second type size. `flex-basis: 0`, not auto: the band WRAPS, and a
    wrapping flex line breaks on each item's hypothetical size — with basis
@@ -10837,25 +11045,23 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
    markup and hooks (button.attr-chip[data-attr-field], the issue chip, the
    chat badge), drawn as muted text with a dot between. The mono issue
    number keeps its family at 12px. */
-:is(.dev-card-dense, .dev-card-topic) .dev-card-status > .dev-badge {
-  height: auto;
-  padding: 0;
-  gap: 4px;
-  border-radius: 0;
-  background: transparent;
-  font-size: 12.5px;
-  font-weight: 500;
-  line-height: 1.4;
-  color: var(--text-muted);
+/* These used to be stripped to muted text with a "·" between them, so
+   "Closes #1575 · @alice · design" read as a byline. The Workshop's folded
+   row kept them as the chips they are, and putting the two sizes beside each
+   other settled which was right: on a proposal card, what it closes and who
+   has it are the two facts most worth not skipping, and a chip is not
+   skipped. The card takes the ROW's treatment now — one vocabulary across
+   both sizes instead of two. `.dev-badge`'s own tinted pill is what shows
+   through; all that is left here is the fit. */
+:is(.dev-card-dense, .dev-card-topic) :is(.dev-card-status, .dev-card-facts) > .dev-badge {
+  height: 19px;
+  font-size: 11.5px;
 }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-status > .dev-badge.font-mono { font-size: 12px; }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-status > .dev-badge + .dev-badge::before {
-  content: "·";
-  margin-right: 2px;
-  opacity: 0.6;
+:is(.dev-card-dense, .dev-card-topic) :is(.dev-card-status, .dev-card-facts) > .dev-badge.font-mono { font-size: 11px; }
+:is(.dev-card-dense, .dev-card-topic) :is(.dev-card-status, .dev-card-facts) > button.dev-badge:hover {
+  box-shadow: 0 0 0 1px var(--border) inset;
 }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-status > button.dev-badge:hover { color: var(--accent); }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-status > .dev-badge .attr-avatar { width: 14px; height: 14px; }
+:is(.dev-card-dense, .dev-card-topic) :is(.dev-card-status, .dev-card-facts) > .dev-badge .attr-avatar { width: 14px; height: 14px; }
 
 /* ── The action band: one line, folding into ⋯ ──
    28px pills at the second type size and the labelled Preview pill at the
@@ -10874,13 +11080,46 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   overflow: hidden;
 }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > [data-folded] { order: 1; }
+/* ── Before the first measurement ──
+   useFoldedActions stamps `data-band-measured` once it has run. Until then
+   every foldable pill sits on the clipped row, which is the steady state in
+   a kanban column. It used to be the opposite: the first paint drew every
+   pill, so a board card opened showing "Create proposal" at the band's left
+   and swapped it for "Open card" a frame later — the flicker reported
+   against #1787 twice. A pill that fits still arrives in the same frame,
+   because the measurement is a layout effect. */
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions:not([data-band-measured]) > [data-fold] { order: 1; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions:empty { display: none; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn {
   height: 28px;
   padding: 0 10px;
   font-size: 12px;
   font-weight: 600;
+  /* The Vote button's "Yes" state (.dev-vote-btn-yes): the accent on its
+     tint. The band's pills were the neutral grey fill, which read as a
+     third colour beside the blue Vote and the blue Preview. */
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-color: transparent;
 }
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn:hover {
+  background: var(--accent-tint);
+  border-color: var(--accent-light);
+  color: var(--accent);
+}
+/* The menu trigger: a hamburger at the far right of the band, the row's own
+   "more" — that is where the pills that do not fit the line go. Preview,
+   when there is one, sits just before it: the pair is pushed to the band's
+   right edge by whichever of the two comes first, and the second keeps the
+   band's gap (the override below), or two auto margins would split the free
+   space between them. */
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn {
+  margin-left: auto;
+  width: 28px;
+  padding: 0;
+  color: var(--accent);
+}
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .dev-card-menu-btn svg { width: 16px; height: 16px; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview {
   margin-left: auto;
   gap: 5px;
@@ -10890,6 +11129,7 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   border-color: transparent;
 }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview:hover { background: var(--accent-tint); border-color: var(--accent-light); }
+:is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview + .dev-card-menu-btn { margin-left: 0; }
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-vote-btn-preview svg { width: 16px; height: 16px; }
 /* The two badge states of the preview, in the band at the same height. */
 :is(.dev-card-dense, .dev-card-topic) .gc-card-actions > .gc-checks-running-badge,
@@ -10901,20 +11141,9 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   flex: none;
 }
 
-/* ── The rail: ⋯ as a 28px well in the corner ── */
-:is(.dev-card-dense, .dev-card-topic) .dev-card-rail > .dev-card-menu-btn {
-  width: 28px;
-  height: 28px;
-  margin: -2px -4px 0 0;
-  background: var(--bg-tertiary);
-  color: var(--text-muted);
-}
-:is(.dev-card-dense, .dev-card-topic) .dev-card-rail > .dev-card-menu-btn:hover { background: var(--accent-tint); color: var(--accent); }
-:is(.dev-card-dense, .dev-card-topic) .dev-card-rail > .dev-card-menu-btn svg { width: 16px; height: 16px; }
-
 /* Cards with 22px corners want a little more air between them than the
    column's space-y-2 gives. */
-#dev-kanban .dev-kanban-col > .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 10px; }
+#dev-kanban .dev-kanban-col > .space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: 4px; }
 
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -11408,6 +11637,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
 #dev-topic-thread .gc-msg-self > .min-w-0 { background: var(--accent-tint); }
+/* The editor needs the row's available width, not the bubble's intrinsic
+   text width. Save and Cancel clear data-editing and restore bubble sizing. */
+#dev-topic-thread .gc-msg[data-editing="1"] > .min-w-0 {
+  flex: 1 1 0%;
+  max-width: 100%;
+}
 #dev-topic-thread .gc-msg > .min-w-0 > .flex { gap: 6px; margin-bottom: 2px; }
 #dev-topic-thread .gc-msg > .min-w-0 > .flex > .truncate { font-size: 14px; }
 #dev-topic-thread .gc-msg > .min-w-0 > .flex > .shrink-0 { font-size: 12.5px; }
@@ -11442,8 +11677,111 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .dev-ws-strip, .dev-ws-theme { background-color: var(--dc-sheet); }
 }
-.dev-ws-strip-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+/* CENTRE, not baseline. Baseline was right while the only thing beside the
+   eyebrow was a 22px pill; with a 30px ring in the line the eyebrow's
+   baseline aligned to the bottom of the ring and the two read as two rows. */
+.dev-ws-strip-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .dev-ws-strip-text { margin: 0; font-size: 14px; color: var(--text-primary); }
+/* ── The digest's three cards ────────────────────────────────
+   One paragraph became three, because one paragraph was answering three
+   questions — what landed last week, what has landed this week, what is
+   still open — and a reader scanning for one of them had to parse all of
+   it. Full-width and stacked rather than a three-column row: the lines are
+   sentences, and three sentences side by side at Dev-screen widths wrap to
+   ragged two- and three-line columns that are harder to scan than the
+   paragraph they replaced.
+
+   The title is the parsing aid. It is small, upper-case and muted against a
+   14px body line, so the eye lands on the label first and the sentence
+   second — the opposite weighting to the sentence itself, which is what
+   makes the block scannable rather than just subdivided. It inherits the
+   pane's own line colour, so the cards read as divisions OF the pane rather
+   than as objects sitting on it. */
+.dev-ws-cards { display: flex; flex-direction: column; gap: 6px; }
+/* Each card is ONE line: the label, a middot, the sentence. It was a title
+   stacked above its line, which cost three rows of vertical space to carry
+   three short sentences and made the block read as three objects rather than
+   three entries in a list. Inline, the eye runs down the labels in a single
+   column and across only where it wants the detail.
+
+   `align-items: baseline` and not `center`: the label is 12px and the
+   sentence 14px, so centring them leaves the label floating slightly high
+   against the text it introduces. Wrapping is the sentence's own — the line
+   is the flex item that grows, so a long one wraps under itself and the
+   label keeps the first row to itself rather than being pushed onto its own.
+
+   SOLID, not translucent. `--dc-sheet` is #ffffff in light and #1c1c1e in
+   dark, so "white" survives the theme; the strip behind these is
+   `--dc-sheet-fill`, which is translucent, so a solid card reads as a card
+   ON the pane rather than another wash of the same surface. */
+.dev-ws-card {
+  display: flex;
+  /* CENTRE, not baseline. On the one card whose sentence wraps to two rows,
+     a baseline-aligned label sits against the FIRST row and reads as if it
+     were floating above its own text; centred, it holds the block. */
+  align-items: center;
+  gap: 6px;
+  border-radius: 10px;
+  padding: 7px 10px;
+  background-color: var(--dc-sheet);
+  /* The hairline plus a real lift. `--dc-sheet` is #ffffff and the strip
+     behind it is `--dc-sheet-fill` at 50% white, so on a light page the
+     inset line was the ONLY thing separating card from pane and the block
+     read flat. Screenshots, not the diff, are what showed that.
+     CAUTION: one invalid var() anywhere in this list voids the WHOLE
+     declaration, hairline included — a missing token here renders as a
+     card with no outline at all, which is exactly how it failed in
+     preview. */
+  box-shadow:
+    0 0 0 1px var(--app-sheet-line) inset,
+    0 1px 2px var(--app-sheet-shadow-near),
+    0 4px 10px var(--app-sheet-shadow-far);
+}
+.dev-ws-card-title {
+  margin: 0;
+  flex: none;
+  /* A fixed COLUMN, so all three sentences share a left edge. "Last week",
+     "This week" and "Open" are different widths, so without it the text
+     started at three different x-positions — which defeats the point of the
+     one-line layout, where you read down the labels and across only where
+     you want the detail. 84px clears the longest of the three at 13.5px.
+     A fourth window with a longer name would need this revisited. */
+  width: 84px;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  /* The accent, so the label separates from its sentence by colour as well
+     as by column. It is not interactive; nothing else in this pane is
+     either, so the blue is not competing with a real affordance. */
+  color: var(--accent);
+}
+.dev-ws-card-line { margin: 0; flex: 1 1 auto; font-size: 14px; color: var(--text-primary); }
+/* ── The Workshop's orientation pane ─────────────────────────
+   "Since your last visit" moved inside "Where the app is": the description
+   leads, and the personal line sits under it as a footnote to it rather than
+   as a strip of its own. */
+.dev-ws-since-line {
+  margin: 6px 0 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 13px; color: var(--text-muted);
+}
+/* A control at the end of a lane — "N more waiting on you". `.dev-ws-link`
+   set `font: inherit` with no size of its own, so it took whatever its parent
+   had: 16px in the two strip heads, larger than every other control on the
+   Dev screen and in a weight nothing else there wears. `.gc-vote-btn` is the
+   platform's small action pill and is already what this screen uses. */
+.dev-ws-lane-btn { margin: 2px 0 0 4px; }
+/* The offer under a lane's heading, where the heading states the fact. */
+.dev-ws-lane-note { margin: -2px 0 6px 16px; font-size: 12px; color: var(--text-muted); }
+/* ── "What needs you": the ring, and the way to put it down ──
+   The pane stated a debt in the warning tint with no way to close it. The
+   ring is the home screen's Challenges primitive saying the same thing as
+   progress, and the × stores the OWED COUNT so the pane comes back by itself
+   the moment that number changes. */
+.dev-ws-needs-end { display: inline-flex; align-items: center; gap: 6px; }
+.dev-ws-vote-ring { width: 30px; height: 30px; }
+/* The count in words beside the ring. Muted and small: the ring is the
+   figure, this is what the figure is about. */
+.dev-ws-needs-count { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 .dev-ws-pill {
   display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px;
   font-size: 12px; font-weight: 600; white-space: nowrap;
@@ -11456,6 +11794,39 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 .dev-ws-link:hover { text-decoration: underline; }
 
+/* The dashboard's four numbers.
+   They were a sentence, and four integers read out as prose is the slowest
+   form they can take: the reader parses a clause to learn something a glance
+   should give. So they are tiles, on their own ground inside the pane, and
+   the paragraph under them is freed to say the things a number cannot.
+   Two up on a phone, four across from 420px. `auto-fit` rather than a fixed
+   count so the row never leaves one tile stranded on a line of its own. */
+.dev-ws-dash {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;
+  margin-top: 2px;
+}
+@media (min-width: 420px) { .dev-ws-dash { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.dev-ws-dash-cell {
+  display: flex; flex-direction: column; gap: 1px;
+  padding: 8px 10px; border-radius: 14px;
+  /* Same surface and the same lift as the cards below them: the tiles sit on
+     the same translucent strip and had the same flatness problem. */
+  background: var(--dc-sheet);
+  box-shadow:
+    0 0 0 1px var(--app-sheet-line) inset,
+    0 1px 2px var(--app-sheet-shadow-near),
+    0 4px 10px var(--app-sheet-shadow-far);
+  font-size: 11.5px; color: var(--text-muted); line-height: 1.25;
+}
+.dev-ws-dash-cell b {
+  font-size: 22px; font-weight: 600; color: var(--text-primary);
+  letter-spacing: -.02em; font-variant-numeric: tabular-nums;
+}
+/* Tone marks the two tiles that are a CALL, not a fact: something shipped,
+   something is blocked on you. A zero wears neither — nothing is waiting on
+   you is not a warning, and the component leaves the class off. */
+.dev-ws-dash-good b { color: var(--state-ok); }
+.dev-ws-dash-warn b { color: var(--state-attention); }
 .dev-ws-sort { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 0; flex-wrap: wrap; }
 .dev-ws-sort-opts { display: flex; gap: 4px; }
 .dev-ws-chip {
@@ -11480,7 +11851,23 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-theme-head:hover { background: var(--state-neutral-bg); }
 .dev-ws-theme-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .dev-ws-theme-name { font-size: 17px; font-weight: 600; letter-spacing: -.01em; color: var(--text-primary); text-wrap: balance; }
-.dev-ws-theme-people { text-align: right; color: var(--text-muted); font-size: 12px; line-height: 1.2; }
+/* The theme's glyph, inline with its name so a long name still wraps under
+   itself rather than around a floated square. Sized to the cap height of the
+   name beside it. */
+.dev-ws-theme-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; margin-right: 7px; border-radius: 7px;
+  font-size: 15px; line-height: 1; vertical-align: -5px;
+  background: var(--state-neutral-bg);
+}
+/* The no-icon fallback: the initial on the name's own swatch — the same
+   colour `Faces` gives that name — so it reads as chosen, not as missing. */
+.dev-ws-theme-icon-letter { color: #fff; font-size: 12px; font-weight: 700; }
+/* Two stats side by side — people, then how many items are still open in
+   here — divided by a hairline rather than a glyph, so the pair reads as one
+   block and the numbers stay the loudest thing in it. */
+.dev-ws-theme-people { text-align: right; color: var(--text-muted); font-size: 12px; line-height: 1.2; display: flex; gap: 10px; }
+.dev-ws-stat + .dev-ws-stat { padding-left: 10px; border-left: 1px solid var(--app-sheet-line); }
 .dev-ws-theme-people b { display: block; font-size: 20px; font-weight: 600; color: var(--text-primary); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .dev-ws-theme-say { grid-column: 1 / -1; margin: 2px 0 0; font-size: 14px; color: var(--text-primary); }
 .dev-ws-theme-counts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -11522,21 +11909,222 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   margin: 0 0 4px; padding: 0 4px; font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase;
   color: var(--text-muted); display: flex; gap: 6px; align-items: center;
 }
+/* "Shipped this week" folds — it is the one lane nothing is waiting on. Its
+   count rides in the heading so the fold never hides how much is in there. */
+.dev-ws-lane-title[role="button"] { cursor: pointer; }
+.dev-ws-lane-title[role="button"]:hover { color: var(--text-primary); }
+.dev-ws-lane-title[role="button"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.dev-ws-lane-n { font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.dev-ws-lane-title[aria-expanded="true"] > .dev-ws-chev { transform: rotate(90deg); }
+.dev-ws-lane-title > .dev-ws-chev { width: 14px; height: 14px; }
 .dev-ws-rowwrap { margin-bottom: 4px; }
+/* ── The row IS the card, folded ─────────────────────────────
+   It used to be a grey strip on the sheet, which made an unfolded row read
+   as two objects: the strip, and a whole card painted under it repeating the
+   same title, number and author. Same sheet, border and radius as the entry
+   below it now, so opening one GROWS the thing you clicked (#1787). */
 .dev-ws-row {
-  width: 100%; text-align: left; display: flex; align-items: center; gap: 10px;
-  padding: 8px 10px; border-radius: 12px; border: 0; background: var(--state-neutral-bg);
+  /* A COLUMN, as the card is: the head (glyph + title) on one line and the
+     bar row under it spanning the whole card. It was a single row with the
+     glyph in its own column, which put the bar 30px in. */
+  width: 100%; text-align: left; display: flex; flex-direction: column; align-items: stretch;
+  /* The card's own chrome, value for value (`div:is(.dev-card-dense,
+     .dev-card-topic)` above): r22, 14px sides and top, 12px bottom, the 8px
+     glyph gap, no border, the same soft drop shadow. The row had a hairline
+     border, 9x10 padding, r12 and a 10px gap — four small differences that
+     made the two sizes of one item read as two objects. */
+  padding: 14px 14px 12px; border-radius: 22px; border: 0;
+  background: var(--dc-sheet);
   color: var(--text-primary); font: inherit; cursor: pointer;
 }
-.dev-ws-row:hover { background: var(--bg-tertiary); }
+/* The hover FILL is the card's, applied as the card applies it: the same
+   `hover:bg-zinc-50 dark:hover:bg-zinc-800` utilities, on the row itself
+   (workshop.tsx). Two sizes of one object hovering to two different greys is
+   the same mismatch as two icons or two chip styles, and hard-coding the
+   colour here could not have fixed it — `zinc` is overridden in
+   tailwind.config.js, so a hex copied from the stock palette would be a
+   third grey rather than the card's. Only the border stays here. */
 .dev-ws-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.dev-ws-row > .dev-card-icon { flex-shrink: 0; }
-.dev-ws-row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.dev-ws-row-title { font-size: 14px; line-height: 1.3; }
-.dev-ws-row-meta { display: flex; gap: 8px; font-size: 12px; color: var(--text-muted); min-width: 0; }
-.dev-ws-row-meta > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dev-ws-row-pill { color: var(--text-primary); }
-.dev-ws-row-chat { font-size: 11px; color: var(--text-muted); white-space: nowrap; }
+/* -- The press ----------------------------------------------
+   Both sizes toggle on a click, and neither said so while the button was
+   down: the hover fill arrived on entry and nothing changed on press, so
+   closing an open card gave no feedback until it had already closed.
+
+   The exclusion list mirrors the two click guards in card/fold.tsx -- the
+   row ignores a press that started on an anchor or a button, and the open
+   card also ignores the thread, the comment list and the detail sections.
+   :active matches every ancestor of the pressed element, so without the
+   :not(:has(...)) a press on the Vote button would tint the whole card
+   behind it, for a press that toggles nothing. */
+/* The kit's scale-press, opted out of — the fourth entry in the list of
+   opt-outs up at `.create-mode-pill:active`, for a different reason. The
+   kit gives every button an instant scale on press; the row carries
+   role="button" so a keyboard can reach it and the open card is a plain
+   div, so the scale landed on ONE of the two sizes. That is the inset a
+   pressed folded row showed and a pressed open card did not. The two sizes
+   are one object: under press the fill changes and nothing else does, at
+   both. The brightness dim stays, as it does for the pills. */
+.dev-ws-row:active { transform: none; }
+.dev-ws-row:active:not(:has(a:active, button:active, input:active, textarea:active, select:active)),
+.dev-ws-rowwrap-open .gc-vote-item:active:not(:has(
+  a:active, button:active, input:active, textarea:active, select:active,
+  .dev-ws-detail:active, .dev-feed-thread:active, .dev-feed-comments:active
+)) {
+  background: var(--dev-press);
+  /* Instant. The open card carries transition-colors, so the press colour
+     eased in over ~150ms while the row snapped to it -- a quick click was
+     released before the card had finished tinting, which is what made the
+     press read as no feedback and the release read as a flash. The return
+     to hover still eases, because that one is not feedback about a gesture. */
+  transition: none;
+}
+/* The row's icon is the CARD's icon, to the pixel: the same 22px box with no
+   tile and no fill, and the same 18px glyph. It used to be a 28px tinted
+   tile, which was the one part of the folded row that did not appear on the
+   card at all — so the two sizes of one item opened on a different mark.
+   The colour that tile was carrying is not lost: it moved to the left edge
+   below, which is where the card carries it. */
+/* The head: the card's `.dev-card-head`, at the row's gap. */
+.dev-ws-row-head { display: flex; align-items: center; gap: 8px; }
+.dev-ws-row-head > .dev-card-icon {
+  /* No margin: the card's glyph sits flush on the padding edge, and a 1px
+     nudge here made the two sizes of one item start on different pixels. */
+  flex-shrink: 0; align-self: flex-start;
+  width: 22px; height: 22px; background: transparent; border-radius: 0;
+}
+.dev-ws-row-head > .dev-card-icon > svg { width: 18px; height: 18px; }
+
+/* ── The row's left edge ──
+   The card's own spine (`div:is(.dev-card-dense, .dev-card-topic)[data-edge]`
+   above), on the row, from the same model field and the same tokens: blue
+   while a vote is open, violet while merging, amber behind main, red on a
+   conflict, green once merged. A folded row and its card now agree on their
+   colour, which is what makes the fold read as a fold. */
+.dev-ws-row {
+  --dev-edge-w: 4px;
+  --dev-edge: transparent;
+  padding-left: calc(14px + var(--dev-edge-w));
+  /* An inset shadow and a 33% mix, exactly as the card draws it: the same
+     4px at the same strength, following the same corner arc, taking no
+     layout, over the same drop shadow. A border here would have been a
+     different mark at a different weight — which is the whole thing this
+     row is trying to stop being. */
+  box-shadow:
+    inset var(--dev-edge-w) 0 0 color-mix(in srgb, var(--dev-edge) 33%, transparent),
+    0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.dev-ws-row[data-edge="vote"]      { --dev-edge: var(--accent); }
+.dev-ws-row[data-edge="progress"]  { --dev-edge: var(--state-progress); }
+.dev-ws-row[data-edge="attention"] { --dev-edge: var(--state-attention); }
+.dev-ws-row[data-edge="blocked"]   { --dev-edge: var(--state-blocked); }
+.dev-ws-row[data-edge="ok"]        { --dev-edge: var(--state-ok); }
+.dev-ws-row[data-edge="neutral"]   { --dev-edge: var(--state-neutral); }
+/* The title takes the head's remaining width, as `.dev-card-title` does
+   on the card. It used to sit in a `.dev-ws-row-main` column with the meta
+   line, which is what held the meta line 30px in: the card puts its meta
+   line at the padding edge, under the glyph, not beside it. */
+.dev-ws-row-head > .dev-ws-row-title { flex: 1; min-width: 0; }
+/* 1.35, the dense card's leading (:is(.dev-card-dense, .dev-card-topic)
+   .dev-card-title above). The row was 1.3, so a two-line title set slightly
+   tighter folded than open — the same words on a different grid. */
+.dev-ws-row-title { font-size: 14px; line-height: 1.35; }
+/* The card's own meta line (dev-card.tsx metaLineNodes), at the card's
+   sizes: 12.5px on 21px lines, wrapping, the number a link, the tags and
+   the linked-issue chips in the card's chip geometry. Keep these in step
+   with `:is(.dev-card-dense, .dev-card-topic) .dev-card-meta` above. */
+/* The card's own tab, by the card's own rule: `:is(.dev-card-dense,
+   .dev-card-topic) .dev-card-head:has(> .dev-card-icon) + .dev-card-meta`
+   above sets the meta line 30px in so it starts under the title rather than
+   under the glyph — and only when there IS a glyph. Same 30px, same
+   condition, so a change to one keeps the other. The status row below takes
+   no tab, at either size: it is the full-width line. */
+.dev-ws-row-head:has(> .dev-card-icon) + .dev-ws-row-meta { padding-left: 30px; }
+.dev-ws-row-meta { display: block; font-size: 12.5px; line-height: 21px; color: var(--text-muted); min-width: 0; margin-top: 0; white-space: normal; }
+.dev-ws-row-meta > .dev-badge { height: 19px; font-size: 11.5px; vertical-align: middle; margin-left: 4px; }
+.dev-ws-row-meta > .dev-badge.font-mono { font-size: 11px; }
+.dev-ws-row-meta > .dev-badge .attr-avatar { width: 14px; height: 14px; }
+/* ── The row's last line ─────────────────────────────────────
+   The card's status row and facts row in one: a chip of the bar's state,
+   the state chips, the message count, and the vote button at the right end
+   — where the card's bar puts it — so the two sizes of one item keep one
+   control in one corner. ONE line, clipped: a card with more state than
+   fits loses the surplus whole rather than growing the row and breaking
+   the column's rhythm; the state chip ellipsises first. */
+.dev-ws-row-band {
+  /* 8px, the card's own `.dev-card-status` margin. The row had 4px plus a
+     1px column gap, so the gap above the one line that carries the state
+     was 5px folded and 8px open. */
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 6px;
+  min-height: 18px; overflow: hidden; margin-top: 8px;
+}
+/* The bar fills the line, as the card's does. The card's pill is a flex
+   item with basis 0 that grows into whatever the Vote button leaves; the
+   row's chip was inline-block at its natural width, so on a 540px Workshop
+   sheet it ended 221px short of the vote and the two sizes drew the same
+   state at two lengths. */
+.dev-ws-row-band > .dev-ws-row-state { flex: 1 1 0; }
+.dev-ws-row-band > .dev-ws-row-trailing { margin-left: auto; }
+/* The card's facts-row geometry (:is(.dev-card-dense, .dev-card-topic)
+   .dev-card-meta > .dev-badge), so "In review" and "@maya" are the same chip
+   at both sizes. Without this they fell back to the base .dev-badge —
+   10.5px on a 20px chip against the card's 11.5px on 19px. */
+.dev-ws-row-band > .dev-badge { flex: none; height: 19px; font-size: 11.5px; }
+/* The composite pill, wearing the tone it has always carried. Tones are
+   `statusPillState`'s vocabulary (neutral / ok / attention / blocked /
+   progress), not the merge badge's colour names — an unknown one falls
+   through to the neutral base rather than rendering unstyled. */
+/* At the card's bar's height and shape (30px, r14, 12.5px — the dense
+   `.dev-status-pill-block` above) rather than a 10px chip: the row's last
+   line is 30px tall whenever it carries the vote button, and a chip that
+   grows into the bar when the card opens was the one thing on that line
+   that still jumped. Content-width, ellipsising, where the card's bar
+   flexes to fill. */
+.dev-ws-row-state {
+  display: inline-block; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  height: 30px; line-height: 30px; box-sizing: border-box;
+  font-size: 12.5px; font-weight: 500; white-space: nowrap;
+  padding: 0 10px; border-radius: 14px;
+  background: var(--state-neutral-bg); color: var(--state-neutral);
+}
+.dev-ws-row-state-blocked   { background: var(--state-blocked-bg);   color: var(--state-blocked); }
+.dev-ws-row-state-ok        { background: var(--state-ok-bg);        color: var(--state-ok); }
+.dev-ws-row-state-attention { background: var(--state-attention-bg); color: var(--state-attention); }
+.dev-ws-row-state-progress  { background: var(--state-progress-bg);  color: var(--state-progress); }
+/* ── The fold mark ───────────────────────────────────────────
+   Which SIZE the item is at, at the top right of the row and of the card
+   (card/fold.tsx FoldMark). The same two chevrons on both; on the open card
+   they are pushed apart with a bar between them, so the mark stretches when
+   the card does and nothing rotates: a chevron that turns promises a
+   direction (the accordion's down → up, the tree's right → down) and the
+   Vote button's ▾ on this same card already means a menu. Absolutely placed
+   so it takes no width from the row's last line — the Vote button there
+   reaches the right edge, as the card's bar row does — and only the title
+   keeps clear of it. right: 14px puts its right edge over the hamburger's
+   in the band below; top: 15px centres it on the title's first line. */
+.dev-ws-row, .dev-ws-sheet > div:is(.dev-card-dense, .dev-card-topic) { position: relative; }
+.dev-ws-row-title, .dev-ws-sheet .dev-card-title { padding-right: 22px; }
+.dev-fold-mark {
+  position: absolute; top: 15px; right: 14px; width: 16px; height: 16px; display: block;
+  padding: 0; margin: 0; border: 0; background: transparent; color: var(--text-faint); line-height: 0;
+}
+button.dev-fold-mark { cursor: pointer; color: var(--accent); border-radius: 4px; }
+button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-fold-mark > svg { width: 16px; height: 16px; display: block; }
+/* The geometry is transforms on the three paths, in the SVG's own units (a
+   CSS px is one user unit on an SVG element): open, the chevrons sit 2
+   units further out and the bar between them is drawn; closed, the bar is
+   scaled to nothing about its middle. Declared as end states, and ALSO as
+   keyframes on the open card, so the stretch plays once when it mounts. */
+.dev-fold-mark path { transform-box: view-box; transform-origin: 12px 12px; }
+.dev-fold-mark .dev-fold-bar { transform: scaleY(0); }
+.dev-fold-mark[data-open="1"] .dev-fold-top { transform: translateY(-2px); animation: dev-fold-top .15s ease both; }
+.dev-fold-mark[data-open="1"] .dev-fold-bottom { transform: translateY(2px); animation: dev-fold-bottom .15s ease both; }
+.dev-fold-mark[data-open="1"] .dev-fold-bar { transform: scaleY(1); animation: dev-fold-bar .15s ease both; }
+@keyframes dev-fold-top { from { transform: translateY(0); } to { transform: translateY(-2px); } }
+@keyframes dev-fold-bottom { from { transform: translateY(0); } to { transform: translateY(2px); } }
+@keyframes dev-fold-bar { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) { .dev-fold-mark path { animation: none; } }
+
 .dev-ws-new {
   margin-left: 6px; font-size: 10px; font-weight: 700; color: var(--accent); background: var(--accent-tint);
   padding: 1px 5px; border-radius: 6px; vertical-align: middle;
@@ -11546,12 +12134,67 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   margin-left: 6px; font-size: 10px; font-weight: 600; color: var(--text-muted);
   border: 1px dashed currentColor; padding: 0 5px; border-radius: 6px; vertical-align: middle; opacity: .8;
 }
-.dev-ws-rowwrap-open > .dev-ws-row { border-radius: 12px 12px 0 0; }
-.dev-ws-rowwrap-open > .dev-feed-entry { border-radius: 0 0 22px 22px; margin-top: 2px; }
+/* ── Open: the card, at the size the Board draws it ─────────
+   There is nothing to join here any more. The wrapper renders EITHER the
+   compressed row or this entry, never both, so the entry keeps the ordinary
+   `#dev-workshop .dev-feed-entry` sheet (above) and the dense card inside it
+   keeps every bit of chrome the Board gives it: the 36px icon, the meta line,
+   the full-width status bar, the facts line, the menu.
+
+   #1799 did the opposite — it kept the row as a head and hid the card's head,
+   meta and status band so they would not repeat it. That made the open state a
+   third object belonging to neither size. Those four rules are gone rather
+   than adjusted; the row IS the compressed representation of this card, and
+   the way to show the card is to show the card. */
+/* ── "Open card", and what it opens ────────────────────────
+   The toggle sits in the card's action band, after its own pills and before
+   the hamburger (card/dev-card.tsx's `actionEnd`), on the Workshop and the
+   Board alike; on the Board it is a link to the item's page.
+
+   On the Workshop it reveals the topic screen's own sections — the ledger,
+   the About sheet with its before/after tiles, the transcript — drawn by the
+   same components from the same view model, indented under the card so a
+   reader can see where the item ends. Not the comment threads: the sheet
+   already carries both, above and below this block. */
+.dev-ws-open-btn { white-space: nowrap; text-decoration: none; }
+.dev-ws-detail {
+  margin-top: 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border-light);
+  display: flex; flex-direction: column; gap: 8px;
+}
+/* The topic sheets are their own surfaces on their own page; inside a card
+   that is already a surface they lose the second one and keep the spacing. */
+.dev-ws-detail .dev-topic-sheet {
+  background: transparent; box-shadow: none; border-radius: 0; padding: 0;
+}
 .dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
 .dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
 .dev-ws-theme-more { font-size: 13px; color: var(--text-muted); padding: 4px 10px 0; }
-/* The vote strip's rows carry the card's Vote button at their trailing
-   edge, before the chevron. */
+/* The row's vote button, at the right end of its last line (.dev-ws-row-band). */
 .dev-ws-row-trailing { display: inline-flex; align-items: center; flex-shrink: 0; }
+/* ── The Board's columns fold their cards too (#1787) ─────────
+   The same row, the same sheet and the same fold (card/fold.tsx), inside a
+   kanban column. The column's own `space-y-2` (4px, see #dev-kanban above)
+   is the rhythm between rows, so the wrapper's 4px is not added to it. The
+   open card is the column's tile as it always was; the sheet around it is
+   transparent here — the Workshop's frosted plane is scoped to #dev-workshop
+   on purpose — and it draws nothing else: the Board's "Open card" is itself
+   the link to the item's page, so the sheet has no line under the card. */
+#dev-kanban .dev-ws-rowwrap { margin-bottom: 0; }
 .dev-ws-foot-note { font-size: 12px; color: var(--text-muted); text-align: center; padding: 6px 0 2px; }
+
+/* Illustration variants share one frame; only visibility changes with theme. */
+.illustration-dark { display: none; }
+.dark .illustration-light { display: none; }
+.dark .illustration-dark { display: block; }
+.home-discover-card[data-preview-theme="light"] .illustration-light { display: block; }
+.home-discover-card[data-preview-theme="light"] .illustration-dark { display: none; }
+.home-discover-card[data-preview-theme="dark"] .illustration-light { display: none; }
+.home-discover-card[data-preview-theme="dark"] .illustration-dark { display: block; }
+.home-discover-card[data-preview-theme="light"] .home-discover-name { color: #1c1c1e; }
+.home-discover-card[data-preview-theme="light"] :is(.home-discover-blurb, .home-discover-meta) { color: #48484a; }
+.home-discover-card[data-preview-theme="dark"] .home-discover-name { color: #eaeaea; }
+.home-discover-card[data-preview-theme="dark"] :is(.home-discover-blurb, .home-discover-meta) { color: #8e8e93; }
+.home-discover-card[data-preview-theme="light"] .card-add-btn[data-added="false"] { background: white; color: #0062cc; border-color: #e3e3e6; }
+.home-discover-card[data-preview-theme="dark"] .card-add-btn[data-added="false"] { background: #2c2c2e; color: #5aa9ff; border-color: #48484a; box-shadow: none; }

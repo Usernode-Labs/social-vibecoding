@@ -77,6 +77,15 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_link_expires_at   TIMESTAMPTZ;
 -- src/routes/sessions.js via src/services/limits.js.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit_cents INTEGER;
 
+-- #1788: per-user WEEKLY LLM spend cap in cents, layered on top of the
+-- daily one above. NULL means "use the platform default" stored in
+-- platform_settings.user_weekly_limit_cents (see below); 0 means "no
+-- weekly cap applies to this user". Same admin surfaces as the daily
+-- override (/api/admin/users/:id/weekly-limit, admin console → Users).
+-- Read by limits.getUserCreditEntitlement / limits.resolveCaps, which
+-- own the full daily-vs-weekly interaction.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS weekly_limit_cents INTEGER;
+
 -- Experimental: opt-in AI progress estimate for coding runs. When TRUE,
 -- the platform periodically asks Haiku to skim the in-flight Claude Code
 -- progress log and emits a vague "AI guess" line in dev-chat (see
@@ -98,19 +107,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL
 -- it on; the deployment gate still applies on top.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS session_bridge_enabled BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Home-screen panels the viewer has dismissed (issue #911) — the keys of
--- the cards that sit on the home screen next to the app grid ('challenges'
--- today; see PANEL_REGISTRY in src/routes/home-panels.js, the only reader
--- and writer of this column). ABSENCE MEANS VISIBLE: an empty array — the
--- default for every existing and future row — means every panel in the
--- registry shows, which is what makes the challenges card default-on for
--- everyone with no backfill. Written only through
--- POST /api/home-panels/:key/visibility, which validates the key against
--- the registry, so the array can never accumulate unknown values. Called
--- "panels" and not "widgets" deliberately: the client half,
--- frontend/src/features/home/home.js, already uses "widget" for the iOS
--- home-screen widget's pinned app grid.
-ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DEFAULT '{}';
+-- Home sections are permanent (#1801). Remove the obsolete preference from
+-- existing databases; IF EXISTS also makes fresh installs and repeat boots safe.
+ALTER TABLE users DROP COLUMN IF EXISTS home_panels_hidden;
 
 -- RETIRED — superseded by the `user_home_layout` table (free-form home-grid
 -- placement). It used to hold an iOS-homescreen-style drag position per
@@ -119,9 +118,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DE
 -- (column, row) cells per breakpoint instead, and holes are a first-class
 -- concept a card-count can't represent.
 --
--- The column is LEFT IN PLACE, unread and unwritten: this file is
--- append-only (it has no DROP COLUMN anywhere) and a dead JSONB default of
--- '{}' costs nothing. Nothing may read it — see user_home_layout below.
+-- This separate legacy placement field is left in place, unread and
+-- unwritten. Nothing may read it — see user_home_layout below.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panel_positions JSONB NOT NULL DEFAULT '{}';
 
 -- Platform-level user language preference (issue #757). A BCP-47 language
@@ -1996,6 +1994,44 @@ INSERT INTO platform_settings (key, value) VALUES
   ('system_tokens_daily_limit_cents', '2500')
 ON CONFLICT (key) DO NOTHING;
 
+-- #1788: the platform-default per-user WEEKLY cap. Seeded as SEVEN TIMES
+-- whatever the daily default is at the moment this first runs, rather than
+-- as a literal: on an existing deployment that is exactly what a user on
+-- the default could already spend across a week, so the cap arrives
+-- enforced but non-regressive. A fresh deploy seeds 7 x 2500 = 17500.
+-- ON CONFLICT DO NOTHING, so an operator-set value survives every boot.
+INSERT INTO platform_settings (key, value)
+SELECT 'user_weekly_limit_cents',
+       (7 * COALESCE((
+         SELECT ps.value::int
+           FROM platform_settings ps
+          WHERE ps.key = 'user_daily_limit_cents'
+            AND ps.value ~ '^[0-9]+$'
+       ), 2500))::text
+ON CONFLICT (key) DO NOTHING;
+
+-- One-shot backfill of users.weekly_limit_cents for everyone who already
+-- holds a DAILY override. Without it, a raised daily cap would collide with
+-- the platform weekly default the first time the weekly gate ran — a user
+-- on $120/day would be cut off partway through Tuesday by a $140 week.
+-- Seven times their own daily cap preserves exactly what each of them could
+-- already spend. Guarded by a marker row so it runs EXACTLY ONCE, the same
+-- way app_quota_migrated above is: a re-runnable UPDATE would re-clobber
+-- any weekly cap an admin later lowers by hand. Rows with no daily override
+-- are left NULL and fall through to the platform default.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM platform_settings WHERE key = 'weekly_limit_backfilled') THEN
+    UPDATE users
+       SET weekly_limit_cents = daily_limit_cents * 7
+     WHERE daily_limit_cents IS NOT NULL
+       AND weekly_limit_cents IS NULL;
+    INSERT INTO platform_settings (key, value)
+      VALUES ('weekly_limit_backfilled', 'true')
+      ON CONFLICT (key) DO NOTHING;
+  END IF;
+END $$;
+
 -- One-shot backfill of users.app_quota from the legacy can_create_apps
 -- boolean. Guarded by a marker row in platform_settings so it runs EXACTLY
 -- ONCE: a re-run-safe UPDATE keyed only on can_create_apps = TRUE would
@@ -2515,10 +2551,10 @@ BEGIN
 END $$;
 
 -- Anonymous-shell probe result (landing-page app directory).
---   anon_shell: whether the app's own HTML shell serves without a
---     platform session. 'public' = anonymous GET / returns 2xx (echo /
---     lastwin style), 'gated' = it 401s or bounces to the platform (the
---     scaffold default), 'unknown' = never probed or unclassifiable.
+--   anon_shell: whether the app's shell and conventional API gate permit
+--     anonymous access. 'public' = GET / succeeds and GET /api/ succeeds
+--     or has no route (404, e.g. a static app). 'gated' = either requires
+--     authentication, 'unknown' = never probed or unclassifiable.
 --     Written ONLY by services/shell-probe.js; consumed by
 --     GET /api/public/apps as `requires_login` (anything not 'public').
 --     'unknown' renders as account-required — the safe default, matching
@@ -2576,6 +2612,18 @@ ALTER TABLE apps ADD COLUMN IF NOT EXISTS screenshot_device_scale SMALLINT NOT N
 -- and rotates the id only when the committed bytes change (the
 -- /app-icons/:id cache header is immutable, so a new id doubles as
 -- the cache-buster).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS featured_illustration JSONB;
+CREATE TABLE IF NOT EXISTS app_illustrations (
+  app_id INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  id VARCHAR(32) NOT NULL UNIQUE,
+  content_type TEXT NOT NULL,
+  data BYTEA NOT NULL
+);
+
+ALTER TABLE app_illustrations ADD COLUMN IF NOT EXISTS dark_id VARCHAR(32) UNIQUE;
+ALTER TABLE app_illustrations ADD COLUMN IF NOT EXISTS dark_content_type TEXT;
+ALTER TABLE app_illustrations ADD COLUMN IF NOT EXISTS dark_data BYTEA;
+
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_emoji VARCHAR(32);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_image_id VARCHAR(32);
 
@@ -4343,6 +4391,7 @@ INSERT INTO mobile_push_kind_categories (kind, category, default_enabled) VALUES
   ('auto_solve_done', 'developer_sessions', TRUE),
   ('connector_submitted', 'developer_sessions', TRUE),
   ('agent_awaiting_input', 'developer_sessions', TRUE),
+  ('test_alert', 'developer_sessions', TRUE),
   ('stale_pr', 'proposal_alerts', TRUE),
   ('check_failed', 'proposal_alerts', TRUE),
   ('pr_proposed', 'proposal_alerts', TRUE),
@@ -4360,7 +4409,7 @@ DELETE FROM mobile_push_kind_categories
  WHERE kind NOT IN (
    'mention', 'reply', 'collab_invite', 'collab_invite_accepted',
    'approver_invite', 'approver_invite_accepted', 'spec_shared',
-   'session_done', 'auto_solve_done', 'stale_pr', 'check_failed',
+   'session_done', 'test_alert', 'auto_solve_done', 'stale_pr', 'check_failed',
    'pr_proposed', 'reaction', 'kudos',
    'conversation_invite', 'conversation_message', 'conversation_mention',
    'conversation_reply', 'conversation_reaction'
@@ -4497,10 +4546,11 @@ BEGIN
      FOR KEY SHARE OF r
   )
   INSERT INTO mobile_push_deliveries (
-    notification_id, registration_id, environment, installation_id, platform, expires_at
+    notification_id, registration_id, environment, installation_id, platform, expires_at, available_at
   )
   SELECT NEW.id, id, environment, installation_id, platform,
-         COALESCE(NEW.created_at, NOW()) + INTERVAL '24 hours'
+         COALESCE(NEW.created_at, NOW()) + INTERVAL '24 hours',
+         NOW() + CASE WHEN NEW.kind = 'test_alert' THEN INTERVAL '10 seconds' ELSE INTERVAL '0 seconds' END
     FROM eligible
   ON CONFLICT (notification_id, environment, installation_id) DO NOTHING;
 
@@ -4885,6 +4935,11 @@ CREATE TABLE IF NOT EXISTS native_session_credentials (
     CHECK (expires_at > created_at),
   CHECK (revoked_at IS NULL OR revoked_at >= created_at)
 );
+
+-- A restored web session is authority only while this exact native lease is
+-- live. Keep the incarnation too, for exact attempt replay and web logout.
+ALTER TABLE sessions ADD COLUMN IF NOT EXISTS native_session_credential_reference
+  VARCHAR(47) REFERENCES native_session_credentials(credential_reference) ON DELETE CASCADE;
 
 -- Existing databases received an unnamed auto-generated CHECK that also
 -- admitted the retired `mobile_logout` value. Replace it without rewriting
@@ -6140,6 +6195,26 @@ CREATE TABLE IF NOT EXISTS user_agent_preferences (
 CREATE UNIQUE INDEX IF NOT EXISTS user_agent_preferences_one_default
   ON user_agent_preferences (user_id) WHERE is_default = TRUE;
 
+-- Per-model favorite overrides for the otherwise very large OpenRouter
+-- catalog. Platform recommendations begin starred when no override exists;
+-- storing both TRUE and FALSE is what lets a user keep either choice after
+-- the recommendation list changes or the model temporarily leaves the
+-- key-filtered catalog. One row per user/model keeps toggles atomic and lets
+-- every device see the same list.
+CREATE TABLE IF NOT EXISTS user_agent_model_favorites (
+  user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  backend     VARCHAR(32) NOT NULL,
+  model_id    VARCHAR(255) NOT NULL,
+  is_favorite BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (user_id, backend, model_id),
+  CONSTRAINT user_agent_model_favorites_backend_check
+    CHECK (backend IN ('codex_openrouter'))
+);
+ALTER TABLE user_agent_model_favorites
+  ADD COLUMN IF NOT EXISTS is_favorite BOOLEAN NOT NULL DEFAULT TRUE;
+COMMENT ON TABLE user_agent_model_favorites IS 'staging:private';
+
 -- Durable per-turn ledger for multi-provider usage, retries, and proxy
 -- settlement. Idempotent settlement keys on the turn id.
 CREATE TABLE IF NOT EXISTS agent_turns (
@@ -6344,6 +6419,37 @@ ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_error TEXT;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_failed_at TIMESTAMPTZ;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS last_viewed_at TIMESTAMPTZ;
 ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS reconcile_started_at TIMESTAMPTZ;
+-- The Workshop's status paragraph: two sentences on the week just gone and
+-- what is in flight, written by the same model that drafts the themes, from
+-- the same snapshot, on the same reconcile. Kept HERE rather than in its own
+-- table so it can never describe a board the themes beside it were not
+-- drafted against. Empty when no model is configured or the call failed: the
+-- client falls back to a sentence derived from the counts.
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_text TEXT;
+-- The same answer as three windowed one-line fields — { lastWeek, thisWeek,
+-- open } — which is what the lander draws, as three cards under the number
+-- tiles. digest_text above is kept as the flattened prose form: it is what a
+-- row written under digest prompt version 2 holds, and the fields here cannot
+-- be recovered from it, so a v2 row serves its paragraph until the version
+-- bump re-asks the model. An empty string in a field means that window was
+-- genuinely empty and its card is not drawn.
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_json JSONB;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_at TIMESTAMPTZ;
+-- Why the last digest attempt got nothing, or NULL when it succeeded. Read by
+-- the lander's footnote, and it picks the retry window (an hour after a
+-- failure, a day after a success).
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_error TEXT;
+-- Which version of each stage's prompt the row was last produced by: the
+-- WORKSHOP_*_VERSION constants beside the prompts in services/llm.js. A
+-- bump makes that stage due on the app's next pass whatever its clocks say
+-- (discovery re-drafts, placement re-places every card, the digest is
+-- rewritten). Stamped on the ATTEMPT, like digest_at, so a bump against a
+-- failing model keeps its backoff instead of retrying on every view. The
+-- default grandfathers the rows written before the columns existed: a
+-- deploy re-drafts nothing by itself.
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS discovery_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS placement_version INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE app_workshop_themes ADD COLUMN IF NOT EXISTS digest_version INTEGER NOT NULL DEFAULT 1;
 
 -- Platform-wide private messaging (#488). This domain is deliberately
 -- separate from app-scoped `chat_messages`: membership, consent, blocks,
@@ -7000,3 +7106,30 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS freshness_error TEXT
 CREATE INDEX IF NOT EXISTS chat_sessions_freshness_checked_idx
   ON chat_sessions (freshness_checked_at NULLS FIRST)
   WHERE status = 'promoted';
+
+-- #1841: private, user-bound mailbox proof, separate from sign-in OTPs.
+CREATE TABLE IF NOT EXISTS account_email_verifications (
+  user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  email VARCHAR(255) NOT NULL,
+  code_hash TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  previous_email VARCHAR(255),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE account_email_verifications IS 'staging:private';
+
+-- Cross-Pod ownership of a preview build/capture; ephemeral runtime state.
+CREATE TABLE IF NOT EXISTS preview_operations (
+  session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  desired_revision TEXT NOT NULL,
+  run_id UUID,
+  revision TEXT,
+  phase TEXT,
+  state TEXT NOT NULL DEFAULT 'queued',
+  result JSONB,
+  finished_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE preview_operations IS 'staging:private';

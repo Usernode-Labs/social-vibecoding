@@ -217,3 +217,89 @@ test('the deploy no longer rebuilds caddy on routine deploys', () => {
   assert.match(workflow, /caddy:\n\s+- 'caddy\.Dockerfile'/,
     'paths-filter must watch caddy.Dockerfile');
 });
+
+// A blue-green flip is a `caddy reload`. Caddy applies the new config, then
+// tears the OLD one down — and two parts of that teardown are unbounded by
+// default: http.Server.Shutdown waits forever for in-flight requests
+// (long-lived SSE), and the reverse_proxy Cleanup writes a WebSocket Close
+// frame to every hijacked client inline, under the handler's connection
+// lock, with no write deadline. One client in TCP zero-window (a suspended
+// mobile tab) blocks that write on the TLS mutex, the reload never returns,
+// the rollout never stops the old color (which keeps the leader lock), and
+// the deployer's flock blocks every later merge. Observed 2026-09-09: a
+// 45-minute hang with the old server's write stuck in
+// reverseproxy.writeCloseControl -> crypto/tls.(*Conn).Write.
+//
+// Three pins: bound the Shutdown wait (global grace_period), take the
+// WebSocket close off the reload's critical path (stream_close_delay, which
+// makes Cleanup schedule the close on a timer), and bound the reload call
+// itself so a wedge surfaces as a failed deploy instead of a silent hang.
+
+function graceSeconds() {
+  const m = caddyfile.match(/^\{\n(?:\t[^\n]*\n)*?\tgrace_period (\d+)s\n/m);
+  assert.ok(m, 'Caddyfile must open with a global options block that sets grace_period');
+  return Number(m[1]);
+}
+
+test('global options bound how long a reload waits for in-flight requests', () => {
+  const firstBlock = caddyfile.indexOf('\n{\n');
+  const firstSnippet = caddyfile.indexOf('\n(');
+  const firstSite = caddyfile.indexOf('\n{$USERNODE_DOMAIN} {');
+  assert.notStrictEqual(firstBlock, -1, 'global options block missing');
+  assert.ok(firstBlock < firstSnippet && firstBlock < firstSite,
+    'the global options block must be the first block in the Caddyfile (Caddy rejects it elsewhere)');
+  const grace = graceSeconds();
+  assert.ok(grace > 0 && grace <= 60,
+    `grace_period (${grace}s) should be long enough for a normal SSE stream to notice and ` +
+    'short enough that a deploy is not held open by stragglers');
+});
+
+for (const [label, src] of [
+  ['committed bootstrap file', activeFile],
+  ['platform-rollout.sh write_active()', rolloutSh],
+  ['rollback.sh kill-switch copy', fs.readFileSync(path.join(root, 'scripts', 'rollback.sh'), 'utf8')],
+]) {
+  test(`apex platform proxy closes old WebSockets on a timer, not inline (${label})`, () => {
+    const proxy = sliceBetween(
+      src, 'reverse_proxy usernode-', '(platform_gate)', `apex proxy (${label})`
+    );
+    assert.match(proxy, /stream_close_delay \d+(ms|s)/,
+      'without stream_close_delay Caddy closes hijacked streams inline during the reload, ' +
+      'holding the connection lock across an undeadlined TLS write');
+  });
+}
+
+test('app-container proxy also closes old WebSockets on a timer', () => {
+  const appProxy = sliceBetween(
+    wildcardSite, 'reverse_proxy {upstream}:3000 {', 'encode gzip', 'app proxy'
+  );
+  assert.match(appProxy, /stream_close_delay \d+(ms|s)/,
+    'app WebSockets (falling sands et al.) are hijacked through this proxy and wedge a reload the same way');
+});
+
+test('the rollout bounds `caddy reload` and does not revert on a timeout', () => {
+  assert.match(rolloutSh, /timeout "\$RELOAD_TIMEOUT" docker compose exec -T caddy caddy reload/,
+    'the reload must run under `timeout` so a wedged Caddy fails the deploy instead of hanging it');
+  const m = rolloutSh.match(/^RELOAD_TIMEOUT="\$\{RELOAD_TIMEOUT:-(\d+)\}"/m);
+  assert.ok(m, 'RELOAD_TIMEOUT default not found');
+  assert.ok(Number(m[1]) > graceSeconds() * 2,
+    `RELOAD_TIMEOUT (${m[1]}s) must comfortably exceed the global grace_period ` +
+    `(${graceSeconds()}s) a healthy reload may legitimately spend draining`);
+  // Exit 124 is `timeout` expiring. It must map to a distinct return code
+  // and short-circuit the retry loop — more reloads only queue on Caddy's
+  // config lock.
+  assert.match(rolloutSh, /\[ "\$rc" -eq 124 \][\s\S]*?return 2/,
+    'a timed-out reload must return a distinct code without retrying');
+  // The caller: on timeout, leave both colors up. Reverting the active
+  // file or stopping the new color would break the traffic the new
+  // config is already serving.
+  const flip = rolloutSh.indexOf('write_active "$IDLE"');
+  const timeoutBranch = sliceBetween(
+    rolloutSh.slice(flip), '-eq 2 ]; then', 'elif', 'timeout branch'
+  );
+  assert.doesNotMatch(timeoutBranch, /write_active "\$LIVE"/,
+    'the timeout branch must not flip the active file back');
+  assert.doesNotMatch(timeoutBranch, /docker compose stop/,
+    'the timeout branch must not stop either color');
+  assert.match(timeoutBranch, /exit 1/, 'the timeout branch must still fail the deploy');
+});

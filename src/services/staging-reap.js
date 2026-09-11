@@ -105,6 +105,14 @@ const JOB_STALE_AFTER_MS = 30 * 60 * 1000;
 const DEFAULT_STALE_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_STALE_SWEEP_LIMIT = 10;
 
+// The connection-pressure pass (#1771). Rarer and smaller than the stale
+// pass on purpose: this one tears down previews that are doing nothing
+// WRONG, purely because the shared Postgres is close to refusing work, so
+// it should act late and lightly and let the ordinary passes do the rest.
+// 0 disables it.
+const DEFAULT_PRESSURE_SWEEP_INTERVAL_MS = 5 * 60 * 1000;
+const DEFAULT_PRESSURE_SWEEP_LIMIT = 3;
+
 // Statuses whose preview backs a live merge vote. The automatic pass must NOT
 // tear these down: stagingNeedsRebuild() now sees their staleness too, so
 // server.js Pass 3 REBUILDS them (bounded to 5 per tick with a per-session
@@ -836,8 +844,24 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
     // pass must stay invisible in host I/O next to live staging restores.
     for (const dbName of batch) {
       try {
-        await dbManager.dropDatabase(dbName);
-        summary.dropped++;
+        const lifecycle = require('./preview-lifecycle');
+        if (lifecycle.enabled(config)) {
+          const sessionId = Number(STAGING_DB_NAME_RE.exec(dbName)[1]);
+          await require('./build-retention-guard').withResourceUse(config,
+            require('./advisory-locks').PREVIEW_LIFECYCLE_LOCK, sessionId, async () => {
+              // The census predates lock acquisition. Recheck durable ownership
+              // and connections after every competing build/capture has stopped.
+              const { rows } = await pool.query(`SELECT 1 FROM chat_sessions
+                WHERE id = $1 AND staging_url IS NOT NULL
+                UNION ALL SELECT 1 FROM pg_stat_activity WHERE datname = $2`, [sessionId, dbName]);
+              if (rows.length) return;
+              await dbManager.dropDatabase(dbName);
+              summary.dropped++;
+            });
+        } else {
+          await dbManager.dropDatabase(dbName);
+          summary.dropped++;
+        }
       } catch (err) {
         summary.failed++;
         log.warn('staging-reap', 'Orphan staging-DB drop failed', {
@@ -849,6 +873,156 @@ async function sweepOrphanDbs(config, { limit = null } = {}) {
     return summary;
   } catch (err) {
     log.warn('staging-reap', 'Orphan staging-DB pass errored', { err: err.message });
+    return summary;
+  }
+}
+
+function pressureSweepIntervalMs() {
+  const raw = parseInt(process.env.STAGING_PRESSURE_SWEEP_INTERVAL_MS || '', 10);
+  if (!Number.isFinite(raw) || raw < 0) return DEFAULT_PRESSURE_SWEEP_INTERVAL_MS;
+  return raw;   // 0 disables
+}
+
+function pressureSweepLimit() {
+  const raw = parseInt(process.env.STAGING_PRESSURE_SWEEP_LIMIT || '', 10);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_PRESSURE_SWEEP_LIMIT;
+  return raw;
+}
+
+let _lastPressureSweepStartedAt = 0;
+
+function pressureSweepDue(nowMs = Date.now()) {
+  const interval = pressureSweepIntervalMs();
+  if (interval <= 0) return false;
+  return nowMs - _lastPressureSweepStartedAt >= interval;
+}
+
+/**
+ * Pure selection, extracted for testability: which idle previews may be
+ * reclaimed to free connections, idle-longest first.
+ *
+ * Everything excluded here is excluded because tearing it down would break
+ * something a person is looking at: a session with a worker turn in flight
+ * or a build running, and any preview backing a live merge vote (the same
+ * VOTE_BACKED_STATUSES the stale pass respects — a reviewer arriving at a
+ * dead link is worse than a tight connection budget).
+ *
+ * @param rows              [{ id, status, last_activity_at }], any order
+ * @param isBusy            (sessionId) => boolean
+ * @param hasInFlightBuild  (sessionId) => boolean
+ */
+function selectPressureVictims({ rows, isBusy = null, hasInFlightBuild = null }) {
+  return rows
+    .filter((r) => {
+      if (VOTE_BACKED_STATUSES.has(String(r.status))) return false;
+      if (isBusy && isBusy(Number(r.id))) return false;
+      if (hasInFlightBuild && hasInFlightBuild(Number(r.id))) return false;
+      return true;
+    })
+    .sort((a, b) => new Date(a.last_activity_at || 0) - new Date(b.last_activity_at || 0));
+}
+
+/**
+ * The automatic connection-pressure pass. NEVER THROWS.
+ *
+ * The other two passes reclaim previews that are stale or orphaned — facts
+ * about the preview itself. This one reclaims previews that are perfectly
+ * healthy, because of a fact about the SERVER: `max_connections` is shared
+ * by the platform, every production app and every preview, and when it runs
+ * out the casualty is whichever proposal's checks happen to run next.
+ *
+ * Two properties matter more than how much it frees:
+ *
+ *   - It does nothing until the census says the server is saturated, so on
+ *     an ordinary day this is one cheap query every five minutes.
+ *   - It re-censuses after each teardown and stops as soon as the pressure
+ *     is off. Freeing the budget is the goal; tearing down previews is only
+ *     the means, so it does the least of it that works.
+ *
+ * Deliberately NOT done here: terminating other databases' idle backends
+ * with pg_terminate_backend. That is the fast way to free connections and
+ * the wrong one — node-postgres surfaces a killed idle client as an error
+ * event on the pool, and a pool with no 'error' listener takes the process
+ * down with it. Generated apps frequently have no such listener, so the
+ * platform would be crash-looping other people's production apps to make
+ * room for a preview.
+ */
+async function sweepConnectionPressure(config, { limit = null } = {}) {
+  const cap = limit || pressureSweepLimit();
+  const summary = { saturated: false, candidates: 0, tornDown: 0, failed: 0, freed: 0 };
+  _lastPressureSweepStartedAt = Date.now();
+  try {
+    // A preview has no docker socket and its cloned chat_sessions is a
+    // stale copy: computing victims from it would be fiction.
+    if (isStagingEnv()) return summary;
+
+    const pool = getPool(config);
+    const { connectionCensus } = require('../db/connection-census');
+    const before = await connectionCensus(pool);
+    // A null census means the query itself could not run, which on this
+    // path most likely means the server is ALREADY refusing connections.
+    // Acting on a reading we do not have would be guessing, and the stale
+    // and orphan passes still run either way.
+    if (!before || !before.saturated) return summary;
+    summary.saturated = true;
+
+    const staging = require('./staging');
+    const activeWorkers = require('./active-workers');
+    const sessionLifecycle = require('./session-lifecycle');
+
+    const { rows } = await pool.query(
+      `SELECT id, status, last_activity_at
+         FROM chat_sessions
+        WHERE staging_url IS NOT NULL
+          AND (staging_runtime_name IS NOT NULL OR staging_container_id IS NOT NULL)
+          AND status NOT IN ('merged')
+        ORDER BY last_activity_at ASC
+        LIMIT 50`
+    );
+    const victims = selectPressureVictims({
+      rows,
+      isBusy: activeWorkers.isSessionBusy,
+      hasInFlightBuild: staging.hasInFlightBuild,
+    });
+    summary.candidates = victims.length;
+    if (!victims.length) {
+      log.warn('staging-reap', 'Postgres near its connection limit, no reclaimable preview', {
+        used: before.used, max: before.max, topDatabases: before.topDatabases,
+      });
+      return summary;
+    }
+
+    log.warn('staging-reap', 'Connection-pressure pass started', {
+      used: before.used, max: before.max, free: before.free,
+      candidates: victims.length, cap,
+      topDatabases: before.topDatabases,
+    });
+
+    for (const victim of victims.slice(0, cap)) {
+      try {
+        const res = await sessionLifecycle.teardownStagingForSession({
+          pool, sessionId: Number(victim.id), reason: 'connection-pressure',
+        });
+        if (res && res.torn) summary.tornDown++;
+      } catch (err) {
+        summary.failed++;
+        log.warn('staging-reap', 'Connection-pressure teardown failed', {
+          sessionId: victim.id, err: err.message,
+        });
+      }
+      // Stop at the first reading that clears: this pass is allowed to
+      // reclaim previews to relieve pressure, not to keep reclaiming them
+      // once the pressure is gone.
+      const now = await connectionCensus(pool);
+      if (now) {
+        summary.freed = Math.max(0, now.free - before.free);
+        if (!now.saturated) break;
+      }
+    }
+    log.info('staging-reap', 'Connection-pressure pass finished', summary);
+    return summary;
+  } catch (err) {
+    log.warn('staging-reap', 'Connection-pressure pass errored', { err: err.message });
     return summary;
   }
 }
@@ -960,6 +1134,7 @@ function _reset() {
   _seq = 0;
   _lastAutomatic = null;
   _lastStaleSweepStartedAt = 0;
+  _lastPressureSweepStartedAt = 0;
 }
 
 module.exports = {
@@ -981,6 +1156,12 @@ module.exports = {
   staleSweepLimit,
   sweepOrphanDbs,
   selectOrphanDbs,
+  // Connection-pressure pass (#1771).
+  sweepConnectionPressure,
+  selectPressureVictims,
+  pressureSweepDue,
+  pressureSweepIntervalMs,
+  pressureSweepLimit,
   orphanDbSweepDue,
   STAGING_DB_NAME_RE,
   reapOne,

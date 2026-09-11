@@ -1,5 +1,5 @@
 // /api/home-panels — the home screen's Challenges card (#911) and the
-// per-user show/hide behind it.
+// fixed sections that remain visible for every signed-in account (#1801).
 //
 // Contracts guarded here:
 //
@@ -13,9 +13,8 @@
 //      snapshot, clamped to the target.
 //   4. points_remaining is withheld (null) unless EVERY open row's reward
 //      parses as a plain number — organiser prose is never guessed at.
-//   5. A hidden panel is dropped from `panels` but still described by
-//      `registry` + `hidden`, so Settings renders from the same response.
-//   6. The visibility write validates its key against the registry.
+//   5. Legacy hidden preferences cannot suppress any fixed section.
+//   6. The retired visibility endpoint cannot mutate preferences.
 //   7. ?demo=1 is a no-op outside staging.
 //
 // Pure-function tests plus HTTP tests against a throwaway express app and
@@ -51,8 +50,7 @@ function makeMockPool(state) {
       if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
       calls.push({ sql, params });
 
-      // Placement moved to user_home_layout (src/routes/home-layout.js);
-      // this route reads only the per-user hidden set now.
+      // Model legacy stored preferences to catch accidental reads or writes.
       if (sql.includes('SELECT home_panels_hidden FROM users')) {
         return { rows: [{ home_panels_hidden: state.hidden ?? [] }] };
       }
@@ -65,17 +63,25 @@ function makeMockPool(state) {
       if (sql.includes('FROM seasons')) {
         return { rows: state.season ? [state.season] : [] };
       }
-      // The COUNT(*) totals query.
-      if (sql.includes('COUNT(*)::int AS total')) {
+      // The COUNT(*) totals query. It counts the EXPANDED scope and narrows
+      // to the collapsed one with a FILTER, which is how one statement
+      // produces both `total` (open) and `all_total` (what an expansion
+      // would draw) — see #1824.
+      if (sql.includes('AS all_total')) {
         // The totals query runs over the WHOLE open set, so the fixture
         // may declare `allRows` (what the season really has) separately
         // from `rows` (the capped page the row query returns). Defaults to
         // `rows` when a test doesn't care about the difference.
         const all = state.allRows || state.rows || [];
         const isDone = (r) => Number(r.my_activity_count) > 0;
+        const total = state.total != null ? state.total : all.length;
         return {
           rows: [{
-            total: state.total != null ? state.total : all.length,
+            total,
+            // A fixture that wants finished/out-of-window challenges behind
+            // the expansion says so; absent means the open set is all there
+            // is, which is what most of these tests are about.
+            all_total: state.allTotal != null ? state.allTotal : total,
             done: all.filter(isDone).length,
             // array_agg(COALESCE(c.reward, ct.reward)) FILTER (NOT done)
             open_rewards: all.filter((r) => !isDone(r))
@@ -389,9 +395,11 @@ test('the SQL done rule mirrors resolveProgress — "has a ledger row" is NOT do
     assert.match(q.sql, /= 'blocks_produced' THEN COALESCE\(\(SELECT ls\.event_total_produced_blocks/);
   }
   // The totals COUNT uses the same expression, so "N of M done" and the
-  // per-row chips cannot disagree.
-  const totals = queries.find((q) => q.sql.includes('COUNT(*)::int AS total'));
-  assert.match(totals.sql, /COUNT\(\*\) FILTER \(WHERE CASE/);
+  // per-row chips cannot disagree. It is a FILTER over the collapsed scope
+  // AND the done rule now, because the same statement also counts the
+  // expanded scope for `all_total` (#1824).
+  const totals = queries.find((q) => q.sql.includes('AS all_total'));
+  assert.match(totals.sql, /COUNT\(\*\) FILTER \( WHERE \(.*?\) AND \( CASE WHEN COALESCE\(c\.metric_type/);
 });
 
 test('GET /api/home-panels: the query\'s done verdict wins over recomputation', async () => {
@@ -472,9 +480,16 @@ test('GET /api/home-panels: prose in an OFF-page open reward still withholds the
 test('the totals query asks for the open rewards, and the row query is capped at 4', async () => {
   const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   await get(app, '/api/home-panels');
-  const totals = calls.find((c) => c.sql.includes('COUNT(*)::int AS total'));
-  assert.match(totals.sql, /array_agg\(COALESCE\(c\.reward, ct\.reward\)\) FILTER \(WHERE NOT \(/,
+  const totals = calls.find((c) => c.sql.includes('AS all_total'));
+  assert.match(totals.sql, /array_agg\(COALESCE\(c\.reward, ct\.reward\)\) FILTER \( WHERE \(.*?\) AND NOT \(/,
     'open rewards come from the full-predicate query, not the page');
+  // One statement, two counts: the collapsed scope for `total` and the
+  // expanded one for `all_total`, so the footer can tell "nothing to expand"
+  // from "finished challenges behind the toggle" (#1824) with no extra trip.
+  assert.match(totals.sql, /COUNT\(\*\)::int AS all_total/);
+  const outerWhere = totals.sql.slice(totals.sql.lastIndexOf('WHERE se.season_id'));
+  assert.doesNotMatch(outerWhere, /c\.completed = FALSE/,
+    'the outer WHERE is the expanded scope; open-only lives in the FILTERs');
   const rowQuery = calls.find((c) => c.sql.includes('LIMIT $3'));
   // Four 40px rows is what fits the DESKTOP tile under --home-panel-max-h;
   // the footer reads "See all N" when total exceeds it. The phone shape draws
@@ -486,25 +501,23 @@ test('the totals query asks for the open rewards, and the row query is capped at
   assert.match(route, /const CHALLENGE_ROW_LIMIT = 4;/);
 });
 
-test('GET /api/home-panels: a hidden panel is dropped from panels but still described', async () => {
-  const { app } = makeApp(
-    { season: SEASON, rows: [row()], hidden: ['challenges'] },
-    { user: USER }
-  );
-  const { body } = await get(app, '/api/home-panels');
-  // Only the hidden one drops out; the rest still build.
-  assert.deepEqual(body.panels.map((p) => p.key), ['discover', 'create']);
-  assert.deepEqual(body.hidden, ['challenges']);
-  assert.deepEqual(body.registry.map((r) => r.key), ['challenges', 'discover', 'create']);
-});
-
-test('GET /api/home-panels: unknown keys in the column are filtered out', async () => {
-  const { app } = makeApp(
-    { season: SEASON, rows: [row()], hidden: ['challenges', 'retired-panel'] },
-    { user: USER }
-  );
-  const { body } = await get(app, '/api/home-panels');
-  assert.deepEqual(body.hidden, ['challenges']);
+test('GET /api/home-panels: legacy hidden preferences never suppress fixed sections', async () => {
+  for (const hidden of [[], ['challenges'], ['challenges', 'create'], ['discover', 'retired-panel']]) {
+    const { app, calls, state } = makeApp(
+      { season: SEASON, rows: [row()], hidden }, { user: USER }
+    );
+    // A second read models reload/another device: no one-off preference reset.
+    for (let visit = 0; visit < 2; visit++) {
+      const { status, body } = await get(app, '/api/home-panels');
+      assert.equal(status, 200);
+      assert.deepEqual(body.panels.map((p) => p.key), ['challenges', 'discover', 'create']);
+      assert.equal(body.panels[0].challenges.length, 1, 'real challenge data is restored');
+      assert.deepEqual(body.hidden, [], 'cached clients also see every section');
+      assert.ok(body.registry.every((p) => p.removable === false));
+    }
+    assert.deepEqual(state.hidden, hidden, 'no preference migration is needed');
+    assert.ok(calls.every(({ sql }) => !sql.includes('home_panels_hidden')));
+  }
 });
 
 test('GET /api/home-panels: ?demo=1 is a no-op outside staging', async () => {
@@ -555,38 +568,18 @@ test('GET ?demo=1 in staging spends its four slots on both kinds of DONE', async
   assert.equal(p.done, 2, 'the header counter agrees with the glyphs');
 });
 
-// ─── POST /api/home-panels/:key/visibility ────────────────────────────
-
-test('POST visibility: 401 unauthenticated', async () => {
-  const { app } = makeApp({ season: SEASON, rows: [] });
-  const { status } = await post(app, '/api/home-panels/challenges/visibility', { hidden: true });
-  assert.equal(status, 401);
-});
-
-test('POST visibility: unknown key -> 400', async () => {
-  const { app } = makeApp({ season: SEASON, rows: [] }, { user: USER });
-  const { status } = await post(app, '/api/home-panels/nope/visibility', { hidden: true });
-  assert.equal(status, 400);
-});
-
-test('POST visibility: a non-boolean hidden -> 400', async () => {
-  const { app } = makeApp({ season: SEASON, rows: [] }, { user: USER });
-  for (const bad of [{ hidden: 'true' }, { hidden: 1 }, {}]) {
-    const { status } = await post(app, '/api/home-panels/challenges/visibility', bad);
-    assert.equal(status, 400, JSON.stringify(bad));
+// Old clients cannot save a preference that the current UI cannot restore.
+test('POST visibility is retired and never mutates saved preferences', async () => {
+  const hidden = ['challenges', 'create'];
+  const { app, calls, state } = makeApp({ season: SEASON, rows: [], hidden }, { user: USER });
+  for (const key of ['challenges', 'create', 'discover', 'nope']) {
+    for (const hide of [true, false]) {
+      const { status } = await post(app, `/api/home-panels/${key}/visibility`, { hidden: hide });
+      assert.equal(status, 404);
+    }
   }
-});
-
-test('POST visibility: hide then show round-trips, and hiding twice cannot duplicate', async () => {
-  const { app, state } = makeApp({ season: SEASON, rows: [], hidden: [] }, { user: USER });
-  let res = await post(app, '/api/home-panels/challenges/visibility', { hidden: true });
-  assert.equal(res.status, 200);
-  assert.deepEqual(res.body.hidden, ['challenges']);
-  res = await post(app, '/api/home-panels/challenges/visibility', { hidden: true });
-  assert.deepEqual(res.body.hidden, ['challenges'], 'array_remove-then-append, no dupes');
-  res = await post(app, '/api/home-panels/challenges/visibility', { hidden: false });
-  assert.deepEqual(res.body.hidden, []);
-  assert.deepEqual(state.hidden, []);
+  assert.deepEqual(state.hidden, hidden);
+  assert.equal(calls.length, 0);
 });
 
 // ─── Expand mode ──────────────────────────────────────────────────────
@@ -630,16 +623,16 @@ test('GET ?expand names ONE panel — an unknown name expands nothing', async ()
 // ─── Drag position ────────────────────────────────────────────────────
 
 // The registry is what says a block EXISTS at all — it is how the two marker
-// blocks, which build no payload, render — and which of them may be hidden.
-test('the registry describes every block and its removability', async () => {
+// blocks, which build no payload, render. All are fixed sections.
+test('the registry describes every fixed block for current and cached clients', async () => {
   const { app } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
   const byKey = Object.fromEntries(body.registry.map((r) => [r.key, r]));
   assert.deepEqual(Object.keys(byKey), ['challenges', 'discover', 'create']);
   // Discover is the shell's only door to the app directory.
   assert.equal(byKey.discover.removable, false);
-  assert.equal(byKey.challenges.removable, true);
-  assert.equal(byKey.create.removable, true);
+  assert.equal(byKey.challenges.removable, false);
+  assert.equal(byKey.create.removable, false);
 
   // FOOTPRINTS ARE GONE. Each entry used to carry a per-column-count `sizes`
   // table — asymmetric for two of the three, so a phone got a full-width row
@@ -655,27 +648,9 @@ test('the registry describes every block and its removability', async () => {
   assert.equal(body.positions, undefined);
 });
 
-test('POST …/visibility refuses to hide a non-removable widget', async () => {
-  const { app, state } = makeApp({ season: SEASON, rows: [], hidden: [] }, { user: USER });
-  const res = await post(app, '/api/home-panels/discover/visibility', { hidden: true });
-  assert.equal(res.status, 400);
-  assert.deepEqual(state.hidden, [], 'nothing was written');
-  // Un-hiding it is harmless and still allowed (it is already visible).
-  const show = await post(app, '/api/home-panels/discover/visibility', { hidden: false });
-  assert.equal(show.status, 200);
-});
-
-// The create widget is on every home screen regardless of app quota, so
-// hiding it must be equally available to everyone — the route must not
-// consult canCreateApps or app_quota on any path.
-test('the create widget hides for any account, quota or not', async () => {
-  const { app, state } = makeApp({ season: SEASON, rows: [], hidden: [] }, { user: USER });
-  const res = await post(app, '/api/home-panels/create/visibility', { hidden: true });
-  assert.equal(res.status, 200);
-  assert.deepEqual(state.hidden, ['create']);
+test('fixed sections are independent of app creation quota', () => {
   const route = read('src/routes/home-panels.js');
-  assert.doesNotMatch(route.replace(/^\s*\/\/.*$/gm, ''), /canCreateApps|app_quota/,
-    'no quota check anywhere in the registry or its routes');
+  assert.doesNotMatch(route.replace(/^\s*\/\/.*$/gm, ''), /canCreateApps|app_quota/);
 });
 
 // The placement endpoint is gone: a widget's home is a real (column, row)
@@ -687,39 +662,28 @@ test('the card-count position endpoint is retired', async () => {
   const route = read('src/routes/home-panels.js');
   assert.doesNotMatch(route, /router\.post\('\/api\/home-panels\/:key\/position'/);
   assert.doesNotMatch(route, /MAX_PANEL_POSITION =/);
-  // The column survives (this schema file is append-only) but nothing reads
+  // The separate legacy placement column survives, but nothing reads
   // it — a stale reader would silently resurrect the old placement model.
   const schema = read('src/db/schema.sql');
   assert.match(schema, /home_panel_positions JSONB NOT NULL DEFAULT '\{\}'/);
   assert.match(schema, /RETIRED — superseded by the `user_home_layout` table/);
   // Matched against code, not comments — the one remaining mention is the
-  // note in readPrefs explaining why it is gone.
+  // historical notes explaining why it is gone.
   assert.doesNotMatch(route.replace(/^\s*\/\/.*$/gm, ''), /home_panel_positions/);
 });
 
 // ─── Source pins ──────────────────────────────────────────────────────
 
-test('schema declares users.home_panels_hidden, defaulting to visible-for-all', () => {
+test('schema removes the retired visibility column on existing and fresh databases', () => {
   const schema = read('src/db/schema.sql');
-  assert.match(
-    schema,
-    /ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT\[\] NOT NULL DEFAULT '\{\}'/,
-    'absence of a key must mean visible, so the default is an empty array'
-  );
+  assert.match(schema, /ALTER TABLE users DROP COLUMN IF EXISTS home_panels_hidden;/);
+  assert.doesNotMatch(schema, /ADD COLUMN[^;]*home_panels_hidden/);
 });
 
 test('the route is mounted in server.js', () => {
   const server = read('server.js');
   assert.match(server, /require\('\.\/src\/routes\/home-panels'\)/);
   assert.match(server, /app\.use\(homePanelRoutes\(config\)\)/);
-});
-
-test('the visibility write is rate limited per user', () => {
-  const limits = read('src/middleware/rate-limits.js');
-  assert.match(limits, /homePanelPrefLimiter = makeLimiter\(\{[\s\S]*?keyByUser: true/);
-  assert.match(limits, /module\.exports = \{[^}]*homePanelPrefLimiter/);
-  const route = read('src/routes/home-panels.js');
-  assert.match(route, /visibility', homePanelPrefLimiter/);
 });
 
 test('staging seeds open challenges covering every card state', () => {
@@ -766,6 +730,13 @@ test('demoChallengesPanel: the few / none variants, and no standings preview', (
   const few = demoChallengesPanel({ variant: 'few', username: 'tester' });
   assert.equal(few.challenges.length, 2, 'two rows: the shrink state');
   assert.equal(few.total, 2, 'nothing past the cap to "see all" of');
+  // …and nothing behind an expansion either, which makes this route THE
+  // no-expand-toggle state of #1824. It stays that way when asked for the
+  // expanded scope: there is no finished row to reveal here on purpose.
+  assert.equal(few.all_total, 2, 'so the footer draws no expand toggle');
+  const fewExpanded = demoChallengesPanel({ variant: 'few', expanded: true, username: 'tester' });
+  assert.equal(fewExpanded.challenges.length, 2, 'expanding reveals nothing more');
+  assert.equal(fewExpanded.all_total, 2);
   // One metered and one binary, so the progress-bar lane is still exercised.
   assert.ok(few.challenges.some((c) => c.metric), 'a metered row');
   assert.ok(few.challenges.some((c) => !c.metric), 'a binary row');
@@ -784,6 +755,10 @@ test('demoChallengesPanel: the few / none variants, and no standings preview', (
   const base = demoChallengesPanel({ username: 'tester' });
   assert.equal(base.challenges.length, 4);
   assert.equal(base.total, 7);
+  // Four drawn of seven, so the default demo route KEEPS the toggle — the
+  // other half of the #1824 pair the checks navigate to.
+  assert.equal(base.all_total, 7);
+  assert.equal(demoChallengesPanel({ expanded: true, username: 'tester' }).all_total, 7);
   assert.equal(base.leaderboard, undefined);
 
   // An unknown value falls through to that default rather than erroring.
@@ -831,4 +806,17 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
   // to fill, so that payload's markup is untouched by this change.
   assert.ok(kept.some((t) => t.path === '/?demo=1' && /home-panel-bar-fill/.test(t.expectSelector)),
     'the existing challenges-widget check still runs');
+
+  // #1824, both directions. The `few` route shows every challenge it has, so
+  // its footer must carry the way out and NO expand toggle; the default route
+  // is truncated, so it must still carry one. A check on only the first would
+  // pass just as well if the toggle were deleted outright.
+  const allShown = kept.find((t) => t.path === '/?demo=1&challenges=few');
+  assert.ok(allShown, 'the all-shown check must survive the manifest reader');
+  assert.match(allShown.expectSelector, /home-panel-footer/);
+  assert.match(allShown.expectSelector, /:not\(:has\(\.home-panel-expand\)\)/,
+    'it asserts the ABSENCE of the toggle, which is the whole fix');
+  assert.ok(kept.some((t) => t.path === '/?demo=1'
+    && /home-panel-expand/.test(t.expectSelector)),
+    'and a truncated list still declares the toggle it keeps');
 });

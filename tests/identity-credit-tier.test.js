@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 function poolFor({ override = null, hasIdentity = false, spent = 0, globalSpent = 0,
-  key = null, entitlementError = null } = {}) {
+  key = null, entitlementError = null, weeklyOverride = null, weeklySpent = 0 } = {}) {
   const calls = [];
   return {
     calls,
@@ -32,11 +32,22 @@ function poolFor({ override = null, hasIdentity = false, spent = 0, globalSpent 
       calls.push(text);
       if (/EXISTS \([\s\S]*user_social_identities/.test(text)) {
         if (entitlementError) throw entitlementError;
-        return { rows: [{ daily_limit_cents: override, has_social_identity: hasIdentity }] };
+        return {
+          rows: [{
+            daily_limit_cents: override,
+            weekly_limit_cents: weeklyOverride,
+            has_social_identity: hasIdentity,
+          }],
+        };
       }
       if (/SELECT value FROM platform_settings/.test(text)) return { rows: [{ value: '20000' }] };
       if (/SELECT total_cost_cents FROM llm_usage/.test(text)) {
         return { rows: [{ total_cost_cents: spent }] };
+      }
+      // #1788: week-to-date for one user. Matched before the global sum
+      // below, which is the same aggregate without the user predicate.
+      if (/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/.test(text)) {
+        return { rows: [{ total: weeklySpent }] };
       }
       if (/SELECT SUM\(total_cost_cents\)/.test(text)) return { rows: [{ total: globalSpent }] };
       if (/SELECT anthropic_key_enc FROM users/.test(text)) {
@@ -60,6 +71,11 @@ test('unverified tier is exactly $0 and returns an actionable refusal', async ()
   assert.deepEqual(e, {
     policy: 'tiered', tier: 'unverified', source: 'identity', limitCents: 0,
     verificationRequired: true, entitlementAvailable: true,
+    // #1788: the weekly allowance is resolved independently — this stub's
+    // platform_settings answers 20000 for every key. It changes nothing
+    // here: the tier's zero is IDENTITY-derived, not an admin switching a
+    // cap off, so it keeps applying and the refusal below is unchanged.
+    weeklyLimitCents: 20000, weeklySource: 'default',
   });
   const budget = await limits.checkBudget(pool, 7);
   assert.equal(budget.reason, 'verification_required');
@@ -95,13 +111,37 @@ test('an explicit administrator override wins, including intentional zero', asyn
   assert.equal(e.tier, 'override');
   assert.equal(e.limitCents, 4321);
 
-  const pool = poolFor({ override: 0, hasIdentity: true });
-  e = await limits.getUserCreditEntitlement(pool, 7);
+  // #1788 changed what an intentional zero MEANS on the daily axis: it is
+  // now "this cap does not apply", per the request that a missing or zero
+  // daily cap defer to the weekly one. So blocking a user takes a zero on
+  // BOTH axes, which is the state that fails closed.
+  const blocked = poolFor({ override: 0, hasIdentity: true, weeklyOverride: 0 });
+  e = await limits.getUserCreditEntitlement(blocked, 7);
   assert.equal(e.limitCents, 0);
+  assert.equal(e.weeklyLimitCents, 0);
   assert.equal(e.verificationRequired, false);
-  const budget = await limits.checkBudget(pool, 7);
-  assert.equal(budget.reason, 'user_limit');
-  assert.doesNotMatch(budget.error, /Connect GitHub or X/);
+  let budget = await limits.checkBudget(blocked, 7);
+  assert.equal(budget.reason, 'no_allowance');
+  assert.doesNotMatch(budget.error, /Connect GitHub or X/,
+    'an admin decision is not an identity problem, and the copy must not say it is');
+
+  // With the daily cap switched off and a weekly one in force, the weekly
+  // cap is the only ceiling — and it governs normally.
+  limits.invalidate();
+  const weeklyOnly = poolFor({
+    override: 0, hasIdentity: true, weeklyOverride: 5000, weeklySpent: 1000, spent: 4000,
+  });
+  budget = await limits.checkBudget(weeklyOnly, 7);
+  assert.equal(budget.ok, true, 'today’s spend cannot exceed a cap that is switched off');
+  assert.equal(budget.weeklyLimit, 5000);
+  assert.equal(budget.weeklyRemaining, 4000);
+
+  limits.invalidate();
+  const weeklyOut = poolFor({
+    override: 0, hasIdentity: true, weeklyOverride: 5000, weeklySpent: 5000,
+  });
+  budget = await limits.checkBudget(weeklyOut, 7);
+  assert.equal(budget.reason, 'weekly_limit');
 });
 
 test('tier lookup failures refuse platform spend instead of falling back to legacy credits', async () => {
@@ -128,7 +168,7 @@ test('legacy remains the default and preserves the existing platform allowance',
   delete process.env.IDENTITY_CREDIT_POLICY;
   const pool = {
     query: async (sql) => {
-      if (/SELECT daily_limit_cents FROM users/.test(String(sql))) {
+      if (/SELECT daily_limit_cents(?:, weekly_limit_cents)? FROM users/.test(String(sql))) {
         return { rows: [{ daily_limit_cents: null }] };
       }
       if (/SELECT value FROM platform_settings/.test(String(sql))) {

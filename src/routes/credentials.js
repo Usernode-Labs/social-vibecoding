@@ -38,6 +38,62 @@ function credentialRoutes(config) {
     return beta.includes(String(userId));
   }
 
+  async function openRouterCatalogForUser(userId, { forceRefresh = false } = {}) {
+    const meta = await credentialStore.readMetadata({ pool, userId, ...OPENROUTER });
+    if (!meta || meta.status !== 'valid') {
+      return {
+        catalog: {
+          backend: 'codex_openrouter',
+          credentialRevision: meta?.revision || null,
+          recommendedModelId: null,
+          models: [],
+        },
+        hasCredential: false,
+      };
+    }
+    const apiKey = await credentialStore.readSecret({
+      pool, userId, ...OPENROUTER, dataKey: config.dataEncryptionKey,
+    });
+    if (!apiKey) {
+      return {
+        catalog: {
+          backend: 'codex_openrouter',
+          credentialRevision: meta.revision,
+          recommendedModelId: null,
+          models: [],
+        },
+        hasCredential: false,
+      };
+    }
+    const catalog = await agentModels.listOpenRouterModels({
+      pool, userId, credentialRevision: meta.revision,
+      apiKey, config, forceRefresh,
+    });
+    return { catalog, hasCredential: true };
+  }
+
+  async function openRouterFavoriteOverrides(userId) {
+    const { rows } = await pool.query(
+      `SELECT model_id, is_favorite FROM user_agent_model_favorites
+        WHERE user_id = $1 AND backend = 'codex_openrouter'`,
+      [userId],
+    );
+    return new Map(rows.map((row) => [row.model_id, row.is_favorite === true]));
+  }
+
+  function decorateCatalogFavorites(catalog, overrides) {
+    const models = (catalog.models || []).map((model) => ({
+      ...model,
+      // Recommendations are the useful first-run shortlist. A stored TRUE or
+      // FALSE always wins, so starring and unstarring are both durable.
+      isFavorite: overrides.has(model.id)
+        ? overrides.get(model.id)
+        : model.isRecommended === true,
+      isDefaultFavorite: !overrides.has(model.id) && model.isRecommended === true,
+    }));
+    return { ...catalog, totalModels: models.length, models };
+  }
+
   // ── OpenRouter key status ──────────────────────────────────────────
   router.get('/api/me/credentials/openrouter', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
@@ -92,9 +148,16 @@ function credentialRoutes(config) {
       const claimed = await managedOpenRouter.provision({
         pool, userId: req.user.id, config,
       });
-      // This is the one and only plaintext response. The browser presents a
-      // copy/save affordance; subsequent GETs return only last4 + metadata.
-      return res.status(201).json({ ok: true, ...claimed, shownOnce: true });
+      // Company-funded credentials stay inside Usernode. Keep this response
+      // allowlisted so a future provisioning detail cannot accidentally
+      // expose credential material to the claimant's browser.
+      return res.status(201).json({
+        ok: true,
+        revision: claimed.revision,
+        defaultModel: claimed.defaultModel,
+        keyInfo: claimed.keyInfo,
+        managed: claimed.managed,
+      });
     } catch (err) {
       if (err instanceof managedOpenRouter.ManagedOpenRouterError) {
         return res.status(err.statusCode).json({ error: err.message, code: err.code });
@@ -350,27 +413,87 @@ function credentialRoutes(config) {
   // ── User-filtered model catalog ────────────────────────────────────
   router.get('/api/me/coding-agent/models', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    // This is live, private account state. In particular, do not let the PWA
+    // API cache outlive OpenRouter's own key-filtered answer.
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Pragma', 'no-cache');
     const backend = (req.query.backend || 'codex_openrouter');
     if (backend !== 'codex_openrouter') return res.json({ backend, models: [] });
     if (!betaAllowed(req.user.id)) return res.status(403).json({ error: 'Not available' });
     try {
-      const meta = await credentialStore.readMetadata({ pool, userId: req.user.id, ...OPENROUTER });
-      if (!meta || meta.status !== 'valid') {
-        return res.json({ backend, credentialRevision: meta?.revision || null, models: [] });
-      }
-      const apiKey = await credentialStore.readSecret({
-        pool, userId: req.user.id, ...OPENROUTER, dataKey: config.dataEncryptionKey,
-      });
-      if (!apiKey) return res.json({ backend, models: [] });
-      const catalog = await agentModels.listOpenRouterModels({
-        pool, userId: req.user.id, credentialRevision: meta.revision,
-        apiKey, config, forceRefresh: req.query.refresh === '1',
-      });
-      res.json(catalog);
+      const [{ catalog }, favoriteOverrides] = await Promise.all([
+        openRouterCatalogForUser(req.user.id, { forceRefresh: req.query.refresh === '1' }),
+        openRouterFavoriteOverrides(req.user.id),
+      ]);
+      res.json(decorateCatalogFavorites(catalog, favoriteOverrides));
     } catch (err) {
       const msg = err.code === 'invalid_key' ? 'OpenRouter rejected the key.' : 'Failed to load models.';
       log.warn('credentials', 'model catalog failed', { userId: req.user.id, err: err.message });
       res.status(400).json({ error: msg });
+    }
+  });
+
+  // Persist one star independently of the selected/default model. TRUE is
+  // validated against the same key-filtered catalog as selection; FALSE is
+  // also stored, rather than deleting the row, so a platform-recommended
+  // model a user unstarred does not reappear as a favorite on the next read.
+  router.patch('/api/me/coding-agent/models/favorite', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Pragma', 'no-cache');
+    if (!betaAllowed(req.user.id)) return res.status(403).json({ error: 'Not available' });
+    const modelId = typeof req.body?.modelId === 'string' ? req.body.modelId.trim() : '';
+    const favorite = req.body?.favorite;
+    if (!modelId || modelId.length > 255 || /[\u0000-\u001f\u007f]/.test(modelId)) {
+      return res.status(400).json({ error: 'Valid model id required' });
+    }
+    if (typeof favorite !== 'boolean') {
+      return res.status(400).json({ error: 'favorite must be true or false' });
+    }
+    try {
+      if (favorite) {
+        const { catalog, hasCredential } = await openRouterCatalogForUser(req.user.id);
+        if (!hasCredential) {
+          return res.status(400).json({ error: 'Add your OpenRouter API key in Settings first.' });
+        }
+        if (!(catalog.models || []).some((model) => model.id === modelId)) {
+          return res.status(400).json({ error: 'That model is not available under your OpenRouter key.' });
+        }
+      }
+      if (favorite) {
+        await pool.query(
+          `INSERT INTO user_agent_model_favorites (user_id, backend, model_id, is_favorite)
+           VALUES ($1, 'codex_openrouter', $2, TRUE)
+           ON CONFLICT (user_id, backend, model_id)
+           DO UPDATE SET is_favorite = TRUE`,
+          [req.user.id, modelId],
+        );
+      } else {
+        const updated = await pool.query(
+          `UPDATE user_agent_model_favorites SET is_favorite = FALSE
+            WHERE user_id = $1 AND backend = 'codex_openrouter' AND model_id = $2`,
+          [req.user.id, modelId],
+        );
+        // A default favorite has no row yet. Persist the negative override;
+        // arbitrary non-recommended ids cannot manufacture unbounded rows.
+        const recommended = Array.isArray(config.openrouterRecommendedModels)
+          && config.openrouterRecommendedModels.includes(modelId);
+        if (!updated.rowCount && recommended) {
+          await pool.query(
+            `INSERT INTO user_agent_model_favorites (user_id, backend, model_id, is_favorite)
+             VALUES ($1, 'codex_openrouter', $2, FALSE)
+             ON CONFLICT (user_id, backend, model_id)
+             DO UPDATE SET is_favorite = FALSE`,
+            [req.user.id, modelId],
+          );
+        }
+      }
+      res.json({ ok: true, modelId, favorite });
+    } catch (err) {
+      log.warn('credentials', 'model favorite update failed', {
+        userId: req.user.id, modelId, err: err.message,
+      });
+      res.status(400).json({ error: 'Could not update that favorite right now.' });
     }
   });
 

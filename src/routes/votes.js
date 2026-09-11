@@ -1,10 +1,12 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
+const { connectionExhaustionMessage } = require('../db/connection-census');
 const log = require('../services/logger');
 const github = require('../services/github');
 const githubMock = require('../services/github-mock');
 const staging = require('../services/staging');
 const docker = require('../services/docker');
+const applicationRuntime = require('../services/application-runtime');
 const { checkAndResolveConflicts, isResolving } = require('../services/conflict-resolver');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
 const { getActiveUserStats, isUserActive } = require('../services/active-users');
@@ -498,6 +500,41 @@ function stagingMockProposals(viewer) {
       test_results: [],
       checks_checked_at: hoursAgo(0.02),
     },
+    // The fifth build step. The container is up (four steps done, 20s) but
+    // the run is parked behind an earlier capture on the same proposal —
+    // the state the card used to spend minutes in reading "4/4" under
+    // "Preparing the staging preview…". The step row names the wait; the
+    // only way to review it, since a real preview has no queued run to show.
+    {
+      ...mk(9000028, 900128,
+        '[Mock] Checks-phase test: preview built, waiting behind an earlier run',
+        0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
+      check_state: 'pending',
+      check_phase: 'building',
+      check_trigger: 'pr-import',
+      recheckable: true,
+      test_results: [],
+      checks_checked_at: hoursAgo(0.02),
+      checks_progress: {
+        build: {
+          step: 'prepare_checks',
+          queued: true,
+          startedAt: hoursAgo(0.015),
+          steps: [
+            { key: 'source_fetch', ms: 2555 },
+            { key: 'image_build', ms: 5372, phases: [
+              { name: 'FROM docker.io/library/node:22-…', ms: 212 },
+              { name: 'COPY . .', ms: 276 },
+              { name: 'COPY --from=css /build/public/c…', ms: 3708 },
+            ] },
+            { key: 'clone', ms: 2426, via: 'template' },
+            { key: 'health', ms: 9585 },
+          ],
+          totalMs: 19964,
+        },
+        updatedAt: hoursAgo(0.015),
+      },
+    },
     // #607: a freshly promoted proposal whose first checks run hasn't even
     // stamped 'pending' yet (staging build still going) — NO verdict, NO
     // console snapshot. The grey "Checks starting…" spinner badge + the
@@ -538,6 +575,24 @@ function stagingMockProposals(viewer) {
         '[Mock] Checks-error test: the staging build or test run itself broke',
         6, 1, 0, 0, { required: 2 }),
       check_state: 'error',
+      recheckable: true,
+      test_results: [],
+    },
+    // #1771: the same red badge, for the one cause that is NOT the author's
+    // to fix. A staging preview starved of Postgres connections used to
+    // record its 500s as assertion failures against the diff; it is an
+    // 'error' with an attribution sentence now, and this row is how that
+    // sentence is reviewable in a preview. The detail comes from the
+    // function that writes the real ones, so the fixture cannot drift from
+    // the copy an author actually sees.
+    {
+      ...mk(9000045, 900145,
+        '[Mock] Checks-error test: the preview was starved of database connections',
+        4, 1, 0, 1, { required: 2 }),
+      check_state: 'error',
+      check_error_detail: connectionExhaustionMessage(
+        { max: 100, used: 98 }, { where: 'ran its checks' }
+      ),
       recheckable: true,
       test_results: [],
     },
@@ -3588,14 +3643,33 @@ function voteRoutes(config) {
         const injected = stagingMockMerged().map((m) => ({ ...m, row_type: 'pr' }))
           .concat(stagingMockCompletedCloseIssues())
           .filter((m) => !have.has(key(m)));
+        // #1788: make room for the mocks BEFORE merging them in, rather than
+        // letting them compete with real history for the page.
+        //
+        // The old order was unshift, sort newest-first, then truncate to
+        // `limit`. That trims the mocks like anything else, and these rows are
+        // dated in DAYS — 9100060 is two days old — so they only survived
+        // while fewer than `limit` real completed rows were newer than them.
+        // On a day with 63 merges they fell off page one entirely, and since
+        // the mocks are first-page-only by design they then appeared nowhere.
+        //
+        // That is what made the "A task moved to Done keeps its chips" check
+        // look flaky: it was failing whenever the platform had been busy, so
+        // its recorded flake rate rose with our own merge rate and it began
+        // blocking unrelated proposals.
+        //
+        // Reserving the slots is the fix rather than re-dating the mocks to a
+        // few hours old: that would work today and rot again at a higher merge
+        // rate, and it would fight #1264, which spread these deliberately over
+        // ~150 days so the report's monthly strip has something to draw.
+        if (rows.length + injected.length > limit) {
+          hasMore = true;
+          rows.length = Math.max(0, limit - injected.length);
+        }
         rows.unshift(...injected);
         // Re-sort so the mock close-issue rows interleave among the mock
         // merged PRs by date instead of clumping at the top.
         rows.sort(completedRowCompare);
-        if (rows.length > limit) {
-          hasMore = true;
-          rows.length = limit;
-        }
         // The COUNT(*) above can't see the mock rows (they aren't in the
         // DB), so bump the total by however many we injected to keep the
         // demo badge self-consistent with the rows the board renders.
@@ -4002,7 +4076,10 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
           [result.containerId, sha || null, session.pr_number || null, app.id]
         );
       } else {
-        log.info('votes', 'Self-app PR merged; host deployer will roll the harness', {
+        const clusterRuntime = applicationRuntime.mode(config) === 'kubernetes';
+        log.info('votes', clusterRuntime
+          ? 'Self-app PR merged; GitHub Actions publishes the release for Argo CD'
+          : 'Self-app PR merged; host deployer will roll the harness', {
           appId: app.id, prNumber: session.pr_number,
         });
         // Skip the deployer's ~2-min baseline poll: tell it main just
@@ -4011,7 +4088,7 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         // the baseline poll still delivers the deploy.
         try {
           const { nudgeHostDeployer } = require('../services/deploy-nudge');
-          nudgeHostDeployer({ sha: mergeCommitSha, prNumber: session.pr_number });
+          if (!clusterRuntime) nudgeHostDeployer({ sha: mergeCommitSha, prNumber: session.pr_number });
         } catch (_) { /* never fail a merge over a hint */ }
       }
       // Let every tab watching this app refresh its commit pill without

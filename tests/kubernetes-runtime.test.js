@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const kubernetes = require('../src/services/kubernetes');
 
 function notFound() {
@@ -29,6 +30,32 @@ function config() {
 
 test.afterEach(() => kubernetes._setClientsForTest(null));
 
+for (const conflict of ['terminating', 'disappeared']) {
+  test(`kpack recreates a pruned Build when its conflicting object is ${conflict}`, async () => {
+    let creates = 0;
+    let reads = 0;
+    kubernetes._setClientsForTest({ custom: {
+      async createNamespacedCustomObject() {
+        if (++creates === 1) throw Object.assign(new Error('exists'), { code: 409 });
+      },
+      async getNamespacedCustomObject() {
+        if (++reads === 1) {
+          if (conflict === 'disappeared') throw notFound();
+          return { metadata: { deletionTimestamp: new Date().toISOString() },
+            status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: 'old-image' } };
+        }
+        return { status: { conditions: [{ type: 'Succeeded', status: 'True' }], latestImage: 'new-image' } };
+      },
+    } });
+    const result = await kubernetes.createBuild(config(), {
+      app: { id: 7, slug: 'demo', repo_url: 'https://github.com/example/demo' },
+      revision: 'a'.repeat(40), environment: 'production',
+    });
+    assert.equal(creates, 2);
+    assert.equal(result.imageRef, 'new-image');
+  });
+}
+
 test('kpack Build is isolated in social-builds and returns status.latestImage', async () => {
   let created;
   kubernetes._setClientsForTest({
@@ -47,9 +74,19 @@ test('kpack Build is isolated in social-builds and returns status.latestImage', 
   assert.equal(created.namespace, 'social-builds');
   assert.equal(created.body.spec.source.git.revision, revision);
   assert.equal(created.body.spec.serviceAccountName, 'social-kpack-builder');
-  assert.deepEqual(created.body.spec.env, [{ name: 'BP_NODE_VERSION', value: '22.*' }]);
+  assert.deepEqual(created.body.spec.env, [
+    { name: 'BP_NODE_VERSION', value: '22.*' },
+    { name: 'NODE_ENV', value: 'production' },
+    { name: 'GIT_SHA', value: revision },
+    { name: 'BPE_OVERRIDE_GIT_SHA', value: revision },
+  ]);
   assert.equal(result.imageRef, 'ghcr.io/example/social-apps/demo@sha256:deadbeef');
   assert.match(result.buildRef, /^social-builds\//);
+  const unstampedRecipe = crypto.createHash('sha256').update(JSON.stringify({
+    builder: config().kubernetes.builderImage,
+    env: created.body.spec.env.filter(entry => !['GIT_SHA', 'BPE_OVERRIDE_GIT_SHA'].includes(entry.name)),
+  })).digest('hex').slice(0, 12);
+  assert.ok(!created.body.spec.tags[0].endsWith(`-${unstampedRecipe}`), 'the same commit must rebuild its previously unstamped image');
 });
 
 test('kpack runs the shell generator during build when the checked-out app declares it', async (t) => {
@@ -75,8 +112,19 @@ test('kpack runs the shell generator during build when the checked-out app decla
 
   assert.deepEqual(created.body.spec.env, [
     { name: 'BP_NODE_VERSION', value: '22.*' },
+    { name: 'NODE_ENV', value: 'production' },
+    { name: 'GIT_SHA', value: 'b'.repeat(40) },
+    { name: 'BPE_OVERRIDE_GIT_SHA', value: 'b'.repeat(40) },
     { name: 'BP_NODE_RUN_SCRIPTS', value: 'ensure:shell' },
   ]);
+  // The source SHA is unchanged: adding production mode must invalidate the
+  // successful Build/image made by the old adapter with development React.
+  const oldRecipe = crypto.createHash('sha256').update(JSON.stringify({
+    builder: config().kubernetes.builderImage,
+    env: created.body.spec.env.filter((entry) => entry.name !== 'NODE_ENV'),
+  })).digest('hex').slice(0, 12);
+  assert.notEqual(created.body.metadata.name, `sv-10-s42-${'b'.repeat(12)}-${oldRecipe}`);
+  assert.ok(!created.body.spec.tags[0].endsWith(`-${oldRecipe}`));
 });
 
 test('kpack selects a declared build script but preserves shell ordering and legacy apps', async (t) => {
@@ -102,6 +150,7 @@ test('kpack selects a declared build script but preserves shell ordering and leg
       revision: 'd'.repeat(40), environment: 'production', sourceDir,
     });
     assert.equal(created.body.spec.env.find((v) => v.name === 'BP_NODE_RUN_SCRIPTS')?.value, expected);
+    assert.equal(created.body.spec.env.find((v) => v.name === 'NODE_ENV')?.value, 'production');
   }
 });
 
@@ -177,7 +226,8 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     readNamespacedService: async () => { throw notFound(); },
     readNamespacedDeployment: async ({ name }) => {
       if (written.some((item) => item.kind === 'Deployment')) {
-        return { metadata: { name, generation: 1 }, status: { observedGeneration: 1, availableReplicas: 1 } };
+        return { ...written.find(item => item.kind === 'Deployment').body,
+          metadata: { name, generation: 1 }, status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
       }
       throw notFound();
     },
@@ -189,13 +239,18 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     apps: { ...missingReads, createNamespacedDeployment: record('Deployment') },
     networking: { ...missingReads, createNamespacedIngress: record('Ingress') },
   });
-  const result = await kubernetes.deployApplication(config(), {
+  const result = await require('../src/services/application-runtime').deploy({ ...config(), appRuntime: 'kubernetes' }, {
     app: { id: 7, slug: 'demo' }, environment: 'production',
     imageRef: 'ghcr.io/example/social-apps/demo@sha256:deadbeef',
     env: { DATABASE_URL: 'postgres://redacted', PORT: '3000' },
+    labels: { 'usernode.env.fp': '0123456789abcdef', 'app.kubernetes.io/managed-by': 'cannot-override-owner' },
   });
   assert.deepEqual(written.map((item) => item.kind).sort(), ['Deployment', 'Ingress', 'Secret', 'Service']);
   const deployment = written.find((item) => item.kind === 'Deployment').body;
+  assert.equal(deployment.spec.template.metadata.labels['usernode.env.fp'], '0123456789abcdef');
+  assert.equal(deployment.metadata.labels['app.kubernetes.io/managed-by'], 'social-vibecoding-runtime');
+  assert.deepEqual(deployment.spec.selector.matchLabels, { 'social.usernode.io/runtime-name': result.runtimeName });
+  assert.equal((await kubernetes.inspectApplication(config(), result.runtimeName)).labels['usernode.env.fp'], '0123456789abcdef');
   assert.equal(deployment.spec.template.spec.containers[0].image, 'ghcr.io/example/social-apps/demo@sha256:deadbeef');
   assert.equal(deployment.spec.template.spec.serviceAccountName, 'social-generated-app');
   assert.equal(
@@ -204,9 +259,67 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
   );
   const ingress = written.find((item) => item.kind === 'Ingress').body;
   assert.equal(ingress.spec.ingressClassName, 'cilium');
-  assert.equal(ingress.metadata.annotations['cert-manager.io/cluster-issuer'], 'letsencrypt-public');
+  assert.equal(ingress.metadata.annotations['cert-manager.io/cluster-issuer'], undefined);
+  assert.deepEqual(ingress.spec.tls, [{ hosts: ['demo.apps.example.test'], secretName: 'social-apps-wildcard-tls' }]);
   assert.equal(result.url, 'https://demo.apps.example.test');
 });
+
+for (const [name, environment, database, preferred] of [
+  ['configured staging', 'staging', { previewDatabaseNamespace: 'database-ns', previewDatabaseCluster: 'writer-cluster' }, true],
+  ['production with database configuration', 'production', { previewDatabaseNamespace: 'database-ns', previewDatabaseCluster: 'writer-cluster' }, false],
+  ['unconfigured staging', 'staging', {}, false],
+  ['staging without database namespace', 'staging', { previewDatabaseCluster: 'writer-cluster' }, false],
+  ['staging without database cluster', 'staging', { previewDatabaseNamespace: 'database-ns' }, false],
+]) {
+  test(`preview primary placement: ${name}`, async () => {
+    let deployment;
+    const missing = async () => { throw notFound(); };
+    const record = async ({ body }) => body;
+    // Deliberately no Pod/node discovery API: the scheduler resolves the
+    // current primary, including after failover or when none matches.
+    kubernetes._setClientsForTest({
+      core: {
+        readNamespacedSecret: missing, createNamespacedSecret: record,
+        readNamespacedService: missing, createNamespacedService: record,
+      },
+      apps: {
+        readNamespacedDeployment: async () => {
+          if (!deployment) throw notFound();
+          return { ...deployment, metadata: { ...deployment.metadata, generation: 1 },
+            status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+        },
+        createNamespacedDeployment: async ({ body }) => { deployment = body; return body; },
+      },
+      networking: { readNamespacedIngress: missing, createNamespacedIngress: record },
+    });
+    const cfg = config();
+    Object.assign(cfg.kubernetes, database);
+    await kubernetes.deployApplication(cfg, {
+      app: { id: 7, slug: 'demo' }, environment, sessionId: 42,
+      imageRef: 'ghcr.io/example/demo@sha256:deadbeef', env: {},
+    });
+    const spec = deployment.spec.template.spec;
+    assert.equal(deployment.metadata.namespace, 'social-apps');
+    assert.equal(spec.nodeName, undefined, 'never pin to a specific node');
+    assert.equal(spec.nodeSelector, undefined, 'other eligible nodes remain available');
+    if (preferred) {
+      assert.deepEqual(spec.affinity, {
+        podAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [{
+          weight: 100,
+          podAffinityTerm: {
+            namespaces: ['database-ns'],
+            labelSelector: { matchLabels: {
+              'cnpg.io/cluster': 'writer-cluster', 'cnpg.io/instanceRole': 'primary',
+            } },
+            topologyKey: 'kubernetes.io/hostname',
+          },
+        }] },
+      }, 'use only a soft preference for this cluster’s current primary');
+    } else {
+      assert.equal(spec.affinity, undefined);
+    }
+  });
+}
 
 test('mutable image tags are refused before any Kubernetes write', async () => {
   await assert.rejects(
@@ -255,7 +368,6 @@ test('a failed staging rollout removes its quota-consuming resources', async () 
     'Deployment/sv-preview-10-s42',
     'Ingress/sv-preview-10-s42',
     'Secret/sv-preview-10-s42-env',
-    'Secret/sv-preview-10-s42-tls',
     'Service/sv-preview-10-s42',
   ]);
 });
@@ -268,13 +380,18 @@ test('worker runtime reconciles a retained PVC, Secret and warm Deployment', asy
       createNamespacedPersistentVolumeClaim: record('PersistentVolumeClaim'),
       readNamespacedSecret: async () => { throw notFound(); },
       createNamespacedSecret: record('Secret'),
-      listNamespacedPod: async () => ({ items: [{ metadata: { name: 'worker-pod' } }] }),
+      listNamespacedPod: async () => ({ items: [{
+        metadata: { name: 'worker-pod', annotations: { 'social.usernode.io/env-checksum': kubernetes._envChecksumForTest({ WORKER_JWT: 'redacted' }) } },
+        spec: { containers: [{ name: 'worker', image: config().kubernetes.workerImage }] },
+        status: { phase: 'Running', conditions: [{ type: 'Ready', status: 'True' }],
+          containerStatuses: [{ name: 'worker', ready: true, state: { running: {} } }] },
+      }] }),
       readNamespacedPodLog: async () => '__USERNODE_PHASE__ warm-ready',
     },
     apps: {
       readNamespacedDeployment: async ({ name }) => {
         if (written.some((item) => item.kind === 'Deployment')) {
-          return { metadata: { name, generation: 1 }, status: { observedGeneration: 1, availableReplicas: 1 } };
+          return { metadata: { name, generation: 1 }, status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
         }
         throw notFound();
       },
@@ -287,6 +404,10 @@ test('worker runtime reconciles a retained PVC, Secret and warm Deployment', asy
   assert.equal(pvc.spec.storageClassName, 'openebs-lvm-retain');
   const deployment = written.find((item) => item.kind === 'Deployment').body;
   assert.equal(deployment.spec.strategy.type, 'Recreate');
+  const workerContainer = deployment.spec.template.spec.containers[0];
+  assert.deepEqual(workerContainer.startupProbe.exec.command, ['test', '-f', '/tmp/usernode-worker-ready']);
+  assert.deepEqual(workerContainer.readinessProbe.exec.command, workerContainer.startupProbe.exec.command);
+  assert.deepEqual(workerContainer.env, [{ name: 'USERNODE_WORKER_REQUIRE_READY', value: '1' }]);
   assert.equal(deployment.metadata.labels['social.usernode.io/worker-contract'], 'v6');
   assert.equal(deployment.spec.template.metadata.labels['social.usernode.io/worker-contract'], 'v6');
   assert.deepEqual(
@@ -344,11 +465,53 @@ test('capture runtime uses a bounded Job and caps log retrieval', async () => {
   assert.equal(created.body.spec.activeDeadlineSeconds, 120);
   assert.equal(created.body.spec.ttlSecondsAfterFinished, 3600);
   assert.equal(created.body.spec.template.spec.automountServiceAccountToken, false);
+  assert.deepEqual(created.body.spec.template.spec.containers[0].resources, {
+    requests: { cpu: '1', memory: '3Gi', 'ephemeral-storage': '1Gi' },
+    limits: { cpu: '8', memory: '4Gi', 'ephemeral-storage': '4Gi' },
+  });
   assert.equal(created.body.spec.template.spec.securityContext.runAsUser, 1000);
   assert.equal(created.body.spec.template.spec.securityContext.runAsGroup, 1000);
   assert.equal(created.body.spec.template.spec.securityContext.fsGroup, 1000);
-  assert.equal(logRequest.limitBytes, 64 * 1024 * 1024);
+  assert.equal(logRequest.limitBytes, 64 * 1024 * 1024 + 1);
   assert.equal(result.stdout, 'result');
+});
+
+for (const kind of ['Capture', 'UnitSuite']) {
+  for (const [cpus, memory, expectedMemory, expectedRequestMemory] of [
+    ['6', '6g', '6Gi', kind === 'Capture' ? '3Gi' : '1Gi'],
+    ['0.5', '512m', '512Mi', '512Mi'],
+  ]) {
+    test(`${kind} honors resource overrides ${cpus} CPU / ${memory} without exceeding limits`, async () => {
+      let created;
+      kubernetes._setClientsForTest({
+        batch: {
+          async createNamespacedJob({ body }) { created = body; },
+          async readNamespacedJob() { return { status: { succeeded: 1 } }; },
+        },
+        core: {
+          async createNamespacedSecret() {},
+          async deleteNamespacedSecret() {},
+          async listNamespacedPod() { return { items: [{ metadata: { name: 'check-pod' } }] }; },
+          async readNamespacedPodLog() { return 'passed'; },
+        },
+      });
+      await kubernetes[`run${kind}Job`](config(), { sessionId: 42, env: {}, cpus, memory });
+      const { requests, limits } = created.spec.template.spec.containers[0].resources;
+      assert.equal(limits.cpu, cpus);
+      assert.equal(limits.memory, expectedMemory);
+      assert.equal(requests.cpu, Number(cpus) < 1 ? cpus : '1');
+      assert.equal(requests.memory, expectedRequestMemory);
+    });
+  }
+}
+
+test('invalid capture resource limits fail before creating credentials or workloads', async () => {
+  kubernetes._setClientsForTest({});
+  for (const options of [{ cpus: '0' }, { cpus: 'invalid' }, { memory: '-1g' }]) {
+    await assert.rejects(kubernetes.runCaptureJob(config(), {
+      sessionId: 42, env: {}, stdinPayload: '{}', ...options,
+    }), /Invalid check (CPU|memory) limit/);
+  }
 });
 
 test('capture runtime transports oversized test input through a temporary Secret volume', async () => {
@@ -390,7 +553,7 @@ test('status inventory normalizes application, preview and worker readiness from
           },
         },
         spec: { replicas: 1, template: { spec: { containers: [{ image: 'example/app@sha256:one' }] } } },
-        status: { observedGeneration: 2, replicas: 1, readyReplicas: 1, availableReplicas: 1 },
+        status: { observedGeneration: 2, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 },
       },
       {
         metadata: {
@@ -415,7 +578,7 @@ test('status inventory normalizes application, preview and worker readiness from
           },
         },
         spec: { replicas: 1, template: { spec: { containers: [{ image: 'example/worker@sha256:three' }] } } },
-        status: { observedGeneration: 1, replicas: 1, readyReplicas: 1, availableReplicas: 1 },
+        status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 },
       },
     ],
   };
@@ -486,4 +649,122 @@ test('namespace capacity reports requests and pod quota without claiming live us
   assert.deepEqual(apps.resources.requestsMemory, { used: '1536Mi', hard: '32Gi', percent: 4.7, headroomPercent: 95.3 });
   assert.equal(kubernetes._quantityNumberForTest('1Gi'), 2 ** 30);
   assert.equal(kubernetes._quantityNumberForTest('250m'), 0.25);
+});
+
+test('capacity exposes saturated limit, storage and object quotas when CPU limits are unquoted', async () => {
+  kubernetes._setClientsForTest({ core: {
+    async listNamespacedResourceQuota() {
+      return { items: [{ metadata: { name: 'social-vibecoding' }, status: {
+        hard: {
+          'requests.cpu': '24', 'limits.memory': '128Gi', 'requests.storage': '600Gi',
+          'requests.ephemeral-storage': '100Gi', 'limits.ephemeral-storage': '400Gi',
+          persistentvolumeclaims: '120', services: '128', secrets: '200', configmaps: '100',
+          'count/jobs.batch': '100', 'count/builds.kpack.io': '100',
+        },
+        used: {
+          'requests.cpu': '1', 'limits.memory': '128Gi', 'requests.storage': '500Gi',
+          'requests.ephemeral-storage': '75Gi', 'limits.ephemeral-storage': '300Gi',
+          persistentvolumeclaims: '119', services: '64', secrets: '180', configmaps: '10',
+          'count/jobs.batch': '90', 'count/builds.kpack.io': '100',
+        },
+      } }] };
+    },
+  } });
+  const [{ resources }] = await kubernetes.listNamespaceCapacity(config());
+  assert.equal(resources.limitsCpu, null, 'no aggregate CPU limit must not invent a capacity');
+  assert.equal(resources.requestsCpu.percent, 4.2);
+  assert.equal(resources.limitsMemory.percent, 100, 'memory blocks admission despite low CPU requests');
+  assert.equal(resources.limitsMemory.headroomPercent, 0);
+  assert.equal(resources.requestsStorage.percent, 83.3);
+  assert.equal(resources.persistentVolumeClaims.percent, 99.2);
+  assert.equal(resources.requestsEphemeralStorage.percent, 75);
+  assert.equal(resources.limitsEphemeralStorage.percent, 75);
+  assert.equal(resources.services.percent, 50);
+  assert.equal(resources.secrets.percent, 90);
+  assert.equal(resources.configMaps.percent, 10);
+  assert.equal(resources.jobs.percent, 90);
+  assert.equal(resources.builds.percent, 100);
+});
+
+
+for (const failed of [false, true]) {
+  test(`unit-suite Job ${failed ? 'preserves failures' : 'completes'} with private input and no cluster credentials`, async () => {
+    let job, secret, removed;
+    kubernetes._setClientsForTest({
+      batch: {
+        async createNamespacedJob(r) { job = r.body; },
+        async readNamespacedJob() { return { status: failed ? { failed: 1 } : { succeeded: 1 } }; },
+      },
+      core: {
+        async createNamespacedSecret(r) { secret = r.body; },
+        async deleteNamespacedSecret(r) { removed = r.name; },
+        async listNamespacedPod() { return { items: [{ metadata: { name: 'suite-pod' }, status: { containerStatuses: [{ name: 'unit-suite', state: { terminated: { exitCode: 1, reason: 'Error' } } }] } }] }; },
+        async readNamespacedPodLog(r) { assert.equal(r.container, 'unit-suite'); return '# tests 2\n# fail 1\nnot ok 2 - regression\n'; },
+      },
+    });
+    const options = { sessionId: 42, cmd: ['bash', '-c', 'npm test'], env: { REPO_URL: 'https://private-token@example.test/repo' }, memory: '2g', cpus: '4', timeoutMs: 60000 };
+    if (failed) {
+      await assert.rejects(kubernetes.runUnitSuiteJob(config(), options), err => {
+        assert.equal(err.code, 1);
+        assert.match(err.stdout, /not ok 2 - regression/);
+        return true;
+      });
+    } else {
+      assert.match((await kubernetes.runUnitSuiteJob(config(), options)).stdout, /# tests 2/);
+    }
+    const pod = job.spec.template.spec;
+    assert.equal(pod.automountServiceAccountToken, false);
+    assert.equal(pod.securityContext.runAsUser, 1000);
+    assert.equal(job.spec.backoffLimit, 0);
+    assert.equal(job.spec.activeDeadlineSeconds, 60);
+    assert.equal(job.spec.ttlSecondsAfterFinished, 3600);
+    assert.equal(pod.containers[0].image, config().kubernetes.workerImage);
+    assert.equal(pod.containers[0].resources.limits.memory, '2Gi');
+    assert.equal(pod.containers[0].resources.limits.cpu, '4');
+    assert.deepEqual(pod.containers[0].command, options.cmd);
+    assert.ok(!JSON.stringify(job).includes('private-token'));
+    assert.equal(secret.stringData.REPO_URL, options.env.REPO_URL);
+    assert.equal(removed, secret.metadata.name);
+  });
+}
+
+test('unit-suite input Secret is removed when Job admission fails', async () => {
+  let removed = false;
+  kubernetes._setClientsForTest({
+    batch: { async createNamespacedJob() { throw new Error('quota'); } },
+    core: { async createNamespacedSecret() {}, async deleteNamespacedSecret() { removed = true; } },
+  });
+  await assert.rejects(kubernetes.runUnitSuiteJob(config(), { sessionId: 1, env: {}, cmd: ['true'] }), /quota/);
+  assert.equal(removed, true);
+});
+
+
+test('unit-suite credentials are owned by the Job and cleaned after its deadline', async (t) => {
+  let secret, deletedJob, deletedSecret, owned;
+  let clock = 0;
+  t.mock.method(Date, 'now', () => ++clock <= 2 ? 0 : 20000);
+  kubernetes._setClientsForTest({
+    batch: {
+      async createNamespacedJob() { return { metadata: { uid: 'job-uid' } }; },
+      async deleteNamespacedJob(r) { deletedJob = r; },
+    },
+    core: {
+      async createNamespacedSecret(r) { secret = r.body; },
+      async readNamespacedSecret() { return secret; },
+      async replaceNamespacedSecret(r) { owned = r.body.metadata.ownerReferences; },
+      async deleteNamespacedSecret(r) { deletedSecret = r.name; },
+    },
+  });
+  await assert.rejects(kubernetes.runUnitSuiteJob(config(), { sessionId: 1, env: {}, cmd: ['sleep', '60'], timeoutMs: 1000 }), err => err.killed === true);
+  assert.equal(owned[0].uid, 'job-uid');
+  assert.equal(owned[0].kind, 'Job');
+  assert.equal(deletedJob.propagationPolicy, 'Background');
+  assert.equal(deletedSecret, secret.metadata.name);
+});
+
+test('unit suite refuses a mutable worker image before creating any resources', async () => {
+  const cfg = config();
+  cfg.kubernetes.workerImage = 'example/worker:latest';
+  kubernetes._setClientsForTest({});
+  await assert.rejects(kubernetes.runUnitSuiteJob(cfg, { sessionId: 1 }), /immutable digest/);
 });

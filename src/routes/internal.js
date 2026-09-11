@@ -7,13 +7,15 @@ const { internalAuth, internalAuthPurpose } = require('../middleware/internal-au
 const log = require('../services/logger');
 const worker = require('../services/worker');
 const docker = require('../services/docker');
+const applicationRuntime = require('../services/application-runtime');
+const kubernetes = require('../services/kubernetes');
 const statusSvc = require('../services/status');
 const debugAccess = require('../services/debug-access');
 const github = require('../services/github');
 // #945: the issue's Usernode-side Discussion thread, merged into the
 // by-number issue response the worker's usernode-issues CLI prints.
 const threadContext = require('../services/thread-context');
-const { USERNODE_DOMAIN } = require('../services/caddy');
+const { USERNODE_DOMAIN, USERNODE_APPS_DOMAIN } = require('../services/caddy');
 const appAccess = require('../services/app-access');
 // #1037: shared draft-card creation (validation, de-dupe, insert, live
 // push), also used by the Mayor's in-process draft_issue_report tool
@@ -36,7 +38,7 @@ async function isKnownHost(pool, rawDomain) {
   // defensively so a stray on-demand handshake for it never gets stuck.
   if (domain === USERNODE_DOMAIN) return true;
 
-  const suffix = '.' + USERNODE_DOMAIN;
+  const suffix = '.' + USERNODE_APPS_DOMAIN;
   if (!domain.endsWith(suffix)) return false;
   const label = domain.slice(0, -suffix.length);
   // Only single-level subdomains are routable (the wildcard matches one
@@ -882,8 +884,7 @@ function internalRoutes(_config) {
     }
   );
 
-  // Container inventory: `docker ps -a` + `docker stats` summaries via
-  // the status service's existing helpers.
+  // Preserve the containers response shape across both runtime inventories.
   router.get(
     '/api/internal/sessions/:sessionId/prod-debug/containers',
     prodDebugAuth,
@@ -891,12 +892,13 @@ function internalRoutes(_config) {
     requireProdDebug,
     async (req, res) => {
       try {
-        const [containers, stats] = await Promise.all([
-          statusSvc.listContainers(_config),
-          statusSvc.getStats(_config),
-        ]);
+        const runtimeKind = applicationRuntime.mode(_config);
+        const [containers, stats] = runtimeKind === 'kubernetes'
+          ? [await kubernetes.listStatusResources(_config), {}]
+          : await Promise.all([statusSvc.listContainers(_config), statusSvc.getStats(_config)]);
         return res.json({
           ok: true,
+          runtimeKind,
           containers: containers.map((c) => ({
             ...c,
             mem: stats[c.name]?.mem || null,
@@ -907,7 +909,7 @@ function internalRoutes(_config) {
         log.error('prod-debug', 'Container list failed', {
           sessionId: req.prodDebug.sessionId, err: err.message,
         });
-        return res.status(500).json({ ok: false, code: 'docker_error' });
+        return res.status(500).json({ ok: false, code: 'runtime_error' });
       }
     }
   );
@@ -923,7 +925,8 @@ function internalRoutes(_config) {
     requireProdDebug,
     async (req, res) => {
       const name = String(req.params.container || '');
-      if (!debugAccess.isAllowedLogContainer(name)) {
+      const runtimeKind = applicationRuntime.mode(_config);
+      if (!debugAccess.isAllowedLogContainer(name, runtimeKind)) {
         return res.status(400).json({ ok: false, code: 'bad_container' });
       }
       const tail = debugAccess.clampTail(req.query.tail);
@@ -931,15 +934,21 @@ function internalRoutes(_config) {
         sessionId: req.prodDebug.sessionId, container: name, tail,
       });
       try {
-        const { stdout, stderr } = await docker.execFileAsync('docker', [
-          'logs', '--tail', String(tail), name,
-        ], { timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
-        // docker writes the container's stderr stream to its own stderr;
-        // both are log content here.
-        let text = `${stdout || ''}${stderr ? `\n${stderr}` : ''}`;
+        let text;
+        if (runtimeKind === 'kubernetes') {
+          text = String(await kubernetes.getDebugLogs(_config, name, { tailLines: tail, maxBytes: debugAccess.MAX_LOG_BYTES }) || '');
+        } else {
+          const { stdout, stderr } = await docker.execFileAsync('docker', [
+            'logs', '--tail', String(tail), name,
+          ], { timeout: 15000, maxBuffer: 8 * 1024 * 1024 });
+          text = `${stdout || ''}${stderr ? `\n${stderr}` : ''}`;
+        }
         let truncated = false;
-        if (text.length > debugAccess.MAX_LOG_BYTES) {
-          text = text.slice(-debugAccess.MAX_LOG_BYTES);
+        if (Buffer.byteLength(text, 'utf8') > debugAccess.MAX_LOG_BYTES) {
+          const bytes = Buffer.from(text, 'utf8');
+          let start = bytes.length - debugAccess.MAX_LOG_BYTES;
+          while ((bytes[start] & 0xc0) === 0x80) start++; // do not split a UTF-8 character
+          text = bytes.subarray(start).toString('utf8');
           truncated = true;
         }
         return res.json({

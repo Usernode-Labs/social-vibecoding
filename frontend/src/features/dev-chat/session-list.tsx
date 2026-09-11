@@ -22,6 +22,7 @@
 
 import { useState, type ReactNode } from 'react';
 
+import { messageStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { sessionListStore } from './session-list-store';
 import type { SessionAction, SessionListState, SessionRow } from './session-list-store';
@@ -110,8 +111,27 @@ function Row({ row }: { row: SessionRow }): ReactNode {
         >{`PR#${row.pr.number}`}</a>
       ) : null}
       {row.actions.map((a) => <ActionButton key={a.key} a={a} />)}
-      <span className="text-xs text-zinc-500 dark:text-zinc-400">{row.date}</span>
+      <SessionDate createdAt={row.createdAt} />
     </div>
+  );
+}
+
+/**
+ * #1808: when the session was opened. It read `toLocaleDateString()` — a
+ * bare "9/9/2026", so two sessions started the same afternoon were
+ * indistinguishable and one started at midnight was ambiguous by a day.
+ * Form A, so today's sessions (nearly all of them, in a list capped at a
+ * handful) still spend the row's last column on a time alone.
+ */
+function SessionDate({ createdAt }: { createdAt: string }) {
+  const stamp = messageStamp(createdAt);
+  if (!stamp.text) return null;
+  return (
+    <time
+      className="text-xs text-zinc-500 dark:text-zinc-400"
+      dateTime={createdAt}
+      title={stamp.title}
+    >{stamp.text}</time>
   );
 }
 

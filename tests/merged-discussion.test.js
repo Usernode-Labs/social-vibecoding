@@ -154,12 +154,18 @@ test('a merged row shows a visible 💬 badge when chat_count > 0', () => {
   assert.doesNotMatch(badge, /\bhidden\b/, 'non-empty badge is visible');
 });
 
-test('a merged row hides the 💬 badge when chat_count is 0', () => {
+test('a merged row draws no 💬 badge when chat_count is 0, and one on its meta line when there are messages', () => {
   const { AppView } = makeAppView();
   AppView._mergedCtx = { majority: 2, activeUsers: 3 };
-  const html = mergedCardHtml(AppView, mergedPr({ chat_count: 0 }), 2);
-  const badge = html.match(/<span class="dev-chat-badge[^>]*data-count="0"[^>]*>/)[0];
-  assert.match(badge, /\bhidden\b/, 'empty badge is hidden');
+  // A live bump repaints from the model, so a 0 count draws nothing, where
+  // it used to draw a hidden badge for the bump to reveal. A real count is
+  // a fact about the item and rides the meta line with the tags, at both
+  // sizes, rather than a different row at each.
+  const none = mergedCardHtml(AppView, mergedPr({ chat_count: 0 }), 2);
+  assert.doesNotMatch(none, /dev-chat-badge|dev-card-facts/);
+  const some = mergedCardHtml(AppView, mergedPr({ chat_count: 2 }), 2);
+  assert.match(some, /<div class="dev-card-meta">[^<]*(?:<[^>]*>[^<]*)*?<span class="dev-chat-badge[^>]*data-count="2"[^>]*>[^<]*<\/span><\/div>/, 'the count closes the meta line');
+  assert.doesNotMatch(some, /dev-card-facts/);
 });
 
 test('#dev-body tap opens the proposal topic on a bare merged-row click', async () => {

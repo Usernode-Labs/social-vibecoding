@@ -16,9 +16,90 @@ rendered manually but are outside Argo's stable version constraint. Cluster
 configuration and SOPS-encrypted secrets remain in the infra repository and
 are applied as external Helm values.
 
-`config.domain` is the single canonical domain expected by the application.
-The platform is served at that hostname and generated applications use
-`<slug>.<domain>` (with staging hosts beneath the same wildcard).
+For Gmail delivery with `secrets.create: true`, merge these fields into the
+existing `secrets` block in the infra repository's SOPS-encrypted
+`prototype/bare-metal-platform/clusters/bare-metal-org/workloads/social-vibecoding/values/platform.secrets.sops.yaml`:
+
+```yaml
+secrets:
+  gmailOauthClientId: "<Google OAuth client ID>"
+  gmailOauthClientSecret: "<Google OAuth client secret>"
+  gmailOauthRefreshToken: "<sending mailbox refresh token>"
+```
+
+Use the SOPS editor to supply real values; keep credentials out of plaintext
+values files. These fields map to `GMAIL_OAUTH_CLIENT_ID`,
+`GMAIL_OAUTH_CLIENT_SECRET`, and `GMAIL_OAUTH_REFRESH_TOKEN` in the platform
+Secret, which the Deployment imports into its environment. With
+`secrets.create: false`, supply those environment-variable keys directly in
+`secrets.existingSecret` instead.
+
+All three values are optional for chart installation but must be populated to
+enable Gmail delivery. The refresh token needs the `gmail.send` scope, and its
+mailbox must be authorized to send as `Usernode <no-reply@onhomeroom.com>`
+(the application's default sender). The Kubernetes deployment reads the Secret;
+the Platform variables panel does not populate this chart's values.
+
+Release the updated chart and sync the encrypted values through Argo CD. The
+Deployment's existing secrets checksum triggers a rollout when these values
+change. After rollout, check the admin mail status and verify delivery to a
+mailbox you control.
+
+For GitHub account linking, add both OAuth credentials to the same encrypted
+file's existing `secrets` block using the SOPS editor:
+
+```yaml
+secrets:
+  githubLinkClientId: "<GitHub OAuth client ID>"
+  githubLinkClientSecret: "<GitHub OAuth client secret>"
+```
+
+With `secrets.create: true`, these map to `GITHUB_LINK_CLIENT_ID` and
+`GITHUB_LINK_CLIENT_SECRET` in the platform Secret and reach the process through
+the Deployment's `envFrom`. With `secrets.create: false`, provide those
+environment-variable keys in `secrets.existingSecret`. Both fields default to
+empty strings and remain optional for chart installation. Publish the updated
+chart and sync the encrypted values through Argo CD; the existing secrets
+checksum rolls out credential changes.
+
+For OpenRouter managed keys, set `secrets.openrouterManagementApiKey` in the
+same SOPS-encrypted values file. With `secrets.create: true`, it maps to
+`OPENROUTER_MANAGEMENT_API_KEY` in the platform Secret, imported through the
+Deployment's `envFrom`. The field defaults to an empty string and is optional
+for chart installation. With `secrets.create: false`, supply
+`OPENROUTER_MANAGEMENT_API_KEY` in `secrets.existingSecret` instead. Release the
+updated chart and sync through Argo CD; the secrets checksum triggers a rollout
+when the value changes.
+
+`config.domain` is the canonical platform hostname (`USERNODE_DOMAIN`).
+`config.appsDomain` optionally sets a separate suffix for generated apps and
+session previews (`USERNODE_APPS_DOMAIN`). When empty, it defaults to
+`config.domain` and preserves existing deployments. For example:
+
+```yaml
+config:
+  domain: my.onhomeroom.com
+  appsDomain: onhomeroom.com
+```
+
+This serves the platform at `my.onhomeroom.com`, production apps at
+`<slug>.onhomeroom.com`, and previews at `<slug>--s<sessionId>.onhomeroom.com`.
+Platform links, CLI authentication, and access-grant redirects continue to use
+`config.domain`. The platform hostname is reserved: app deployment rejects a
+collision before writing Kubernetes resources, and app access parsing never
+treats the platform as a generated app.
+
+DNS and cert-manager must support both hostname sets before rollout. Keep
+session cookies host-only. Update external OAuth callback URLs and any
+registered origins for the platform hostname. This change does not migrate
+existing generated-app Ingresses or persisted preview URLs automatically:
+redeploy existing apps and rebuild active previews through their normal
+platform workflows after the platform release. Keep the prior DNS records
+until migration and rollback checks are complete. A deployment restart alone
+does not reconcile existing child-app routes.
+
+The bundled standalone Caddyfile still uses its existing single-domain layout;
+the separate-domain configuration described here is for the Kubernetes chart.
 
 The OCI chart package must be public for unauthenticated Argo CD pulls. If it
 is kept private, Argo CD needs a read-only GHCR repository credential with OCI
@@ -32,6 +113,23 @@ Resource ordering within the Application is:
 3. Idempotent migration `Sync` hook at wave `-1`.
 4. Platform Deployment, Service and Ingress at wave `0`.
 
+Session capacity and idle cleanup are explicit `config` values:
+`maxGlobalSessions`, `maxUserSessions`, `maxUserPromotedSessions`,
+`maxAdminUserSessions`, `maxAdminUserPromotedSessions`, `workerIdleEvictionMs`,
+`sessionAutopauseIdleMs`, and `stagingIdleTeardownMs`. Defaults match the
+application defaults; cluster values can restore the standalone deployment's
+session ceiling and five-minute worker eviction without changing Docker defaults.
+These values render as explicit environment variables and take precedence over
+the same keys in an imported Secret or ConfigMap. Zero idle-timeout values are
+preserved, including the supported `sessionAutopauseIdleMs: 0` disable switch.
+
+The session ceiling counts logical active/promoted coding sessions, including
+sessions with evicted workers. It does not reserve a worker or preview for each
+session. Raising it requires matching namespace compute/object/PVC budgets,
+working idle eviction and preview cleanup. ResourceQuota can still reject work
+at its memory/request/object ceiling; it is not a job queue or a throughput
+guarantee. Keep per-user caps and observe quota headroom after changes.
+
 The master `enabled` gate is split further into `platform.enabled`,
 `migration.enabled`, and `postgresql.enabled`. All three default to `true` for
 backward compatibility. To use CloudNativePG or another external database, set
@@ -40,6 +138,30 @@ the narrow `postgresql.podSelector`, then let the database-owning deployment
 control ingress to its Pods. This also permits a cutover-ready configuration
 with the platform, migration Job, and ingress disabled until the database is
 writable.
+
+Previews prefer the node hosting the external CloudNativePG primary by default
+(`config.previewFollowDatabasePrimary: true`). The chart derives
+`PREVIEW_DATABASE_CLUSTER` from `postgresql.podSelector["cnpg.io/cluster"]` and
+`PREVIEW_DATABASE_NAMESPACE` from `postgresql.namespace` (or the release
+namespace). Set the flag to `false` to disable the preference. Bundled PostgreSQL
+and external databases without the CNPG cluster selector keep normal placement.
+Installations without Helm can set both environment variables on the platform.
+
+Only staging preview Deployments receive a weight-100 preferred Pod affinity
+term matching that cluster's `cnpg.io/instanceRole: primary` across
+`kubernetes.io/hostname`. Other eligible nodes remain available if the primary's
+node is full, unavailable, or no matching primary exists. This is a scheduler
+preference, not a guarantee: other scheduling scores can outweigh it. It needs
+no node labels beyond the standard hostname, extra runtime RBAC, or node lookup.
+
+After releasing the platform image and chart together, newly created or
+reconciled preview Deployments get this policy. Existing Deployments are not
+patched automatically. Following a database failover, newly scheduled Pods
+prefer the new primary; running previews stay where they are. Opting out affects
+future reconciliation too. Production apps, build Pods, workers and captures
+retain their existing placement. See the
+[Kubernetes affinity documentation](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity)
+and [CloudNativePG labels](https://cloudnative-pg.io/docs/1.28/labels_annotations/).
 
 Platform upgrades use a Kubernetes-native blue/green equivalent: a
 `RollingUpdate` Deployment creates a new ReplicaSet beside the live one,
@@ -75,3 +197,46 @@ helm template social-vibecoding-platform ./social-vibecoding-platform \
   --set secrets.create=false \
   --set secrets.existingSecret=social-vibecoding
 ```
+
+
+## Proposal checks in Kubernetes
+
+Capture Jobs honor the same `CAPTURE_CPUS` and `CAPTURE_MEMORY` limits as
+Docker (eight CPUs / 4 GiB by default). Their requests are one CPU / 3 GiB,
+matching the observed browser working set; smaller limit overrides also lower
+the requests so Kubernetes can admit the Pod. Per-job ephemeral storage remains
+1 GiB requested / 4 GiB limited. Changes apply to newly created check Jobs.
+
+Capture Jobs visit the generated app and preview HTTPS ingress hostnames. The
+self-app's production capture uses the canonical platform hostname. Worker
+namespace DNS and egress must reach these ingress endpoints with valid TLS;
+there is no HTTP or certificate-verification fallback. This preserves Secure
+session cookies in Paketo's production-mode previews. Docker captures retain
+their existing network path.
+
+When `WORKER_RUNTIME=kubernetes`, repo unit suites run as separate Jobs using
+`KUBERNETES_WORKER_IMAGE`, pinned by the same chart release. That image includes
+Node, git and a local disposable PostgreSQL 17 for repositories opting into SQL
+checks. Each Job has no service-account token or shared workspace volume,
+uses the existing worker service account for image pulls, and runs as UID 1000.
+Clone credentials are in a temporary Secret owned by the Job and deleted when
+the runner finishes. Jobs have no retries, a default ten-minute deadline, and
+a one-hour cleanup TTL. The default limit is four CPUs / 2 GiB, with requests
+of one CPU / 1 GiB; existing `UNIT_SUITE_CPUS`, `UNIT_SUITE_MEMORY` and
+`UNIT_SUITE_TIMEOUT_MS` settings apply. Allow worker quota for simultaneous
+capture and unit-suite Jobs. Unit-suite log reads are bounded to 32 MiB.
+
+Failed Jobs preserve their exit code and available test output in the check
+result; timeouts remain failures. Checks and earned merge gating are not
+bypassed. Existing previews can be rechecked after the platform release; a
+preview rebuild is not required just to change its capture URL.
+
+## Platform rollout reporting
+
+The platform reads its own Deployment for `/api/version` and admin status.
+The chart binds `social-platform-runtime` to a Role with only `get` on that
+Deployment and injects its namespace and name, including fullname overrides.
+Incomplete rollouts, controller failures, paused rollouts, and unavailable API
+reads remain distinct. This reports Argo-applied rollout state; image build and
+chart publication progress remain in the `Build Kubernetes images` workflow.
+Kubernetes self-app merges do not write the standalone host-deployer nudge.

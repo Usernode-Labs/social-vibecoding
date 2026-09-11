@@ -105,6 +105,7 @@ const CHROME = process.env.CHROME_PATH
  * un-converted section's own `innerHTML` would report as a violation.
  */
 const OWNED = [
+  { sel: '[data-account-email-form]', when: '#settings/email' },
   // `#home-grid-overlay` is appended into this host by home.js during a drag,
   // which this sweep never performs and so never sees. It is a deliberate
   // exception resting on a timing invariant rather than a boundary — the
@@ -143,6 +144,7 @@ const OWNED = [
   // The card's ⋯ menu (features/dev-board/card-menu.tsx). Same story as the
   // picker above: on screen only mid-gesture, so this sweep never sees one.
   { sel: '.dev-card-menu' },
+  { sel: '[data-session-checks-host]' },
   // The three body-mounted Dev modals (features/dev-board/modals/). Same
   // story again — each scrim is created on open and removed on close, so
   // this sweep never sees one; the coverage is
@@ -322,7 +324,7 @@ const OWNED = [
 
 const ROUTES = [
   '#home', '#apps', '#apps/recipebot', '#settings', '#settings/app-ai',
-  '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#messages', '#notifications',
+  '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/experimental', '#profile', '#leaderboard', '#messages', '#notifications',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
   '#app/recipebot/dev/sessions/1',
   // The spec reader, which is the one host inside `#dc-view` whose subtree

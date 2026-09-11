@@ -132,7 +132,34 @@ const MANIFEST_FILENAME = 'dapp.json';
 // at ~3.9s over a pool of 8 is ~283s of ideal work, so TESTS_DEADLINE_MS goes
 // 560s → 570s to keep the 2x margin (clears it by ~4s), and RUN_TIMEOUT_MS
 // 680s → 690s to stay the required 120s above it.
-const MAX_DECLARED_TESTS = 580;
+//
+// Raised 580 → 600 by #1824, which declares two checks of its own and found
+// the manifest at 560 — exactly ON the 20-slot floor, so ANY proposal that
+// declared a check was red before it started. That is the fifth time this has
+// happened, and the reason it keeps happening is that the floor is a floor:
+// clearing it by zero is indistinguishable from crossing it until the next
+// person adds a check.
+//
+// Same arithmetic, same coupled move: 600 checks at ~3.9s over a pool of 8 is
+// ~293s of ideal work, so TESTS_DEADLINE_MS goes 570s → 590s to keep the 2x
+// margin (clears it by ~5s), and RUN_TIMEOUT_MS 690s → 710s to stay the
+// required 120s above it. The step buys 38 slots over the 562 declared here.
+//
+// Raised 600 → 630 by #1876, which splits the waitlist confirm errand into two
+// screens and so declares eight checks where one stood: there are two states
+// now, they cannot be photographed at once, and each needs its visible half,
+// its hidden half and its step line asserted. That put the manifest at 587
+// against a 580 floor. Sixth crossing, and the first one caused by a
+// proposal's own checks rather than by finding the floor already met — which
+// is the same lesson from the other side: a floor cleared by seven is a floor
+// the next feature crosses.
+//
+// Same arithmetic, same coupled move: 630 checks at ~3.9s over a pool of 8 is
+// ~307s of ideal work, so TESTS_DEADLINE_MS goes 590s → 620s to keep the 2x
+// margin (clears it by ~6s), and RUN_TIMEOUT_MS 710s → 740s to stay the
+// required 120s above it. The step is 30 again, and buys 23 slots over the 587
+// declared here.
+const MAX_DECLARED_TESTS = 630;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
@@ -330,6 +357,7 @@ const PLATFORM_ENV_UNWRITABLE = new Set([
   'USERNODE_APP_SECRET_KEY',
   // Ingress / TLS, owned by the Caddy half of the deploy.
   'USERNODE_DOMAIN',
+  'USERNODE_APPS_DOMAIN',
   'ZEROSSL_API_KEY',
   'ZEROSSL_EAB_KID',
   'ZEROSSL_EAB_HMAC',

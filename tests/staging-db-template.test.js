@@ -5,8 +5,8 @@
 // every STAGING_DB_TEMPLATE_MAX_AGE_MS, instead of paying pg_dump |
 // pg_restore of the live database on every build.
 //
-// Pinned here, with child_process stubbed at the same seam as
-// tests/db-clone-exclude-data.test.js:
+// Pinned here, with pg and child_process stubbed (the latter at the same seam as
+// tests/db-clone-exclude-data.test.js):
 //   - a missing or stale template is rebuilt into `_next` with the direct
 //     path's own steps, stamped, locked against connections, and swapped in
 //     by rename — never built in place;
@@ -28,13 +28,14 @@ function stub(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
 }
 
-function loadDbManager({ templateComment = null, failOn = null, maxAge = null } = {}) {
+function loadDbManager({ templateComment = null, failOn = null, maxAge = null, privateTables = [], privateColumns = [], failConnect = false, loseConnection = false, timeoutOn = null } = {}) {
   const savedEnv = { url: process.env.DB_ADMIN_URL, age: process.env.STAGING_DB_TEMPLATE_MAX_AGE_MS };
   process.env.DB_ADMIN_URL = 'postgres://usernode:test@db.example.test:5432/usernode';
   if (maxAge === null) delete process.env.STAGING_DB_TEMPLATE_MAX_AGE_MS;
   else process.env.STAGING_DB_TEMPLATE_MAX_AGE_MS = String(maxAge);
   const ids = {
     childProcess: require.resolve('child_process'),
+    pg: require.resolve('pg'),
     logger: require.resolve('../src/services/logger'),
     subject: require.resolve('../src/services/db-manager'),
   };
@@ -45,15 +46,18 @@ function loadDbManager({ templateComment = null, failOn = null, maxAge = null } 
     const dashC = args.indexOf('-c');
     const sql = dashC >= 0 ? args[dashC + 1] : '';
     calls.push({ cmd, args, sql, db: (opts.env || {}).PGDATABASE });
+    if (timeoutOn && timeoutOn.test(sql)) return Promise.reject(new Error('Query read timeout'));
     if (failOn && failOn.test(sql)) return Promise.reject(new Error(`boom: ${sql.slice(0, 40)}`));
     if (/shobj_description/.test(sql)) {
       return Promise.resolve({ stdout: templateComment ? `${templateComment}\n` : '\n', stderr: '' });
     }
-    if (/obj_description|col_description/.test(sql)) return Promise.resolve({ stdout: '\n', stderr: '' });
+    if (/col_description/.test(sql)) return Promise.resolve({ stdout: privateColumns.join('\n'), stderr: '' });
+    if (/obj_description/.test(sql)) return Promise.resolve({ stdout: privateTables.join('\n'), stderr: '' });
     return Promise.resolve({ stdout: '', stderr: '' });
   };
   fakeExecFile[require('util').promisify.custom] = fakeExecFile;
   const fakeSpawn = (cmd, args, opts = {}) => {
+    assert.ok(connections.every((c) => c.ended), 'close clone connections before refresh or fallback');
     const child = new EventEmitter();
     child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough();
     child.kill = () => {};
@@ -61,6 +65,29 @@ function loadDbManager({ templateComment = null, failOn = null, maxAge = null } 
     setImmediate(() => child.emit('close', 0, null));
     return child;
   };
+  const connections = [];
+  class FakeClient extends EventEmitter {
+    constructor(config) {
+      super();
+      this.config = config;
+      this.db = new URL(config.connectionString).pathname.slice(1);
+      this.ended = false;
+      connections.push(this);
+    }
+    async connect() {
+      if (failConnect && this.db !== 'usernode') throw new Error('connection refused');
+    }
+    async query({ text, rowMode }) {
+      assert.equal(rowMode, 'array');
+      assert.equal(this.ended, false, 'queries cannot use a closed clone connection');
+      const result = await fakeExecFile('pg', ['-c', text], { env: { PGDATABASE: this.db } });
+      if (loseConnection && this.db !== 'usernode') this.emit('error', new Error('connection lost'));
+      return { rows: result.stdout.trim() ? result.stdout.trim().split('\n').map((row) => row.split('|')
+        .map((value) => value === 't' ? true : value === 'f' ? false : value || null)) : [] };
+    }
+    async end() { this.ended = true; }
+  }
+  stub(ids.pg, { Client: FakeClient });
   stub(ids.childProcess, { execFile: fakeExecFile, spawn: fakeSpawn });
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   delete require.cache[ids.subject];
@@ -70,14 +97,42 @@ function loadDbManager({ templateComment = null, failOn = null, maxAge = null } 
     if (savedEnv.url === undefined) delete process.env.DB_ADMIN_URL; else process.env.DB_ADMIN_URL = savedEnv.url;
     if (savedEnv.age === undefined) delete process.env.STAGING_DB_TEMPLATE_MAX_AGE_MS; else process.env.STAGING_DB_TEMPLATE_MAX_AGE_MS = savedEnv.age;
   };
-  return { dbManager, calls, restore };
+  return { dbManager, calls, connections, restore };
 }
 
-const sqls = (calls) => calls.filter((c) => c.cmd === 'psql').map((c) => c.sql);
+const sqls = (calls) => calls.filter((c) => ['psql', 'pg'].includes(c.cmd)).map((c) => c.sql);
 const dumps = (calls) => calls.filter((c) => c.cmd === 'pg_dump');
 const restores = (calls) => calls.filter((c) => c.cmd === 'pg_restore');
 const fresh = () => `staging-template source=app_demo refreshed_at=${new Date().toISOString()}`;
 const stale = () => `staging-template source=app_demo refreshed_at=${new Date(Date.now() - 3600 * 1000).toISOString()}`;
+
+for (const stage of ['database', 'role']) {
+  const failOn = stage === 'database' ? /^DROP DATABASE IF EXISTS app_demo_staging_/ : /^DROP ROLE IF EXISTS app_demo_staging_/;
+  for (const viaTemplate of [false, true]) {
+    test(`${viaTemplate ? 'template' : 'direct'} clone stops before creation when old ${stage} cleanup fails`, async () => {
+      const { dbManager, calls, restore } = loadDbManager({ failOn, templateComment: fresh() });
+      try {
+        await assert.rejects(
+          dbManager.cloneDatabase('app_demo', 'app_demo_staging_s9_abc123', { viaTemplate }),
+          /boom: DROP/,
+        );
+        assert.ok(!sqls(calls).some((sql) => /^CREATE (ROLE|DATABASE) app_demo_staging_/.test(sql)),
+          'failed cleanup must not be masked by a duplicate role or database error');
+        assert.equal(dumps(calls).length, 0);
+        if (stage === 'database') {
+          assert.ok(!sqls(calls).some((sql) => /^DROP ROLE/.test(sql)), 'keep the role that still owns the database');
+        }
+      } finally { restore(); }
+    });
+  }
+
+  test(`ordinary teardown stays best-effort when ${stage} cleanup fails`, async () => {
+    const { dbManager, restore } = loadDbManager({ failOn });
+    try {
+      await assert.doesNotReject(dbManager.dropDatabase('app_demo_staging_s9_abc123'));
+    } finally { restore(); }
+  });
+}
 
 test('no template yet: it is built into _next with the direct steps, stamped, locked, and swapped in by rename', async () => {
   const { dbManager, calls, restore } = loadDbManager();
@@ -105,10 +160,10 @@ test('no template yet: it is built into _next with the direct steps, stamped, lo
     assert.ok(cloneCreate > rename, 'the clone follows the swap');
     assert.ok(s.slice(cloneCreate).some((x) => /GRANT ALL PRIVILEGES ON DATABASE app_demo_staging_s1_abc123 TO app_demo_staging_s1_abc123_owner/.test(x)));
     // Ownership walk template role → clone role, then the redaction passes on the clone.
-    const walk = calls.filter((c) => c.cmd === 'psql' && c.db === 'app_demo_staging_s1_abc123' && /DO \$\$/.test(c.sql));
+    const walk = calls.filter((c) => ['psql', 'pg'].includes(c.cmd) && c.db === 'app_demo_staging_s1_abc123' && /DO \$\$/.test(c.sql));
     assert.ok(walk.length >= 1, 'reassignUserObjectsTo ran inside the clone');
     assert.ok(walk.some((c) => /app_demo_stgtmpl_owner/.test(c.sql) && /app_demo_staging_s1_abc123_owner/.test(c.sql)));
-    const onClone = calls.filter((c) => c.cmd === 'psql' && c.db === 'app_demo_staging_s1_abc123').map((c) => c.sql);
+    const onClone = calls.filter((c) => ['psql', 'pg'].includes(c.cmd) && c.db === 'app_demo_staging_s1_abc123').map((c) => c.sql);
     assert.ok(onClone.some((x) => /obj_description/.test(x) && /relkind/.test(x)), 'truncatePrivateTables still runs on the clone');
     assert.ok(onClone.some((x) => /col_description/.test(x)), 'scrubPrivateColumns still runs on the clone');
   } finally { restore(); }
@@ -215,4 +270,100 @@ test('the preview build asks for the template and records how the clone went', (
   assert.match(staging, /if \(cloned\.templateStale\) timings\.templateRefreshQueued = true;/);
   const visuals = fs.readFileSync(path.join(__dirname, '..', 'src/services/visuals.js'), 'utf8');
   assert.match(visuals, /via: buildTimings\.cloneVia \|\| undefined,/, 'the checks trace tells the two apart');
+});
+
+
+test('template clone uses two bounded connections for 101 redactions and closes both', async () => {
+  const fixture = loadDbManager({ templateComment: fresh(),
+    privateTables: Array.from({ length: 82 }, (_, i) => `public.private_${i}`),
+    privateColumns: Array.from({ length: 19 }, (_, i) => `public.users|secret_${i}|f|`),
+  });
+  try {
+    const result = await fixture.dbManager.cloneDatabase('app_demo', 'app_demo_staging_s8_abc123', { viaTemplate: true });
+    assert.equal(result.via, 'template');
+    assert.deepEqual(fixture.connections.map((c) => c.db), ['usernode', 'app_demo_staging_s8_abc123']);
+    for (const c of fixture.connections) {
+      assert.equal(c.ended, true);
+      assert.equal(c.config.connectionTimeoutMillis, 30000);
+      assert.equal(c.config.statement_timeout, 30000);
+      assert.equal(c.config.query_timeout, 30000);
+    }
+    assert.equal(fixture.calls.filter((c) => c.cmd === 'pg' && /^TRUNCATE/.test(c.sql)).length, 82);
+    assert.equal(fixture.calls.filter((c) => c.cmd === 'pg' && /^UPDATE/.test(c.sql)).length, 19);
+    assert.ok(!fixture.calls.some((c) => c.cmd === 'psql' && /TRUNCATE|UPDATE/.test(c.sql)));
+    assert.ok(!fixture.calls.some((c) => /^(BEGIN|COMMIT)/.test(c.sql || '')), 'CREATE DATABASE stays outside transactions');
+  } finally { fixture.restore(); }
+});
+
+test('reused connection preserves bool/null discovery and unique private-column redaction', async () => {
+  const fixture = loadDbManager({ templateComment: fresh(), privateColumns: [
+    'public.users|token|t|64', 'public.users|password|f|',
+  ] });
+  try {
+    await fixture.dbManager.cloneDatabase('app_demo', 'app_demo_staging_s8_abc123', { viaTemplate: true });
+    const updates = fixture.calls.filter((c) => c.cmd === 'pg' && /^UPDATE/.test(c.sql)).map((c) => c.sql);
+    assert.deepEqual(updates, [
+      "UPDATE public.users SET token = left('__staging_redacted__' || ctid::text, 64)",
+      'UPDATE public.users SET password = NULL',
+    ]);
+  } finally { fixture.restore(); }
+});
+
+for (const failure of ['redaction', 'connect', 'disconnect']) {
+  test(`template clone closes its connections after ${failure} failure before fallback`, async () => {
+    const fixture = loadDbManager({ templateComment: fresh(),
+      privateTables: ['public.private_one', 'public.private_two'],
+      failOn: failure === 'redaction' ? /^TRUNCATE public.private_one/ : null,
+      failConnect: failure === 'connect', loseConnection: failure === 'disconnect',
+    });
+    try {
+      const promise = fixture.dbManager.cloneDatabase('app_demo', 'app_demo_staging_s8_abc123', { viaTemplate: true });
+      if (failure === 'redaction') {
+        await assert.rejects(promise, /Failed to truncate/);
+        assert.ok(fixture.calls.some((c) => c.cmd === 'pg' && /^TRUNCATE public.private_two/.test(c.sql)),
+          'autocommit allows collecting later failures without skipping redaction');
+      } else {
+        assert.equal((await promise).via, 'direct');
+      }
+      assert.equal(fixture.connections.length, 2);
+      assert.ok(fixture.connections.every((c) => c.ended));
+      assert.equal(dumps(fixture.calls).length, 1, 'existing direct fallback remains available');
+    } finally { fixture.restore(); }
+  });
+}
+
+
+test('concurrent clones never share target connections', async () => {
+  const fixture = loadDbManager({ templateComment: fresh(), privateTables: ['public.private_data'] });
+  try {
+    const results = await Promise.all(['app_demo', 'app_other'].map((source) =>
+      fixture.dbManager.cloneDatabase(source, `${source}_staging_s8_abc123`, { viaTemplate: true })));
+    assert.ok(results.every((r) => r.via === 'template'));
+    assert.equal(fixture.connections.length, 4);
+    assert.deepEqual(fixture.connections.filter((c) => c.db !== 'usernode').map((c) => c.db).sort(),
+      ['app_demo_staging_s8_abc123', 'app_other_staging_s8_abc123']);
+    assert.ok(fixture.connections.every((c) => c.ended));
+  } finally { fixture.restore(); }
+});
+
+
+test('client query timeout stops submissions on the uncertain connection before fallback', async () => {
+  const fixture = loadDbManager({ templateComment: fresh(),
+    privateTables: ['public.private_one', 'public.private_two'], timeoutOn: /^TRUNCATE public.private_one/,
+  });
+  try {
+    await assert.rejects(fixture.dbManager.cloneDatabase('app_demo', 'app_demo_staging_s8_abc123', { viaTemplate: true }), /Failed to truncate/);
+    assert.ok(!fixture.calls.some((c) => c.cmd === 'pg' && /^TRUNCATE public.private_two/.test(c.sql)));
+    assert.ok(fixture.connections.every((c) => c.ended));
+    assert.equal(dumps(fixture.calls).length, 1);
+  } finally { fixture.restore(); }
+});
+
+test('strict database existence lookup propagates failure rather than authorizing a parallel clone', async () => {
+  const fixture = loadDbManager({ failOn: /SELECT 1 FROM pg_database/ });
+  try {
+    assert.equal(await fixture.dbManager.databaseExists('app_demo'), false, 'legacy best-effort callers remain compatible');
+    await assert.rejects(fixture.dbManager.databaseExists('app_demo', { strict: true }), /boom/);
+    await assert.rejects(fixture.dbManager.databaseExists('unsafe-name', { strict: true }), /unsafe/);
+  } finally { fixture.restore(); }
 });

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 
+import { messageStamp } from '../../lib/timestamp';
 import type { ConversationUser, SharedObjectCard } from './types';
 
 export function initials(label: string): string {
@@ -11,23 +12,12 @@ export function initials(label: string): string {
     .join('') || '?';
 }
 
-export function relativeTime(value: string): string {
-  const time = Date.parse(value);
-  if (!Number.isFinite(time)) return '';
-  const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000));
-  if (seconds < 60) return 'now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
-  return new Date(time).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
+// `relativeTime` lived here — the conversation list's own copy of the ago
+// ladder, one of five that had each drifted to a different cutoff. It is
+// `agoStamp` from lib/timestamp.ts now (#1808); import that directly.
 
 export function fullTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString();
+  return messageStamp(value).title;
 }
 
 function fallbackMarkdown(value: string): string {

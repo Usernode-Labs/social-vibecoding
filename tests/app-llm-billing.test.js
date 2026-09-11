@@ -30,6 +30,12 @@ const GOOD_KEY_ENC = secrets.encrypt(USER_KEY, DATA_KEY);
 function makePool({
   userLimit = 2500,
   userSpent = 0,
+  // #1788: the weekly layer, defaulted OFF (0 = "this cap does not
+  // apply", per limits.resolveCaps) so every pre-existing case below
+  // still describes a daily-only account.
+  weeklyLimit = 0,
+  weeklySpent = 0,
+  weeklyOverride = null,
   globalLimit = 20000,
   globalSpent = 0,
   keyEnc = null,
@@ -39,15 +45,21 @@ function makePool({
     calls,
     async query(sql, params) {
       calls.push({ sql, params });
-      if (/SELECT daily_limit_cents FROM users/.test(sql)) {
-        return { rows: [{ daily_limit_cents: userLimit }] };
+      if (/SELECT daily_limit_cents(?:, weekly_limit_cents)? FROM users/.test(sql)) {
+        return { rows: [{ daily_limit_cents: userLimit, weekly_limit_cents: weeklyOverride }] };
       }
       if (/SELECT value FROM platform_settings/.test(sql)) {
-        const value = params[0] === limits.KEY_GLOBAL ? globalLimit : 2500;
+        const value = params[0] === limits.KEY_GLOBAL ? globalLimit
+          : params[0] === limits.KEY_WEEKLY ? weeklyLimit : 2500;
         return { rows: [{ value: String(value) }] };
       }
       if (/SELECT total_cost_cents FROM llm_usage/.test(sql)) {
         return { rows: [{ total_cost_cents: userSpent }] };
+      }
+      // Week-to-date for one user. Matched BEFORE the global sum below,
+      // which is the same aggregate without the user predicate.
+      if (/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/.test(sql)) {
+        return { rows: [{ total: weeklySpent }] };
       }
       if (/SELECT SUM\(total_cost_cents\)/.test(sql)) {
         return { rows: [{ total: globalSpent }] };
@@ -147,4 +159,65 @@ test('spentCentsHeaderValue clamps zero, negative, and garbage to "0"', () => {
   assert.equal(spentCentsHeaderValue(Infinity), '0');
   assert.equal(spentCentsHeaderValue(undefined), '0');
   assert.equal(spentCentsHeaderValue('not-a-number'), '0');
+});
+
+// ── #1788: the app proxy inherits the weekly cap through checkBudget ────
+//
+// resolveAppPayer asks limits.checkBudget for the whole per-user
+// allowance question, so the weekly axis reaches app calls without the
+// app proxy re-deriving it. What is worth pinning is that the answer
+// travels: the user-facing refusal names the week, and the BYOK spill
+// path works from a weekly exhaustion exactly as from a daily one.
+
+test('weekly cap exhausted → the app-facing refusal names the week', async () => {
+  // Nothing spent today: only the week-to-date sum refuses this call.
+  const pool = makePool({ userSpent: 0, weeklyLimit: 17500, weeklySpent: 17500 });
+  const payer = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_NO_BYOK);
+  assert.match(payer.error, /Weekly limit reached \(\$175\.00\)\. Resets Monday 00:00 UTC\./);
+  assert.equal(payer.byok, undefined);
+  assert.ok(pool.issued(/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/),
+    'the week was actually read, not inferred from today');
+});
+
+test('weekly cap exhausted + allow_byok + key → BYOK path', async () => {
+  const pool = makePool({
+    userSpent: 0, weeklyLimit: 17500, weeklySpent: 17500, keyEnc: GOOD_KEY_ENC,
+  });
+  const payer = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_BYOK);
+  assert.deepEqual(payer, { byok: true, apiKey: USER_KEY });
+});
+
+test('weekly headroom left → platform path, and the ledger read is the only extra cost', async () => {
+  const pool = makePool({ userSpent: 100, weeklyLimit: 17500, weeklySpent: 900 });
+  const payer = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_NO_BYOK);
+  assert.deepEqual(payer, { byok: false });
+});
+
+test('no weekly cap → the app proxy never queries the weekly ledger', async () => {
+  const pool = makePool({ userSpent: 100 });
+  await resolveAppPayer(pool, DATA_KEY, 7, GRANT_NO_BYOK);
+  assert.equal(pool.issued(/COALESCE\(SUM\(total_cost_cents\), 0\) AS total/), false);
+});
+
+test('both caps switched off → refused, pointing at the admin console', async () => {
+  const pool = makePool({ userLimit: 0, weeklyLimit: 0, weeklyOverride: 0 });
+  const payer = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_NO_BYOK);
+  assert.match(payer.error, /No AI allowance is configured for this account/);
+  assert.match(payer.error, /admin can set a daily or weekly cap/);
+});
+
+// The mid-stream kill is what stops a single long streamed response from
+// running past a cap it was under when it started. #1788 added the weekly
+// bucket to it; both crossings report the same reason, because the caller
+// (anthropic-stream) treats 'over_budget' as one terminal state.
+test('the weekly mid-stream kill reports the same over_budget reason as the daily one', () => {
+  const src = require('node:fs').readFileSync(
+    require('node:path').join(__dirname, '..', 'src', 'routes', 'app-llm-proxy.js'), 'utf8');
+  assert.match(src, /Mid-stream kill — over weekly budget/);
+  const weeklyBlock = src.slice(src.indexOf('Mid-stream kill — over weekly budget'));
+  assert.match(weeklyBlock.slice(0, 400), /return 'over_budget';/,
+    'a new kill reason here would be an unhandled state downstream');
+  assert.match(src, /const weeklyCapCents = userCaps && userCaps\.weeklyApplies/);
+  assert.match(src, /weeklyCapCents != null\s*\n\s*\? await refreshUserWeeklySpend/,
+    'and the weekly ledger is only read when a weekly cap applies');
 });

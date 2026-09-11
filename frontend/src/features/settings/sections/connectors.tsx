@@ -26,11 +26,14 @@ import { SocialIdentity } from '../social-identity';
  * reach — a repo file covers one repo and travels into a fresh web container;
  * a personal file covers every repo and does not.
  *
- * Six rules, not three: the same three for `usernode` and for `Usernode`. A
- * permission rule names its server literally, the name is typed by a human
- * into another product's dialog, and the capitalised spelling is the one
- * near-miss worth guessing. Any other spelling is what
- * #connector-name-spelling below rewrites these blocks for.
+ * Four spellings of the name, not one. A permission rule names its server
+ * literally, and the name is typed by a human into another product's dialog,
+ * so the capitalised form is the one near-miss worth guessing — that is the
+ * `homeroom` / `Homeroom` pair. The `usernode` pair is not a guess: it is
+ * what the connector was called before the rename, so it is what an account
+ * that connected earlier is still registered as. Both ship until the old
+ * name is gone from people's connector lists. Any spelling beyond these is
+ * what #connector-name-spelling below rewrites these blocks for.
  *
  * Written out as a literal rather than built from
  * services/mcp-connect-constants.js: that module is CommonJS on the server
@@ -44,6 +47,16 @@ import { SocialIdentity } from '../social-identity';
 const PERSONAL_ALLOW_RULES = `{
   "permissions": {
     "allow": [
+      "mcp__homeroom__get_*",
+      "mcp__homeroom__list_*",
+      "mcp__homeroom__whoami",
+      "mcp__homeroom__notify_awaiting_input",
+      "mcp__homeroom__notify_input_received",
+      "mcp__Homeroom__get_*",
+      "mcp__Homeroom__list_*",
+      "mcp__Homeroom__whoami",
+      "mcp__Homeroom__notify_awaiting_input",
+      "mcp__Homeroom__notify_input_received",
       "mcp__usernode__get_*",
       "mcp__usernode__list_*",
       "mcp__usernode__whoami",
@@ -125,6 +138,50 @@ export function ConnectorsSection() {
           >
             Copy
           </Button>
+        </div>
+        {/*
+            #1607: the walkthroughs below are six and seven steps, and the
+            complaint was that reading them is the cost. These two links hand
+            the same job to the assistant that is going to use the connector:
+            they open a NEW chat pre-loaded with the server URL and the two
+            facts people get wrong (dynamic client registration, so there is
+            no client secret to hunt for; and the exact name `usernode`, per
+            #1218), and ask it to walk the reader through one step at a time.
+
+            They do not REPLACE the steps below, and the request's hope that
+            they would is worth answering plainly: an assistant in a chat
+            cannot click through Claude's or ChatGPT's own settings UI. What
+            it can do is answer "where is that button" without the reader
+            re-reading a wall of prose, which is the back-and-forth the
+            request is actually about. So this is a shortcut past the reading,
+            not a replacement for the reference.
+
+            The href is built at click time from the LIVE #connector-url value
+            by Settings._renderConnectors(), never hardcoded, so a fork or a
+            config change cannot stale it — the same rule the prose below
+            follows. Nothing secret travels: the connector URL is
+            `${origin}/mcp`, a public endpoint, and auth is OAuth inside the
+            product rather than anything carried in a link.
+        */}
+        <div className="mb-3 flex flex-wrap gap-2">
+          <a
+            id="connector-open-claude"
+            href="https://claude.ai/new"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-[44px] sm:min-h-[36px] items-center rounded-md border border-zinc-200 dark:border-zinc-700 px-3 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+          >
+            Set it up in Claude
+          </a>
+          <a
+            id="connector-open-chatgpt"
+            href="https://chatgpt.com/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-[44px] sm:min-h-[36px] items-center rounded-md border border-zinc-200 dark:border-zinc-700 px-3 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+          >
+            Set it up in ChatGPT
+          </a>
         </div>
         {/*
             #1289: the one-line "Settings → Connectors, paste the URL" summary
@@ -209,11 +266,14 @@ export function ConnectorsSection() {
             permission rule's server segment cannot be wildcarded, every rule
             Usernode ships missed it SILENTLY. So the canonical name is stated
             here, at the moment the field is filled in, rather than left to
-            chance. `usernode` is exactly what serverInfo.name reports, so a
+            chance. `homeroom` is exactly what serverInfo.name reports, so a
             client that derives the name and one where it was typed agree.
+            The pre-rename spellings are still in the shipped block, so an
+            existing connector keeps working and only a NEW one needs the
+            name below.
         */}
         <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-4 leading-relaxed">
-          Name it exactly <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code>. Claude Code builds its permission rules from that name. A different spelling still works, but the read-only allowlist Usernode ships in every app repo will not match it, and you will keep being asked to approve each call. The allowlist covers <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code> as well, so the capitalised form is safe; anything else needs the rules rewritten, which the field further down does for you.
+          Name it exactly <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code>. Claude Code builds its permission rules from that name. A different spelling still works, but the read-only allowlist Usernode ships in every app repo will not match it, and you will keep being asked to approve each call. The allowlist covers <code className="font-mono text-zinc-600 dark:text-zinc-400">Homeroom</code> as well, so the capitalised form is safe. It also still covers <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code> and <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code>, the names this connector went by before, so a connector you added earlier keeps working and there is nothing to redo. Anything else needs the rules rewritten, which the field further down does for you.
         </p>
         {/*
             #1218 follow-up: the same three rules land in two different files
@@ -332,12 +392,15 @@ export function ConnectorsSection() {
             Reads only. Anything that acts on your behalf (filing a request, opening or advancing a proposal) still asks every time, on purpose.
           </p>
           {/*
-              The blocks above cover `usernode` and `Usernode`. Any other
-              spelling — a typo, a name someone chose — needs the same rules
-              with that segment, and telling a user to hand-edit six JSON
-              strings is telling them to make a seventh mistake. So the page
-              does the edit: type what your tools are actually called, and
-              both blocks above are rewritten in place.
+              The blocks above cover `homeroom` and `Homeroom`, plus the
+              pre-rename `usernode` and `Usernode`. Any other spelling — a
+              typo, a name someone chose — needs the same rules with that
+              segment, and telling a user to hand-edit twenty JSON strings is
+              telling them to make a twenty-first mistake. So the page does
+              the edit: type what your tools are actually called, and both
+              blocks above are rewritten in place. Typing a name the block
+              already covers puts the shipped rules back, rather than
+              narrowing them to the one spelling that was typed.
 
               Static markup with a sibling handler, like the copy buttons: the
               rewrite is Settings._wireConnectorNameSpelling(), which writes
@@ -351,7 +414,7 @@ export function ConnectorsSection() {
               Connector registered under a different name?
             </Label>
             <p className="text-xs text-zinc-500 dark:text-zinc-500 mb-2 leading-relaxed">
-              Check what your tools are called in your session, the middle part of <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__usernode__whoami</code>. If it is not <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code> or <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code>, type it here and both blocks above are rewritten for it.
+              Check what your tools are called in your session, the middle part of <code className="font-mono text-zinc-600 dark:text-zinc-400">mcp__homeroom__whoami</code>. If it is not <code className="font-mono text-zinc-600 dark:text-zinc-400">homeroom</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">Homeroom</code>, <code className="font-mono text-zinc-600 dark:text-zinc-400">usernode</code> or <code className="font-mono text-zinc-600 dark:text-zinc-400">Usernode</code>, type it here and both blocks above are rewritten for it.
             </p>
             <Input
               id="connector-name-spelling"
@@ -359,7 +422,7 @@ export function ConnectorsSection() {
               spellCheck="false"
               width="flex"
               mono
-              placeholder="usernode"
+              placeholder="homeroom"
             />
           </div>
           {/*

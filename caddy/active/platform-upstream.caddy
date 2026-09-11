@@ -17,10 +17,19 @@
 # Both snippets keep the #711 hold-and-retry: a color that crash-restarts
 # outside a rollout (or a cold start) reads as a brief latency bump, not
 # a 502 storm. Sizing rationale lives in the Caddyfile comments.
+#
+# stream_close_delay: after the reload that flips colors, close the OLD
+# color's hijacked WebSocket streams on a timer rather than inline. Inline,
+# Caddy writes a Close frame to each client under the handler's connection
+# lock with no write deadline; a single client that has stopped reading
+# (TCP zero-window, e.g. a suspended mobile tab) blocks that write on the
+# TLS mutex forever and the reload — and the whole rollout behind it —
+# never returns. Pairs with the global grace_period in the Caddyfile.
 (platform_upstream) {
 	reverse_proxy usernode-blue:3000 {
 		lb_try_duration 30s
 		lb_try_interval 250ms
+		stream_close_delay 5s
 		transport http {
 			dial_timeout 2s
 		}

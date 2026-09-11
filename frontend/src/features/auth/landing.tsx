@@ -147,8 +147,10 @@ const ViewerRegion = memo(function ViewerRegion() {
  * required" caption; tapping one remembers the app deep link and routes to
  * #signup, so the account flow lands the user in the app they wanted.
  */
-function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp) => void }) {
-  const gated = !!app.requires_login;
+export function LandingTile({ app, onOpen }: { app: PublicApp; onOpen: (app: PublicApp) => void }) {
+  // Only an explicit public verdict unlocks a tile. Missing/stale client
+  // metadata must not turn an unknown app into an anonymous launch (#1522).
+  const gated = app.requires_login !== false;
   const label = app.name || app.slug;
   return (
     <div
@@ -316,6 +318,16 @@ export function LandingScreen() {
 
   const openLandingApp = useCallback(
     (app: PublicApp) => {
+      // Guard the actual viewer entry, not only tile clicks: the legacy
+      // bridge calls this opener too. Never mount a gated app's frame.
+      if (app.requires_login !== false) {
+        (legacy().AuthScreens?.rememberDeepLink as undefined | ((h: string) => void))?.(
+          '/app/' + encodeURIComponent(app.slug || ''),
+        );
+        location.hash = '#signup';
+        return;
+      }
+      if (!app.url) return;
       const viewer = byId('app-viewer');
       const scroller = byId('auth-landing-scroll');
       if (!viewer || !scroller) return;
@@ -491,27 +503,51 @@ export function LandingScreen() {
       return pred();
     };
     const isOpen = () => !viewer.classList.contains('hidden');
+    /**
+     * Stamp WHY the script gave up (#1755).
+     *
+     * Every bail below used to be a bare `return`, which left
+     * `data-anon-back` unset. The assertion can then never become true, so
+     * the runner polls it to its 25s per-check cap and reports `Check did not
+     * finish within 25s` — the same sentence whichever step failed, about a
+     * page that may be perfectly healthy. That verdict is unactionable, and
+     * "re-run it" was the only tool anyone had.
+     *
+     * Stamping a non-`done` value changes nothing about what passes: the
+     * assertion requires `data-anon-back="done"` and still gets it only from
+     * the happy path. What it buys is a verdict that arrives IMMEDIATELY, on
+     * a settled DOM, naming the step.
+     *
+     * The `-slow` suffix separates the two questions that matter and used to
+     * be indistinguishable: a step that genuinely failed, versus one that ran
+     * out of the overall budget because the container was overloaded. The
+     * first is a bug in the guest back path; the second is capacity.
+     */
+    const bail = (reason: string) => {
+      viewer.setAttribute('data-anon-back', Date.now() >= deadline ? `${reason}-slow` : reason);
+    };
     try {
       await st.appsReady;
     } catch {
       /* ignore */
     }
     // First app the directory would actually open: not gated, has a URL.
-    const target = st.appsList.find((a) => a && !a.requires_login && a.url);
-    if (!target) return;
+    const target = st.appsList.find((a) => a && a.requires_login === false && a.url);
+    if (!target) { bail('no-target'); return; }
     // `st.appsReady` settles when the FETCH does; the tiles appear when React
     // commits the state it set, which is a tick or more later. So wait for
     // the element, like every other step here waits on DOM state — reading
     // "not committed yet" as "no directory" and returning is how this shot
     // finished without ever stamping the marker below.
-    if (!(await until(() => !!landingTileFor(target.slug), 2000))) return;
+    if (!(await until(() => !!landingTileFor(target.slug), 2000))) { bail('no-tile'); return; }
     for (let cycle = 0; cycle < 2; cycle++) {
+      const c = `c${cycle + 1}`;
       // POLL for the tile: `appsReady` resolves when the FETCH lands, but the
       // tiles appear one React commit later, so a synchronous lookup here found
       // nothing and bailed — the reason this shot had never once stamped.
-      if (!(await until(() => !!landingTileFor(target.slug), 5000))) return;
+      if (!(await until(() => !!landingTileFor(target.slug), 5000))) { bail(`no-tile-${c}`); return; }
       landingTileFor(target.slug)?.click();
-      if (!(await until(isOpen, 5000))) return;
+      if (!(await until(isOpen, 5000))) { bail(`open-timeout-${c}`); return; }
       // Let the zoom-in settle before backing out, so each cycle exercises a
       // fully-open viewer rather than a mid-transition one.
       await wait(140);
@@ -519,7 +555,7 @@ export function LandingScreen() {
       // The stamp below is the assertion's subject: a close that never lands
       // means the guest back path is genuinely broken, so bail WITHOUT
       // stamping rather than start cycle two against an open viewer.
-      if (!(await until(() => !isOpen(), 8000))) return;
+      if (!(await until(() => !isOpen(), 8000))) { bail(`close-timeout-${c}`); return; }
       // Let the marker entry's history.back() popstate drain before the next
       // cycle pushes a fresh entry — a human cannot re-open in under 80ms.
       await wait(80);
@@ -635,14 +671,7 @@ export function LandingScreen() {
    */
   const onTileClick = useCallback(
     (app: PublicApp) => {
-      if (app.requires_login) {
-        (legacy().AuthScreens?.rememberDeepLink as undefined | ((h: string) => void))?.(
-          '/app/' + encodeURIComponent(app.slug || ''),
-        );
-        location.hash = '#signup';
-        return;
-      }
-      if (app.url) live.current.openLandingApp(app);
+      live.current.openLandingApp(app);
     },
     [],
   );
@@ -830,6 +859,32 @@ export function LandingScreen() {
             >
               Join the waitlist
             </a>
+            {/*
+                The way back for somebody who already joined, on a device that
+                knows nothing about it (#1538). It goes to the same code-entry
+                step the waitlist screen's own "Already joined?" link opens,
+                which is where an emailed code is typed and where the status
+                comes back. Hidden alongside the CTA for a session: they are
+                already in the queue and can read their own state from the
+                waiting room.
+            */}
+            <p
+              className={hiddenLast(
+                session,
+                'mt-3 text-sm text-zinc-500 dark:text-zinc-400',
+              )}
+            >
+              {'Already joined? '}
+              <a
+                id="landing-status-link"
+                href="#waitlist?confirm=1"
+                data-offline-disabled=""
+                className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
+                onClick={onLeaveCta}
+              >
+                Check your status
+              </a>
+            </p>
             {/*
                 Swapped in for the link when a (waiting-room) session exists —
                 they're already on the list, so pointing them at the join form

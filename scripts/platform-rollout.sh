@@ -48,6 +48,13 @@ HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-150}"
 # SIGTERM handler (cleanup() in server.js) can drain HTTP handlers and
 # release the leader lock before the container is killed.
 DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-40}"
+# Upper bound on a single `caddy reload`. A reload legitimately takes up to
+# the Caddyfile's global grace_period (30s: the old server instance waits
+# that long for in-flight SSE before force-closing), so this must stay
+# comfortably above it. Anything longer means Caddy is wedged tearing down
+# the old config — the failure mode this bound exists to surface instead
+# of holding the deployer's flock for hours.
+RELOAD_TIMEOUT="${RELOAD_TIMEOUT:-120}"
 
 log() { echo "==> $*"; }
 
@@ -93,10 +100,19 @@ write_active() {
 # Both snippets keep the #711 hold-and-retry: a color that crash-restarts
 # outside a rollout (or a cold start) reads as a brief latency bump, not
 # a 502 storm. Sizing rationale lives in the Caddyfile comments.
+#
+# stream_close_delay: after the reload that flips colors, close the OLD
+# color's hijacked WebSocket streams on a timer rather than inline. Inline,
+# Caddy writes a Close frame to each client under the handler's connection
+# lock with no write deadline; a single client that has stopped reading
+# (TCP zero-window, e.g. a suspended mobile tab) blocks that write on the
+# TLS mutex forever and the reload — and the whole rollout behind it —
+# never returns. Pairs with the global grace_period in the Caddyfile.
 (platform_upstream) {
 	reverse_proxy usernode-${color}:3000 {
 		lb_try_duration 30s
 		lb_try_interval 250ms
+		stream_close_delay 5s
 		transport http {
 			dial_timeout 2s
 		}
@@ -140,13 +156,31 @@ wait_healthy() {
 # Graceful Caddy config reload (re-reads the Caddyfile, which `import`s the
 # active-color file we just rewrote). Retried because on a very first deploy
 # Caddy may still be coming up / racing TLS issuance.
+#
+# Returns 0 on success, 1 when Caddy rejected the config (nothing applied —
+# safe to revert), and 2 when the reload TIMED OUT. A timeout is not a
+# rejection: by the time `caddy reload` blocks, the new config's servers are
+# already up and own the listeners, and Caddy is stuck tearing down the OLD
+# config (in-flight streams, hijacked WebSockets). Retrying only queues more
+# callers on Caddy's config lock, and reverting the active file would flip
+# traffic back at a color the caller is about to stop — so on timeout we
+# stop immediately and let the caller decide, which it does by leaving both
+# colors up. Diagnose with a goroutine dump (pprof on the admin port does
+# not take the config lock):
+#   docker exec caddy wget -qO- 'http://127.0.0.1:2019/debug/pprof/goroutine?debug=1'
 reload_caddy() {
-  local i
+  local i rc
   for i in 1 2 3 4 5; do
-    if docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile; then
+    rc=0
+    timeout "$RELOAD_TIMEOUT" docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || rc=$?
+    if [ "$rc" -eq 0 ]; then
       return 0
     fi
-    log "Caddy reload attempt $i failed; retrying in 3s"
+    if [ "$rc" -eq 124 ]; then
+      echo "::error::Caddy reload did not return within ${RELOAD_TIMEOUT}s — Caddy is wedged tearing down the previous config" >&2
+      return 2
+    fi
+    log "Caddy reload attempt $i failed (exit $rc); retrying in 3s"
     sleep 3
   done
   return 1
@@ -225,7 +259,19 @@ fi
 
 log "usernode-$IDLE healthy — flipping Caddy apex + gate to it"
 write_active "$IDLE"
-if ! reload_caddy; then
+reload_rc=0
+reload_caddy || reload_rc=$?
+if [ "$reload_rc" -eq 2 ]; then
+  # Timed out. The new config is already serving (listeners were handed to
+  # usernode-$IDLE before Caddy got stuck), so the active file is correct as
+  # written and usernode-$IDLE must stay up. usernode-$LIVE also stays up —
+  # it still holds the leader lock, and stopping it while Caddy has not
+  # finished the flip would leave the wedged old servers with nothing to
+  # proxy to. Exit non-zero so the deployer logs the failure; a re-run
+  # converges (it targets the non-live color and flips again).
+  echo "::error::Leaving BOTH colors running: usernode-$IDLE is serving new connections, usernode-$LIVE still leads. Unwedge Caddy, then re-run the deploy." >&2
+  exit 1
+elif [ "$reload_rc" -ne 0 ]; then
   echo "::error::Caddy reload failed — reverting active file to usernode-$LIVE" >&2
   write_active "$LIVE"
   reload_caddy || true

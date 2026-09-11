@@ -51,14 +51,14 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'"'"'`)}'`;
 }
 
-async function execWorkerCommand(runtimeName, command, stdinText = null) {
+async function execWorkerCommand(runtimeName, command, stdinText = null, { timeoutMs = stdinText === null ? 30000 : 20000 } = {}) {
   if (usesKubernetesWorkers()) {
-    return kubernetes.execInWorker(kubernetesWorkerConfig(), runtimeName, command, stdinText);
+    return kubernetes.execInWorker(kubernetesWorkerConfig(), runtimeName, command, stdinText, { timeoutMs });
   }
   if (stdinText !== null) {
-    return docker.execShellStdin(runtimeName, stdinText, { timeoutMs: 20000, label: 'worker exec' });
+    return docker.execShellStdin(runtimeName, stdinText, { timeoutMs, label: 'worker exec' });
   }
-  return docker.execFileAsync('docker', ['exec', runtimeName, ...command], { timeout: 30000 });
+  return docker.execFileAsync('docker', ['exec', runtimeName, ...command], { timeout: timeoutMs });
 }
 
 // URL the worker container uses to reach the platform's internal API
@@ -93,7 +93,8 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // builds. A v7 runner would retry a stale --resume with the compact prompt and
 // no scout history, so every older warm container must be replaced first.
 // v9: refresh warm workers so run-cc.sh emits partial usage events (#1600).
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v9';
+// v10 publishes bootstrap readiness and fences turns after container restarts.
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v10';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -1081,6 +1082,8 @@ function recordClaudeCodingRun({
 // ──────────────────────────────────────────────────────────────────────
 
 async function ensureWorkerImage() {
+  // Self-previews serve requests only; image builds belong to their parent.
+  if (process.env.USERNODE_ENV === 'staging') return;
   if (usesKubernetesWorkers()) {
     if (!(process.env.KUBERNETES_WORKER_IMAGE || '').includes('@sha256:')) {
       throw new Error('KUBERNETES_WORKER_IMAGE must be configured with an immutable digest');
@@ -1224,9 +1227,17 @@ async function writeTurnSystemPrompt(sessionId, systemPrompt) {
   if (!meta) {
     throw new Error(`writeTurnSystemPrompt: no warm worker registered for session ${sessionId}`);
   }
-  await docker.execShellStdin(meta.containerName, buildTurnSystemPromptScript(systemPrompt), {
-    timeoutMs: 20000, label: 'writeTurnSystemPrompt',
-  });
+  if (usesKubernetesWorkers()) {
+    await execWorkerCommand(
+      meta.containerName,
+      ['sh', '-s'],
+      buildTurnSystemPromptScript(systemPrompt),
+    );
+  } else {
+    await docker.execShellStdin(meta.containerName, buildTurnSystemPromptScript(systemPrompt), {
+      timeoutMs: 20000, label: 'writeTurnSystemPrompt',
+    });
+  }
 }
 
 // Complete user-level prompt used only when a hosted Claude --resume attempt
@@ -1503,10 +1514,8 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
   );
   if (filesToRemove.length) {
     const containerName = _registryGet(sessionId)?.containerName
-      || workerContainerName(sessionId);
-    await docker.execFileAsync('docker', [
-      'exec', containerName, 'rm', '-f', ...filesToRemove,
-    ], { timeout: 5000 }).catch(() => {});
+      || workerRuntimeName(sessionId);
+    await execWorkerCommand(containerName, ['rm', '-f', ...filesToRemove], null, { timeoutMs: 5000 }).catch(() => {});
   }
 
   if (ownsCleanup) {
@@ -1682,7 +1691,7 @@ function _messageHasPrefix(err, prefixes) {
 // the coding agent never started and no code was touched. Exported so the
 // route layer can say that honestly instead of surfacing the raw string.
 function isBootstrapError(err) {
-  return _messageHasPrefix(err, BOOTSTRAP_ERROR_PREFIXES);
+  return err?.bootstrapFailed === true || _messageHasPrefix(err, BOOTSTRAP_ERROR_PREFIXES);
 }
 
 function isRetryableBootstrapError(err) {
@@ -1797,13 +1806,20 @@ async function _bootstrapWarmContainer(sessionId, {
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
   };
   if (usesKubernetesWorkers()) {
-    const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
-      sessionId,
-      env: safeEnv,
-    });
-    containerName = result.runtimeName;
-    log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName });
-    return containerName;
+    try {
+      const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
+        sessionId, env: safeEnv, onProgress,
+      });
+      containerName = result.runtimeName;
+      log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName });
+      return containerName;
+    } catch (err) {
+      Object.defineProperty(err, 'bootstrapFailed', { value: true, configurable: true });
+      log.error('worker', 'Bootstrap failed', { sessionId, containerName,
+        phase: err.bootstrapPhase || null, message: log.redactString(err.message),
+        logTail: err.bootstrapLog?.join('\n') || null });
+      throw attachBootstrapContext(err, { containerName, attempts: 1 });
+    }
   }
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 
@@ -2478,7 +2494,7 @@ async function execInWorker(sessionId, {
         .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
         .join('\n');
       const detached = `${exports}\nnohup sh -c ${shellQuote(args[args.length - 1])} >/dev/null 2>&1 &\n`;
-      await execWorkerCommand(containerName, ['sh', '-s'], detached);
+      await execWorkerCommand(containerName, ['sh', '-s'], detached, { timeoutMs: 30000 });
     } else {
       await docker.execFileAsync('docker', args, {
         timeout: 30000,
@@ -2555,7 +2571,7 @@ async function execInWorker(sessionId, {
     state.modelMaxOutputTokens = agentModelMetadata?.maxOutputTokens ?? null;
     execState = state;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
-    await _consumeJournal(containerName, journal, progress, state, { sessionId });
+    await _consumeJournal(containerName, journal, progress, state, { sessionId, startedAt: providerStartedAt });
     providerTerminalObserved = true;
 
     // Successful, complete turns don't need their journal anymore; failed
@@ -2767,30 +2783,64 @@ async function inspectContainerState(containerName) {
 // The tail itself is a disposable `docker exec`; if it drops while the
 // turn is still running (docker hiccup, etc.) we restart it and skip
 // the lines we already consumed.
-async function _consumeJournal(containerName, journal, progress, state, { sessionId = null } = {}) {
+async function _consumeJournal(containerName, journal, progress, state, { sessionId = null, startedAt = null } = {}) {
   if (usesKubernetesWorkers()) {
-    let linesConsumed = 0;
+    const since = startedAt || new Date().toISOString();
+    let charsConsumed = 0;
+    const counters = newWatchdogCounters();
+    let lastProbeAt = Date.now();
     // WORKER_JWT_TTL is the jsonwebtoken duration string "24h". Use its
     // numeric twin for arithmetic; coercing the string produces NaN and
     // makes this loop return probe_unobservable before its first poll.
     const deadline = Date.now() + WORKER_JWT_TTL_MS;
-    while (Date.now() < deadline) {
+    const readJournal = async () => {
       try {
         const { stdout } = await execWorkerCommand(containerName, ['cat', journal]);
-        const lines = stdout.split('\n');
-        for (let i = linesConsumed; i < lines.length; i++) {
-          if (!lines[i]) continue;
-          linesConsumed += 1;
-          state.rawStdout += `${lines[i]}\n`;
-          parseLine(lines[i], progress, state);
-          if (state.execExitSeen) return state;
+        // cat may race a writer halfway through a JSON record or marker.
+        // Advance only past complete lines, including blank lines. The next
+        // cumulative read supplies the remainder without losing or replaying
+        // records (and therefore provider usage) at a polling boundary.
+        let newline;
+        while ((newline = stdout.indexOf('\n', charsConsumed)) !== -1) {
+          const line = stdout.slice(charsConsumed, newline);
+          charsConsumed = newline + 1;
+          state.rawStdout += `${line}\n`;
+          parseLine(line, progress, state);
+          if (state.execExitSeen) return;
         }
       } catch (_) { /* journal may not exist yet */ }
-      const busy = await isWorkerExecuting(containerName);
-      if (busy === false && linesConsumed > 0) {
-        state.exitCode = state.exitCode ?? -1;
-        state.markerlessCause = 'turn_process_gone';
-        return state;
+    };
+    while (Date.now() < deadline) {
+      await readJournal();
+      if (state.execExitSeen) return state;
+      const stopRequested = sessionId != null && !!_registryGet(sessionId)?.stopRequestedAt;
+      const interval = stopRequested ? WATCHDOG_STOP_INTERVAL_MS : WATCHDOG_INTERVAL_MS;
+      if (Date.now() - lastProbeAt >= interval) {
+        const busy = await isWorkerExecuting(containerName, { timeoutMs: WATCHDOG_PROBE_TIMEOUT_MS });
+        lastProbeAt = Date.now();
+        const verdict = recordWatchdogProbe(counters, busy, {
+          idleLimit: stopRequested ? WATCHDOG_STOP_IDLE_STRIKE_LIMIT : WATCHDOG_IDLE_STRIKE_LIMIT,
+        });
+        if (busy === null) {
+          log.warn('worker', 'Turn liveness probe failed', { containerName, sessionId, journal,
+            consecutiveFailures: counters.probeFailures });
+        }
+        if (verdict.abandon) {
+          // The wrapper can append its terminal marker between the last
+          // journal read and the idle probe. Give that durable result the
+          // final word, even if the journal was empty until this point.
+          await readJournal();
+          if (state.execExitSeen) return state;
+          state.exitCode = state.exitCode ?? -1;
+          const termination = await kubernetes.inspectWorkerTermination(kubernetesWorkerConfig(), containerName, { since });
+          // A normal terminal journal marker always wins. Pod OOM evidence
+          // must belong to this turn; an earlier restart proves nothing.
+          await readJournal();
+          if (state.execExitSeen) return state;
+          state.markerlessCause = termination?.oomKilled ? 'oom_killed'
+            : termination && termination.status !== 'running' ? 'container_gone' : verdict.cause;
+          return state;
+        }
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));
     }
@@ -2986,7 +3036,7 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
 // a fallback for the case where this append doesn't land at all.
 async function stopTurn(sessionId) {
   const meta = _registryGet(sessionId);
-  const containerName = meta?.containerName || workerContainerName(sessionId);
+  const containerName = meta?.containerName || workerRuntimeName(sessionId);
   _registryUpsert(sessionId, { stopRequestedAt: Date.now() });
   await execWorkerCommand(containerName, ['sh', '-c',
     buildTurnStopScript(meta?.journal || null),
@@ -3077,7 +3127,7 @@ async function resumeTurnFromJournal(sessionId, {
 } = {}) {
   if (!journal) throw new Error('resumeTurnFromJournal: journal path required');
   const meta = _registryGet(sessionId);
-  const containerName = meta?.containerName || workerContainerName(sessionId);
+  const containerName = meta?.containerName || workerRuntimeName(sessionId);
   // #664: seed the per-turn BYOK counters from the persisted active_turn
   // record (callers pass active_turn.byokCents) so post-restart switched
   // calls accumulate on top instead of restarting from zero, and the
@@ -3137,7 +3187,7 @@ async function resumeTurnFromJournal(sessionId, {
   let providerTerminalObserved = false;
   try {
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
-    await _consumeJournal(containerName, journal, progress, state, { sessionId });
+    await _consumeJournal(containerName, journal, progress, state, { sessionId, startedAt: safeStartedAt });
     if (state.rawStdout || state.execExitSeen) state.providerDispatched = true;
     providerTerminalObserved = true;
     // The recovery caller owns required persistence (thread id + ledger)
@@ -3191,6 +3241,9 @@ async function evictWorker(sessionId) {
 // (recoverActiveWorkers in server.js). The live per-turn path uses
 // execInWorker which streams the docker-exec child's stdout directly.
 async function watchWorker(containerName, { onProgress, fromStart = true } = {}) {
+  if (usesKubernetesWorkers()) {
+    throw new Error('Kubernetes worker recovery requires a turn journal; legacy Docker log recovery is unavailable');
+  }
   const state = newWatchState();
   state.hostContainerName = containerName;
   const progress = typeof onProgress === 'function' ? onProgress : () => {};
@@ -3362,8 +3415,8 @@ function buildTurnStopScript(journal) {
 //
 // Returns:
 //   true   — claude (or its parent run-cc.sh) is currently executing
-//   false  — only the sleep wrapper is alive
-//   null   — couldn't determine (container not running, exec failed, etc.)
+//   false  — no turn is executing, or Kubernetes confirms no worker exists
+//   null   — couldn't determine (worker unready, exec/API failed, etc.)
 //
 // `timeoutMs` is overridable because the journal watchdog deliberately
 // runs the probe with a generous timeout (the probe is a safety net, not
@@ -3371,7 +3424,7 @@ function buildTurnStopScript(journal) {
 async function isWorkerExecuting(containerName, { timeoutMs = 5000 } = {}) {
   try {
     const { stdout } = usesKubernetesWorkers()
-      ? await execWorkerCommand(containerName, ['sh', '-c', TURN_PROC_PROBE_SCRIPT])
+      ? await execWorkerCommand(containerName, ['sh', '-c', TURN_PROC_PROBE_SCRIPT], null, { timeoutMs })
       : await docker.execFileAsync('docker', [
           'exec', containerName, 'sh', '-c', TURN_PROC_PROBE_SCRIPT,
         ], { timeout: timeoutMs });
@@ -3379,9 +3432,23 @@ async function isWorkerExecuting(containerName, { timeoutMs = 5000 } = {}) {
     if (out === 'busy') return true;
     if (out === 'idle') return false;
     return null;
-  } catch {
+  } catch (err) {
+    if (usesKubernetesWorkers() && err.code === 'WORKER_NOT_FOUND') return false;
     return null;
   }
+}
+
+async function getWorkerStatus(containerName) {
+  return usesKubernetesWorkers()
+    ? kubernetes.getWorkerStatus(kubernetesWorkerConfig(), containerName)
+    : docker.getContainerStatus(containerName);
+}
+
+// Legacy stop handles still exist during recovery. Kubernetes has no Docker
+// stop operation: remove the worker Deployment, preserving its workspace.
+async function stopWorker(containerName) {
+  if (usesKubernetesWorkers()) return destroyWorker(containerName);
+  await docker.execFileAsync('docker', ['stop', containerName], { timeout: 15000 });
 }
 
 // Hard teardown of a worker container. Used for session archive, error
@@ -3392,7 +3459,8 @@ async function isWorkerExecuting(containerName, { timeoutMs = 5000 } = {}) {
 // instead — same effect, but the function name signals intent better.
 async function destroyWorker(containerName) {
   const m = containerName.match(/(?:usernode-worker-|sv-worker-s)(\d+)$/);
-  if (usesKubernetesWorkers() && m) {
+  if (usesKubernetesWorkers()) {
+    if (!m) throw new Error(`Invalid Kubernetes worker name: ${containerName}`);
     await kubernetes.deleteWorker(kubernetesWorkerConfig(), parseInt(m[1], 10), { deleteVolume: false }).catch(() => {});
   } else {
     await docker.stopAndRemove(containerName).catch(() => {});
@@ -3546,7 +3614,7 @@ async function execPushFromWorker(sessionId, branchName) {
     let stderr;
     if (usesKubernetesWorkers()) {
       const script = `export PAT=${shellQuote(botToken)}\nexport BRANCH=${shellQuote(branchName)}\n${inlineScript}\n`;
-      ({ stdout, stderr } = await execWorkerCommand(containerName, ['bash', '-s'], script));
+      ({ stdout, stderr } = await execWorkerCommand(containerName, ['bash', '-s'], script, { timeoutMs: 60000 }));
     } else {
       ({ stdout, stderr } = await docker.execFileAsync('docker', args, {
         timeout: 60000,
@@ -3604,6 +3672,9 @@ function describePushFailure(err) {
 }
 
 module.exports = {
+  usesKubernetesWorkers,
+  getWorkerStatus,
+  stopWorker,
   describePushFailure,
   ensureWorkerImage,
   // long-lived API

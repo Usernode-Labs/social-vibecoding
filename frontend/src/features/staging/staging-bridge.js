@@ -110,6 +110,10 @@ export const stagingBridge = {
   frame() {
     return stagingRefs.iframe;
   },
+  setBackground(background) {
+    if (!stagingRefs.iframe) return;
+    stagingStore.set({ background: background || '' });
+  },
   /**
    * Point the preview at `src`. The ONLY way its `src` ever changes, and an
    * imperative write by design — see staging-store.js.
@@ -123,6 +127,7 @@ export const stagingBridge = {
   },
   /** `iframe.src = ''` — drops the previous preview without touching the element. */
   clearSrc() {
+    stagingStore.set({ background: '' });
     const el = stagingRefs.iframe;
     if (el) el.src = '';
   },

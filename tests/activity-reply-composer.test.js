@@ -147,7 +147,13 @@ test('the inline reply preview preserves composer line breaks', () => {
     'the reply remains plain escaped text with its original newline');
   // The bubble (round three): the author and the age on the first line,
   // the text under them, a swatch avatar outside.
-  assert.match(html, /<span class="dev-feed-msg-author">bob<\/span><span class="dev-feed-msg-time">/);
+  // #1808 made the age a `<time>` with the full instant on `title`, so the
+  // element changed but the adjacency — author then age, one line — did not.
+  // #1808 made the age a `<time>` carrying the full instant on `title`, so
+  // the element changed but the adjacency — author then age, one line — did
+  // not. The `datetime` match is case-insensitive because React 19 emits the
+  // JSX spelling and HTML attribute names are case-insensitive anyway.
+  assert.match(html, /<span class="dev-feed-msg-author">bob<\/span><time class="dev-feed-msg-time" datetime="2026-09-04T11:00:00Z" title="[^"]*2026[^"]*">/i);
   assert.match(html, /class="dev-feed-msg-avatar" aria-hidden="true" style="background-color:#[0-9a-f]{6}">B</);
 });
 

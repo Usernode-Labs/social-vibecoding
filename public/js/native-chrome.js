@@ -479,6 +479,48 @@
       return run;
     },
 
+    _webRecovery: null,
+    _lastWebRenewal: 0,
+
+    restoreWebSession({ force = false } = {}) {
+      const bridge = window.usernode;
+      if (!bridge || bridge.isNative !== true || NativeChrome._logoutRunning) {
+        return Promise.resolve(false);
+      }
+      if (NativeChrome._webRecovery) return NativeChrome._webRecovery;
+      if (!force && NativeChrome._lastWebRenewal &&
+          Date.now() - NativeChrome._lastWebRenewal < 24 * 60 * 60 * 1000) {
+        return Promise.resolve(false);
+      }
+      const generation = NativeChrome._realmGeneration;
+      let run;
+      run = (async () => {
+        const info = await NativeChrome.getInfo();
+        if (!info || info.degraded) throw new Error('Native session recovery is unavailable');
+        if (!Array.isArray(info.capabilities) || !info.capabilities.includes('restoreWebSession')) return false;
+        if (NativeChrome._logoutRunning || generation !== NativeChrome._realmGeneration) return false;
+        const result = await bridge.restoreWebSession();
+        if (NativeChrome._logoutRunning || generation !== NativeChrome._realmGeneration) {
+          throw new Error('Native web session recovery was superseded');
+        }
+        if (result && result.status === 'absent') return false;
+        if (!result || result.status !== 'restored' || result.protocol !== 2 ||
+            typeof result.userId !== 'string' || !/^[1-9][0-9]*$/.test(result.userId) ||
+            typeof result.attemptId !== 'string' || !/^nsa_[A-Za-z0-9_-]{43}$/.test(result.attemptId)) {
+          throw new Error('Invalid native web session recovery');
+        }
+        NativeChrome._writeStoredAttempt({
+          protocol: 2, userId: result.userId, attemptId: result.attemptId, desiredRuntime: 'running',
+        });
+        NativeChrome._lastWebRenewal = Date.now();
+        return true;
+      })().finally(() => {
+        if (NativeChrome._webRecovery === run) NativeChrome._webRecovery = null;
+      });
+      NativeChrome._webRecovery = run;
+      return run;
+    },
+
     // Close the JS/native realm synchronously before the first logout await.
     prepareWebLogout() {
       NativeChrome._logoutRunning = true;
@@ -488,10 +530,15 @@
       // safely closed but may require a process restart to recover.
       NativeChrome._closeRealm({ discardAttempt: true });
       const bridge = window.usernode;
-      // Classification is deliberately non-fallible. The server logout must
-      // never wait on native health; semantic protocol validation belongs to
+      // Classification is deliberately non-fallible. Only an already-started
+      // recovery must settle here; semantic protocol validation belongs to
       // the terminal native call after server authority has been revoked.
-      return { nativeTerminal: !!bridge && bridge.isNative === true };
+      return {
+        nativeTerminal: !!bridge && bridge.isNative === true,
+        // Settle any already-admitted cookie installation before sending the
+        // logout request, so the server receives the latest exact cookie.
+        webRecoverySettled: NativeChrome._webRecovery?.catch(() => {}),
+      };
     },
 
     // Successful native logout replaces this WebView. Callers must return
@@ -1001,7 +1048,12 @@
     _initSessionRecoveryEvents() {
       const recover = () => {
         if (document.visibilityState === 'hidden') return;
-        NativeChrome.recoverSessionAdmission();
+        if (window.App && App.user && !App._sessionFromSnapshot) {
+          NativeChrome.restoreWebSession().then(() => NativeChrome.recoverSessionAdmission())
+            .catch((error) => NativeChrome._recordSessionFailure('web-recovery', error));
+        } else {
+          NativeChrome.recoverSessionAdmission();
+        }
       };
       window.addEventListener('online', recover);
       window.addEventListener('pageshow', recover);
@@ -1009,6 +1061,9 @@
         NativeChrome._closeRealm({ notifyBridge: false });
       });
       document.addEventListener('visibilitychange', recover);
+      // Long foreground sessions count as activity even without a wallet or
+      // producer requests. The recovery owner coalesces renewal to once/day.
+      setInterval(recover, 60 * 1000);
     },
 
     // ── Appearance publish (the cold-launch white flash) ─────────────

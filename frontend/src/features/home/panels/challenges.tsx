@@ -47,9 +47,10 @@
  * A block of leaderboard rows used to sit under the challenges. It is
  * removed: this area is called Challenges, and a second list with its own
  * label inside one card made the reader work out which list they were looking
- * at before they could read either. The way to the standings is one tap from
- * here — "Open leaderboard", in this section's own heading, which renders in
- * every branch including the between-seasons one.
+ * at before they could read either. The way to the Leaderboard screen is one
+ * tap from here — "Open challenges" (#1916), in this section's own heading,
+ * which renders in every branch including the between-seasons one and lands
+ * on the screen's Challenges tab, one tab from the standings.
  */
 
 import { ProgressRing } from '@/components/ui/progress-ring';
@@ -275,11 +276,20 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
       expanded={view.expanded}
       plate="soft"
       stamps={{ rows: view.rows.length }}
-      footer={<PanelFooter panelKey={view.key} total={view.total} expanded={view.expanded} />}
+      footer={(
+        <PanelFooter
+          panelKey={view.key}
+          total={view.total}
+          expanded={view.expanded}
+          expandable={view.expandable !== false}
+        />
+      )}
     >
       {view.season ? <SeasonRing view={view.season} /> : null}
+      {/* #1915: padded on BOTH sides. With `pb-3` alone the line sat flush
+          against the season ring's bottom hairline above it. */}
       {view.onboardingNote ? (
-        <p className="px-1 pb-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">
+        <p className="px-1 py-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">
           {view.onboardingNote}
         </p>
       ) : null}

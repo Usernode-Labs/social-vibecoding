@@ -668,7 +668,7 @@ recoverable rather than a dead end.
 | `openBatterySettings()` | opens Android battery-optimization settings |
 | `openNotificationSettings()` | opens the OS notification settings page for the app. The only way back from a **determined-denied** iOS notification permission: once the user has answered the OS prompt, `requestPermissions()` resolves immediately and presents no dialog, so a screen offering only "request" is a tap that does nothing forever. Capability-gated, and fails fast (probe timeout, not the 120 s permission timeout) — an *inconclusive* probe still calls through, per issue #978. |
 | `prepareForLogin()` | from an anonymous trusted shell, closes and drains any privately recovered native session before Social receives a session-mint request; no-op when native is already signed out |
-| `logout()` | performs the bounded hard native logout (node stop/drain plus identity and credential cleanup); clear the web session and cache first, then invoke this as the terminal operation |
+| `logout()` | performs the bounded hard native logout (node stop/drain plus identity and credential cleanup); attempt web revocation and clear caches first, then invoke this as the terminal operation; `offlineLogout` permits API failure and guarantees native WebView cleanup |
 
 ### Platform login + node lifecycle (semantic protocol 2)
 
@@ -728,6 +728,24 @@ ticket still fails. Builds lacking `sessionLifecycleProtocol: 2` are web-only
 and update-required. There is no fallback to a multi-call login, node-start,
 or auth-poll sequence.
 
+Builds advertising `restoreWebSession` can recover the web login from
+their retained native credential. This root-owned, trusted-top-frame method
+does not require a realm-session claim. Native calls
+`POST /api/v4/mobile/auth/restore-web-session`, persists the authenticated
+90-day lease receipt, installs the seven-day HttpOnly cookie in the OS WebView
+store, and returns only `{ status: "restored", protocol: 2, userId, attemptId }`
+(or `{ status: "absent" }`). The original web incarnation and attempt are
+preserved. Cookie material never crosses the Flutter or JavaScript bridge.
+
+Social tries this before treating a web-auth 401 as signed out, and renews
+during foreground use at most once daily per document, including walletless
+sessions. Network failures preserve the display snapshot. Logout closes
+admission and settles an already-admitted recovery before sending web logout;
+restored cookies are also checked against their exact live native credential
+on cookie-authenticated paths, so a late response cannot undo revocation.
+Deploy the server/schema support before distributing the native capability.
+Older builds keep their existing web-login behavior.
+
 Before an anonymous native shell submits any ordinary session-mint request,
 it invokes the privileged root-owned `prepareForLogin()` operation. Native
 closes admission, drains admitted work, revokes the exact retained credential,
@@ -736,9 +754,17 @@ session claim because a recovered native session may predate the current web
 document. A live web session is never preempted this way: the API returns
 `409 logout_required`, requiring the ordinary explicit logout flow.
 
-Logout closes the Social realm first, clears the web session and caches, and
-only then invokes the privileged terminal native `logout()` operation. A web
-logout failure leaves the native terminal untouched and the realm closed.
+Logout closes the Social realm first and attempts web-session revocation.
+Apps advertising `offlineLogout` can continue after an API failure or a two-second
+timeout: native retires local authority without requiring server confirmation,
+then deletes WebView cookies, local storage and cache before acknowledging and
+replacing the document. The privileged top-frame capability authorizes this
+process-root retirement even when an offline document has no native session claim.
+Local cleanup failures reject logout and can be retried. Without `offlineLogout`,
+web revocation must still succeed before invoking native logout.
+
+Remote revocation is best effort on the offline path; this does not revoke a
+server-side session while the server is unreachable or queue a later retry.
 
 ## Trust model
 

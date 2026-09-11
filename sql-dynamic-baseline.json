@@ -47,13 +47,6 @@
     {
       "source": "src/db/migrate.js",
       "kind": "structural-template",
-      "fingerprint": "7443932f8fa8a6d66a99",
-      "count": 1,
-      "preview": "`INSERT INTO llm_usage (user_id, date, total_cost_cents, byok_cost_cents) SELECT $1, CURRENT_DATE - g, LEAST($2 + (g % 5) * 10, $3)::numeric(10,4), ${byokExpr}:"
-    },
-    {
-      "source": "src/db/migrate.js",
-      "kind": "structural-template",
       "fingerprint": "7ad7a570203416ff9eca",
       "count": 1,
       "preview": "`INSERT INTO user_enrollments (id, user_id, season_id, season_event_id, created_at, updated_at) VALUES (${base}, $1, $2, NULL, NOW(), NOW()), (${base + 1}, $1, "
@@ -78,6 +71,27 @@
       "fingerprint": "ddac26545fc20b07434f",
       "count": 1,
       "preview": "`INSERT INTO token_allocation (id, user_id, season_id, total_points, total_season_tokens, allocated_tokens, description, created_at, updated_at) VALUES (${base}"
+    },
+    {
+      "source": "src/db/reindex-after-host-move.js",
+      "kind": "structural-template",
+      "fingerprint": "fc7626a63bf5115a5be2",
+      "count": 1,
+      "preview": "`REINDEX TABLE ${quoteIdent(table.name)}`"
+    },
+    {
+      "source": "src/middleware/auth.js",
+      "kind": "structural-template",
+      "fingerprint": "202f3cd543e04da1dc8d",
+      "count": 1,
+      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platfo"
+    },
+    {
+      "source": "src/middleware/topochain-auth.js",
+      "kind": "structural-template",
+      "fingerprint": "707ac8bf3044e407ae12",
+      "count": 1,
+      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin, ${nativeWebSessionIsLive('s')} AS native_session_valid FROM sessions s JOIN users u ON s.user_id = u.id"
     },
     {
       "source": "src/routes/admin.js",
@@ -155,6 +169,13 @@
       "fingerprint": "a8b771920b8319e47251",
       "count": 1,
       "preview": "query"
+    },
+    {
+      "source": "src/routes/cli-auth.js",
+      "kind": "structural-template",
+      "fingerprint": "f19dc833c7ff22a7347f",
+      "count": 1,
+      "preview": "`SELECT 1 FROM sessions WHERE token = $1 AND user_id = $2 AND clock_timestamp() < expires_at AND ${nativeWebSessionIsLive('sessions')}`"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -250,13 +271,6 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "767046d15a8b591a58c7",
-      "count": 1,
-      "preview": "`SELECT COALESCE(SUM(total_cost_cents), 0)::float AS cents FROM llm_usage WHERE date = CURRENT_DATE ${adminFilter('user_id', includeAdmins)}`"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
       "fingerprint": "7b689087e7ec4ffd947e",
       "count": 1,
       "preview": "`WITH base AS ( SELECT u.id AS user_id, u.is_admin FROM users u WHERE ${userCohort} ${adminFilter('u.id', includeAdmins)} ), flags AS ( SELECT b.user_id, b.is_a"
@@ -311,6 +325,13 @@
       "preview": "`WITH cohorts AS ( SELECT id AS user_id, date_trunc('week', created_at)::date AS cohort_wk FROM users WHERE TRUE ${adminFilter('id', includeAdmins)} ), activity"
     },
     {
+      "source": "src/routes/dashboard.js",
+      "kind": "structural-template",
+      "fingerprint": "d5accaf0d7be85f38b5e",
+      "count": 1,
+      "preview": "`SELECT COALESCE(SUM(total_cost_cents) FILTER (WHERE date = CURRENT_DATE), 0)::float AS cents, COALESCE(SUM(total_cost_cents) FILTER (WHERE date >= date_trunc('"
+    },
+    {
       "source": "src/routes/debug.js",
       "kind": "structural-template",
       "fingerprint": "a740c5c5517cf3fe1b4b",
@@ -340,10 +361,10 @@
     },
     {
       "source": "src/routes/home-panels.js",
-      "kind": "runtime-expression",
-      "fingerprint": "b233a9a8cce906aaab1b",
+      "kind": "structural-template",
+      "fingerprint": "6342aec040e022e3a331",
       "count": 1,
-      "preview": "hidden ? `UPDATE users SET home_panels_hidden = array_append(array_remove(COALESCE(home_panels_hidden, '{}'), $2), $2) WHERE id = $1 RETURNING home_panels_hidde"
+      "preview": "`SELECT COUNT(*) FILTER (WHERE ${scopeFilter})::int AS total, COUNT(*)::int AS all_total, COUNT(*) FILTER ( WHERE ${scopeFilter} AND (${totalSql(doneExpr)}) )::"
     },
     {
       "source": "src/routes/home-panels.js",
@@ -351,13 +372,6 @@
       "fingerprint": "bc985dc7d04a921eaa79",
       "count": 1,
       "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
-    },
-    {
-      "source": "src/routes/home-panels.js",
-      "kind": "structural-template",
-      "fingerprint": "c714fb518d47b4a81b6f",
-      "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${totalSql(doneExpr)})::int AS done, COALESCE( array_agg(COALESCE(c.reward, ct.reward)) FILTER (WHERE NOT"
     },
     {
       "source": "src/routes/kudos.js",
@@ -442,6 +456,13 @@
       "fingerprint": "e16f1722cca1c2b80269",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`"
+    },
+    {
+      "source": "src/routes/status.js",
+      "kind": "structural-template",
+      "fingerprint": "1ae08ea76410c3bc332e",
+      "count": 1,
+      "preview": "`SELECT s.expires_at, u.is_admin, u.username, u.id AS user_id FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = $1 AND ${nativeWebSessionIsLive('"
     },
     {
       "source": "src/routes/topochain/admin/app-version-configs.js",
@@ -656,6 +677,13 @@
     {
       "source": "src/routes/topochain/mobile.js",
       "kind": "structural-template",
+      "fingerprint": "61c57c9794df3c33690c",
+      "count": 1,
+      "preview": "`SELECT user_id FROM sessions WHERE token = $1 AND user_id = $2 AND expires_at > NOW() AND ${nativeWebSessionIsLive('sessions')} FOR SHARE`"
+    },
+    {
+      "source": "src/routes/topochain/mobile.js",
+      "kind": "structural-template",
       "fingerprint": "fe16617c4721e7ce69a5",
       "count": 1,
       "preview": "`SELECT id, name, description, starts_at, ends_at, is_active FROM seasons ${seasonWhere} ORDER BY starts_at DESC, id DESC`"
@@ -799,6 +827,13 @@
       "fingerprint": "f2f69da3d22877da7289",
       "count": 1,
       "preview": "`INSERT INTO credentials.user_ai_credentials (user_id, provider, purpose, secret_enc, secret_last4, secret_fingerprint, status, verified_at, revision) VALUES ($"
+    },
+    {
+      "source": "src/services/db-manager.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "cab417dc71282a32b0c6",
+      "count": 1,
+      "preview": "{ text: sql, rowMode: 'array' }"
     },
     {
       "source": "src/services/debug-access.js",
@@ -962,6 +997,13 @@
       "preview": "`UPDATE chat_sessions SET platform_env_state = $2, platform_env_detail = $3::jsonb WHERE id = $1${commitGuard}`"
     },
     {
+      "source": "src/services/preview-lifecycle.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "4ec7c53222c8a758c722",
+      "count": 5,
+      "preview": "sql"
+    },
+    {
       "source": "src/services/proposal-update.js",
       "kind": "structural-template",
       "fingerprint": "48b2cbd10645fd9ca1ec",
@@ -1046,6 +1088,20 @@
       "preview": "`SELECT ${columnList} FROM ${table} ORDER BY 1`"
     },
     {
+      "source": "src/services/topochain/native-session-protocol.js",
+      "kind": "structural-template",
+      "fingerprint": "3dc5e15e8d408d0e7773",
+      "count": 1,
+      "preview": "`SELECT token FROM sessions WHERE native_session_incarnation_id = $1 AND user_id = $2 AND expires_at >= $3 AND ${nativeWebSessionIsLive('sessions')} FOR KEY SHA"
+    },
+    {
+      "source": "src/services/topochain/native-session-protocol.js",
+      "kind": "structural-template",
+      "fingerprint": "d4d4b0f3f08a9940bfb1",
+      "count": 1,
+      "preview": "`SELECT token, user_id, native_session_incarnation_id, native_session_credential_reference, (SELECT c.attempt_id FROM native_session_credentials c WHERE c.crede"
+    },
+    {
       "source": "src/services/topochain/snapshot-builder.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "8bc6a43a6ca98c6d2fe8",
@@ -1114,6 +1170,13 @@
       "fingerprint": "2e26921bc2eaf7ee6d9c",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_title, cs.pr_summary_md, cs.linked_issues, cs.status, cs.created_at, u.username, (SELECT COUNT(*) FROM pr_votes pv WHERE pv.s"
+    },
+    {
+      "source": "src/services/ws.js",
+      "kind": "structural-template",
+      "fingerprint": "47c0995a68c0e5f4afc4",
+      "count": 1,
+      "preview": "`SELECT s.user_id, s.expires_at, u.username, u.is_admin FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = $1 AND ${nativeWebSessionIsLive('s')}`"
     }
   ]
 }

@@ -295,6 +295,13 @@ export interface WorkshopTheme {
   description: string;
   /** "What people are asking for" — the model's line, absent on the category grouping. */
   saying: string | null;
+  /**
+   * One emoji for the theme, chosen by the model (fixed per category on the
+   * fallback grouping). `''` when there is none — a row written before icons
+   * existed, or an answer the sanitiser rejected — and the head then draws
+   * the theme's initial instead of a stand-in glyph that would mean nothing.
+   */
+  icon: string;
   people: string[];
   /** Epoch ms of the newest activity on any item in the theme. */
   lastActive: number;
@@ -313,10 +320,31 @@ export interface DevWorkshopView {
   slug?: string;
   /** Whether the viewer may post into a row's thread (collab-gated server-side). */
   canPost?: boolean;
+  /** Who is reading, so a dismissal is per account on a shared device. */
+  viewerId?: number | null;
   /** The no-items note, with its load-failure prefix. */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
   /** Proposals awaiting THIS viewer's vote — pinned above the themes. */
-  votes: { count: number; rows: ListRow[] };
+  votes: {
+    /** Still owed by this viewer. */
+    count: number;
+    /** Everything they COULD vote on, answered or not: the ring's denominator. */
+    total: number;
+    /** How many of `rows` the lander draws before "N more waiting on you". */
+    shown: number;
+    /** ALL of them: the rest are revealed in place, not on another screen. */
+    rows: ListRow[];
+  };
+  /**
+   * The viewer's OWN work in flight on this app: their dev sessions and the
+   * proposals they opened. Unfiltered, like `votes` — your own work is yours
+   * whatever the board is narrowed to.
+   */
+  mine: {
+    count: number;
+    shown: number;
+    rows: ListRow[];
+  };
   /**
    * What happened since the viewer last opened this app's Workshop, or null
    * on a first visit (the welcome takes its place). `baseline` is epoch ms.
@@ -329,7 +357,44 @@ export interface DevWorkshopView {
     rows: ListRow[];
   } | null;
   /** First-visit orientation: the board's shape in numbers. */
-  welcome: { open: number; themes: number; votesWaiting: number; shippedWeek: number } | null;
+  /**
+   * The app's state in numbers, every visit rather than only the first —
+   * this was `welcome`, which asked a newcomer's question a returning member
+   * has too. Everything here is derived from data the board already loaded;
+   * nothing is written by a model.
+   */
+  dashboard: {
+    open: number;
+    themes: number;
+    votesWaiting: number;
+    /** Merges in the last 7 days, and in the 7 before them — a rate. */
+    shippedWeek: number;
+    shippedPrevWeek: number;
+    /** Distinct people active on the app (the merge context's own count). */
+    people: number;
+    /** Open issues with no claim, no session and nobody assigned. */
+    unclaimed: number;
+    /** The theme with the most recent activity, by name. */
+    busiest: string | null;
+    /** The merged history is paged; true means the week counts are floors. */
+    partial: boolean;
+    /**
+     * The model's three windowed lines, drawn as cards under the tiles. A
+     * field is '' when that window held nothing, and its card is then not
+     * drawn at all — which is why these are strings rather than optional.
+     */
+    cards: { lastWeek: string; thisWeek: string; open: string } | null;
+    /**
+     * The same answer flattened to one paragraph. It is what a row last
+     * written under the previous digest prompt holds, so it keeps such a
+     * board saying something until its next pass re-asks for the fields.
+     * Null with no model, before the first draft, or when that call failed —
+     * the counts above then build the sentence instead.
+     */
+    summary: string | null;
+  } | null;
+  /** One unclaimed open issue to suggest, as a row. Null while filtering. */
+  nextUp: ListRow | null;
   /** The app's general discussion, as a row — see AppView._discussionCardModel. */
   discussion: ListRow | null;
   themes: WorkshopTheme[];
@@ -350,6 +415,8 @@ export interface DevWorkshopView {
     pendingStage: 'discovery' | 'placement' | null;
     /** Why the last stage failed, so the footnote can say so. */
     lastError: string | null;
+    /** Why the model's summary paragraph is missing, when the last attempt failed. */
+    digestError: string | null;
     /** How much of the board the themes hold, as the server counts it. */
     coverage: { total: number; placed: number; unplaced: number; pending: number } | null;
     /** Cards on screen the server has themes for but has not placed yet. */
@@ -375,6 +442,15 @@ export interface KanbanColView {
 export interface DevKanbanView {
   activeTab: string;
   cols: KanbanColView[];
+  /** The app, for the open card's "Open on its own page" link. */
+  slug?: string;
+  canPost?: boolean;
+  /**
+   * `?cards=open`: every card drawn unfolded — the board as it was before its
+   * columns folded, and the state the declared checks that read a card's
+   * anatomy run in.
+   */
+  unfolded?: boolean;
   /**
    * True until the board's first fetch lands. Every column draws placeholder
    * cards, and its count draws as a bar rather than `· 0` — an empty board

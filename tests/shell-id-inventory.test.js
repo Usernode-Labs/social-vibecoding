@@ -274,6 +274,33 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── OpenRouter catalog controls ──────────────────────────────────
+  'settings-openrouter-model-search': 'Filters the key-visible OpenRouter catalog by model name, id or provider without another network request.',
+  'settings-openrouter-favorites-only': 'Limits the settings picker to the viewer\'s saved OpenRouter model favorites.',
+  'settings-openrouter-refresh-models': 'Forces a fresh key-visible catalog from OpenRouter and reports when it was refreshed.',
+  'settings-openrouter-star-model': 'Adds or removes the selected OpenRouter model from the viewer\'s persistent favorites.',
+  'settings-openrouter-catalog-meta': 'Shows the visible and total model counts plus catalog freshness beside the picker.',
+  // ── #1538: check my status ────────────────────────────────────────
+  // The waitlist confirm step doubles as "read where I stand", so the panel
+  // that used to print one fixed sentence now prints what the row actually
+  // says. Four of the five ids are inside #waitlist-confirmed; the fifth
+  // is the landing page's way in.
+  'waitlist-status-pill': 'The three-state queue pill on #waitlist-confirmed, rendered from the SAME table as the stage-2 screen\'s #more-status-pill (waitlist-shared.tsx) so one row cannot be described two ways. Always in the markup and hidden until a code lands: the prerender has no status, and contents rendered before the fetch are a hydration mismatch, which console.errors and fails proposal checks.',
+  'waitlist-status-since': 'The joined-on date, offered in place of the queue position this panel deliberately does not show. Nothing on the platform ranks the waitlist (services/waitlist-signals.js computes no score on purpose), so a number would be invented; the date is a fact the row actually holds. Same always-present, hidden-until-filled contract as #waitlist-confirmed-email beside it.',
+  'waitlist-status-action': 'The one thing a RELEASED signup can act on: Create my account (#signup) or Sign in (#login), chosen on whether the invite has already been redeemed. Before this, somebody who lost the access-ready mail was told by this panel to keep waiting for it. Hidden for a signup that is still queued.',
+  'waitlist-confirmed-headline': 'The panel\u2019s emerald headline, named because it is CONDITIONAL now rather than constant. The card serves two arrivals: somebody who just joined and confirmed, and somebody who typed their address to read where they stand. Congratulating the second one restates what the pill below already says and reads as a system that has lost track of when they joined, so the headline is the confirm path\u2019s and the pill is the status path\u2019s, split on the codeOnly state that already separates the two everywhere else on this screen. Visible in the prerender, which is the shape the hand-written shell shipped.',
+  'landing-status-link': 'The landing card\'s "Already joined? Check your status" link, into the same code-entry step #waitlist-enter-code opens. It is the entry point for the case the issue is about — checking from a device that knows nothing about the signup — and it is on the landing page because that is where such a device arrives. Hidden for a session, like the CTA above it.',
+  // ── #1876: the check-my-status errand is two steps ────────────────
+  // It asked for the address and the six-digit code in one breath, and the
+  // control that actually SENT the code was a tertiary "Didn't get it?" link
+  // underneath the field. Split, on the codeOnly path only: the post-join
+  // path is untouched, because there the join WAS step 1.
+  'waitlist-confirm-address': 'Step 1 of that errand: the address, the send, and its own status line. A wrapper rather than a set of per-element class expressions, because the whole half comes and goes together; and a wrapper rather than `display: contents`, which `.hidden` cannot override. Ships hidden: nothing here is on screen until somebody asks to check their status.',
+  'waitlist-confirm-code': 'Step 2: the six-digit field, the resend and the way back, which is everything #waitlist-confirm used to hold on its own. Visible in the prerender, because that is what the hand-written shell shipped and what the post-join path still shows; the split only hides it while the address step is up.',
+  'waitlist-request-code': 'The address step\u2019s primary action, and the promotion the issue was about: sending the code is what somebody came here to do, so it is a filled button rather than a footnote under the field. Its cooldown and its label are the resend\u2019s, because it is the same request to the same endpoint.',
+  'waitlist-request-note': 'That step\u2019s own status line. Separate from #waitlist-resend-note so the two cannot overwrite each other: a request that failed says why here and stays put, and one the server accepted advances and says so on the next step, beside the field it is about.',
+  'waitlist-have-code': 'For the reader who arrived from the status mail with a code already in hand. It sends NOTHING on purpose: issueVerificationCode deletes every unconsumed code for an address before minting the next one, so making this button send would invalidate the code in the inbox of the very person who followed that mail here.',
+  'waitlist-change-email': 'The way back from the code step to the address step, for the address that was a typo. It assigns the fragment rather than only setting state, so the browser\u2019s own Back does the same thing and the URL and the screen cannot disagree.',
   'feedback-form': 'The existing feedback form is hidden while the first-feedback confirmation is visible (#1583).',
   'feedback-first-success': 'Persistent first-feedback confirmation inside the existing feedback dialog (#1583).',
   'feedback-first-title': 'Accessible heading congratulating the first feedback submission (#1583).',
@@ -372,6 +399,14 @@ const ADDED_IDS = {
   'mobile-install-banner': 'The phone-browser strip offering the native app (#1372). Sits under #offline-banner and stacks with it.',
   'mobile-install-open': 'The strip\'s primary control. An anchor to the store when a listing is published for this OS (href from app_version_configs.update_url via GET /api/public/mobile-app); a button revealing the Add-to-Home-Screen steps when none is (#1513).',
   'mobile-install-dismiss': 'Dismisses the strip for this session; the answer is kept in sessionStorage, so the next visit is offered the app once more (#1514).',
+  // #1561 — the once-per-account welcome on Home. A new account lands on a
+  // launcher grid of other people's apps with nothing on the screen saying
+  // what the place is, so the banner states it: the apps are changed by the
+  // people using them, and nothing ships without a group vote. Like the
+  // install strip above, it is always in the document and starts `hidden`,
+  // because the viewer is not known at prerender time.
+  'home-welcome': 'The dismissible first-login explainer at the top of #home-body (#1561).',
+  'home-welcome-dismiss': 'Dismisses it for good, per account: the answer is kept in localStorage under the viewer\'s user id.',
   // #1281 — the session-CLI bridge opt-in. The spec marks that venue
   // settings-gated and "most users: no", so the gate needs somewhere to
   // live: Settings → Experimental, beside the other per-user preview flag.
@@ -489,6 +524,14 @@ const ADDED_IDS = {
   'connector-prompt-help': 'Settings → Connectors block explaining how to stop the per-call connector permission prompts (#1218).',
   'connector-allow-rules': 'The three read-only allow rules, rendered for copying into a personal ~/.claude/settings.json (#1218).',
   'connector-allow-rules-copy': 'Copy button for that block (#1218).',
+  // #1607: the two product walkthroughs below the connector URL are six and
+  // seven steps, and the reported cost was reading them. These open a new
+  // chat pre-loaded with the server URL and the job, so the assistant that
+  // will use the connector answers "where is that button" instead. The href
+  // is written by Settings._renderConnectors() from the live #connector-url
+  // value, never hardcoded, so a fork shows its own.
+  'connector-open-claude': 'Settings → Connectors link opening a pre-loaded Claude chat to walk through connector setup (#1607).',
+  'connector-open-chatgpt': 'The same for ChatGPT (#1607).',
   // The in-chat setup tip fired once in production and locked itself out, and
   // the panel it points at had one flaw of its own: a single block headed "add
   // this to ~/.claude/settings.json", which is the wrong file for Claude Code
@@ -521,15 +564,13 @@ const ADDED_IDS = {
   'messages-share-dialog': 'React-owned typed Usernode item chooser for Messages (#488).',
   'notifications-saved': 'Pinned "Saved" section at the top of the bell drawer, holding the messages this user bookmarked (#1280).',
   // #1344 — eligible users may claim one company-funded OpenRouter key.
-  // These are static settings controls; settings.js owns their state and the
-  // one-time plaintext reveal lifecycle.
+  // These are static settings controls; settings.js owns their state. The
+  // four plaintext reveal controls originally added here were removed when
+  // company-funded credentials became internal-only; like other post-baseline
+  // ids, they leave this map rather than entering RETIRED_IDS.
   'settings-openrouter-managed-card': 'Included managed OpenRouter key status and claim card (#1344).',
   'settings-openrouter-managed-message': 'Eligibility/ownership/status copy for the included key (#1344).',
   'settings-openrouter-claim': 'One-time managed child-key provisioning action (#1344).',
-  'settings-openrouter-reveal': 'One-time plaintext child-key reveal container (#1344).',
-  'settings-openrouter-revealed-key': 'Read-only one-time child-key value shown only after creation (#1344).',
-  'settings-openrouter-copy': 'Copy action for the one-time child-key reveal (#1344).',
-  'settings-openrouter-dismiss-reveal': 'Clears the one-time plaintext key from the settings DOM (#1344).',
   'settings-openrouter-personal-controls': 'Personal-BYOK controls hidden while a managed key owns the credential slot (#1344).',
   // #1383 — the #apps directory's Sort control. It rides INSIDE
   // #browse-search-bar rather than in a strip of its own: both narrow the

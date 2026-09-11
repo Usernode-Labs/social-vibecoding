@@ -94,7 +94,7 @@ test('gmail without a sender address is refused', () => {
 });
 
 test('the committed default sender is the single platform address', () => {
-  assert.equal(select.DEFAULT_FROM, 'Usernode <no-reply@usernodelabs.org>');
+  assert.equal(select.DEFAULT_FROM, 'Usernode <no-reply@onhomeroom.com>');
   // A fresh deploy that set nothing still has a correct From.
   assert.equal(select.resolveFrom({}), select.DEFAULT_FROM);
   // PLATFORM_MAIL_FROM wins; TOPOCHAIN_MAIL_FROM is the legacy fallback.
@@ -390,7 +390,9 @@ test('the join mail carries the CODE, the confirm link AND the survey link', asy
   // a desktop, where it is one click. Either stamps the same row.
   assert.match(msg.text, /verification code is 123456/);
   assert.ok(msg.text.includes(seen[0].confirmUrl), 'the confirm CTA must be in the copy');
-  assert.match(msg.text, /confirm this email address in one click/i);
+  // #1540: the sentence is shorter and the HTML half is a button, but the
+  // text part must still carry the URL for a reader who cannot see HTML.
+  assert.match(msg.text, /confirm in one tap/i);
   // Andrea's copy for the optional questions, and the rolling-groups
   // promise that replaced the placeholder "[September 9]" date — no wave
   // has been committed to, and a date that slips is worse than none.
@@ -510,11 +512,34 @@ test('the password-reset mail carries the reset link and no secrets beyond it', 
   assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
 });
 
+test('the release mail promises the code only on the arm that sends one (#1548)', () => {
+  // Following the no-account link asks for a code straight away, so the copy
+  // has to say so: the recipient is about to get a second email, and without
+  // this line they read the code request as something going wrong.
+  const fresh = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/#signup/a%40b.invalid', hasAccount: false,
+  });
+  assert.match(fresh.text, /emails you a 6-digit code/);
+  // The figure must track OTP_TTL_MS, so pin it rather than the sentence.
+  assert.match(fresh.text, /expires in 10 minutes/);
+  assert.match(fresh.html, /emails you a 6-digit code/);
+
+  // Somebody who already has an account is sent to #login and never asked
+  // for a code, so promising one there would be a plain lie.
+  const returning = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/#login', hasAccount: true,
+  });
+  assert.doesNotMatch(returning.text, /6-digit code/);
+  assert.doesNotMatch(returning.html, /6-digit code/);
+});
+
 test('every kind renders subject, text and html with no leaked undefined', () => {
   const payloads = {
     otp: { code: '123456' },
+    account_email: { code: '123456' },
     waitlist_joined: { url: 'https://x.invalid/#more/aa', confirmUrl: 'https://x.invalid/c/aa' },
-    waitlist_released: { url: 'https://x.invalid/#login', hasAccount: true },
+    // The no-account arm, because that is the one that grew copy in #1548.
+    waitlist_released: { url: 'https://x.invalid/#signup/a%40b.invalid', hasAccount: false },
     password_reset: { url: 'https://x.invalid/#reset-password?token=aa' },
     admin_test: {
       provider: 'gmail', from: 'Usernode <no-reply@x.invalid>',
@@ -543,12 +568,12 @@ test('base64url output is URL-safe and unpadded', () => {
 
 test('the raw message is CRLF multipart/alternative with the right headers', () => {
   const raw = gmail.buildRaw({
-    from: 'Usernode <no-reply@usernodelabs.org>',
+    from: 'Usernode <no-reply@onhomeroom.com>',
     to: 'a@b.invalid',
     message: { subject: 'Your Usernode login code', text: 'code 123456', html: '<p>hi</p>' },
     boundary: 'bnd',
   });
-  assert.match(raw, /^From: Usernode <no-reply@usernodelabs\.org>\r\n/);
+  assert.match(raw, /^From: Usernode <no-reply@onhomeroom\.com>\r\n/);
   assert.match(raw, /\r\nTo: a@b\.invalid\r\n/);
   assert.match(raw, /Content-Type: multipart\/alternative; boundary="bnd"/);
   // text part before html part: clients pick the LAST part they can render.
@@ -798,7 +823,7 @@ test('dapp.json declares every Platform mail variable, credentials private', () 
   }
   // The sender default is committed, so a fresh deploy has a correct From.
   assert.equal(byKey.get('PLATFORM_MAIL_FROM').default,
-    'Usernode <no-reply@usernodelabs.org>');
+    'Usernode <no-reply@onhomeroom.com>');
   // ...and code and manifest agree on it.
   assert.equal(byKey.get('PLATFORM_MAIL_FROM').default, select.DEFAULT_FROM);
 });

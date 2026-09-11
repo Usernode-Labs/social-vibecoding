@@ -136,22 +136,24 @@ async function findStuckCheckSessions({
 // that only wants liveness, and every pre-existing preview, behave as before.
 async function stagingNeedsRebuild(session, { config = null, headSha = null } = {}) {
   if (!session.staging_url) return true;
+  let state;
   if (session.staging_runtime_kind === 'kubernetes') {
     if (!session.staging_runtime_name) return true;
     const applicationRuntime = require('./application-runtime');
-    const config = {
-      appRuntime: 'kubernetes',
-      kubernetes: { appNamespace: process.env.APP_NAMESPACE || 'social-apps' },
+    const runtimeConfig = {
+      ...config, appRuntime: 'kubernetes',
+      kubernetes: { appNamespace: process.env.APP_NAMESPACE || 'social-apps', ...config?.kubernetes },
     };
-    const status = await applicationRuntime.status(config, {
-      runtimeKind: 'kubernetes', runtimeName: session.staging_runtime_name,
-    });
-    if (status !== 'running') return true;
-    return previewIsOfAnotherCommit(session, headSha);
+    try {
+      state = await applicationRuntime.inspect(runtimeConfig, {
+        runtimeKind: 'kubernetes', runtimeName: session.staging_runtime_name,
+      });
+    } catch (_) { return false; } // An API outage is not evidence of a stale preview.
+  } else {
+    if (!session.staging_container_id) return true;
+    const docker = require('./docker');
+    state = await docker.inspectContainer(session.staging_container_id);
   }
-  if (!session.staging_container_id) return true;
-  const docker = require('./docker');
-  const state = await docker.inspectContainer(session.staging_container_id);
   // The inspect could not be PERFORMED (unreachable daemon). Distinct from
   // 'not_found', which means the container is genuinely gone and is handled
   // below by the status check. Leave the preview strictly alone here: a docker
@@ -166,7 +168,7 @@ async function stagingNeedsRebuild(session, { config = null, headSha = null } = 
 
   const stagingEnv = require('./staging-env');
   const expected = stagingEnv.expectedStagingFingerprint(config);
-  const actual = state.labels[stagingEnv.LABEL_ENV_FP] || null;
+  const actual = state.labels?.[stagingEnv.LABEL_ENV_FP] || null;
   if (actual === expected) return false;
 
   log.info('staging-recovery', 'Preview env is stale — rebuild needed', {
@@ -647,8 +649,14 @@ async function recordChecksSkipped({
 // only on the first failure of a streak (check_error_notified_at gate), which
 // setChecksPending clears when a new commit is pushed.
 async function recordStagingBootFailure({ config, pool, session, commitHash, err }) {
+  if (require('./preview-lifecycle').isCancelled(err) || err?.previewFailureHandled) return;
   const visuals = require('./visuals');
+  const { bootFailureIsInfrastructure } = require('./deploy-failure');
   const detail = visuals.summarizeBootFailure(err);
+  // #1771: the shared Postgres refusing this container a connection is not
+  // a fact about this proposal. summarizeBootFailure already says so in the
+  // detail; this decides who gets told.
+  const infrastructure = bootFailureIsInfrastructure(err);
 
   const stored = await visuals.storeChecks(
     pool, session.id, commitHash, { state: 'error', results: [] }, detail
@@ -677,6 +685,7 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   log.warn('staging-recovery', 'Staging preview failed to boot — recorded checks error', {
     sessionId: session.id,
     failures: row ? row.consecutive_check_failures : null,
+    infrastructure: infrastructure || undefined,
     detail,
   });
 
@@ -688,6 +697,26 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
     `UPDATE chat_sessions SET check_error_notified_at = NOW() WHERE id = $1`,
     [session.id]
   ).catch(() => {});
+
+  // #1771: the checks row, the retry schedule and the card's detail are all
+  // still written above — the proposal is still blocked and still says why.
+  // What is skipped here is the part addressed to the AUTHOR: a thread post
+  // and a notification asking them to look at a build that failed because
+  // the fleet was out of database connections. There is nothing in their
+  // diff to find, the retry that fixes it is already scheduled, and the
+  // person who can act on it is the platform owner, who gets the escalation
+  // the 'error' state already carries. The stamp above still runs, so the
+  // backoff retries stay quiet either way.
+  if (infrastructure) {
+    log.warn('staging-recovery', 'Boot failure is infrastructure — author not nudged', {
+      sessionId: session.id, detail,
+    });
+    try {
+      const { broadcastGlobal } = require('./ws');
+      broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'error' });
+    } catch { /* narration only */ }
+    return;
+  }
 
   // Visible-in-thread record of why the preview won't come up.
   //

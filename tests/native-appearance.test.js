@@ -161,6 +161,7 @@ function loadNativeChrome({
       return timer;
     },
     clearTimeout,
+    setInterval() { return 0; },
     async fetch() { throw new Error('no network in this test'); },
   };
   sandbox.window = sandbox;

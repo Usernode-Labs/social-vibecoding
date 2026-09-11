@@ -21,13 +21,27 @@
  * one the strip shows and CSS acts on it only below 640px. A tab tap calls
  * `AppView._onKanbanTabSelect`, which persists the choice and republishes
  * `activeTab` — replacing `_applyKanbanTab`'s class-toggling DOM pass.
+ *
+ * ── The cards fold (#1787) ────────────────────────────────────────────
+ *
+ * A column draws each card as the Workshop's one-line row and unfolds the
+ * one you tap into the dense card, in place (./fold.tsx). Which row is open
+ * is the COLUMN's state — one per column, so a board with four open cards
+ * is still four columns of rows — and it lives in the component, so the
+ * WS-driven republishes that repaint the board leave it alone. The open card
+ * is the card the column always drew, with the Workshop's "Open card" toggle
+ * as the last pill of its action band (the facts-line seat moves the actions
+ * up beside it, which a column cannot hold) and the item's own page one link
+ * below. `?cards=open` draws every card unfolded: the board as it was, and
+ * the state the declared checks that read a card's anatomy run in.
  */
 
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { useNarrowViewport } from '../../../lib/use-narrow';
 import { useStoreState } from '../../../lib/use-store-state';
 import { devKanbanStore } from './cards-store';
+import { callAppView } from './fold';
 import { FooterView } from './footer';
 import { ListRowView } from './list-rows';
 import type { KanbanColView, ListRow } from './model';
@@ -64,9 +78,32 @@ function Tab({ col, active, loading }: { col: KanbanColView; active: boolean; lo
 }
 
 function Column(
-  { col, active, loading, deferred }:
-  { col: KanbanColView; active: boolean; loading: boolean; deferred: boolean },
+  { col, active, loading, deferred, slug, canPost, unfolded }:
+  {
+    col: KanbanColView; active: boolean; loading: boolean; deferred: boolean;
+    slug: string; canPost: boolean; unfolded: boolean;
+  },
 ): ReactNode {
+  // The one open card, by row key. Toggling the open one closes it; opening
+  // another closes the first. Survives republishes because it is here and
+  // not in the view model.
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
+  // A merged card's kudos slot is a legacy-filled host (`_fillKudosHosts`,
+  // run by app-view.js after every publish). A fold happens BETWEEN
+  // publishes, so the slot a card just unfolded with would stay empty until
+  // the next repaint; re-run the filler here. It skips filled hosts.
+  //
+  // A LAYOUT effect, not a plain one: a plain effect runs after the browser
+  // has painted the card with the slot empty, so the kudos pill popped in a
+  // frame later and shoved "Open card" along the band — the flicker at the
+  // bottom-left of every merged card on open. Before paint, the card is
+  // whole on its first frame, and the band's fold measurement (which
+  // watches its own subtree) re-folds around the filled slot in the same
+  // frame.
+  useLayoutEffect(() => {
+    if (hostRef.current) callAppView('_fillKudosHosts', hostRef.current);
+  }, [openKey, unfolded]);
   let cards: ReactNode;
   // Below 640px this column is `display:none` unless it is the active one
   // (see .dev-kanban-col in app.css), so building its cards is work whose
@@ -92,12 +129,32 @@ function Column(
   } else {
     cards = (
       <div className="space-y-2">
-        {col.rows.map((row: ListRow) => <ListRowView key={row.key} row={row} />)}
+        {col.rows.map((row: ListRow) => (
+          <ListRowView
+            key={row.key}
+            row={row}
+            fold={{
+              slug,
+              canPost,
+              open: unfolded || openKey === row.key,
+              onToggle: () => setOpenKey((k) => (k === row.key ? null : row.key)),
+              // "Open card" rides in the action band here, not on the facts
+              // line: a column is too narrow for the actions that seat moves
+              // up beside it (fold.tsx).
+              detail: 'actions',
+              // And it is a link to the item's page, not the sections in
+              // place: a column is the wrong width for a ledger and a
+              // transcript, and the page is one tap away from here.
+              expand: 'page',
+            }}
+          />
+        ))}
       </div>
     );
   }
   return (
     <div
+      ref={hostRef}
       id={`dev-kanban-col-${col.key}`}
       data-kanban-col={col.key}
       className={`dev-kanban-col${active ? ' dev-kanban-col-active' : ''}`}
@@ -143,6 +200,9 @@ export function DevKanban(): ReactNode {
             active={col.key === v.activeTab}
             loading={!!v.loading}
             deferred={narrow && col.key !== v.activeTab}
+            slug={v.slug || ''}
+            canPost={!!v.canPost}
+            unfolded={!!v.unfolded}
           />
         ))}
       </div>

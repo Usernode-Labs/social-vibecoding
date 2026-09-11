@@ -25,7 +25,9 @@
   const SCREEN_IDS = {
     landing: 'auth-landing-screen',
     login: 'auth-login-screen',
-    signup: 'auth-login-screen', // sub-view of the login screen
+    // Sub-view of the login screen. #signup/<address> carries a url-encoded
+    // email address from the waitlist-release email.
+    signup: 'auth-login-screen',
     register: 'auth-register-screen',
     waiting: 'auth-waiting-screen',
     // Stage-1 waitlist survey, #waitlist — its own screen rather than a
@@ -214,12 +216,19 @@
       //
       // First match wins, and the address is rewritten to the hash route, so
       // whichever spelling arrives the address bar ends up identical.
+      //
+      // `?status=1` is the check-my-status mail's one button (#1538). It
+      // resolves to the code-entry step of the waitlist screen, which is a
+      // hash ROUTE plus a hash QUERY — so it cannot use the bare `/#route`
+      // template the other two share. The state stays in the fragment for
+      // the same reason it always has: a query would put it in server logs.
       try {
         if (!location.hash) {
           const params = new URLSearchParams(location.search);
           const route = params.has('signup') ? 'signup'
             : params.has('login') ? 'login'
-              : null;
+              : params.has('status') ? 'waitlist?confirm=1'
+                : null;
           if (route) history.replaceState(null, '', `/#${route}`);
         }
       } catch (_) {}
@@ -256,7 +265,9 @@
       // already up (e.g. login ↔ signup share one screen).
       if (route === 'landing') AuthScreens._landingOnShow();
       if (route === 'login') AuthScreens._loginOnShow(false);
-      if (route === 'signup') AuthScreens._loginOnShow(true);
+      // seg is the url-encoded email address from a waitlist-release link
+      // (#signup/<address>); the login island prefills it and asks for a code.
+      if (route === 'signup') AuthScreens._loginOnShow(true, seg);
       if (route === 'reset-password') AuthScreens._resetOnShow(seg);
       if (route === 'register') AuthScreens._registerOnShow(seg);
       if (route === 'waiting') AuthScreens._waitingOnShow();
@@ -278,6 +289,7 @@
           : DEPTH[route] < DEPTH[prev] ? 'pop' : 'none');
 
       fx(() => {
+        window.UsernodeBrowserScroll?.capture();
         for (const r of Object.keys(SCREEN_IDS)) {
           setScreenVisible(SCREEN_IDS[r], SCREEN_IDS[r] === id);
         }

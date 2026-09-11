@@ -12,6 +12,11 @@
 //      name and the date do not, and land as text.
 //   2. An empty thread draws nothing at all, not a bare "Discussion" heading.
 //
+// #1808 added a third: the row carries a real stamp. It used to print
+// `createdAt.slice(0, 10)` — a UTC date, so a comment posted at 8pm in Sao
+// Paulo was stamped with the next day, and no time at all — directly above a
+// Discussion thread that got both right.
+//
 // Run with: node --test tests/dev-issue-comments.test.js
 
 'use strict';
@@ -31,7 +36,8 @@ const APP_VIEW = read('public/js/app-view.js');
 
 const view = (over) => ({ comments: [], truncated: false, htmlUrl: null, ...over });
 const comment = (over) => ({
-  key: '1', author: 'evan', bot: false, date: '2026-03-04', bodyHtml: '<p>hi</p>', ...over,
+  key: '1', author: 'evan', bot: false, createdAt: '2026-03-04T15:30:00Z',
+  bodyHtml: '<p>hi</p>', ...over,
 });
 const render = (over) => renderComponent(COMMENTS, 'IssueCommentsView', view(over));
 
@@ -45,7 +51,7 @@ test('a comment carries its author, its bot tag and its date', () => {
   const html = render({
     comments: [
       comment({ key: '1', author: 'evan' }),
-      comment({ key: '2', author: 'github-actions[bot]', bot: true, date: '' }),
+      comment({ key: '2', author: 'github-actions[bot]', bot: true, createdAt: '' }),
     ],
   });
   // The sheet heading (round three): the same uppercase label every topic
@@ -61,7 +67,23 @@ test('a comment carries its author, its bot tag and its date', () => {
   assert.match(html, /github-actions\[bot\]<\/span><span class="text-\[0\.9375rem\] text-sky-700 dark:text-sky-400">bot<\/span>/);
   // A row with no timestamp omits the date rather than drawing an empty span.
   assert.equal((html.match(/dev-feed-msg-time/g) || []).length, 1);
-  assert.match(html, /2026-03-04/);
+  // #1808: a month and a day, then a time — not a bare `2026-03-04`, and not
+  // a bare time either. The year is elided or not depending on when the suite
+  // runs, so match the parts that are always there.
+  // Case-insensitive on the attribute name: React 19 emits the JSX spelling
+  // (`dateTime`) and HTML attribute names are case-insensitive.
+  assert.match(html, /<time class="dev-feed-msg-time" datetime="2026-03-04T15:30:00Z" title="[^"]+">/i);
+  assert.match(html, /Mar 4[^<]*\d\d?:\d\d/);
+  // The title never elides: it always carries the year.
+  assert.match(html, /title="[^"]*2026[^"]*"/);
+});
+
+test('an unparseable timestamp draws no stamp at all', () => {
+  // Rather than "Invalid Date" or a 1970 stamp in front of a reader. The
+  // shared helper decides this; the row only has to respect the empty text.
+  const html = render({ comments: [comment({ createdAt: 'not a date' })] });
+  assert.ok(!html.includes('dev-feed-msg-time'));
+  assert.ok(!html.includes('Invalid'));
 });
 
 test('the body is markup and everything else is text', () => {
@@ -71,7 +93,7 @@ test('the body is markup and everything else is text', () => {
   const html = render({
     comments: [comment({
       author: '<img src=x onerror=alert(1)>',
-      date: '<b>nope</b>',
+      createdAt: '<b>nope</b>',
       bodyHtml: '<p class="dc-p">Looks like a <strong>race</strong>.</p>',
     })],
   });
@@ -79,6 +101,7 @@ test('the body is markup and everything else is text', () => {
   assert.ok(!html.includes('<img'), 'the author name is not');
   assert.match(html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.ok(!html.includes('<b>nope'), 'nor is the date');
+  assert.ok(!html.includes('&lt;b&gt;nope'), 'which is now dropped entirely');
 });
 
 test('a truncated thread says so, and links out when it can', () => {

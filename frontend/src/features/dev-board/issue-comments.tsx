@@ -5,6 +5,7 @@
 
 import { useMemo } from 'react';
 
+import { messageStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { swatchFor } from '../messages/format';
 import {
@@ -36,6 +37,11 @@ function Body({ html }: { html: string }) {
  * the box below would post next to (that box posts to the app's thread).
  */
 function Comment({ comment }: { comment: IssueCommentView }) {
+  // #1808: the same stamp the Discussion thread directly below this one
+  // shows, from the same helper — a date once it is not today's, a year once
+  // it is not this one, and the unelided form in `title`. This row used to
+  // print a bare UTC `YYYY-MM-DD` with no time.
+  const stamp = messageStamp(comment.createdAt);
   return (
     <div className="dev-issue-comment dev-feed-msg">
       <span className="dev-feed-msg-avatar" aria-hidden="true" style={{ backgroundColor: swatchFor(comment.author) }}>
@@ -48,8 +54,10 @@ function Comment({ comment }: { comment: IssueCommentView }) {
             <span className="text-[0.9375rem] text-sky-700 dark:text-sky-400">bot</span>
           ) : null}
           <span className="dev-topic-gh-tag">GitHub</span>
-          {comment.date ? (
-            <span className="dev-feed-msg-time">{comment.date}</span>
+          {stamp.text ? (
+            <time className="dev-feed-msg-time" dateTime={comment.createdAt} title={stamp.title}>
+              {stamp.text}
+            </time>
           ) : null}
         </div>
         <Body html={comment.bodyHtml} />

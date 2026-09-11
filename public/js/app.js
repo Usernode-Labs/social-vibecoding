@@ -430,6 +430,21 @@ const App = {
   // nothing arrived in time — an open-but-stalled socket must not hold the
   // whole boot, which is what left the reported blank screen.
   async _fetchSession() {
+    const response = await App._fetchWebSession();
+    if (window.NativeChrome && typeof NativeChrome.restoreWebSession === 'function') {
+      try {
+        const restored = await NativeChrome.restoreWebSession({ force: response.status === 401 });
+        if (restored) return App._fetchWebSession();
+      } catch (error) {
+        // Native uncertainty must not erase a display snapshot. A valid web
+        // response can still be used while native recovery is unavailable.
+        if (response.status === 401) throw error;
+      }
+    }
+    return response;
+  },
+
+  async _fetchWebSession() {
     let timer = null;
     const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
     if (ctrl) timer = setTimeout(() => ctrl.abort(), App.BOOT_SESSION_TIMEOUT_MS);
@@ -622,6 +637,9 @@ const App = {
     // anonymous boot so the capture session can't strip #login to the feed.
     // `password-recovery-sent` is the same view with the post-submit
     // confirmation painted (the green "link is on its way" success box).
+    // `email-code-password-account` (#1586) is the login screen carrying the
+    // explanation an email code hands back when the account it matches can
+    // only be signed in with its password. Same anonymous boot, same reason.
     // `waitlist-confirmed` is the state AFTER the six-digit code lands:
     // confirming is what puts somebody on the list now, so the list place
     // and the stage-2 offer live there rather than on `waitlist-joined`,
@@ -639,15 +657,44 @@ const App = {
     // anonymous boot for the same reason waitlist-more does: restoreFromHash
     // drops an auth route outright for the signed-in session every capture
     // and proposal check runs as.
+    // `waitlist-code-step` (#1876) is what follows that address step now
+    // that the errand is two screens: the six-digit field, the way back, and
+    // the resend, with a request already behind it. A shot of its own
+    // because the two halves cannot be photographed at once, and a capture
+    // can only navigate to a state, never type its way into one.
+    // `waitlist-admitted` (#1538) is the released panel of check-my-status:
+    // the pill, the joined-on date and the "Create my account" action a
+    // signup that has been let in reads back after typing its code. It is
+    // the one settled state no other route can paint, because reaching it
+    // for real needs a row with a released_at behind it.
+    // `waitlist-status` is the same panel one state earlier: still waiting,
+    // read back through check-my-status rather than confirmed just now. It
+    // is a separate shot from `waitlist-confirmed` because the difference
+    // between them is the whole point of the panel — the celebration is the
+    // join's and the state pill is the status read's — and one shot cannot
+    // photograph both.
+    // `signup-code-sent` (#1548) is the signup screen a second after a
+    // waitlist-release link opens it: the code step, the confirmation, and
+    // the resend held for its cooldown. The address rides in the fragment
+    // (`/?shot=signup-code-sent#signup/<url-encoded address>`), and like
+    // `waitlist-more` it needs the anonymous boot, because restoreFromHash
+    // drops an auth route for the signed-in session every capture and
+    // proposal check runs as. login.tsx paints it and sends nothing.
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
         shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
+        shot !== 'waitlist-code-step' &&
+        shot !== 'waitlist-admitted' && shot !== 'waitlist-status' &&
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
-        shot !== 'password-recovery' && shot !== 'password-recovery-sent') {
+        shot !== 'signup-code-sent' &&
+        shot !== 'password-recovery' && shot !== 'password-recovery-sent' &&
+        shot !== 'email-code-password-account') {
       return false;
     }
     if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed'
-         || shot === 'waitlist-step1' || shot === 'waitlist-code-entry') &&
+         || shot === 'waitlist-step1' || shot === 'waitlist-code-entry'
+         || shot === 'waitlist-code-step'
+         || shot === 'waitlist-admitted' || shot === 'waitlist-status') &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }
@@ -879,6 +926,7 @@ const App = {
     if (App._shotHash === location.hash) return;
     App._shotHash = location.hash;
     App._applyImproveShot();
+    App._applyDevTerminalShot();
     App._applyPlatformUpdateShot();
     App._applyLaunchShot();
     App._applyOfflineAppShot();
@@ -995,6 +1043,62 @@ const App = {
         // what says whether it took.
         const panel = document.getElementById('improve-panel');
         if (panel && panel.hasAttribute('data-open')) return;
+      } catch (err) { /* ignore */ }
+      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+    };
+    setTimeout(attempt, 50);
+  },
+
+  // Screenshot-state deep links `?shot=dev-terminal` and
+  // `?shot=dev-terminal-open`: the Improve panel with its "Developer
+  // terminal" row showing, and the same row already actioned.
+  //
+  // Neither state is otherwise reachable by a URL. The row is conditional on
+  // DevConsole's own visibility signal — an app iframe on screen, plus either
+  // "always show" in Settings or an error already forwarded from that frame —
+  // so a plain route renders the panel WITHOUT it, and what the row does when
+  // pressed is behind a tap that no still frame and no declared check can
+  // perform. #1967 shipped a row that did nothing for exactly as long as that
+  // was true, so the fix is locked in by a link rather than by a screenshot.
+  //
+  // No server state: the availability signal is published into DevConsole's
+  // own in-memory state and the console renders from the buffer it already
+  // has. Nothing is fetched and no row is written, so this is deliberately
+  // NOT env-gated — same reasoning as ?shot=improve above, and the "before"
+  // shot needs it to work in production too. The one thing it does persist is
+  // the viewer's own "always show dev console" preference, which setMode()
+  // stores: that is the same switch Settings flips, it is what makes the row
+  // exist at all, and it is undone from Settings like any other.
+  _applyDevTerminalShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'dev-terminal' && shot !== 'dev-terminal-open') return;
+    const openIt = shot === 'dev-terminal-open';
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      try {
+        // Stand in for the app frame that normally publishes this. All three
+        // calls are needed: _refreshButtonVisibility() shows the row only when
+        // there is an app slug AND an iframe on screen AND one of
+        // always-mode / a logged error / an already-open panel. A fresh
+        // browser has no localStorage and no errors, so without the mode call
+        // the row is correctly absent and the link would capture a panel with
+        // nothing in it to press.
+        const slug = App.currentApp;
+        if (slug && window.DevConsole) {
+          window.DevConsole.setCurrentApp(slug);
+          window.DevConsole.setButtonVisible(true);
+          window.DevConsole.setMode(window.DevConsole.MODE_ALWAYS);
+        }
+        window.Improve?.open();
+        const panel = document.getElementById('improve-panel');
+        const row = document.getElementById('improve-row-terminal');
+        if (panel && panel.hasAttribute('data-open') && row) {
+          // The panel closes on the way, so the row has to be pressed once
+          // and only once — a repeat would reopen nothing and re-hide this.
+          if (openIt) row.click();
+          return;
+        }
       } catch (err) { /* ignore */ }
       if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
     };
@@ -2160,6 +2264,40 @@ const App = {
     }
   },
 
+  /**
+   * Slugs a status broadcast has already made us re-pull the app list for.
+   *
+   * A creation emits many `app_status` messages (one per phase), and without
+   * this the first one would be followed by another list fetch on every
+   * subsequent phase for the same app.
+   */
+  _listedNewApps: new Set(),
+
+  /**
+   * A status arrived for an app with NO card on the home grid (#1547).
+   *
+   * That is the just-created app: the grid was loaded before it existed, so
+   * nothing on My Apps represents it. Closing the creation dialog therefore
+   * left the build with no visible trace at all until it finished, which is
+   * exactly the report — the dialog is "dismissing a report, not cancelling
+   * anything" (create-app.tsx), and the screen behind it did not say so.
+   *
+   * One list pull per slug puts the tile there, and the tile already knows how
+   * to say "Spinning up..." for a creating app (Home.renderAppCard). Every
+   * later phase for that slug then takes the `if (card)` branch above, which
+   * keeps `data-status` current with no further fetching.
+   *
+   * Deliberately not gated on which screen is showing: Home.load() is the
+   * same call the running/error branch makes, the payload is one request, and
+   * gating it would mean the grid is stale the moment somebody navigates back
+   * to it mid-build — which is the bug wearing a different hat.
+   */
+  _listNewlyCreatedApp(slug) {
+    if (!slug || App._listedNewApps.has(slug)) return;
+    App._listedNewApps.add(slug);
+    if (window.Home && typeof Home.load === 'function') Home.load();
+  },
+
   handleAppStatusUpdate(data) {
     // The create dialog's progress view, if one is open on this app.
     // Forwarded unconditionally — the store drops messages for apps it
@@ -2185,6 +2323,8 @@ const App = {
       if (data.status === 'running' || data.status === 'error') {
         Home.load();
       }
+    } else {
+      App._listNewlyCreatedApp(data.slug);
     }
 
     // Update app view if we're looking at this app
@@ -3551,13 +3691,6 @@ const App = {
         if (App._inSettings) App._exitSettings();
             if (App._inBrowse) App._exitBrowse();
         App._showOnlyScreen('home-screen');
-        // Home is the one screen with no way out in the bar, and this is the
-        // branch a COLD BOOT at `/` takes (an empty hash is an unrecognised
-        // one), not just a bad address — so it is as load-bearing as the one
-        // in navigateHome. Same reason it is not a classList write any more:
-        // #back-btn's className is React's, and _showOnlyScreen has just
-        // published the 'home' default that would draw a house here.
-        App.setBackIcon('none');
         App.setHeaderTitle('Social Vibecoding');
         // Home has no Improve target: clear whatever screen published one, or
         // the header button would outlive the app it was about (the lingering
@@ -3676,9 +3809,9 @@ const App = {
     'settings-screen', 'messages-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
-  // `keepAlso`), and hand the header's back chevron back to its default
-  // "home" meaning — the incoming module's own chrome sync flips it to
-  // 'arrow' afterwards when it owns a level-2 view.
+  // `keepAlso`), and publish the incoming screen's default back slot.
+  // Home and the Browse list share a root header (#1569); other screens
+  // keep the Home button. A module's chrome sync supplies a drill-in's arrow.
   //
   // *** CALL THIS INSIDE THE PlatformUI.transition CALLBACK, NEVER
   // BEFORE IT. *** A View Transition captures the OUTGOING page at the
@@ -3694,6 +3827,7 @@ const App = {
   // zoom types ("fn reveals the incoming screen, after conceals the
   // outgoing one" — usernode-native/v1/native.js).
   _showOnlyScreen(revealId, keepAlso) {
+    window.UsernodeBrowserScroll?.capture();
     const keep = keepAlso || [];
     for (const id of App.SCREEN_IDS) {
       if (id === revealId || keep.includes(id)) continue;
@@ -3709,7 +3843,9 @@ const App = {
     // show and the router says home is, and the router is the one that is
     // right. See Home.publishImproveTarget, whose gate reads both.
     App._revealedScreen = revealId;
-    App.setBackIcon('home');
+    // Publish the final root state directly. Showing a house and then hiding
+    // it in a per-screen callback shifts the shared title slot unnecessarily.
+    App.setBackIcon(revealId === 'home-screen' || revealId === 'browse-screen' ? 'none' : 'home');
   },
 
   // The screen root _showOnlyScreen last revealed, or null before the first
@@ -4075,9 +4211,9 @@ const App = {
   // No permission gate: the grid is built from GET /api/apps, which is
   // already visibility-filtered per viewer, and restoreFromHash's
   // anonymous-shell branch bounced a signed-out visitor to login before
-  // this can run. The header's back button goes home; the browser/OS back
-  // gesture returns here from an app opened out of this grid, because the
-  // screen has its own hash entry.
+  // this can run. The top-level header matches Home, which stays accessible
+  // through the navigation menu. Browser/OS back returns here from an app
+  // opened out of this grid, because the screen has its own hash entry.
   navigateToBrowse(slug) {
     // Already mounted: this is an in-screen level change (#apps ↔
     // #apps/<slug>, the back button, a hand-typed hash), not a screen
@@ -4570,7 +4706,11 @@ const App = {
     } catch (err) { /* unparseable url — nothing to warm */ }
   },
 
+  _appNavigationGeneration: 0,
+  _appLoad: null,
+
   async navigateToApp(slug, tab, ref, subTab) {
+    const generation = ++App._appNavigationGeneration;
     // Clean up whatever app we had mounted. This is a no-op on the first
     // navigation into any app, but without it a direct app-A → app-B
     // jump (e.g. via hash) would carry the previous app's dev-chat
@@ -4667,7 +4807,16 @@ const App = {
     // `!!tab` is load-bearing: without an explicit tab, `initialRoute.tab`
     // came from the launcher's cached record above, and a stale record must
     // never be what decides that an App-tab render can skip its token.
-    await AppView.open(slug, { needsToken: !(tab && initialRoute.tab === 'dev') });
+    const load = {
+      slug,
+      promise: AppView.open(slug, { needsToken: !(tab && initialRoute.tab === 'dev') }),
+    };
+    App._appLoad = load;
+    try {
+      await load.promise;
+    } finally {
+      if (App._appLoad === load) App._appLoad = null;
+    }
 
     // The user can navigate away (back to home, into a different app,
     // to the leaderboard) while `AppView.open(slug)` is still resolving
@@ -4677,7 +4826,7 @@ const App = {
     // user has since moved to. `App.currentApp` is updated synchronously
     // at the top of every navigate* method, so it's the canonical
     // "what's actually on screen right now" signal.
-    if (App.currentApp !== slug) return;
+    if (App.currentApp !== slug) return false;
 
     // After app data is loaded, swap header to the display name — unless a
     // Dev view owns the title by now (Streamlined Concept: Activity / Board
@@ -4708,7 +4857,11 @@ const App = {
     const finalTab = tab || defaultTab;
     const actualFinalTab = finalTab === 'app' && AppView.appData?.self_hosted
       ? 'dev' : finalTab;
-    App.switchTab(finalTab, ref, subTab, {
+    // A notification may have requested a different item in this same app
+    // while metadata was loading. Finish the shared setup above, but leave
+    // that newer caller in charge of the destination.
+    if (generation !== App._appNavigationGeneration) return false;
+    return App.switchTab(finalTab, ref, subTab, {
       // A provisional App path becoming the self-hosted Board is one logical
       // navigation. Replace it so Back returns to the launch origin in one go.
       replaceRoute: App._normalizeTab(actualFinalTab, ref, subTab).tab
@@ -4749,15 +4902,6 @@ const App = {
     PlatformUI.transition(() => {
       AppView.close();
       App._showOnlyScreen('home-screen', ['app-view']);
-      // HOME IS THE ONE SCREEN WITH NO BUTTON. _showOnlyScreen publishes the
-      // 'home' default a line above — right for every other screen and wrong
-      // for this one — so this is the single 'none' caller in the shell.
-      //
-      // It was a raw `classList.add('hidden')` on #back-btn until now, which
-      // is a write into React-owned DOM: it held only until the header island
-      // next rendered from its own props, and it could not express the new
-      // three-state slot at all.
-      App.setBackIcon('none');
       // …and the GitHub / Share rows retire with the panel's target, rather
       // than being hidden one by one as drawer rows were. This clears the
       // app's target; the line below immediately republishes home's own.
@@ -4818,10 +4962,9 @@ const App = {
     const arrow = mode === 'arrow';
     // THREE modes now (features/header/back-button-store.js): 'arrow' is a
     // level up, 'home' is the house, and 'none' hides the slot outright.
-    // 'none' has exactly one caller — navigateHome — because Home is the one
-    // screen with nowhere to go. Everything else keeps the default it always
-    // passed, and the default now DRAWS something, which is the whole change:
-    // a screen gets a way out by existing rather than by remembering to ask.
+    // Home and the top-level Browse list use 'none' for their shared root
+    // header (#1569). Other screens keep the default Home button, or an arrow
+    // when they have a level above them.
     const slot = arrow ? 'arrow' : (mode === 'none' ? 'none' : 'home');
     const target = href || (window.NavLink ? NavLink.homeHref() : '/');
     // The slot is React's (features/header/platform-header.tsx), so its
@@ -5070,12 +5213,21 @@ const App = {
       : (opts && opts.ref != null ? opts.ref : null);
     const subTab = (opts && opts.subTab) || null;
     if (App.currentApp !== slug) {
-      App.navigateToApp(slug, tab, ref, subTab);
+      return App.navigateToApp(slug, tab, ref, subTab);
     } else {
       // Same app: switchTab normalizes legacy names, re-renders, and
       // syncs the clean route — idempotent when nothing changed, a forced
       // refresh when the target equals the current view.
-      App.switchTab(tab, ref, subTab);
+      const generation = ++App._appNavigationGeneration;
+      const load = App._appLoad;
+      if (load && load.slug === slug) {
+        return load.promise.then(() => {
+          if (App.currentApp !== slug ||
+              generation !== App._appNavigationGeneration) return false;
+          return App.switchTab(tab, ref, subTab);
+        });
+      }
+      return App.switchTab(tab, ref, subTab);
     }
   },
 };

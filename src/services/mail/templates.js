@@ -89,6 +89,30 @@ const HTML_SHELL = (body) =>
 const p = (s) => `<p>${s}</p>`;
 const link = (url) => `<a href="${esc(url)}">${esc(url)}</a>`;
 
+/**
+ * The mail's ONE action, as a button (#1540).
+ *
+ * The confirm step used to be a sentence followed by the raw URL printed as
+ * its own link text — sixty-odd characters of `https://…/api/public/waitlist/
+ * confirm/<48 hex>` wrapping across two lines. That is not a call to action,
+ * it is a machine address a person is being asked to aim at, and next to a
+ * large six-digit code it read as the lesser of two chores rather than the
+ * one-tap path it actually is.
+ *
+ * Inline styles and a real `<a>`: `<button>` does nothing in a mail client,
+ * `<style>` blocks are stripped by Gmail's clipper and Outlook, and a
+ * `mso-` conditional table would be scaffolding for a single control. Padding
+ * on the anchor is what every client renders consistently.
+ *
+ * The URL still appears in the TEXT part, which is where a reader who cannot
+ * see HTML needs it.
+ */
+const BUTTON_STYLE =
+  'display:inline-block;padding:11px 20px;border-radius:8px;background:#1f86ff;'
+  + 'color:#ffffff;font-size:15px;font-weight:600;text-decoration:none';
+const button = (url, label) =>
+  `<p><a href="${esc(url)}" style="${BUTTON_STYLE}">${esc(label)}</a></p>`;
+
 // A one-time code, set big enough to read at arm's length and to copy by
 // eye off a phone. Three mails carry one and all three render it this way;
 // #1516 asked for the join mail to stop being the odd one out.
@@ -167,10 +191,8 @@ function waitlistJoined(payload) {
       + 'rolling basis after that.');
 
   if (confirmUrl) {
-    text += '\n\nOr confirm this email address in one click:\n'
-      + confirmUrl;
-    html += p('Or confirm this email address in one click:')
-      + p(link(confirmUrl));
+    text += '\n\nOr confirm in one tap:\n' + confirmUrl;
+    html += button(confirmUrl, 'Confirm my email');
   }
   if (surveyUrl) {
     text += '\n\nWant to increase your chances of getting into an earlier group? '
@@ -190,13 +212,20 @@ function waitlistJoined(payload) {
 // a code, is capped at one per address per day, and re-sending it would
 // tell somebody they had "joined" a list they joined weeks ago.
 //
-// Two shapes, and the branch is the ONLY place the platform ever discloses
-// whether an address is already confirmed. The endpoint answers the same
-// words to everyone; the inbox belongs to the address itself, so it is the
-// one channel where saying "you are already confirmed" leaks nothing.
+// Three shapes, and the branch is the ONLY place the platform ever
+// discloses whether an address is already confirmed. The endpoint answers
+// the same words to everyone; the inbox belongs to the address itself, so
+// it is the one channel where saying "you are already confirmed" leaks
+// nothing.
+//
+// `payload.confirmed` picks between the two code shapes. A confirmed
+// address asking for a code is check-my-status (#1538), so the mail is a
+// status code and its one button carries NO capability token — a code you
+// type is the thing that survives a mail scanner rewriting links (#1545),
+// and moving away from mailed magic links is the direction #1531 wants.
 function waitlistCode(payload) {
-  // Already confirmed: no code is minted, so there is nothing to type. The
-  // useful answer is where to look at where they stand.
+  // Minting failed for an already-confirmed address: there is no code to
+  // type, so the useful answer is where to look at where they stand.
   if (!payload.code) {
     const statusUrl = payload.statusUrl || null;
     let text = 'You asked for a new confirmation code for the Usernode waitlist.\n\n'
@@ -212,6 +241,24 @@ function waitlistCode(payload) {
     return { subject: 'Your Usernode waitlist address is already confirmed', text, html };
   }
 
+  // The status-code shape: same six digits, different errand.
+  if (payload.confirmed) {
+    const statusUrl = payload.statusUrl || null;
+    let text = `Your Usernode waitlist status code is ${payload.code}. `
+      + 'It works for 15 minutes.\n\n'
+      + 'Any earlier code has stopped working, so use this one.';
+    let html = p('Your Usernode waitlist status code is:')
+      + codeBlock(payload.code)
+      + p('It works for 15 minutes. Any earlier code has stopped working, so use this one.');
+    if (statusUrl) {
+      text += '\n\nEnter it here:\n' + statusUrl;
+      html += button(statusUrl, 'Check my status');
+    }
+    text += '\n\nIf you did not ask for this, you can ignore this email.';
+    html += p('If you did not ask for this, you can ignore this email.');
+    return { subject: 'Your Usernode waitlist status code', text, html };
+  }
+
   const confirmUrl = payload.confirmUrl || null;
   let text = `Your Usernode waitlist confirmation code is ${payload.code}. `
     + 'It works for 15 minutes.\n\n'
@@ -220,8 +267,8 @@ function waitlistCode(payload) {
     + codeBlock(payload.code)
     + p('It works for 15 minutes. Any earlier code has stopped working, so use this one.');
   if (confirmUrl) {
-    text += '\n\nOr confirm this email address in one click:\n' + confirmUrl;
-    html += p('Or confirm this email address in one click:') + p(link(confirmUrl));
+    text += '\n\nOr confirm in one tap:\n' + confirmUrl;
+    html += button(confirmUrl, 'Confirm my email');
   }
   text += '\n\nIf you did not ask for this, you can ignore this email.';
   html += p('If you did not ask for this, you can ignore this email.');
@@ -229,13 +276,21 @@ function waitlistCode(payload) {
   return { subject: 'Your Usernode waitlist confirmation code', text, html };
 }
 
+// Waitlist release. The no-account link carries the released address, and
+// opening it asks for a sign-in code straight away, so say so: the recipient
+// should be expecting a second email rather than hunting for a button. The
+// 10-minute figure must match OTP_TTL_MS in src/services/email-signup.js.
+const RELEASE_CODE_NOTE = 'Opening the link emails you a 6-digit code to sign in with. '
+  + 'The code expires in 10 minutes, and you can ask for a new one at any time.';
+
 function waitlistReleased(payload) {
   const url = payload.url;
   const text = payload.hasAccount
     ? "Good news, you're off the Usernode waitlist and your account now has platform access.\n\n"
       + `Sign in to get started: ${url}`
     : "Good news, you're off the Usernode waitlist.\n\n"
-      + `Create your account with this email address to get started: ${url}`;
+      + `Create your account with this email address to get started: ${url}\n\n`
+      + RELEASE_CODE_NOTE;
   return {
     subject: 'Your Usernode access is ready',
     text,
@@ -244,8 +299,15 @@ function waitlistReleased(payload) {
         ? "Good news, you're off the Usernode waitlist and your account now has platform access."
         : "Good news, you're off the Usernode waitlist.")
       + p(payload.hasAccount
-        ? `Sign in to get started: ${link(url)}`
-        : `Create your account with this email address to get started: ${link(url)}`)
+        ? 'Sign in to get started.'
+        : 'Create your account with this email address to get started.')
+      // #1540: this mail is one link with a sentence around it, so the link
+      // is the button rather than a URL printed mid-paragraph.
+      + button(url, payload.hasAccount ? 'Sign in' : 'Create my account')
+      // #1548: the no-account link now sends a code the moment it is opened,
+      // so say so here. Somebody who is not told to expect a SECOND email
+      // goes hunting for a button that is not there.
+      + (payload.hasAccount ? '' : p(RELEASE_CODE_NOTE))
     ),
   };
 }
@@ -320,6 +382,13 @@ function adminTest(payload) {
  */
 const TEMPLATES = {
   otp,
+  account_email: ({ code }) => ({
+    subject: 'Verify your account email',
+    text: `Your account email verification code is ${code}.\n\nEnter it in Settings → Email & recovery to link this address to your account. It expires in 10 minutes. Never share this code. If you did not request this, ignore this email.`,
+    html: p('Enter this code in Settings → Email & recovery to link this address to your account:')
+      + codeBlock(code)
+      + p('It expires in 10 minutes. Never share this code. If you did not request this, ignore this email.'),
+  }),
   waitlist_joined: waitlistJoined,
   waitlist_code: waitlistCode,
   waitlist_released: waitlistReleased,

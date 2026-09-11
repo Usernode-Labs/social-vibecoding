@@ -40,6 +40,9 @@
 //      `activity_kind` here, carrying the challenge's `kind` value.
 'use strict';
 
+const { nativeWebSessionIsLive } = require('../../services/web-session-auth');
+
+
 const { loadOnboarding, visibleChallenges, challengeCategory } =
   require('../../services/topochain/challenge-onboarding');
 
@@ -1883,6 +1886,7 @@ function topochainMobileRoutes(config) {
         const { rows: sessionRows } = await client.query(
           `SELECT user_id FROM sessions
             WHERE token = $1 AND user_id = $2 AND expires_at > NOW()
+              AND ${nativeWebSessionIsLive('sessions')}
             FOR SHARE`,
           [sessionToken, req.user.id]
         );

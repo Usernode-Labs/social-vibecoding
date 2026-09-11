@@ -44,6 +44,20 @@ function stagingDemoThemes() {
   ];
 }
 
+// Staging-only demo cards (?demo=1), for the same reason as the themes
+// above: the three lines are written by the model on a reconcile, and a
+// staging preview has neither a model nor a drafted row, so the Workshop's
+// cards would simply not be drawn and the declared check for them would gate
+// on whether staging happened to have a key. Substituted only when the row
+// has none — a real card set always wins. A no-op in production.
+function stagingDemoCards() {
+  return {
+    lastWeek: 'Staging demo: one line on what landed in the completed week just gone.',
+    thisWeek: 'Staging demo: one line on what has landed so far this week.',
+    open: 'Staging demo: one line on what the open issues and waiting proposals are about.',
+  };
+}
+
 function workshopThemesRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -55,7 +69,17 @@ function workshopThemesRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
       const result = await workshopThemes.getThemes({ pool, app });
       const themes = result.themes.slice();
-      if (IS_STAGING && req.query.demo === '1') themes.push(...stagingDemoThemes());
+      const demo = IS_STAGING && req.query.demo === '1';
+      if (demo) themes.push(...stagingDemoThemes());
+      // Demo mode wins OUTRIGHT, exactly as the themes line above does.
+      // `result.digestCards || demo` read as the careful version and was the
+      // wrong way round: app_workshop_themes is not `staging:private`, so a
+      // staging database is a COPY of production's rows — and the moment
+      // production had a real digest, the clone had one too, the demo cards
+      // stopped being substituted, and the declared check that asserts their
+      // text failed. A preview is a demo or it is not; it cannot depend on
+      // what production happens to be holding that day.
+      const digestCards = demo ? stagingDemoCards() : (result.digestCards || null);
       res.json({
         themes,
         source: result.source,
@@ -74,6 +98,19 @@ function workshopThemesRoutes(config) {
         // placer (`unplaced`, also named by key), and not yet placed.
         coverage: result.coverage || null,
         unplaced: Array.isArray(result.unplaced) ? result.unplaced : [],
+        // The three windowed lines the lander draws as cards — what landed
+        // last week, what has landed this week, what the open work is about
+        // — written by the model on the same reconcile that drafted the
+        // themes. A field is an empty string when that window was genuinely
+        // empty, and its card is then not drawn.
+        digestCards,
+        // The same answer flattened to prose. A row last written under the
+        // previous digest prompt has only this, so serving both is what lets
+        // such a row keep saying something until its next pass re-asks for
+        // the fields. Null on all three counts — no model, no draft yet, a
+        // failed call — and the client derives a sentence from the counts.
+        digest: result.digest || null,
+        digestError: result.digestError || null,
       });
     } catch (err) {
       log.error('workshop-themes', 'GET failed', { message: err.message });
@@ -84,4 +121,4 @@ function workshopThemesRoutes(config) {
   return router;
 }
 
-module.exports = { workshopThemesRoutes, stagingDemoThemes };
+module.exports = { workshopThemesRoutes, stagingDemoThemes, stagingDemoCards };

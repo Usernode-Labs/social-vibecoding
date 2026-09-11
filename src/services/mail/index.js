@@ -396,19 +396,33 @@ async function sendWaitlistJoinMail(config, email, { moreToken = null, code = nu
 // mail's one-per-day rule cannot swallow it and so the words are the ones
 // somebody chasing a code needs rather than a second welcome.
 //
-// `code: null` is the already-confirmed shape. The caller passes it when
-// the address has a confirmed_at, and the template answers "nothing left
-// to do" with a link to where they stand. The mail is the ONLY channel
-// that discloses that: the HTTP response is identical either way.
-async function sendWaitlistCodeMail(config, email, { code = null, moreToken = null } = {}) {
+// `confirmed: true` is the check-my-status shape (#1538): the address
+// already has a confirmed_at, so the code proves the mailbox rather than
+// confirming it, and the mail's one button goes to the code-entry screen
+// carrying NO token. `code: null` is the degradation for that same
+// address when minting failed — the template's "nothing left to do"
+// shape, which is still true. The mail is the ONLY channel that discloses
+// confirmation state: the HTTP response is identical either way.
+//
+// The status URL is a QUERY, not a fragment. Link rewriters drop
+// fragments (#1545), and AuthScreens.enter() turns `?status=1` back into
+// the code-entry route on arrival.
+async function sendWaitlistCodeMail(
+  config,
+  email,
+  { code = null, moreToken = null, confirmed = false } = {}
+) {
   await send(config, {
     kind: 'waitlist_code',
     to: email,
     code,
-    confirmUrl: code && moreToken
+    confirmed,
+    confirmUrl: code && moreToken && !confirmed
       ? `${PRODUCTION_ORIGIN}/api/public/waitlist/confirm/${moreToken}`
       : null,
-    statusUrl: !code && moreToken ? `${PRODUCTION_ORIGIN}/#more/${moreToken}` : null,
+    statusUrl: confirmed
+      ? `${PRODUCTION_ORIGIN}/?status=1`
+      : (!code && moreToken ? `${PRODUCTION_ORIGIN}/#more/${moreToken}` : null),
   });
 }
 
@@ -442,11 +456,34 @@ async function sendPasswordResetMail(config, email, token) {
  * link pointed. The fragment spelling still works for anything that already
  * has one.
  */
-async function sendWaitlistReleaseMail(config, email, { hasAccount = false } = {}) {
+async function sendWaitlistReleaseMail(config, email, { hasAccount = false, moreToken = null } = {}) {
   await send(config, {
     kind: 'waitlist_released',
     to: email,
-    url: `${PRODUCTION_ORIGIN}/?${hasAccount ? 'login' : 'signup'}=1`,
+    // #1548: carry a TOKEN so the signup screen can prefill the address and
+    // send the code without a second step.
+    //
+    // Not the address itself, and not a fragment, which were the two obvious
+    // options and are both wrong here:
+    //
+    //   A FRAGMENT is client-side only, so a link rewriter reconstructing the
+    //   URL drops it. That is exactly the bug #1545 fixed on this same mail:
+    //   it landed on the home page from a desktop client and worked from a
+    //   phone. A prefill carried in `#signup/<address>` would silently vanish
+    //   for the very people that fix was for.
+    //
+    //   THE ADDRESS IN A QUERY survives rewriters but puts an email in a URL,
+    //   which means server logs and referrers. For a waitlist, membership is
+    //   the fact people would least want landing there.
+    //
+    // `more_token` is already an unguessable capability delivered to this
+    // address, and GET /api/public/waitlist/more/:token already resolves it
+    // (rate-limited, scan-limited) and already returns the email. So this
+    // needs no new endpoint and no new secret: the query survives the
+    // rewriter, and what travels is a token the recipient already holds.
+    url: hasAccount
+      ? `${PRODUCTION_ORIGIN}/?login=1`
+      : `${PRODUCTION_ORIGIN}/?signup=1${moreToken ? `&t=${encodeURIComponent(moreToken)}` : ''}`,
     hasAccount,
   });
 }

@@ -332,14 +332,15 @@ function testsDeadlineMs(env) {
   // platform-side TESTS_DEADLINE_MS; then 470000 → 520000 with the 480 → 530
   // ceiling bump; then 520000 → 560000 with 530 → 560, when the manifest
   // reached 512 and left 18 of the 20 required slots; then 560000 → 570000
-  // with 560 → 580, a proposal in flight at the same time. The two defaults
-  // are asserted equal by
+  // with 560 → 580, a proposal in flight at the same time; then 570000 →
+  // 590000 with 580 → 600 (#1824); then 590000 → 620000 with 600 → 630
+  // (#1876). The two defaults are asserted equal by
   // tests/checks-budget.test.js precisely so a container running without the
   // env var cannot silently apply a shorter budget than the platform planned
   // — which would cut a full manifest's tail while the platform reported the
   // suite as merely unfinished.
   const raw = parseInt((env || {}).TESTS_DEADLINE_MS, 10);
-  return (Number.isFinite(raw) && raw > 0) ? raw : 570000;
+  return (Number.isFinite(raw) && raw > 0) ? raw : 620000;
 }
 
 // Whether this run also produces the before/after media artifacts. The
@@ -1251,6 +1252,37 @@ async function runTestGroup(browser, group, opts) {
     const activity = makeActivityClock();
     // Request lifecycle only — the clock that rolls the assert window.
     const netActivity = makeActivityClock();
+    // Initial navigation and a cold-cohort fallback must judge hydration
+    // with the same window. Network quiet alone does not mean timers/rAF
+    // have finished rendering the expected UI.
+    const pollPresence = async (cohortTests) => {
+      const presence = new Map();
+      const floorAt = Date.now() + assertMax;
+      let assertDeadlineAt = floorAt;
+      let seenNetAt = netActivity.lastAt;
+      let pending = cohortTests;
+      for (;;) {
+        const still = [];
+        for (const t of pending) {
+          const reason = await assertPresence(page, t);
+          presence.set(t, reason);
+          if (reason) still.push(t);
+        }
+        pending = still;
+        if (!pending.length) break;
+        if (netActivity.lastAt > seenNetAt) {
+          seenNetAt = netActivity.lastAt;
+          assertDeadlineAt = Math.max(
+            floorAt,
+            Math.min(Date.now() + assertMax, groupCeilingAt)
+          );
+        }
+        const leftMs = assertDeadlineAt - Date.now();
+        if (leftMs <= 0) break;
+        await sleep(Math.min(assertPoll, leftMs));
+      }
+      return presence;
+    };
     const on = (event, handler) => {
       try { page.on(event, handler); } catch { /* fake pages may not emit it */ }
     };
@@ -1338,35 +1370,7 @@ async function runTestGroup(browser, group, opts) {
       // still failing keeps waiting, and never past its one shared ceiling.
       // Evaluated BEFORE the console errors are frozen so the cold-load
       // fallback below can re-run them on a reloaded document.
-      const presence = new Map();
-      if (!loadFailure) {
-        // The fixed window is the FLOOR; network traffic rolls it forward,
-        // never past the group's ceiling. See ASSERT_REPORT_RESERVE_MS.
-        const floorAt = Date.now() + assertMax;
-        let assertDeadlineAt = floorAt;
-        let seenNetAt = netActivity.lastAt;
-        let pending = cohort.tests;
-        for (;;) {
-          const still = [];
-          for (const t of pending) {
-            const reason = await assertPresence(page, t);
-            presence.set(t, reason);
-            if (reason) still.push(t);
-          }
-          pending = still;
-          if (!pending.length) break;
-          if (netActivity.lastAt > seenNetAt) {
-            seenNetAt = netActivity.lastAt;
-            assertDeadlineAt = Math.max(
-              floorAt,
-              Math.min(Date.now() + assertMax, groupCeilingAt)
-            );
-          }
-          const leftMs = assertDeadlineAt - Date.now();
-          if (leftMs <= 0) break;
-          await sleep(Math.min(assertPoll, leftMs));
-        }
-      }
+      let presence = loadFailure ? new Map() : await pollPresence(cohort.tests);
 
       // ── A hash switch is not always equivalent to a cold load (#1146) ──
       //
@@ -1410,7 +1414,7 @@ async function runTestGroup(browser, group, opts) {
             pushErr('load', `page returned HTTP ${reloadStatus}`, cohort.tests[0].url);
             for (const t of cohort.tests) presence.set(t, `Page returned HTTP ${reloadStatus}`);
           } else {
-            for (const t of cohort.tests) presence.set(t, await assertPresence(page, t));
+            presence = await pollPresence(cohort.tests);
           }
         } catch (err) {
           // The hash-switch verdict stands. A fallback that cannot navigate
@@ -1545,7 +1549,7 @@ async function runTests(browser, tests, opts) {
   // reaches this — so the cost is paid only by pages that are genuinely stuck,
   // and a stuck navigation is itself bounded by NAV_TIMEOUT_MS.
   const navBudgetMs = Number(o.navBudgetMs) > 0 ? Number(o.navBudgetMs) : perTestMs;
-  const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 570000;
+  const budgetMs = Number(o.deadlineMs) > 0 ? Number(o.deadlineMs) : 620000;
   const now = typeof o.now === 'function' ? o.now : () => Date.now();
 
   if (!list.length) {

@@ -15,6 +15,7 @@ const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8',
 );
+const { SW_VERSION } = require('../public/sw.js');
 
 function makeHarness() {
   const requests = [];
@@ -91,6 +92,96 @@ test('OpenRouter model labels show exact rates, cost tier, and advisory compatib
     compatibility: 'blocked',
   });
   assert.equal(limited, 'vendor/limited: Price unavailable · $100 /M input · ? /M output · limited');
+});
+
+test('OpenRouter picker labels and ordering surface favorites, recommendations, and new models', () => {
+  const h = makeHarness();
+  const models = [
+    { id: 'vendor/ordinary', name: 'Ordinary', isFavorite: false, isRecommended: false },
+    { id: 'openai/recommended', name: 'Recommended GPT', provider: 'openai', isRecommended: true },
+    { id: 'deepseek/favorite', name: 'Favorite DeepSeek', provider: 'deepseek', isFavorite: true },
+  ];
+  assert.deepEqual(
+    h.DevChat._openRouterModelsForPicker(models).map((model) => model.id),
+    ['deepseek/favorite', 'openai/recommended', 'vendor/ordinary'],
+  );
+  assert.deepEqual(
+    h.DevChat._openRouterModelsForPicker(models, { query: 'deepseek' }).map((model) => model.id),
+    ['deepseek/favorite'],
+  );
+  assert.deepEqual(
+    h.DevChat._openRouterModelsForPicker(models, { favoritesOnly: true }).map((model) => model.id),
+    ['deepseek/favorite'],
+  );
+  const label = h.DevChat._openRouterModelOptionLabel({
+    ...models[1], createdAt: new Date().toISOString(), costTier: 'low', compatibility: 'experimental',
+  });
+  assert.match(label, /Recommended GPT · Recommended · New:/);
+});
+
+test('an OpenRouter task opens on favorites without replacing an uncommon current model', () => {
+  const h = makeHarness();
+  const models = [
+    { id: 'deepseek/default', isFavorite: true },
+    { id: 'openai/default', isFavorite: true },
+    { id: 'vendor/uncommon', isFavorite: false },
+  ];
+  assert.equal(
+    h.DevChat._openRouterFavoritesOnlyByDefault(models, 'deepseek/default'),
+    true,
+    'a recommended/default favorite gets the short task list',
+  );
+  assert.equal(
+    h.DevChat._openRouterFavoritesOnlyByDefault(models, 'vendor/uncommon'),
+    false,
+    'opening the picker preserves a current non-favorite selection',
+  );
+  assert.equal(h.DevChat._openRouterFavoritesOnlyByDefault(models, 'missing'), false);
+  assert.match(SRC, /id="dc-agent-choice-model-search"/);
+  assert.match(SRC, /id="dc-agent-choice-favorites-only"/);
+  assert.match(SRC, /Platform recommendations start in Favorites/);
+});
+
+test('the task-time picker ships through a fresh shell cache', () => {
+  const version = Number(String(SW_VERSION).replace(/^v/, ''));
+  assert.ok(version >= 11, `expected a post-v10 shell cache, got ${SW_VERSION}`);
+});
+
+test('forced catalog refresh and favorite writes bypass browser caches', async () => {
+  const h = makeHarness();
+  h.respondWith(async (url) => {
+    if (url === '/api/me/coding-agent') {
+      return { ok: true, json: async () => ({ defaultBackend: 'codex_openrouter', backends: {}, codexAvailable: true }) };
+    }
+    if (url === '/api/me/credentials/openrouter') {
+      return { ok: true, json: async () => ({ configured: true, status: 'valid' }) };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        models: [{ id: 'deepseek/deepseek-v4.1-flash' }],
+        recommendedModelId: 'deepseek/deepseek-v4.1-flash',
+        refreshedAt: '2026-09-10T12:00:00.000Z',
+        totalModels: 1,
+      }),
+    };
+  });
+
+  const catalog = await h.DevChat._loadCodingAgentChoiceData({ forceRefresh: true });
+  assert.equal(catalog.catalogLoaded, true);
+  assert.equal(catalog.models.length, 1);
+  const catalogRequest = h.requests.find((request) => request.url.includes('/models?'));
+  assert.match(catalogRequest.url, /refresh=1/);
+  assert.equal(catalogRequest.options.cache, 'no-store');
+
+  await h.DevChat._setOpenRouterModelFavorite('deepseek/deepseek-v4.1-flash', true);
+  const favoriteRequest = h.requests.at(-1);
+  assert.equal(favoriteRequest.url, '/api/me/coding-agent/models/favorite');
+  assert.equal(favoriteRequest.options.method, 'PATCH');
+  assert.equal(favoriteRequest.options.cache, 'no-store');
+  assert.deepEqual(JSON.parse(favoriteRequest.options.body), {
+    modelId: 'deepseek/deepseek-v4.1-flash', favorite: true,
+  });
 });
 
 test('new session creation sends the explicit Claude choice', async () => {

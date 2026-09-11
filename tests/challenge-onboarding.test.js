@@ -133,12 +133,16 @@ function makeApp(counts = [0, 0, 0]) {
       return { rows: [{ id: params[0], internal: false }] };
     }
     if (sql.includes('FROM challenges c')) {
-      if (sql.includes('my_activity_count') || sql.includes('COUNT(*)::int AS total')) {
-        const totals = sql.includes('COUNT(*)::int AS total');
+      // The totals statement counts the open scope and the whole catalog in one
+      // pass (#1824), so `AS all_total` is what identifies it now. Nothing here
+      // models completion or scheduling windows, so both counts are the same.
+      if (sql.includes('my_activity_count') || sql.includes('AS all_total')) {
+        const totals = sql.includes('AS all_total');
         const allowed = sql.includes('AND c.id = ANY') ? params[totals ? 2 : 3] : null;
         const selected = rows.filter((r) => !allowed || allowed.includes(r.id));
         if (totals) return { rows: [{
-          total: selected.length, done: selected.filter((r) => done(r.id)).length,
+          total: selected.length, all_total: selected.length,
+          done: selected.filter((r) => done(r.id)).length,
           open_rewards: selected.filter((r) => !done(r.id)).map((r) => r.t_reward),
         }] };
         return { rows: [...selected].sort((a, b) => Number(done(a.id)) - Number(done(b.id)))

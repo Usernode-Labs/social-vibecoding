@@ -1,4 +1,6 @@
 const { Router } = require('express');
+const { rateLimit } = require('express-rate-limit');
+const { queueTestAlert } = require('../services/test-alert');
 const { getPool } = require('../db/pool');
 const notifications = require('../services/notifications');
 const messageBookmarks = require('../services/message-bookmarks');
@@ -156,6 +158,27 @@ function stagingMockNotifications() {
       prTitle: null, branchName: 'dev/mockuser-1700000000002',
       prNumber: null, headlessIssueNumber: null,
     },
+    // #1808: the row that is PAST the relative form's seven-day floor, and
+    // fixed in an earlier year so it stays past it. Every other row here is
+    // minutes or days old, so without this one a preview shows only the "12m
+    // ago" half of the change and never the date the old code could not
+    // reach: these rows had no floor at all and printed "412d ago".
+    //
+    // UNREAD on purpose, which is both where the bug was worst and the only
+    // way a preview can see it: the sheet opens on the Unread tab, so a read
+    // row of this age is one click away from every screenshot and declared
+    // check. An old unread notification is exactly the row that used to read
+    // as a four-hundred-day duration.
+    {
+      ...base,
+      id: 990209, kind: 'session_done',
+      createdAt: '2024-05-21T14:05:00Z',
+      readAt: null,
+      sessionId: 990108,
+      sessionTitle: '[Mock] Something from an earlier year',
+      prTitle: null, branchName: 'dev/mockuser-1700000000003',
+      prNumber: null, headlessIssueNumber: null,
+    },
   ];
 }
 
@@ -205,6 +228,27 @@ function stagingMockSavedMessages() {
 function notificationsRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+
+  const testAlertLimiter = rateLimit({
+    windowMs: 60000,
+    limit: 3,
+    keyGenerator: (req) => String(req.user.id),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Please wait a minute before sending another test alert.' },
+  });
+  router.post('/api/me/test-alert', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    return next();
+  }, testAlertLimiter, async (req, res) => {
+    try {
+      return res.json(await queueTestAlert(pool, req.user.id));
+    } catch (err) {
+      log.error('test-alert', 'queue failed', { message: err.message });
+      return res.status(500).json({ error: 'Could not queue the test push. Please try again.' });
+    }
+  });
 
   // Account-level mobile-push policy. This is intentionally a browser-
   // session surface rather than a phone-registration surface: any signed-in

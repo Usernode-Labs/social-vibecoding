@@ -157,7 +157,7 @@ export interface LedgerBuildPhase {
   state: 'done' | 'now' | 'todo';
 }
 
-/** One step of the preview build: fetch, image, database, start. */
+/** One step of the preview build: fetch, image, database, start, prepare checks. */
 export interface LedgerBuildStep {
   key: string;
   label: string;

@@ -30,12 +30,12 @@
  * itself, Profile, Settings, Admin and Messages all had no way off them in
  * the bar at all.
  *
- * "Every page should have a back or a home button, except Home." So the
- * modes are now genuinely three:
+ * Secondary screens keep a back or home button; Home and the Browse list
+ * share a root header (#1569). The modes are genuinely three:
  *
- *   'none'   the anchor is hidden. Home only — you are already there.
+ *   'none'   the anchor is hidden. Home and the top-level Browse list.
  *   'home'   the house, linking to home. The DEFAULT, which is what makes
- *            this safe: `_showOnlyScreen` publishes it on every screen swap,
+ *            this safe: `_showOnlyScreen` publishes it on other screen swaps,
  *            so a screen gets a way out by existing rather than by
  *            remembering to ask for one.
  *   'arrow'  the chevron, linking one level UP to `href`.
@@ -43,7 +43,7 @@
  * Redefining 'home' rather than adding a fourth name is deliberate: ~40 call
  * sites already spell the default that way, and every one of them meant "no
  * level above this" — which is exactly the screen that should offer home.
- * The ones that must NOT (only Home itself) are the ones that changed.
+ * Home and Browse reach each other through the shared navigation menu.
  *
  * ── The initial value is the prerender ─────────────────────────────────
  *

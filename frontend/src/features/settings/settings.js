@@ -142,6 +142,11 @@
     _connectorLoadId: 0,
     _githubLink: null,
     _openRouterModels: [],
+    _openRouterSelectedModelId: '',
+    _openRouterRecommendedModelId: '',
+    _openRouterCatalogRefreshedAt: null,
+    _openRouterCatalogTotal: 0,
+    _openRouterFavoritesOnly: false,
     _mobilePushPreferences: null,
     _mobilePushLoading: false,
     _mobilePushSaving: false,
@@ -224,6 +229,7 @@
       // section to configure.
 
       { key: 'username', label: 'Username', group: 'Account' },
+      { key: 'email', label: 'Email & recovery', group: 'Account' },
       { key: 'password', label: 'Password', group: 'Account' },
       { key: 'wallet', label: 'Usernode Wallet', group: 'Account', gate: 'wallet-section' },
 
@@ -296,19 +302,29 @@
       // off server-side (the section markup stays, the controls no-op).
       const orSave = document.getElementById('settings-openrouter-save');
       const orClaim = document.getElementById('settings-openrouter-claim');
-      const orCopy = document.getElementById('settings-openrouter-copy');
-      const orDismissReveal = document.getElementById('settings-openrouter-dismiss-reveal');
       const orRemove = document.getElementById('settings-openrouter-remove');
       const orSetDefault = document.getElementById('settings-openrouter-set-default');
       const orModel = document.getElementById('settings-openrouter-model');
+      const orModelSearch = document.getElementById('settings-openrouter-model-search');
+      const orFavoritesOnly = document.getElementById('settings-openrouter-favorites-only');
+      const orRefreshModels = document.getElementById('settings-openrouter-refresh-models');
+      const orStarModel = document.getElementById('settings-openrouter-star-model');
       const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
       if (orClaim) orClaim.addEventListener('click', () => this._claimManagedOpenRouterKey());
-      if (orCopy) orCopy.addEventListener('click', () => this._copyManagedOpenRouterKey());
-      if (orDismissReveal) orDismissReveal.addEventListener('click', () => this._dismissManagedOpenRouterReveal());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
       if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
-      if (orModel) orModel.addEventListener('change', () => this._syncOpenRouterModelDetails());
+      if (orModel) orModel.addEventListener('change', () => {
+        this._openRouterSelectedModelId = orModel.value;
+        this._syncOpenRouterModelDetails();
+      });
+      if (orModelSearch) orModelSearch.addEventListener('input', () => this._renderOpenRouterModelOptions());
+      if (orFavoritesOnly) orFavoritesOnly.addEventListener('click', () => {
+        this._openRouterFavoritesOnly = !this._openRouterFavoritesOnly;
+        this._renderOpenRouterModelOptions();
+      });
+      if (orRefreshModels) orRefreshModels.addEventListener('click', () => this._refreshOpenRouterModelsNow());
+      if (orStarModel) orStarModel.addEventListener('click', () => this._toggleSelectedOpenRouterFavorite());
       if (claudeSetDefault) claudeSetDefault.addEventListener('click', () => this._saveClaudeDefault());
 
       const linkBtn = document.getElementById('wallet-link-btn');
@@ -465,36 +481,48 @@
         });
       }
 
-      // #138 "Send a test alert" — exercises the user's own setup. Fires a
-      // demo completion after a short delay so they can stay (hear the
-      // chime) or switch away (see the background notification).
+      // The server owns delayed push delivery; this countdown only explains
+      // when the optional live-page chime will run.
       const alertsTest = document.getElementById('devchat-alerts-test');
       if (alertsTest) {
-        alertsTest.addEventListener('click', () => {
-          if (!window.DevAlerts) return;
+        alertsTest.addEventListener('click', async () => {
+          if (!window.DevAlerts || alertsTest.disabled) return;
           const status = document.getElementById('devchat-alerts-test-status');
-          const ms = DevAlerts.testAlert();
-          if (!status) return;
-          // Visible countdown that ticks down each second (the previous
-          // version set the text once and it looked frozen). Guard against
-          // rapid re-clicks by clearing any in-flight countdown first; the
-          // same id is cleared on close().
           this._clearAlertsTestCountdown();
-          status.classList.remove('hidden');
-          let remaining = Math.ceil(ms / 1000);
-          const render = () => {
-            status.textContent = `Alert in ${remaining}s. Stay here for the chime, or switch away / background the app for a notification.`;
-          };
-          render();
-          this._alertsTestTimer = setInterval(() => {
-            remaining -= 1;
-            if (remaining > 0) {
-              render();
-              return;
-            }
-            this._clearAlertsTestCountdown();
-            status.textContent = 'Sent. You should hear a chime now (or get a notification if you switched away).';
-          }, 1000);
+          alertsTest.disabled = true;
+          if (status) {
+            status.classList.remove('hidden');
+            status.textContent = 'Queueing test alert…';
+          }
+          try {
+            const result = await DevAlerts.testAlert();
+            if (!status) return;
+            const pushStatus = result.queued
+              ? 'Phone push queued. Background or close the mobile app to check for a notification.'
+              : result.reason === 'preference_disabled'
+                ? 'Phone push was not queued. Enable Developer sessions under Mobile push categories and try again.'
+                : 'Phone push was not queued. Sign in on your phone and enable Activity notifications and notification permission. Push delivery must also be available on the server.';
+            let remaining = Math.ceil(result.delayMs / 1000);
+            const render = () => {
+              status.textContent = `Alert in ${remaining}s. ${pushStatus} Stay here for the chime if sound is enabled.`;
+            };
+            render();
+            this._alertsTestTimer = setInterval(() => {
+              remaining -= 1;
+              if (remaining > 0) {
+                render();
+                return;
+              }
+              this._clearAlertsTestCountdown();
+              status.textContent = result.queued
+                ? 'The test push is queued for delivery. Check your phone; delivery may take a few more seconds.'
+                : pushStatus;
+            }, 1000);
+          } catch (err) {
+            if (status) status.textContent = err.message || 'Could not queue the test push. Please try again.';
+          } finally {
+            alertsTest.disabled = false;
+          }
         });
       }
 
@@ -1254,13 +1282,15 @@
     },
 
     _scrollTop() {
-      const el = document.getElementById('settings-screen');
+      const screen = document.getElementById('settings-screen');
+      const el = window.PlatformUI?.scrollElement?.(screen) || screen;
       return el ? el.scrollTop : 0;
     },
 
     // A pushed screen starts at the top; a pop restores where the menu was.
     _restoreScroll() {
-      const el = document.getElementById('settings-screen');
+      const screen = document.getElementById('settings-screen');
+      const el = window.PlatformUI?.scrollElement?.(screen) || screen;
       if (!el) return;
       el.scrollTop = (Settings._isMobile() && Settings._level === 1)
         ? Settings._menuScrollTop
@@ -1395,14 +1425,22 @@
     // lease to release at all.
     _localAgentView(agent) {
       const app = agent.appName || agent.appSlug || 'an app';
-      const seen = Number.isFinite(Date.parse(agent.lastSeenAt))
-        ? new Date(agent.lastSeenAt).toLocaleTimeString() : 'unknown';
       return {
         leaseId: agent.leaseId || null,
         label: agent.label || null,
         title: agent.label || 'Unnamed machine',
         where: agent.sessionTitle ? `${app} · ${agent.sessionTitle}` : String(app),
-        detail: `${agent.runtime || 'claude-code'} · last seen ${seen}`,
+        runtime: agent.runtime || 'claude-code',
+        // #1808: the raw instant, NOT a formatted time. This was
+        // `toLocaleTimeString()`, so a machine last seen in March read
+        // "last seen 10:00" — the same words as one seen this morning, on a
+        // row whose entire job is to say whether the machine is still there.
+        // ./local-agents-list.tsx stamps it with the shared helper, which
+        // this module cannot import: four test harnesses run its real source
+        // through `vm.runInContext` as a classic script, where a top-level
+        // `import` is a syntax error. Formatting in the renderer is the
+        // arrangement that needs no second copy of the helper.
+        lastSeenAt: Number.isFinite(Date.parse(agent.lastSeenAt)) ? agent.lastSeenAt : null,
         // Demo rows (staging ?demo=1) are fabricated per request and own no
         // lease, so there is nothing for a button to release.
         detachable: !agent.demo && !!agent.leaseId,
@@ -1436,15 +1474,8 @@
       }
     },
 
-    // `_renderHomePanelsSection()`, `_toggleHomePanel()` and
-    // `_saveHomePanelVisibility()` lived here: #911's one-checkbox-per-widget
-    // list, built from GET /api/home-panels's `registry` + `hidden`, and the
-    // POST that wrote a toggle back. THE UI OVERHAUL made Discover,
-    // Challenges and Create app FIXED sections of the home screen rather than
-    // draggable, hideable widgets, so there is nothing left to show or hide
-    // from a settings page. The visibility endpoint is untouched and the ⋮
-    // menu on a block still writes it (HomePanels.setHidden) — what went is
-    // the second, list-shaped way in.
+    // Home sections are permanent (#1801); the old widget visibility
+    // settings, menu and endpoint are retired together.
 
     _renderLanguageSection() {
       const select = document.getElementById('settings-locale');
@@ -1647,11 +1678,19 @@
       // and the fallback for an empty or unusable field.
       const canonical = blocks[0].textContent;
       let suffixes = [];
+      let covered = new Set();
       try {
         const allow = JSON.parse(canonical)?.permissions?.allow || [];
         suffixes = [...new Set(allow.map((rule) => rule.slice(rule.indexOf('__', 5) + 2)))];
+        // The spellings the shipped block ALREADY covers, read out of the
+        // block itself for the same reason the suffixes are: a second copy
+        // of the list here would be the thing that drifts. Typing any of
+        // them means there is nothing to rewrite — including the spellings
+        // that predate the rename, which a long-connected user is still on.
+        covered = new Set(allow.map((rule) => rule.split('__')[1].toLowerCase()));
       } catch {
         suffixes = [];
+        covered = new Set();
       }
 
       const render = () => {
@@ -1660,7 +1699,7 @@
         // rule for a different tool — those characters are dropped, not
         // escaped, and the result is shown so the user can see what happened.
         const name = String(field.value || '').trim().replace(/[^A-Za-z0-9.-]/g, '');
-        const custom = name && name.toLowerCase() !== 'usernode' && suffixes.length;
+        const custom = name && !covered.has(name.toLowerCase()) && suffixes.length;
         const text = custom
           ? JSON.stringify(
             { permissions: { allow: suffixes.map((s) => `mcp__${name}__${s}`) } }, null, 2
@@ -1679,7 +1718,36 @@
       // The connector URL is derived from the origin the SPA is served
       // from, so a self-hosted fork shows its own.
       const urlField = document.getElementById('connector-url');
-      if (urlField) urlField.value = `${window.location.origin}/mcp`;
+      const connectorUrl = `${window.location.origin}/mcp`;
+      if (urlField) urlField.value = connectorUrl;
+
+      // #1607: the "set it up in <product>" links open a new chat pre-loaded
+      // with the job. Built HERE, from the same derived origin the field
+      // shows, so a fork or a config change cannot leave a hardcoded URL
+      // behind — the rule the written steps already follow by pointing back
+      // at #connector-url rather than naming a host.
+      //
+      // The prompt carries the two things people get wrong: that Usernode
+      // uses dynamic client registration (so there is no client ID or secret
+      // to go looking for), and the exact name `usernode`, which is what
+      // Claude Code builds its permission rules from (#1218) and which one
+      // account once mistyped, silently missing every rule the platform
+      // ships.
+      //
+      // Deliberately short. It is a query string, and nothing secret is in
+      // it: the connector URL is a public endpoint and the authorisation
+      // happens through OAuth inside the product, not in this link.
+      const chatPrompt = `I want to add a custom MCP connector. The server URL is ${connectorUrl}`
+        + ' and it uses dynamic client registration, so there is no client ID or secret to enter.'
+        + ' Name it exactly "usernode". Walk me through it one step at a time and tell me what to click.';
+      const chatLinks = [
+        ['connector-open-claude', 'https://claude.ai/new?q='],
+        ['connector-open-chatgpt', 'https://chatgpt.com/?q='],
+      ];
+      for (const [id, base] of chatLinks) {
+        const link = document.getElementById(id);
+        if (link) link.href = `${base}${encodeURIComponent(chatPrompt)}`;
+      }
 
       this._connectorLoadId = (this._connectorLoadId || 0) + 1;
       const loadId = this._connectorLoadId;
@@ -1797,8 +1865,17 @@
         if (cap && shown >= cap) {
           text += `That is the limit of ${cap} per connection per ${days} days; it will come back once the window rolls over.`;
         } else if (quietUntil > Date.now()) {
+          // #1808: a bare "12:20 AM" here can be TOMORROW's. The cooldown
+          // runs from the last tip, so one sent late in the evening puts the
+          // deadline past midnight, and a reader comparing it to the clock
+          // concludes the window has already passed. A day word settles it,
+          // and anything further out gets the whole stamp.
+          const end = new Date(quietUntil);
+          const deadline = end.toDateString() === new Date().toDateString()
+            ? `today at ${end.toLocaleTimeString()}`
+            : end.toLocaleString();
           text += `It stays quiet for ${cooldown} minutes after each one, so a conversation opened before `
-            + `${new Date(quietUntil).toLocaleTimeString()} will not carry it. One opened after that will.`;
+            + `${deadline} will not carry it. One opened after that will.`;
         } else {
           text += 'Open a new conversation to see it again.';
         }
@@ -2740,20 +2817,116 @@
     },
 
     _openRouterModelOptionLabel(model) {
+      const badges = [];
+      if (model?.isFavorite) badges.push('★');
+      if (model?.isRecommended) badges.push('Recommended');
+      if (model?.createdAt) {
+        const age = Date.now() - Date.parse(model.createdAt);
+        if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
+      }
       const compatibility = model?.compatibility === 'verified'
         ? ' · verified'
         : (model?.compatibility === 'blocked' ? ' · limited' : ' · unverified');
-      return `${model?.name || model?.id || 'Unknown model'}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+      const badgeText = badges.length ? ` · ${badges.join(' · ')}` : '';
+      return `${model?.name || model?.id || 'Unknown model'}${badgeText}: ${this._openRouterModelCostSummary(model)}${compatibility}`;
+    },
+
+    _openRouterModelsForPicker(models, { query = '', favoritesOnly = false } = {}) {
+      const needle = String(query || '').trim().toLocaleLowerCase();
+      return (Array.isArray(models) ? models : [])
+        .map((model, index) => ({ model, index }))
+        .filter(({ model }) => {
+          if (favoritesOnly && model?.isFavorite !== true) return false;
+          if (!needle) return true;
+          return [model?.name, model?.id, model?.provider, model?.canonicalSlug]
+            .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
+        })
+        .sort((a, b) => {
+          if (!!a.model?.isFavorite !== !!b.model?.isFavorite) return a.model?.isFavorite ? -1 : 1;
+          if (!!a.model?.isRecommended !== !!b.model?.isRecommended) return a.model?.isRecommended ? -1 : 1;
+          return a.index - b.index;
+        })
+        .map(({ model }) => model);
+    },
+
+    _openRouterCatalogAgeText(refreshedAt) {
+      const refreshed = Date.parse(refreshedAt || '');
+      if (!Number.isFinite(refreshed)) return '';
+      const seconds = Math.max(0, Math.round((Date.now() - refreshed) / 1000));
+      if (seconds < 60) return 'Updated just now';
+      const minutes = Math.round(seconds / 60);
+      if (minutes < 60) return `Updated ${minutes}m ago`;
+      return `Updated ${Math.round(minutes / 60)}h ago`;
+    },
+
+    _renderOpenRouterModelOptions() {
+      const select = document.getElementById('settings-openrouter-model');
+      if (!select) return;
+      const search = document.getElementById('settings-openrouter-model-search');
+      const favoritesOnlyButton = document.getElementById('settings-openrouter-favorites-only');
+      const meta = document.getElementById('settings-openrouter-catalog-meta');
+      const visibleModels = this._openRouterModelsForPicker(this._openRouterModels, {
+        query: search?.value || '',
+        favoritesOnly: this._openRouterFavoritesOnly,
+      });
+      select.innerHTML = '';
+      for (const model of visibleModels) {
+        const option = document.createElement('option');
+        option.value = model.id;
+        option.textContent = this._openRouterModelOptionLabel(model);
+        select.appendChild(option);
+      }
+      if (!visibleModels.some((model) => model.id === this._openRouterSelectedModelId)) {
+        const fallback = visibleModels.find((model) => model.id === this._openRouterRecommendedModelId)
+          || visibleModels.find((model) => model.isRecommended)
+          || visibleModels[0]
+          || null;
+        if (fallback) this._openRouterSelectedModelId = fallback.id;
+      }
+      select.value = visibleModels.some((model) => model.id === this._openRouterSelectedModelId)
+        ? this._openRouterSelectedModelId
+        : '';
+      select.disabled = visibleModels.length === 0;
+      if (favoritesOnlyButton) {
+        favoritesOnlyButton.setAttribute('aria-pressed', String(this._openRouterFavoritesOnly));
+        favoritesOnlyButton.textContent = this._openRouterFavoritesOnly ? '★ Favorites' : '☆ Favorites';
+      }
+      if (meta) {
+        const age = this._openRouterCatalogAgeText(this._openRouterCatalogRefreshedAt);
+        meta.textContent = visibleModels.length
+          ? `${visibleModels.length} of ${this._openRouterCatalogTotal || this._openRouterModels.length} models${age ? ` · ${age}` : ''}`
+          : `No key-visible models match. Refresh, then check this key's OpenRouter account policies${age ? ` · ${age}` : ''}`;
+      }
+      this._syncOpenRouterModelDetails();
     },
 
     _syncOpenRouterModelDetails() {
       const select = document.getElementById('settings-openrouter-model');
       const effort = document.getElementById('settings-openrouter-reasoning');
       const model = this._openRouterModels.find((item) => item.id === select?.value) || null;
+      const star = document.getElementById('settings-openrouter-star-model');
+      const saveDefault = document.getElementById('settings-openrouter-set-default');
       if (!model) {
         if (select) select.title = 'Models are sorted by average input/output price. Actual spend depends on token usage.';
         if (effort) effort.disabled = true;
+        if (star) {
+          star.disabled = true;
+          star.textContent = '☆';
+          star.setAttribute('aria-pressed', 'false');
+        }
+        if (saveDefault) saveDefault.disabled = true;
         return;
+      }
+      if (saveDefault) saveDefault.disabled = false;
+      if (star) {
+        star.disabled = false;
+        star.textContent = model.isFavorite ? '★' : '☆';
+        star.setAttribute('aria-pressed', String(model.isFavorite === true));
+        const label = model.isFavorite
+          ? 'Remove selected model from favorites'
+          : 'Add selected model to favorites';
+        star.setAttribute('aria-label', label);
+        star.title = label;
       }
       let compatibility = 'Not yet verified for repository coding.';
       if (model.compatibility === 'verified') compatibility = 'Verified for repository coding.';
@@ -2866,12 +3039,8 @@
           await this._refreshOpenRouter();
           return;
         }
-        const reveal = document.getElementById('settings-openrouter-reveal');
-        const key = document.getElementById('settings-openrouter-revealed-key');
-        if (key) key.value = j.apiKey || '';
-        if (reveal) reveal.classList.remove('hidden');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
-        this._setOrStatus(`Created and selected OpenRouter${j.defaultModel ? ` with ${j.defaultModel}` : ''} as your default. Save the displayed key now.`, 'ok');
+        this._setOrStatus(`Created and selected OpenRouter${j.defaultModel ? ` with ${j.defaultModel}` : ''} as your default.`, 'ok');
         await this._refreshOpenRouter();
       } catch (err) {
         this._setOrStatus(`Network error: ${err.message}`, 'error');
@@ -2880,61 +3049,95 @@
       }
     },
 
-    async _copyManagedOpenRouterKey() {
-      const key = document.getElementById('settings-openrouter-revealed-key');
-      if (!key?.value) return;
-      try {
-        await navigator.clipboard.writeText(key.value);
-        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
-      } catch {
-        key.select();
-        document.execCommand('copy');
-        this._setOrStatus('Key copied. Keep it somewhere secure.', 'ok');
-      }
-    },
-
-    _dismissManagedOpenRouterReveal() {
-      const reveal = document.getElementById('settings-openrouter-reveal');
-      const key = document.getElementById('settings-openrouter-revealed-key');
-      if (key) key.value = '';
-      if (reveal) reveal.classList.add('hidden');
-    },
-
-    async _loadOpenRouterModels() {
+    async _loadOpenRouterModels({ forceRefresh = false } = {}) {
       const sel = document.getElementById('settings-openrouter-model');
       const wrap = document.getElementById('settings-openrouter-models-wrap');
       if (!sel) return;
       try {
-        const r = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', { credentials: 'same-origin' });
-        if (!r.ok) { if (wrap) wrap.classList.add('hidden'); return; }
+        const refresh = forceRefresh ? '&refresh=1' : '';
+        const r = await fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
+          credentials: 'same-origin', cache: 'no-store',
+        });
+        const errorBody = r.ok ? null : await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(errorBody?.error || 'Could not load OpenRouter models.');
         const cat = await r.json();
         const models = Array.isArray(cat.models) ? cat.models : [];
         this._openRouterModels = models;
-        if (!models.length) { if (wrap) wrap.classList.add('hidden'); return; }
-        // Build options with DOM methods, NOT innerHTML (review P2):
-        // OpenRouter model IDs/names are untrusted catalog data and
-        // could inject markup into the authenticated Settings page.
-        sel.innerHTML = '';
-        for (const m of models) {
-          const opt = document.createElement('option');
-          opt.value = m.id;
-          opt.textContent = this._openRouterModelOptionLabel(m);
-          sel.appendChild(opt);
+        this._openRouterRecommendedModelId = cat.recommendedModelId || '';
+        this._openRouterCatalogRefreshedAt = cat.refreshedAt || null;
+        this._openRouterCatalogTotal = Number.isInteger(cat.totalModels) ? cat.totalModels : models.length;
+        if (!models.length) {
+          this._openRouterSelectedModelId = '';
+          this._renderOpenRouterModelOptions();
+          if (wrap) wrap.classList.remove('hidden');
+          return;
         }
         const recommended = models.some((model) => model.id === cat.recommendedModelId)
           ? cat.recommendedModelId
-          : (models.find((model) => model.compatibility === 'verified')?.id || models[0].id);
-        sel.value = recommended;
-        // Restore the previously-saved model/effort if any.
-        const prefs = await (await fetch('/api/me/coding-agent', { credentials: 'same-origin' })).json();
-        const saved = prefs.backends?.codex_openrouter;
-        if (saved?.model && models.some((model) => model.id === saved.model)) sel.value = saved.model;
-        const eff = document.getElementById('settings-openrouter-reasoning');
-        if (eff) eff.value = saved?.reasoningEffort || '';
-        this._syncOpenRouterModelDetails();
+          : (models.find((model) => model.isRecommended)?.id
+            || models.find((model) => model.compatibility === 'verified')?.id
+            || models[0].id);
+        if (!forceRefresh || !models.some((model) => model.id === this._openRouterSelectedModelId)) {
+          this._openRouterSelectedModelId = recommended;
+        }
+        if (!forceRefresh) {
+          // Restore the previously-saved model/effort on the initial load.
+          const prefs = await (await fetch('/api/me/coding-agent', {
+            credentials: 'same-origin', cache: 'no-store',
+          })).json();
+          const saved = prefs.backends?.codex_openrouter;
+          if (saved?.model && models.some((model) => model.id === saved.model)) {
+            this._openRouterSelectedModelId = saved.model;
+          }
+          const eff = document.getElementById('settings-openrouter-reasoning');
+          if (eff) eff.value = saved?.reasoningEffort || '';
+        }
+        this._renderOpenRouterModelOptions();
         if (wrap) wrap.classList.remove('hidden');
-      } catch {
-        this._openRouterModels = [];
+      } catch (err) {
+        if (!this._openRouterModels.length && wrap) wrap.classList.add('hidden');
+        throw err;
+      }
+    },
+
+    async _refreshOpenRouterModelsNow() {
+      const button = document.getElementById('settings-openrouter-refresh-models');
+      if (button) { button.disabled = true; button.textContent = 'Refreshing…'; }
+      this._setOrStatus('Refreshing the key-visible catalog from OpenRouter…', 'info');
+      try {
+        await this._loadOpenRouterModels({ forceRefresh: true });
+        this._setOrStatus(`Loaded ${this._openRouterModels.length} current OpenRouter models.`, 'ok');
+      } catch (err) {
+        this._setOrStatus(err.message || 'Could not refresh OpenRouter models.', 'error');
+      } finally {
+        if (button) { button.disabled = false; button.textContent = 'Refresh'; }
+      }
+    },
+
+    async _toggleSelectedOpenRouterFavorite() {
+      const button = document.getElementById('settings-openrouter-star-model');
+      const model = this._openRouterModels.find(
+        (item) => item.id === this._openRouterSelectedModelId,
+      );
+      if (!model || button?.disabled) return;
+      const favorite = model.isFavorite !== true;
+      if (button) button.disabled = true;
+      try {
+        const r = await fetch('/api/me/coding-agent/models/favorite', {
+          method: 'PATCH', credentials: 'same-origin', cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ modelId: model.id, favorite }),
+        });
+        const body = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(body.error || 'Could not update that favorite.');
+        model.isFavorite = favorite;
+        this._renderOpenRouterModelOptions();
+        this._setOrStatus(favorite
+          ? `${model.name || model.id} added to favorites.`
+          : `${model.name || model.id} removed from favorites.`, 'ok');
+      } catch (err) {
+        this._setOrStatus(err.message || 'Could not update that favorite.', 'error');
+        if (button) button.disabled = false;
       }
     },
 
@@ -2975,6 +3178,10 @@
         this._setOrStatus('Key removed.' + note, 'ok');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = false;
         this._openRouterModels = [];
+        this._openRouterSelectedModelId = '';
+        this._openRouterRecommendedModelId = '';
+        this._openRouterCatalogRefreshedAt = null;
+        this._openRouterCatalogTotal = 0;
         await this._refreshOpenRouter();
       } catch {
         this._setOrStatus('Failed to remove key.', 'error');
@@ -2985,6 +3192,7 @@
 
     async _saveOpenRouterDefault() {
       const model = document.getElementById('settings-openrouter-model')?.value;
+      if (!model) { this._setOrStatus('Choose an OpenRouter model first.', 'error'); return; }
       const reasoningEffort = document.getElementById('settings-openrouter-reasoning')?.value || null;
       // Preserve the user's existing cost cap across this save (review P3):
       // include it explicitly so an omission can't drop the safety limit,
@@ -3247,10 +3455,7 @@
         return false;
       };
 
-      // This call closes the private realm synchronously, before this function
-      // reaches its first await. Native capability probing deliberately waits
-      // until after the server has revoked the HttpOnly session, so a degraded
-      // bridge can never prevent the authoritative logout boundary.
+      // Close native admission before any asynchronous work, including probes.
       let preflight = { nativeTerminal: false };
       try {
         if (window.NativeChrome && NativeChrome.prepareWebLogout) {
@@ -3260,15 +3465,44 @@
         return fail(error);
       }
 
+      // Older apps cannot delete the HttpOnly cookie locally. Only opt into
+      // offline logout when native explicitly guarantees that cleanup.
+      let offlineLogout = false;
+      if (preflight.nativeTerminal) {
+        try {
+          const info = await NativeChrome.getInfo();
+          offlineLogout = info?.degraded !== true &&
+            info?.sessionLifecycleProtocol === 2 &&
+            info?.capabilities?.includes('offlineLogout') === true;
+        } catch (_) {}
+      }
+      let webRevoked = false;
+      let timeout;
+      let controller;
       try {
-        const response = await fetch('/api/auth/logout', {
+        if (preflight.webRecoverySettled) await preflight.webRecoverySettled;
+        controller = offlineLogout ? new AbortController() : null;
+        const request = fetch('/api/auth/logout', {
           method: 'POST', credentials: 'same-origin',
+          ...(controller ? { signal: controller.signal } : {}),
         });
+        const response = offlineLogout ? await Promise.race([
+          request,
+          new Promise((_, reject) => {
+            timeout = setTimeout(() => {
+              controller.abort();
+              reject(new Error('Remote sign-out timed out'));
+            }, 2000);
+          }),
+        ]) : await request;
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        webRevoked = true;
       } catch (error) {
-        // Do not tear down native while the HttpOnly web-session cookie can
-        // still restore this participant in the replacement WebView.
-        return fail(error);
+        if (!offlineLogout) return fail(error);
+        // Native owns deletion of the cookie and durable credential. Remote
+        // revocation remains best effort when the API cannot be reached.
+      } finally {
+        if (timeout !== undefined) clearTimeout(timeout);
       }
       // Offline mode (#487): the service worker caches GET /api/* responses
       // per-URL, not per-user — wipe them so the next account on this
@@ -3290,8 +3524,8 @@
       // URL it was on, so a logout from `#settings` (or from `/app/<slug>`)
       // leaves an address that restoreFromHash reads as a remembered deep
       // link and answers with the sign-in form on the next restore. This runs
-      // after the revocation above on purpose: a logout that FAILED must
-      // leave the address still describing the screen the user is looking at.
+      // after remote revocation or an offline-capable native hand-off has
+      // been selected.
       //
       // replaceState is safe on both counts that matter here. NATIVE-BRIDGE.md's
       // trust model binds the privileged capability to the executing JS realm,
@@ -3326,6 +3560,9 @@
           if (timer && typeof timer.unref === 'function') timer.unref();
           return result;
         }, (error) => {
+          // If neither boundary completed, do not reload a possibly live
+          // cookie or claim the user is signed out. Allow cleanup to retry.
+          if (!webRevoked) return fail(error);
           // A rejection leaves the native realm closed and server authority
           // revoked, but this document alive and signed out. Carry the
           // advisory across the navigation (the toast itself would not
@@ -4189,8 +4426,14 @@
     // exactly when it is wanted — the same mistake the connection panel
     // above was written to undo.
 
+    // #1808: the WHOLE instant, not a time of day. This stamps one
+    // diagnostics line ("Last icon check: …") whose only reader is somebody
+    // working out whether the widget's icon verdict is stale — and "02:41 PM"
+    // with no day cannot answer that. It is a plain `toLocaleString()` rather
+    // than the shared helper because a diagnostics line elides nothing and
+    // this module cannot import (see _localAgentView).
     _widgetIconTime(ms) {
-      try { return new Date(ms).toLocaleTimeString(); } catch (_) { return String(ms); }
+      try { return new Date(ms).toLocaleString(); } catch (_) { return String(ms); }
     },
 
     // One line per pinned entry: what the widget says it holds, and

@@ -16,6 +16,9 @@ release:
 
 platform:
   enabled: true
+  # Activation/rollback requires draining all flag-off/on platform Pods;
+  # see docs/kubernetes-operations.md. Mixed coordination modes are unsafe.
+  previewLifecycleEnabled: false
   replicas: 1
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform
@@ -84,9 +87,14 @@ migration:
       ephemeral-storage: 2Gi
 
 config:
-  # Canonical platform host and generated-application suffix. Generated apps
-  # are addressed as <slug>.<domain>.
+  # Prefer the external CNPG primary's node for previews, with normal scheduler
+  # fallback. Uses postgresql.namespace and podSelector["cnpg.io/cluster"].
+  # No effect for bundled PostgreSQL or external databases without that label.
+  previewFollowDatabasePrimary: true
+  # Canonical platform host for the UI, authentication, and platform API.
   domain: social-vibecoding.example.invalid
+  # Empty retains the historical <slug>.<domain> layout.
+  appsDomain: ""
   platformRepository: https://github.com/replace-me/social-vibecoding
   nodeRpcUrl: http://replace-me.invalid:3000
   # Explorer host[:port] without a scheme. Public hosts use HTTPS; private
@@ -101,6 +109,17 @@ config:
   logLevel: INFO
   workerMemory: 2g
   workerCpus: "2"
+  captureMemory: 4g
+  captureCpus: "8"
+  # Match application defaults here; each cluster declares its own capacity.
+  maxGlobalSessions: 25
+  maxUserSessions: 3
+  maxUserPromotedSessions: 5
+  maxAdminUserSessions: 5
+  maxAdminUserPromotedSessions: 8
+  workerIdleEvictionMs: 600000
+  sessionAutopauseIdleMs: 300000
+  stagingIdleTeardownMs: 21600000
 
 secrets:
   create: false
@@ -118,8 +137,17 @@ secrets:
   githubAppId: ""
   githubPrivateKey: ""
   githubBotToken: ""
+  # Optional GitHub account-linking OAuth credentials. Set both in encrypted external values.
+  githubLinkClientId: ""
+  githubLinkClientSecret: ""
   anthropicApiKey: ""
   anthropicAdminKey: ""
+  # Optional OpenRouter management credential, supplied through encrypted external values.
+  openrouterManagementApiKey: ""
+  # Optional Gmail sender credentials. Set all three in encrypted external values.
+  gmailOauthClientId: ""
+  gmailOauthClientSecret: ""
+  gmailOauthRefreshToken: ""
 
 ingress:
   enabled: true
@@ -134,6 +162,8 @@ ingress:
 networkPolicy:
   enabled: true
   ciliumApiServerEgress: true
+  # Must match APP_NAMESPACE in the foundation's social-build-policy ConfigMap.
+  appNamespace: social-apps
   # Optional cross-namespace access to the selected UserNode HTTP endpoint.
   # Keep the Pod selector specific so the platform cannot reach every workload
   # in the network namespace merely because it needs one node's /status API.

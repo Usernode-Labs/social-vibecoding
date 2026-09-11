@@ -220,14 +220,23 @@
       return un.attachSwipeActions(rowEl, opts || {});
     },
 
-    /** Pull-to-refresh on a scrollable container (element mode — the
-        platform is a fixed shell). No-op on desktop by kit design. */
+    /** Resolve the document scroller on mobile web, or the native shell's
+        original element. The bridge also settles a just-rendered route. */
+    scrollElement(el) {
+      return window.UsernodeBrowserScroll?.scrollElement(el) || el;
+    },
+
+    /** Keep the gesture/content local to its screen, but read the actual
+        page offset so pulling down mid-page never claims a refresh. */
     pullToRefresh(scrollEl, onRefresh, opts) {
       const un = kit();
       if (!un || typeof un.attachPullToRefresh !== 'function' || !scrollEl) {
         return { detach() {} };
       }
-      return un.attachPullToRefresh(scrollEl, onRefresh, opts || {});
+      return un.attachPullToRefresh(scrollEl, onRefresh, {
+        ...opts,
+        getScrollTop: () => PlatformUI.scrollElement(scrollEl).scrollTop,
+      });
     },
 
     /** App-side gestures join the kit's intent lock through here. */

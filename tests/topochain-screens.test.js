@@ -139,8 +139,12 @@ test('one entry point reaches all three surfaces', () => {
   // the destination, which is the half that owns the hash.
   const ui = fs.readFileSync(
     path.join(root, 'frontend/src/features/home/panels/ui.tsx'), 'utf8');
-  assert.match(ui, /className="home-panel-lb-browse[^"]*"[\s\S]*?aria-label="Open leaderboard"/,
+  // #1916: the link reads "Open challenges" and lands on the screen's
+  // Challenges tab, one tab from the standings.
+  assert.match(ui, /className="home-panel-lb-browse[^"]*"[\s\S]*?aria-label="Open challenges"/,
     'the area\u2019s title bar carries the link');
+  assert.match(panels, /goToChallenges\(\) \{[\s\S]*?location\.hash = '#leaderboard\/challenges'/,
+    'which is a real hash navigation onto the Leaderboard screen');
   assert.match(panels, /goToLeaderboard\(kind\) \{[\s\S]*?location\.hash = kind === 'kudos' \? '#leaderboard\/users' : '#leaderboard'/,
     'and it is a real hash navigation, so the device back gesture returns home');
 });

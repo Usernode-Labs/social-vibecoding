@@ -50,6 +50,14 @@ export interface DiscoverTileView {
   added: boolean;
   icon: IconView;
   /**
+   * The featured illustration: its image, how it is framed inside the art
+   * block, and — when its author chose one — the card colour it sits on: a
+   * tone name, or one of the legacy tint numbers saved before the tones
+   * existed. An absent `tint` means the slug's own hash, which is what every
+   * card without an illustration wears.
+   */
+  illustration?: { url: string; darkUrl?: string | null; zoom: number; x: number; y: number; tint?: string | number | null } | null;
+  /**
    * The app's own one-line description, from its manifest — null when it
    * declares none, which is most apps. The card draws nothing in its place.
    */
@@ -132,7 +140,21 @@ export interface ChallengesView {
   onboardingNote?: string | null;
   /** Null between seasons, and on the empty block. */
   season: SeasonView | null;
+  /** How many challenges are OPEN — what "See all N challenges" counts. */
   total: number;
+  /**
+   * How many rows an expansion would draw: the open ones plus the season's
+   * finished and out-of-window ones. `total` cannot tell a full-but-short
+   * list from a short list with finished challenges behind it.
+   */
+  allTotal?: number;
+  /**
+   * Whether the footer draws its expand toggle at all — false when the rows
+   * on screen already ARE every challenge there is, which is the "See all 3
+   * challenges" under three challenges of #1824. Always true once expanded:
+   * that is the way back to "Show less".
+   */
+  expandable?: boolean;
   expanded: boolean;
   rows: ChallengeRowView[];
 }

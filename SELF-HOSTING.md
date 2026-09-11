@@ -1,5 +1,11 @@
 # Self-hosting Usernode inside itself
 
+Runtime scope: the server, Compose, Docker-log, rollback and host-deployer
+procedures here describe the standalone Docker installation and its migration
+history. For the Kubernetes installation, use [Kubernetes operations](docs/kubernetes-operations.md)
+and the [platform chart](deploy/helm/social-vibecoding-platform/README.md).
+Kubernetes uses Argo releases and Pod APIs; no cluster node runs the host poller.
+
 Operational reference for the shipped self-hosting setup. The
 self-app is the row in `apps` whose container *is* the running
 platform — `self_hosted = TRUE`, slug `usernode-2d5619`, database
@@ -1026,7 +1032,7 @@ clone routinely accessible through dev-chat preview):**
   `/api/teardown-staging`). It cannot escape to the parent prod
   origin.
 
-## Host-side deployer (primary deploy path)
+## Host-side deployer (standalone Docker deploy path)
 
 Production deploys used to depend on a GitHub Actions runner picking up
 the push to `main`. During the 2026-08-06 GHA outage, merged self-app

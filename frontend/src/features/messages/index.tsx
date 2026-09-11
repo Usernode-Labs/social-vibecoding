@@ -2,12 +2,13 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { EllipsisHorizontalIcon, PlusIcon, UserGroupIcon } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+import { agoStamp } from '../../lib/timestamp';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { MessageComposer } from './composer';
 import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
-import { relativeTime, UserAvatar } from './format';
+import { UserAvatar } from './format';
 import { MessageRow } from './message-row';
 import { ShareItemDialog } from './share-dialog';
 import {
@@ -64,6 +65,10 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
   const peer = conversationPeer(conversation);
   const invited = conversation.membershipStatus === 'invited';
   const unread = conversation.unreadCount > 0;
+  // #1808: the shared ago ladder, which stops being relative at a week — a
+  // conversation last spoken in during March read "412d", which is a duration
+  // and not information. `title` carries the unelided instant either way.
+  const activity = agoStamp(conversation.lastActivityAt);
   return (
     <a
       href={`#messages/${conversation.id}`}
@@ -85,7 +90,7 @@ function ConversationRow({ conversation, active }: { conversation: ConversationS
             pill — without adding a third line. */}
         <div className="messages-row-line">
           <span className="messages-row-name">{conversation.kind === 'direct' && peer ? `@${peer.username}` : conversation.title}{conversation.kind === 'group' ? <span className="messages-group-tag">{conversation.memberCount}</span> : null}</span>
-          <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`}>{relativeTime(conversation.lastActivityAt)}</time>
+          <time className={`messages-row-time ${unread ? 'messages-row-time-unread' : ''}`} dateTime={conversation.lastActivityAt} title={activity.title}>{activity.text}</time>
         </div>
         <div className="messages-row-line">
           <span className={`messages-row-preview ${invited ? 'messages-row-preview-invited' : ''}`}>{invited ? `${conversation.kind === 'direct' ? 'Message request' : 'Group invitation'} · Tap to review` : conversation.latestSummary || 'No messages yet'}</span>

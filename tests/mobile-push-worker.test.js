@@ -497,3 +497,16 @@ test('maintenance resets interrupted work and performs bounded retention', async
   assert.match(queries[4].sql, /DELETE FROM mobile_push_registration_events/);
   assert.deepEqual(queries[4].params, [14, 25]);
 });
+
+test('test pushes use the normal provider path and recheck opt-outs before sending', async () => {
+  for (const enabled of [true, false]) {
+    const { worker, calls } = harness({ row: delivery({
+      kind: 'test_alert', app_name: null, session_title: null, push_enabled: enabled,
+    }) });
+    await worker.processDelivery(JOB);
+    assert.equal(calls.sent.length, enabled ? 1 : 0);
+    assert.equal(calls.finished[0].status, enabled ? 'sent' : 'cancelled');
+    if (enabled) assert.equal(calls.sent[0].notification.title, 'Usernode test alert');
+    else assert.equal(calls.finished[0].code, 'preference_disabled');
+  }
+});

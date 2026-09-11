@@ -1,3 +1,4 @@
+const { withBuildUse } = require('./build-retention-guard');
 const log = require('./logger');
 const github = require('./github');
 const docker = require('./docker');
@@ -265,7 +266,11 @@ async function createApp(config, appRow) {
 // on missing required secrets, then builds + runs + health-checks the
 // production container and flips the row to `running`. Cleans up
 // `tempDir` on every exit path.
-async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoUrl, mainSha }) {
+async function finalizeDeploy(config, options) {
+  return withBuildUse(config, () => finalizeDeployInner(config, options));
+}
+
+async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, repoUrl, mainSha }) {
   const pool = getPool(config);
   const containerName = `usernode-app-${slug}`;
   const imageName = `usernode-app-${slug}:latest`;

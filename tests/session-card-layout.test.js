@@ -166,22 +166,29 @@ test('a PRIVATE own session carries the muted shell; a visible one does not', ()
   assert.doesNotMatch(vis, /dev-card-muted/, 'a visible session is not muted');
 });
 
-test('shared card: single-row shell; noNav drops nav, chevron and the actions row', () => {
+test('shared card: single-row shell; noNav drops nav and chevron, and its band holds only the menu', () => {
   const AppView = makeAppView();
   const s = sharedSess({ busy: true, staging_url: 'https://example.invalid' });
   const nav = sharedSessionCardHtml(AppView, s);
   assert.match(nav, /data-shared-session-row="71"/);
   assert.ok(nav.includes(SHELL), 'uses the standard single-row card shell');
-  // The preview is a labelled pill at the end of the action band (round
-  // three), so it comes BEFORE the chevron on the card's right edge — and
-  // with nothing to demote there is no rail column at all.
-  assertOrder(nav, ['dev-card-title', SPINNER, 'dev-chat-badge', 'gc-vote-btn-preview', CHEVRON]);
-  assert.doesNotMatch(nav, /dev-card-rail/, 'no column for a lone chevron');
+  // The preview is a labelled pill closing the action band, so it comes
+  // BEFORE the chevron on the card's right edge — where the chevron now
+  // stands alone: the rail column that once held the ⋯ and the eye is gone.
+  // The count rides the meta line now, so it comes BEFORE the badge row's
+  // spinner; the preview still precedes the chevron.
+  assertOrder(nav, ['dev-card-title', 'dev-chat-badge', SPINNER, 'gc-vote-btn-preview', CHEVRON]);
+  assert.doesNotMatch(nav, /dev-card-rail/, 'no right-edge column');
 
   const noNav = sharedSessionCardHtml(AppView, s, { noNav: true });
   assert.doesNotMatch(noNav, /data-shared-session-row/, 'noNav variant has no row hook');
   assert.ok(!noNav.includes(CHEVRON), 'noNav variant has no chevron');
-  assert.doesNotMatch(noNav, /gc-card-actions/, 'noNav variant has no actions row');
+  // The topic head's menu (View checks, …) used to sit in the rail's
+  // corner; the band is the trigger's one seat now, so the head keeps an
+  // action band with the hamburger alone in it, and nothing else.
+  assert.match(noNav, /<div class="gc-card-actions"><button [^>]*dev-card-menu-btn" data-card-menu="session:71"[^>]*>[\s\S]*?<\/button><\/div>/,
+    'noNav variant\'s band holds only its menu trigger');
+  assert.doesNotMatch(noNav, /gc-card-actions"><button[^>]*data-act=/, 'and no pills');
 });
 
 test('an owned imported PR shows proposal metadata with one promotion action', () => {
@@ -214,7 +221,7 @@ test('an owned imported PR shows proposal metadata with one promotion action', (
   assert.doesNotMatch(html, />Yes \(|>No \(/, 'voting stays hidden until promotion');
   assert.doesNotMatch(html, /Make visible|>Hide<|Share chat/);
   assert.equal(menuLabels(AppView, html).join('|'),
-    'Change priority…|Change category…|Change assignee…|View PR on GitHub',
+    'Change priority…|Change category…|Change assignee…|View PR on GitHub|View checks',
     'the menu edits proposal attributes without exposing dev-session actions');
   assert.ok(!menuHas(AppView, html, /Archive|Open session|Vote/));
 });
@@ -358,7 +365,7 @@ test('chat-shared own card flips to the revoke row and says so in the subtitle',
   assert.match(html, /Visible to everyone · chat readable/);
 });
 
-test('the ⋯ rows come in chat-sharing → discussion → Archive order', () => {
+test('the ⋯ rows come in chat-sharing → discussion → checks → Archive order', () => {
   const AppView = makeAppView();
   AppView._sharedById = { 51: { id: 51, chat_count: 0 } };
   const html = mySessionCardHtml(AppView, mySess({ shared_at: '2026-06-01T03:00:00Z' }));
@@ -366,7 +373,7 @@ test('the ⋯ rows come in chat-sharing → discussion → Archive order', () =>
   // Visibility used to lead this list; it is the promoted pill now, so the
   // menu starts at the narrower second opt-in. Archive stays last — it is the
   // destructive row.
-  assert.match(labels, /^Share chat\|Open public discussion\|Archive$/);
+  assert.match(labels, /^Share chat\|Open public discussion\|View checks\|Archive$/);
   assert.match(html, /gc-card-actions[\s\S]*?>Hide</, 'visibility leads the ACTION band');
 });
 
@@ -382,10 +389,10 @@ test('the "Read chat" PILL is gone — the transcript lives on the detail page',
     /data-transcript-section="71"/, 'the detail page hosts it');
 });
 
-test('a shared card carries no ⋯ at all (nothing left to demote)', () => {
+test('a shared card offers View checks from its menu', () => {
   const AppView = makeAppView();
   const html = sharedSessionCardHtml(AppView, sharedSess({ transcript_shared: true }));
-  assert.equal(menuKeyOf(html), null, 'no dead ⋯ button');
+  assert.equal(menuLabels(AppView, html).join('|'), 'View checks');
 });
 
 test('read-only viewers still reach a published transcript (via the detail page)', () => {

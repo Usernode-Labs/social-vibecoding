@@ -50,7 +50,7 @@ const NON_SECRET_APP_COLUMNS = [
   'manifest_snapshot', 'last_failure', 'locked', 'self_hosted',
   'collab_visibility', 'view_visibility', 'approver_policy',
   'approvals_required', 'screenshot_device_scale', 'icon_emoji',
-  'icon_image_id', 'forked_from', 'admin_usernames',
+  'icon_image_id', 'featured_illustration', 'forked_from', 'admin_usernames',
   'directory_review_status', 'directory_reviewed_at', 'directory_reviewed_sha',
 ];
 
@@ -262,7 +262,7 @@ async function getWsVisibility(pool, { appId = null, appSlug = null } = {}) {
 // 10s TTL cache so the view-public fast path costs ~zero DB work.
 
 const platformJwt = require('./platform-jwt');
-const { USERNODE_DOMAIN } = require('./caddy');
+const { USERNODE_DOMAIN, USERNODE_APPS_DOMAIN } = require('./caddy');
 
 // Short-lived grant the apex /__access/authorize route (routes/apps.js)
 // mints from a real platform session; the edge gate (/__caddy/access in
@@ -283,7 +283,8 @@ function mintAccessGrant({ uid, appId, host }) {
 // { slug, label } or null for hosts that aren't a routable app subdomain.
 function parseAppHost(rawHost) {
   const host = String(rawHost || '').trim().toLowerCase().replace(/:\d+$/, '');
-  const suffix = '.' + USERNODE_DOMAIN;
+  if (host === USERNODE_DOMAIN) return null;
+  const suffix = '.' + USERNODE_APPS_DOMAIN;
   if (!host.endsWith(suffix)) return null;
   const label = host.slice(0, -suffix.length);
   // Only single-level subdomains are routable (the Caddy wildcard

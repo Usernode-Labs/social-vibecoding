@@ -25,8 +25,15 @@ const read = (...p) => fs.readFileSync(path.join(PUBLIC, ...p), 'utf8');
 const DEV_ALERTS_SRC = read('js', 'dev-alerts.js');
 // #1079 chunk B moved this module into the React bundle (it is the same
 // file — see the note at the top of it); only the path changed here.
+// #1808: notifications.js has one bundle import now (`agoStamp` from
+// lib/timestamp.ts, which gave the rows a stamp with a floor). This harness
+// evaluates the shipped source raw in a vm, so it stands in for the bundler:
+// the import statement is dropped and the REAL helper is put in the sandbox
+// under the same name, so a row's stamp is the one that ships.
+const { agoStamp } = require('./lib/render-tsx').loadTsx('frontend/src/lib/timestamp.ts');
 const NOTIF_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'), 'utf8');
+  path.join(__dirname, '..', 'frontend', 'src', 'features', 'notifications', 'notifications.js'), 'utf8')
+  .replace(/^import \{ agoStamp \}.*$/m, '');
 
 // Minimal fake DOM element tracking class list, text and attributes for the
 // badge tests.
@@ -71,6 +78,7 @@ function makeNotifEnv() {
     addEventListener: () => {},
     createElement: () => ({ set textContent(v) { this._t = v; }, get innerHTML() { return this._t || ''; } }),
   };
+  sandbox.agoStamp = agoStamp;
   vm.runInNewContext(NOTIF_SRC, sandbox);
   return { Notifications: sandbox.window.Notifications, elements };
 }
@@ -82,11 +90,12 @@ function makeEnv({
   permission = 'granted',
   audioRunning = true,
   enabled = true,
+  fetchResponse = { ok: true, queued: true, delayMs: 10000 },
 } = {}) {
   const store = {};
   if (enabled === false) store.devchat_alerts_enabled = '0';
 
-  const calls = { oscillators: 0, expRamps: 0, notifications: [], bridge: [], permissionRequests: 0 };
+  const calls = { oscillators: 0, expRamps: 0, notifications: [], bridge: [], permissionRequests: 0, timers: [], requests: [] };
 
   class FakeParam {
     setValueAtTime() {} linearRampToValueAtTime() {}
@@ -104,7 +113,13 @@ function makeEnv({
     createGain() { return new FakeNode(); }
   }
 
-  const sandbox = { Promise, Date, JSON, Math, console, setTimeout: () => 0 };
+  const sandbox = { Promise, Date, JSON, Math, console,
+    setTimeout: (fn, delay) => calls.timers.push({ fn, delay }),
+    fetch: async (url, options) => {
+      calls.requests.push({ url, options });
+      return { ok: fetchResponse.ok, json: async () => fetchResponse };
+    },
+  };
   sandbox.window = sandbox;
   sandbox.localStorage = {
     getItem: (k) => (k in store ? store[k] : null),
@@ -383,4 +398,76 @@ test('dev-alerts.js still loads before notifications, and index.html ships the s
   assert.match(html, /id="notifications-badge"[^>]*data-session-done="0"/);
   assert.ok(!html.includes('id="notifications-badge-ai"'),
     'the green count on #improve-btn is retired');
+});
+
+test('test alert queues on the server before the optional foreground chime', async () => {
+  const { DevAlerts, calls } = makeEnv();
+  const result = await DevAlerts.testAlert();
+  assert.equal(result.queued, true);
+  assert.equal(calls.requests[0].url, '/api/me/test-alert');
+  assert.equal(calls.requests[0].options.method, 'POST');
+  assert.equal(calls.requests[0].options.credentials, 'same-origin');
+  assert.equal(calls.timers[0].delay, 10000);
+  assert.equal(calls.oscillators, 0);
+  calls.timers[0].fn();
+  assert.ok(calls.oscillators > 0);
+});
+
+test('native background tests never post duplicate local alerts, with remote state on or off', async () => {
+  for (const active of [true, false]) {
+    const { DevAlerts, calls } = makeEnv({ isNative: true, visibility: 'hidden' });
+    DevAlerts.setRemoteDeliveryActive(active);
+    await DevAlerts.testAlert();
+    calls.timers[0].fn();
+    assert.equal(calls.requests.length, 1);
+    assert.equal(calls.bridge.length, 0);
+    assert.equal(calls.oscillators, 0);
+  }
+});
+
+test('a live background browser still previews the alert without an eligible phone', async () => {
+  const { DevAlerts, calls } = makeEnv({ visibility: 'hidden',
+    fetchResponse: { ok: true, queued: false, reason: 'no_eligible_device', delayMs: 10000 } });
+  const result = await DevAlerts.testAlert();
+  assert.equal(result.queued, false);
+  calls.timers[0].fn();
+  assert.equal(calls.notifications[0].title, 'Usernode test alert');
+  assert.equal(DevAlerts._routeFor({ kind: 'test_alert' }), '#settings/alerts');
+});
+
+test('queue errors reject without scheduling a success preview', async () => {
+  const { DevAlerts, calls } = makeEnv({ fetchResponse: { ok: false, error: 'Please wait a minute' } });
+  await assert.rejects(DevAlerts.testAlert(), /Please wait a minute/);
+  assert.equal(calls.timers.length, 0);
+});
+
+test('settings reports queue outcomes and never turns a countdown into a delivery claim', async () => {
+  const src = fs.readFileSync(path.join(__dirname, '../frontend/src/features/settings/settings.js'), 'utf8');
+  const start = src.indexOf("      const alertsTest = document.getElementById('devchat-alerts-test');");
+  const end = src.indexOf('// Account-level remote-push categories', start);
+  for (const [result, expected] of [
+    [{ queued: true, delayMs: 10000 }, /queued for delivery/],
+    [{ queued: false, reason: 'preference_disabled', delayMs: 10000 }, /Enable Developer sessions/],
+    [{ queued: false, reason: 'no_eligible_device', delayMs: 10000 }, /Sign in on your phone/],
+    [new Error('Please wait a minute'), /Please wait a minute/],
+  ]) {
+    const button = new FakeEl();
+    const status = new FakeEl();
+    let handler;
+    let tick;
+    button.addEventListener = (_event, fn) => { handler = fn; };
+    const sandbox = {
+      document: { getElementById: (id) => id === 'devchat-alerts-test' ? button : status },
+      DevAlerts: { testAlert: async () => { if (result instanceof Error) throw result; return result; } },
+      setInterval: (fn) => { tick = fn; return 1; },
+      _clearAlertsTestCountdown() {},
+    };
+    sandbox.window = sandbox;
+    vm.runInNewContext(src.slice(start, end), sandbox);
+    await handler();
+    if (tick) for (let i = 0; i < 10; i += 1) tick();
+    assert.match(status.textContent, expected);
+    assert.doesNotMatch(status.textContent, /Sent\.|successfully delivered/i);
+    assert.equal(button.disabled, false);
+  }
 });

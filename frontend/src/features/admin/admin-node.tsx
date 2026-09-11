@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 // depended on <script> order (admin-console.js loaded first); inside the
 // React bundle the dependency is explicit (#1082 chunk E).
 import { AdminUI } from './admin-console.js';
+import { messageStamp } from '../../lib/timestamp';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
 // Node & chain section of the admin console (#860) — the retired
@@ -89,9 +90,12 @@ function fmtNum(n: number | null | undefined): string {
   return Number(n).toLocaleString();
 }
 
+// #1808: the day in front of the time once the instant is not today's. The
+// node panel's stamps are last-seen / last-block times that can be hours or
+// days old, and a bare "02:41 PM" on a stale node reads as current.
 function fmtTime(ms: number | null | undefined): string {
   if (!ms) return '—';
-  try { return new Date(ms).toLocaleTimeString(); } catch { return '—'; }
+  try { return messageStamp(ms).text || '—'; } catch { return '—'; }
 }
 
 function StatusBadge({ status }: { status?: string }) {

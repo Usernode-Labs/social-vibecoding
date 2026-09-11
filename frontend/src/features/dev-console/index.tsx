@@ -30,17 +30,22 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { XIcon } from '@/components/ui/icons';
 
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { messageStamp } from '../../lib/timestamp';
 import { devConsole, type DevConsoleEntry } from './store';
 
 /** How close to the bottom counts as "following the tail" (px). */
 const STICK_SLACK_PX = 40;
 
 function LogRow({ entry }: { entry: DevConsoleEntry }) {
+  // The TEXT stays a bare 24-hour time: these rows are a live tail, they are
+  // read in a narrow column, and a date on every one of them is the noise
+  // #1808's fix exists to avoid. The full instant hangs on `title` instead,
+  // which is what a reader pasting a log line into an issue needs.
   const time = new Date(entry.ts).toLocaleTimeString('en-US', { hour12: false });
   const meta = entry.source ? ` @ ${entry.source}${entry.line ? `:${entry.line}` : ''}` : '';
   return (
     <div className={`dc-log-entry dc-log-${entry.level}`}>
-      <span className="dc-log-time">{time}</span>
+      <time className="dc-log-time" title={messageStamp(entry.ts).title}>{time}</time>
       <span className="dc-log-level">{entry.level.toUpperCase()}</span>
       <span className="dc-log-msg">{entry.args.join(' ') + meta}</span>
     </div>

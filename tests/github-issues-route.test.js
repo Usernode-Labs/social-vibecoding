@@ -498,8 +498,18 @@ test('staging comments endpoint serves mock thread (with a bot comment) on an em
     const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900001/comments?demo=1`);
     assert.strictEqual(res.status, 200);
     const body = await res.json();
-    assert.strictEqual(body.comments.length, 3, 'mock 900001 thread has 3 comments');
+    // Three rows of its own, over the three-row stamp ladder every mock
+    // thread now opens with (#1808): an earlier year, six weeks back, a few
+    // days back, so the three branches the stamp formats are all on screen.
+    assert.strictEqual(body.comments.length, 6, 'mock 900001 thread has 6 comments');
     assert.ok(body.comments.some((c) => c.author === 'usernode-bot'), 'includes a bot-authored comment');
+    assert.strictEqual(body.comments[0].createdAt, '2024-03-05T09:15:00Z',
+      'the ladder leads with a fixed earlier year, so that branch stays reachable');
+    const days = (iso) => (Date.now() - Date.parse(iso)) / 86400000;
+    assert.ok(days(body.comments[1].createdAt) > 7,
+      'the second rung is past the relative floor');
+    assert.ok(days(body.comments[2].createdAt) < 7,
+      'and the third is inside it');
   } finally {
     global.fetch = baselineFetch;
     server.close();

@@ -98,6 +98,11 @@ const SIGNUP_COOKIE = 'usernode_signup';
 // though its transaction also revokes the user's older server sessions.
 const SESSION_MINT_PATHS = [
   '/api/auth/login',
+  // Verifying an email code signs an already-established account straight in,
+  // so it mints a session and belongs here. `/api/auth/otp/request` does not:
+  // the wallet-recovery dialog and the mobile wallet-claim flow both request
+  // codes while signed in, and a mint guard there would break claiming.
+  '/api/auth/otp/verify',
   '/api/auth/otp/set-password',
   '/api/auth/register',
   '/api/auth/wallet-verify',
@@ -282,9 +287,38 @@ function authRoutes(config) {
 
   router.post('/api/auth/otp/verify', otpVerifyLimiter, async (req, res) => {
     try {
-      const verified = await emailSignup.verifyCode(pool, req.body?.email, req.body?.code);
+      const verified = await emailSignup.verifyCode(
+        pool,
+        req.body?.email,
+        req.body?.code,
+        { createSession }
+      );
+      if (verified.next === 'signed-in') {
+        // The account already has a password, so there is nothing to set up.
+        // Clear any stale continuation and hand back the ordinary web session,
+        // shaped exactly like /api/auth/login's response.
+        clearSignupCookie(res);
+        createSessionCookie(res, verified.session.token, verified.session.expiresAt);
+        log.info('email-signup', 'Email code signed an existing account in', {
+          userId: verified.userId,
+          next: 'signed-in',
+        });
+        return res.json({
+          ok: true,
+          next: 'signed-in',
+          user: {
+            id: verified.user.id,
+            username: verified.user.username,
+            ...roleFields(verified.user.isAdmin, verified.user.adminReadonly),
+          },
+        });
+      }
       createSignupCookie(res, verified.signupToken, verified.expiresAt);
-      return res.json({ ok: true });
+      log.info('email-signup', 'Email code verified, password setup pending', {
+        userId: verified.userId,
+        next: 'set-password',
+      });
+      return res.json({ ok: true, next: 'set-password' });
     } catch (error) {
       if (error instanceof emailSignup.EmailSignupError) {
         return res.status(422).json({ error: error.message, code: error.code });
@@ -625,6 +659,20 @@ function authRoutes(config) {
         hasByokKey: true,
         resetsAt: reset.toISOString(),
         lowBalancePct: 80,
+        // #1788: the allowance has two windows now, and the row's copy
+        // follows whichever one is binding. The daily cap binds in this
+        // fixture — the weekly one still has room — so the reviewed row
+        // reads exactly as it did before, with the window now stated
+        // rather than assumed.
+        capWindow: 'daily',
+        windowLabel: 'Today',
+        resetLabel: 'midnight UTC',
+        dailyApplies: true,
+        dailyLimitCents: 2000,
+        dailySpentCents: 1360,
+        weeklyApplies: true,
+        weeklyLimitCents: 17500,
+        weeklySpentCents: 4820,
         demo: true,
       });
     }
@@ -1180,12 +1228,15 @@ function authRoutes(config) {
         const token = crypto.randomBytes(32).toString('hex');
         const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
         const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
-        await pool.query(
+        const issued = await pool.query(
           `UPDATE users SET password_reset_token_hash = $1,
                             password_reset_expires_at = $2
-            WHERE id = $3`,
-          [tokenHash, expiresAt, user.id]
+            WHERE id = $3 AND email = $4 AND email_confirmed = TRUE AND is_admin = FALSE`,
+          [tokenHash, expiresAt, user.id, user.email]
         );
+        // The mailbox may have changed since the lookup. Never issue a
+        // recovery token to the former address after it has been replaced.
+        if (!issued.rowCount) return res.json({ ok: true });
         // Never throws (mail-door contract); a transport failure is logged
         // there and must not turn this into an account oracle.
         await mail.sendPasswordResetMail(config, user.email, token);

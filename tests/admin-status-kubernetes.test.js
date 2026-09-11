@@ -25,6 +25,10 @@ test('Kubernetes capacity renders quota reservations, not invented live usage', 
   assert.match(source, /data\.runtimeKind === 'kubernetes'/);
   assert.match(source, /CPU requests/);
   assert.match(source, /Memory requests/);
+  for (const label of ['CPU limits', 'Memory limits', 'Ephemeral storage limits',
+    'Persistent storage requests', 'Volume claims', 'Services', 'Secrets', 'Jobs', 'Build records']) {
+    assert.ok(source.includes(label), `capacity must display ${label}`);
+  }
   assert.match(source, /% headroom/);
   assert.doesNotMatch(source, /Kubernetes live (CPU|memory)/i);
   assert.match(source, /d\.runtimeKind === 'kubernetes' \? 'Capacity' : 'Capacity & host'/);
@@ -56,4 +60,16 @@ test('database export remains runtime-neutral through networked pg_dump', () => 
   assert.match(source, /spawnFn \|\| spawn\)\('pg_dump'/);
   assert.match(source, /DB_ADMIN_URL \|\| process\.env\.DATABASE_URL/);
   assert.doesNotMatch(source, /docker exec/);
+});
+
+
+test('capacity distinguishes idle connections from busy pool slots and labels missing previews honestly', () => {
+  const source = read('frontend/src/features/admin/admin-status.tsx');
+  assert.match(source, /Math.max\(0, db.total - db.idle\)/);
+  assert.match(source, /poolBusy \/ db.max/);
+  assert.match(source, /DB pool \(busy \/ max\)/);
+  assert.match(source, /db.idle} idle/);
+  assert.match(source, /db.waiting > 0/);
+  assert.match(source, /Missing previews/);
+  assert.doesNotMatch(source, />Stuck sessions<|label="Stuck"/);
 });

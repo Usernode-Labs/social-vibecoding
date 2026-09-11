@@ -23,7 +23,9 @@
  * preview and the app's own thread with its reply box (./card/feed-thread.tsx)
  * — so a reply from here lands in the same thread the Board and the topic
  * page show. One row per theme is open at a time, because a theme with
- * every row unfolded is the stream this replaced.
+ * every row unfolded is the stream this replaced. The row, the open sheet
+ * and the fold between them are ../card/fold.tsx's, shared with the Board's
+ * columns, which fold their cards the same way now.
  *
  * Two slots inside an unfolded row stay legacy-FILLED, rendered here once,
  * empty, with constant classNames — the same seam the feed had:
@@ -34,24 +36,25 @@
  *   name, like the footer buttons make).
  * - `[data-kudos-host]` inside merged cards — `_fillKudosHosts` + Kudos.
  *
- * Opening a card full-screen is the delegated `#dev-body` handler's, exactly
- * as on the Board: the unfolded card carries its `data-issue-row` /
- * `data-proposal-row` hooks and the compact row deliberately does not.
+ * Both sizes carry the item's `data-issue-row` / `data-proposal-row` hooks,
+ * and the delegated `#dev-body` handler stands aside for clicks inside a
+ * fold wrapper (see fold.tsx's header); the item's full-screen route is the
+ * link on the open card.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { ChevronRightIcon } from '@/components/ui/icons';
 
+import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
 import { devWorkshopStore } from '../card/cards-store';
-import { CardIcon, DevCard, VoteButton } from '../card/dev-card';
-import type { ActionSpec } from '../card/model';
-import { FeedThread } from '../card/feed-thread';
-import type { DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
+import { DevCard } from '../card/dev-card';
+import { CardRowView, callAppView } from '../card/fold';
+import type { DevWorkshopView, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
+import { ProgressRing } from '@/components/ui/progress-ring';
 
-type CardRow = Extract<ListRow, { t: 'card' }>;
 type SortKey = 'people' | 'activity' | 'open';
 
 /** The swatch a name gets everywhere (feed-thread's rule, kept in step). */
@@ -62,128 +65,17 @@ function swatchFor(name: string): string {
   return palette[h % palette.length];
 }
 
+// The shared ago ladder (#1808) — this file used to carry its own, with a
+// 90-second "just now" and a 48-hour bucket that read "36h ago" where every
+// other surface said "1d ago". Both call sites drop it into a SENTENCE, so
+// the degraded form lands as "drafted Jun 16" rather than "drafted 84d ago",
+// which is the point.
+//
+// The epoch guard stays: these two take a millisecond number that is 0 when
+// the thing never happened, and `agoStamp(0)` is a 1970 date, not nothing.
 function relTime(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) return '';
-  const secs = Math.max(0, Math.floor((Date.now() - ms) / 1000));
-  if (secs < 90) return 'just now';
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 48) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
-
-function callAppView(fn: string, ...args: unknown[]): void {
-  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
-  if (av && typeof av[fn] === 'function') av[fn](...args);
-}
-
-/**
- * Where "Open" leads: the card's own full-screen route, read off the hooks
- * the delegated handler reads, so the two can never disagree.
- */
-function openHref(slug: string, card: DevCardModel): string | null {
-  const a = card.attrs || {};
-  if (!slug) return null;
-  if (a['data-issue-row']) return `#app/${slug}/dev/issues/${a['data-issue-row']}`;
-  if (a['data-proposal-row']) return `#app/${slug}/dev/proposals/${a['data-proposal-row']}`;
-  if (a['data-gov-row']) return `#app/${slug}/dev/governance/${a['data-gov-row']}`;
-  if (a['data-shared-session-row']) return `#app/${slug}/dev/shared/${a['data-shared-session-row']}`;
-  if (a['data-session-chip']) return `#app/${slug}/dev/sessions/${a['data-session-chip']}`;
-  return null;
-}
-
-/** The `#N` from the meta line, when the card has one. */
-function numberOf(card: DevCardModel): string | null {
-  for (const m of card.meta) {
-    if (m.t === 'link' && /^#\d+$/.test(m.s)) return m.s;
-  }
-  return null;
-}
-
-/** The author from the meta line: the first plain text part. */
-function authorOf(card: DevCardModel): string | null {
-  for (const m of card.meta) if (m.t === 'text') return m.s;
-  return null;
-}
-
-/**
- * One folded row: a disclosure, and one that carries NO `data-issue-row`,
- * so the delegated card-open handler never mistakes it for a card.
- *
- * A `div` with the button role rather than a `<button>`, because the vote
- * strip's rows carry the card's Vote button INSIDE them (`trailing`), and
- * a button cannot contain a button. The trailing control stops its clicks
- * from reaching the row; Enter and Space on the row itself toggle it.
- */
-function FoldedRow({
-  row, open, onToggle, trailing,
-}: { row: CardRow; open: boolean; onToggle: () => void; trailing?: ReactNode }): ReactNode {
-  const c = row.card;
-  const n = numberOf(c);
-  const by = authorOf(c);
-  const pill = c.pill?.state.label || null;
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      className={open ? 'dev-ws-row dev-ws-row-open' : 'dev-ws-row'}
-      aria-expanded={open}
-      data-ws-row={row.key}
-      onClick={onToggle}
-      onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return;
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); }
-      }}
-    >
-      {c.icon ? <CardIcon spec={{ ...c.icon, small: true }} /> : null}
-      <span className="dev-ws-row-main">
-        <span className="dev-ws-row-title">
-          {c.title.text}
-          {row.fresh ? <span className="dev-ws-new">new</span> : null}
-          {row.placing ? <span className="dev-ws-placing" title="Being placed into a theme">placing…</span> : null}
-        </span>
-        <span className="dev-ws-row-meta">
-          {n ? <span className="font-mono">{n}</span> : null}
-          {by ? <span>{by}</span> : null}
-          {pill ? <span className="dev-ws-row-pill">{pill}</span> : null}
-        </span>
-      </span>
-      {c.chatCount ? <span className="dev-ws-row-chat" title={`${c.chatCount} replies`}>{`💬 ${c.chatCount}`}</span> : null}
-      {trailing ? <span className="dev-ws-row-trailing" onClick={(e) => e.stopPropagation()}>{trailing}</span> : null}
-      <ChevronRightIcon className="dev-ws-chev" aria-hidden="true" />
-    </div>
-  );
-}
-
-/**
- * The unfolded row: the Activity entry, byte-compatible with the feed's —
- * `.dev-feed-entry` wraps the dense card, the GitHub preview slot and the
- * app thread, so app.css's sheet treatment and the module's two fillers
- * find exactly the markup they expect.
- */
-function UnfoldedRow({
-  row, slug, canPost, onCollapse,
-}: { row: CardRow; slug: string; canPost: boolean; onCollapse: () => void }): ReactNode {
-  const href = openHref(slug, row.card);
-  return (
-    <div className="dev-feed-entry dev-ws-sheet" data-ws-sheet={row.key}>
-      <DevCard model={row.card} />
-      {row.commentsFor != null ? (
-        <div className="dev-feed-comments" data-comments-for={String(row.commentsFor)}></div>
-      ) : null}
-      {row.thread && slug ? (
-        <FeedThread slug={slug} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
-      ) : null}
-      <div className="dev-ws-sheet-actions">
-        {href ? (
-          <a href={href} className="dev-ws-link">Open card ›</a>
-        ) : null}
-        <span className="flex-1"></span>
-        <button type="button" className="gc-vote-btn" onClick={onCollapse}>Collapse</button>
-      </div>
-    </div>
-  );
+  return agoStamp(ms).text;
 }
 
 function Lane({
@@ -196,51 +88,44 @@ function Lane({
   onToggle: (key: string) => void;
   themeId: string;
 }): ReactNode {
+  // "Shipped this week" is the one lane that is a RECORD rather than a
+  // question — nothing in it needs anybody — so a theme opens on the work
+  // that still wants someone and keeps the record one tap away (#1787). The
+  // hook runs before the early return below, because a hook may not be
+  // conditional; the lane still renders nothing when it holds nothing.
+  const collapsible = lane.key === 'shipped';
+  const [laneOpen, setLaneOpen] = useState(!collapsible);
   if (!lane.rows.length && !lane.more) return null;
+  const total = lane.rows.length + lane.more;
   return (
     <div className={`dev-ws-lane dev-ws-lane-${lane.key}`} data-ws-lane={lane.key}>
-      <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>{lane.title}</h4>
-      {lane.rows.map((row) => {
-        if (row.t !== 'card') return null;
-        const open = openKey === row.key;
-        return (
-          <div key={row.key} className={open ? 'dev-ws-rowwrap dev-ws-rowwrap-open' : 'dev-ws-rowwrap'}>
-            <FoldedRow row={row} open={open} onToggle={() => onToggle(row.key)} />
-            {open ? (
-              <UnfoldedRow row={row} slug={slug} canPost={canPost} onCollapse={() => onToggle(row.key)} />
-            ) : null}
-          </div>
-        );
-      })}
-      {lane.more ? <div className="dev-ws-more">{`+${lane.more} more in this lane`}</div> : null}
-    </div>
-  );
-}
-
-/** The card's Yes/No vote specs, when it carries a vote (the dense card's rule). */
-function voteSpecs(card: DevCardModel): { yes: ActionSpec; no: ActionSpec } | null {
-  const yes = card.actions.find((a) => /\bgc-vote-btn-yes\b/.test(a.cls || ''));
-  const no = card.actions.find((a) => /\bgc-vote-btn-no\b/.test(a.cls || ''));
-  return yes && no ? { yes, no } : null;
-}
-
-/**
- * A row in the vote strip: the folded row with the card's own Vote button
- * inside it, at the trailing edge. Unfolds like any other row.
- */
-function VoteRow({
-  row, slug, canPost, open, onToggle,
-}: { row: CardRow; slug: string; canPost: boolean; open: boolean; onToggle: () => void }): ReactNode {
-  const specs = voteSpecs(row.card);
-  return (
-    <div className={open ? 'dev-ws-rowwrap dev-ws-rowwrap-open' : 'dev-ws-rowwrap'}>
-      <FoldedRow
-        row={row}
-        open={open}
-        onToggle={onToggle}
-        trailing={specs ? <VoteButton yes={specs.yes} no={specs.no} /> : null}
-      />
-      {open ? <UnfoldedRow row={row} slug={slug} canPost={canPost} onCollapse={onToggle} /> : null}
+      {collapsible ? (
+        <h4
+          className="dev-ws-lane-title"
+          role="button"
+          tabIndex={0}
+          aria-expanded={laneOpen}
+          onClick={() => setLaneOpen(!laneOpen)}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setLaneOpen(!laneOpen); } }}
+        >
+          <span className="dev-ws-dot" aria-hidden="true"></span>{lane.title}
+          <span className="dev-ws-lane-n">{total}</span>
+          <ChevronRightIcon className="dev-ws-chev" aria-hidden="true" />
+        </h4>
+      ) : (
+        <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>{lane.title}</h4>
+      )}
+      {!laneOpen ? null : lane.rows.map((row) => (row.t === 'card' ? (
+        <CardRowView
+          key={row.key}
+          row={row}
+          slug={slug}
+          canPost={canPost}
+          open={openKey === row.key}
+          onToggle={() => onToggle(row.key)}
+        />
+      ) : null))}
+      {laneOpen && lane.more ? <div className="dev-ws-more">{`+${lane.more} more in this lane`}</div> : null}
     </div>
   );
 }
@@ -287,6 +172,7 @@ function ThemeCard({
   onToggleRow: (key: string) => void;
 }): ReactNode {
   const c = theme.counts;
+  const openItems = c.open + c.underway + c.review;
   const chips: ReactNode[] = [];
   if (c.fresh) chips.push(<span key="fresh" className="dev-ws-cnt dev-ws-cnt-fresh"><b>{`+${c.fresh}`}</b> new</span>);
   if (c.review) chips.push(<span key="review" className="dev-ws-cnt dev-ws-cnt-review"><span className="dev-ws-dot"></span><b>{c.review}</b> in review</span>);
@@ -294,18 +180,24 @@ function ThemeCard({
   chips.push(<span key="open" className="dev-ws-cnt"><span className="dev-ws-dot"></span><b>{c.open}</b> open</span>);
   if (c.shipped) chips.push(<span key="shipped" className="dev-ws-cnt dev-ws-cnt-shipped"><span className="dev-ws-dot"></span><b>{c.shipped}</b> shipped this week</span>);
 
-  const building = theme.lanes.find((l) => l.key === 'underway')?.rows.length || 0;
-  const reviewing = theme.lanes.find((l) => l.key === 'review')?.rows.length || 0;
+  // `counts` rather than `rows.length`: the lane caps its rows at
+  // WORKSHOP_LANE_MAX, so a theme with twelve underway used to report eight.
   const bits: string[] = [];
-  if (building) bits.push(`${building} underway`);
-  if (reviewing) bits.push(`${reviewing} in review`);
+  if (c.underway) bits.push(`${c.underway} underway`);
+  if (c.review) bits.push(`${c.review} in review`);
   const quietDays = theme.lastActive ? Math.floor((Date.now() - theme.lastActive) / 86400000) : null;
   const hidden = theme.lanes.reduce((n, l) => n + l.more, 0);
-  const foot = bits.length
-    ? `${theme.people.length} involved · ${bits.join(' · ')}`
-    : (quietDays != null && quietDays > 14
-      ? `${theme.people.length} involved · quiet for ${quietDays} days`
-      : `${theme.people.length} involved · nobody building yet`);
+  // "nobody building yet" said something this cannot know. The condition is
+  // only that nothing is in flight RIGHT NOW — a theme that shipped a dozen
+  // changes and has a quiet week reads identically to one nobody has ever
+  // touched, and the "yet" told newcomers the second story about both. What
+  // the data actually supports is the present tense, so that is what it says;
+  // where the theme shipped something this week it can say that instead, which
+  // is the same fact with the history the old line was inventing.
+  const idle = c.shipped
+    ? `${c.shipped} shipped this week, nothing in flight now`
+    : (quietDays != null && quietDays > 14 ? `quiet for ${quietDays} days` : 'nothing in flight right now');
+  const foot = `${theme.people.length} involved · ${bits.length ? bits.join(' · ') : idle}`;
 
   return (
     <article
@@ -321,8 +213,32 @@ function ThemeCard({
         onClick={onToggle}
         onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
       >
-        <div className="dev-ws-theme-name">{theme.name}</div>
-        <div className="dev-ws-theme-people"><b>{theme.people.length}</b>{theme.people.length === 1 ? 'person' : 'people'}</div>
+        {/* The model picks the glyph, so it means the part of the product
+            rather than hashing to a stable-but-arbitrary one. With none —
+            an older row, or an answer the sanitiser rejected — the theme's
+            initial on its own swatch, which is the treatment `Faces` already
+            uses and reads as deliberate where a random emoji would not. */}
+        <div className="dev-ws-theme-name">
+          {theme.icon
+            ? <span className="dev-ws-theme-icon" aria-hidden="true">{theme.icon}</span>
+            : (
+              <span
+                className="dev-ws-theme-icon dev-ws-theme-icon-letter"
+                aria-hidden="true"
+                style={{ backgroundColor: swatchFor(theme.name) }}
+              >{theme.name.slice(0, 1).toUpperCase()}</span>
+            )}
+          {theme.name}
+        </div>
+        {/* Two stats, not one: how many people, and how big. `counts` is
+            incremented before the lane cap in the publisher, so this is the
+            theme's real size and not what happens to be drawn. SHIPPED is
+            excluded on purpose — the question the number answers is "how
+            much is left in here", and work that landed is not left. */}
+        <div className="dev-ws-theme-people">
+          <span className="dev-ws-stat"><b>{theme.people.length}</b>{theme.people.length === 1 ? 'person' : 'people'}</span>
+          <span className="dev-ws-stat"><b>{openItems}</b>{openItems === 1 ? 'item' : 'items'}</span>
+        </div>
         {theme.saying ? (
           <p className="dev-ws-theme-say">{theme.saying}</p>
         ) : (theme.description ? <p className="dev-ws-theme-say">{theme.description}</p> : null)}
@@ -368,17 +284,31 @@ function ThemeCard({
  * failure if there was one. Each is a fact the viewer can see on the page
  * ("placing…" markers, the trailing group), so the note names it.
  */
-function aiFootnote(meta: DevWorkshopView['meta']): string {
+function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
   const drafted = meta.discoveredAt ? Date.parse(meta.discoveredAt) : NaN;
   const parts: string[] = [
     Number.isFinite(drafted)
-      ? `Themes were drafted ${relTime(drafted)} and are re-drafted daily, or sooner when a tenth of the board changes.`
-      : 'Themes are drafted from the board and re-drafted daily, or sooner when a tenth of the board changes.',
+      ? `Categories were drafted ${relTime(drafted)} and are re-drafted daily, or sooner when a tenth of the board changes.`
+      : 'Categories are drafted from the board and re-drafted daily, or sooner when a tenth of the board changes.',
   ];
+  // Which paragraph is at the top of the page. Without this the two states
+  // are indistinguishable on screen — a model that has never run and one
+  // whose call is failing both leave the derived sentence up there, and the
+  // only way to tell was to read the database.
+  if (written) {
+    parts.push('The summary at the top was written by the model on the same pass.');
+  } else if (meta.digestError) {
+    // The failure that used to be a log line and a day of silence. Naming
+    // it here is what turned "could something be up with the summarizer?"
+    // from a question about the database into one the page answers.
+    parts.push(`The model\u2019s summary could not be written (${meta.digestError}); it is retried within the hour, and the sentence at the top is worked out from the board meanwhile.`);
+  } else {
+    parts.push('The summary at the top is worked out from the board; the model writes one on the next pass.');
+  }
   const c = meta.coverage;
   if (c && c.pending) parts.push(`${c.pending} new ${c.pending === 1 ? 'card is' : 'cards are'} being placed.`);
   if (c && c.unplaced) {
-    parts.push(`${c.unplaced} ${c.unplaced === 1 ? 'card did' : 'cards did'} not fit a theme and ${c.unplaced === 1 ? 'waits' : 'wait'} for the next draft.`);
+    parts.push(`${c.unplaced} ${c.unplaced === 1 ? 'card did' : 'cards did'} not fit a category and ${c.unplaced === 1 ? 'waits' : 'wait'} for the next draft.`);
   }
   if (meta.lastError) parts.push(`The last attempt failed (${meta.lastError}); it is retried shortly.`);
   return parts.join(' ');
@@ -400,6 +330,228 @@ const SORTS: { key: SortKey; label: string }[] = [
   { key: 'open', label: 'By open items' },
 ];
 
+type Dash = NonNullable<DevWorkshopView['dashboard']>;
+
+/** The rate, as a sentence: this week's merges against last week's. */
+function pace(d: Dash): string {
+  const n = d.shippedWeek;
+  const p = d.shippedPrevWeek;
+  // ── Why a partial history states no rate ──────────────────────────
+  //
+  // Both weeks are counted from the SAME page of merged history, and when
+  // there is more behind it the earlier week is the one more likely to fall
+  // off the end. So a truncated page reads as a drought that never happened:
+  // an app merging twenty changes a week was told "20 landed this week, the
+  // first in a fortnight", which is not a hedge away from true, it is
+  // backwards. `At least` was already on the COUNT and it was never enough,
+  // because the fault is in the COMPARISON.
+  //
+  // With a partial page the honest sentence is the floor and nothing else.
+  if (d.partial) {
+    if (!n) return 'Nothing has landed this week.';
+    return `At least ${n} ${n === 1 ? 'change' : 'changes'} landed this week.`;
+  }
+  if (!n && !p) return 'Nothing has landed in the last fortnight.';
+  if (!p) return `${n} ${n === 1 ? 'change' : 'changes'} landed this week, the first in a fortnight.`;
+  if (n > p) return `${n} landed this week, up from ${p} the week before.`;
+  if (n < p) return `${n} landed this week, down from ${p} the week before.`;
+  return `${n} landed this week, the same as the week before.`;
+}
+
+/**
+ * The app in two sentences, written by the model on the same reconcile that
+ * drafted the themes — from the same board snapshot, so the paragraph and the
+ * grouping under it can never describe different boards. `describe()` below is
+ * what runs when there is none: no model configured, no draft yet, or that one
+ * call failed. Same relationship the category grouping has to the themes.
+ */
+/**
+ * The four numbers, as tiles.
+ *
+ * They were prose ("58 open items across 11 themes... 4 proposals are waiting
+ * on votes and 19 open items have nobody on them"), which is the slowest
+ * possible way to read four integers and the reason the paragraph never got
+ * to say anything else. A tile is scanned; a clause has to be parsed.
+ *
+ * These four and not others: they are the ones somebody arriving asks. How
+ * much is open, is it moving, is anything blocked on ME, and is anything
+ * going begging. `themes` and `people` are already on screen — the sort bar
+ * counts the themes, and every theme header carries its own roster.
+ *
+ * "Shipped this week" wears a `+` when the merged history is paged, because
+ * the number is then a floor and not a total. That is the same fact `pace()`
+ * refuses to compare on, said in one character.
+ */
+function DashTiles({ d }: { d: Dash }): ReactNode {
+  const cells: { key: string; n: number; label: string; cls?: string; title?: string }[] = [
+    { key: 'open', n: d.open, label: d.open === 1 ? 'open item' : 'open items' },
+    {
+      key: 'shipped',
+      n: d.shippedWeek,
+      label: 'shipped this week',
+      cls: d.shippedWeek ? 'dev-ws-dash-good' : undefined,
+      title: d.partial ? 'At least this many: the merged history is longer than the page loaded.' : undefined,
+    },
+    {
+      key: 'votes',
+      n: d.votesWaiting,
+      label: d.votesWaiting === 1 ? 'waiting on a vote' : 'waiting on votes',
+      cls: d.votesWaiting ? 'dev-ws-dash-warn' : undefined,
+    },
+    { key: 'unclaimed', n: d.unclaimed, label: 'with nobody on them' },
+  ];
+  return (
+    <div className="dev-ws-dash" data-ws-dash="">
+      {cells.map((c) => (
+        <span
+          key={c.key}
+          className={c.cls ? `dev-ws-dash-cell ${c.cls}` : 'dev-ws-dash-cell'}
+          data-ws-dash-cell={c.key}
+          title={c.title}
+        >
+          <b>{c.key === 'shipped' && d.partial && c.n ? `${c.n}+` : c.n}</b>
+          {c.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The three cards: what landed last week, what has landed this week, what
+ * the open work is about — one model-written line each, under a title.
+ *
+ * They replaced a single paragraph that was answering all three questions at
+ * once, and answering them badly: asked to cover a week, its meaning and the
+ * work in flight inside 100 words, the model picked a headline and
+ * generalised from the top of its list. Three fields give each window its own
+ * sentence and its own budget, and — the half that actually fixed the
+ * accuracy — its own complete input, fetched per calendar week rather than
+ * filtered out of a board snapshot that was capped at a hundred merges.
+ *
+ * A window that held nothing gets no card, which is what the empty string
+ * from the server means. All three empty is not a card set at all (the
+ * client's normaliser returns null), so the pane falls through to the
+ * paragraph and then to the derived sentence, and never renders an empty box.
+ */
+const DIGEST_CARDS: { key: keyof NonNullable<Dash['cards']>; title: string }[] = [
+  { key: 'lastWeek', title: 'Last week' },
+  { key: 'thisWeek', title: 'This week' },
+  { key: 'open', title: 'Open' },
+];
+
+function DigestCards({ cards }: { cards: NonNullable<Dash['cards']> }): ReactNode {
+  const drawn = DIGEST_CARDS.filter((c) => cards[c.key]);
+  if (!drawn.length) return null;
+  return (
+    <div className="dev-ws-cards" data-ws-cards="">
+      {drawn.map((c) => (
+        <article key={c.key} className="dev-ws-card" data-ws-card={c.key}>
+          <h4 className="dev-ws-card-title">{c.title}</h4>
+          <p className="dev-ws-card-line">{cards[c.key]}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The paragraph, for a board whose row predates the cards. `d.summary` is the
+ * three lines flattened, which is all a row last written under the previous
+ * digest prompt has; `describe` is the derived sentence under that again.
+ */
+function summarise(d: Dash): string {
+  return d.summary || describe(d);
+}
+
+/**
+ * The derived sentence — what the pane says when the model has not written
+ * one.
+ *
+ * Round four cut this down to the two things the tiles cannot show and let
+ * it return an EMPTY string when it could say neither, on the reasoning that
+ * a blank beats prose repeating the numbers directly above it. That was
+ * right about the duplication and wrong about the outcome: the model
+ * paragraph is written on a reconcile pass, an app can sit for a long time
+ * without one, and what a reader actually got was a pane with a heading, four
+ * tiles and nothing that reads like a sentence — which looks like a broken
+ * feature rather than a deliberate silence.
+ *
+ * So the full sentence is back, as the FALLBACK only. When the model has
+ * written a paragraph that paragraph stands alone and states no counts (the
+ * prompt spends most of its length on that). When it has not, this repeats
+ * two of the tiles and is worth it, because the alternative is a blank.
+ *
+ * The footnote at the bottom of the lander says which of the two is on
+ * screen, so "the summarizer looks broken" and "no draft yet" are
+ * distinguishable without reading the database.
+ */
+function describe(d: Dash): string {
+  const parts: string[] = [];
+  const scale = `${d.open} open ${d.open === 1 ? 'item' : 'items'}`
+    + (d.themes ? ` across ${d.themes} ${d.themes === 1 ? 'category' : 'categories'}` : '');
+  parts.push(d.busiest ? `${scale}, most of the movement in ${d.busiest}.` : `${scale}.`);
+  parts.push(pace(d));
+  const waiting: string[] = [];
+  if (d.votesWaiting) {
+    waiting.push(`${d.votesWaiting} ${d.votesWaiting === 1 ? 'proposal is' : 'proposals are'} waiting on votes`);
+  }
+  if (d.unclaimed) {
+    waiting.push(`${d.unclaimed} open ${d.unclaimed === 1 ? 'item has nobody on it' : 'items have nobody on them'}`);
+  }
+  if (waiting.length) parts.push(`${waiting.join(' and ').replace(/^./, (c) => c.toUpperCase())}.`);
+  return parts.join(' ');
+}
+
+/** "1 change landed, 2 new proposals" — what moved while you were away. */
+function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
+  if (!s.rows.length) return 'nothing has changed';
+  const bits = [
+    s.shipped ? `${s.shipped} ${s.shipped === 1 ? 'change' : 'changes'} landed` : null,
+    s.opened ? `${s.opened} new ${s.opened === 1 ? 'issue' : 'issues'}` : null,
+    s.proposed ? `${s.proposed} new ${s.proposed === 1 ? 'proposal' : 'proposals'}` : null,
+  ].filter(Boolean);
+  return bits.length ? bits.join(', ') : `${s.rows.length} things moved`;
+}
+
+/**
+ * The vote badge: a ring, and the count in words beside it.
+ *
+ * It was "4 to vote on" in the warning tint, which stated a debt. The ring
+ * says the same population as PROGRESS — how many of the app's open
+ * proposals this viewer has answered — using the primitive the home
+ * screen's Challenges block uses.
+ *
+ * The words are back beside it because a ring alone is a fraction with no
+ * subject: "0/5" does not say what the five are, and a reader should not
+ * have to hover a donut to find out. The ring carries the shape of the
+ * answer, the sentence carries its meaning.
+ *
+ * There is no × any more. A count that can be closed is a count somebody
+ * stops seeing while it is still true, and this one is the whole reason the
+ * pane exists.
+ */
+function VoteRing({ owed, total }: { owed: number; total: number }): ReactNode {
+  const done = Math.max(0, total - owed);
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return (
+    <span className="dev-ws-needs-end">
+      {owed ? (
+        <span className="dev-ws-needs-count">
+          {`${owed} ${owed === 1 ? 'proposal needs' : 'proposals need'} your vote`}
+        </span>
+      ) : null}
+      <ProgressRing
+        className="dev-ws-vote-ring"
+        pct={pct}
+        label={`${done}/${total}`}
+        title={`${done} of ${total} open proposals voted on`}
+        arcClassName={owed ? 'stroke-amber-500' : 'stroke-emerald-500'}
+      />
+    </span>
+  );
+}
+
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -407,19 +559,40 @@ export function DevWorkshop(): ReactNode {
   // Which themes are unfolded, keyed by id. The FIRST theme opens by
   // default: a lander whose every theme is shut is a list of headings.
   // Seeded once the first real publish lands, then the viewer's.
-  const [openThemes, setOpenThemes] = useState<Record<string, boolean> | null>(null);
+  // Seeded FROM the publish, not from an effect: `autoExpand` is how the
+  // `?shot=` deep links reach a theme now that every one starts shut, and an
+  // effect would paint the closed state first. Nothing hydrates this component
+  // — it mounts client-side into a legacy host and is absent from the
+  // prerendered shell — so there is no mismatch to cause. The effect below
+  // still handles the case where the themes land after the first paint.
+  const [openThemes, setOpenThemes] = useState<Record<string, boolean> | null>(
+    () => (v.autoExpand ? { [v.autoExpand.theme]: true } : null),
+  );
   // At most one unfolded row per theme (and one for the since strip).
-  const [openRows, setOpenRows] = useState<Record<string, string>>({});
+  const [openRows, setOpenRows] = useState<Record<string, string>>(
+    () => (v.autoExpand && v.autoExpand.key ? { [v.autoExpand.theme]: v.autoExpand.key } : {}),
+  );
   const [sinceOpen, setSinceOpen] = useState(false);
+  // "N more waiting on you" reveals them HERE. It used to set a board filter
+  // and navigate, which left the lander and changed the view mode to read a
+  // list the strip was already showing the top of.
+  const [allVotes, setAllVotes] = useState(false);
+  const [allMine, setAllMine] = useState(false);
 
   const themes = useMemo(() => sortThemes(v.themes, sortKey), [v.themes, sortKey]);
-  const firstId = themes.length ? themes[0].id : null;
-  const isOpen = (id: string) => (openThemes ? !!openThemes[id] : id === firstId);
+  // Named categories only — "Not yet grouped" is a holding pen, not one of
+  // them. Counted here so the label can agree with itself: it read
+  // "1 themes" before, which is the kind of thing a reader trusts a screen
+  // slightly less for.
+  const countOfThemes = themes.filter((t) => !t.ungrouped).length;
+  // Every theme starts SHUT. The first one used to open itself, on the
+  // reasoning that a lander whose every theme is closed is a list of
+  // headings — but a list of headings is exactly what this screen is for,
+  // and opening one of them for you spends the top of the page on whichever
+  // theme happened to sort first rather than on the shape of the whole board.
+  const isOpen = (id: string) => !!(openThemes && openThemes[id]);
   const toggleTheme = (id: string) => {
-    setOpenThemes((cur) => {
-      const base = cur || (firstId ? { [firstId]: true } : {});
-      return { ...base, [id]: !base[id] };
-    });
+    setOpenThemes((cur) => ({ ...(cur || {}), [id]: !(cur && cur[id]) }));
   };
   const toggleRow = (scope: string, key: string) => {
     setOpenRows((cur) => (cur[scope] === key ? { ...cur, [scope]: '' } : { ...cur, [scope]: key }));
@@ -431,15 +604,20 @@ export function DevWorkshop(): ReactNode {
   useEffect(() => {
     if (!v.autoExpand) return;
     const { theme, key } = v.autoExpand;
-    setOpenThemes((cur) => ({ ...(cur || (firstId ? { [firstId]: true } : {})), [theme]: true }));
-    setOpenRows((cur) => ({ ...cur, [theme]: key }));
+    setOpenThemes((cur) => ({ ...(cur || {}), [theme]: true }));
+    // `?shot=themes` names a theme and no row: the lanes are the subject, and
+    // every row in them stays folded.
+    if (key) setOpenRows((cur) => ({ ...cur, [theme]: key }));
   }, [autoKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The two legacy fillers, re-run whenever the set of unfolded entries
   // changes — see the header. `_wireFeedComments` replaces its observer, so
   // calling it again is idempotent; `_fillKudosHosts` skips filled hosts.
+  // A layout effect, so a merged card's kudos pill is in its band on the
+  // card's first frame rather than popping in after it (dev-kanban.tsx has
+  // the same note).
   const openSig = Object.values(openRows).join('|') + (sinceOpen ? '|since' : '');
-  useEffect(() => {
+  useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
     callAppView('_wireFeedComments', host);
@@ -447,6 +625,7 @@ export function DevWorkshop(): ReactNode {
   }, [openSig, v]);
 
   if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
+  const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
   const slug = v.slug || '';
   const canPost = !!v.canPost;
 
@@ -467,82 +646,154 @@ export function DevWorkshop(): ReactNode {
         </div>
       ) : null}
 
-      {v.votes.rows.length ? (
-        <section className="dev-ws-strip" data-ws-votes="">
+      {/* ── One pane: where the app is, and what moved while you were away ──
+          These were two strips asking one question. The description leads —
+          the app says what it is about the way a theme does — and the personal
+          line sits under it, because "what changed for me" only means anything
+          against "what this is". Both hooks ride on the one section now. */}
+      {v.dashboard ? (
+        <section
+          className="dev-ws-strip"
+          data-ws-since={v.since ? '' : undefined}
+          data-ws-dashboard=""
+        >
           <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">Needs your vote</span>
-            <span className="dev-ws-pill dev-ws-pill-warn">{`${v.votes.count} ${v.votes.count === 1 ? 'proposal' : 'proposals'}`}</span>
+            <span className="dev-ws-eyebrow">Where the app is</span>
+            {v.since && v.since.shipped
+              ? <span className="dev-ws-pill dev-ws-pill-good">{`${v.since.shipped} shipped since`}</span>
+              : null}
           </div>
-          <div className="dev-ws-lane" data-ws-lane="votes">
-            {v.votes.rows.map((row) => (row.t === 'card' ? (
-              <VoteRow
-                key={row.key}
-                row={row}
-                slug={slug}
-                canPost={canPost}
-                open={openRows.votes === row.key}
-                onToggle={() => toggleRow('votes', row.key)}
-              />
-            ) : null))}
-          </div>
-          {v.votes.count > v.votes.rows.length ? (
-            <button type="button" className="dev-ws-link self-start" onClick={() => callAppView('openBoardNeedingVote')}>
-              {`${v.votes.count - v.votes.rows.length} more waiting on you ›`}
-            </button>
+          <DashTiles d={v.dashboard} />
+          {v.dashboard.cards
+            ? <DigestCards cards={v.dashboard.cards} />
+            : summarise(v.dashboard)
+              ? <p className="dev-ws-strip-text">{summarise(v.dashboard)}</p>
+              : null}
+          {v.since ? (
+            <p className="dev-ws-since-line">
+              <span>{`Since your last visit, ${relTime(v.since.baseline)}: ${sinceWords(v.since)}`}</span>
+              {v.since.rows.length ? (
+                <button
+                  type="button"
+                  className="gc-vote-btn"
+                  aria-expanded={sinceOpen}
+                  onClick={() => setSinceOpen(!sinceOpen)}
+                >{sinceOpen ? 'Hide' : `Show ${v.since.rows.length}`}</button>
+              ) : null}
+            </p>
           ) : null}
-        </section>
-      ) : null}
-
-      {v.since ? (
-        <section className="dev-ws-strip" data-ws-since="">
-          <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">{`Since your last visit · ${relTime(v.since.baseline)}`}</span>
-            {v.since.shipped ? <span className="dev-ws-pill dev-ws-pill-good">{`${v.since.shipped} shipped`}</span> : null}
-          </div>
-          <p className="dev-ws-strip-text">
-            {v.since.rows.length
-              ? [
-                v.since.shipped ? `${v.since.shipped} ${v.since.shipped === 1 ? 'change' : 'changes'} landed` : null,
-                v.since.opened ? `${v.since.opened} new ${v.since.opened === 1 ? 'issue' : 'issues'}` : null,
-                v.since.proposed ? `${v.since.proposed} new ${v.since.proposed === 1 ? 'proposal' : 'proposals'}` : null,
-              ].filter(Boolean).join(', ') || `${v.since.rows.length} things moved`
-              : 'Nothing has changed since then.'}
-            {v.since.rows.length ? (
-              <button type="button" className="dev-ws-link ml-1" aria-expanded={sinceOpen} onClick={() => setSinceOpen(!sinceOpen)}>
-                {sinceOpen ? 'Hide' : `Show ${v.since.rows.length}`}
-              </button>
-            ) : null}
-          </p>
-          {sinceOpen ? (
+          {v.since && sinceOpen ? (
             <div className="dev-ws-lane" data-ws-lane="since">
-              {v.since.rows.map((row) => {
-                if (row.t !== 'card') return null;
-                const open = openRows.since === row.key;
-                return (
-                  <div key={row.key} className={open ? 'dev-ws-rowwrap dev-ws-rowwrap-open' : 'dev-ws-rowwrap'}>
-                    <FoldedRow row={row} open={open} onToggle={() => toggleRow('since', row.key)} />
-                    {open ? (
-                      <UnfoldedRow row={row} slug={slug} canPost={canPost} onCollapse={() => toggleRow('since', row.key)} />
-                    ) : null}
-                  </div>
-                );
-              })}
+              {v.since.rows.map((row) => (row.t === 'card' ? (
+                <CardRowView
+                  key={row.key}
+                  row={row}
+                  slug={slug}
+                  canPost={canPost}
+                  open={openRows.since === row.key}
+                  onToggle={() => toggleRow('since', row.key)}
+                />
+              ) : null))}
             </div>
           ) : null}
         </section>
       ) : null}
 
-      {v.welcome ? (
-        <section className="dev-ws-strip" data-ws-welcome="">
+      {/* ── Yours, first ──
+          The first question a returning member has is about their OWN work,
+          and the lander answered every other one before it: what the app is
+          doing, what the group needs, what nobody has picked up. A
+          half-finished session of theirs was somewhere down inside a theme,
+          under a heading about the theme. */}
+      {v.mine && v.mine.rows.length ? (
+        <section className="dev-ws-strip" data-ws-mine="">
           <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">What this project is working on</span>
+            <span className="dev-ws-eyebrow">What you are working on</span>
           </div>
-          <p className="dev-ws-strip-text">
-            {`${v.welcome.open} open ${v.welcome.open === 1 ? 'item' : 'items'} in ${v.welcome.themes} ${v.welcome.themes === 1 ? 'theme' : 'themes'}`}
-            {v.welcome.votesWaiting ? `, ${v.welcome.votesWaiting} ${v.welcome.votesWaiting === 1 ? 'proposal' : 'proposals'} waiting for votes` : ''}
-            {v.welcome.shippedWeek ? `, ${v.welcome.shippedWeek} ${v.welcome.shippedWeek === 1 ? 'change' : 'changes'} shipped this week` : ''}
-            {'. Open a theme to see what is being said and built, and reply on anything to join in.'}
-          </p>
+          <div className="dev-ws-lane" data-ws-lane="mine">
+            {(allMine ? v.mine.rows : v.mine.rows.slice(0, v.mine.shown)).map((row) => (row.t === 'card' ? (
+              <CardRowView
+                key={row.key}
+                row={row}
+                slug={slug}
+                canPost={canPost}
+                open={openRows.mine === row.key}
+                onToggle={() => toggleRow('mine', row.key)}
+              />
+            ) : null))}
+            {v.mine.rows.length > v.mine.shown ? (
+              <button
+                type="button"
+                className="gc-vote-btn dev-ws-lane-btn"
+                aria-expanded={allMine}
+                data-ws-mine-more=""
+                onClick={() => setAllMine(!allMine)}
+              >
+                {allMine ? 'Show fewer' : `${v.mine.count - v.mine.shown} more of yours`}
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {/* ── One pane: what needs a person ──
+          Voting on somebody else's work and picking up nobody's are the same
+          offer — "here is what you could do with five minutes" — and they were
+          two containers saying it twice. */}
+      {v.votes.rows.length || nextUp ? (
+        <section
+          className="dev-ws-strip"
+          data-ws-votes=""
+          data-ws-next={nextUp ? '' : undefined}
+        >
+          <div className="dev-ws-strip-head">
+            <span className="dev-ws-eyebrow">What needs you</span>
+            {v.votes.total ? <VoteRing owed={v.votes.count} total={v.votes.total} /> : null}
+          </div>
+          {v.votes.rows.length ? (
+            <div className="dev-ws-lane" data-ws-lane="votes">
+              <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>Needs your vote</h4>
+              {(allVotes ? v.votes.rows : v.votes.rows.slice(0, v.votes.shown)).map((row) => (row.t === 'card' ? (
+                <CardRowView
+                  key={row.key}
+                  row={row}
+                  slug={slug}
+                  canPost={canPost}
+                  open={openRows.votes === row.key}
+                  onToggle={() => toggleRow('votes', row.key)}
+                />
+              ) : null))}
+              {v.votes.rows.length > v.votes.shown ? (
+                <button
+                  type="button"
+                  className="gc-vote-btn dev-ws-lane-btn"
+                  aria-expanded={allVotes}
+                  data-ws-votes-more=""
+                  onClick={() => setAllVotes(!allVotes)}
+                >
+                  {allVotes
+                    ? 'Show fewer'
+                    : `${v.votes.count - v.votes.shown} more waiting on you`}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {nextUp ? (
+            <div className="dev-ws-lane" data-ws-lane="next">
+              {/* The heading states the fact; the line under it makes the
+                  offer. "Why not give it a try?" did both at once and coaxed
+                  while it did — a lander does not need to wheedle. */}
+              <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>Nobody has picked this up</h4>
+              <p className="dev-ws-lane-note">Free to take, if you want to try solving an issue.</p>
+              <CardRowView
+                row={nextUp}
+                slug={slug}
+                canPost={canPost}
+                open={openRows.next === nextUp.key}
+                onToggle={() => toggleRow('next', nextUp.key)}
+              />
+            </div>
+          ) : null}
         </section>
       ) : null}
 
@@ -554,16 +805,16 @@ export function DevWorkshop(): ReactNode {
         <>
           <div className="dev-ws-sort">
             <span className="dev-ws-eyebrow">
-              {`${themes.filter((t) => !t.ungrouped).length} themes`}
+              {`${countOfThemes} ${countOfThemes === 1 ? 'category' : 'categories'}`}
               {v.meta.source === 'category' ? ' · grouped by category for now' : ''}
               {v.meta.source === 'demo' ? ' · staging demo grouping' : ''}
               {v.meta.pending
                 ? (v.meta.pendingStage === 'placement'
                   ? ' · placing new cards…'
-                  : (v.meta.source === 'ai' ? ' · re-drafting themes…' : ' · drafting themes…'))
+                  : (v.meta.source === 'ai' ? ' · re-drafting categories…' : ' · drafting categories…'))
                 : ''}
             </span>
-            <div className="dev-ws-sort-opts" role="group" aria-label="Order themes">
+            <div className="dev-ws-sort-opts" role="group" aria-label="Order categories">
               {SORTS.map((s) => (
                 <button
                   key={s.key}
@@ -597,13 +848,13 @@ export function DevWorkshop(): ReactNode {
               of the board it holds. */}
           <div className="dev-ws-foot-note">
             {v.meta.source === 'ai'
-              ? aiFootnote(v.meta)
+              ? aiFootnote(v.meta, !!(v.dashboard && (v.dashboard.cards || v.dashboard.summary)))
               : v.meta.source === 'demo'
-                ? 'Staging demo grouping: in production the themes are drafted by the model from the board.'
+                ? 'Staging demo grouping: in production the categories are drafted by the model from the board.'
                 : v.meta.pending
-                  ? 'Themes are being drafted from the board now. They replace this grouping when they land.'
+                  ? 'Categories are being drafted from the board now. They replace this grouping when they land.'
                   : v.meta.lastError
-                    ? `The last attempt to draft themes failed (${v.meta.lastError}). Items stay grouped by their voted category until the next attempt.`
+                    ? `The last attempt to draft categories failed (${v.meta.lastError}). Items stay grouped by their voted category until the next attempt.`
                     : 'No AI model is configured, so items are grouped by their voted category.'}
           </div>
         </>
