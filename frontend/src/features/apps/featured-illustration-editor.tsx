@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { DiscoverCard } from '../home/panels/discover';
-import { TONES, cardTint, cardTintClass, toneLabel } from '../home/panels/ui';
+import { TONES, cardTintClass, toneLabel } from '../home/panels/ui';
 import type { DiscoverTileView } from '../home/panels-store';
 import { prepareIllustration } from '../../lib/prepare-illustration';
 import {
@@ -34,6 +34,9 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
   useIsomorphicLayoutEffect(() => { close.current = onClose; }, [onClose]);
   const [art, setArt] = useState<Art | null>(null);
   const pendingBlob = useRef<Blob | null>(null);
+  const pendingDark = useRef<Blob | null>(null);
+  const uploadTheme = useRef<'light' | 'dark'>('light');
+  const [previewTheme, setPreviewTheme] = useState<'light' | 'dark'>('light');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -55,6 +58,10 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     const url = art?.url;
     return () => { if (url?.startsWith('blob:')) URL.revokeObjectURL(url); };
   }, [art?.url]);
+  useEffect(() => {
+    const url = art?.darkUrl;
+    return () => { if (url?.startsWith('blob:')) URL.revokeObjectURL(url); };
+  }, [art?.darkUrl]);
   useIsomorphicLayoutEffect(() => {
     if (!root.current || !card.current) return;
     let adoption: KitAdoption | null = adoptKitSurface({ kind: 'modal', contentEl: card.current,
@@ -103,8 +110,15 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     try {
       const prepared = await prepareIllustration(chosen);
       if (current !== generation.current) return;
-      pendingBlob.current = prepared;
-      setArt(a => ({ url: URL.createObjectURL(prepared), ...DEFAULT_FRAME, tint: a?.tint ?? null }));
+      const url = URL.createObjectURL(prepared);
+      if (uploadTheme.current === 'dark') {
+        pendingDark.current = prepared;
+        setArt(a => a ? { ...a, darkUrl: url } : null);
+      } else {
+        pendingBlob.current = prepared;
+        setArt(a => a ? { ...a, url } : { url, ...DEFAULT_FRAME, tint: null });
+      }
+      setPreviewTheme(uploadTheme.current);
     } catch (err) { if (current === generation.current) setError((err as Error).message); }
     finally { if (current === generation.current) setBusy(false); }
   };
@@ -112,15 +126,18 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     if (busy || loading) return;
     setBusy(true); setError('');
     try {
-      const blob = pendingBlob.current;
-      // The tint is sent only once one has actually been picked. Omitting it
-      // is what leaves an app on the slug's own hash, which is the default the
-      // whole directory renders with.
+      const encode = async (blob: Blob | null) => {
+        if (!blob) return undefined;
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        let binary = '';
+        for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+        return btoa(binary);
+      };
       const framing = art ? { ...clampFrame(art), ...(art.tint ? { tint: art.tint } : null) } : null;
-      const query = blob && framing ? `?${new URLSearchParams(Object.entries(framing).map(([k, v]) => [k, String(v)]))}` : '';
-      const res = await fetch(endpoint + query, { method: !art ? 'DELETE' : blob ? 'POST' : 'PATCH',
-        headers: { 'Content-Type': blob && art ? 'application/octet-stream' : 'application/json' },
-        body: !art ? undefined : blob || JSON.stringify(framing) });
+      const res = await fetch(endpoint, { method: art ? 'PUT' : 'DELETE',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: art ? JSON.stringify({ ...framing, light: await encode(pendingBlob.current),
+          dark: art.darkUrl ? await encode(pendingDark.current) : null }) : undefined });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Could not save. Try again.');
       app.featured_illustration = data.illustration;
@@ -146,6 +163,12 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     <div ref={card} className="flex flex-col px-4 pb-5" aria-label="Featured illustration">
       <h2 className="text-lg font-bold pt-3 pb-4">Featured illustration</h2>
       <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">Preview on Discover</p>
+      <div className="flex gap-2 mb-3" role="group" aria-label="Preview theme">
+        {(['light', 'dark'] as const).map(theme => <Button key={theme} type="button" variant="neutral" ink="muted"
+          aria-pressed={previewTheme === theme} className={previewTheme === theme ? 'ring-2 ring-violet-500' : undefined} onClick={() => setPreviewTheme(theme)}>
+          {theme === 'light' ? 'Light' : 'Dark'}
+        </Button>)}
+      </div>
       <div className="flex justify-center mb-4">
         <div ref={surface} data-framing-surface={art ? 'true' : 'false'} role="group"
           aria-label="Illustration framing: drag to move, scroll or pinch to zoom, arrow keys to nudge"
@@ -190,15 +213,22 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
           }}
           onPointerUp={event => endPointer(event.pointerId)}
           onPointerCancel={event => endPointer(event.pointerId)}>
-          <DiscoverCard tile={tile} preview />
+          <DiscoverCard tile={tile} preview previewTheme={previewTheme} />
         </div>
       </div>
-      <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+      <input ref={file} name="featured-illustration" type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
         aria-label="Upload featured illustration" onChange={e => { void chooseFile(e.target.files?.[0]); e.target.value = ''; }} />
       <fieldset disabled={busy || loading} className="flex flex-col gap-3">
-        <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => file.current?.click()}>{art ? 'Replace image' : 'Upload image'}</Button>
+        <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { uploadTheme.current = 'light'; file.current?.click(); }}>{art ? 'Replace light image' : 'Upload light image'}</Button>
         <p className="text-xs text-zinc-500 dark:text-zinc-400">PNG, JPEG or WebP, up to 20 MB.</p>
         {art ? <>
+          <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]"
+            onClick={() => { uploadTheme.current = 'dark'; file.current?.click(); }}>
+            {art.darkUrl ? 'Replace dark image' : 'Upload dark image'}
+          </Button>
+          {art.darkUrl ? <Button type="button" variant="neutral" ink="muted"
+            onClick={() => { pendingDark.current = null; setArt({ ...art, darkUrl: null }); }}>Use light image in both themes</Button> : null}
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">Use images with the same dimensions. Framing and colour are shared across both themes.</p>
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             Drag the card to move the image. Scroll or pinch to zoom. Zoom <span data-zoom-readout>{Math.round(art.zoom * 100)}%</span>.
           </p>
@@ -225,12 +255,12 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
                 onClick={() => setArt({ ...art, tint: tone })}
                 className={`${cardTintClass(tone)} un-touch-target w-8 h-8 rounded-full border transition-shadow ${
                   chosen ? 'ring-2 ring-violet-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900' : ''}`}
-                style={{ background: 'var(--tint-bg)', borderColor: 'var(--tint-line)' }} />;
+                style={{ background: 'var(--tone-50)', borderColor: 'var(--tint-line)' }} />;
             })}
           </div>
           <div className="flex gap-3">
             <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => setArt({ ...art, ...DEFAULT_FRAME })}>Reset position</Button>
-            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { setArt(null); pendingBlob.current = null; }}>Use app icon</Button>
+            <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { setArt(null); pendingBlob.current = null; pendingDark.current = null; }}>Use app icon</Button>
           </div>
         </> : null}
       </fieldset>

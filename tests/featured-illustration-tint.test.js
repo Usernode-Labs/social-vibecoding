@@ -81,10 +81,10 @@ test('the palette is twelve tones plus the five legacy tints, and nothing else',
   // and each tone body is the exact tone-50 hex from the palette.
   const css = read('public/css/app.css');
   for (const [tone, hex] of Object.entries(TONE_50)) {
-    assert.match(css, new RegExp(`\\.home-tone-${tone} \\{ --tint-bg: ${hex};[^}]*--tint-art`), tone);
-    assert.match(css, new RegExp(`\\.dark \\.home-tone-${tone} \\{[^}]*--tint-bg`), `dark ${tone}`);
+    assert.match(css, new RegExp(`\\.home-tone-${tone} \\{ --tone-50: ${hex};[^}]*--tone-light-line`), tone);
+    assert.ok(css.includes(`.home-tone-${tone}`), `shared dark formula includes ${tone}`);
   }
-  for (const n of LEGACY_TINTS) assert.match(css, new RegExp(`\\.home-tint-${n} \\{[^}]*--tint-bg`));
+  for (const n of LEGACY_TINTS) assert.match(css, new RegExp(`\\.home-tint-${n}[^{}]*\\{[^}]*--tint-bg`));
 });
 
 test('the server accepts exactly the colours the frontend can produce', () => {
@@ -132,7 +132,7 @@ test('the Discover card renders the saved colour, the legacy one, and the defaul
 test('the editor offers the twelve tones, staged, and no arbitrary colour', () => {
   const editor = read('frontend/src/features/apps/featured-illustration-editor.tsx');
   // One palette, read from the shared vocabulary rather than re-listed here.
-  assert.match(editor, /import \{ TONES, cardTint, cardTintClass, toneLabel \} from '\.\.\/home\/panels\/ui'/);
+  assert.match(editor, /import \{ TONES, cardTintClass, toneLabel \} from '\.\.\/home\/panels\/ui'/);
   assert.ok(!/#[0-9a-fA-F]{6}|type="color"/.test(editor), 'no hex field and no arbitrary colour input');
   // A radiogroup, so the swatches are one control to a screen reader, and each
   // is labelled by the colour's own name rather than its position.
@@ -152,5 +152,33 @@ test('the editor offers the twelve tones, staged, and no arbitrary colour', () =
   // Reset position replaces the frame only, and replacing the image keeps the
   // colour that was picked to sit with the artwork.
   assert.match(editor, /setArt\(\{ \.\.\.art, \.\.\.DEFAULT_FRAME \}\)/);
-  assert.match(editor, /\.\.\.DEFAULT_FRAME, tint: a\?\.tint \?\? null/);
+  assert.match(editor, /a \? \{ \.\.\.a, url \} : \{ url, \.\.\.DEFAULT_FRAME, tint: null \}/);
+});
+
+test('dark harmonic colours are computed from tone 50 with readable shared text', () => {
+  const css = read('public/css/app.css');
+  assert.match(css, /--tone-dark-bg: color-mix\(in srgb, var\(--tone-50\) 10%, #0b0b0c\)/);
+  assert.match(css, /--tone-dark-art: color-mix\(in srgb, var\(--tone-50\) 14%, #0b0b0c\)/);
+  const rgb = hex => hex.slice(1).match(/../g).map(n => parseInt(n, 16) / 255);
+  const luminance = rgb => rgb.map(c => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4)
+    .reduce((sum, c, i) => sum + c * [.2126, .7152, .0722][i], 0);
+  for (const [name, hex] of Object.entries(TONE_50)) {
+    const dark = rgb(hex).map((c, i) => .1 * c + .9 * rgb('#0b0b0c')[i]);
+    const contrast = (luminance(rgb('#8e8e93')) + .05) / (luminance(dark) + .05);
+    assert.ok(contrast >= 4.5, `${name} dark secondary text contrast ${contrast}`);
+  }
+});
+
+test('light and dark images render with the same crop and a single colour', () => {
+  const { DiscoverCard } = loadTsx('frontend/src/features/home/panels/discover.tsx');
+  const illustration = art({ darkUrl: '/app-illustrations/' + 'b'.repeat(32), zoom: 2, x: 12, y: -9, tint: 'mint' });
+  for (const previewTheme of ['light', 'dark']) {
+    const html = renderToHtml(createElement(DiscoverCard, { tile: tile(illustration), preview: true, previewTheme }));
+    assert.match(html, new RegExp(`data-preview-theme="${previewTheme}"`));
+    assert.equal((html.match(/translate\(12%, -9%\) scale\(2\)/g) || []).length, 2);
+    assert.match(html, /home-tone-mint/);
+    assert.match(html, /illustration-light/); assert.match(html, /illustration-dark/);
+  }
+  const old = renderToHtml(createElement(DiscoverCard, { tile: tile(art()) }));
+  assert.ok(!old.includes('illustration-dark'), 'a single-image record remains visible in both themes');
 });

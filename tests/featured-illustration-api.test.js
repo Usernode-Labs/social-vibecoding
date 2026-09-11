@@ -8,9 +8,16 @@ const admins = require('../src/services/app-admins');
 const state = { art: null, image: null, manager: true, visible: true, writes: 0 };
 const original = [poolModule.getPool, access.getAppForUser, admins.canManageApp];
 poolModule.getPool = () => ({ query: async (sql, p) => {
-  if (sql.startsWith('SELECT content_type')) return { rows: state.image?.id === p[0] ? [state.image] : [] };
+  if (sql.startsWith('SELECT content_type')) return { rows: state.image?.id === p[0] ? [state.image] : state.image?.dark_id === p[0] ? [{ content_type: state.image.dark_content_type, data: state.image.dark_data }] : [] };
   state.writes++;
-  if (sql.includes('WITH image')) { state.art = JSON.parse(p[4]); state.image = { id: p[1], content_type: p[2], data: p[3] }; }
+  if (sql.includes('WITH pair')) {
+    if (!p[1] && !state.image) return { rows: [] };
+    state.image = { ...state.image, ...(p[1] ? { id: p[1], content_type: p[2], data: p[3] } : {}),
+      ...(p[7] ? { dark_id: p[4], dark_content_type: p[5], dark_data: p[6] } : {}) };
+    state.art = { ...state.art, ...JSON.parse(p[8]), url: '/app-illustrations/' + state.image.id,
+      darkUrl: state.image.dark_id ? '/app-illustrations/' + state.image.dark_id : null };
+  }
+  else if (sql.includes('WITH image')) { state.art = JSON.parse(p[4]); state.image = { id: p[1], content_type: p[2], data: p[3] }; }
   else if (sql.includes('WITH removed')) { state.art = null; state.image = null; }
   else if (state.art) state.art = { ...state.art, ...JSON.parse(p[1]) };
   return { rows: state.art ? [{ featured_illustration: state.art }] : [] };
@@ -112,4 +119,55 @@ test('upload, read, reframe, replacement, permission denial and reset', async ()
     assert.equal(state.art, null);
     assert.equal((await request(endpoint, 'PATCH', { zoom: 1, x: 0, y: 0 })).status, 409);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});
+
+
+test('paired uploads preserve one frame and colour, replace independently, and reject invalid writes', async () => {
+  state.art = null; state.image = null; state.manager = true; state.visible = true;
+  const server = app.listen(0); await once(server, 'listening');
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const put = body => fetch(origin + endpoint, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: JSON.stringify(body) });
+  const frame = { zoom: 2, x: 12, y: -9, tint: 'blue' };
+  const light = png.toString('base64');
+  const dark = Buffer.concat([png, Buffer.from('dark')]).toString('base64');
+  try {
+    assert.equal((await put({ ...frame, dark })).status, 409, 'a dark image requires a light fallback');
+    let response = await put({ ...frame, light, dark });
+    assert.equal(response.status, 200);
+    const first = (await response.json()).illustration;
+    assert.notEqual(first.url, first.darkUrl);
+    for (const [key, value] of Object.entries(frame)) assert.equal(first[key], value);
+    for (const [url, bytes] of [[first.url, light], [first.darkUrl, dark]]) {
+      const image = await fetch(origin + url);
+      assert.equal(image.status, 200);
+      assert.match(image.headers.get('cache-control'), /immutable/);
+      assert.equal(Buffer.from(await image.arrayBuffer()).toString('base64'), bytes);
+    }
+    response = await put({ ...frame, zoom: 1.5 });
+    let saved = (await response.json()).illustration;
+    assert.equal(saved.url, first.url); assert.equal(saved.darkUrl, first.darkUrl);
+    assert.equal(saved.zoom, 1.5);
+    response = await put({ ...frame, dark: light });
+    saved = (await response.json()).illustration;
+    assert.equal(saved.url, first.url); assert.notEqual(saved.darkUrl, first.darkUrl);
+    assert.equal((await fetch(origin + first.darkUrl)).status, 404);
+    const darkUrl = saved.darkUrl;
+    response = await put({ ...frame, light: dark });
+    saved = (await response.json()).illustration;
+    assert.notEqual(saved.url, first.url); assert.equal(saved.darkUrl, darkUrl);
+    const before = state.writes;
+    for (const invalid of [null, [], { ...frame, dark: '!!!' }, { ...frame, light: 'PHN2Zy8+' }, { ...frame, dark: 2 }]) {
+      assert.equal((await put(invalid)).status, 400);
+    }
+    state.manager = false;
+    assert.equal((await put({ ...frame, dark: null })).status, 403);
+    state.manager = true;
+    assert.equal(state.writes, before, 'rejected requests do not write either variant');
+    response = await put({ ...frame, dark: null });
+    saved = (await response.json()).illustration;
+    assert.equal(saved.darkUrl, null); assert.equal(saved.tint, 'blue');
+    assert.equal((await fetch(origin + darkUrl)).status, 404);
+    await fetch(origin + endpoint, { method: 'DELETE' });
+    assert.equal((await fetch(origin + saved.url)).status, 404);
+  } finally { server.close(); await once(server, 'close'); }
 });

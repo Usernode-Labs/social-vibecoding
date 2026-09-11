@@ -2620,6 +2620,10 @@ CREATE TABLE IF NOT EXISTS app_illustrations (
   data BYTEA NOT NULL
 );
 
+ALTER TABLE app_illustrations ADD COLUMN IF NOT EXISTS dark_id VARCHAR(32) UNIQUE;
+ALTER TABLE app_illustrations ADD COLUMN IF NOT EXISTS dark_content_type TEXT;
+ALTER TABLE app_illustrations ADD COLUMN IF NOT EXISTS dark_data BYTEA;
+
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_emoji VARCHAR(32);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_image_id VARCHAR(32);
 

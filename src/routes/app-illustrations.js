@@ -52,7 +52,7 @@ function illustrationImageRoutes(config) {
   router.get('/app-illustrations/:id', async (req, res) => {
     if (!/^[a-f0-9]{32}$/.test(req.params.id)) return res.status(404).end();
     try {
-      const { rows } = await pool.query('SELECT content_type, data FROM app_illustrations WHERE id = $1', [req.params.id]);
+      const { rows } = await pool.query('SELECT content_type, data FROM app_illustrations WHERE id = $1 UNION ALL SELECT dark_content_type AS content_type, dark_data AS data FROM app_illustrations WHERE dark_id = $1', [req.params.id]);
       if (!rows.length) return res.status(404).end();
       res.set('Content-Type', rows[0].content_type);
       res.set('X-Content-Type-Options', 'nosniff');
@@ -100,6 +100,43 @@ function illustrationRoutes(config) {
         UPDATE apps SET featured_illustration = $5::jsonb WHERE id = (SELECT app_id FROM image)`,
       [req.illustrationApp.id, id, contentType, req.body, JSON.stringify(illustration)]);
       res.json({ illustration });
+    } catch (err) { next(err); }
+  });
+  // Both variants and their shared framing are published in one statement.
+  // Raw JSON avoids the shell's smaller general-purpose JSON body limit.
+  router.put(path, attachmentUploadLimiter, express.raw({ type: 'application/octet-stream', limit: '3mb' }), async (req, res, next) => {
+    let body;
+    try { body = JSON.parse(req.body.toString('utf8')); } catch { return res.status(400).json({ error: 'Could not read the illustration pair.' }); }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return res.status(400).json({ error: 'Could not read the illustration pair.' });
+    const framing = parseFraming(body);
+    const decode = value => typeof value === 'string' && value.length <= 1398104 && value.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(value) ? Buffer.from(value, 'base64') : null;
+    const light = body.light === undefined ? null : decode(body.light);
+    const dark = body.dark === undefined || body.dark === null ? null : decode(body.dark);
+    if (!framing || (body.light !== undefined && !validateImage(light)) ||
+        (body.dark !== undefined && body.dark !== null && !validateImage(dark))) {
+      return res.status(400).json({ error: 'Choose PNG, JPEG or WebP images under 1 MB and valid shared framing.' });
+    }
+    const lightId = light ? crypto.randomBytes(16).toString('hex') : null;
+    const darkId = dark ? crypto.randomBytes(16).toString('hex') : null;
+    try {
+      const { rows } = await pool.query(`WITH pair AS (
+        INSERT INTO app_illustrations (app_id, id, content_type, data, dark_id, dark_content_type, dark_data)
+        SELECT a.id, COALESCE($2, i.id), COALESCE($3, i.content_type), COALESCE($4, i.data),
+          CASE WHEN $8 THEN $5 ELSE i.dark_id END,
+          CASE WHEN $8 THEN $6 ELSE i.dark_content_type END,
+          CASE WHEN $8 THEN $7 ELSE i.dark_data END
+        FROM apps a LEFT JOIN app_illustrations i ON i.app_id = a.id
+        WHERE a.id = $1 AND ($2::text IS NOT NULL OR i.id IS NOT NULL)
+        ON CONFLICT (app_id) DO UPDATE SET id = EXCLUDED.id, content_type = EXCLUDED.content_type,
+          data = EXCLUDED.data, dark_id = EXCLUDED.dark_id, dark_content_type = EXCLUDED.dark_content_type, dark_data = EXCLUDED.dark_data
+        RETURNING app_id, id, dark_id)
+        UPDATE apps a SET featured_illustration = COALESCE(a.featured_illustration, '{}'::jsonb) || $9::jsonb ||
+          jsonb_build_object('url', '/app-illustrations/' || pair.id, 'darkUrl', CASE WHEN pair.dark_id IS NULL THEN NULL ELSE '/app-illustrations/' || pair.dark_id END)
+        FROM pair WHERE a.id = pair.app_id RETURNING featured_illustration`,
+      [req.illustrationApp.id, lightId, light && validateImage(light), light, darkId, dark && validateImage(dark), dark,
+        body.dark !== undefined, JSON.stringify(framing)]);
+      if (!rows.length) return res.status(409).json({ error: 'Upload a light image first.' });
+      res.json({ illustration: rows[0].featured_illustration });
     } catch (err) { next(err); }
   });
   router.patch(path, async (req, res, next) => {

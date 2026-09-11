@@ -111,6 +111,7 @@ function CardArt({ icon }: { icon: IconView }) {
  */
 function IllustrationArt({ tile }: { tile: DiscoverTileView }) {
   const [failed, setFailed] = useState(false);
+  const [darkFailed, setDarkFailed] = useState(false);
   const art = tile.illustration;
   if (!art || failed) return <CardArt icon={tile.icon} />;
   // Re-clamped on render, not trusted as stored: the art `cover`s the block,
@@ -118,12 +119,19 @@ function IllustrationArt({ tile }: { tile: DiscoverTileView }) {
   // of tint along one edge. The editor cannot produce one; the API's framing
   // range is wider than the editor's, so the card does not assume it.
   const frame = clampFrame(art);
-  return <img src={art.url} alt="" draggable={false} className="home-discover-illustration"
-    onError={() => setFailed(true)}
-    style={{ transform: `translate(${frame.x}%, ${frame.y}%) scale(${frame.zoom})` }} />;
+  const style = { transform: `translate(${frame.x}%, ${frame.y}%) scale(${frame.zoom})` };
+  const hasDark = !!art.darkUrl && !darkFailed;
+  return <>
+    <img src={art.url} alt="" draggable={false}
+      className={`home-discover-illustration ${hasDark ? 'illustration-light' : ''}`}
+      onError={() => setFailed(true)} style={style} />
+    {hasDark ? <img src={art.darkUrl!} alt="" draggable={false}
+      className="home-discover-illustration illustration-dark"
+      onError={() => setDarkFailed(true)} style={style} /> : null}
+  </>;
 }
 
-export function DiscoverCard({ tile, preview = false }: { tile: DiscoverTileView; preview?: boolean }) {
+export function DiscoverCard({ tile, preview = false, previewTheme }: { tile: DiscoverTileView; preview?: boolean; previewTheme?: 'light' | 'dark' }) {
   const { added } = tile;
   return (
     <div
@@ -131,12 +139,13 @@ export function DiscoverCard({ tile, preview = false }: { tile: DiscoverTileView
       // the hash of the slug when they did not — see `cardTint`. Both branches
       // are pure functions of props, so the prerender and the client agree.
       className={`app-card home-discover-card ${cardTint(tile.slug, tile.illustration?.tint)} relative flex flex-col cursor-pointer`}
+      data-preview-theme={preview ? previewTheme : undefined}
       data-slug={tile.slug}
       data-status={tile.status}
       {...(tile.demo ? { 'data-demo': 'true' } : null)}
     >
       <div className="home-discover-art relative">
-        <IllustrationArt key={tile.illustration?.url || 'default'} tile={tile} />
+        <IllustrationArt key={`${tile.illustration?.url}:${tile.illustration?.darkUrl}`} tile={tile} />
         <button
           type="button"
           disabled={preview}

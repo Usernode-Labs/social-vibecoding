@@ -130,7 +130,7 @@ test('the editor renders a gesture surface and no sliders', () => {
   assert.match(html, /class="app-card home-discover-card/);
   // Staged actions are untouched by the conversion. Reset / Use app icon only
   // exist once an image is staged, so the fresh editor shows Save and Cancel.
-  for (const label of ['Upload image', 'Save', 'Cancel']) assert.ok(html.includes(label), label);
+  for (const label of ['Upload light image', 'Light', 'Dark', 'Save', 'Cancel']) assert.ok(html.includes(label), label);
 });
 
 test('the editor keeps the framing helpers as its only clamp, and the card covers', () => {

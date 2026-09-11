@@ -2756,65 +2756,45 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    Dark mode does what the wallpaper does: the same hues, re-tuned to a
    lightness that reads on the inverted ground rather than inverted into
    mud. */
-.home-tint-1 { --tint-bg: #e3efe0; --tint-line: #cfe0ca; --tint-art: #cfe3c7; }
-.home-tint-2 { --tint-bg: #dfeaf6; --tint-line: #c9dcee; --tint-art: #c6dcf0; }
-.home-tint-3 { --tint-bg: #e9e2f2; --tint-line: #d9cfe8; --tint-art: #ded2ef; }
-.home-tint-4 { --tint-bg: #fbe6d5; --tint-line: #f2d5bd; --tint-art: #f7ddc6; }
-.home-tint-5 { --tint-bg: #f8dde8; --tint-line: #eec7d6; --tint-art: #f4d6de; }
-.dark .home-tint-1 { --tint-bg: #1b2a1f; --tint-line: #2c4433; --tint-art: #22331f; }
-.dark .home-tint-2 { --tint-bg: #17263a; --tint-line: #27405e; --tint-art: #1b2f47; }
-.dark .home-tint-3 { --tint-bg: #241f38; --tint-line: #3a3157; --tint-art: #2b2442; }
-.dark .home-tint-4 { --tint-bg: #33231a; --tint-line: #50392a; --tint-art: #3d2a1f; }
-.dark .home-tint-5 { --tint-bg: #331d28; --tint-line: #513043; --tint-art: #3e2231; }
+.home-tint-1, .home-tint-1[data-preview-theme="light"], .dark .home-tint-1[data-preview-theme="light"] { --tint-bg: #e3efe0; --tint-line: #cfe0ca; --tint-art: #cfe3c7; }
+.home-tint-2, .home-tint-2[data-preview-theme="light"], .dark .home-tint-2[data-preview-theme="light"] { --tint-bg: #dfeaf6; --tint-line: #c9dcee; --tint-art: #c6dcf0; }
+.home-tint-3, .home-tint-3[data-preview-theme="light"], .dark .home-tint-3[data-preview-theme="light"] { --tint-bg: #e9e2f2; --tint-line: #d9cfe8; --tint-art: #ded2ef; }
+.home-tint-4, .home-tint-4[data-preview-theme="light"], .dark .home-tint-4[data-preview-theme="light"] { --tint-bg: #fbe6d5; --tint-line: #f2d5bd; --tint-art: #f7ddc6; }
+.home-tint-5, .home-tint-5[data-preview-theme="light"], .dark .home-tint-5[data-preview-theme="light"] { --tint-bg: #f8dde8; --tint-line: #eec7d6; --tint-art: #f4d6de; }
+.dark .home-tint-1, .home-tint-1[data-preview-theme="dark"], .dark .home-tint-1[data-preview-theme="dark"] { --tint-bg: #1b2a1f; --tint-line: #2c4433; --tint-art: #22331f; }
+.dark .home-tint-2, .home-tint-2[data-preview-theme="dark"], .dark .home-tint-2[data-preview-theme="dark"] { --tint-bg: #17263a; --tint-line: #27405e; --tint-art: #1b2f47; }
+.dark .home-tint-3, .home-tint-3[data-preview-theme="dark"], .dark .home-tint-3[data-preview-theme="dark"] { --tint-bg: #241f38; --tint-line: #3a3157; --tint-art: #2b2442; }
+.dark .home-tint-4, .home-tint-4[data-preview-theme="dark"], .dark .home-tint-4[data-preview-theme="dark"] { --tint-bg: #33231a; --tint-line: #50392a; --tint-art: #3d2a1f; }
+.dark .home-tint-5, .home-tint-5[data-preview-theme="dark"], .dark .home-tint-5[data-preview-theme="dark"] { --tint-bg: #331d28; --tint-line: #513043; --tint-art: #3e2231; }
 
-/* ── THE CARD LANGUAGE: TONES ───────────────────────────────
-   The five tints above are what a card wears by DEFAULT — hashed from its own
-   identity, never chosen. These twelve are what an author PICKS, in the
-   featured-illustration editor, to sit behind their artwork: the tone-50 row
-   of the HIG-muted harmonic palette, one per hue family.
-
-   Why a second set rather than five more tints: the hashed five are assigned
-   to every card in the launcher and have to stay distinguishable from each
-   other at a glance, which caps how many there can usefully be. A chosen
-   colour has the opposite requirement — it sits alone on one card, it is
-   picked to match an image, and twelve gentle neighbours are a better palette
-   for that than five that must not collide. The two sets share the three
-   custom properties below, so the card renders one way whichever it wears.
-
-   The steps are the palette's own, not tuned per hue: `--tint-bg` is tone 50
-   (the card body, and what the swatch shows), `--tint-art` is tone 100 (the
-   block behind an emoji or initial, which an uploaded illustration covers
-   entirely — so it only shows when the image fails), and `--tint-line` is
-   tone 200. The hairline is a whole step stronger than the tints' above
-   because a tone-50 body is much paler than a tint: at tone 100 a cream card
-   would have no edge against a pale wallpaper at all.
-
-   Dark mode keeps each family's hue and drops it to the lightness the dark
-   tints use, rather than inverting a near-white into mud. */
-.home-tone-cream { --tint-bg: #fefdf5; --tint-line: #f5f0d0; --tint-art: #fffeea; }
-.home-tone-yellow { --tint-bg: #fff9de; --tint-line: #f0d85c; --tint-art: #ffee6f; }
-.home-tone-orange { --tint-bg: #fff0e0; --tint-line: #e8a878; --tint-art: #faccaa; }
-.home-tone-coral { --tint-bg: #fde8e4; --tint-line: #e09488; --tint-art: #f5bdb4; }
-.home-tone-pink { --tint-bg: #f8e4ee; --tint-line: #d48eb4; --tint-art: #e8b8d0; }
-.home-tone-purple { --tint-bg: #ede4f4; --tint-line: #aa92c2; --tint-art: #ccbadc; }
-.home-tone-indigo { --tint-bg: #e4e8f6; --tint-line: #8896c8; --tint-art: #b4bee0; }
-.home-tone-blue { --tint-bg: #deedf8; --tint-line: #6aadd4; --tint-art: #a8cde8; }
-.home-tone-teal { --tint-bg: #deeeed; --tint-line: #72bab2; --tint-art: #a4d4cf; }
-.home-tone-mint { --tint-bg: #e2f2e8; --tint-line: #88c49e; --tint-art: #b4dcc2; }
-.home-tone-sage { --tint-bg: #eaf2e4; --tint-line: #a9cf97; --tint-art: #c8deb8; }
-.home-tone-gray { --tint-bg: #f4f3f1; --tint-line: #b8b4ac; --tint-art: #dddbd6; }
-.dark .home-tone-cream { --tint-bg: #252318; --tint-line: #4b4630; --tint-art: #353222; }
-.dark .home-tone-yellow { --tint-bg: #272416; --tint-line: #4e472c; --tint-art: #37331f; }
-.dark .home-tone-orange { --tint-bg: #271d16; --tint-line: #4e3b2c; --tint-art: #372a1f; }
-.dark .home-tone-coral { --tint-bg: #271816; --tint-line: #4d302d; --tint-art: #372220; }
-.dark .home-tone-pink { --tint-bg: #25181f; --tint-line: #4b2f3f; --tint-art: #35222d; }
-.dark .home-tone-purple { --tint-bg: #1f1924; --tint-line: #3d3248; --tint-art: #2b2333; }
-.dark .home-tone-indigo { --tint-bg: #171a26; --tint-line: #2e334c; --tint-art: #212436; }
-.dark .home-tone-blue { --tint-bg: #161f27; --tint-line: #2c3e4e; --tint-art: #1f2c37; }
-.dark .home-tone-teal { --tint-bg: #162725; --tint-line: #2c4e4a; --tint-art: #1f3735; }
-.dark .home-tone-mint { --tint-bg: #16271d; --tint-line: #2d4d3a; --tint-art: #203729; }
-.dark .home-tone-sage { --tint-bg: #1c2419; --tint-line: #384932; --tint-art: #283423; }
-.dark .home-tone-gray { --tint-bg: #21201c; --tint-line: #423f38; --tint-art: #2f2d28; }
+/* Harmonic palette: select tone 50 once. Dark surfaces are computed from
+   that same token, blended into the shell's zinc-950 ground. The fixed 10%,
+   14%, 24% proportions give every hue the same quiet surface hierarchy.
+   These formulas also drive explicit editor previews; no second palette. */
+.home-tone-cream { --tone-50: #fefdf5; --tone-light-line: #f5f0d0; }
+.home-tone-yellow { --tone-50: #fff9de; --tone-light-line: #f0d85c; }
+.home-tone-orange { --tone-50: #fff0e0; --tone-light-line: #e8a878; }
+.home-tone-coral { --tone-50: #fde8e4; --tone-light-line: #e09488; }
+.home-tone-pink { --tone-50: #f8e4ee; --tone-light-line: #d48eb4; }
+.home-tone-purple { --tone-50: #ede4f4; --tone-light-line: #aa92c2; }
+.home-tone-indigo { --tone-50: #e4e8f6; --tone-light-line: #8896c8; }
+.home-tone-blue { --tone-50: #deedf8; --tone-light-line: #6aadd4; }
+.home-tone-teal { --tone-50: #deeeed; --tone-light-line: #72bab2; }
+.home-tone-mint { --tone-50: #e2f2e8; --tone-light-line: #88c49e; }
+.home-tone-sage { --tone-50: #eaf2e4; --tone-light-line: #a9cf97; }
+.home-tone-gray { --tone-50: #f4f3f1; --tone-light-line: #b8b4ac; }
+:is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray) {
+  --tone-dark-bg: color-mix(in srgb, var(--tone-50) 10%, #0b0b0c);
+  --tone-dark-art: color-mix(in srgb, var(--tone-50) 14%, #0b0b0c);
+  --tone-dark-line: color-mix(in srgb, var(--tone-50) 24%, #0b0b0c);
+  --tint-bg: var(--tone-50); --tint-line: var(--tone-light-line); --tint-art: var(--tone-50);
+}
+.dark :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray), :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="dark"] {
+  --tint-bg: var(--tone-dark-bg); --tint-line: var(--tone-dark-line); --tint-art: var(--tone-dark-art);
+}
+.dark :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="light"], :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="light"] {
+  --tint-bg: var(--tone-50); --tint-line: var(--tone-light-line); --tint-art: var(--tone-50);
+}
 
 /* ── Discover: the card rail ────────────────────────────────
    The lane was a GRID of six 40px icon tiles inside the block's white card:
@@ -6207,7 +6187,7 @@ span.gc-vote-btn-icon { cursor: default; }
 
 .dc-log-msg { color: #e4e4e7; }
 
-.dc-log-log   .dc-log-level { background: #27272a; color: #a1a1aa; }
+.dc-log-log   .dc-log-level { background: #27272a; color: #8e8e93; }
 .dc-log-info  .dc-log-level { background: #1e3a5f; color: #93c5fd; }
 .dc-log-debug .dc-log-level { background: #27272a; color: #6e6e8a; }
 .dc-log-warn  .dc-log-level { background: #78350f; color: #fde68a; }
@@ -12007,3 +11987,18 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
    the link to the item's page, so the sheet has no line under the card. */
 #dev-kanban .dev-ws-rowwrap { margin-bottom: 0; }
 .dev-ws-foot-note { font-size: 12px; color: var(--text-muted); text-align: center; padding: 6px 0 2px; }
+
+/* Illustration variants share one frame; only visibility changes with theme. */
+.illustration-dark { display: none; }
+.dark .illustration-light { display: none; }
+.dark .illustration-dark { display: block; }
+.home-discover-card[data-preview-theme="light"] .illustration-light { display: block; }
+.home-discover-card[data-preview-theme="light"] .illustration-dark { display: none; }
+.home-discover-card[data-preview-theme="dark"] .illustration-light { display: none; }
+.home-discover-card[data-preview-theme="dark"] .illustration-dark { display: block; }
+.home-discover-card[data-preview-theme="light"] .home-discover-name { color: #1c1c1e; }
+.home-discover-card[data-preview-theme="light"] :is(.home-discover-blurb, .home-discover-meta) { color: #48484a; }
+.home-discover-card[data-preview-theme="dark"] .home-discover-name { color: #eaeaea; }
+.home-discover-card[data-preview-theme="dark"] :is(.home-discover-blurb, .home-discover-meta) { color: #8e8e93; }
+.home-discover-card[data-preview-theme="light"] .card-add-btn[data-added="false"] { background: white; color: #0062cc; border-color: #e3e3e6; }
+.home-discover-card[data-preview-theme="dark"] .card-add-btn[data-added="false"] { background: #2c2c2e; color: #5aa9ff; border-color: #48484a; box-shadow: none; }
