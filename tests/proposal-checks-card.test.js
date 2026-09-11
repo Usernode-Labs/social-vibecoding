@@ -79,7 +79,7 @@ test('card: green checks + an open vote surface the vote state in the pill', () 
   assert.doesNotMatch(html, /Checks passing/, 'nothing left to warn about, so nothing is said');
 });
 
-test('card: check_state="failing" is a BLOCKED pill, never a plain tally', () => {
+test('card: check_state="failing" is a red tag, and the tally keeps counting', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({
     check_state: 'failing',
@@ -90,11 +90,15 @@ test('card: check_state="failing" is a BLOCKED pill, never a plain tally', () =>
       { name: 'Board', path: '/board', status: 'fail', failureReason: 'missing' },
     ],
   }));
-  // The whole point of the pill: even with the vote won, a proposal whose
-  // tests fail must not read as a neutral "3 / 3".
-  assert.match(html, /Checks failing · 2/);
-  assert.match(html, /gc-vote-count-blocked/, 'blocked tone, not the advisory amber');
-  assert.doesNotMatch(html, /gc-vote-count-label">3 \/ 3/);
+  // This used to be the whole point of the pill: with the vote won, a
+  // proposal whose tests fail must not read as a neutral "3 / 3". The
+  // proposition is unchanged — a reader must not mistake this for ready —
+  // but it is a RED TAG that says so, not the bar, because the bar answers a
+  // different question ("where has the vote got to?") that stays worth
+  // answering while a check is red.
+  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Checks failing · 2<\/span>/);
+  assert.doesNotMatch(html, /gc-vote-count-blocked/, 'the bar is not blocked-toned');
+  assert.match(html, /3\s*\/\s*3/, 'and the tally is drawn');
 });
 
 test('checksBadgeHtml: failing carries the blocked tone (it gates the merge)', () => {
@@ -114,24 +118,25 @@ test('card: check_state="pending" renders the running pill', () => {
   assert.match(html, /dc-status-spinner-arc/, 'spinner inside the pill');
 });
 
-test('card: check_state="error" is a blocked pill naming the boot failure', () => {
+test('card: check_state="error" is a red tag naming the boot failure', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({ check_state: 'error', test_results: [] }));
-  assert.match(html, /Preview won/, 'the pill names WHY checks could not run');
-  assert.match(html, /gc-vote-count-blocked/);
+  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Preview won[^<]*<\/span>/,
+    'the tag names WHY checks could not run');
+  assert.doesNotMatch(html, /gc-vote-count-blocked/);
   // The standalone helper keeps its own wording for the other surfaces.
   assert.match(AppView.checksBadgeHtml(baseProposal({ check_state: 'error' })), /Checks couldn/);
 });
 
-test('a legacy row (no check_state) surfaces its console errors in the pill', () => {
+test('a legacy row (no check_state) surfaces its console errors as an amber tag', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({
     console_check_state: 'errors',
     console_errors: [{ kind: 'console', message: 'oops' }],
   }));
-  assert.match(html, /Console errors · 1/);
-  // Advisory, so the ATTENTION tone — it never blocks the vote.
-  assert.match(html, /gc-vote-count-attention/);
+  // Advisory — it never blocks the merge — which is what amber means here.
+  assert.match(html, /<span class="dev-badge [^"]*amber[^"]*"[^>]*>Console errors · 1<\/span>/);
+  assert.doesNotMatch(html, /gc-vote-count-attention/, 'the bar is the vote, in the vote\u2019s tone');
 });
 
 test('the checks detail lists per-test rows with failure reasons', () => {
