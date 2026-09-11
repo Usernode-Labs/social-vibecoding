@@ -23,6 +23,24 @@ for configuration and the `infra/prototype/bare-metal-platform` runbooks for
 cluster foundation and database operations. Read the installed image and Argo
 revision when comparing source behavior with a live failure.
 
+## Shared app and preview TLS
+
+Generated apps and previews share the installation-owned TLS Secret named by
+`APP_TLS_SECRET_NAME` (default `social-apps-wildcard-tls`) in `APP_NAMESPACE`.
+Provision a trusted wildcard covering `*.USERNODE_APPS_DOMAIN` before deploying
+this runtime version. The foundation chart owns its Certificate and DNS-01
+renewal. App Ingresses have no certificate issuer annotation; ordinary preview
+rebuilds, failed-start cleanup and idle teardown neither request certificates
+nor delete TLS Secrets. An installation can also supply an existing wildcard
+Secret with the same ownership and coverage contract.
+
+This is a rollout prerequisite, not an optional per-host fallback. Deploying
+the runtime before the Secret is ready can leave new/rebuilt previews without
+working HTTPS even when their Pods are Ready. Existing Ingresses keep their old
+TLS references until reconciled or migrated. The infra runbook
+`docs/23-social-vibecoding-shared-tls.md` includes a read-only migration planner,
+issuance-limit recovery and explicit retirement of legacy Certificates.
+
 ## Read-only inventory and logs
 
 These examples use the organization namespace and Deployment names. Substitute
@@ -61,6 +79,23 @@ reasons, restart counts, scheduling conditions and readiness together. An old
 ready replica can still serve while the desired image is failing to start.
 ResourceQuota reports reservations and object counts, not measured CPU or
 memory consumption. Do not substitute Docker host statistics for cluster usage.
+
+Capture Jobs default to an 8-CPU / 4Gi limit for eight concurrent browser groups,
+with 1 CPU / 3Gi requested. The foundation worker LimitRange must allow at least
+8 CPUs per container. `CAPTURE_CPUS`, `CAPTURE_MEMORY` and `TEST_CONCURRENCY`
+override these settings on the platform; keep CPU capacity aligned with browser
+concurrency when tuning them. CPU requests are scheduling reservations, so the
+larger limit allows bursts but does not guarantee eight idle cores. Check
+historical CPU throttling as well as completion: a successful Job can still
+produce timing-sensitive assertion failures under CPU contention. Unit-suite
+and coding-worker resource settings are independent.
+
+Self-app previews (`USERNODE_ENV=staging`) do not build worker images, inspect
+Docker or Kubernetes workloads, or read the parent's deployment status. Their
+status API reports `runtimeKind: preview` and `runtimeAvailable: false`; fleet
+counters are null and the UI labels runtime status unavailable. Cloned app and
+session rows do not establish live workload readiness. Preview isolation does
+not require forwarding runtime credentials or a Kubernetes service-account token.
 
 The authorized `usernode-debug containers` and `usernode-debug logs <name>`
 interfaces accept managed runtime names such as `sv-worker-s42` and

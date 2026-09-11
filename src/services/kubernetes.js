@@ -538,12 +538,14 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace, {
     apiVersion: 'networking.k8s.io/v1', kind: 'Ingress', metadata: {
       name, namespace, labels: resourceLabels,
-      annotations: { 'cert-manager.io/cluster-issuer': cfg.clusterIssuer },
+      // TLS belongs to the installation, not the disposable app/preview.
+      // No issuer annotation: ingress-shim must not create per-host certificates.
+      annotations: {},
     },
     spec: {
       ingressClassName: cfg.ingressClassName,
       rules: [{ host: hostname, http: { paths: [{ path: '/', pathType: 'Prefix', backend: { service: { name, port: { number: 3000 } } } }] } }],
-      tls: [{ hosts: [hostname], secretName: withSuffix(name, 'tls') }],
+      tls: [{ hosts: [hostname], secretName: cfg.appTlsSecretName || 'social-apps-wildcard-tls' }],
     },
   });
   try {
@@ -667,7 +669,8 @@ async function deleteApplication(config, runtimeName) {
     deleteIfPresent(networking, 'deleteNamespacedIngress', runtimeName, namespace),
     deleteIfPresent(core, 'deleteNamespacedService', runtimeName, namespace),
     deleteIfPresent(core, 'deleteNamespacedSecret', withSuffix(runtimeName, 'env'), namespace),
-    deleteIfPresent(core, 'deleteNamespacedSecret', withSuffix(runtimeName, 'tls'), namespace),
+    // Keep shared and legacy TLS material across rebuilds, idle teardown and
+    // failed rollouts. Certificate retirement is a separate operator action.
     deleteIfPresent(apps, 'deleteNamespacedDeployment', runtimeName, namespace, { propagationPolicy: 'Foreground' }),
   ]);
 }
@@ -1108,7 +1111,7 @@ async function cloneWorkerVolume(config, sourceSessionId, targetSessionId) {
 // swallowed: progress is a courtesy, the verdict still comes from the final
 // read below, unchanged.
 async function runCaptureJob(config, options) {
-  return runCheckJob(config, { memory: '4g', cpus: '4', ...options }, 'capture');
+  return runCheckJob(config, { memory: '4g', cpus: '8', ...options }, 'capture');
 }
 
 async function runUnitSuiteJob(config, options) {

@@ -92,7 +92,9 @@ test('the capture container is sized for a pool of pages, not one', () => {
   const cpus = constant('CAPTURE_CPUS');
   assert.match(memory, /process\.env\.CAPTURE_MEMORY \|\| '4g'/,
     'each Chromium page is ~50-80 MiB of renderer on top of the browser itself');
-  assert.match(cpus, /process\.env\.CAPTURE_CPUS \|\| '4'/);
+  assert.match(cpus, /process\.env\.CAPTURE_CPUS \|\| '8'/);
+  assert.ok(numericConstant('CAPTURE_CPUS') >= capture.poolSize({}),
+    'the default capture quota must provide at least one core per browser group');
   // And they must actually reach the container — a limit computed and not
   // passed is the same as no limit.
   assert.match(visualsSrc, /memory: CAPTURE_MEMORY,\s*\n\s*cpus: CAPTURE_CPUS,/,

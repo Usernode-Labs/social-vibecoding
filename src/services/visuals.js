@@ -150,7 +150,9 @@ const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 // — an OOM-kill there loses the whole run, sentinel included, and reads to
 // the platform as a crashed container.
 const CAPTURE_MEMORY = process.env.CAPTURE_MEMORY || '4g';
-const CAPTURE_CPUS = process.env.CAPTURE_CPUS || '4';
+// Eight browser groups saturated the former four-core quota even on an
+// idle node. Allow one core per default group without reducing suite time.
+const CAPTURE_CPUS = process.env.CAPTURE_CPUS || '8';
 
 // Suite bounds handed to the container. Kept here rather than left to the
 // image's own defaults so the platform's timeout arithmetic (below) and the
@@ -696,7 +698,11 @@ function classifyTests(frames, expectedCount, options) {
   const sentinel = opts.sentinel || null;
   const extraRows = Array.isArray(opts.extraRows) ? opts.extraRows : [];
 
-  const parsed = (Array.isArray(frames) ? frames : []).slice(0, TEST_MAX_RESULTS);
+  // The manifest ceiling bounds declarations, not observations. A full
+  // suite can emit additional retry frames; dropping those before grouping
+  // them falsely keeps recovered checks blocking. Earned-gating output is
+  // already bounded by the dispatched declarations below.
+  const parsed = Array.isArray(frames) ? frames : [];
 
   // ── Legacy shape ───────────────────────────────────────────────────────
   // extraRows (the unit-suite row today) still ride along: the synthesized
@@ -705,7 +711,7 @@ function classifyTests(frames, expectedCount, options) {
   // declares no dapp.json checks. Error verdicts stay decided by the
   // container's own frames, exactly as before.
   if (!dispatched) {
-    const results = parsed.map((f) => ({
+    const results = parsed.slice(0, TEST_MAX_RESULTS).map((f) => ({
       name: String(f.name || '').slice(0, CONSOLE_MAX_MSG_LEN),
       path: String(f.path || '').slice(0, CONSOLE_MAX_MSG_LEN),
       status: f.status === 'pass' ? 'pass' : 'fail',

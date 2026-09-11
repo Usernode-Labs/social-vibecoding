@@ -35,9 +35,9 @@ function readDocker() {
 let cached = null;
 let pending = null;
 async function read(config = {}) {
-  if ((config.appRuntime || process.env.APP_RUNTIME || 'docker') !== 'kubernetes') return readDocker();
   // A self-app preview has no authority over the platform's release rollout.
   if (process.env.USERNODE_ENV === 'staging') return null;
+  if ((config.appRuntime || process.env.APP_RUNTIME || 'docker') !== 'kubernetes') return readDocker();
   const cfg = config.kubernetes || {};
   const key = `${cfg.platformNamespace}/${cfg.platformDeployment}`;
   if (cached?.key === key && Date.now() - cached.at < 5000) return cached.value;
