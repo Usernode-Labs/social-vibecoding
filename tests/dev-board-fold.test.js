@@ -320,8 +320,9 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // bumps it by exactly that many and says so here (560 → 562: the two #1824
   // challenges-footer checks; 562 → 563: the fifth build step's queued-wait
   // check on the checks card; 563 → 573: the ten #1808 stamp checks, one per
-  // surface whose timestamp changed; 573 → 574: #1841 account email settings).
-  assert.equal(DAPP.tests.length, 574);
+  // surface whose timestamp changed; 573 → 574: #1841 account email settings;
+  // 574 → 576: the two #1771 infrastructure-error checks).
+  assert.equal(DAPP.tests.length, 576);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
