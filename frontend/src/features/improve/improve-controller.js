@@ -898,9 +898,16 @@ const Improve = {
   },
 
   /** The retired `#dev-console-btn`, as a row. */
+  // Waits for the panel to be GONE before presenting, for the same reason
+  // `share()` below does: on touch the console rides in a kit bottom sheet of
+  // its own, and presenting it across this panel's exit spring puts two kit
+  // surfaces on screen at once — the second one adopting its node while the
+  // first is still tearing its own down. Desktop resolves immediately after
+  // the slide, so the row costs nothing there. (#1967)
   openTerminal() {
-    Improve.close();
-    window.DevConsole?.show?.();
+    Promise.resolve(Improve.close()).then(() => {
+      window.DevConsole?.show?.();
+    });
   },
 
   /** The retired `#drawer-row-share`, as a row. */
