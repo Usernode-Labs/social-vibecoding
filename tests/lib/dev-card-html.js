@@ -63,6 +63,14 @@ const mergedRowHtml = (AppView, row) => {
 /** Render the whole Workshop from `AppView._workshopView()`. */
 function workshopHtml(AppView) {
   const m = mod();
+  // Mirrors `AppView._rerenderWorkshop()`, including its ORDER: the grouping
+  // is seeded from the stored preference, and the board's view model is
+  // published only for the stage pane and only BEFORE the Workshop's own
+  // publish. So a test that seeds localStorage `devWorkshopGroup` gets the
+  // pane a viewer with that preference would see, built the same way.
+  const group = AppView._getWorkshopGroup();
+  m.publishWorkshopGroup(group);
+  if (group === 'stage') m.devKanbanStore.set(AppView._kanbanView());
   m.devWorkshopStore.set(AppView._workshopView());
   return renderToHtml(createElement(m.DevWorkshop));
 }
