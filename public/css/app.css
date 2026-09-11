@@ -11669,21 +11669,45 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    makes the block scannable rather than just subdivided. It inherits the
    pane's own line colour, so the cards read as divisions OF the pane rather
    than as objects sitting on it. */
-.dev-ws-cards { display: flex; flex-direction: column; gap: 8px; }
+.dev-ws-cards { display: flex; flex-direction: column; gap: 6px; }
+/* Each card is ONE line: the label, a middot, the sentence. It was a title
+   stacked above its line, which cost three rows of vertical space to carry
+   three short sentences and made the block read as three objects rather than
+   three entries in a list. Inline, the eye runs down the labels in a single
+   column and across only where it wants the detail.
+
+   `align-items: baseline` and not `center`: the label is 12px and the
+   sentence 14px, so centring them leaves the label floating slightly high
+   against the text it introduces. Wrapping is the sentence's own — the line
+   is the flex item that grows, so a long one wraps under itself and the
+   label keeps the first row to itself rather than being pushed onto its own.
+
+   SOLID, not translucent. `--dc-sheet` is #ffffff in light and #1c1c1e in
+   dark, so "white" survives the theme; the strip behind these is
+   `--dc-sheet-fill`, which is translucent, so a solid card reads as a card
+   ON the pane rather than another wash of the same surface. */
 .dev-ws-card {
-  border-radius: 12px;
-  padding: 8px 10px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  border-radius: 10px;
+  padding: 7px 10px;
+  background-color: var(--dc-sheet);
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
 }
 .dev-ws-card-title {
-  margin: 0 0 3px;
-  font-size: 11px;
+  margin: 0;
+  flex: none;
+  font-size: 12px;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0.04em;
   color: var(--text-muted);
 }
-.dev-ws-card-line { margin: 0; font-size: 14px; color: var(--text-primary); }
+/* The separator is the label's, not an element of its own: a real node
+   between them would land inside the `.dev-ws-card-title + .dev-ws-card-line`
+   chain dapp.json's declared check selects on. */
+.dev-ws-card-title::after { content: '\00B7'; margin-left: 6px; }
+.dev-ws-card-line { margin: 0; flex: 1 1 auto; font-size: 14px; color: var(--text-primary); }
 /* ── The Workshop's orientation pane ─────────────────────────
    "Since your last visit" moved inside "Where the app is": the description
    leads, and the personal line sits under it as a footnote to it rather than

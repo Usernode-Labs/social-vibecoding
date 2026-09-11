@@ -695,6 +695,23 @@ test('a failed discovery keeps the standing categories and lets the rest of the 
     assert.ok(m.calls.some((c) => c.kind === 'digest'), 'and so did the digest');
     assert.ok(st.row.digest_text, 'which is how a paragraph gets written at all on a drifting board');
 
+    // …but it does NOT re-ask for a digest that is not due. `wantDigest` is
+    // decided before the draft is attempted, as `why ? 'discovery' : …`, and
+    // `why` never clears while discovery keeps failing — so without the
+    // fallback every pass would buy another digest call forever, billed to
+    // the platform user, whose llm_usage row is what the GLOBAL daily cap
+    // sums. The row here has a paragraph written a minute ago, so its own
+    // clock says no.
+    m.calls.length = 0;
+    st.row.last_failed_at = null;
+    st.row.digest_at = ago(60 * 1000);
+    st.row.digest_text = 'The standing paragraph.';
+    st.row.digest_error = null;
+    const second = await svc.reconcile({ pool, app: APP, reason: 'get' });
+    assert.equal(second.discoveryFailed, true, 'the draft failed again');
+    assert.equal(m.calls.filter((c) => c.kind === 'digest').length, 0,
+      'and the digest was NOT re-asked: it is not due on its own clock');
+
     // The backoff still applies: a recorded failure is what keeps a model
     // that cannot answer from being asked again on every single view.
     m.calls.length = 0;
@@ -969,15 +986,19 @@ test('the status paragraph is written on a discovery pass, and survives one that
     const call = m.calls.find((c) => c.kind === 'digest');
 
     assert.match(call.params.messages[0].content, /BOARD \(JSON\):/);
-    assert.match(call.params.system, /exactly three fields, each ONE sentence of at most 25 words/);
+    assert.match(call.params.system, /exactly three fields, each ONE sentence of about 12 words/);
     // The three windows, each its own field, and the rule that keeps a
     // single line from becoming a headline — the failure that produced
     // "mostly reshaped the Workshop and Dev board" on a week of eight areas.
     assert.match(call.params.system, /"lastWeek": what landed in the completed week just gone/);
     assert.match(call.params.system, /"thisWeek": what has landed in the current week so far/);
     assert.match(call.params.system, /"open": what the app's open, unfinished work is about/);
-    assert.match(call.params.system, /NAME THE BREADTH, NOT A HEADLINE/);
-    assert.match(call.params.system, /COUNT the entries by area before you write/);
+    // The two rules that survive twelve words. "Name the breadth" did not:
+    // at this length an inventory of five areas is a worse sentence than a
+    // shape, so breadth moves into a general tail clause instead.
+    assert.match(call.params.system, /TWO CLAUSES, NOT A LIST/);
+    assert.match(call.params.system, /COUNT BEFORE YOU LEAD/);
+    assert.match(call.params.system, /how many items it has, NOT of how visible it is/);
     assert.match(call.params.system, /STATE NO COUNTS/);
     // An empty window is an empty field, which is what stops its card being
     // drawn — the "(if any)" of the design, stated to the model.
@@ -1139,7 +1160,7 @@ test('digestDue: the version first, then the clocks', () => {
   assert.equal(svc.versionBehind(undefined, 2), false);
 });
 
-test('the three versions are positive integers and the digest is on its third', () => {
+test('the three versions are positive integers and the digest is on its fourth', () => {
   for (const v of [llm.WORKSHOP_DISCOVERY_VERSION, llm.WORKSHOP_PLACEMENT_VERSION, llm.WORKSHOP_DIGEST_VERSION]) {
     assert.ok(Number.isInteger(v) && v >= 1, String(v));
   }
@@ -1149,8 +1170,9 @@ test('the three versions are positive integers and the digest is on its third', 
   // old paragraph, and 2 is what puts the new one on every app. 3 splits
   // that paragraph into the three windowed lines the lander draws as cards:
   // the fields cannot be recovered from the prose a v2 row holds, so the
-  // bump is what re-asks for them rather than migrating anything.
-  assert.equal(llm.WORKSHOP_DIGEST_VERSION, 3);
+  // bump is what re-asks for them rather than migrating anything. 4 halves
+  // the length and makes the line lead by count rather than by visibility.
+  assert.equal(llm.WORKSHOP_DIGEST_VERSION, 4);
 });
 
 test('a digest version bump rewrites a fresh paragraph now, and only the paragraph', async () => {
@@ -1425,6 +1447,27 @@ test('the three lines flatten to the paragraph a pre-cards row still holds', () 
   assert.equal(svc.flattenDigest({ lastWeek: '', thisWeek: '', open: '' }), null,
     'and all three empty is no paragraph at all, not an empty string');
   assert.equal(svc.flattenDigest(null), null);
+});
+
+test('a first draft that fails does not place cards into zero categories', async () => {
+  // Reachable only since a failed draft stopped aborting the pass. With no
+  // standing themes there is nothing to place INTO: placeAll would serialise
+  // an empty themesJson and empty themeIds and ask the model, one call per
+  // batch of forty, to sort every card into no categories at all — and every
+  // one would come back unplaced, which then counts as churn.
+  await settle();
+  boardOf(45);
+  const st = makeStore(freshRow({ themes_json: [], placements_json: {} }));
+  const m = makeModel({ fail: (kind) => kind === 'discovery' });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.reconcile({ pool, app: APP, reason: 'get' });
+    assert.equal(out.discoveryFailed, true, 'the first draft failed');
+    assert.equal(m.calls.filter((c) => c.kind === 'placement').length, 0,
+      'no placement call: 45 cards would have been two batches into nothing');
+    assert.equal(st.row.unplaced_json.length, 0, 'and nothing was marked unplaced');
+    assert.deepEqual(st.row.themes_json, [], 'still no categories');
+  } finally { llm._setClientForTests(prev); resetBoard(); }
 });
 
 test('digestStale: none, old, current', () => {

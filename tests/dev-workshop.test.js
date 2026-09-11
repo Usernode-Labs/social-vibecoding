@@ -616,6 +616,39 @@ test('the three cards are what the pane draws, titled and in window order', asyn
   assert.match(html, /The summary at the top was written by the model on the same pass\./);
 });
 
+test('a card is one line: label, middot, sentence — and the middot is not a node', async () => {
+  const AppView = await loadWith(responseBody({
+    digestCards: {
+      lastWeek: 'the Dev screen became a styled Workshop, alongside many bug fixes.',
+      thisWeek: 'summary cards got shorter, plus preview and sign-in work.',
+      open: 'mostly QA triage, with older proposals still awaiting votes.',
+    },
+  }));
+  const html = workshopHtml(AppView);
+
+  // The title and the line are ADJACENT siblings. dapp.json's declared check
+  // selects `.dev-ws-card-title + .dev-ws-card-line`, so a separator rendered
+  // as its own element between them would pass locally and fail the gate.
+  assert.match(html, /<h4 class="dev-ws-card-title">Last week<\/h4><p class="dev-ws-card-line">/,
+    'nothing rendered between the label and the sentence');
+  // Scoped to the cards block: the pane uses a middot elsewhere (meta lines),
+  // so asking the whole document would pass for the wrong reason.
+  const block = html.slice(html.indexOf('data-ws-cards'), html.indexOf('</div>', html.indexOf('data-ws-cards')));
+  assert.ok(block.includes('data-ws-card="lastWeek"'), 'found the cards block');
+  assert.ok(!block.includes('\u00B7'), 'the middot is CSS, not markup');
+
+  // One row per card: the layout is the stylesheet's job, and these are the
+  // three declarations that make it a line rather than a stack.
+  assert.match(CSS, /\.dev-ws-card \{[^}]*display: flex;/, 'the card is a row');
+  assert.match(CSS, /\.dev-ws-card \{[^}]*align-items: baseline;/,
+    'baseline, not centre — a 12px label beside a 14px sentence');
+  assert.match(CSS, /\.dev-ws-card-title::after \{ content: '\\00B7'/, 'the separator');
+  // Solid, and theme-aware: --dc-sheet is #ffffff in light and #1c1c1e in
+  // dark, so "white cards" does not become a white slab on a dark screen.
+  assert.match(CSS, /\.dev-ws-card \{[^}]*background-color: var\(--dc-sheet\);/);
+  assert.match(CSS, /--dc-sheet: #ffffff;/);
+});
+
 test('an empty window draws no card at all', async () => {
   // The "(if any)" of the design. An empty string is how the server says the
   // window held nothing — a Monday morning, a board with nothing open — and
