@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { DiscoverCard } from '../home/panels/discover';
-import { TINTS, cardTint, tintClass } from '../home/panels/ui';
+import { TONES, cardTint, cardTintClass, toneLabel } from '../home/panels/ui';
 import type { DiscoverTileView } from '../home/panels-store';
 import { prepareIllustration } from '../../lib/prepare-illustration';
 import {
@@ -202,17 +202,28 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             Drag the card to move the image. Scroll or pinch to zoom. Zoom <span data-zoom-readout>{Math.round(art.zoom * 100)}%</span>.
           </p>
+          {/*
+              The twelve tone-50 colours, and nothing else: no hex field and
+              no colour input, because the point is a card that belongs to the
+              app's own palette. A swatch wears its own tone class, so the two
+              custom properties it paints from are exactly the ones the card
+              will use — one palette, read from one place.
+
+              An illustration saved before these existed carries one of the
+              five hashed tints instead. It still renders (see cardTintClass),
+              it simply matches no swatch, so the row shows nothing selected
+              until a colour is picked — which is the honest reading of "the
+              colour this card wears is not one of these".
+          */}
           <div data-tint-picker role="radiogroup" aria-label="Card colour" className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-zinc-500 dark:text-zinc-400 mr-1">Card colour</span>
-            {TINTS.map(n => {
-              const chosen = tintClass(n) === cardTint(app.slug, art.tint);
-              return <button key={n} type="button" role="radio" aria-checked={chosen}
-                aria-label={`Card colour ${n}`} data-tint={n} data-chosen={String(chosen)}
-                onClick={() => setArt({ ...art, tint: n })}
-                // The swatch wears the tint class itself, so the two custom
-                // properties it paints from are the ones the card will use —
-                // one palette, read from one place.
-                className={`${tintClass(n)} un-touch-target w-9 h-9 rounded-full border transition-shadow ${
+            {TONES.map(tone => {
+              const chosen = art.tint === tone;
+              return <button key={tone} type="button" role="radio" aria-checked={chosen}
+                aria-label={toneLabel(tone)} title={toneLabel(tone)}
+                data-tint={tone} data-chosen={String(chosen)}
+                onClick={() => setArt({ ...art, tint: tone })}
+                className={`${cardTintClass(tone)} un-touch-target w-8 h-8 rounded-full border transition-shadow ${
                   chosen ? 'ring-2 ring-violet-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900' : ''}`}
                 style={{ background: 'var(--tint-bg)', borderColor: 'var(--tint-line)' }} />;
             })}

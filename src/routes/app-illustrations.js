@@ -7,26 +7,39 @@ const { sniffImageType } = require('../services/attachments');
 const log = require('../services/logger');
 const { attachmentUploadLimiter } = require('../middleware/rate-limits');
 
-// The five theme tints (`.home-tint-1` … `-5` in app.css). A card whose
-// illustration carries none wears the hash of its own slug, so a stored tint
-// is an OVERRIDE and the absent case is the default rather than a missing
-// value. Only these five are accepted: the palette is the app's own, and an
-// arbitrary colour is exactly what this field is not.
-const TINTS = [1, 2, 3, 4, 5];
+// The card colours an illustration may carry, kept in step with
+// frontend/src/features/home/panels/ui.tsx (asserted by
+// tests/featured-illustration-tint.test.js, since a .tsx cannot be required
+// from here).
+//
+// TONES are the twelve tone-50 colours the editor offers (`.home-tone-cream`
+// … `-gray` in app.css). LEGACY_TINTS are the five hashed tints it offered
+// briefly before them; they are still accepted so an illustration saved then
+// keeps its colour through a later reframe, and still render, but nothing
+// picks a new one.
+//
+// A card whose illustration carries neither wears the hash of its own slug,
+// so a stored value is an OVERRIDE and the absent case is the default rather
+// than a missing value. Nothing outside these lists is accepted: the palette
+// is the app's own, and an arbitrary colour is exactly what this field is not.
+const TONES = ['cream', 'yellow', 'orange', 'coral', 'pink', 'purple',
+  'indigo', 'blue', 'teal', 'mint', 'sage', 'gray'];
+const LEGACY_TINTS = [1, 2, 3, 4, 5];
+const isCardColour = tint => (typeof tint === 'string' ? TONES.includes(tint) : LEGACY_TINTS.includes(tint));
 
 /**
- * Framing, plus the optional tint that travels with it.
+ * Framing, plus the optional card colour that travels with it.
  *
  * The tint is omitted from the result when it was not supplied, which is what
- * makes PATCH's `||` jsonb merge leave an already-saved tint alone rather than
- * writing a null over it.
+ * makes PATCH's `||` jsonb merge leave an already-saved colour alone rather
+ * than writing a null over it.
  */
 function parseFraming(body) {
   const { zoom, x, y, tint } = body || {};
   if (![zoom, x, y].every(v => typeof v === 'number' && Number.isFinite(v))
       || zoom < 0.5 || zoom > 3 || x < -100 || x > 100 || y < -100 || y > 100) return null;
   if (tint === undefined || tint === null) return { zoom, x, y };
-  return TINTS.includes(tint) ? { zoom, x, y, tint } : null;
+  return isCardColour(tint) ? { zoom, x, y, tint } : null;
 }
 function validateImage(data) {
   if (!Buffer.isBuffer(data) || !data.length || data.length > 1024 * 1024) return null;
@@ -66,9 +79,13 @@ function illustrationRoutes(config) {
   router.post(path, attachmentUploadLimiter, express.raw({ type: 'application/octet-stream', limit: '2mb' }), async (req, res, next) => {
     const framing = parseFraming({
       zoom: Number(req.query.zoom), x: Number(req.query.x), y: Number(req.query.y),
-      // Absent stays absent — `Number(undefined)` is NaN, which would fail the
-      // tint check and reject an upload that simply did not choose one.
-      tint: req.query.tint === undefined ? undefined : Number(req.query.tint),
+      // A query value is always a string, so a tone name arrives ready and a
+      // legacy tint has to be coerced back to the number it is stored as —
+      // the editor stopped sending those, but a page cached from before it
+      // did has not. Absent stays absent, so an upload that chose no colour
+      // is not rejected for it.
+      tint: typeof req.query.tint === 'string' && /^[0-9]+$/.test(req.query.tint)
+        ? Number(req.query.tint) : req.query.tint,
     });
     const contentType = validateImage(req.body);
     if (!framing || !contentType) return res.status(400).json({ error: 'Choose a PNG, JPEG or WebP under 1 MB, a card colour from the set, and valid image framing.' });
@@ -105,4 +122,4 @@ function illustrationRoutes(config) {
   });
   return router;
 }
-module.exports = { illustrationRoutes, illustrationImageRoutes, parseFraming, validateImage, TINTS };
+module.exports = { illustrationRoutes, illustrationImageRoutes, parseFraming, validateImage, TONES, LEGACY_TINTS };

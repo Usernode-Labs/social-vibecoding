@@ -18,7 +18,7 @@ poolModule.getPool = () => ({ query: async (sql, p) => {
 access.getAppForUser = async () => state.visible ? { id: 1, featured_illustration: state.art } : null;
 admins.canManageApp = async () => state.manager;
 delete require.cache[require.resolve('../src/routes/app-illustrations')];
-const { illustrationRoutes, illustrationImageRoutes, parseFraming, validateImage, TINTS } = require('../src/routes/app-illustrations');
+const { illustrationRoutes, illustrationImageRoutes, parseFraming, validateImage, TONES, LEGACY_TINTS } = require('../src/routes/app-illustrations');
 const app = express();
 app.use(express.json());
 app.use(illustrationRoutes({}));
@@ -35,16 +35,22 @@ test('framing and upload limits reject malformed values and active image formats
   assert.equal(validateImage(Buffer.alloc(1024 * 1024 + 1)), null);
   assert.equal(validateImage(png), 'image/png');
 });
-test('the card tint is optional, and only the five theme tints are a tint', () => {
+test('the card colour is optional, and only the palette is a card colour', () => {
   // Absent means "no override" — the card falls back to the slug's own hash —
   // so the key is left OFF the result rather than written as null, which is
-  // what lets PATCH's jsonb merge leave an already-saved tint alone.
+  // what lets PATCH's jsonb merge leave an already-saved colour alone.
   assert.deepEqual(parseFraming({ zoom: 1, x: 0, y: 0 }), { zoom: 1, x: 0, y: 0 });
   assert.deepEqual(parseFraming({ zoom: 1, x: 0, y: 0, tint: null }), { zoom: 1, x: 0, y: 0 });
-  for (const tint of TINTS) assert.deepEqual(parseFraming({ zoom: 1, x: 0, y: 0, tint }), { zoom: 1, x: 0, y: 0, tint });
+  // The twelve tones the editor offers, plus the five tints it offered before
+  // them: an illustration saved then keeps its colour through a later reframe.
+  for (const tint of [...TONES, ...LEGACY_TINTS]) {
+    assert.deepEqual(parseFraming({ zoom: 1, x: 0, y: 0, tint }), { zoom: 1, x: 0, y: 0, tint });
+  }
   // Anything else is rejected outright rather than dropped, so a client that
-  // means to set a colour is told it did not.
-  for (const tint of [0, 6, -1, 2.5, '3', NaN, Infinity, true, {}]) {
+  // means to set a colour is told it did not. A tone is a name and a legacy
+  // tint is a number, and neither is read across: '3' and 'Blue' are not
+  // colours, they are a client sending the wrong shape.
+  for (const tint of [0, 6, -1, 2.5, '3', 'Blue', 'lilac', '', NaN, Infinity, true, {}]) {
     assert.equal(parseFraming({ zoom: 1, x: 0, y: 0, tint }), null, `rejected: ${JSON.stringify(tint)}`);
   }
 });
@@ -60,26 +66,35 @@ test('upload, read, reframe, replacement, permission denial and reset', async ()
     const first = (await response.json()).illustration;
     assert.equal(first.x, -15); assert.equal(first.zoom, 1.2);
     // An upload that picked no colour stores none, which is how the card keeps
-    // the tint it already had from its slug.
+    // the colour it already had from its slug.
     assert.equal('tint' in first, false);
     response = await request(first.url);
     assert.equal(response.status, 200); assert.match(response.headers.get('cache-control'), /immutable/);
     assert.deepEqual(Buffer.from(await response.arrayBuffer()), png);
-    response = await request(endpoint, 'PATCH', { zoom: 2, x: 0, y: -50, tint: 4 });
+    response = await request(endpoint, 'PATCH', { zoom: 2, x: 0, y: -50, tint: 'teal' });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).illustration.url, first.url);
     response = await request(endpoint);
     let saved = (await response.json()).illustration;
-    assert.equal(saved.y, -50); assert.equal(saved.tint, 4);
+    assert.equal(saved.y, -50); assert.equal(saved.tint, 'teal');
     // Reframing without a colour keeps the saved one rather than clearing it.
     response = await request(endpoint, 'PATCH', { zoom: 1, x: 0, y: 0 });
-    assert.equal((await response.json()).illustration.tint, 4);
+    assert.equal((await response.json()).illustration.tint, 'teal');
+    // A colour saved before the tones existed round-trips unchanged, so an
+    // illustration from then is not silently recoloured by a reframe.
+    await request(endpoint, 'PATCH', { zoom: 1, x: 0, y: 0, tint: 4 });
+    assert.equal((await (await request(endpoint)).json()).illustration.tint, 4);
     // Out of the set is a 400 on both write paths, and writes nothing.
     const before = state.writes;
-    assert.equal((await request(endpoint, 'PATCH', { zoom: 1, x: 0, y: 0, tint: 9 })).status, 400);
+    assert.equal((await request(endpoint, 'PATCH', { zoom: 1, x: 0, y: 0, tint: 'lilac' })).status, 400);
     assert.equal((await request(endpoint + '?zoom=1&x=0&y=0&tint=9', 'POST', png, 'application/octet-stream')).status, 400);
     assert.equal(state.writes, before);
-    // A replacement image carries the colour picked to sit with it.
+    // A replacement image carries the colour picked to sit with it. A query
+    // value is always a string, so the tone arrives ready and the legacy tint
+    // a stale page might still send is coerced back to its number.
+    response = await request(endpoint + '?zoom=1&x=0&y=0&tint=blue', 'POST', png, 'application/octet-stream');
+    saved = (await response.json()).illustration;
+    assert.equal(saved.tint, 'blue');
     response = await request(endpoint + '?zoom=1&x=0&y=0&tint=2', 'POST', png, 'application/octet-stream');
     saved = (await response.json()).illustration;
     assert.equal(saved.tint, 2);
