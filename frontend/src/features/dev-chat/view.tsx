@@ -13,7 +13,6 @@ import { DevComposer } from './composer';
 import { SessionHeader } from './session-header';
 import { sessionHeaderStore } from './session-header-store';
 import { SessionChecksPanel } from '../dev-board/modals/session-checks';
-import { ChangeDetail } from '../dev-board/topic/topic-head';
 import { SessionList } from './session-list';
 import { SpecViewer } from './spec-viewer';
 import { DevChatTranscript } from './transcript';
@@ -128,7 +127,7 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
       <div id="dc-banners" className="contents"><DevChatBanners /></div>
       <div className="dc-session-body flex-1 flex min-h-0 dc-lift dc-lift-session">
         <div id="dc-tab-chat" className="dc-chat-pane flex-1 flex flex-col min-h-0">
-          {s.returnHint ? (
+          {s.returnHint && !s.embedded ? (
             <aside
               id="dc-return-hint" aria-label="Returning to dev chat"
               className="mx-3 mt-3 mb-1 flex flex-wrap items-center gap-3 rounded-xl bg-violet-500/10 p-3 text-sm text-zinc-700 dark:text-zinc-200 shrink-0"
@@ -207,34 +206,16 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
   );
 }
 
-/** Keep the workspace mounted while reading the overview: switching views
- * must not discard a draft, interrupt streaming, or change sharing. */
+/** Session URLs are the workspace; Open card has its own topic destination. */
 function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): ReactNode {
-  const [workspace, setWorkspace] = useState(s.change?.workspace ?? true);
-  useEffect(() => {
-    if (workspace) window.DevChat?.restoreSessionScroll?.();
-  }, [workspace]);
-  const selectWorkspace = (next: boolean) => {
-    const url = new URL(window.location.href);
-    url.searchParams.set('workspace', next ? '1' : '0');
-    window.history.replaceState(window.history.state, '', url);
-    setWorkspace(next);
-  };
-  const showOverview = () => {
-    window.DevChat?._resetStagingPanel?.();
-    window.DevChat?._publishDevView?.();
-    selectWorkspace(false);
-  };
-  if (!s.change) return <WorkspaceView s={s} />;
+  useEffect(() => { window.DevChat?.restoreSessionScroll?.(); }, []);
+  if (!s.change || s.embedded) return <WorkspaceView s={s} />;
   return <>
     <nav className="dev-change-tabs" aria-label="Change views">
-      <button type="button" className="gc-vote-btn" aria-pressed={!workspace} onClick={showOverview}>Change overview</button>
-      <button type="button" className="gc-vote-btn" aria-pressed={workspace} onClick={() => selectWorkspace(true)}>Agent workspace · {s.change.item.transcript_shared_at ? 'shared read-only' : 'private'}</button>
+      <button type="button" className="gc-vote-btn" onClick={() => (window as any).AppView?.openTopic('proposal', s.change!.item.id)}>Change overview</button>
+      <span className="dev-topic-note">Agent workspace</span>
     </nav>
-    <div className="dev-change-overview platform-safe-scroll" hidden={workspace}>
-      <ChangeDetail key={s.change.item.id} {...s.change} owner active={!workspace} />
-    </div>
-    <div className="dev-change-workspace" hidden={!workspace}><WorkspaceView s={s} /></div>
+    <WorkspaceView s={s} />
   </>;
 }
 
