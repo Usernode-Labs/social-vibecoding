@@ -64,7 +64,7 @@ import { clampFrame } from '../../../lib/illustration-framing';
 
 import type { IconView } from '../grid-store';
 import type { DiscoverTileView, DiscoverView } from '../panels-store';
-import { PanelShell, tintOf } from './ui';
+import { PanelShell, cardTint } from './ui';
 
 function home(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
@@ -127,7 +127,10 @@ export function DiscoverCard({ tile, preview = false }: { tile: DiscoverTileView
   const { added } = tile;
   return (
     <div
-      className={`app-card home-discover-card ${tintOf(tile.slug)} relative flex flex-col cursor-pointer`}
+      // The tint saved with the illustration when its author picked one, and
+      // the hash of the slug when they did not — see `cardTint`. Both branches
+      // are pure functions of props, so the prerender and the client agree.
+      className={`app-card home-discover-card ${cardTint(tile.slug, tile.illustration?.tint)} relative flex flex-col cursor-pointer`}
       data-slug={tile.slug}
       data-status={tile.status}
       {...(tile.demo ? { 'data-demo': 'true' } : null)}

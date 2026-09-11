@@ -7,11 +7,26 @@ const { sniffImageType } = require('../services/attachments');
 const log = require('../services/logger');
 const { attachmentUploadLimiter } = require('../middleware/rate-limits');
 
+// The five theme tints (`.home-tint-1` … `-5` in app.css). A card whose
+// illustration carries none wears the hash of its own slug, so a stored tint
+// is an OVERRIDE and the absent case is the default rather than a missing
+// value. Only these five are accepted: the palette is the app's own, and an
+// arbitrary colour is exactly what this field is not.
+const TINTS = [1, 2, 3, 4, 5];
+
+/**
+ * Framing, plus the optional tint that travels with it.
+ *
+ * The tint is omitted from the result when it was not supplied, which is what
+ * makes PATCH's `||` jsonb merge leave an already-saved tint alone rather than
+ * writing a null over it.
+ */
 function parseFraming(body) {
-  const { zoom, x, y } = body || {};
+  const { zoom, x, y, tint } = body || {};
   if (![zoom, x, y].every(v => typeof v === 'number' && Number.isFinite(v))
       || zoom < 0.5 || zoom > 3 || x < -100 || x > 100 || y < -100 || y > 100) return null;
-  return { zoom, x, y };
+  if (tint === undefined || tint === null) return { zoom, x, y };
+  return TINTS.includes(tint) ? { zoom, x, y, tint } : null;
 }
 function validateImage(data) {
   if (!Buffer.isBuffer(data) || !data.length || data.length > 1024 * 1024) return null;
@@ -49,9 +64,14 @@ function illustrationRoutes(config) {
   });
   router.get(path, (req, res) => res.json({ illustration: req.illustrationApp.featured_illustration || null }));
   router.post(path, attachmentUploadLimiter, express.raw({ type: 'application/octet-stream', limit: '2mb' }), async (req, res, next) => {
-    const framing = parseFraming({ zoom: Number(req.query.zoom), x: Number(req.query.x), y: Number(req.query.y) });
+    const framing = parseFraming({
+      zoom: Number(req.query.zoom), x: Number(req.query.x), y: Number(req.query.y),
+      // Absent stays absent — `Number(undefined)` is NaN, which would fail the
+      // tint check and reject an upload that simply did not choose one.
+      tint: req.query.tint === undefined ? undefined : Number(req.query.tint),
+    });
     const contentType = validateImage(req.body);
-    if (!framing || !contentType) return res.status(400).json({ error: 'Choose a PNG, JPEG or WebP under 1 MB and valid image framing.' });
+    if (!framing || !contentType) return res.status(400).json({ error: 'Choose a PNG, JPEG or WebP under 1 MB, a card colour from the set, and valid image framing.' });
     const id = crypto.randomBytes(16).toString('hex');
     const illustration = { url: `/app-illustrations/${id}`, ...framing };
     try {
@@ -67,7 +87,7 @@ function illustrationRoutes(config) {
   });
   router.patch(path, async (req, res, next) => {
     const framing = parseFraming(req.body);
-    if (!framing) return res.status(400).json({ error: 'Choose valid image framing.' });
+    if (!framing) return res.status(400).json({ error: 'Choose valid image framing and a card colour from the set.' });
     try {
       const { rows } = await pool.query(`UPDATE apps SET featured_illustration = featured_illustration || $2::jsonb
         WHERE id = $1 AND featured_illustration IS NOT NULL RETURNING featured_illustration`,
@@ -85,4 +105,4 @@ function illustrationRoutes(config) {
   });
   return router;
 }
-module.exports = { illustrationRoutes, illustrationImageRoutes, parseFraming, validateImage };
+module.exports = { illustrationRoutes, illustrationImageRoutes, parseFraming, validateImage, TINTS };

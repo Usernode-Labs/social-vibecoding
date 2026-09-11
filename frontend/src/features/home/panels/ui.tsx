@@ -83,6 +83,41 @@ export function tintOf(key: string): string {
 }
 
 /**
+ * THE WHOLE TINT VOCABULARY, as data.
+ *
+ * `tintOf` above picks one for a card that has never been given one, and that
+ * stays the default. But a featured illustration may now carry a tint its
+ * author chose to sit with the artwork, so the five have to be enumerable —
+ * for the editor's swatches, and for the server, which accepts a stored tint
+ * only if it is one of these.
+ *
+ * Numbers rather than class names on the wire: the stored value is an index
+ * into a palette the CSS owns, so a future rename of `.home-tint-3` is a CSS
+ * change rather than a data migration. The class strings are complete
+ * literals here for the same reason every other class in this tree is.
+ */
+export const TINTS = [1, 2, 3, 4, 5] as const;
+export type Tint = (typeof TINTS)[number];
+
+const TINT_CLASS: Record<Tint, string> = {
+  1: 'home-tint-1', 2: 'home-tint-2', 3: 'home-tint-3', 4: 'home-tint-4', 5: 'home-tint-5',
+};
+
+/** The class for a stored tint, or null for anything that is not one of the five. */
+export function tintClass(tint: unknown): string | null {
+  return TINTS.includes(tint as Tint) ? TINT_CLASS[tint as Tint] : null;
+}
+
+/**
+ * What a card actually wears: the chosen tint when there is one, otherwise the
+ * hash of its own identity. Deliberately one function, because the fallback is
+ * the thing that has to match between the server prerender and the client.
+ */
+export function cardTint(key: string, tint?: unknown): string {
+  return tintClass(tint) || tintOf(key);
+}
+
+/**
  * A home-screen area's LABEL, and the controls that act on the block below it.
  *
  * ── Why the title moved back out of the card ──────────────────────────

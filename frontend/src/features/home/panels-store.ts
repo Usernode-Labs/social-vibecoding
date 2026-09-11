@@ -49,7 +49,13 @@ export interface DiscoverTileView {
   /** Is this app already in "Your apps"? Drives the badge's whole treatment. */
   added: boolean;
   icon: IconView;
-  illustration?: { url: string; zoom: number; x: number; y: number } | null;
+  /**
+   * The featured illustration: its image, how it is framed inside the art
+   * block, and — when its author chose one — which of the five theme tints
+   * the card wears behind it. An absent `tint` means the slug's own hash,
+   * which is what every card without an illustration wears.
+   */
+  illustration?: { url: string; zoom: number; x: number; y: number; tint?: number | null } | null;
   /**
    * The app's own one-line description, from its manifest — null when it
    * declares none, which is most apps. The card draws nothing in its place.

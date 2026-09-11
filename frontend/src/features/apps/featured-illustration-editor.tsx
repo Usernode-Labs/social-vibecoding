@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { DiscoverCard } from '../home/panels/discover';
+import { TINTS, cardTint, tintClass } from '../home/panels/ui';
 import type { DiscoverTileView } from '../home/panels-store';
 import { prepareIllustration } from '../../lib/prepare-illustration';
 import {
@@ -10,6 +11,14 @@ import {
 } from '../../lib/illustration-framing';
 
 type Art = NonNullable<DiscoverTileView['illustration']>;
+/**
+ * The card colour rides INSIDE the framing state, not beside it, and that is
+ * what makes every existing action behave the way it already did: a gesture
+ * spreads the frame over it, Reset position replaces only the frame, Replace
+ * image keeps the colour that was picked to sit with the artwork, Use app icon
+ * drops the whole record, and Cancel writes nothing because nothing here is
+ * written before Save.
+ */
 // Keyboard equivalents for the gestures, so framing is not mouse-only now
 // that the sliders are gone.
 const KEY_PAN = 3;
@@ -95,7 +104,7 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
       const prepared = await prepareIllustration(chosen);
       if (current !== generation.current) return;
       pendingBlob.current = prepared;
-      setArt({ url: URL.createObjectURL(prepared), ...DEFAULT_FRAME });
+      setArt(a => ({ url: URL.createObjectURL(prepared), ...DEFAULT_FRAME, tint: a?.tint ?? null }));
     } catch (err) { if (current === generation.current) setError((err as Error).message); }
     finally { if (current === generation.current) setBusy(false); }
   };
@@ -104,7 +113,10 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
     setBusy(true); setError('');
     try {
       const blob = pendingBlob.current;
-      const framing = art ? clampFrame(art) : null;
+      // The tint is sent only once one has actually been picked. Omitting it
+      // is what leaves an app on the slug's own hash, which is the default the
+      // whole directory renders with.
+      const framing = art ? { ...clampFrame(art), ...(art.tint ? { tint: art.tint } : null) } : null;
       const query = blob && framing ? `?${new URLSearchParams(Object.entries(framing).map(([k, v]) => [k, String(v)]))}` : '';
       const res = await fetch(endpoint + query, { method: !art ? 'DELETE' : blob ? 'POST' : 'PATCH',
         headers: { 'Content-Type': blob && art ? 'application/octet-stream' : 'application/json' },
@@ -190,6 +202,21 @@ export function FeaturedIllustrationEditor({ app, onClose }: { app: any; onClose
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
             Drag the card to move the image. Scroll or pinch to zoom. Zoom <span data-zoom-readout>{Math.round(art.zoom * 100)}%</span>.
           </p>
+          <div data-tint-picker role="radiogroup" aria-label="Card colour" className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 mr-1">Card colour</span>
+            {TINTS.map(n => {
+              const chosen = tintClass(n) === cardTint(app.slug, art.tint);
+              return <button key={n} type="button" role="radio" aria-checked={chosen}
+                aria-label={`Card colour ${n}`} data-tint={n} data-chosen={String(chosen)}
+                onClick={() => setArt({ ...art, tint: n })}
+                // The swatch wears the tint class itself, so the two custom
+                // properties it paints from are the ones the card will use —
+                // one palette, read from one place.
+                className={`${tintClass(n)} un-touch-target w-9 h-9 rounded-full border transition-shadow ${
+                  chosen ? 'ring-2 ring-violet-500 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900' : ''}`}
+                style={{ background: 'var(--tint-bg)', borderColor: 'var(--tint-line)' }} />;
+            })}
+          </div>
           <div className="flex gap-3">
             <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => setArt({ ...art, ...DEFAULT_FRAME })}>Reset position</Button>
             <Button type="button" variant="neutral" ink="muted" className="min-h-[44px]" onClick={() => { setArt(null); pendingBlob.current = null; }}>Use app icon</Button>
