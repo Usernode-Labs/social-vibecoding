@@ -30,6 +30,7 @@ import type { MouseEvent, ReactNode } from 'react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { DevCard, ActionButton } from '../card/dev-card';
 import { topicHeadStore } from './topic-store';
+import { ChangeConversation } from './conversation';
 import type {
   ChecksVerdict,
   CheckRow,
@@ -463,10 +464,10 @@ function Transcript({ t }: { t: TranscriptSection }): ReactNode {
   );
 }
 
-export function TopicHead(): ReactNode {
+export function TopicHead({ conversation = false }: { conversation?: boolean }): ReactNode {
   const { card, body, item } = useStoreState(topicHeadStore);
   if (!card || !body) return null;
-  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} />;
+  return <ChangeDetail key={item?.id || 'topic'} card={card} body={body} item={item} conversation={conversation} />;
 }
 
 /** Refresh from the endpoint that owns this lifecycle's metadata. */
@@ -490,8 +491,8 @@ export async function readChangeDetail(item: any, owner: boolean, signal: AbortS
  * Full public metadata is fetched separately from the lightweight board.
  * This endpoint cannot return private agent messages or credentials.
  */
-export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true }: {
-  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean;
+export function ChangeDetail({ card: initialCard, body: initialBody, item, owner = false, active = true, conversation = false }: {
+  card: any; body: TopicBody; item?: any; owner?: boolean; active?: boolean; conversation?: boolean;
 }): ReactNode {
   const root = useRef<HTMLDivElement>(null);
   const [loaded, setLoaded] = useState<any>(null);
@@ -530,7 +531,6 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
     <div ref={root} className="dev-topic">
       {error ? <p role="alert" className="dev-topic-note">{error} <button className="gc-vote-btn" onClick={() => setRevision((n) => n + 1)}>Retry</button></p> : null}
       <div className="dev-topic-sheet dev-topic-card" data-topic-sheet="card">
-        <DevCard model={card} />
         {body.issues?.length ? <aside className="dev-change-issues" aria-label="Issues this change addresses">
           <h4 className="dev-topic-h">Addresses</h4>
           {body.issues.map((issue) => <a key={issue.n} href={issue.href} onClick={(event) => {
@@ -539,16 +539,11 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
             event.preventDefault(); call('openTopic', 'issue', issue.n);
           }}>#{issue.n} · {issue.title}</a>)}
         </aside> : body.changeId ? <p className="dev-topic-note">No issue linked yet.</p> : null}
-        {body.workspace && !owner ? <button type="button" className="gc-vote-btn" onClick={() => call('openChangeWorkspace', body.workspace)}>Continue building · private workspace</button> : null}
+        <DevCard model={card} />
+        {body.workspace && !owner ? <button type="button" className="gc-vote-btn" onClick={() => call('openChangeWorkspace', body.workspace)}>Continue building</button> : null}
       </div>
-      <TopicBodySections body={owner ? { ...body, transcript: null } : body} />
-      {owner && body.changeId ? <section className="dev-topic-sheet">
-        <h4 className="dev-topic-h">Discussion</h4>
-        {body.discussion ? <p className="dev-topic-note">{body.discussion}</p> : <>
-          <p className="dev-topic-note">The group discussion stays with this change when it enters review.</p>
-          <button className="gc-vote-btn" onClick={() => call('openTopic', ['active', 'paused'].includes(session.status) ? 'session' : 'proposal', body.changeId)}>Open discussion</button>
-        </>}
-      </section> : null}
+      <TopicBodySections body={conversation ? { ...body, transcript: null, activity: [] } : owner ? { ...body, transcript: null } : body} />
+      {conversation && body.changeId ? <ChangeConversation key={body.changeId} item={session} body={body} /> : null}
     </div>
   );
 }

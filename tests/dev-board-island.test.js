@@ -42,7 +42,14 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const PORTALS = read('frontend/src/lib/legacy-portals.tsx');
 const MOUNT = read('frontend/src/features/dev-board/mount.ts');
-const FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
+// The board frame as a SURFACE is two files since the toolbar moved: the
+// column and its scroller here, `#dev-actions` — the filter host, the "+" and
+// its menu — in ./actions-row.tsx, which the Workshop renders instead on its
+// own surface. Assertions about the frame's own structure read FRAME_ONLY;
+// assertions about what the surface renders read both.
+const FRAME_ONLY = read('frontend/src/features/dev-board/board-frame.tsx');
+const ACTIONS = read('frontend/src/features/dev-board/actions-row.tsx');
+const FRAME = FRAME_ONLY + '\n' + ACTIONS;
 const CHAT_FRAME = read('frontend/src/features/dev-board/chat-frame.tsx');
 const SESSION_FRAME = read('frontend/src/features/dev-board/session-frame.tsx');
 const STORE = read('frontend/src/features/dev-board/view-mode-store.ts');
@@ -385,9 +392,16 @@ test('the view toggle is real React state, and the className writer is gone', ()
   // Counted on comment-stripped source: `useBodyInitial`'s own note names the
   // call while explaining why it does NOT follow it live, and prose about a
   // hook is not a call to it.
+  // THREE readers now. The third is the toolbar's home: `#dev-actions` renders
+  // inside the Workshop's own pane on that surface (../dev-board/actions-row.tsx,
+  // rendered by workshop/workshop.tsx), so the frame draws it only on the
+  // Board — still not a view SWITCH, just a second thing whose placement
+  // depends on which surface is up.
   const frameCode = FRAME.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  assert.equal((frameCode.match(/useDevViewMode\(\)/g) || []).length, 2,
-    'the discussion card and the body skeleton, and nothing else');
+  assert.equal((frameCode.match(/useDevViewMode\(\)/g) || []).length, 3,
+    'the discussion card, the body skeleton and the toolbar\u2019s home, and nothing else');
+  assert.match(frameCode, /mode === 'workshop' \? null : \(\s*<DevActionsRow/,
+    'and the third reader is exactly that: no toolbar on the Workshop');
   assert.ok(!PANEL.includes('id="improve-board-layouts"'),
     'the Kanban|Feed sub-strip under the Board row is retired');
   assert.ok(!FRAME.includes('id="dev-view-toggle"'),

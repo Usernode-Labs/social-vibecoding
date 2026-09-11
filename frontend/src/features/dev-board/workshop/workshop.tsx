@@ -51,6 +51,8 @@ import { useStoreState } from '../../../lib/use-store-state';
 import { devWorkshopStore } from '../card/cards-store';
 import { DevCard } from '../card/dev-card';
 import { DevKanban } from '../card/dev-kanban';
+import { DevActionsRow } from '../actions-row';
+import { useDevActions } from '../actions-store';
 import { CardRowView, callAppView } from '../card/fold';
 import type { DevWorkshopView, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
@@ -585,6 +587,10 @@ export function DevWorkshop(): ReactNode {
   // the kanban view model only when the stage pane is up. See
   // ./group-mode-store.ts.
   const group = useWorkshopGroup();
+  // The toolbar's props reach this root through a store, not a prop — the
+  // Workshop is a separate React root from the frame that receives them. See
+  // ../actions-store.ts.
+  const actions = useDevActions();
 
   const themes = useMemo(() => sortThemes(v.themes, sortKey), [v.themes, sortKey]);
   // Named categories only — "Not yet grouped" is a holding pen, not one of
@@ -821,6 +827,23 @@ export function DevWorkshop(): ReactNode {
               the tiles, the three summary lines, the votes waiting on you
               and the general discussion are facts about the app, not about
               how you happen to be sorting it. */}
+          <section className="dev-ws-pane" data-ws-pane="">
+          {/* ── The sticky head: the controls that act on what is below ──
+              The search, the filters and the "+" used to sit in the frame's
+              chrome above the scroller, two strips away from the list they
+              narrow. They belong WITH it — and with the tab strip, because
+              "which grouping" and "narrowed to what" are one question asked
+              twice. Both pin together: filtering a long list is exactly what
+              you are doing when you are scrolled down, and a tab strip that
+              scrolled away would leave no way back to the other pane.
+
+              THE TABS LEAD, and the order is the argument: they decide what
+              the search is searching. With the search above them the control
+              that sets the scope sat under the control that acts within it,
+              and the pane had to be read bottom-up to be understood. Leading
+              with the switch also gives the head a title bar — the two-state
+              choice, then the tools for whichever state you picked. */}
+          <div className="dev-ws-pane-head">
           <div className="dev-ws-group" role="tablist" aria-label="Group the board by">
             <button
               type="button"
@@ -843,6 +866,21 @@ export function DevWorkshop(): ReactNode {
               By stage
             </button>
           </div>
+            <DevActionsRow
+              illustrationApp={actions.illustrationApp}
+              canManageIllustration={actions.canManageIllustration}
+              selfHosted={actions.selfHosted}
+              readOnly={actions.readOnly}
+              canCollaborate={actions.canCollaborate}
+              showsMembers={actions.showsMembers}
+            />
+          </div>
+          {/* The pane's face is painted by its two PARTS, not by the pane —
+              see app.css. A fill on the pane with a second one on the sticky
+              head stacked 50% on 50% and drew a lighter band across the
+              controls; giving head and body the same fill on the same
+              backdrop makes them the same colour by construction. */}
+          <div className="dev-ws-pane-body">
           {group === 'stage' ? (
             <div className="dev-ws-board" data-ws-stage="">
               <DevKanban />
@@ -905,6 +943,8 @@ export function DevWorkshop(): ReactNode {
           </div>
           </>
           )}
+          </div>
+          </section>
         </>
       ) : null}
     </div>
