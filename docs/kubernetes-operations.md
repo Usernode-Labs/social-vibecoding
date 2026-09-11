@@ -54,6 +54,67 @@ The platform setting takes effect when the updated server is deployed. Existing
 child-app repositories and previews built from older commits retain their own
 server code; changing the scaffold does not retrofit them.
 
+## Coordinated preview lifecycle
+
+`platform.previewLifecycleEnabled` (default `false`) sets
+`PREVIEW_LIFECYCLE_ENABLED`. With it enabled, builds, captures and teardown share
+one PostgreSQL advisory lock per session, across platform Pods. A durable
+`preview_operations` row records the desired revision, run UUID, phase and
+outcome. Advancing the session's checks/imported head cancels the old owner;
+the successor waits for its capture and unit-suite consumers to stop before
+changing the preview. Cancellation is not an app test failure.
+
+Capture and unit-suite Jobs carry `social.usernode.io/preview-run-id`. The owner
+requests foreground deletion and confirms Job/Pod termination. API errors keep
+replacement blocked; a DELETE acknowledgement alone does not establish that
+the browser stopped. After a platform restart, the next owner stops orphaned
+check Jobs before using the preview. Existing recovery schedules restart work;
+this is not resumption from an arbitrary point inside a capture.
+
+Every capture rechecks the exact deployed revision, image, environment
+fingerprint, completed rollout, application health and public edge before
+starting. Check results and screenshot transactions verify the current run and
+revision under a session row lock. Newer revisions cannot publish older output;
+same-commit recovery after a rebuild can replace an infrastructure-error verdict.
+Manual reruns, unit checks, browser checks, screenshots, PR visuals, progress and
+automatic merging remain supported. Docker retains its existing lifecycle.
+
+Kubernetes rebuilds reconcile the existing Ingress and Service instead of
+deleting them first. This removes the missing-host TLS routing window, but does
+not promise uninterrupted interactive previews during application/database
+replacement. Already-started image builds and database preparation settle before
+ownership passes; obsolete captures are cancelled explicitly. Build artifacts
+remain subject to normal retention. This change does not add Envoy retries.
+
+### Activation and rollback
+
+Apply the additive schema migration with the release. **Do not use an ordinary
+rolling flag change:** a flag-off Pod can bypass the coordinator even if it runs
+the new binary. The chart defaults off to make this transition explicit.
+
+1. Schedule a brief platform maintenance window and pause proposal mutations.
+   Through the installation's GitOps owner, scale the platform to zero and
+   confirm all platform Pods have terminated. Keep app previews and PostgreSQL
+   running; do not delete the preview Ingresses.
+2. With platform replicas still zero, set `platform.previewLifecycleEnabled: true`
+   and select the coordinator-capable release. Confirm the schema hook succeeded.
+3. Restore the normal replica count and resume mutations. Verify a new revision
+   supersedes an active capture, both old check Jobs stop, and the new run
+   produces checks/screenshots for its own revision. Further releases may roll
+   normally while every participating Pod keeps coordination enabled.
+
+Rollback across this boundary uses the same stop-all-platform-Pods procedure.
+Before starting a flag-off/older release, terminate outstanding capture and
+unit-suite Jobs and confirm their Pods have stopped. Retain the additive table.
+The mixed-mode restriction also applies to manually started platform processes.
+
+For local validation, `tests/preview-lifecycle.test.js` uses independent real
+PostgreSQL connections and an isolated temporary schema. Set
+`PREVIEW_LIFECYCLE_TEST_DATABASE_URL` to a disposable test database, or use the
+existing `SQL_CHECK_CONNECTION_URL` supplied by the unit runner. It never falls
+back to the application's `DATABASE_URL`. Kubernetes termination and cancellation
+are covered by `tests/kubernetes-preview-cancellation.test.js` with API doubles.
+
 ## Read-only inventory and logs
 
 These examples use the organization namespace and Deployment names. Substitute
