@@ -10686,6 +10686,20 @@ body.is-offline [data-offline-disabled] {
 #dev-workshop .dev-feed-entry + .dev-feed-entry {
   margin-top: 4px;
 }
+/* #1885: THE CARD SITS FLUSH in its sheet. The sheet's padding is for what
+   hangs UNDER the card — the thread, its reply box, "Open on its own page" —
+   and those keep it (their own margins are measured from it). The card itself
+   is pulled out to the sheet's edges, so opening a row no longer drops it into
+   a frosted frame, and it takes the sheet's corners so the two outlines are
+   one. With nothing under it the card is the whole sheet. */
+#dev-workshop .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):first-child {
+  width: calc(100% + 20px);
+  margin: -10px -10px 0;
+  border-radius: inherit;
+}
+#dev-workshop .dev-feed-entry > div:is(.dev-card-dense, .dev-card-topic):only-child {
+  margin-bottom: -12px;
+}
 /* A reading column. The stream is one column of cards each with a thread
    under it; past ~760px a card's meta line and its bubbles were sentences
    too wide to read in one saccade, and the board strip beside them was
