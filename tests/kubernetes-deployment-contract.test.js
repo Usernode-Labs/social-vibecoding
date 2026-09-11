@@ -89,6 +89,22 @@ test('Kubernetes chart supplies the canonical native testnet ChainId', () => {
   assert.match(values, /nativeSessionV2TestnetChainId: "utc1rq8tql3wr5w8u6nvkwepu7dazq89kv2838xwf02xmg2w5vzgly3s6xf63v"/);
 });
 
+test('Kubernetes chart preserves both social account-linking credential pairs', () => {
+  const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
+  const secret = read('deploy/helm/social-vibecoding-platform/templates/secret.yaml');
+  const readme = read('deploy/helm/social-vibecoding-platform/README.md');
+  for (const provider of [
+    { value: 'githubLink', env: 'GITHUB_LINK', callback: 'github' },
+    { value: 'xLink', env: 'X_LINK', callback: 'x' },
+  ]) {
+    assert.match(values, new RegExp(`${provider.value}ClientId: ""`));
+    assert.match(values, new RegExp(`${provider.value}ClientSecret: ""`));
+    assert.match(secret, new RegExp(`${provider.env}_CLIENT_ID: \\{\\{ \\.Values\\.secrets\\.${provider.value}ClientId \\| quote \\}\\}`));
+    assert.match(secret, new RegExp(`${provider.env}_CLIENT_SECRET: \\{\\{ \\.Values\\.secrets\\.${provider.value}ClientSecret \\| quote \\}\\}`));
+    assert.match(readme, new RegExp(`/api/me/${provider.callback}/callback`));
+  }
+});
+
 test('platform node RPC egress is restricted to the configured namespace and Pod labels', () => {
   const policy = read('deploy/helm/social-vibecoding-platform/templates/networkpolicy.yaml');
   const platformPolicy = policy.split('kind: NetworkPolicy')[2].split('---')[0];
