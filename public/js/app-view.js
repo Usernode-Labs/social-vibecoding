@@ -738,7 +738,7 @@ const AppView = {
         const asked = /^(session|proposal|issue|gov|merged)(:\d+)?$/.exec(q.get('card') || '');
         const kind = asked ? asked[1] : null;
         const want = kind
-          ? (asked[2] ? `[data-card-menu="${asked[0]}"]` : `[data-card-menu^="${kind}:"]`)
+          ? (asked[2] ? `[data-card-menu="${asked[0]}"], [data-card-menu="detail:${asked[0]}"]` : `[data-card-menu^="${kind}:"], [data-card-menu^="detail:${kind}:"]`)
           : '[data-card-menu]';
         // Fixed grammar, same as `card=` — a named UI state, never a
         // query-string-injected selector.
@@ -3023,37 +3023,73 @@ const AppView = {
   //
   // Read-only viewers are NOT filtered here: that gate lives in
   // _exploreChatBtnHtml (#621), so it stays in exactly one place.
-  // Shape a card model for the topic head (round three): the GitHub link as
-  // the meta line's last word, the state as a bar rather than the capsule,
-  // and the detail actions merged onto the card's own band — the labelled
-  // Preview, Explore, kudos, and the issue's claim toggle. Anything the ⋯
-  // already carries (Open session, Withdraw, Generate proposal, Pledge
-  // kudos, Propose to close) is not repeated as a pill.
+  // Full cards own their action band. Secondary actions live in More;
+  // contextual recovery lives beside its status in the detail ledger.
   _topicCard(card, kind, item, body) {
     if (!card || !item) return card;
+    // The full card owns lifecycle actions; its menu is independent of the
+    // compact card so filtering shortcuts here cannot change the board.
     const gh = kind === 'issue' ? item.htmlUrl : item.pr_url;
-    if (gh) {
-      card.meta = [...(card.meta || []), {
-        t: 'link', href: gh, s: 'GitHub ↗', cls: 'dev-topic-gh',
-        title: kind === 'issue' ? 'Open this issue on GitHub' : 'Open this pull request on GitHub',
-      }];
+    const shortcuts = ['View checks', 'Re-run checks', 'Open public discussion',
+      'Continue building', 'Open session', 'Put up for vote', 'View PR on GitHub',
+      'Retry preview', 'Before/after screenshots'];
+    const menu = [...(AppView._cardMenus[card.rail.menuKey] || [])]
+      .filter((a) => !body.changeId || !shortcuts.some((label) =>
+        a.label === label || a.label.startsWith(`${label} (`)));
+    for (const action of card.actions || []) {
+      if (action.key === 'vis') menu.unshift(AppView._foldedMenuItem(action));
     }
+    card.actions = (card.actions || []).filter((a) => a.key !== 'vis');
+    if (body.changeId) {
+      const secondary = kind === 'proposal' ? AppView._proposalMenuItems(item, {
+        mine: !!(App.user && Number(item.user_id) === Number(App.user.id)),
+        imported: item.source === 'imported', noNav: true,
+      }).filter((a) => ['kudos', 'explore'].includes(a.icon)) : [];
+      for (const action of secondary) if (!menu.some((a) => a.icon === action.icon)) menu.push(action);
+      card.actions = card.actions.filter((a) => a.explore == null && a.kudos == null);
+    }
+    if (gh && !menu.some((a) => a.label === 'Open on GitHub')) {
+      menu.push({ label: 'Open on GitHub', icon: 'github', act: () => window.open(gh, '_blank', 'noopener') });
+    }
+    card.rail.menuKey = AppView._registerCardMenu(`detail:${kind}:${item.id || item.number}`, menu);
     if (card.pill) card.pill = { ...card.pill, inline: false };
     const pills = (body && body.actions && Array.isArray(body.actions.pills)) ? body.actions.pills : [];
-    const keep = pills.filter((p) => p.preview || p.explore != null || p.kudos != null
+    const keep = pills.filter((p) => p.preview || (!body.changeId && (p.explore != null || p.kudos != null))
       || p.key === 'claim' || (p.key === 'promote' && !body.changeId));
     const have = new Set((card.actions || []).map((a) => (a.act && a.act.fn) || (a.kudos != null ? 'kudos' : null)));
     card.actionPreview = null;
     card.actions = [
+      ...keep.filter((p) => p.preview),
       ...(card.actions || []),
-      ...keep.filter((p) => !(p.act && have.has(p.act.fn)) && !(p.kudos != null && have.has('kudos'))),
+      ...keep.filter((p) => !p.preview && !(p.act && have.has(p.act.fn)) && !(p.kudos != null && have.has('kudos'))),
     ];
+    card.rail.preview = null;
+    if (body.changeId && item.status === 'merged') {
+      card.actions = card.actions.filter((a) => !a.preview);
+      card.actions.unshift({ key: 'open-app', cls: 'gc-vote-btn', label: 'Open app',
+        act: { fn: 'openLiveApp', args: [AppView.appData?.slug || App.currentApp] } });
+    }
     return card;
   },
 
   // One detail model for a change before and after it enters review.
   // The source row is public metadata; private agent messages never enter it.
+  openLiveApp(slug) { return App.openAppTab(slug, 'app'); },
   _changeActions: new Map(),
+  _changeItems: new Map(),
+  changeSubmissionState(item) {
+    if (!item || !['active', 'paused'].includes(item.status)) return { kind: 'completed' };
+    if (AppView._changeActions.get(Number(item.id)) === 'promote') return { kind: 'pending' };
+    // Ordinary sessions can kick off their first build/check cycle on submit.
+    // Managed handoffs must already have a checked, uploaded revision.
+    const ready = item.status === 'active' && (item.check_state === 'passing'
+      || (!item.check_state && item.source !== 'cli_handoff')) && !item.busy
+      && !AppView._checksBaseNote(item)
+      && (item.source !== 'cli_handoff' || item.proposal_state === 'ready');
+    return ready ? { kind: 'ready' } : { kind: 'blocked', label: 'Submit for review',
+      reason: item.status === 'paused' ? 'Resume this change before submitting it.'
+        : 'Finish the build and pass checks for the current revision before submitting for review.' };
+  },
   _completeChangeView(item, card, body) {
     const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
     const underway = ['active', 'paused'].includes(item.status);
@@ -3061,6 +3097,7 @@ const AppView = {
     const busy = AppView._changeActions.get(Number(item.id));
     const rows = body.details.ledger;
     body.changeId = item.id;
+    AppView._changeItems.set(Number(item.id), item);
     if (mine && underway && item.source !== 'imported') {
       const own = AppView._mySessionCardModel(item);
       card.rail.menuKey = own.rail.menuKey;
@@ -3084,6 +3121,11 @@ const AppView = {
     card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? 'Visible to the group' : 'Private change') : (item.status === 'promoted' ? 'In review' : item.status) }];
     if (!rows.some((r) => r.key === 'preview')) rows.unshift({ key: 'preview', label: 'Preview', tone: item.staging_url ? 'ok' : 'mute', text: [item.staging_url ? 'Available for the submitted build.' : 'No staging preview is available yet.'] });
     if (!rows.some((r) => r.key === 'checks')) rows.push({ key: 'checks', label: 'Checks', tone: 'mute', text: ['No check results have been recorded yet.'] });
+    if (!AppView.readOnly && !item.staging_url && item.staging_error && item.status !== 'merged') {
+      const preview = rows.find((r) => r.key === 'preview');
+      preview.actions = [{ key: 'retry-preview', cls: 'gc-vote-btn', label: 'Retry preview',
+        act: { fn: 'swapToStagingForSession', args: [item.id, ''] } }];
+    }
     // Keep the established conflict explanations, and put the manual action
     // next to them. Forks cannot be updated by the platform worker.
     let main = rows.find((r) => ['sync', 'behind', 'conflict', 'mergeability'].includes(r.key));
@@ -3112,36 +3154,55 @@ const AppView = {
       body.details.pathSteps = null;
       body.details.pathLeft = null;
       rows.forEach((r) => { delete r.step; delete r.stepDone; });
-      const ready = item.status === 'active' && item.check_state === 'passing' && !item.busy
-        && !AppView._checksBaseNote(item)
-        && (item.source !== 'cli_handoff' || item.proposal_state === 'ready');
+      const submission = AppView.changeSubmissionState(item);
+      const ready = submission.kind === 'ready';
       rows.push({ key: 'review', label: 'Review', tone: ready ? 'ok' : 'mute',
-        text: [ready ? 'Ready to propose to the group.' : 'This change is underway. Finish the build and pass its required checks before proposing it.'],
-        actions: mine && !AppView.readOnly ? [{ key: 'propose-change', cls: 'gc-vote-btn', label: busy === 'promote' ? 'Proposing…' : 'Propose to group', disabled: !ready || !!busy, act: { fn: 'runChangeAction', args: [item.id, 'promote'] } }] : [] });
+        text: [ready ? 'Ready to submit for review.' : submission.reason || 'Submitting for review…'] });
+      card.actions = (card.actions || []).filter((a) => a.key !== 'promote');
+      if (mine && !AppView.readOnly) card.actions.push({ key: 'propose-change', cls: 'gc-vote-btn',
+        label: submission.kind === 'pending' ? 'Submitting…' : 'Submit for review',
+        title: submission.reason, disabled: !ready || !!busy,
+        act: { fn: 'runChangeAction', args: [item.id, 'promote'] } });
     }
   },
 
   async runChangeAction(id, action) {
     if (!['sync-main', 'promote'].includes(action) || AppView._changeActions.has(Number(id))) return;
+    const session = typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)
+      ? DevChat.currentSession : AppView._changeItems.get(Number(id));
+    if (action === 'promote' && (!session || AppView.changeSubmissionState(session).kind !== 'ready')) return;
+    const slug = AppView.appData?.slug;
+    const fromWorkspace = typeof DevChat !== 'undefined' && DevChat.currentSession === session;
+    const stillVisible = () => !fromWorkspace || Number(DevChat.currentSession?.id) === Number(id);
     AppView._changeActions.set(Number(id), action);
     const repaint = () => {
       AppView._renderTopicHead();
-      if (typeof DevChat !== 'undefined') DevChat._publishDevView();
+      if (typeof DevChat !== 'undefined') { DevChat._publishDevView(); DevChat._publishTranscript(); }
       window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(id) }));
     };
     repaint();
     try {
       const response = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.ok === false) throw new Error(data.error || data.message || 'The action could not be completed.');
-      PlatformUI.toast(data.message || (action === 'promote' ? 'Proposed to the group.' : 'Synced with main.'));
+      if (!response.ok || data.ok === false) throw new Error(data.error === 'proposal_not_ready'
+        ? 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.'
+        : data.message || data.error || 'The action could not be completed.');
+      if (stillVisible() && action !== 'promote') PlatformUI.toast(data.message || 'Synced with main.');
+      if (action === 'promote') {
+        session.status = 'promoted';
+        if (data.prNumber) session.pr_number = data.prNumber;
+        if (data.prUrl) session.pr_url = data.prUrl;
+        if (data.prTitle) session.pr_title = session.session_title = data.prTitle;
+        const listed = typeof DevChat !== 'undefined' && DevChat.sessions?.find((s) => Number(s.id) === Number(id));
+        if (listed) Object.assign(listed, { status: session.status, pr_number: session.pr_number, pr_url: session.pr_url, pr_title: session.pr_title, session_title: session.session_title });
+      }
       if (typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)) {
-        await DevChat.openSession(id);
         DevChat.renderChatView();
       }
-      await AppView._loadDevData();
+      if (AppView.appData?.slug === slug) await AppView._loadDevData();
     } catch (error) {
-      PlatformUI.toast(error.message);
+      if (stillVisible()) PlatformUI.toast(error?.name === 'TypeError' ? 'Network error' : error.message);
+      else console.warn('Change action failed after leaving the session:', error.message);
     } finally {
       AppView._changeActions.delete(Number(id));
       repaint();
@@ -3226,17 +3287,6 @@ const AppView = {
         });
       }
     } else if (kind === 'issue' && !AppView.readOnly) {
-      // The issue card's demoted actions, spelled out where there is room.
-      const h = item.headless;
-      const generating = !!(h && h.status === 'generating');
-      const clonedReady = !!(h && h.status === 'ready' && h.mySessionId);
-      if (!generating && !clonedReady) {
-        pills.push({
-          key: 'generate', cls: 'gc-vote-btn', label: 'Generate proposal',
-          title: 'Spin up a headless AI session that starts solving this issue on its own. Uses your credits',
-          act: { fn: 'confirmAutoSession', args: [item.number] },
-        });
-      }
       const ipClaims = (item.in_progress && Array.isArray(item.in_progress.claims))
         ? item.in_progress.claims : [];
       pills.push(ipClaims.some((c) => c.mine)
@@ -7309,6 +7359,16 @@ const AppView = {
   // lifecycle transition.
   _importedUnderwayMenuItems(s) {
     const items = AppView._attrMenuItems('proposal', s.id, s);
+    if (!AppView.readOnly && Number(s.user_id) === Number(App.user?.id)
+        && ['active', 'paused'].includes(s.status)) {
+      items.push({ label: 'Archive PR', icon: 'archive', danger: true,
+        title: 'Close this imported pull request and archive its card',
+        act: async () => {
+          if (!await AppView._archiveSession(s.id, s.pr_title || `PR #${s.pr_number}`, true)) return;
+          await AppView._loadDevFeed();
+          AppView._renderTopicHead();
+        } });
+    }
     if (s.pr_url) {
       items.push({
         label: 'View PR on GitHub',
@@ -7483,7 +7543,7 @@ const AppView = {
     const imported = s.source === 'imported';
     const author = s.imported_pr_author || 'unknown author';
     const preview = AppView._cardPreviewSpec(s, { kind: 'shared-session', sessionId: s.id });
-    const menu = imported && !noNav ? AppView._importedUnderwayMenuItems(s) : [];
+    const menu = imported ? AppView._importedUnderwayMenuItems(s).filter((a) => !noNav || a.icon === 'archive') : [];
     menu.push({ label: 'View checks', icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
     const recheck = AppView._recheckAction(s);
     if (recheck && !recheck.disabled) {
@@ -7796,11 +7856,11 @@ const AppView = {
   // session block) then POST /api/sessions/:id/archive. Owner-scoped
   // server-side. Returns true on success so callers can re-render. Used
   // by the pinned session cards' Archive button (delegated handler).
-  async _archiveSession(sessionId, name) {
+  async _archiveSession(sessionId, name, imported = false) {
     if (!sessionId) return false;
     const ok = await ConfirmModal.show({
       title: `Archive "${name}"?`,
-      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
+      message: imported ? "This closes the imported pull request on GitHub and archives its card. The source branch is kept." : "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
       confirmLabel: 'Archive',
       danger: true,
     });
@@ -11885,9 +11945,15 @@ const AppView = {
   //   run ready, other outcomes    → Review spec / Review solution /
   //                                  Changes ready — review & start session
   //
-  // "Generate proposal" for a never-run issue lives in the ⋯ menu: starting
-  // a headless run spends the viewer's credits, so it should be a chosen
-  // action rather than the card's most prominent button.
+  // Start work makes the choice explicit: interactive work or an AI build.
+  // The latter still goes through its existing credit confirmation.
+  chooseIssueWork(number) {
+    if (AppView.readOnly) return;
+    PlatformUI.actionSheet({ actions: [
+      { label: 'Work with an agent', handler: () => AppView.createPrForIssue(number) },
+      { label: 'Start AI build (uses credits)', handler: () => AppView.confirmAutoSession(number) },
+    ] });
+  },
   _issuePrimaryActionSpec(issue, opts) {
     const noNav = !!(opts && opts.noNav);
     const n = issue.number;
@@ -11935,10 +12001,10 @@ const AppView = {
         // discussion is the one place they can contribute — a real
         // navigation from the board, and nothing at all from the head,
         // which already IS that discussion.
-        if (noNav) return null;
+        if (noNav) return { key: 'primary', cls: 'gc-vote-btn', label: 'Start work', act: { fn: 'chooseIssueWork', args: [n] } };
         return {
           key: 'primary', cls: 'gc-vote-btn', label: 'Answer & regenerate',
-          title: 'This auto-solve run has a question. Answer it on this issue, then use ⋯ → Generate proposal to re-run',
+          title: 'This auto-solve run has a question. Answer it on this issue, then use Start work → Start AI build to re-run',
           act: { fn: 'openTopic', args: ['issue', n] },
         };
       }
@@ -11962,14 +12028,14 @@ const AppView = {
     // myPrSessionId).
     return issue.myPrSessionId
       ? {
-        key: 'primary', cls: 'gc-vote-btn', label: 'Create new proposal',
+        key: 'primary', cls: 'gc-vote-btn', label: 'Start more work',
         title: 'Start another dev chat for this issue',
-        act: { fn: 'createPrForIssue', args: [n] },
+        act: { fn: 'chooseIssueWork', args: [n] },
       }
       : {
-        key: 'primary', cls: 'gc-vote-btn', label: 'Create proposal',
+        key: 'primary', cls: 'gc-vote-btn', label: 'Start work',
         title: 'Start a dev chat to solve this issue',
-        act: { fn: 'createPrForIssue', args: [n] },
+        act: { fn: 'chooseIssueWork', args: [n] },
       };
   },
 
@@ -12009,25 +12075,11 @@ const AppView = {
     const items = [];
 
     if (!AppView.readOnly) {
-      // Generate proposal — the headless run. Not on the card face because
-      // it spends the viewer's credits. Absent while a run is in flight
-      // (the primary already says "Generating proposal…") and while the
-      // viewer has a clone of a finished run (the primary is "Go to
-      // session", and offering a re-run there produces two competing
-      // actions for a proposal that already exists — #150's rule, now
-      // enforced by having exactly one place the action can live).
-      const generating = !!(h && h.status === 'generating');
-      const clonedReady = !!(h && h.status === 'ready' && h.mySessionId);
-      if (!generating && !clonedReady) {
-        items.push({
-          label: 'Generate proposal',
-          icon: 'generate',
-          title: h && h.status === 'ready' && h.outcome === 'question'
-            ? 'Questions were posted on the issue. Answer them, then generate a proposal again'
-            : 'Spin up a headless AI session that starts solving this issue on its own. Uses your credits',
-          act: () => AppView.confirmAutoSession(n),
-        });
-      }
+      // A finished run keeps its Review/Continue primary. New work remains
+      // available through the same two-choice launcher, never a second AI CTA.
+      if (h?.status === 'ready' && !h.mySessionId) items.push({
+        label: 'Start more work', icon: 'generate', act: () => AppView.chooseIssueWork(n),
+      });
       // "Pledge kudos" disables once the viewer has an open bounty here or
       // has spent their shared weekly allowance.
       const budgetSpent = meta.myRemaining === 0;

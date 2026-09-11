@@ -380,7 +380,7 @@ test('issue: the full demoted set, and Open on GitHub last', () => {
   const AppView = makeAppView();
   const labels = menuLabels(AppView, issueCardHtml(AppView, 
     ISSUE({ htmlUrl: 'https://gh/i/5' })));
-  assert.equal(labels[0], 'Generate proposal');
+  assert.equal(labels[0], 'Pledge kudos');
   assert.ok(labels.some((l) => /Pledge kudos/.test(l)));
   // The claim toggle is PROMOTED to the action band, so it left the menu.
   assert.ok(!labels.some((l) => /Claim this issue/.test(l)), 'promoted onto the face');
