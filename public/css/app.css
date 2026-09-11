@@ -11901,6 +11901,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
+/* Where there is no backdrop-filter the fill is all there is, and 50% white
+   with rows sliding CRISPLY under it is the rendering fault the frost is what
+   prevents — not a slightly flatter bar. Every other frosted surface in this
+   file carries the same guard; a pinned one needs it most, because it is the
+   only sheet with moving content behind it. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dev-ws-pane-head { background-color: var(--dc-sheet); }
+}
 /* Inside the pane the toolbar is a plain row: the frame's own `px-3 pt-2`
    placed it against the scroller's edge, and here the pane supplies both. */
 .dev-ws-pane .dev-ws-pane-head #dev-actions { padding: 0; }

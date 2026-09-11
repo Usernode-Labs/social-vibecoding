@@ -2009,9 +2009,16 @@ test('the pane head pins, and the pane does not clip what must escape it', () =>
   // is behind the element it is set on, and these rows are inside the pane.
   assert.match(CSS, /\.dev-ws-pane-head \{[^}]*background-color: var\(--dc-sheet-fill\)/);
   assert.match(CSS, /\.dev-ws-pane-head \{[^}]*backdrop-filter: var\(--dc-frost\)/);
-  for (const token of ['--dc-sheet-fill', '--dc-frost']) {
+  for (const token of ['--dc-sheet-fill', '--dc-frost', '--dc-sheet']) {
     assert.ok(CSS.includes(`${token}:`), `${token} is defined`);
   }
+  // ...and where there is no backdrop-filter the fill is ALL there is, so it
+  // falls back opaque. 50% white with rows sliding crisply under it is the
+  // rendering fault the frost prevents, not a slightly flatter bar. Every
+  // other frosted surface in this file carries the same guard.
+  assert.match(CSS,
+    /@supports not \(\(backdrop-filter[^{]*\{\s*\.dev-ws-pane-head \{ background-color: var\(--dc-sheet\); \}/,
+    'the pinned head falls back to an opaque fill');
   // On By stage the BAR spans the window — it is a pinned edge, and one that
   // stopped short of the board under it would look like a mistake — but what
   // sits IN it keeps the reading column. A search field and two tabs stretched
