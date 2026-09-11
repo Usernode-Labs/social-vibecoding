@@ -274,6 +274,7 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  'staging-retry-btn': '#1993: retry preview sign-in after token acquisition fails; initially hidden.',
   // ── OpenRouter catalog controls ──────────────────────────────────
   'settings-openrouter-model-search': 'Filters the key-visible OpenRouter catalog by model name, id or provider without another network request.',
   'settings-openrouter-favorites-only': 'Limits the settings picker to the viewer\'s saved OpenRouter model favorites.',
