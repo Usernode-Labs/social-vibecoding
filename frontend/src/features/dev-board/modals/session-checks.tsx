@@ -9,9 +9,9 @@ export interface SessionChecksProps {
   onClose: () => void;
 }
 
-/** Same presentation as the proposal page; results are only loaded while open. */
+/** Shared verdict presentation for the dev panel and standalone dialog. */
 export function SessionCheckResults({ session }: { session: any }): ReactNode {
-  const av = (window as any).AppView;
+  const av = typeof window === 'undefined' ? null : (window as any).AppView;
   const verdict: ChecksVerdict | null = av._checksVerdictView(session);
   const notes: NoteBox[] = verdict ? [] : av._checksStatusNotes(session);
   return <>
@@ -23,19 +23,12 @@ export function SessionCheckResults({ session }: { session: any }): ReactNode {
   </>;
 }
 
-export function SessionChecks({ sessionId, onClose }: SessionChecksProps): ReactNode {
-  const dialog = useRef<HTMLDialogElement>(null);
+export function SessionChecksPanel({ sessionId }: { sessionId: number }): ReactNode {
   const [session, setSession] = useState<any>(null);
   const [error, setError] = useState('');
   const [rerunning, setRerunning] = useState(false);
   const [revision, setRevision] = useState(0);
-  const av = (window as any).AppView;
-
-  useEffect(() => {
-    const el = dialog.current!;
-    el.showModal();
-    return () => el.close();
-  }, []);
+  const av = typeof window === 'undefined' ? null : (window as any).AppView;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -72,28 +65,42 @@ export function SessionChecks({ sessionId, onClose }: SessionChecksProps): React
   }
 
   return (
+    <div className="space-y-4 text-sm leading-relaxed text-zinc-900 dark:text-zinc-100">
+      {session ? <p className="text-zinc-500 dark:text-zinc-400 break-words">{session.pr_title || session.session_title}</p> : null}
+      {error ? <p role="alert" className="text-red-700 dark:text-red-400">{error}</p> : null}
+      {!session && !error ? <p role="status">Loading checks…</p> : null}
+      {session ? <div className="min-w-0 [overflow-wrap:anywhere]"><SessionCheckResults session={session} /></div> : null}
+      <div className="flex flex-wrap gap-2">
+        <Button variant="neutral" ink="neutral" onClick={() => setRevision((n) => n + 1)}>Refresh results</Button>
+        {recheck ? <Button disabled={rerunning || recheck.disabled} onClick={rerun}>
+          {rerunning ? 'Re-running…' : recheck.label}
+        </Button> : null}
+      </div>
+    </div>
+  );
+}
+
+export function SessionChecks({ sessionId, onClose }: SessionChecksProps): ReactNode {
+  const dialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const el = dialog.current!;
+    el.showModal();
+    return () => el.close();
+  }, []);
+  return (
     <dialog
       ref={dialog}
       aria-label="Proposal checks"
-      className="m-auto w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl border-0 bg-transparent p-0 text-sm text-zinc-900 dark:text-zinc-100 backdrop:bg-black/60"
+      className="m-auto w-[calc(100%-2rem)] max-w-4xl max-h-[85dvh] overflow-y-auto rounded-xl border-0 bg-transparent p-0 text-sm text-zinc-900 dark:text-zinc-100 backdrop:bg-black/60"
       onCancel={(event) => { event.preventDefault(); onClose(); }}
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
     >
-      <DialogCard size="md" className="max-w-none">
+      <DialogCard size="md" className="max-w-none space-y-5 sm:p-8">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-bold">Proposal checks</h2>
           <Button variant="neutral" ink="neutral" onClick={onClose}>Close</Button>
         </div>
-        {session ? <p className="mt-1 text-zinc-500 dark:text-zinc-400">{session.pr_title || session.session_title}</p> : null}
-        {error ? <p role="alert" className="mt-3 text-red-700 dark:text-red-400">{error}</p> : null}
-        {!session && !error ? <p role="status" className="mt-3">Loading checks…</p> : null}
-        {session ? <SessionCheckResults session={session} /> : null}
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Button variant="neutral" ink="neutral" onClick={() => setRevision((n) => n + 1)}>Refresh results</Button>
-          {recheck ? <Button disabled={rerunning || recheck.disabled} onClick={rerun}>
-            {rerunning ? 'Re-running…' : recheck.label}
-          </Button> : null}
-        </div>
+        <SessionChecksPanel key={sessionId} sessionId={sessionId} />
       </DialogCard>
     </dialog>
   );

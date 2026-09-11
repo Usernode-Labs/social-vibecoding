@@ -167,7 +167,8 @@ function Capacity({ data }: { data: StatusData }) {
   const memTone: Tone = host && host.memUsedPct >= 90 ? 'red' : host && host.memUsedPct >= 75 ? 'yellow' : 'green';
   const loadPct = host && host.cpus ? (host.loadAvg1 / host.cpus) * 100 : 0;
   const loadTone: Tone = loadPct >= 100 ? 'red' : loadPct >= 70 ? 'yellow' : 'zinc';
-  const poolPct = db && db.max ? (db.total / db.max) * 100 : 0;
+  const poolBusy = db ? Math.max(0, db.total - db.idle) : 0;
+  const poolPct = db && db.max ? (poolBusy / db.max) * 100 : 0;
   const poolTone: Tone = db && db.waiting > 0 ? 'red' : poolPct >= 80 ? 'yellow' : 'zinc';
   // #1771: the figure the pool above is competing FOR. One Postgres backs the
   // platform, every app and every preview; the pool meter can read 3 / 60
@@ -237,8 +238,8 @@ function Capacity({ data }: { data: StatusData }) {
       ) : null}
 
       {db ? (
-        <MeterRow label="DB pool (open / max)" pct={poolPct} tone={poolTone}
-          value={`${db.total} / ${db.max}${db.waiting > 0 ? ` · ${db.waiting} waiting` : ''}`} />
+        <MeterRow label="DB pool (busy / max)" pct={poolPct} tone={poolTone}
+          value={`${poolBusy} / ${db.max} · ${db.idle} idle${db.waiting > 0 ? ` · ${db.waiting} waiting` : ''}`} />
       ) : null}
 
       {server ? (
@@ -297,6 +298,9 @@ function nodeStatusMeta(node: any): { label: string; pill: string; tone: Tone } 
 }
 
 function Summary({ s, node, runtimeKind }: { s: StatusData; node: any; runtimeKind?: string }) {
+  if (runtimeKind === 'preview') return (
+    <SummaryCard label="Runtime status" tone="zinc">Unavailable in previews</SummaryCard>
+  );
   const prodTone: Tone = s.prodMissing > 0 ? 'red' : 'green';
   const workerTone: Tone = s.workersOrphaned > 0 ? 'red' : 'zinc';
   const stuckTone: Tone = s.stuckSessions > 0 ? 'yellow' : 'zinc';
@@ -336,7 +340,7 @@ function Summary({ s, node, runtimeKind }: { s: StatusData; node: any; runtimeKi
         </>
       )}
     </SummaryCard>,
-    <SummaryCard key="stuck" label="Stuck" tone={stuckTone}>{`${s.stuckSessions}`}</SummaryCard>,
+    <SummaryCard key="stuck" label="Missing previews" tone={stuckTone}>{`${s.stuckSessions}`}</SummaryCard>,
     <SummaryCard key="prodmissing" label="Prod missing" tone={s.prodMissing > 0 ? 'red' : 'zinc'}>{`${s.prodMissing}`}</SummaryCard>,
   ];
 
@@ -491,8 +495,10 @@ function Node({ node }: { node: any }) {
 }
 
 function SessionRow({ s }: { s: any }) {
-  const stagingState = s.staging?.state || (s.stagingDriftWarning ? 'missing' : 'creating');
-  const stagingLabel = s.staging?.state || (s.stagingDriftWarning ? 'drift' : 'pending');
+  const stagingState = s.runtimeAvailable === false ? 'unknown'
+    : s.staging?.state || (s.stagingDriftWarning ? 'missing' : 'creating');
+  const stagingLabel = s.runtimeAvailable === false ? 'unavailable'
+    : s.staging?.state || (s.stagingDriftWarning ? 'drift' : 'pending');
   const resolve = typeof window !== 'undefined' && typeof (window as any).resolveDevHost === 'function'
     ? (window as any).resolveDevHost
     : (u: string) => u;
@@ -553,10 +559,10 @@ function Apps({ apps }: { apps: any[] }) {
         // otherwise the one app that is definitely up reads as the one app
         // that is down.
         const selfHostedNoContainer = !!a.selfHosted && !a.prod;
-        const prodState = selfHostedNoContainer
+        const prodState = a.runtimeAvailable === false ? 'unknown' : selfHostedNoContainer
           ? 'running'
           : (a.prod?.state || (a.dbStatus === 'creating' ? 'creating' : 'missing'));
-        const prodLabel = selfHostedNoContainer
+        const prodLabel = a.runtimeAvailable === false ? 'unavailable' : selfHostedNoContainer
           ? 'self-hosted'
           : (a.prod?.state || a.dbStatus || 'missing');
         let repoHost = '';
@@ -653,7 +659,7 @@ function Stuck({ stuck }: { stuck: any[] }) {
       {stuck.map((s) => (
         <div key={s.id} className="rounded border border-yellow-300 dark:border-yellow-700/40 bg-zinc-50 dark:bg-zinc-900/40 p-2">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="pill pill-stopped"><span className="dot" />stuck</span>
+            <span className="pill pill-stopped"><span className="dot" />preview missing</span>
             <span className="text-xs text-zinc-600 dark:text-zinc-400">{`session #${s.id}`}</span>
             <span className="mono text-xs text-zinc-500 dark:text-zinc-400">{s.appSlug}</span>
             <span className="text-xs">{`@${s.username || 'unknown'}`}</span>
@@ -845,15 +851,15 @@ function StatusSection() {
 
       {/* Deploy-in-progress banner. */}
       <div id="admin-status-deploy-banner"
-        className={`${deploy?.deploying ? '' : 'hidden '}mb-4 rounded-lg border border-violet-300 dark:border-violet-700/50 bg-violet-50 dark:bg-violet-900/20 px-4 py-3`}>
+        className={`${deploy?.deploying || deploy?.failed || deploy?.unavailable || deploy?.phase === 'paused' ? '' : 'hidden '}mb-4 rounded-lg border border-violet-300 dark:border-violet-700/50 bg-violet-50 dark:bg-violet-900/20 px-4 py-3`}>
         <div className="flex items-center gap-3">
           <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping" />
+            {deploy?.deploying ? <span className="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping" /> : null}
             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-violet-500" />
           </span>
           <div className="text-sm">
-            <span className="font-semibold text-violet-800 dark:text-violet-200">Deploy in progress:</span>
-            <span className="text-violet-700 dark:text-violet-300/80"> your changes may take a minute to go live.</span>
+            <span className="font-semibold text-violet-800 dark:text-violet-200">{deploy?.failed ? 'Deployment failed:' : deploy?.unavailable ? 'Deployment status unavailable:' : deploy?.phase === 'paused' ? 'Deployment paused:' : 'Deploy in progress:'}</span>
+            <span className="text-violet-700 dark:text-violet-300/80"> {deploy?.failed ? deploy.message : deploy?.unavailable ? 'the rollout could not be observed.' : deploy?.phase === 'paused' ? 'waiting for the rollout to resume.' : 'your changes may take a minute to go live.'}</span>
           </div>
           <span id="admin-status-deploy-meta" className="ml-auto text-xs mono text-violet-700 dark:text-violet-400">
             {[sha, elapsed && `${elapsed} ago`].filter(Boolean).join(' · ')}
@@ -928,7 +934,7 @@ function StatusSection() {
           </section>
 
           <section>
-            <h3 className={`${SECTION_H3} mb-2`}>Stuck sessions</h3>
+            <h3 className={`${SECTION_H3} mb-2`}>Missing previews</h3>
             <div id="admin-status-stuck" className="space-y-2 text-sm">
               {data ? <Stuck stuck={d.stuckSessions || []} /> : null}
             </div>

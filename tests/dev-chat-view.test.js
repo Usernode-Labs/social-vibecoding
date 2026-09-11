@@ -456,3 +456,20 @@ test('re-rendering the same screen is a reconcile, not a rebuild', () => {
   const portals = read('frontend', 'src', 'lib', 'legacy-portals.tsx');
   assert.match(portals, /On a re-mount \(live entry\) the children are\n\s*\/\/ React-owned/);
 });
+
+
+test('#1851: a dev session with a PR displays checks without opening a card menu', () => {
+  const store = mod().sessionHeaderStore;
+  const previous = store.get();
+  try {
+    store.set({ ...previous, sessionId: 1851, pr: 99 });
+    const rendered = html(SESSION);
+    assert.match(rendered, /aria-label="Proposal checks"/);
+    assert.match(rendered, /aria-expanded="true"/);
+    assert.match(rendered, /Loading checks…/);
+    assert.match(rendered, /Refresh results/);
+    assert.ok(rendered.indexOf('Proposal checks') < rendered.indexOf('id="dc-messages"'));
+    store.set({ ...previous, sessionId: 1852, pr: null });
+    assert.doesNotMatch(html(SESSION), /aria-label="Proposal checks"/);
+  } finally { store.set(previous); }
+});

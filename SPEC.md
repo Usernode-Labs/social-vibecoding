@@ -14,26 +14,26 @@ subtitle: "where the users are the developers are the users are the developers..
 
 ## Architecture
 
-- **Platform**: single Node.js/Express app that orchestrates everything, deployed on the same Hetzner box as other projects
-- **Child apps**: each app is an isolated Docker container on the same box
-- **Database**: shared Postgres instance with per-app databases (e.g. `app_myapp`, `app_myapp_staging_alice_abc123`); staging versions get a `pg_dump`/`pg_restore` copy
+- **Platform**: Node.js/Express service, deployed through Argo/Helm on Kubernetes or the supported standalone Docker stack. Kubernetes rolling updates can overlap platform Pods.
+- **Child apps**: Kubernetes Deployments, Services and Ingresses built with kpack/Paketo; standalone Docker installations use containers built from Dockerfiles.
+- **Database**: per-app and preview databases on the configured PostgreSQL service. Kubernetes administration uses networked PostgreSQL clients and must target the configured writer, not a historical standby.
 - Apps are rendered inside **iframes** within the platform UI — the platform passes auth context to child apps via a **signed JWT** in the iframe `src` query param, so the child app knows which user is interacting. All child apps share the same JWT signing secret (set once in the template).
 - Every app is a Node.js/Express server with HTML/JS/Tailwind CDN frontend, backed by Postgres (stripped-down recipe-bot pattern) — apps can have multiple JS files, server routes, etc.
 
 ### URLs
 
-- Production apps: `appname.<USERNODE_DOMAIN>`
-- Staging: `appname--username--abc123.<USERNODE_DOMAIN>` (first 6 chars of commit hash)
+- Production apps: `appname.<USERNODE_APPS_DOMAIN>`
+- Staging: `appname--s<sessionId>.<USERNODE_APPS_DOMAIN>` (stable per session)
 
-where `USERNODE_DOMAIN` is the hostname this instance is deployed at
-(set via env var; see `.env.example` and README). Wildcard DNS for
-`*.<USERNODE_DOMAIN>` is required so Caddy can issue per-app certs.
+`USERNODE_APPS_DOMAIN` falls back to `USERNODE_DOMAIN`. Kubernetes uses Ingress
+and cert-manager; standalone Docker uses Caddy. See the installation's domain,
+issuer and service configuration rather than assuming a common server IP.
 
 ### Container Limits
 
-- Each user can have up to **3 staging containers** at a time (across all apps)
-- Global max: **25 staging containers** across all users
-- Child app containers run with **Docker resource limits** (`--memory`, `--cpus`) to prevent any single app from starving the box
+- Session caps are configured globally and per user; an idle session may have no resident worker.
+- Kubernetes workloads have resource requests/limits plus namespace quotas and LimitRanges.
+- Standalone Docker workloads use `--memory` and `--cpus` limits. Docker host statistics do not describe Kubernetes capacity.
 
 ## Home Screen
 
@@ -113,6 +113,10 @@ The template is a stripped-down recipe-bot: Node.js/Express + single HTML page +
 
 ## Networking
 
+Kubernetes uses Service DNS internally, Cilium Ingress for public routing and
+cert-manager for TLS. See [Kubernetes operations](docs/kubernetes-operations.md).
+The Caddy details below apply only to standalone Docker installations.
+
 - Wildcard DNS: `*.usernode` A record in Hetzner DNS → VPS IP
 - **Caddy on-demand TLS**: certs are fetched automatically on first request to each new hostname (~60–90s on the first hit, then cached ~90 days); no wildcard cert or custom Caddy build needed. A single wildcard site gates issuance via an `ask` endpoint (`/__caddy/ask`) so only real apps / live staging previews can trigger an ACME order. Issuer order is **ZeroSSL ACME (EAB) primary, Let's Encrypt fallback**: LE caps issuance at 50 certs per registered domain per 168h, which the per-preview-subdomain fleet blew past once real traffic arrived (→ HTTP 429 → hung handshakes → "can't load preview"). ZeroSSL's ACME endpoint has no weekly cap. EAB credentials are derived once from the ZeroSSL API key; see the Caddyfile global block.
 - Caddy reverse proxy routes requests to the appropriate container based on subdomain
@@ -122,11 +126,13 @@ The template is a stripped-down recipe-bot: Node.js/Express + single HTML page +
 
 ## Deploy Checklist
 
-> **Two deploy paths.** The steps below describe the *original*
+> **Legacy Docker checklist.** Kubernetes deployments use the
+> [platform chart](deploy/helm/social-vibecoding-platform/README.md) and
+> [Kubernetes operations](docs/kubernetes-operations.md). The steps below describe the *original*
 > `evanshapi.ro`-monorepo deploy, where Usernode is one of several
 > projects orchestrated by a shared `orchestrate.sh` + shared Caddy.
 > For the **standalone** deploy (dedicated VPS, self-contained
-> `docker-compose.yml`, the long-term home) see
+> `docker-compose.yml`) see
 > [`README.md` → Standalone deployment](./README.md#standalone-deployment).
 > Most of sections 2–6 below (GitHub App registration, activation
 > codes, verification smoke test) apply to both paths.

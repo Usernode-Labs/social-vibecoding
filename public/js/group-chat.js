@@ -13,6 +13,7 @@ const GroupChat = {
   typingTimeout: null,
   oldestMessageId: null,
   hasMore: true,
+  _historyLoad: null,
   // Scroll-position memory. `_lockedToBottom` drives "should new incoming
   // messages auto-scroll?". `_savedScrollTop` is the last observed scroll
   // offset so we can restore it when the tab is re-mounted (group-chat DOM
@@ -165,7 +166,7 @@ const GroupChat = {
   // (#gc-messages) plus at most one mounted thread (#gc-thread-messages,
   // inside an Issues/Proposals accordion). Per-thread history caches
   // live in `threads`, keyed by `${type}:${ref}`.
-  threads: new Map(),       // key -> { messages, oldestId, hasMore, loaded }
+  threads: new Map(),       // key -> { messages, oldestId, hasMore, loaded, loading }
   activeThread: null,       // { type, ref } | null — the mounted thread
   _threadTypingTimer: null,
 
@@ -176,7 +177,7 @@ const GroupChat = {
   _threadState(type, ref) {
     const key = GroupChat.threadKey(type, ref);
     if (!GroupChat.threads.has(key)) {
-      GroupChat.threads.set(key, { messages: [], oldestId: null, hasMore: true, loaded: false });
+      GroupChat.threads.set(key, { messages: [], oldestId: null, hasMore: true, loaded: false, loading: false });
     }
     return GroupChat.threads.get(key);
   },
@@ -330,6 +331,7 @@ const GroupChat = {
   },
 
   disconnect() {
+    GroupChat._historyLoad = null;
     if (GroupChat._reconnectTimer) {
       clearTimeout(GroupChat._reconnectTimer);
       GroupChat._reconnectTimer = null;
@@ -356,8 +358,20 @@ const GroupChat = {
     GroupChat._pendingOutgoing.length = 0;
   },
 
+  // History can overlap messages already delivered over the socket. Keep the
+  // server's chronological positions, but prefer the live cached version.
+  _mergeHistory(messages, current) {
+    const byId = new Map();
+    for (const message of [...messages, ...current]) {
+      byId.set(String(message.id), message);
+    }
+    return [...byId.values()];
+  },
+
   async loadHistory() {
-    if (!GroupChat.appSlug) return;
+    if (!GroupChat.appSlug || GroupChat._historyLoad) return;
+    const load = {};
+    GroupChat._historyLoad = load;
     try {
       const isFirstLoad = !GroupChat.oldestMessageId;
       const url = GroupChat.oldestMessageId
@@ -373,11 +387,13 @@ const GroupChat = {
       const res = await fetch(url);
       if (!res.ok) return;
       const { messages } = await res.json();
+      // Disconnect invalidates this request, even if we return to the same app.
+      if (GroupChat._historyLoad !== load) return;
 
       if (messages.length < 50) GroupChat.hasMore = false;
 
       if (messages.length > 0) {
-        GroupChat.messages = [...messages, ...GroupChat.messages];
+        GroupChat.messages = GroupChat._mergeHistory(messages, GroupChat.messages);
         GroupChat.oldestMessageId = messages[0].id;
       }
 
@@ -390,7 +406,9 @@ const GroupChat = {
         const newScrollHeight = container.scrollHeight;
         container.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
       }
-    } catch {}
+    } catch {} finally {
+      if (GroupChat._historyLoad === load) GroupChat._historyLoad = null;
+    }
   },
 
   handleIncoming(msg) {
@@ -821,6 +839,10 @@ const GroupChat = {
     const slug = GroupChat.appSlug;
     if (!slug) return;
     const st = GroupChat._threadState(type, ref);
+    // A topic repaint can mount this thread again before its first fetch
+    // finishes. Only one initial/page request may own this cache at a time.
+    if (st.loading) return;
+    st.loading = true;
     const beforeParam = st.oldestId ? `&before=${st.oldestId}` : '';
     try {
       const res = await fetch(
@@ -829,9 +851,10 @@ const GroupChat = {
       );
       if (!res.ok) return;
       const { messages } = await res.json();
+      if (GroupChat.threads.get(GroupChat.threadKey(type, ref)) !== st) return;
       if (messages.length < 50) st.hasMore = false;
       if (messages.length > 0) {
-        st.messages = [...messages, ...st.messages];
+        st.messages = GroupChat._mergeHistory(messages, st.messages);
         st.oldestId = messages[0].id;
       }
       st.loaded = true;
@@ -839,7 +862,9 @@ const GroupChat = {
       if (a && a.type === type && Number(a.ref) === Number(ref)) {
         GroupChat.renderThread();
       }
-    } catch { /* transient — re-open retries */ }
+    } catch { /* transient — re-open retries */ } finally {
+      st.loading = false;
+    }
   },
 
   // #363: the element that actually scrolls a mounted thread. In the unified

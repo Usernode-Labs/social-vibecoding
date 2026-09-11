@@ -285,13 +285,136 @@ test('#1771: a non-passing check run says whether the server was starved', () =>
     'both failing and error runs get the line — a passing run needs nothing');
   assert.match(after, /const census = await connectionCensus\(getPool\(config\)\);/);
   assert.match(after, /Checks ran while Postgres was near its connection limit/);
-  // A log line, never a verdict. Reclassifying rows on a busy box would let
-  // real failures through.
+  // The census on its own is evidence, not a verdict: a busy server does not
+  // excuse a single row, and reclassifying on it alone would let real
+  // failures through the merge gate. Whether the run is RE-LABELLED goes
+  // through connectionExhaustionDetail's every-row rule instead, which
+  // tests/checks-connection-exhaustion.test.js pins.
   const block = after.slice(after.indexOf("if (checksResult.state !== 'passing')"));
-  assert.doesNotMatch(block.slice(0, 700), /checksResult\.state = |advisory: true/,
-    'the census must not change what the run decided');
+  assert.doesNotMatch(block, /advisory: true/, 'no row is quietly downgraded');
+  const flip = block.indexOf("checksResult.state = 'error'");
+  assert.ok(flip > 0, 'the run block re-labels a starved run (#1771)');
+  assert.ok(block.slice(0, flip).includes('connectionExhaustionDetail('),
+    'and only ever behind the every-row rule, never on the census alone');
   // And storeChecks stays a pure write.
   const store = src.slice(src.indexOf('async function storeChecks('), src.indexOf('async function storeChecksSkipped'));
   assert.doesNotMatch(store, /connectionCensus/,
     'the persistence path gains no query');
+});
+
+// ── Containment: the ceiling, and the reclaim ────────────────────────────
+//
+// Detection tells the author it was not their diff. It does not give the
+// fleet its connections back. These two pin the halves that do.
+
+test('#1771: a preview clone gets a server-enforced ceiling, a fork does not', async () => {
+  const dbm = require('../src/services/db-manager');
+  const calls = [];
+  const execute = async (sql) => { calls.push(sql); };
+
+  // The name shape stagingDbName() builds.
+  const applied = await dbm.applyStagingConnectionLimit(
+    'app_recipe_box_staging_s4102_9ab31c', { execute }
+  );
+  assert.equal(applied, dbm.DEFAULT_STAGING_DB_CONNECTION_LIMIT);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /^ALTER DATABASE app_recipe_box_staging_s4102_9ab31c CONNECTION LIMIT \d+$/);
+
+  // cloneDatabase also serves app forks, whose target is a real production
+  // database. Capping one of those would be this issue's symptom made
+  // permanent, on an app nobody is previewing.
+  calls.length = 0;
+  assert.equal(await dbm.applyStagingConnectionLimit('app_recipe_box', { execute }), null);
+  assert.equal(await dbm.applyStagingConnectionLimit('usernode', { execute }), null);
+  assert.equal(calls.length, 0, 'a production database is never capped');
+
+  // Identifiers are the one thing interpolated into this statement.
+  assert.equal(await dbm.applyStagingConnectionLimit('app_x_staging_s1_aaaaaa; DROP DATABASE usernode', { execute }), null);
+
+  // The ceiling is a BACKSTOP, not a working budget: capture drives 8
+  // concurrent pages against the preview, so anything at or below that would
+  // throttle a healthy check run instead of localizing a sick one.
+  assert.ok(dbm.DEFAULT_STAGING_DB_CONNECTION_LIMIT > 8,
+    'must sit above what a healthy preview uses under a full check run');
+});
+
+test('#1771: setting the ceiling never fails a build, and can be turned off', async () => {
+  const dbm = require('../src/services/db-manager');
+  const boom = async () => { throw new Error('permission denied for database'); };
+  assert.equal(await dbm.applyStagingConnectionLimit('app_x_staging_s1_aaaaaa', { execute: boom }), null,
+    'an uncapped preview is the status quo; a failed build is a regression');
+
+  const prev = process.env.STAGING_DB_CONNECTION_LIMIT;
+  try {
+    process.env.STAGING_DB_CONNECTION_LIMIT = '0';
+    const calls = [];
+    assert.equal(
+      await dbm.applyStagingConnectionLimit('app_x_staging_s1_aaaaaa', { execute: async (q) => calls.push(q) }),
+      null
+    );
+    assert.equal(calls.length, 0, '0 disables the ceiling, as -1 does in Postgres');
+  } finally {
+    if (prev === undefined) delete process.env.STAGING_DB_CONNECTION_LIMIT;
+    else process.env.STAGING_DB_CONNECTION_LIMIT = prev;
+  }
+});
+
+test('#1771: both clone paths converge on one place that sets the ceiling', () => {
+  const src = stripComments(read('src/services/db-manager.js'));
+  const fn = src.slice(src.indexOf('async function cloneDatabase(sourceDb'));
+  const body = fn.slice(0, fn.indexOf('\nasync function cloneDatabaseDirect'));
+  assert.equal((body.match(/applyStagingConnectionLimit\(targetDb\)/g) || []).length, 2,
+    'the template path and the direct path each land on it');
+  // After the copy, never before: pg_restore opens its own connections and a
+  // ceiling applied mid-restore would cap the restore itself.
+  assert.ok(body.indexOf('cloneDatabaseDirect(sourceDb, targetDb)') < body.lastIndexOf('applyStagingConnectionLimit'));
+});
+
+test('#1771: pressure reclaim skips every preview somebody is using', () => {
+  const { selectPressureVictims } = require('../src/services/staging-reap');
+  const rows = [
+    { id: 1, status: 'active', last_activity_at: '2026-09-01T00:00:00Z' },   // idle longest
+    { id: 2, status: 'promoted', last_activity_at: '2026-09-02T00:00:00Z' }, // backs a live vote
+    { id: 3, status: 'merging', last_activity_at: '2026-09-03T00:00:00Z' },  // mid-merge
+    { id: 4, status: 'active', last_activity_at: '2026-09-04T00:00:00Z' },   // a turn in flight
+    { id: 5, status: 'paused', last_activity_at: '2026-09-05T00:00:00Z' },   // building
+    { id: 6, status: 'active', last_activity_at: '2026-09-06T00:00:00Z' },
+  ];
+  const victims = selectPressureVictims({
+    rows,
+    isBusy: (id) => id === 4,
+    hasInFlightBuild: (id) => id === 5,
+  });
+  assert.deepEqual(victims.map((v) => v.id), [1, 6],
+    'a reviewer arriving at a dead link is worse than a tight connection budget');
+  assert.equal(victims[0].id, 1, 'idle-longest first');
+});
+
+test('#1771: the reclaim acts on a reading, stops on a reading, and kills nothing', () => {
+  const src = stripComments(read('src/services/staging-reap.js'));
+  const fn = src.slice(src.indexOf('async function sweepConnectionPressure('));
+  const body = fn.slice(0, fn.indexOf('\n}\n') + 3);
+  assert.match(body, /if \(!before \|\| !before\.saturated\) return summary;/,
+    'on an ordinary day this is one cheap query and nothing else');
+  assert.match(body, /if \(!now\.saturated\) break;/,
+    're-census after each teardown: freeing the budget is the goal, tearing down is the means');
+  assert.match(body, /if \(isStagingEnv\(\)\) return summary;/,
+    'a preview computing victims from its own stale clone would be fiction');
+  assert.match(body, /reason: 'connection-pressure'/);
+  assert.match(body, /teardownStagingForSession/,
+    'through the one chokepoint that also drops the DB and nulls staging_url');
+  // The fast way to free connections is the wrong one: node-postgres
+  // surfaces a killed idle client as a pool 'error' event, and a pool with
+  // no listener takes the process down. Generated apps frequently have none,
+  // so this would crash-loop other people's production apps.
+  // (The module NAMES it, in the doc comment explaining why not, so the scan
+  // is for an executable mention rather than any mention at all.)
+  for (const line of read('src/services/staging-reap.js').split('\n')) {
+    if (!line.includes('pg_terminate_backend')) continue;
+    assert.match(line.trim(), /^(\/\/|\*)/,
+      'never terminate another database\'s backends to make room');
+  }
+  // Wired next to the passes it belongs with, behind its own throttle.
+  const server = stripComments(read('server.js'));
+  assert.match(server, /if \(stagingReap\.pressureSweepDue\(\)\) \{\s*await stagingReap\.sweepConnectionPressure\(config\);/);
 });

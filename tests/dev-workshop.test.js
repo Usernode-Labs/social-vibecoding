@@ -744,7 +744,7 @@ test('a folded row\'s last line carries the card\'s state, in the tone the pill 
 
 test('an open row IS the Board\'s card, not a headless copy under a row', () => {
   const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
-  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} \/>/);
+  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/);
 
   // #1799 kept the compressed row as a head and hid the card's head, meta and
   // status band so they would not repeat it — which made the open state a
@@ -1347,7 +1347,7 @@ test('an unfolded row is the Activity entry: the sheet, the card, the slot, the 
   // entry wrapper and its three children, in the order the feed drew them.
   const unfolded = FOLD.slice(FOLD.indexOf('function UnfoldedRow'), FOLD.indexOf('function voteSpecs'));
   assert.match(unfolded, /className="dev-feed-entry dev-ws-sheet"/, 'the sheet wrapper the feed used');
-  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} \/>/, 'the same card builder');
+  assert.match(unfolded, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/, 'the same card builder');
   // Minus the rail chevron: inside a fold a click on the card folds it, so the
   // Board's "this opens" mark would promise a destination the card no longer
   // has. Everything else on the model is the Board's, untouched.
@@ -1466,13 +1466,13 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   assert.ok(!unfolded.expectSelector.includes('data-ws-open-card'));
 
   // The preview moved to the facts line and then back to the action band —
-  // after the hamburger, closing it — and the declared check moved with it
-  // each time. This is the sweep that was missed the first time: the unit
+  // at its right end, just before the hamburger — and the declared check
+  // moved with it each time. This is the sweep that was missed the first time: the unit
   // tests for the new position were all updated and dapp.json was not, so
   // the gate found it instead.
   const preview = byName(/Preview is a labelled pill/);
   assert.ok(preview, 'the board still pins where the preview lives');
-  assert.match(preview.expectSelector, /\.gc-card-actions > \.dev-card-menu-btn\[data-card-menu\] ~ \.gc-vote-btn-preview:last-child:not\(\.gc-vote-btn-icon\)/);
+  assert.match(preview.expectSelector, /\.gc-card-actions > \.gc-vote-btn-preview:not\(\.gc-vote-btn-icon\) \+ \.dev-card-menu-btn\[data-card-menu\]:last-child/);
   for (const t of dapp.tests) {
     assert.ok(!/dev-card-status-end[^,]*gc-vote-btn-preview/.test(t.expectSelector || ''),
       `${t.name}: no check still looks for the preview on the facts line`);

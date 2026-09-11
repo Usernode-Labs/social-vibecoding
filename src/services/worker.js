@@ -93,7 +93,8 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // builds. A v7 runner would retry a stale --resume with the compact prompt and
 // no scout history, so every older warm container must be replaced first.
 // v9: refresh warm workers so run-cc.sh emits partial usage events (#1600).
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v9';
+// v10 publishes bootstrap readiness and fences turns after container restarts.
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v10';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -1081,6 +1082,8 @@ function recordClaudeCodingRun({
 // ──────────────────────────────────────────────────────────────────────
 
 async function ensureWorkerImage() {
+  // Self-previews serve requests only; image builds belong to their parent.
+  if (process.env.USERNODE_ENV === 'staging') return;
   if (usesKubernetesWorkers()) {
     if (!(process.env.KUBERNETES_WORKER_IMAGE || '').includes('@sha256:')) {
       throw new Error('KUBERNETES_WORKER_IMAGE must be configured with an immutable digest');
@@ -1688,7 +1691,7 @@ function _messageHasPrefix(err, prefixes) {
 // the coding agent never started and no code was touched. Exported so the
 // route layer can say that honestly instead of surfacing the raw string.
 function isBootstrapError(err) {
-  return _messageHasPrefix(err, BOOTSTRAP_ERROR_PREFIXES);
+  return err?.bootstrapFailed === true || _messageHasPrefix(err, BOOTSTRAP_ERROR_PREFIXES);
 }
 
 function isRetryableBootstrapError(err) {
@@ -1803,13 +1806,20 @@ async function _bootstrapWarmContainer(sessionId, {
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
   };
   if (usesKubernetesWorkers()) {
-    const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
-      sessionId,
-      env: safeEnv,
-    });
-    containerName = result.runtimeName;
-    log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName });
-    return containerName;
+    try {
+      const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
+        sessionId, env: safeEnv, onProgress,
+      });
+      containerName = result.runtimeName;
+      log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName });
+      return containerName;
+    } catch (err) {
+      Object.defineProperty(err, 'bootstrapFailed', { value: true, configurable: true });
+      log.error('worker', 'Bootstrap failed', { sessionId, containerName,
+        phase: err.bootstrapPhase || null, message: log.redactString(err.message),
+        logTail: err.bootstrapLog?.join('\n') || null });
+      throw attachBootstrapContext(err, { containerName, attempts: 1 });
+    }
   }
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 
@@ -2561,7 +2571,7 @@ async function execInWorker(sessionId, {
     state.modelMaxOutputTokens = agentModelMetadata?.maxOutputTokens ?? null;
     execState = state;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
-    await _consumeJournal(containerName, journal, progress, state, { sessionId });
+    await _consumeJournal(containerName, journal, progress, state, { sessionId, startedAt: providerStartedAt });
     providerTerminalObserved = true;
 
     // Successful, complete turns don't need their journal anymore; failed
@@ -2773,8 +2783,9 @@ async function inspectContainerState(containerName) {
 // The tail itself is a disposable `docker exec`; if it drops while the
 // turn is still running (docker hiccup, etc.) we restart it and skip
 // the lines we already consumed.
-async function _consumeJournal(containerName, journal, progress, state, { sessionId = null } = {}) {
+async function _consumeJournal(containerName, journal, progress, state, { sessionId = null, startedAt = null } = {}) {
   if (usesKubernetesWorkers()) {
+    const since = startedAt || new Date().toISOString();
     let charsConsumed = 0;
     const counters = newWatchdogCounters();
     let lastProbeAt = Date.now();
@@ -2821,7 +2832,13 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
           await readJournal();
           if (state.execExitSeen) return state;
           state.exitCode = state.exitCode ?? -1;
-          state.markerlessCause = verdict.cause;
+          const termination = await kubernetes.inspectWorkerTermination(kubernetesWorkerConfig(), containerName, { since });
+          // A normal terminal journal marker always wins. Pod OOM evidence
+          // must belong to this turn; an earlier restart proves nothing.
+          await readJournal();
+          if (state.execExitSeen) return state;
+          state.markerlessCause = termination?.oomKilled ? 'oom_killed'
+            : termination && termination.status !== 'running' ? 'container_gone' : verdict.cause;
           return state;
         }
       }
@@ -3170,7 +3187,7 @@ async function resumeTurnFromJournal(sessionId, {
   let providerTerminalObserved = false;
   try {
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
-    await _consumeJournal(containerName, journal, progress, state, { sessionId });
+    await _consumeJournal(containerName, journal, progress, state, { sessionId, startedAt: safeStartedAt });
     if (state.rawStdout || state.execExitSeen) state.providerDispatched = true;
     providerTerminalObserved = true;
     // The recovery caller owns required persistence (thread id + ledger)
@@ -3224,6 +3241,9 @@ async function evictWorker(sessionId) {
 // (recoverActiveWorkers in server.js). The live per-turn path uses
 // execInWorker which streams the docker-exec child's stdout directly.
 async function watchWorker(containerName, { onProgress, fromStart = true } = {}) {
+  if (usesKubernetesWorkers()) {
+    throw new Error('Kubernetes worker recovery requires a turn journal; legacy Docker log recovery is unavailable');
+  }
   const state = newWatchState();
   state.hostContainerName = containerName;
   const progress = typeof onProgress === 'function' ? onProgress : () => {};
@@ -3395,8 +3415,8 @@ function buildTurnStopScript(journal) {
 //
 // Returns:
 //   true   — claude (or its parent run-cc.sh) is currently executing
-//   false  — only the sleep wrapper is alive
-//   null   — couldn't determine (container not running, exec failed, etc.)
+//   false  — no turn is executing, or Kubernetes confirms no worker exists
+//   null   — couldn't determine (worker unready, exec/API failed, etc.)
 //
 // `timeoutMs` is overridable because the journal watchdog deliberately
 // runs the probe with a generous timeout (the probe is a safety net, not
@@ -3412,9 +3432,23 @@ async function isWorkerExecuting(containerName, { timeoutMs = 5000 } = {}) {
     if (out === 'busy') return true;
     if (out === 'idle') return false;
     return null;
-  } catch {
+  } catch (err) {
+    if (usesKubernetesWorkers() && err.code === 'WORKER_NOT_FOUND') return false;
     return null;
   }
+}
+
+async function getWorkerStatus(containerName) {
+  return usesKubernetesWorkers()
+    ? kubernetes.getWorkerStatus(kubernetesWorkerConfig(), containerName)
+    : docker.getContainerStatus(containerName);
+}
+
+// Legacy stop handles still exist during recovery. Kubernetes has no Docker
+// stop operation: remove the worker Deployment, preserving its workspace.
+async function stopWorker(containerName) {
+  if (usesKubernetesWorkers()) return destroyWorker(containerName);
+  await docker.execFileAsync('docker', ['stop', containerName], { timeout: 15000 });
 }
 
 // Hard teardown of a worker container. Used for session archive, error
@@ -3425,7 +3459,8 @@ async function isWorkerExecuting(containerName, { timeoutMs = 5000 } = {}) {
 // instead — same effect, but the function name signals intent better.
 async function destroyWorker(containerName) {
   const m = containerName.match(/(?:usernode-worker-|sv-worker-s)(\d+)$/);
-  if (usesKubernetesWorkers() && m) {
+  if (usesKubernetesWorkers()) {
+    if (!m) throw new Error(`Invalid Kubernetes worker name: ${containerName}`);
     await kubernetes.deleteWorker(kubernetesWorkerConfig(), parseInt(m[1], 10), { deleteVolume: false }).catch(() => {});
   } else {
     await docker.stopAndRemove(containerName).catch(() => {});
@@ -3637,6 +3672,9 @@ function describePushFailure(err) {
 }
 
 module.exports = {
+  usesKubernetesWorkers,
+  getWorkerStatus,
+  stopWorker,
   describePushFailure,
   ensureWorkerImage,
   // long-lived API

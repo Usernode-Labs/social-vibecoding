@@ -1251,6 +1251,37 @@ async function runTestGroup(browser, group, opts) {
     const activity = makeActivityClock();
     // Request lifecycle only — the clock that rolls the assert window.
     const netActivity = makeActivityClock();
+    // Initial navigation and a cold-cohort fallback must judge hydration
+    // with the same window. Network quiet alone does not mean timers/rAF
+    // have finished rendering the expected UI.
+    const pollPresence = async (cohortTests) => {
+      const presence = new Map();
+      const floorAt = Date.now() + assertMax;
+      let assertDeadlineAt = floorAt;
+      let seenNetAt = netActivity.lastAt;
+      let pending = cohortTests;
+      for (;;) {
+        const still = [];
+        for (const t of pending) {
+          const reason = await assertPresence(page, t);
+          presence.set(t, reason);
+          if (reason) still.push(t);
+        }
+        pending = still;
+        if (!pending.length) break;
+        if (netActivity.lastAt > seenNetAt) {
+          seenNetAt = netActivity.lastAt;
+          assertDeadlineAt = Math.max(
+            floorAt,
+            Math.min(Date.now() + assertMax, groupCeilingAt)
+          );
+        }
+        const leftMs = assertDeadlineAt - Date.now();
+        if (leftMs <= 0) break;
+        await sleep(Math.min(assertPoll, leftMs));
+      }
+      return presence;
+    };
     const on = (event, handler) => {
       try { page.on(event, handler); } catch { /* fake pages may not emit it */ }
     };
@@ -1338,35 +1369,7 @@ async function runTestGroup(browser, group, opts) {
       // still failing keeps waiting, and never past its one shared ceiling.
       // Evaluated BEFORE the console errors are frozen so the cold-load
       // fallback below can re-run them on a reloaded document.
-      const presence = new Map();
-      if (!loadFailure) {
-        // The fixed window is the FLOOR; network traffic rolls it forward,
-        // never past the group's ceiling. See ASSERT_REPORT_RESERVE_MS.
-        const floorAt = Date.now() + assertMax;
-        let assertDeadlineAt = floorAt;
-        let seenNetAt = netActivity.lastAt;
-        let pending = cohort.tests;
-        for (;;) {
-          const still = [];
-          for (const t of pending) {
-            const reason = await assertPresence(page, t);
-            presence.set(t, reason);
-            if (reason) still.push(t);
-          }
-          pending = still;
-          if (!pending.length) break;
-          if (netActivity.lastAt > seenNetAt) {
-            seenNetAt = netActivity.lastAt;
-            assertDeadlineAt = Math.max(
-              floorAt,
-              Math.min(Date.now() + assertMax, groupCeilingAt)
-            );
-          }
-          const leftMs = assertDeadlineAt - Date.now();
-          if (leftMs <= 0) break;
-          await sleep(Math.min(assertPoll, leftMs));
-        }
-      }
+      let presence = loadFailure ? new Map() : await pollPresence(cohort.tests);
 
       // ── A hash switch is not always equivalent to a cold load (#1146) ──
       //
@@ -1410,7 +1413,7 @@ async function runTestGroup(browser, group, opts) {
             pushErr('load', `page returned HTTP ${reloadStatus}`, cohort.tests[0].url);
             for (const t of cohort.tests) presence.set(t, `Page returned HTTP ${reloadStatus}`);
           } else {
-            for (const t of cohort.tests) presence.set(t, await assertPresence(page, t));
+            presence = await pollPresence(cohort.tests);
           }
         } catch (err) {
           // The hash-switch verdict stands. A fallback that cannot navigate

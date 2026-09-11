@@ -650,7 +650,12 @@ async function recordChecksSkipped({
 // setChecksPending clears when a new commit is pushed.
 async function recordStagingBootFailure({ config, pool, session, commitHash, err }) {
   const visuals = require('./visuals');
+  const { bootFailureIsInfrastructure } = require('./deploy-failure');
   const detail = visuals.summarizeBootFailure(err);
+  // #1771: the shared Postgres refusing this container a connection is not
+  // a fact about this proposal. summarizeBootFailure already says so in the
+  // detail; this decides who gets told.
+  const infrastructure = bootFailureIsInfrastructure(err);
 
   const stored = await visuals.storeChecks(
     pool, session.id, commitHash, { state: 'error', results: [] }, detail
@@ -679,6 +684,7 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   log.warn('staging-recovery', 'Staging preview failed to boot — recorded checks error', {
     sessionId: session.id,
     failures: row ? row.consecutive_check_failures : null,
+    infrastructure: infrastructure || undefined,
     detail,
   });
 
@@ -690,6 +696,26 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
     `UPDATE chat_sessions SET check_error_notified_at = NOW() WHERE id = $1`,
     [session.id]
   ).catch(() => {});
+
+  // #1771: the checks row, the retry schedule and the card's detail are all
+  // still written above — the proposal is still blocked and still says why.
+  // What is skipped here is the part addressed to the AUTHOR: a thread post
+  // and a notification asking them to look at a build that failed because
+  // the fleet was out of database connections. There is nothing in their
+  // diff to find, the retry that fixes it is already scheduled, and the
+  // person who can act on it is the platform owner, who gets the escalation
+  // the 'error' state already carries. The stamp above still runs, so the
+  // backoff retries stay quiet either way.
+  if (infrastructure) {
+    log.warn('staging-recovery', 'Boot failure is infrastructure — author not nudged', {
+      sessionId: session.id, detail,
+    });
+    try {
+      const { broadcastGlobal } = require('./ws');
+      broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'error' });
+    } catch { /* narration only */ }
+    return;
+  }
 
   // Visible-in-thread record of why the preview won't come up.
   //

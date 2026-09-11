@@ -302,15 +302,15 @@ test('an issue run with no preview (or a spec-only outcome) shows no affordance'
   }), /gc-vote-btn-preview/);
 });
 
-test('on a board card the preview is a labelled pill closing the ACTION BAND, after the hamburger', () => {
+test('on a board card the preview is a labelled pill at the ACTION BAND\u2019s right end, just before the hamburger', () => {
   // Round three moved the preview out of the rail's corner and made it a pill
   // with the eye AND the word: the 24px corner eye was the hardest thing on
   // the card to hit. #1787 round four moved that pill onto the facts line;
-  // this round seats it with the card's other controls instead — the far
-  // right of the action band, after the hamburger, a fixed child the pills
-  // fold around. The hamburger's auto margin pushes the pair to the band's
-  // right edge, so a column of cards shows every preview on one vertical
-  // line, and there is no rail at all any more.
+  // this round seats it with the card's other controls instead — the right
+  // end of the action band, just before the hamburger, a fixed child the
+  // pills fold around. An auto margin on the first of the pair pushes both
+  // to the band's right edge, so a column of cards shows every preview on
+  // one vertical line, and there is no rail at all any more.
   const AppView = makeAppView();
   const cards = {
     proposal: proposalCardHtml(AppView, PR({ staging_url: 'https://s' })),
@@ -326,13 +326,14 @@ test('on a board card the preview is a labelled pill closing the ACTION BAND, af
   for (const [kind, html] of Object.entries(cards)) {
     const band = html.match(/<div class="gc-card-actions">([\s\S]*?)<\/div>/);
     assert.ok(band, `${kind}: the action band is emitted`);
-    assert.match(band[1], /gc-vote-btn-preview"[^>]*>[\s\S]*?Preview<\/button>$/,
-      `${kind}: the labelled preview closes the band`);
     assert.doesNotMatch(band[1], /gc-vote-btn-preview[^>]*gc-vote-btn-icon/,
       `${kind}: never the icon variant`);
     if (/data-card-menu/.test(band[1])) {
-      assert.ok(band[1].indexOf('data-card-menu') < band[1].indexOf('gc-vote-btn-preview'),
-        `${kind}: right of the hamburger`);
+      assert.match(band[1], /gc-vote-btn-preview"[^>]*>[\s\S]*?Preview<\/button><button [^>]*data-card-menu=[^>]*>[\s\S]*?<\/button>$/,
+        `${kind}: the labelled preview, then the hamburger closing the band`);
+    } else {
+      assert.match(band[1], /gc-vote-btn-preview"[^>]*>[\s\S]*?Preview<\/button>$/,
+        `${kind}: with no menu, the labelled preview closes the band`);
     }
     assert.doesNotMatch(html, /dev-card-status-end/, `${kind}: nothing on the facts line`);
     assert.doesNotMatch(html, /dev-card-rail/, `${kind}: and no rail`);
