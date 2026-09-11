@@ -2316,6 +2316,8 @@ const AppView = {
     // creator/admin/collaborator rule and reads AppView.appData, so the
     // component takes its answer rather than re-deriving it.
     AppView._reactDevBoard()?.mountBoard(content, {
+      illustrationApp: AppView.appData,
+      canManageIllustration: !!AppView.appData?.can_manage,
       selfHosted: !!AppView.appData?.self_hosted,
       readOnly: !!AppView.readOnly,
       canCollaborate: !!AppView.appData?.can_collaborate,
@@ -3988,6 +3990,8 @@ const AppView = {
         AppView.openMembersModal();
       }, { signal });
     }
+    const illustrationBtn = menu.querySelector('[data-plus="featured-illustration"]');
+    if (illustrationBtn) illustrationBtn.addEventListener('click', close, { signal });
     const renameBtn = menu.querySelector('[data-plus="rename"]');
     if (renameBtn) {
       renameBtn.addEventListener('click', () => {

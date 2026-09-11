@@ -2762,16 +2762,45 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    Dark mode does what the wallpaper does: the same hues, re-tuned to a
    lightness that reads on the inverted ground rather than inverted into
    mud. */
-.home-tint-1 { --tint-bg: #e3efe0; --tint-line: #cfe0ca; --tint-art: #cfe3c7; }
-.home-tint-2 { --tint-bg: #dfeaf6; --tint-line: #c9dcee; --tint-art: #c6dcf0; }
-.home-tint-3 { --tint-bg: #e9e2f2; --tint-line: #d9cfe8; --tint-art: #ded2ef; }
-.home-tint-4 { --tint-bg: #fbe6d5; --tint-line: #f2d5bd; --tint-art: #f7ddc6; }
-.home-tint-5 { --tint-bg: #f8dde8; --tint-line: #eec7d6; --tint-art: #f4d6de; }
-.dark .home-tint-1 { --tint-bg: #1b2a1f; --tint-line: #2c4433; --tint-art: #22331f; }
-.dark .home-tint-2 { --tint-bg: #17263a; --tint-line: #27405e; --tint-art: #1b2f47; }
-.dark .home-tint-3 { --tint-bg: #241f38; --tint-line: #3a3157; --tint-art: #2b2442; }
-.dark .home-tint-4 { --tint-bg: #33231a; --tint-line: #50392a; --tint-art: #3d2a1f; }
-.dark .home-tint-5 { --tint-bg: #331d28; --tint-line: #513043; --tint-art: #3e2231; }
+.home-tint-1, .home-tint-1[data-preview-theme="light"], .dark .home-tint-1[data-preview-theme="light"] { --tint-bg: #e3efe0; --tint-line: #cfe0ca; --tint-art: #cfe3c7; }
+.home-tint-2, .home-tint-2[data-preview-theme="light"], .dark .home-tint-2[data-preview-theme="light"] { --tint-bg: #dfeaf6; --tint-line: #c9dcee; --tint-art: #c6dcf0; }
+.home-tint-3, .home-tint-3[data-preview-theme="light"], .dark .home-tint-3[data-preview-theme="light"] { --tint-bg: #e9e2f2; --tint-line: #d9cfe8; --tint-art: #ded2ef; }
+.home-tint-4, .home-tint-4[data-preview-theme="light"], .dark .home-tint-4[data-preview-theme="light"] { --tint-bg: #fbe6d5; --tint-line: #f2d5bd; --tint-art: #f7ddc6; }
+.home-tint-5, .home-tint-5[data-preview-theme="light"], .dark .home-tint-5[data-preview-theme="light"] { --tint-bg: #f8dde8; --tint-line: #eec7d6; --tint-art: #f4d6de; }
+.dark .home-tint-1, .home-tint-1[data-preview-theme="dark"], .dark .home-tint-1[data-preview-theme="dark"] { --tint-bg: #1b2a1f; --tint-line: #2c4433; --tint-art: #22331f; }
+.dark .home-tint-2, .home-tint-2[data-preview-theme="dark"], .dark .home-tint-2[data-preview-theme="dark"] { --tint-bg: #17263a; --tint-line: #27405e; --tint-art: #1b2f47; }
+.dark .home-tint-3, .home-tint-3[data-preview-theme="dark"], .dark .home-tint-3[data-preview-theme="dark"] { --tint-bg: #241f38; --tint-line: #3a3157; --tint-art: #2b2442; }
+.dark .home-tint-4, .home-tint-4[data-preview-theme="dark"], .dark .home-tint-4[data-preview-theme="dark"] { --tint-bg: #33231a; --tint-line: #50392a; --tint-art: #3d2a1f; }
+.dark .home-tint-5, .home-tint-5[data-preview-theme="dark"], .dark .home-tint-5[data-preview-theme="dark"] { --tint-bg: #331d28; --tint-line: #513043; --tint-art: #3e2231; }
+
+/* Harmonic palette: select tone 50 once. Dark surfaces are computed from
+   that same token, blended into the shell's zinc-950 ground. The fixed 10%,
+   14%, 24% proportions give every hue the same quiet surface hierarchy.
+   These formulas also drive explicit editor previews; no second palette. */
+.home-tone-cream { --tone-50: #fefdf5; --tone-light-line: #f5f0d0; }
+.home-tone-yellow { --tone-50: #fff9de; --tone-light-line: #f0d85c; }
+.home-tone-orange { --tone-50: #fff0e0; --tone-light-line: #e8a878; }
+.home-tone-coral { --tone-50: #fde8e4; --tone-light-line: #e09488; }
+.home-tone-pink { --tone-50: #f8e4ee; --tone-light-line: #d48eb4; }
+.home-tone-purple { --tone-50: #ede4f4; --tone-light-line: #aa92c2; }
+.home-tone-indigo { --tone-50: #e4e8f6; --tone-light-line: #8896c8; }
+.home-tone-blue { --tone-50: #deedf8; --tone-light-line: #6aadd4; }
+.home-tone-teal { --tone-50: #deeeed; --tone-light-line: #72bab2; }
+.home-tone-mint { --tone-50: #e2f2e8; --tone-light-line: #88c49e; }
+.home-tone-sage { --tone-50: #eaf2e4; --tone-light-line: #a9cf97; }
+.home-tone-gray { --tone-50: #f4f3f1; --tone-light-line: #b8b4ac; }
+:is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray) {
+  --tone-dark-bg: color-mix(in srgb, var(--tone-50) 10%, #0b0b0c);
+  --tone-dark-art: color-mix(in srgb, var(--tone-50) 14%, #0b0b0c);
+  --tone-dark-line: color-mix(in srgb, var(--tone-50) 24%, #0b0b0c);
+  --tint-bg: var(--tone-50); --tint-line: var(--tone-light-line); --tint-art: var(--tone-50);
+}
+.dark :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray), :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="dark"] {
+  --tint-bg: var(--tone-dark-bg); --tint-line: var(--tone-dark-line); --tint-art: var(--tone-dark-art);
+}
+.dark :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="light"], :is(.home-tone-cream, .home-tone-yellow, .home-tone-orange, .home-tone-coral, .home-tone-pink, .home-tone-purple, .home-tone-indigo, .home-tone-blue, .home-tone-teal, .home-tone-mint, .home-tone-sage, .home-tone-gray)[data-preview-theme="light"] {
+  --tint-bg: var(--tone-50); --tint-line: var(--tone-light-line); --tint-art: var(--tone-50);
+}
 
 /* ── Discover: the card rail ────────────────────────────────
    The lane was a GRID of six 40px icon tiles inside the block's white card:
@@ -2849,7 +2878,12 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
   overflow: hidden;
   cursor: pointer;
 }
+/* `cover`, not `contain`: the framing editor's zoom bottoms out at the exact
+   cover fit and its pan is clamped to it, so the art fills the block at every
+   legal framing rather than letterboxing itself against the tint. */
+.home-discover-illustration { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .home-discover-art {
+  overflow: hidden;
   height: 7.5rem;
   background: var(--tint-art);
   display: flex;
@@ -6165,7 +6199,7 @@ span.gc-vote-btn-icon { cursor: default; }
 
 .dc-log-msg { color: #e4e4e7; }
 
-.dc-log-log   .dc-log-level { background: #27272a; color: #a1a1aa; }
+.dc-log-log   .dc-log-level { background: #27272a; color: #8e8e93; }
 .dc-log-info  .dc-log-level { background: #1e3a5f; color: #93c5fd; }
 .dc-log-debug .dc-log-level { background: #27272a; color: #6e6e8a; }
 .dc-log-warn  .dc-log-level { background: #78350f; color: #fde68a; }
@@ -12071,3 +12105,18 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
    the link to the item's page, so the sheet has no line under the card. */
 #dev-kanban .dev-ws-rowwrap { margin-bottom: 0; }
 .dev-ws-foot-note { font-size: 12px; color: var(--text-muted); text-align: center; padding: 6px 0 2px; }
+
+/* Illustration variants share one frame; only visibility changes with theme. */
+.illustration-dark { display: none; }
+.dark .illustration-light { display: none; }
+.dark .illustration-dark { display: block; }
+.home-discover-card[data-preview-theme="light"] .illustration-light { display: block; }
+.home-discover-card[data-preview-theme="light"] .illustration-dark { display: none; }
+.home-discover-card[data-preview-theme="dark"] .illustration-light { display: none; }
+.home-discover-card[data-preview-theme="dark"] .illustration-dark { display: block; }
+.home-discover-card[data-preview-theme="light"] .home-discover-name { color: #1c1c1e; }
+.home-discover-card[data-preview-theme="light"] :is(.home-discover-blurb, .home-discover-meta) { color: #48484a; }
+.home-discover-card[data-preview-theme="dark"] .home-discover-name { color: #eaeaea; }
+.home-discover-card[data-preview-theme="dark"] :is(.home-discover-blurb, .home-discover-meta) { color: #8e8e93; }
+.home-discover-card[data-preview-theme="light"] .card-add-btn[data-added="false"] { background: white; color: #0062cc; border-color: #e3e3e6; }
+.home-discover-card[data-preview-theme="dark"] .card-add-btn[data-added="false"] { background: #2c2c2e; color: #5aa9ff; border-color: #48484a; box-shadow: none; }
