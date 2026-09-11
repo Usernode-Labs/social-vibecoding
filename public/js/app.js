@@ -657,6 +657,11 @@ const App = {
     // anonymous boot for the same reason waitlist-more does: restoreFromHash
     // drops an auth route outright for the signed-in session every capture
     // and proposal check runs as.
+    // `waitlist-code-step` (#1876) is what follows that address step now
+    // that the errand is two screens: the six-digit field, the way back, and
+    // the resend, with a request already behind it. A shot of its own
+    // because the two halves cannot be photographed at once, and a capture
+    // can only navigate to a state, never type its way into one.
     // `waitlist-admitted` (#1538) is the released panel of check-my-status:
     // the pill, the joined-on date and the "Create my account" action a
     // signup that has been let in reads back after typing its code. It is
@@ -677,6 +682,7 @@ const App = {
     // proposal check runs as. login.tsx paints it and sends nothing.
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
         shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
+        shot !== 'waitlist-code-step' &&
         shot !== 'waitlist-admitted' && shot !== 'waitlist-status' &&
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
@@ -687,6 +693,7 @@ const App = {
     }
     if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed'
          || shot === 'waitlist-step1' || shot === 'waitlist-code-entry'
+         || shot === 'waitlist-code-step'
          || shot === 'waitlist-admitted' || shot === 'waitlist-status') &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
