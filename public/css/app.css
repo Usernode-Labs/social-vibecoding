@@ -11681,21 +11681,65 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    makes the block scannable rather than just subdivided. It inherits the
    pane's own line colour, so the cards read as divisions OF the pane rather
    than as objects sitting on it. */
-.dev-ws-cards { display: flex; flex-direction: column; gap: 8px; }
+.dev-ws-cards { display: flex; flex-direction: column; gap: 6px; }
+/* Each card is ONE line: the label, a middot, the sentence. It was a title
+   stacked above its line, which cost three rows of vertical space to carry
+   three short sentences and made the block read as three objects rather than
+   three entries in a list. Inline, the eye runs down the labels in a single
+   column and across only where it wants the detail.
+
+   `align-items: baseline` and not `center`: the label is 12px and the
+   sentence 14px, so centring them leaves the label floating slightly high
+   against the text it introduces. Wrapping is the sentence's own — the line
+   is the flex item that grows, so a long one wraps under itself and the
+   label keeps the first row to itself rather than being pushed onto its own.
+
+   SOLID, not translucent. `--dc-sheet` is #ffffff in light and #1c1c1e in
+   dark, so "white" survives the theme; the strip behind these is
+   `--dc-sheet-fill`, which is translucent, so a solid card reads as a card
+   ON the pane rather than another wash of the same surface. */
 .dev-ws-card {
-  border-radius: 12px;
-  padding: 8px 10px;
-  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+  display: flex;
+  /* CENTRE, not baseline. On the one card whose sentence wraps to two rows,
+     a baseline-aligned label sits against the FIRST row and reads as if it
+     were floating above its own text; centred, it holds the block. */
+  align-items: center;
+  gap: 6px;
+  border-radius: 10px;
+  padding: 7px 10px;
+  background-color: var(--dc-sheet);
+  /* The hairline plus a real lift. `--dc-sheet` is #ffffff and the strip
+     behind it is `--dc-sheet-fill` at 50% white, so on a light page the
+     inset line was the ONLY thing separating card from pane and the block
+     read flat. Screenshots, not the diff, are what showed that.
+     CAUTION: one invalid var() anywhere in this list voids the WHOLE
+     declaration, hairline included — a missing token here renders as a
+     card with no outline at all, which is exactly how it failed in
+     preview. */
+  box-shadow:
+    0 0 0 1px var(--app-sheet-line) inset,
+    0 1px 2px var(--app-sheet-shadow-near),
+    0 4px 10px var(--app-sheet-shadow-far);
 }
 .dev-ws-card-title {
-  margin: 0 0 3px;
-  font-size: 11px;
+  margin: 0;
+  flex: none;
+  /* A fixed COLUMN, so all three sentences share a left edge. "Last week",
+     "This week" and "Open" are different widths, so without it the text
+     started at three different x-positions — which defeats the point of the
+     one-line layout, where you read down the labels and across only where
+     you want the detail. 84px clears the longest of the three at 13.5px.
+     A fourth window with a longer name would need this revisited. */
+  width: 84px;
+  font-size: 13.5px;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--text-muted);
+  letter-spacing: 0.01em;
+  /* The accent, so the label separates from its sentence by colour as well
+     as by column. It is not interactive; nothing else in this pane is
+     either, so the blue is not competing with a real affordance. */
+  color: var(--accent);
 }
-.dev-ws-card-line { margin: 0; font-size: 14px; color: var(--text-primary); }
+.dev-ws-card-line { margin: 0; flex: 1 1 auto; font-size: 14px; color: var(--text-primary); }
 /* ── The Workshop's orientation pane ─────────────────────────
    "Since your last visit" moved inside "Where the app is": the description
    leads, and the personal line sits under it as a footnote to it rather than
@@ -11749,7 +11793,13 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-dash-cell {
   display: flex; flex-direction: column; gap: 1px;
   padding: 8px 10px; border-radius: 14px;
-  background: var(--dc-sheet); box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+  /* Same surface and the same lift as the cards below them: the tiles sit on
+     the same translucent strip and had the same flatness problem. */
+  background: var(--dc-sheet);
+  box-shadow:
+    0 0 0 1px var(--app-sheet-line) inset,
+    0 1px 2px var(--app-sheet-shadow-near),
+    0 4px 10px var(--app-sheet-shadow-far);
   font-size: 11.5px; color: var(--text-muted); line-height: 1.25;
 }
 .dev-ws-dash-cell b {

@@ -15,6 +15,7 @@ const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
   'utf8',
 );
+const { SW_VERSION } = require('../public/sw.js');
 
 function makeHarness() {
   const requests = [];
@@ -116,6 +117,34 @@ test('OpenRouter picker labels and ordering surface favorites, recommendations, 
     ...models[1], createdAt: new Date().toISOString(), costTier: 'low', compatibility: 'experimental',
   });
   assert.match(label, /Recommended GPT · Recommended · New:/);
+});
+
+test('an OpenRouter task opens on favorites without replacing an uncommon current model', () => {
+  const h = makeHarness();
+  const models = [
+    { id: 'deepseek/default', isFavorite: true },
+    { id: 'openai/default', isFavorite: true },
+    { id: 'vendor/uncommon', isFavorite: false },
+  ];
+  assert.equal(
+    h.DevChat._openRouterFavoritesOnlyByDefault(models, 'deepseek/default'),
+    true,
+    'a recommended/default favorite gets the short task list',
+  );
+  assert.equal(
+    h.DevChat._openRouterFavoritesOnlyByDefault(models, 'vendor/uncommon'),
+    false,
+    'opening the picker preserves a current non-favorite selection',
+  );
+  assert.equal(h.DevChat._openRouterFavoritesOnlyByDefault(models, 'missing'), false);
+  assert.match(SRC, /id="dc-agent-choice-model-search"/);
+  assert.match(SRC, /id="dc-agent-choice-favorites-only"/);
+  assert.match(SRC, /Platform recommendations start in Favorites/);
+});
+
+test('the task-time picker ships through a fresh shell cache', () => {
+  const version = Number(String(SW_VERSION).replace(/^v/, ''));
+  assert.ok(version >= 11, `expected a post-v10 shell cache, got ${SW_VERSION}`);
 });
 
 test('forced catalog refresh and favorite writes bypass browser caches', async () => {
