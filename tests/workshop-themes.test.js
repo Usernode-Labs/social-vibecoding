@@ -969,15 +969,19 @@ test('the status paragraph is written on a discovery pass, and survives one that
     const call = m.calls.find((c) => c.kind === 'digest');
 
     assert.match(call.params.messages[0].content, /BOARD \(JSON\):/);
-    assert.match(call.params.system, /exactly three fields, each ONE sentence of at most 25 words/);
+    assert.match(call.params.system, /exactly three fields, each ONE sentence of about 12 words/);
     // The three windows, each its own field, and the rule that keeps a
     // single line from becoming a headline — the failure that produced
     // "mostly reshaped the Workshop and Dev board" on a week of eight areas.
     assert.match(call.params.system, /"lastWeek": what landed in the completed week just gone/);
     assert.match(call.params.system, /"thisWeek": what has landed in the current week so far/);
     assert.match(call.params.system, /"open": what the app's open, unfinished work is about/);
-    assert.match(call.params.system, /NAME THE BREADTH, NOT A HEADLINE/);
-    assert.match(call.params.system, /COUNT the entries by area before you write/);
+    // The two rules that survive twelve words. "Name the breadth" did not:
+    // at this length an inventory of five areas is a worse sentence than a
+    // shape, so breadth moves into a general tail clause instead.
+    assert.match(call.params.system, /TWO CLAUSES, NOT A LIST/);
+    assert.match(call.params.system, /COUNT BEFORE YOU LEAD/);
+    assert.match(call.params.system, /how many items it has, NOT of how visible it is/);
     assert.match(call.params.system, /STATE NO COUNTS/);
     // An empty window is an empty field, which is what stops its card being
     // drawn — the "(if any)" of the design, stated to the model.
@@ -1139,7 +1143,7 @@ test('digestDue: the version first, then the clocks', () => {
   assert.equal(svc.versionBehind(undefined, 2), false);
 });
 
-test('the three versions are positive integers and the digest is on its third', () => {
+test('the three versions are positive integers and the digest is on its fourth', () => {
   for (const v of [llm.WORKSHOP_DISCOVERY_VERSION, llm.WORKSHOP_PLACEMENT_VERSION, llm.WORKSHOP_DIGEST_VERSION]) {
     assert.ok(Number.isInteger(v) && v >= 1, String(v));
   }
@@ -1149,8 +1153,9 @@ test('the three versions are positive integers and the digest is on its third', 
   // old paragraph, and 2 is what puts the new one on every app. 3 splits
   // that paragraph into the three windowed lines the lander draws as cards:
   // the fields cannot be recovered from the prose a v2 row holds, so the
-  // bump is what re-asks for them rather than migrating anything.
-  assert.equal(llm.WORKSHOP_DIGEST_VERSION, 3);
+  // bump is what re-asks for them rather than migrating anything. 4 halves
+  // the length and makes the line lead by count rather than by visibility.
+  assert.equal(llm.WORKSHOP_DIGEST_VERSION, 4);
 });
 
 test('a digest version bump rewrites a fresh paragraph now, and only the paragraph', async () => {
