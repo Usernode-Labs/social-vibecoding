@@ -1141,7 +1141,8 @@ async function reconcile({ pool, app, reason }) {
     // on a settled board this branch is the ONLY one that ever fires, which
     // is exactly why the digest never got written before.
     const digestWhy = why ? 'discovery' : digestDue(row);
-    const wantDigest = !!digestWhy;
+    // `let`, because a draft that FAILS has to take this back. See the catch.
+    let wantDigest = !!digestWhy;
     if (why === 'version') result.outdated.push('discovery');
     if (replace) result.outdated.push('placement');
     if (digestWhy === 'version') result.outdated.push('digest');
@@ -1199,6 +1200,16 @@ async function reconcile({ pool, app, reason }) {
       } catch (err) {
         discoveryError = `discovery: ${String((err && err.message) || err).slice(0, 120)}`;
         result.discoveryFailed = true;
+        // The digest was due only because a DRAFT was — that is what
+        // `why ? 'discovery'` means. No draft happened, so it falls back to
+        // its own clock. Without this the digest is re-asked on EVERY pass
+        // for as long as discovery keeps failing, because `why` never clears
+        // on a drifting board: one model call per failure-backoff window,
+        // indefinitely, billed to the platform user — and that is the row
+        // the GLOBAL daily cap sums, so it is everyone's budget, not just
+        // this app's. Letting a failed stage carry on is right; letting it
+        // re-trigger a stage that is not due is not.
+        wantDigest = !!digestDue(row);
         log.warn('workshop-themes', 'discovery failed; keeping the standing categories', {
           app: app.slug, reason: why, message: err && err.message,
         });
@@ -1219,7 +1230,13 @@ async function reconcile({ pool, app, reason }) {
     // Both stages' failures, not the last one to happen: a pass can now fail
     // its draft AND a placement batch, and the footnote should name both.
     let lastError = discoveryError;
-    if (toPlace.length) {
+    // `themes.length`, because there is nothing to place INTO otherwise.
+    // Reachable only since a failed draft stopped aborting the pass: a board
+    // whose FIRST draft fails has no standing categories, and placement then
+    // serialised an empty themesJson and empty themeIds and asked the model,
+    // one call per batch of forty, to sort cards into no categories at all.
+    // Every card came back unplaced, which then counts as churn.
+    if (toPlace.length && themes.length) {
       const out = await placeAll({ pool, app, themes, input, keys: toPlace });
       Object.assign(next.placements, out.placed);
       for (const k of out.none) next.unplaced.add(k);
