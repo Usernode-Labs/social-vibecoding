@@ -736,3 +736,18 @@ test('a refused row says only that, not that you are also standing in it', async
   // …while an ordinary current row still ticks.
   assert.equal(items.filter((i) => /✓/.test(i.label)).length, 0);
 });
+
+
+test('native handoffs retain their actual provider without becoming web sessions', () => {
+  const BV = require('../public/js/build-venues');
+  for (const [agent, label] of [['codex', 'Codex'], ['claude-code', 'Claude Code'], ['external', 'External agent'], [undefined, 'External agent']]) {
+    const state = { source: 'cli_handoff', externalAgent: agent, agentBackend: 'claude_code' };
+    assert.equal(BV.currentVenue(state), 'local');
+    assert.equal(BV.sessionVenue(state).label, label);
+    assert.equal(BV.sessionVenue(state).chat, true);
+    assert.equal(BV.sessionVenue({ ...state, buildVenue: 'usernode-openrouter' }).label, 'Usernode · OpenRouter');
+    assert.equal(BV.sessionVenue({ ...state, localAgent: { leaseId: 'active' } }).label, 'Your computer · Usernode session');
+  }
+  assert.equal(BV.sessionVenue({ externalAgent: 'codex' }).label, 'Codex on the web');
+  assert.equal(BV.sessionVenue({ agentBackend: 'claude_code' }).label, 'Usernode · Claude');
+});
