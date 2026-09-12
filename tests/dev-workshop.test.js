@@ -2640,3 +2640,41 @@ test('a wide window reads the tabs at the top, as underlined words', () => {
   // bar floating over what scrolls beneath it is dead space here.
   assert.match(wide[1], /\.dev-ws-tabbody \{ padding-bottom: 0; \}/);
 });
+
+test('the read-only demo check names the pane its proposal is actually on', () => {
+  // #621 asserts one string — the seeded proposal's title — is on the demo
+  // app's Dev tab. The rework put it behind two choices and `&ws=all` alone
+  // was not enough, so the check went red and stayed red through a merge.
+  //
+  // ALL ITEMS DEFAULTS TO "BY CATEGORY", AND A CATEGORY CARD IS COLLAPSED.
+  // It renders the category's name, its saying and its count chips; the lanes
+  // holding item titles are behind `open`. So the title is not merely below
+  // the fold on that pane — it is not in the document. By stage renders the
+  // board's own columns, where every row is a card with its title.
+  //
+  // `&col=inreview` because the seed (src/db/migrate.js) inserts the proposal
+  // `promoted`, which `_kanbanView` buckets into `inreview` — and at phone
+  // width the board shows ONE column, so without it the check passes at
+  // 1280px and fails at 402px depending on the runner's viewport. Measured
+  // against the real components at 402, 800 and 1280: absent on category at
+  // every width, absent on stage/issues at 402, present and painted on
+  // stage/inreview at all three.
+  const dapp = JSON.parse(read('dapp.json'));
+  const found = [];
+  const walk = (o) => {
+    if (Array.isArray(o)) return o.forEach(walk);
+    if (!o || typeof o !== 'object') return;
+    if (typeof o.expectText === 'string' && o.expectText === 'Staging demo read-only proposal') found.push(o);
+    Object.values(o).forEach(walk);
+  };
+  walk(dapp);
+  assert.equal(found.length, 1, 'exactly one check asserts the seeded proposal');
+  const p = found[0].path;
+  assert.match(p, /[?&]ws=all(&|$)/, 'the tab, since the lander opens on Current status');
+  assert.match(p, /[?&]group=stage(&|$)/, 'the pane that lists item titles');
+  assert.match(p, /[?&]col=inreview(&|$)/, 'the column a promoted proposal buckets into');
+  // The bucketing this leans on, pinned here so moving `promoted` to another
+  // column fails locally rather than as a red check on somebody's proposal.
+  assert.match(APP_VIEW_SRC, /key: 'inreview', title: 'In review'/);
+  assert.match(APP_VIEW_SRC, /rows: cardRows\(kInReview, \(x\) => \(x\.kind === 'proposal'/);
+});
