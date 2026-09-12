@@ -144,7 +144,7 @@ test('?cards=open draws every card at full size, hooks intact: the board as it w
     'and it sits inside the action band');
   assert.ok(!/dev-card-status-end"[^>]*>(?:(?!<\/span>)[\s\S])*?dev-ws-open-btn/.test(html), 'not on the facts line');
   assert.ok(!/dev-ws-open-btn"[^>]*aria-expanded/.test(html), 'and never the in-place toggle here');
-  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="createPrForIssue">Create proposal<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
+  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="chooseIssueWork">Start work<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
     'the card\u2019s own pills come first, each marked foldable, then the link, then the hamburger');
   // A card with nothing in its status band still drops the band (#1139):
   // the toggle is not in it.
@@ -371,13 +371,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // its step line, plus step 2's back link and resend;
   // 587 → 589: the Workshop's two grouping panes, one check each — the tab
   // strip in its default state, and `?group=stage` drawing the board's own
-  // columns under it with the summary strip still above them).
-  // Two additional checks cover the underway overview and workspace deep link.
-  // 591 → 592: the Workshop's working pane, pinning that the search, filters
+  // columns under it with the summary strip still above them;
+  // 589 → 591: the status bar becoming the vote alone — one check that a
+  // BLOCKED proposal still draws a vote bar, one that its reasons are tags on
+  // the facts line beside it. Two, because those two facts sit on sibling
+  // rows and no single selector can assert both;
+  // 591 → 593: two additional checks cover the underway overview and
+  // workspace deep link;
+  // 593 → 594: the Workshop's working pane, pinning that the search, filters
   // and "+" render in its sticky head directly above those tabs rather than
   // in the frame's chrome two strips away;
-  // 592 → 595: full-card tabs, embedded owner workspace and review discussion.
-  assert.equal(DAPP.tests.length, 595);
+  // 594 → 597: full-card tabs, embedded owner workspace and review discussion.
+  // 597 → 598: #1926 repeated conflict notices in card discussions.
+  assert.equal(DAPP.tests.length, 598);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
@@ -438,7 +444,7 @@ test('every pill is foldable: the band shows as many as fit its line and the men
   assert.ok(!CARD.includes('ACTION_PRIMARY_MAX'), 'no count cap: the line is the cap');
   assert.ok(!/i > 0 && a\.kudos == null/.test(CARD));
   const html = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
-  assert.match(html, /data-fold="1"[^>]*data-act="createPrForIssue"/, 'the first pill carries a fold index');
+  assert.match(html, /data-fold="1"[^>]*data-act="chooseIssueWork"/, 'the first pill carries a fold index');
 });
 
 test('the tags ride the meta line beside the number, on the open card and the folded row alike', () => {
@@ -454,9 +460,17 @@ test('the tags ride the meta line beside the number, on the open card and the fo
   assert.match(CARD, /for \(const b of m\.linked \|\| \[\]\) nodes\.push/);
   assert.match(CARD, /filter\(\(b\) => b && b\.t === 'issueChip'\)\) nodes\.push/, 'a session\u2019s #N chips too');
   assert.match(CARD, /<div className="dev-card-meta">\{metaNodes\}<\/div>/);
-  assert.match(CARD, /const states = chips\.filter\(\(b\) => b\.t !== 'attr' && b\.t !== 'issueChip'\);/);
+  // The STATUS TAGS ride here too, marked `meta` on their spec: the status
+  // band is the vote and its button alone now, and of the two lines this is
+  // the one with room for a list that grows. Both sides of the split are
+  // asserted, because drawing them in both places is the failure mode.
+  assert.match(CARD, /filter\(\(b\) => b && b\.t === 'chip' && b\.meta\)\) nodes\.push/,
+    'the meta line draws them');
+  assert.match(CARD, /const states = chips\.filter\([\s\S]{0,160}!\(b\.t === 'chip' && b\.meta\)\);/,
+    'and the facts row does not draw them again');
   assert.match(FOLD_SRC, /<span className="dev-ws-row-meta">\{metaLineNodes\(c\)\}<\/span>/);
-  assert.match(FOLD_SRC, /filter\(\(b\) => b && b\.t !== 'attr' && b\.t !== 'issueChip'\)\.slice\(0, ROW_BADGE_MAX\)/, 'the row\u2019s last line keeps the states');
+  assert.match(FOLD_SRC, /!\(b\.t === 'chip' && b\.meta\)\)\s*\.slice\(0, ROW_BADGE_MAX\)/,
+    'the row\u2019s last line keeps the remaining states, not the status tags');
   // Rendered: the fixture issue has an assignee, so its chip sits on the
   // meta line at both sizes and its status band holds nothing.
   const open = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
