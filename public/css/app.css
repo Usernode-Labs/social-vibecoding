@@ -11945,6 +11945,13 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    UPWARDS (each press puts an older window above the one you were reading),
    so its caret is always up; the since-list opens DOWNWARDS, so its caret
    points down and turns over once the rows are showing. */
+/* Left-aligned, in the lane's own text column.
+   Centring is right for the week walk: it sits under a stack of full-width
+   cards and belongs to all of them. The since-list's control sits in a lane
+   of left-aligned type — a bulleted heading and its note — and centred it
+   read as a third, unrelated thing floating mid-lane. Indented to the
+   note's 16px so the two share a left edge. */
+.dev-ws-reveal-start { justify-content: flex-start; padding-left: 16px; }
 .dev-ws-reveal-chev { width: 14px; height: 14px; }
 .dev-ws-week-more .dev-ws-reveal-chev { transform: rotate(180deg); }
 .dev-ws-reveal[aria-expanded="true"] .dev-ws-reveal-chev { transform: rotate(180deg); }

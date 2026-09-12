@@ -804,7 +804,11 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   // quiet centred line that puts more of the pane on screen. Both wore the
   // platform's grey action pill, which made the most optional thing in each
   // block the most solid-looking thing in it.
-  assert.match(html, /class="dev-ws-reveal" data-ws-since-btn=""[^>]*>.*?Show 3</);
+  assert.match(html, /class="dev-ws-reveal dev-ws-reveal-start" data-ws-since-btn=""[^>]*>.*?Show 3</);
+  // Left-aligned, unlike the week walk's: that one sits under a stack of
+  // full-width cards and belongs to all of them, this one sits in a lane of
+  // left-aligned type and shares its note's left edge.
+  assert.match(CSS, /\.dev-ws-reveal-start \{[^}]*justify-content: flex-start;/);
   assert.match(html, /data-ws-since-btn=""[\s\S]{0,400}?dev-ws-reveal-chev/, 'and it carries the caret');
   assert.match(CSS, /\.dev-ws-reveal \{[^}]*justify-content: center;/);
   assert.match(CSS, /\.dev-ws-reveal\[aria-expanded="true"\] \.dev-ws-reveal-chev \{[^}]*rotate\(180deg\)/,

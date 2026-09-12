@@ -984,7 +984,7 @@ export function DevWorkshop(): ReactNode {
               {v.since.rows.length ? (
                 <button
                   type="button"
-                  className="dev-ws-reveal"
+                  className="dev-ws-reveal dev-ws-reveal-start"
                   data-ws-since-btn=""
                   aria-expanded={sinceOpen}
                   onClick={() => setSinceOpen(!sinceOpen)}
