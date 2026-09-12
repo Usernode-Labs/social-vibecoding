@@ -1830,7 +1830,12 @@ test('the sheet CSS moved host with the entry, and the Workshop has its own', ()
   assert.deepEqual(rules, [], 'no rule is scoped to the retired #dev-feed');
   assert.match(CSS, /#dev-workshop \.dev-feed-entry \{/);
   assert.match(CSS, /#dev-workshop \.dev-feed-thread \{/);
-  assert.match(CSS, /#dev-body:has\(> #dev-workshop\) \{ padding: 8px 4px 12px; \}/);
+  // The bottom is `--ws-gap` now, not 12px: it is the same air the sticky rail
+  // rests on, so the gap under the bar is identical whether the lander fills
+  // the scroller (rail at its bottom edge, padding decides) or overflows it
+  // (rail stuck, `bottom` decides). At 12 against 8 they differed by 4px
+  // depending on the tab. The sides are unchanged.
+  assert.match(CSS, /#dev-body:has\(> #dev-workshop\) \{ padding: 8px 4px var\(--ws-gap, 8px\); \}/);
   assert.match(CSS, /\.dev-ws-theme-head \{/);
   assert.match(CSS, /\.dev-ws-row \{/);
 });
@@ -2189,7 +2194,12 @@ test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
   // #dev-body drops to 4px of side padding for the Workshop, which reads as
   // a clipped edge once the board spans the window: 4 + 8 restores the 12px
   // the standalone board gets from #dev-body's own px-3.
-  assert.match(CSS, /#dev-body:has\(> #dev-workshop\) \{ padding: 8px 4px 12px; \}/);
+  // The bottom is `--ws-gap` now, not 12px: it is the same air the sticky rail
+  // rests on, so the gap under the bar is identical whether the lander fills
+  // the scroller (rail at its bottom edge, padding decides) or overflows it
+  // (rail stuck, `bottom` decides). At 12 against 8 they differed by 4px
+  // depending on the tab. The sides are unchanged.
+  assert.match(CSS, /#dev-body:has\(> #dev-workshop\) \{ padding: 8px 4px var\(--ws-gap, 8px\); \}/);
   assert.match(CSS, /\.dev-ws-board \{ padding: 2px 8px 0; \}/);
 });
 
@@ -2422,4 +2432,45 @@ test('the ask composer shows its send button before it is touched', () => {
   assert.ok(row, 'the model row is still gated on focus');
   assert.ok(!/dc-send-btn/.test(row[1]), 'the send circle is not in it');
   assert.match(row[1], /data-ws-ask-model/, 'the model picker is');
+});
+
+test('the lander fills its scroller without a percentage in the floor', () => {
+  // THE BUG THIS PINS SHIPPED TWICE AND WAS INVISIBLE TO EVERY LOCAL CHECK.
+  // The floor was `min-height: max(100%, var(--ws-area))`. FIREFOX does not
+  // apply it: measured on the running app (Gecko 155), `.dev-ws` computed
+  // `min-height: max(100%, 806.5px)` and used a height of 649px, leaving
+  // 121px of unused scroller beneath it. A sticky bar cannot sit below its
+  // own parent's bottom edge, so the rail rested there — and three rounds of
+  // tuning `--ws-gap` and `bottom` moved numbers that were never the problem.
+  // Chromium applies the same declaration correctly, so a headless harness
+  // reported 8px while the app floated. The percentage is indefinite here and
+  // the two engines disagree about what that does to the whole `max()`.
+  //
+  // So the rule is: NO PERCENTAGE IN THIS FLOOR, in either layout.
+  assert.ok(!/\.dev-ws \{ min-height: max\(100%/.test(CSS),
+    'the percentage floor is gone — Firefox drops it');
+  assert.match(CSS, /html\[data-browser-scroller\] \.dev-ws \{ min-height: var\(--ws-area\); \}/,
+    'the browser layout gets the viewport floor as a plain length');
+  // The native layout does not use a floor at all: the scroller has a definite
+  // height there, so the chain flexes and the lander takes what is left. That
+  // also drops the dependency on --platform-header-h being right, and on how
+  // much chrome sits above #dev-body (measured: 47px, which no viewport
+  // subtraction knew about).
+  assert.match(CSS, /#dev-forum-scroll:has\(> #dev-body > #dev-workshop\) \{ display: flex; flex-direction: column; \}/);
+  // Both selectors carry TWO rules each (the padding one above shares
+  // `#dev-body:has(> #dev-workshop)`), so match the block that actually holds
+  // the flex declarations rather than the first block that matches the name.
+  for (const sel of ['#dev-body:has\\(> #dev-workshop\\)', '#dev-workshop:has\\(> \\.dev-ws\\)']) {
+    const blocks = [...CSS.matchAll(new RegExp(sel + ' \\{([^}]*)\\}', 'g'))].map((m) => m[1]);
+    assert.ok(blocks.length, `${sel} has a rule`);
+    const flexed = blocks.find((b) => /flex: 1 1 auto/.test(b));
+    assert.ok(flexed, `${sel} is part of the flex chain`);
+    assert.match(flexed, /min-height: 0/);
+  }
+  // And the width is explicit, because `#dev-workshop` centres with
+  // `margin: 0 auto` and auto margins on a flex column's cross axis ABSORB
+  // the free space instead of stretching. Without it the pane collapsed to
+  // content: measured 760 -> 640 on By category and 1432 -> 310 on By stage.
+  assert.match(CSS, /#dev-workshop:has\(> \.dev-ws\) \{[^}]*width: 100%/);
+  assert.match(CSS, /#dev-workshop > \.dev-ws \{ flex: 1 1 auto; width: 100%; \}/);
 });
