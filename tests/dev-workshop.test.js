@@ -806,12 +806,13 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   // holds those — under the free-to-take lane, as the one item there that is
   // a record rather than a request.
   assert.match(html, /<section class="dev-ws-strip" data-ws-dashboard="">/, 'not on the dashboard any more');
-  assert.match(html, /data-ws-votes="" data-ws-next="" data-ws-since=""/);
+  assert.match(html, /<section class="dev-ws-strip" data-ws-since="">/,
+    'its own pane now: the free-to-take issues became questions and moved to the Needs-you queue, which left this alone under a heading about things that need you');
   assert.ok(!html.includes('dev-ws-since-line'), 'the old line is retired');
   // The pane's THIRD lane, built like the two above it: heading, note,
   // control. A colon for a label and its value, never an em dash (#1389).
-  assert.match(html, /data-ws-lane="since"[\s\S]*?class="dev-ws-lane-title">[\s\S]*?Since your last visit/);
-  assert.match(html, /class="dev-ws-lane-note">3d ago: 1 change landed/);
+  assert.match(html, /data-ws-since=""[\s\S]*?class="dev-ws-eyebrow">Since your last visit/);
+  assert.match(html, /class="dev-ws-lane-note dev-ws-since-note">3d ago: 1 change landed/);
   // The same control as the week walk's, because it is the same act: one
   // quiet centred line that puts more of the pane on screen. Both wore the
   // platform's grey action pill, which made the most optional thing in each
@@ -825,8 +826,9 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   assert.match(CSS, /\.dev-ws-reveal \{[^}]*justify-content: center;/);
   assert.match(CSS, /\.dev-ws-reveal\[aria-expanded="true"\] \.dev-ws-reveal-chev \{[^}]*rotate\(180deg\)/,
     'the caret turns over once the rows are up');
-  // Under the offers, not above them.
-  assert.ok(html.indexOf('data-ws-lane="next"') < html.indexOf('data-ws-lane="since"'));
+  // Last on the status tab: everything above it is what the app IS, and
+  // this is what changed for one reader.
+  assert.ok(html.indexOf('data-ws-mine') < html.indexOf('data-ws-since'));
   // The sentence is NOT the button's label. `.gc-vote-btn` is a 24px
   // fixed-height pill sized for two or three words; carrying the whole
   // sentence in it set a min-content width wider than a phone and took the
@@ -844,14 +846,19 @@ test('the vote deck is its own tab; the unclaimed suggestion stays with the stat
   // else competing for the tap; as one lane of three it read as one errand
   // among several. What is left in this strip is the thing that is not a
   // decision — an issue nobody has claimed.
-  assert.match(html, /<section class="dev-ws-strip" data-ws-votes="" data-ws-next="">/);
-  assert.ok(!html.includes('data-ws-lane="votes"'), 'the vote lane is gone from the status tab');
-  assert.ok(!html.includes('data-ws-needs'), 'and the deck is not drawn here either');
+  assert.ok(!html.includes('data-ws-votes'), 'the vote lane is gone from the status tab');
+  assert.ok(!html.includes('data-ws-lane="next"'), 'and so is the free-to-take lane');
+  assert.ok(!html.includes('data-ws-needs'), 'the deck is not drawn here either');
+  // Both are QUESTIONS, so both are the Needs-you queue: the proposals owed
+  // a vote first, the unclaimed issues behind them.
+  const q = AppView._workshopView().queue;
+  assert.deepEqual(plain(q.map((r) => r.kind)), ['vote', 'claim', 'claim']);
+  assert.deepEqual(plain(q.map((r) => r.ask)),
+    ['Should this change go in?', 'Do you want to pick this up?', 'Do you want to pick this up?']);
   // The heading states the fact; the offer is the line under it. "Why not
   // give it a try?" did both at once and coaxed while it did.
-  assert.match(html, /data-ws-lane="next"[\s\S]*?Nobody has picked this up/);
-  assert.match(html, /class="dev-ws-lane-note">Free to take, if you want to try solving an issue\./);
-  assert.ok(!html.includes('why not give it a try'), 'and the coaxing is gone');
+  assert.ok(!html.includes('Free to take, if you want to try solving an issue.'),
+    'the lane and its offer line went with it');
   // The declared check walks to a vote button; it rides the Needs-you tab
   // now, which `?ws=needs` reaches.
   const needs = workshopHtml(AppView, 'needs');
@@ -987,31 +994,29 @@ test('#1934: the rest of the unclaimed issues are the rest of the deck', () => {
   assert.equal(v.nextUp.key, 'next:issue:12');
   // Joined: the arrays come from the AppView sandbox's own realm.
   assert.equal(v.nextMore.map((r) => r.key).join(','), 'next:issue:13', 'same order, same next: keys');
-  const html = workshopHtml(AppView);
-  // #1934's "Show N more" list became one deck paged sideways: the
-  // suggestion first, then the rest, one card on screen at a time. The
-  // reveal is the pager's control, so there is no second disclosure.
-  assert.match(html, /data-ws-lane="next"[\s\S]*?data-ws-pager="next"/);
-  assert.ok(!html.includes('data-ws-next-more'), 'the vertical reveal is retired');
-  const lane = html.slice(html.indexOf('data-ws-lane="next"'));
-  assert.equal((lane.match(/data-ws-row="/g) || []).length, 2, 'both are in the deck, not behind a toggle');
-  assert.match(lane, />1 of 2</, 'and the control says how many there are');
-  // The control rides the HEADING, not the space under the deck: below the
-  // card it was a row of three small things between a card and the next
-  // heading, captioning neither.
-  assert.ok(lane.indexOf('data-ws-pager-ctl') < lane.indexOf('data-ws-pager="next"'),
-    'the control is on the heading row, above the deck');
-  assert.match(lane, /class="dev-ws-lane-head"[\s\S]*?Nobody has picked this up[\s\S]*?data-ws-pager-ctl/);
+  // #1934's "Show N more" list became a sideways deck, and then the whole
+  // lane moved: an unclaimed issue asks "will you take this?", which is the
+  // same shape of question as "should this go in?", so both are the
+  // Needs-you queue with the issues behind the proposals.
+  assert.ok(!workshopHtml(AppView).includes('data-ws-lane="next"'),
+    'nothing on the status tab any more');
+  assert.deepEqual(plain(v.queue.filter((r) => r.kind === 'claim').map((r) => r.key)),
+    ['need:issue:12', 'need:issue:13'], 'same order, behind the votes');
+  // The deck draws ONE card, so only the current question is in the DOM —
+  // the claim question is on the queue, and on screen when you reach it.
+  const needs = workshopHtml(AppView, 'needs');
+  assert.match(needs, /class="dev-ws-ask-q">Should this change go in\?</, 'the first question');
+  assert.ok(!needs.includes('data-ws-next-more'), 'the vertical reveal is long retired');
 
   // Capped like a theme lane.
   assert.match(require('fs').readFileSync(require('path').join(__dirname, '..', 'public/js/app-view.js'), 'utf8'),
     /idle\.slice\(1, 1 \+ AppView\.WORKSHOP_LANE_MAX\)/);
 
-  // One unclaimed issue → one card and no control at all.
+  // One unclaimed issue → one claim question in the queue.
   AppView._ghIssues[1].assignee = { top: 'erin' };
   const one = AppView._workshopView();
   assert.equal(one.nextMore.length, 0);
-  assert.doesNotMatch(workshopHtml(AppView), /data-ws-pager-ctl/);
+  assert.equal(one.queue.filter((r) => r.kind === 'claim').length, 1);
 });
 
 test('#1934: a filter drops the "more" along with the suggestion', () => {
@@ -1052,12 +1057,11 @@ test('the strips are ordered for a returning member: state, then what to do, the
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
   const html = workshopHtml(AppView);
-  const order = ['data-ws-dashboard', 'data-ws-votes', 'data-ws-next', 'data-ws-lane="since"',
-    'data-ws-discussion', 'data-discussion-row']
+  const order = ['data-ws-dashboard', 'data-ws-since', 'data-ws-discussion', 'data-discussion-row']
     .map((k) => html.indexOf(k));
   assert.ok(order.every((i) => i >= 0), `every strip is drawn: ${JSON.stringify(order)}`);
   assert.deepEqual(order.slice().sort((a, b) => a - b), order,
-    'where the app is, what needs you, what you could take, what changed');
+    'where the app is, what you are working on, what changed, where to talk');
   // The order changed with the "since" move: the pane used to lead with what
   // had moved for this reader, which put a personal footnote above the app's
   // own state. The app first, then the three things addressed to the reader,
@@ -1510,9 +1514,11 @@ test('the viewer\u2019s own work in flight leads the lander', () => {
     'most recently active first, and keyed apart from the same card elsewhere');
 
   const html = workshopHtml(AppView);
-  // Above "Needs your vote": the first question a returning member has is
-  // about their OWN work, and the lander answered every other one first.
-  assert.ok(html.indexOf('data-ws-mine') < html.indexOf('data-ws-votes'), 'and it leads');
+  // Second only to the app's own numbers on the status tab. The questions
+  // addressed to this viewer are a tab of their own now, so what is left
+  // here is: what the app is, then what YOU have in flight.
+  assert.ok(html.indexOf('data-ws-dashboard') < html.indexOf('data-ws-mine'));
+  assert.ok(html.indexOf('data-ws-mine') < html.indexOf('data-ws-discussion'), 'and it leads the rest');
   assert.match(html, /data-ws-lane="mine"/);
   assert.match(html, /What you are working on/);
 
@@ -1581,7 +1587,9 @@ test('every owed vote is in the deck, not on a filtered board', () => {
   // three and hid two behind "2 more waiting on you" is gone, and so is the
   // list: a decision gets the whole screen, and `votes.shown` no longer
   // decides anything that is drawn (it stays on the view model).
-  assert.match(html, /class="dev-ws-pager-n">1 of 5</, 'the deck counts every owed row');
+  // Seven: five proposals owed a vote, then the two unclaimed issues behind
+  // them. The deck is one queue of questions, not two lists.
+  assert.match(html, /class="dev-ws-pager-n">1 of 7</, 'the deck counts the whole queue');
   assert.equal((html.match(/dev-card-dense|dev-card-topic/g) || []).length, 1, 'one card on screen');
   assert.ok(!html.includes('data-ws-votes-more'), 'and there is no second disclosure');
   assert.match(html, /5 proposals need your vote/, 'with the count in words above it');

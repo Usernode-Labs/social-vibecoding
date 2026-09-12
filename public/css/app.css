@@ -11973,7 +11973,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   position: sticky; bottom: 0; z-index: 25;
   display: flex; gap: 4px;
   margin-top: 2px;
-  padding: 5px;
+  padding: 6px;
   border-radius: 999px;
   border: 1px solid var(--app-sheet-line);
   background-color: var(--dc-sheet-fill);
@@ -11986,11 +11986,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-tab {
   flex: 1 1 0; min-width: 0;
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  height: 34px; padding: 0 8px;
+  /* A THUMB TARGET, not a text button. 34px cleared the label and nothing
+     else; the shell's own minimum for something you tap on a phone is 44,
+     and this bar is the lander's primary navigation. */
+  height: 48px; padding: 0 8px;
   border: 0; border-radius: 999px;
   background: transparent;
   color: var(--text-muted);
-  font: inherit; font-size: 13px; font-weight: 600;
+  font: inherit; font-size: 14px; font-weight: 600;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   cursor: pointer;
 }
@@ -12033,12 +12036,17 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   display: grid;
   /* Two thirds to the thing being decided, one to the place you can ask
      about it — enough to say the pane is there and take a question. */
-  grid-template-rows: 2fr 1fr;
+  grid-template-rows: 1fr auto;
   gap: 8px;
 }
-/* Once you have asked something, the conversation is what you are reading
-   and the card is context for it. It stops at half: the card is the
-   subject, and a chat that swallows its subject is a chat about nothing. */
+/* Until it is used the ask pane is ONE ROW — the box and nothing else, which
+   is `auto` above. It opened at a third of the screen with a heading and a
+   hint in it, and that spent a third of a decision screen on an invitation
+   nobody had accepted.
+
+   Once you have asked something the conversation is what you are reading and
+   the card is context for it, so it takes half. It stops there: the card is
+   the subject, and a chat that swallows its subject is a chat about nothing. */
 .dev-ws-needs-engaged { grid-template-rows: 1fr 1fr; }
 @media (prefers-reduced-motion: no-preference) {
   .dev-ws-needs { transition: grid-template-rows .22s ease; }
@@ -12071,7 +12079,39 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   white-space: pre-wrap;
 }
 .dev-ws-needs-nosummary { color: var(--text-muted); font-size: 14px; font-style: italic; }
+/* ── The three answers ───────────────────────────────────────
+   Big, because this is the one thing the screen is for and a decision is a
+   poor place for a small target. Three rather than two: "not now" is a real
+   answer, and a queue that accepts only yes or no gets answered carelessly
+   by people who want it to end. */
+.dev-ws-answer { display: flex; flex-direction: column; gap: 8px; }
+.dev-ws-ask-q {
+  margin: 0; text-align: center;
+  font-size: 15px; font-weight: 600; color: var(--text-primary);
+}
+.dev-ws-answer-row { display: flex; gap: 8px; }
+.dev-ws-answer-btn {
+  flex: 1 1 0; min-width: 0; height: 52px;
+  border-radius: 16px; border: 1px solid transparent;
+  font: inherit; font-size: 16px; font-weight: 600;
+  cursor: pointer;
+}
+.dev-ws-answer-btn:disabled { opacity: .4; cursor: default; }
+.dev-ws-answer-yes { background: var(--state-ok-bg); color: var(--state-ok); border-color: currentColor; }
+/* `--state-blocked` is the platform's own red — the same token the blocked
+   pills use — rather than a literal. There is no `--state-bad`. */
+.dev-ws-answer-no { background: var(--state-blocked-bg); color: var(--state-blocked); border-color: currentColor; }
+/* Skip is deliberately the quiet one: it is always available and should
+   never be the easiest thing to hit by accident. */
+.dev-ws-answer-skip {
+  background: transparent; color: var(--text-muted);
+  border-color: var(--app-sheet-line); font-weight: 500;
+}
+.dev-ws-answer-btn[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 2px; }
 .dev-ws-needs-nav { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.dev-ws-needs-of { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* In its own pane the note needs no lane indent. */
+.dev-ws-since-note { margin-left: 0; }
 .dev-ws-needs-done {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 6px; text-align: center; padding: 48px 16px;

@@ -6141,6 +6141,48 @@ const AppView = {
       partial: !serverShipped && !!AppView._mergedHasMore,
     };
 
+    // ── The Needs-you queue ──
+    //
+    // One ordered list of QUESTIONS, which is what that tab answers: the
+    // proposals owed a vote first, then the issues nobody has claimed. The
+    // unclaimed used to be a lane on the status tab, alone under a heading
+    // that covered nothing else; they are the back of this queue now,
+    // because "will you take this?" is the same shape of ask as "should
+    // this go in?" — one card, one question, three answers.
+    //
+    // Each row carries the question and what Yes and No DO, so the deck
+    // renders buttons rather than deciding policy. A proposal's pair comes
+    // from `_cardVoteButtonSpecs`, which keeps the reviewed-head revision
+    // argument the server checks. An issue has no claim API, so Yes opens
+    // it — the same thing tapping the row has always done — and No records
+    // nothing beyond moving on, which is stated rather than implied.
+    const queue = [];
+    for (const x of owed) {
+      const card = x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item);
+      const pair = x.kind === 'proposal' ? AppView._cardVoteButtonSpecs(x.item) : [];
+      const yes = pair.find((b) => b.key === 'yes') || null;
+      const no = pair.find((b) => b.key === 'no') || null;
+      queue.push({
+        ...voteRow(card, x.item),
+        kind: 'vote',
+        ask: 'Should this change go in?',
+        yes: yes ? { label: yes.label, act: yes.act } : null,
+        no: no ? { label: no.label, act: no.act } : null,
+      });
+    }
+    for (const e of idle.slice(0, AppView.WORKSHOP_LANE_MAX)) {
+      const n = e.item && e.item.number;
+      queue.push({
+        ...e.row,
+        key: `need:${e.row.key}`,
+        kind: 'claim',
+        summary: null,
+        ask: 'Do you want to pick this up?',
+        yes: n ? { label: 'Yes', act: { fn: 'openTopic', args: ['issue', n] } } : null,
+        no: { label: 'No', act: null },
+      });
+    }
+
     // "Try taking this one next" — the most recently active open issue with
     // nobody on it. Recency rather than age on purpose: an issue the group is
     // still talking about has context to start from, where the oldest one on
@@ -6194,6 +6236,7 @@ const AppView = {
       emptyNote,
       // Which tab a URL asked for, or null for the viewer's own choice.
       tab: AppView._workshopTabParam(),
+      queue,
       votes,
       mine,
       since,

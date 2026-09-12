@@ -781,7 +781,7 @@ function RowPager({
 function NeedsDeck({
   rows, owed, total,
 }: {
-  rows: DevWorkshopView['votes']['rows'];
+  rows: DevWorkshopView['queue'];
   owed: number;
   total: number;
 }): ReactNode {
@@ -791,12 +791,17 @@ function NeedsDeck({
   // one's conversation with it.
   const [threads, setThreads] = useState<Record<string, { who: 'you' | 'ai'; text: string }[]>>({});
   const [draft, setDraft] = useState('');
+  // Answered here, this session: an answer moves the deck on, and the card
+  // stays in the list so a mis-tap can be walked back to.
+  const [answered, setAnswered] = useState<Record<string, string>>({});
 
   if (!cards.length) {
     return (
       <div className="dev-ws-needs dev-ws-needs-done" data-ws-needs="">
         <p className="dev-ws-needs-done-line">Nothing is waiting on you.</p>
-        <p className="dev-ws-needs-done-sub">Every proposal you can vote on has your answer.</p>
+        <p className="dev-ws-needs-done-sub">
+          Every proposal you can vote on has your answer, and every open issue has somebody on it.
+        </p>
       </div>
     );
   }
@@ -805,6 +810,13 @@ function NeedsDeck({
   const row = cards[i];
   const thread = threads[row.key] || [];
   const engaged = thread.length > 0;
+  const answer = (which: string, act: { fn: string; args: unknown[] } | null) => {
+    if (act) callAppView(act.fn, ...(act.args as unknown[]));
+    setAnswered((cur) => ({ ...cur, [row.key]: which }));
+    // Straight on to the next question. At the end of the queue it stays
+    // put: there is nowhere further to go, and the deck says so.
+    if (i < cards.length - 1) setAt(i + 1);
+  };
   const ask = () => {
     const q = draft.trim();
     if (!q) return;
@@ -831,50 +843,89 @@ function NeedsDeck({
       <section className="dev-ws-needs-subject">
         <div className="dev-ws-needs-head">
           <span className="dev-ws-eyebrow">{owed ? voteWords(owed) : 'Nothing owed'}</span>
+          <span className="dev-ws-needs-of">{`${i + 1} / ${cards.length}`}</span>
           {total ? <VoteRing owed={owed} total={total} /> : null}
         </div>
+        {/* The card, then the sentence explaining it. The summary led at
+            first, which put the explanation above the thing it explains and
+            made the card read as a footnote to its own description. */}
         <div className="dev-ws-needs-scroll">
-          {row.summary
-            ? <p className="dev-ws-needs-summary">{row.summary}</p>
-            : (
-              <p className="dev-ws-needs-summary dev-ws-needs-nosummary">
-                No plain-language summary was written for this change.
-              </p>
-            )}
           <DevCard model={row.card} />
+          {row.kind === 'vote' ? (
+            row.summary
+              ? <p className="dev-ws-needs-summary">{row.summary}</p>
+              : (
+                <p className="dev-ws-needs-summary dev-ws-needs-nosummary">
+                  No plain-language summary was written for this change.
+                </p>
+              )
+          ) : null}
         </div>
-        <div className="dev-ws-needs-nav" data-ws-needs-nav="">
-          <button
-            type="button"
-            className="dev-ws-pager-btn"
-            aria-label="Previous proposal"
-            disabled={i === 0}
-            onClick={() => setAt(i - 1)}
-          ><ChevronLeftIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
-          <span className="dev-ws-pager-n">{`${i + 1} of ${cards.length}`}</span>
-          <button
-            type="button"
-            className="dev-ws-pager-btn"
-            aria-label="Next proposal"
-            disabled={i >= cards.length - 1}
-            onClick={() => setAt(i + 1)}
-          ><ChevronRightIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
+        {/* The question, and the three answers to it. Big, because this is
+            the one thing the screen is for and a decision should not be a
+            small target; and three rather than two, because "not now" is a
+            real answer and a queue that only accepts yes or no is answered
+            carelessly. */}
+        <div className="dev-ws-answer" data-ws-answer="">
+          <p className="dev-ws-ask-q">{row.ask}</p>
+          <div className="dev-ws-answer-row">
+            <button
+              type="button"
+              className="dev-ws-answer-btn dev-ws-answer-yes"
+              data-ws-answer-btn="yes"
+              disabled={!row.yes}
+              aria-pressed={answered[row.key] === 'yes'}
+              onClick={() => answer('yes', row.yes ? row.yes.act : null)}
+            >Yes</button>
+            <button
+              type="button"
+              className="dev-ws-answer-btn dev-ws-answer-no"
+              data-ws-answer-btn="no"
+              disabled={!row.no}
+              aria-pressed={answered[row.key] === 'no'}
+              onClick={() => answer('no', row.no ? row.no.act : null)}
+            >No</button>
+            <button
+              type="button"
+              className="dev-ws-answer-btn dev-ws-answer-skip"
+              data-ws-answer-btn="skip"
+              onClick={() => answer('skip', null)}
+            >Skip</button>
+          </div>
+          <div className="dev-ws-needs-nav" data-ws-needs-nav="">
+            <button
+              type="button"
+              className="dev-ws-pager-btn"
+              aria-label="Back"
+              disabled={i === 0}
+              onClick={() => setAt(i - 1)}
+            ><ChevronLeftIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
+            <span className="dev-ws-pager-n">{`${i + 1} of ${cards.length}`}</span>
+            <button
+              type="button"
+              className="dev-ws-pager-btn"
+              aria-label="Forward"
+              disabled={i >= cards.length - 1}
+              onClick={() => setAt(i + 1)}
+            ><ChevronRightIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
+          </div>
         </div>
       </section>
 
+      {/* Until you use it, this is ONE ROW — the box and nothing else. It
+          opened as a third of the screen with a heading and a hint in it,
+          which spent a third of a decision screen on an invitation nobody
+          had accepted. It earns its height when it is used. */}
       <section className="dev-ws-ask" data-ws-ask="">
-        <div className="dev-ws-ask-head">
-          <span className="dev-ws-eyebrow">Ask about this change</span>
-        </div>
-        <div className="dev-ws-ask-log">
-          {thread.length ? thread.map((m, n) => (
-            <p key={n} className={m.who === 'you' ? 'dev-ws-ask-msg dev-ws-ask-you' : 'dev-ws-ask-msg dev-ws-ask-ai'}>
-              {m.text}
-            </p>
-          )) : (
-            <p className="dev-ws-ask-hint">What does this change for someone using the app? Why this way?</p>
-          )}
-        </div>
+        {engaged ? (
+          <div className="dev-ws-ask-log">
+            {thread.map((m, n) => (
+              <p key={n} className={m.who === 'you' ? 'dev-ws-ask-msg dev-ws-ask-you' : 'dev-ws-ask-msg dev-ws-ask-ai'}>
+                {m.text}
+              </p>
+            ))}
+          </div>
+        ) : null}
         <form
           className="dev-ws-ask-composer"
           onSubmit={(e) => { e.preventDefault(); ask(); }}
@@ -1091,96 +1142,42 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
-      {/* ── What is free to take, and what moved ──
-          The votes used to sit here too, as the first of three lanes. They
-          are a TAB now (`Needs you`): a decision deserves the whole screen
-          and nothing else competing for the tap, and a strip of three lanes
-          made voting look like one of several errands. What is left are the
-          two things that are not decisions — an issue nobody has claimed,
-          and what changed while you were away. */}
-      {nextUp || v.since ? (
-        <section
-          className="dev-ws-strip"
-          data-ws-votes=""
-          data-ws-next={nextUp ? '' : undefined}
-          data-ws-since={v.since ? '' : undefined}
-        >
+      {/* ── What moved while you were away ──
+          Its own pane. It was a lane inside "What needs you", beside the
+          free-to-take issues — and those are questions, so they went to the
+          Needs-you queue, which left this alone under a heading about things
+          that need you. It is a RECORD, not a request; it is on the status
+          tab because that is what it is a fact about. */}
+      {v.since ? (
+        <section className="dev-ws-strip" data-ws-since="">
           <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">What needs you</span>
+            <span className="dev-ws-eyebrow">Since your last visit</span>
           </div>
-          {nextUp ? (
-            <div className="dev-ws-lane" data-ws-lane="next">
-              {/* The heading states the fact; the line under it makes the
-                  offer. "Why not give it a try?" did both at once and coaxed
-                  while it did — a lander does not need to wheedle. Both are
-                  the pager's to draw now, because the paging control sits on
-                  the heading row.
-
-                  The suggestion is the first card, then the rest of the
-                  free-to-take issues — one deck rather than a card plus a
-                  "Show N more" list under it (#1934's reveal, turned
-                  sideways). */}
-              <RowPager
-                rows={[nextUp, ...(v.nextMore || [])]}
-                scope="next"
-                title="Nobody has picked this up"
-                note="Free to take, if you want to try solving an issue."
-                slug={slug}
-                canPost={canPost}
-                openKey={openRows.next || ''}
-                onToggle={(key) => toggleRow('next', key)}
-              />
-            </div>
+          <p className="dev-ws-lane-note dev-ws-since-note">
+            {`${relTime(v.since.baseline)}: ${sinceWords(v.since)}`}
+          </p>
+          {v.since.rows.length ? (
+            <button
+              type="button"
+              className="dev-ws-reveal dev-ws-reveal-start"
+              data-ws-since-btn=""
+              aria-expanded={sinceOpen}
+              onClick={() => setSinceOpen(!sinceOpen)}
+            >
+              <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+              {sinceOpen ? 'Hide' : `Show ${v.since.rows.length}`}
+            </button>
           ) : null}
-          {/* ── What moved while you were away ──
-              This was a line under the tiles in the pane above, which is
-              where it was first written and the wrong place for it: the
-              dashboard answers "what is this app", and a list of things that
-              changed for YOU is the same kind of thing as a vote you owe.
-              It sits under the offers, folded, because it is the one item
-              here that is a record rather than a request. */}
-          {v.since ? (
-            <div className="dev-ws-lane" data-ws-lane="since">
-              {/* The pane's THIRD lane, built like the two above it: the
-                  heading names it, the line under says what it holds, and
-                  the control sits below that. It was one full-width button
-                  carrying the whole sentence — which read as a different
-                  kind of object from its neighbours, and whose label could
-                  not wrap inside the pill it started life in. */}
-              <h4 className="dev-ws-lane-title">
-                <span className="dev-ws-dot" aria-hidden="true"></span>Since your last visit
-              </h4>
-              <p className="dev-ws-lane-note">{`${relTime(v.since.baseline)}: ${sinceWords(v.since)}`}</p>
-              {/* The same control as "Show past week" above, because it is the
-                  same act: one quiet line that puts more of the pane on
-                  screen. It wore the platform's grey action pill, which made
-                  the most optional thing in the lane the most solid-looking.
-                  The caret points DOWN here — down is where these rows
-                  appear — and turns over once they are up. */}
-              {v.since.rows.length ? (
-                <button
-                  type="button"
-                  className="dev-ws-reveal dev-ws-reveal-start"
-                  data-ws-since-btn=""
-                  aria-expanded={sinceOpen}
-                  onClick={() => setSinceOpen(!sinceOpen)}
-                >
-                  <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-                  {sinceOpen ? 'Hide' : `Show ${v.since.rows.length}`}
-                </button>
-              ) : null}
-              {sinceOpen ? v.since.rows.map((row) => (row.t === 'card' ? (
-                <CardRowView
-                  key={row.key}
-                  row={row}
-                  slug={slug}
-                  canPost={canPost}
-                  open={openRows.since === row.key}
-                  onToggle={() => toggleRow('since', row.key)}
-                />
-              ) : null)) : null}
-            </div>
-          ) : null}
+          {sinceOpen ? v.since.rows.map((row) => (row.t === 'card' ? (
+            <CardRowView
+              key={row.key}
+              row={row}
+              slug={slug}
+              canPost={canPost}
+              open={openRows.since === row.key}
+              onToggle={() => toggleRow('since', row.key)}
+            />
+          ) : null)) : null}
         </section>
       ) : null}
 
@@ -1203,7 +1200,7 @@ export function DevWorkshop(): ReactNode {
       ) : null}
 
       {tab === 'needs' ? (
-        <NeedsDeck rows={v.votes.rows} owed={v.votes.count} total={v.votes.total} />
+        <NeedsDeck rows={v.queue} owed={v.votes.count} total={v.votes.total} />
       ) : null}
 
       {tab === 'all' && themes.length ? (

@@ -335,6 +335,18 @@ export interface DevWorkshopView {
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
   /** Which tab a `?ws=` deep link asked for; null for the viewer's own choice. */
   tab: 'status' | 'needs' | 'all' | null;
+  /**
+   * The Needs-you tab's queue, in order: the proposals owed a vote, then the
+   * issues nobody has claimed. One card, one question, three answers — the
+   * row carries the question and what Yes and No DO, so the deck renders
+   * buttons rather than deciding policy.
+   */
+  queue: (ListRow & {
+    kind: 'vote' | 'claim';
+    ask: string;
+    yes: { label: string; act: { fn: string; args: unknown[] } | null } | null;
+    no: { label: string; act: { fn: string; args: unknown[] } | null } | null;
+  })[];
   /** Proposals awaiting THIS viewer's vote — pinned above the themes. */
   votes: {
     /** Still owed by this viewer. */
