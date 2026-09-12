@@ -85,45 +85,6 @@
   function connectorProduct(agent) {
     return agent === 'codex' ? 'ChatGPT' : 'Claude';
   }
-
-  // ── The connector, named once, at the paste moment ───────────────────
-  //
-  // The walkthrough deliberately does not REQUIRE the MCP connector (#1049):
-  // the branch gets pushed without one and this tab's Submit button finishes
-  // the job. But the work order tells the agent to read the full platform
-  // rules through its connector and to submit the branch itself, and a
-  // Claude or ChatGPT account that never added the connector can do neither.
-  // It stalls at "I have no Usernode tools", and the person who pasted it was
-  // never told why, because nothing in these five steps mentioned it — the
-  // only place the connect steps live is Settings → Connectors, which the
-  // venue definition points at and nothing here navigated to.
-  //
-  // So the hand-off step says it once, where the paste happens, and links the
-  // page that already has the connector URL and the click-by-click steps.
-  // A connector belongs to the chat ACCOUNT it was added in, which is why the
-  // server's count cannot settle this for somebody pasting into a second
-  // account: with none it is a prerequisite worth stating; with some, the
-  // card-level hint below carries the per-account caveat instead.
-  //
-  // Null once the branch is pushed — the moment has passed — and null when
-  // the status carries no connector count at all, so a payload that predates
-  // the field renders exactly as before.
-  function connectorNote(connectors, agent, branch) {
-    if (branch && branch.pushed) return null;
-    if (!connectors || typeof connectors.count !== 'number') return null;
-    if (connectors.count > 0) return null;
-    var label = agentLabel(agent);
-    return {
-      before: 'Before you paste, connect Usernode in the ' + connectorProduct(agent)
-        + ' account ' + label + ' will run as. ',
-      linkLabel: 'Settings → Connectors',
-      href: '#settings/connectors',
-      after: ' has the connector URL and the steps. ' + label
-        + ' uses the connector to read the full platform rules and to submit the branch as a proposal itself.'
-        + ' Without it the branch still gets pushed, but you finish here: come back to this tab and press Submit.',
-    };
-  }
-
   // Why the external flows are not on offer, in the user's words. The
   // server sends the reason code; this is the only place it becomes copy.
   function unavailableNote(reason) {
@@ -147,16 +108,15 @@
     var st = status || {};
     var gh = st.github || {};
     var fork = st.fork || null;
-    var task = st.task || null;
-    var branch = st.branch || null;
-    var label = agentLabel(agent || (task && task.agent));
-    // #1054 + #1071. When the prepared task carries a target, this run is a
-    // CONTINUATION and the last two steps say something different: the branch
-    // goes back onto something that already exists, and the final press is an
-    // update, not a new pull request. `targetKind` distinguishes the proposal
-    // the group is voting on from the session still being built.
-    var target = (task && task.targetProposal) || null;
-    var targetKind = target ? (target.targetKind || 'proposal') : null;
+    var label = agentLabel(agent);
+    // #1054 + #1071. A CONTINUATION goes back onto work that already exists,
+    // so the instructions name that proposal and the step says so. The server
+    // decides which it is; this only renders the difference.
+    var targetKind = st.targetKind || null;
+    // The connector is a REQUIREMENT now, not the advisory note it used to be
+    // below this step. Without it the agent cannot call prepare_work, so it
+    // has no base commit and no task id — there is nothing useful to hand it.
+    var connected = !!(st.connectors && st.connectors.count > 0);
 
     var list = [
       {
@@ -178,48 +138,26 @@
         actions: forkActions(fork),
       },
       {
-        key: 'prepare',
-        title: 'Prepare the work order',
-        done: !!task,
-        detail: task
-          ? prepareDetail(task, target, targetKind)
-          : 'Usernode writes the work order: the repository, the fork, the branch, the exact base commit and the platform rules your agent has to follow. Say what to build and it mints one.',
-        // #1281: the field lives HERE rather than in the composer. In a
-        // launchpad venue the composer is hidden — no turn will run in this
-        // session — so a step that told you to type in it would be pointing
-        // at something that is not on the screen.
-        brief: !task,
-        actions: task ? [] : [{ action: 'prepare', label: 'Prepare work order', primary: true }],
-      },
-      {
         key: 'handoff',
-        title: 'Hand it to ' + label,
-        done: !!(branch && branch.pushed),
-        detail: handoffDetail(branch, task, label, targetKind),
-        note: connectorNote(st.connectors, agent || (task && task.agent), branch),
-        detailExtra: target ? startOverNote(targetKind) : '',
-        actions: task ? handoffActions(agent || task.agent) : [],
-      },
-      {
-        key: 'submit',
-        title: target ? 'Submit the update' : 'Submit for review',
+        title: connected ? 'Hand it to ' + label : 'Connect Usernode',
+        // Terminal. Usernode used to track the rest — a work order minted
+        // here, a branch to watch for, a Submit button to come back and press
+        // — and that tracking is exactly what left a stale work order sitting
+        // in a launchpad nobody could clear. The agent asks what to build,
+        // mints its own work order through the connector and submits it, so
+        // there is nothing further for this tab to know.
         done: false,
-        detail: branch && branch.pushed
-          ? submitDetail(targetKind)
-          : 'Available once your branch is pushed.',
-        detailExtra: task && branch && branch.pushed ? startOverNote(targetKind) : '',
-        // "Start over" rides here too, because this is the step a stale work
-        // order strands you on: once the agent has pushed, the hand-off step is
-        // `done` and only the current step is given buttons, so a button that
-        // lived on hand-off alone would be unreachable in exactly the case the
-        // bug report described — work that was already finished. Discarding
-        // here abandons the RESERVATION, never the pushed branch.
-        actions: (branch && branch.pushed
-          ? [target
-            ? { action: 'submit-update', label: 'Submit the update', primary: true }
-            : { action: 'submit', label: 'Submit for review', primary: true }]
-          : []
-        ).concat(task ? [{ action: 'discard', label: 'Start over' }] : []),
+        detail: connected
+          ? handoffDetail(label, targetKind)
+          : 'Usernode hands ' + label + ' a short set of instructions; '
+            + label + ' asks what you want to build and takes it from there: '
+            + 'writing the work order, reading this app\'s rules, pushing the '
+            + 'branch and opening the proposal. It needs the connector in the '
+            + connectorProduct(agent) + ' account it runs as to do any of that.',
+        actions: connected
+          ? handoffActions(agent)
+          : [{ action: 'link-connector', label: 'Connect Usernode', primary: true },
+            { action: 'refresh', label: 'Check again' }],
       },
     ];
 
@@ -237,13 +175,6 @@
         title: step.title,
         state: state,
         detail: step.detail + (step.detailExtra || ''),
-        // Unlike actions and the brief box, the note is not gated on
-        // 'current': it names a prerequisite for a step still ahead, and
-        // connecting first is precisely the point.
-        note: step.note || null,
-        // Only on the step you are ON, for the same reason its actions are:
-        // a brief box under a step nobody can act on is furniture.
-        brief: !!step.brief && state === 'current',
         // Only the step you are on offers buttons: three live "Check again"
         // buttons down the card is noise, and acting on a later step out of
         // order just produces an error the user did not need to see.
@@ -276,79 +207,21 @@
     actions.push({ action: 'refresh', label: 'Check again' });
     return actions;
   }
-
-  // Step 3's detail. The branch and base commit are the same facts either
-  // way; what changes is that a continuation names WHAT it is continuing,
-  // because "starting from 4f2a1c9" on its own gives no clue that this run
-  // will move an existing session or proposal rather than open a new one.
-  function prepareDetail(task, target, targetKind) {
-    var line = 'Branch ' + (task.branch || '') + ', starting from ' + shortSha(task.baseSha) + '.';
-    if (!target) return line;
-    var title = target.title ? '"' + target.title + '"' : (targetKind === 'session' ? 'this session' : 'this proposal');
-    return (targetKind === 'session' ? 'Continuing ' : 'Updating ') + title + '. ' + line;
-  }
-
-  // Step 5's detail. Three sentences for three consequences — the vote
-  // clearing is the one people most need warning about, and a continuation of
-  // an unpromoted session has no votes to clear, so saying so there would be
-  // false.
-  function submitDetail(targetKind) {
-    if (targetKind === 'session') {
-      return 'Usernode moves this session onto the commit your agent pushed. No new proposal, no new pull request, just the same session further along.';
-    }
-    if (targetKind === 'proposal') {
-      return 'Usernode moves this proposal onto the commit your agent pushed. Its existing votes are cleared and its checks re-run, because the group would otherwise be approving code it never saw.';
-    }
-    return 'Usernode opens the pull request for you and imports it as a proposal you can put to a vote.';
-  }
-
-  function handoffDetail(branch, task, label, targetKind) {
-    if (!task) return 'Paste the work order into ' + label + ' and let it build.';
-    if (branch && branch.pushed) return 'Branch ' + task.branch + ' is pushed and ready to submit.';
-    if (branch && branch.unpushed) {
-      return 'Branch ' + task.branch + ' exists on your fork but is still on the base commit. It looks like the commits were made locally and never pushed.';
-    }
-    var base = 'Copy the work order, paste it into ' + label
-      + ', and let it push branch ' + task.branch + ' to your fork. Usernode checks for the branch when you come back to this tab.';
-    // The one thing that trips people up on a continuation: the agent gets
-    // its own conversation over there, and this transcript will not grow.
+  function handoffDetail(label, targetKind) {
+    var base = 'Copy the instructions and paste them into ' + label + '. It will ask '
+      + 'what you want to build, then write the work order, push the branch and open '
+      + 'the proposal itself. You do not come back here to finish.';
     if (targetKind === 'session' || targetKind === 'proposal') {
-      base += ' The agent talks to you in ' + label + ', not here. This transcript stays where it is until the update lands.';
+      base += ' The instructions name the ' + (targetKind === 'session' ? 'session' : 'proposal')
+        + ' this continues, so the work lands as an update to it rather than as a second copy.';
     }
     return base;
   }
 
-  // What "Start over" costs on a CONTINUATION (#1054/#1071), said out loud.
-  //
-  // It was withheld on those at first, on the grounds that discarding one drops
-  // the proposal or session it points at. But the walkthrough resolves its task
-  // per (user, app), so ONE continuation pins the launchpad of every session in
-  // that app — and the supposed escape, "Build here instead", only changes the
-  // venue: it leaves the reservation open and re-renders the same order on the
-  // way back. Withholding the button therefore bought a silent dead end rather
-  // than safety. Offer it, and name the consequence instead.
-  function startOverNote(targetKind) {
-    var what = targetKind === 'session' ? 'that session' : 'that proposal';
-    return ' "Start over" puts this work order away and stops it updating '
-      + what + '; ' + what.replace('that ', 'the ') + ' itself is left alone.';
-  }
-
-  // "Start over" is in here because the hand-off step is where a live work
-  // order is normally read — the walkthrough re-renders whatever open task the
-  // account holds for this app, which is what makes it resumable and also what
-  // made a stale one permanent: step 3 reads `done`, so its "what should it
-  // build?" field is gone, and the only other button in reach copies a work
-  // order for something that may have been finished weeks ago. The submit step
-  // carries the same action for the case where the branch is already pushed.
-  //
-  // Never primary — copying the work order is still what almost everybody
-  // arriving here wants.
   function handoffActions(agent) {
-    var actions = [{ action: 'copy', label: 'Copy work order', primary: true }];
+    var actions = [{ action: 'copy', label: 'Copy instructions', primary: true }];
     var url = agentUrl(agent);
     if (url) actions.push({ action: 'open-agent', label: 'Open ' + agentLabel(agent), href: url });
-    actions.push({ action: 'refresh', label: 'Check again' });
-    actions.push({ action: 'discard', label: 'Start over' });
     return actions;
   }
 
@@ -484,10 +357,16 @@
         + '</div>';
     }).join('');
 
-    var task = s.status.task;
-    var order = task && task.workOrder
-      ? '<details class="dc-flow-order"><summary>Work order</summary>'
-        + '<pre class="dc-flow-order-text" data-flow-order="1">' + escapeHtml(task.workOrder) + '</pre>'
+    // The instructions in full, and OPEN. The work order this replaced ran to
+    // three hundred lines, so hiding it behind a disclosure was a kindness;
+    // fifteen lines is short enough to just read, and reading what you are
+    // about to paste into an agent is the point rather than an afterthought.
+    // It also keeps the text visible to the declared checks: the two other
+    // details-based checks in dapp.json both assert on the summary, because
+    // a collapsed body is not there to be seen.
+    var order = s.status.instructions
+      ? '<details class="dc-flow-order" open><summary>Instructions</summary>'
+        + '<pre class="dc-flow-order-text" data-flow-order="1">' + escapeHtml(s.status.instructions) + '</pre>'
         + '</details>'
       : '';
 
@@ -565,7 +444,6 @@
     agentLabel: agentLabel,
     agentUrl: agentUrl,
     connectorProduct: connectorProduct,
-    connectorNote: connectorNote,
     unavailableNote: unavailableNote,
     steps: steps,
     vendorToggleHtml: vendorToggleHtml,
