@@ -911,7 +911,6 @@ function NeedsDeck({
       <section className="dev-ws-needs-subject">
         <div className="dev-ws-needs-head">
           <span className="dev-ws-eyebrow">{owed ? voteWords(owed) : 'Nothing owed'}</span>
-          <span className="dev-ws-needs-of">{`${i + 1} / ${cards.length}`}</span>
           {total ? <VoteRing owed={owed} total={total} /> : null}
         </div>
         {/* The card, then the sentence explaining it. The summary led at
@@ -974,18 +973,22 @@ function NeedsDeck({
               type="button"
               className="dev-ws-move-btn"
               data-ws-move="prev"
-              aria-label="Previous"
               disabled={i <= 0}
               onClick={() => go(-1)}
-            ><ChevronLeftIcon className="dev-ws-move-icon" aria-hidden="true" /></button>
+            ><ChevronLeftIcon className="dev-ws-move-icon" aria-hidden="true" />Previous</button>
+            {/* THE COUNT LIVES HERE NOW, not in the eyebrow. It is the answer
+                to "where am I", which is the question these two buttons
+                change — and up there it was a second small number competing
+                with the sentence that says how many need you. It also fills
+                the gap the edge-anchored boxes leave. */}
+            <span className="dev-ws-needs-of">{`${i + 1} / ${cards.length}`}</span>
             <button
               type="button"
               className="dev-ws-move-btn"
               data-ws-move="next"
-              aria-label="Next"
               disabled={i >= cards.length - 1}
               onClick={() => go(1)}
-            ><ChevronRightIcon className="dev-ws-move-icon" aria-hidden="true" /></button>
+            >Next<ChevronRightIcon className="dev-ws-move-icon" aria-hidden="true" /></button>
           </div>
         </div>
       </section>

@@ -12278,17 +12278,27 @@ html.un-kb .dev-ws { --ws-gap: 8px; }
    that are navigation rather than acts. Shorter too — 44px is the shell's
    tap minimum, and turning a page does not need the thumb-sized target a
    vote does. */
-.dev-ws-move-row { display: flex; gap: 8px; margin-top: 8px; }
+.dev-ws-move-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 10px;
+}
+/* CONTENT WIDTH, AT THE EDGES. Full-width boxes here were two equal boxes
+   under two equal boxes, and the row read as two more answers. Sized to their
+   own words they cannot line up with the pair above — "Previous" is a wider
+   word than "Next", so they are visibly not a matched set — and pushing them
+   apart leaves the centre for the count. Words rather than bare chevrons for
+   the same reason: a label says navigation where an arrow alone says button. */
 .dev-ws-move-btn {
-  flex: 1 1 0; height: 44px;
-  display: inline-flex; align-items: center; justify-content: center;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 40px; padding: 0 14px;
   border: 1px solid var(--app-sheet-line); border-radius: 14px;
   background: transparent; color: var(--text-muted);
+  font: inherit; font-size: 13.5px; font-weight: 600;
   cursor: pointer;
 }
 .dev-ws-move-btn:hover:not(:disabled) { background: var(--state-neutral-bg); color: var(--text-primary); }
 .dev-ws-move-btn:disabled { opacity: .35; cursor: default; }
-.dev-ws-move-icon { width: 20px; height: 20px; }
+.dev-ws-move-icon { width: 16px; height: 16px; }
 .dev-ws-answer-btn {
   flex: 1 1 0; min-width: 0; height: 52px;
   border-radius: 16px; border: 1px solid transparent;

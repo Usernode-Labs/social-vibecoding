@@ -2525,12 +2525,26 @@ test('the deck answers in one row and moves in another', () => {
   assert.ok(!/data-ws-answer-btn="skip"/.test(WORKSHOP), 'skip is gone from the answers');
   assert.ok(!/dev-ws-answer-skip/.test(WORKSHOP), 'and so is its button');
   assert.match(WORKSHOP, /<div className="dev-ws-move-row" data-ws-move-row="">/);
-  for (const [dir, guard] of [['prev', /disabled=\{i <= 0\}/], ['next', /disabled=\{i >= cards\.length - 1\}/]]) {
-    const btn = new RegExp(`data-ws-move="${dir}"[\\s\\S]{0,220}?/>`).exec(WORKSHOP);
+  for (const [dir, guard, word] of [
+    ['prev', /disabled=\{i <= 0\}/, /Previous/],
+    ['next', /disabled=\{i >= cards\.length - 1\}/, /Next/],
+  ]) {
+    const btn = new RegExp(`data-ws-move="${dir}"[\\s\\S]{0,320}?</button>`).exec(WORKSHOP);
     assert.ok(btn, `the ${dir} control exists`);
     assert.match(btn[0], guard, `${dir} is disabled at its end rather than wrapping`);
-    assert.match(btn[0], /aria-label="/, `${dir} is an icon button and needs a name`);
+    // A VISIBLE WORD, not a bare chevron with an aria-label. An arrow alone
+    // reads as another button in a row of buttons; the label is what says
+    // navigation. It also means no `aria-label` is wanted — a visible name
+    // IS the accessible name, and a second one only invites them to drift.
+    assert.match(btn[0], word, `${dir} says what it does`);
+    assert.ok(!/aria-label/.test(btn[0]), `${dir} needs no aria-label over its own words`);
   }
+  // The count sits BETWEEN them rather than in the eyebrow: it answers "where
+  // am I", which is the question these two buttons change, and up there it was
+  // a second small number competing with the sentence saying how many need you.
+  assert.match(WORKSHOP, /data-ws-move="prev"[\s\S]{0,700}?dev-ws-needs-of[\s\S]{0,400}?data-ws-move="next"/);
+  assert.ok(!/dev-ws-needs-head[\s\S]{0,300}?dev-ws-needs-of/.test(WORKSHOP),
+    'and no longer in the head');
   // NO WRAP, and no reordering. Skip used to send a card to the back, which
   // was the only way back to it without losing your place; you walk back now.
   // A deck that reorders itself as you browse is one you never reach the end
