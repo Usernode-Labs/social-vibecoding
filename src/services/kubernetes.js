@@ -700,14 +700,23 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   // from deploying. Without it the Ingress simply omits the asset paths and
   // the app routes exactly as it did before.
   //
-  // Never for the platform's OWN app deployment: it is the SOURCE of these
-  // three trees, so routing them to the shared backend would serve a preview
-  // the production image's copy of its own files — the preview's checks would
-  // then describe bytes that are not in the preview. Its 15 native-kit demo
-  // checks caught exactly that.
+  // RECONCILING the shared backend and ROUTING this app to it are separate
+  // questions, and conflating them cost an outage (#2045). The backend is
+  // shared; the routing is per-app. Guarding both on the self-app check meant
+  // platform previews — far and away the most frequent deploy here — stopped
+  // reconciling at all, so the one thing that happens constantly could no
+  // longer heal a broken backend, and an already-deployed app whose Ingress
+  // carried the asset paths kept answering 503 with no way back.
+  //
+  // So: always reconcile, and route only for child apps. The platform's own
+  // deployment is the SOURCE of these three trees — routing them to the
+  // shared backend would serve a preview the production image's copy of its
+  // own files, and the preview's checks would describe bytes that are not in
+  // the preview. Its 15 native-kit demo checks caught exactly that.
   let assetBackend = null;
   try {
-    if (app.slug !== config.selfAppSlug) assetBackend = await ensurePlatformAssetBackend(config);
+    const backend = await ensurePlatformAssetBackend(config);
+    if (app.slug !== config.selfAppSlug) assetBackend = backend;
   } catch (err) {
     log.warn('kubernetes', 'platform asset backend unavailable — app deploys without asset routing', {
       namespace, app: app.slug, error: err?.message,
@@ -1739,7 +1748,7 @@ module.exports = {
   _deploymentStateForTest: deploymentState,
   _normalizeDeploymentForTest: normalizeDeployment,
   _quantityNumberForTest: quantityNumber,
-  PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME,
+  PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME, ensurePlatformAssetBackend,
   _appIngressManifestForTest: appIngressManifest,
   _ensurePlatformAssetBackendForTest: ensurePlatformAssetBackend,
   _resetPlatformAssetBackendForTest: () => { platformAssetBackend = null; platformAssetBackendRetryAfter = 0; },

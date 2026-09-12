@@ -365,3 +365,70 @@ test('a backend that never becomes ready is not routed to', async (t) => {
     'the next caller gets no backend rather than another wait');
   assert.ok(Date.now() - startedAt < 100, 'and returns immediately');
 });
+
+test('the platform\'s own deploy still reconciles the shared backend', async (t) => {
+  // #2045. Reconciling the shared backend and routing THIS app to it are
+  // separate questions, and guarding both on the self-app check meant
+  // platform previews — the most frequent deploy here — stopped reconciling
+  // at all. The one thing that happens constantly could then no longer heal
+  // a broken backend, and an already-deployed app whose Ingress carried the
+  // asset paths answered 503 with no way back: it cannot detect that, cannot
+  // serve those paths itself (the Ingress rule wins), and cannot fix it from
+  // app code.
+  let reconciled = 0;
+  const fake = {
+    apps: {
+      readNamespacedDeployment: async ({ namespace, name }) => {
+        if (namespace === 'social-platform') {
+          reconciled += 1;
+          return { spec: { template: { spec: { containers: [{ name: 'platform', image: 'img@sha256:a' }] } } } };
+        }
+        return { metadata: { name, generation: 1 }, spec: { replicas: 2 },
+          status: { observedGeneration: 1, replicas: 2, updatedReplicas: 2, readyReplicas: 2, availableReplicas: 2 } };
+      },
+      createNamespacedDeployment: async ({ body }) => body,
+      replaceNamespacedDeployment: async ({ body }) => body,
+      listNamespacedPod: async () => ({ items: [] }),
+    },
+    core: {
+      readNamespacedService: async () => { const e = new Error('nf'); e.code = 404; throw e; },
+      createNamespacedService: async ({ body }) => body,
+      replaceNamespacedService: async ({ body }) => body,
+      listNamespacedPod: async () => ({ items: [] }),
+    },
+  };
+  k8s._setClientsForTest(fake);
+  k8s._resetPlatformAssetBackendForTest();
+  t.after(() => { k8s._setClientsForTest(null); k8s._resetPlatformAssetBackendForTest(); });
+
+  const config = { kubernetes: { appNamespace: 'social-apps', platformNamespace: 'social-platform',
+    platformDeployment: 'social-vibecoding', generatedAppServiceAccount: 'social-generated-app' } };
+  assert.equal(await k8s.ensurePlatformAssetBackend(config), k8s.PLATFORM_ASSET_NAME);
+  assert.equal(reconciled, 1, 'the reconcile is reachable independent of which app is deploying');
+
+  // The self app still must not be ROUTED to it — it is the source of those
+  // three trees, and routing them away serves a preview the production
+  // image's copy of its own files.
+  assert.deepEqual(
+    pathsOf(ingressFor('usernode-2d5619--s4137.onhomeroom.com', null)).map((p) => p.path),
+    ['/'],
+  );
+});
+
+test('the boot path reconciles the backend, on Kubernetes only', () => {
+  // Otherwise a fix to how the backend is BUILT does not reach one that
+  // already exists until some child app happens to deploy.
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf-8');
+  const leader = server.slice(server.indexOf('async function becomeLeader()'));
+  const call = leader.indexOf('ensurePlatformAssetBackend');
+  assert.ok(call > 0, 'the leader reconciles the hosted-asset backend');
+
+  const block = leader.slice(0, call);
+  assert.match(block.slice(-400), /mode\(config\) === 'kubernetes'/,
+    'gated on the runtime — the docker runtime has no cluster to reconcile against');
+  // Fire-and-forget: a platform that cannot reach its cluster must still boot.
+  assert.match(leader.slice(call, call + 400), /\.catch\(/,
+    'failure is logged, never fatal');
+  assert.doesNotMatch(leader.slice(Math.max(0, call - 200), call), /await\s+require/,
+    'and never awaited, so boot is not blocked on it');
+});
