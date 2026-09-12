@@ -349,7 +349,11 @@ app.get('/claude.md', (_req, res) => {
   const fs = require('fs');
   const fp = path.join(__dirname, 'src', 'prompts', 'app-conventions.md');
   try {
-    const body = fs.readFileSync(fp, 'utf-8');
+    // Through the loader, NOT a raw read: the document carries a
+    // {{PLATFORM_ORIGIN}} token that services/prompts.js resolves to this
+    // deployment's own origin. Reading the file directly here would publish
+    // the token itself to the very people this URL exists for.
+    const body = require('./src/services/prompts').getAppConventions();
     const stat = fs.statSync(fp);
     res.set('Content-Type', 'text/markdown; charset=utf-8');
     res.set('Last-Modified', stat.mtime.toUTCString());

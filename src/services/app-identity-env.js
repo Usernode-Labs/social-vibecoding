@@ -82,6 +82,26 @@ function normalizePem(raw) {
   return String(raw || '').replace(/\\n/g, '\n').trim();
 }
 
+// The platform's own PUBLIC origin, for the app's platform LINKS — an
+// "Open in Usernode" CTA, a landing page's sign-up button. That is the one
+// thing a relative path cannot express, because the platform is a different
+// origin from the app. The three hosted ASSETS do not need it: they are
+// served from the app's own hostname (services/kubernetes.js), precisely so
+// no app has to know this value.
+//
+// Read from USERNODE_DOMAIN, the same single source caddy.js, template.js
+// and config.js already read, so a self-hosted fork and a domain move both
+// carry through with no app edit.
+//
+// Omitted rather than defaulted when the domain is unset. A baked-in
+// fallback is the exact failure this key exists to end: apps scaffolded
+// before the last platform domain move still carry that era's hostname
+// as a literal, and it no longer answers.
+function platformOrigin() {
+  const domain = String(process.env.USERNODE_DOMAIN || '').trim().replace(/\/+$/, '');
+  return domain ? `https://${domain}` : null;
+}
+
 // `config` is optional: all five call sites have one, but falling back to
 // process.env keeps this usable from a boot path that runs before
 // config.load() and keeps the two sources provably identical (config's
@@ -107,12 +127,15 @@ function appIdentityEnv(app, config = null) {
     log.warn('app-identity-env', 'IFRAME_JWT_PUBLIC_KEY unset — container will reject every user token', { appId });
   }
 
+  const origin = platformOrigin();
+
   return {
     USERNODE_JWT_PUBLIC_KEY: publicPem,
     JWT_SECRET: publicPem,
     USERNODE_APP_ID: String(appId),
     IFRAME_JWT_PUBLIC_KEY: publicPem,
+    ...(origin ? { USERNODE_PLATFORM_ORIGIN: origin } : {}),
   };
 }
 
-module.exports = { appIdentityEnv, normalizePem };
+module.exports = { appIdentityEnv, normalizePem, platformOrigin };
