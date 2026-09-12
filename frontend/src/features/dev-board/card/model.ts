@@ -386,7 +386,34 @@ export interface DevWorkshopView {
      * field is '' when that window held nothing, and its card is then not
      * drawn at all — which is why these are strings rather than optional.
      */
-    cards: { lastWeek: string; thisWeek: string; open: string } | null;
+    cards: {
+      lastWeek: string;
+      thisWeek: string;
+      open: string;
+      /** Weeks before last week, newest first: one Monday-anchored window each. */
+      older: { start: number; line: string }[];
+      /** Monday of the app's first week of activity, when the server says. */
+      firstWeek: number | null;
+    } | null;
+    /**
+     * The same lines as a WALK BACKWARDS through the app's weeks, oldest
+     * first — which is the order they are drawn, top to bottom. The pane
+     * shows only the last entry (`open`) and reveals the rest one step at a
+     * time, newest end first. Empty when no line has ever been written.
+     *
+     * `startMs`/`endMs` bound the window a line was written from, so the
+     * pane can caption an older week with its dates; both are 0 on `open`,
+     * which is not a window at all.
+     */
+    weeks: {
+      key: string;
+      title: string;
+      line: string;
+      startMs: number;
+      endMs: number;
+    }[];
+    /** Monday of the app's first week of activity, when the server says. */
+    firstWeek: number | null;
     /**
      * The same answer flattened to one paragraph. It is what a row last
      * written under the previous digest prompt holds, so it keeps such a

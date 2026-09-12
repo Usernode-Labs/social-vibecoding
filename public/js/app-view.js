@@ -5363,6 +5363,13 @@ const AppView = {
   WORKSHOP_MINE_MAX: 3,
   // Rows in the "since your last visit" list.
   WORKSHOP_SINCE_MAX: 30,
+  // One calendar week, in ms. The digest's windows are Monday-anchored in
+  // UTC — see services/workshop-themes.js `weekStart`, which this file's
+  // `_weekStart` mirrors. The two MUST agree: the server decides which
+  // merges a week's line was written from, and the client decides which
+  // dates that line is labelled with, so a client on a different anchor
+  // would caption the server's sentence with somebody else's week.
+  WORKSHOP_WEEK_MS: 7 * 86400000,
   // Per page session: slug → the baseline (epoch ms, 0 on a first visit)
   // the since-strip is computed against. See _workshopBaseline.
   _workshopSince: {},
@@ -5472,7 +5479,112 @@ const AppView = {
     if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
     const line = (x) => (typeof x === 'string' ? x.trim() : '');
     const cards = { lastWeek: line(v.lastWeek), thisWeek: line(v.thisWeek), open: line(v.open) };
-    return (cards.lastWeek || cards.thisWeek || cards.open) ? cards : null;
+    // Weeks BEFORE last week, oldest-first or newest-first as the server
+    // likes — sorted here, so the walk-back never depends on an ordering
+    // nobody promised. Each is one Monday-anchored week: `start` names it,
+    // `line` is that week's sentence. An entry with no usable line is
+    // dropped rather than rendered blank; a week that is genuinely empty is
+    // the server's to describe ("nothing landed"), because the client cannot
+    // tell an empty week from a week it was never told about.
+    const older = (Array.isArray(v.older) ? v.older : [])
+      .map((w) => ({ start: AppView._ms(w && w.start), line: line(w && w.line) }))
+      .filter((w) => w.start && w.line)
+      .sort((a, b) => b.start - a.start);
+    // The Monday of the first week this app had any activity: where the
+    // walk-back stops offering another step. Null when the server has not
+    // said, which reads as "there may be more" — the button then disappears
+    // when `older` runs out instead, which is the same stop one week late
+    // rather than a false floor.
+    const firstWeek = AppView._ms(v.firstWeek) || null;
+    return (cards.lastWeek || cards.thisWeek || cards.open || older.length)
+      ? { ...cards, older, firstWeek }
+      : null;
+  },
+
+  /** A timestamp field that may arrive as ms, as a numeric string, or as ISO. */
+  _ms(x) {
+    if (typeof x === 'number') return Number.isFinite(x) ? x : 0;
+    if (typeof x !== 'string' || !x) return 0;
+    const n = /^\d+$/.test(x) ? parseInt(x, 10) : Date.parse(x);
+    return Number.isFinite(n) ? n : 0;
+  },
+
+  /**
+   * Midnight UTC on the Monday of the week containing `ms`.
+   *
+   * The mirror of services/workshop-themes.js `weekStart`, and deliberately
+   * UTC rather than local: the digest is cached per APP and read by
+   * everyone, so a viewer's timezone cannot be allowed to decide where the
+   * week starts without the cached line disagreeing with half the people
+   * reading it.
+   */
+  _weekStart(ms) {
+    const d = new Date(ms);
+    const dow = (d.getUTCDay() + 6) % 7; // Monday 0 … Sunday 6
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - dow * 86400000;
+  },
+
+  /**
+   * The digest as a WALK BACKWARDS, newest last.
+   *
+   * The three fixed windows were drawn as three cards, all three at once,
+   * and that is the whole history the lander could ever show: a reader who
+   * wanted the week before last had nowhere to go. This builds the same
+   * three as the first three steps of an arbitrarily long walk — open, this
+   * week, last week, then "N weeks ago" for as many as the server has
+   * written — and the component reveals them one at a time from the newest
+   * end.
+   *
+   * Order is OLDEST FIRST in the array, which is the order they are drawn
+   * top-to-bottom (it is also the order the three cards were drawn in
+   * before). `open` is last because it is the only entry that is not a
+   * window at all: it describes what is unfinished right now, which is the
+   * present, which is the bottom of any timeline.
+   */
+  _workshopWeeks(cards, nowMs) {
+    if (!cards) return [];
+    const WEEK = AppView.WORKSHOP_WEEK_MS;
+    const thisStart = AppView._weekStart(nowMs);
+    const out = [];
+    // Not `cards.older` directly. A cards object reaches here from the
+    // themes CACHE, and a cache written by a build before this field existed
+    // — a tab open across a deploy, a warm localStorage-free page that kept
+    // its in-memory `_workshopThemes` — has no `older` at all. A view
+    // builder that throws takes the whole lander down to its skeleton, so
+    // the shape is asserted here rather than assumed.
+    for (const w of (Array.isArray(cards.older) ? cards.older : [])) {
+      // How many weeks back from the CURRENT week: `lastWeek` is 1, so the
+      // first entry this loop can hold is 2 and the labels never collide
+      // with the two named windows below.
+      const n = Math.round((thisStart - w.start) / WEEK);
+      if (n < 2) continue;
+      out.push({
+        key: `week:${w.start}`, title: `${n} weeks ago`, line: w.line,
+        startMs: w.start, endMs: w.start + WEEK,
+      });
+    }
+    out.sort((a, b) => a.startMs - b.startMs);
+    if (cards.lastWeek) {
+      out.push({
+        key: 'lastWeek', title: 'Last week', line: cards.lastWeek,
+        startMs: thisStart - WEEK, endMs: thisStart,
+      });
+    }
+    if (cards.thisWeek) {
+      out.push({
+        key: 'thisWeek', title: 'This week', line: cards.thisWeek,
+        startMs: thisStart, endMs: nowMs,
+      });
+    }
+    // The open card carries no window: "what the open work is about" is not
+    // a week, and dating it would invite the reader to read it as one.
+    //
+    // "Open issues" rather than "Open": beside "Last week" and "This week",
+    // a bare "Open" reads as a third TIME and the eye expects a date under
+    // it. The key stays `open` — it is the server's field name and
+    // dapp.json's declared check selects on it.
+    if (cards.open) out.push({ key: 'open', title: 'Open issues', line: cards.open, startMs: 0, endMs: 0 });
+    return out;
   },
 
   // Fetch the themes, and re-fetch on the schedule above while a
@@ -5987,6 +6099,15 @@ const AppView = {
       // sentence the client can always build stays the last resort — the
       // same relationship the category grouping has to the drafted themes.
       cards: (tData && tData.digestCards) || null,
+      // The same lines as a walk backwards through the app's weeks, oldest
+      // first. The pane draws only the last of these (`open`) and reveals
+      // the rest one step at a time; see _workshopWeeks.
+      weeks: AppView._workshopWeeks((tData && tData.digestCards) || null, nowMs),
+      // The Monday of the app's first week of activity, when the server has
+      // said. The walk stops when `weeks` runs out either way; this is only
+      // how the pane can tell "that is the whole history" from "that is all
+      // that has been written so far".
+      firstWeek: (tData && tData.digestCards && tData.digestCards.firstWeek) || null,
       summary: (tData && tData.digest) || null,
       // The merged history is paged. With more behind it, page-counted week
       // numbers are floors, not totals, and the view has to say so rather
