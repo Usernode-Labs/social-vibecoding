@@ -577,40 +577,41 @@ function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
 }
 
 /**
- * The vote badge: a ring, and the count in words beside it.
+ * The vote badge: a ring, beside the heading whose lane it counts.
  *
  * It was "4 to vote on" in the warning tint, which stated a debt. The ring
  * says the same population as PROGRESS — how many of the app's open
  * proposals this viewer has answered — using the primitive the home
  * screen's Challenges block uses.
  *
- * The words are back beside it because a ring alone is a fraction with no
- * subject: "0/5" does not say what the five are, and a reader should not
- * have to hover a donut to find out. The ring carries the shape of the
- * answer, the sentence carries its meaning.
+ * A ring alone is a fraction with no subject: "0/5" does not say what the
+ * five are, and a reader should not have to hover a donut to find out. So
+ * the words are still there — as the LANE'S NOTE (`voteWords` below), in
+ * the place "Free to take, if you want to try solving an issue." occupies
+ * one lane down. Both lanes then have the same shape: a heading, a line
+ * saying what the lane is offering, and the deck. The ring and the words
+ * used to sit together up in the strip head, which put the subject of one
+ * lane above a heading that belonged to both.
  *
  * There is no × any more. A count that can be closed is a count somebody
  * stops seeing while it is still true, and this one is the whole reason the
  * pane exists.
  */
+function voteWords(owed: number): string {
+  return `${owed} ${owed === 1 ? 'proposal needs' : 'proposals need'} your vote`;
+}
+
 function VoteRing({ owed, total }: { owed: number; total: number }): ReactNode {
   const done = Math.max(0, total - owed);
   const pct = total ? Math.round((done / total) * 100) : 0;
   return (
-    <span className="dev-ws-needs-end">
-      {owed ? (
-        <span className="dev-ws-needs-count">
-          {`${owed} ${owed === 1 ? 'proposal needs' : 'proposals need'} your vote`}
-        </span>
-      ) : null}
-      <ProgressRing
-        className="dev-ws-vote-ring"
-        pct={pct}
-        label={`${done}/${total}`}
-        title={`${done} of ${total} open proposals voted on`}
-        arcClassName={owed ? 'stroke-amber-500' : 'stroke-emerald-500'}
-      />
-    </span>
+    <ProgressRing
+      className="dev-ws-vote-ring"
+      pct={pct}
+      label={`${done}/${total}`}
+      title={`${done} of ${total} open proposals voted on`}
+      arcClassName={owed ? 'stroke-amber-500' : 'stroke-emerald-500'}
+    />
   );
 }
 
@@ -637,12 +638,14 @@ function VoteRing({ owed, total }: { owed: number; total: number }): ReactNode {
  * position, so a swipe and a press cannot disagree about which card is up.
  */
 function RowPager({
-  rows, scope, title, note, slug, canPost, openKey, onToggle,
+  rows, scope, title, titleExtra, note, slug, canPost, openKey, onToggle,
 }: {
   rows: DevWorkshopView['votes']['rows'];
   scope: string;
   /** The lane's heading. The pager owns it, because the control rides it. */
   title: string;
+  /** A badge that belongs to the heading itself, after the words. */
+  titleExtra?: ReactNode;
   /** The line under the heading, where a lane has one. */
   note?: string;
   slug: string;
@@ -674,7 +677,10 @@ function RowPager({
           heading it is plainly the control FOR this lane, and the deck and
           the lane under it stay one block. */}
       <div className="dev-ws-lane-head">
-        <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>{title}</h4>
+        <h4 className="dev-ws-lane-title">
+          <span className="dev-ws-dot" aria-hidden="true"></span>{title}
+          {titleExtra}
+        </h4>
         {cards.length > 1 ? (
           <div className="dev-ws-pager-ctl" data-ws-pager-ctl="">
             <button
@@ -899,9 +905,11 @@ export function DevWorkshop(): ReactNode {
           data-ws-next={nextUp ? '' : undefined}
           data-ws-since={v.since ? '' : undefined}
         >
+          {/* The eyebrow alone. The ring and its sentence used to sit here,
+              which put one lane's subject above a heading that covers two —
+              they are the vote lane's, and they live on it now. */}
           <div className="dev-ws-strip-head">
             <span className="dev-ws-eyebrow">What needs you</span>
-            {v.votes.total ? <VoteRing owed={v.votes.count} total={v.votes.total} /> : null}
           </div>
           {v.votes.rows.length ? (
             <div className="dev-ws-lane" data-ws-lane="votes">
@@ -913,6 +921,10 @@ export function DevWorkshop(): ReactNode {
                 rows={v.votes.rows}
                 scope="votes"
                 title="Needs your vote"
+                titleExtra={v.votes.total
+                  ? <VoteRing owed={v.votes.count} total={v.votes.total} />
+                  : null}
+                note={v.votes.count ? voteWords(v.votes.count) : undefined}
                 slug={slug}
                 canPost={canPost}
                 openKey={openRows.votes || ''}

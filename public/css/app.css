@@ -12057,16 +12057,20 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-lane-btn { margin: 2px 0 0 4px; }
 /* The offer under a lane's heading, where the heading states the fact. */
 .dev-ws-lane-note { margin: -2px 0 6px 16px; font-size: 12px; color: var(--text-muted); }
-/* ── "What needs you": the ring, and the way to put it down ──
+/* ── "What needs you": the ring ────────────────────────────────
    The pane stated a debt in the warning tint with no way to close it. The
    ring is the home screen's Challenges primitive saying the same thing as
-   progress, and the × stores the OWED COUNT so the pane comes back by itself
-   the moment that number changes. */
-.dev-ws-needs-end { display: inline-flex; align-items: center; gap: 6px; }
-.dev-ws-vote-ring { width: 30px; height: 30px; }
-/* The count in words beside the ring. Muted and small: the ring is the
-   figure, this is what the figure is about. */
-.dev-ws-needs-count { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+   progress.
+
+   It sits ON THE LANE HEADING now, not in the strip head — it counts the
+   vote lane, and the strip head covers two lanes. `.dev-ws-needs-end` (the
+   ring-and-words wrapper) and `.dev-ws-needs-count` (the words) are retired
+   with that move: the words are the lane's `.dev-ws-lane-note`, in the same
+   place the free-to-take lane keeps its own line.
+
+   22px, not 30px: the heading it now rides is 12px tracked-out caps, and
+   the old size set the height of the whole row. */
+.dev-ws-vote-ring { width: 22px; height: 22px; flex: none; margin-left: 2px; }
 .dev-ws-pill {
   display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px;
   font-size: 12px; font-weight: 600; white-space: nowrap;

@@ -1418,7 +1418,20 @@ test('the vote badge is a ring AND the count in words, and cannot be closed', ()
   // not have to hover a donut to learn what the five are.
   assert.match(html, /class="[^"]*dev-ws-vote-ring/);
   assert.match(html, /1\/3/, 'answered of votable');
-  assert.match(html, /class="dev-ws-needs-count">2 proposals need your vote</);
+  // The words are the vote lane's NOTE now, in the place the free-to-take
+  // lane keeps "Free to take, if you want to try solving an issue." — so
+  // both lanes read heading, offer, deck. They used to sit in the strip
+  // head beside the ring, which put one lane's subject above a heading
+  // that covers two.
+  assert.match(html, /class="dev-ws-lane-note">2 proposals need your vote</);
+  assert.ok(!html.includes('dev-ws-needs-count'), 'the strip-head pair is retired');
+  // The RULE, not the name: the stylesheet still names both retired classes
+  // in the comment that explains where they went, which is the point of the
+  // comment.
+  assert.ok(!CSS.includes('.dev-ws-needs-count {'), 'and so is its rule');
+  assert.ok(!CSS.includes('.dev-ws-needs-end {'), 'and the wrapper it sat in');
+  // And the ring rides the heading it counts.
+  assert.match(html, /class="dev-ws-lane-title">[\s\S]*?Needs your vote[\s\S]{0,200}?dev-ws-vote-ring/);
   assert.match(html, /aria-label="1 of 3 open proposals voted on"/);
 
   // And no ×. A count that can be closed is a count somebody stops seeing
