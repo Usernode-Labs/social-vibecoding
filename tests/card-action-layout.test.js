@@ -279,8 +279,8 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   const html = cardHtml(model);
   assert.match(html, /gc-card-actions/, 'shared action row present');
   // The state-driven primary for a never-started issue.
-  assert.ok(hasAction(model, 'createPrForIssue', 5), 'the primary is wired');
-  assert.match(html, />Create proposal</);
+  assert.ok(hasAction(model, 'chooseIssueWork', 5), 'the primary is wired');
+  assert.match(html, />Start work</);
   // …plus the promoted claim toggle. The card reserves an action band on
   // every row now, and this issue card had one button to put in it; claiming
   // is what a reader does with an issue before writing any code, and the
@@ -290,7 +290,7 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   assertCardActionContract(AppView, html, { primary: 2, menu: true, previewIcon: false });
   // Generating a headless proposal spends the viewer's credits, so it is a
   // chosen ⋯ action rather than the card's most prominent button.
-  assert.ok(menuHas(AppView, html, /^Generate proposal$/), 'Generate proposal in ⋯');
+  assert.ok(!menuHas(AppView, html, /^Generate proposal$/), 'AI building is in the Start work chooser');
   assert.ok(menuHas(AppView, html, /Pledge kudos/), 'Pledge kudos in ⋯');
   assert.ok(menuHas(AppView, html, /Propose to close/), 'Propose to close in ⋯');
   assert.ok(menuHas(AppView, html, /Set priority/), 'Set priority… in ⋯');
@@ -332,7 +332,7 @@ test('issue card (read-only): no claim pill at all', () => {
   AppView.appData = null;
 });
 
-test('issue card: a ready headless run IS the primary, replacing Create proposal', () => {
+test('issue card: a ready headless run IS the primary, replacing Start work', () => {
   const AppView = makeAppView(ME);
   const model = AppView._issueCardModel(baseIssue({
     headless: { status: 'ready', outcome: 'spec', sessionId: 90 },
@@ -340,7 +340,7 @@ test('issue card: a ready headless run IS the primary, replacing Create proposal
   const html = cardHtml(model);
   assert.ok(hasAction(model, 'startFromAutoSession', 90), 'contextual ready run is the primary');
   assert.match(html, />Review spec/, 'and it wears the contextual label');
-  assert.ok(!hasAction(model, 'createPrForIssue'), 'Create proposal is superseded, not stacked beside it');
+  assert.ok(!hasAction(model, 'chooseIssueWork'), 'Start work is superseded, not stacked beside it');
   // Two primaries: the state-driven one, plus the promoted claim toggle.
   assertCardActionContract(AppView, html, { primary: 2, menu: true });
   assert.ok(menuHas(AppView, html, /Pledge kudos/), 'kudos still reachable, from ⋯');
@@ -359,7 +359,7 @@ test('issue card: a question outcome folds TWO competing pills into one primary'
   // Two pills in the band, but only ONE of them is about the headless run: the
   // fold is still a fold. The second is the promoted claim toggle.
   assertCardActionContract(AppView, html, { primary: 2, menu: true });
-  assert.ok(menuHas(AppView, html, /^Generate proposal$/), 're-run reachable from ⋯');
+  assert.ok(menuHas(AppView, html, /^Start more work$/), 're-run reachable from ⋯');
 });
 
 test('issue card: a run the viewer already cloned offers no competing re-run', () => {

@@ -112,7 +112,9 @@
 // shell bundle, while Settings lives in a lazy chunk; without retiring the
 // cached shell, an existing installation could show the new Settings picker
 // alongside the old in-task model list.
-const SW_VERSION = 'v13';
+// Card-action cleanup: retire cached shells so existing previews receive
+// the Build tab, its author default, and the simplified full-card controls.
+const SW_VERSION = 'v14';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
