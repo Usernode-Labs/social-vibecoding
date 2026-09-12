@@ -2128,14 +2128,24 @@ async function adoptTaskForSession(pool, taskId, userId, sessionId) {
 // session-scoped: an agent that lost its task id knows the app and the branch
 // it pushed, and nothing about the browser session a human minted it in.
 //
-// Two steps, in this order:
-//   1. This session's own task.
-//   2. Failing that, ADOPT the newest order that belongs to no session yet —
-//      rows minted before this column existed, or through the connector. Left
-//      unadopted they would be invisible to every launchpad while still
-//      counting against the caller's open-work-order cap, which is a worse
-//      trap than the one this change removes. The first launchpad to look
-//      claims it; every other session then starts clean.
+// This session's own order, or none. There is deliberately no fallback.
+//
+// It used to ADOPT the newest order belonging to no session, on the reasoning
+// that an unadopted one would be invisible while still holding a cap slot.
+// That was wrong twice over. Factually: those rows were listed in the Improve
+// panel the whole time, which filters on `session_id` (the shared-session
+// column) and expiry, never on `origin_session_id`. And conceptually: a work
+// order is not a durable thing to keep reachable. It is one ATTEMPT at an
+// issue — active work, finished or abandoned — so an attempt whose session is
+// gone is not a backlog item, it is over. Adopting them turned one permanently
+// stale launchpad into a QUEUE of them: every new change claimed the next
+// orphan off the pile.
+//
+// What was actually missing is the ending. An attempt had a beginning
+// (prepare) and two endings (submit, "Start over") but none for "the session
+// it belonged to is over" — so dead ones leaked. finalizeArchivedSession
+// closes them now, and the backfill in schema.sql closed the ones that had
+// already accumulated.
 //
 // `unexpiredOnly` carries the same meaning it has on the app-wide lookup.
 async function loadOpenTaskForSession(pool, userId, slug, sessionId, opts = {}) {
@@ -2160,34 +2170,35 @@ async function loadOpenTaskForSession(pool, userId, slug, sessionId, opts = {}) 
           ORDER BY t.id DESC LIMIT 1`,
         [userId, slug, session]
       );
-    if (mine.rows[0]) return mine.rows[0];
-
-    const orphan = opts.unexpiredOnly
-      ? await pool.query(
-        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
-          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
-            AND t.origin_session_id IS NULL
-            AND t.expires_at > NOW()
-          ORDER BY t.id DESC LIMIT 1`,
-        [userId, slug]
-      )
-      : await pool.query(
-        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
-          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
-            AND t.origin_session_id IS NULL
-          ORDER BY t.id DESC LIMIT 1`,
-        [userId, slug]
-      );
-    const row = orphan.rows[0];
-    if (!row) return null;
-    const adopted = await adoptTaskForSession(pool, row.id, userId, session);
-    if (adopted) row.origin_session_id = adopted;
-    return row;
+    return mine.rows[0] || null;
   } catch {
     return null;
   }
+}
+
+// The ending that was missing: a session is over, so the attempt it was making
+// is over. Called from finalizeArchivedSession, which every archive path
+// funnels through.
+//
+// `session_id IS NULL` is the one exclusion. That column means the work has
+// been SHARED as an in-progress card on the Dev board; the card outlives the
+// chat session it was started from, and closing its reservation would strand
+// a submission the group can already see. Only unshared attempts are closed.
+//
+// Scoped by the session alone, not by user: the caller has already authorised
+// the archive, and a task whose origin_session_id is this session is this
+// session's by construction.
+async function abandonTasksForSession(pool, sessionId) {
+  const session = sessionRef(sessionId);
+  if (!session) return 0;
+  const { rows } = await pool.query(
+    `UPDATE external_agent_tasks
+        SET status = 'abandoned'
+      WHERE origin_session_id = $1 AND status = 'open' AND session_id IS NULL
+      RETURNING id`,
+    [session]
+  );
+  return rows.length;
 }
 
 // The attribution gate. A proposal opened through this path carries the
@@ -3487,6 +3498,7 @@ module.exports = {
   // The walkthrough's own lookup (per session), and the adoption behind it.
   loadOpenTaskForSession,
   adoptTaskForSession,
+  abandonTasksForSession,
   renderPreparedTask,
   prepareWork,
   submitWork,

@@ -763,19 +763,15 @@ test('the per-session lookup is a separate function, not a widened one', () => {
 
   const perSession = svcSrc.slice(
     svcSrc.indexOf('async function loadOpenTaskForSession('),
-    svcSrc.indexOf('// The attribution gate.')
+    svcSrc.indexOf('async function abandonTasksForSession(')
   );
-  // Four literals: this session's task and the orphan scan, each with and
-  // without the expiry filter — all static, none assembled.
-  assert.equal((perSession.match(/await pool\.query\(/g) || []).length, 4);
+  // Two literals: this session's task, with and without the expiry filter.
+  // Both static, neither assembled. There is no third — the orphan scan that
+  // used to follow them handed a new change somebody else's work order.
+  assert.equal((perSession.match(/await pool\.query\(/g) || []).length, 2);
   assert.equal((perSession.match(/AND t\.origin_session_id = \$3/g) || []).length, 2);
-  assert.equal((perSession.match(/AND t\.origin_session_id IS NULL/g) || []).length, 2);
-  // Own task first, orphan second — the other way round, a legacy row would
-  // be adopted over a task this session actually prepared.
-  assert.ok(
-    perSession.indexOf('origin_session_id = $3') < perSession.indexOf('origin_session_id IS NULL'),
-    "this session's own task is looked for first"
-  );
+  assert.ok(!/origin_session_id IS NULL/.test(perSession),
+    'a session shows its own work order or none');
 });
 
 test('discard is authenticated, same-origin and digits-only', async () => {
