@@ -11201,6 +11201,20 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 #dev-topic-thread > .dev-thread > #gc-thread-scroll {
   padding: 0 4px;
 }
+/* #1901: the reply bar sits in the THREAD'S column, not the window's. The
+   topic card and the Discussion sheet are capped at 900px and centred
+   (`.dev-topic`, `#gc-thread-messages` below), but the typing line and the
+   composer bar under them spanned the whole pane — so on a wide desktop the
+   "Reply in thread" box stretched far past the thread it answers and read as
+   floating loose on the page. Same cap, same centring, so its edges line up
+   with the sheet above it. A no-op below 900px + gutters. */
+#dev-topic-thread > .dev-thread > #gc-thread-typing,
+#dev-topic-thread > .dev-thread > .platform-safe-bar {
+  width: 100%;
+  max-width: 900px;
+  margin-left: auto;
+  margin-right: auto;
+}
 .dev-topic {
   display: flex;
   flex-direction: column;
