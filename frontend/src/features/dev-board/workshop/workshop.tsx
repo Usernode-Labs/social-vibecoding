@@ -44,7 +44,15 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { ArrowUpIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icons';
+import {
+  ArrowUpIcon,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  NewspaperIcon,
+  SpeechCheckIcon,
+  Squares2X2Icon,
+} from '@/components/ui/icons';
 
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -67,11 +75,26 @@ type TabKey = 'status' | 'needs' | 'all';
  * is, what it needs from you, everything there is. The bar sits at the
  * BOTTOM — this is a phone screen first, and the three destinations are
  * navigation, not a control acting on what is above them.
+ *
+ * EACH CARRIES A GLYPH, AND KEEPS ITS WORDS. A bottom rail is scanned, not
+ * read, and three same-weight phrases gave the eye nothing to aim at; the
+ * label stays under the glyph because none of the three is conventional
+ * enough to stand alone, and dropping it would cost the tab its accessible
+ * name as well.
+ *
+ * Why these three. The newspaper is the week as written, which is what the
+ * status tab is — a digest, not a dashboard. The grid is everything, in
+ * whichever grouping you pick. The bubble-with-a-tick is drawn for this bar
+ * (see icons.tsx): a plain bubble reads as "messages", which is the wrong
+ * destination, and a bare tick reads as the state after you have answered
+ * rather than the asking. `BoardIcon` was the other candidate for status and
+ * lost twice — it is the Kanban glyph, so it collides with All items' own
+ * By-stage pane, and its 4-unit-wide bars close up at this size.
  */
-const TABS: { key: TabKey; label: string }[] = [
-  { key: 'status', label: 'Current status' },
-  { key: 'needs', label: 'Needs you' },
-  { key: 'all', label: 'All items' },
+const TABS: { key: TabKey; label: string; Icon: typeof NewspaperIcon }[] = [
+  { key: 'status', label: 'Current status', Icon: NewspaperIcon },
+  { key: 'needs', label: 'Needs you', Icon: SpeechCheckIcon },
+  { key: 'all', label: 'All items', Icon: Squares2X2Icon },
 ];
 
 /** The swatch a name gets everywhere (feed-thread's rule, kept in step). */
@@ -1438,7 +1461,14 @@ export function DevWorkshop(): ReactNode {
             aria-selected={tab === t.key}
             onClick={() => setTab(t.key)}
           >
-            {t.label}
+            {/* The glyph is decoration over a label that is already there, so
+                it is hidden from the accessibility tree rather than given a
+                name of its own — otherwise every tab announces twice. Its
+                size comes from the class, not a prop: icons.tsx has no size
+                variant on purpose, and every other `.dev-ws-*` measurement
+                lives in app.css beside its neighbours. */}
+            <t.Icon className="dev-ws-tab-glyph" aria-hidden="true" />
+            <span className="dev-ws-tab-label">{t.label}</span>
           </button>
         ))}
       </nav>
