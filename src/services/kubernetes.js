@@ -543,9 +543,18 @@ function appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, as
 // fleet-wide fix central hosting is for. Without the memo this would add
 // three API calls to every app deploy and every preview build.
 let platformAssetBackend = null;
+// After a failed reconcile, stop trying for a while. Clearing the memo alone
+// means the NEXT app deploy pays the readiness wait again, and the one after
+// that — so a backend that cannot come up (a bad launch command, an image
+// that will not start) would add that wait to every deploy on the platform
+// rather than costing it once. Routing is the thing being delayed here, and
+// no app needs it urgently enough to be worth that.
+let platformAssetBackendRetryAfter = 0;
 
-async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 120000 } = {}) {
+async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retryAfterMs = 300000 } = {}) {
   if (platformAssetBackend) return platformAssetBackend;
+  // Still cooling off from a failure: no backend, and crucially no wait.
+  if (Date.now() < platformAssetBackendRetryAfter) return null;
   platformAssetBackend = (async () => {
     const cfg = config.kubernetes;
     const namespace = cfg.appNamespace;
@@ -618,6 +627,7 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 120000 } = 
     // Clear the memo so the next deploy retries rather than this process
     // serving apps without asset routing until it restarts.
     platformAssetBackend = null;
+    platformAssetBackendRetryAfter = Date.now() + retryAfterMs;
     throw err;
   });
   return platformAssetBackend;
@@ -690,14 +700,23 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   // from deploying. Without it the Ingress simply omits the asset paths and
   // the app routes exactly as it did before.
   //
-  // Never for the platform's OWN app deployment: it is the SOURCE of these
-  // three trees, so routing them to the shared backend would serve a preview
-  // the production image's copy of its own files — the preview's checks would
-  // then describe bytes that are not in the preview. Its 15 native-kit demo
-  // checks caught exactly that.
+  // RECONCILING the shared backend and ROUTING this app to it are separate
+  // questions, and conflating them cost an outage (#2045). The backend is
+  // shared; the routing is per-app. Guarding both on the self-app check meant
+  // platform previews — far and away the most frequent deploy here — stopped
+  // reconciling at all, so the one thing that happens constantly could no
+  // longer heal a broken backend, and an already-deployed app whose Ingress
+  // carried the asset paths kept answering 503 with no way back.
+  //
+  // So: always reconcile, and route only for child apps. The platform's own
+  // deployment is the SOURCE of these three trees — routing them to the
+  // shared backend would serve a preview the production image's copy of its
+  // own files, and the preview's checks would describe bytes that are not in
+  // the preview. Its 15 native-kit demo checks caught exactly that.
   let assetBackend = null;
   try {
-    if (app.slug !== config.selfAppSlug) assetBackend = await ensurePlatformAssetBackend(config);
+    const backend = await ensurePlatformAssetBackend(config);
+    if (app.slug !== config.selfAppSlug) assetBackend = backend;
   } catch (err) {
     log.warn('kubernetes', 'platform asset backend unavailable — app deploys without asset routing', {
       namespace, app: app.slug, error: err?.message,
@@ -1729,8 +1748,8 @@ module.exports = {
   _deploymentStateForTest: deploymentState,
   _normalizeDeploymentForTest: normalizeDeployment,
   _quantityNumberForTest: quantityNumber,
-  PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME,
+  PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME, ensurePlatformAssetBackend,
   _appIngressManifestForTest: appIngressManifest,
   _ensurePlatformAssetBackendForTest: ensurePlatformAssetBackend,
-  _resetPlatformAssetBackendForTest: () => { platformAssetBackend = null; },
+  _resetPlatformAssetBackendForTest: () => { platformAssetBackend = null; platformAssetBackendRetryAfter = 0; },
 };

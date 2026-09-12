@@ -620,26 +620,57 @@ test('voteButtonsHtml: full set concatenates Preview/Yes/No/Admin (group-chat ro
   assert.match(html, /castAdminMerge\(7\)/, 'Admin merge');
 });
 
-test('native vote controls and request carry the exact rendered revision', async () => {
+test('native vote controls and request carry the approval epoch', async () => {
+  // #2038: the vote is pinned to the epoch the card was rendered at, not to
+  // the commit. A commit changes every time the platform brings a proposal up
+  // to date with main, and a guard that compared commits rejected the next
+  // voter's click on every one of those merges — for code the platform had
+  // just certified was unchanged.
   const AppView = makeAppView(ME);
-  const head = 'a'.repeat(40);
-  const html = AppView.voteButtonsHtml(baseProposal({ reviewed_head_sha: head }));
-  assert.match(html, new RegExp(`castVote\\(7, 'yes', '${head}'\\)`));
-  assert.match(html, new RegExp(`castVote\\(7, 'no', '${head}'\\)`));
+  const html = AppView.voteButtonsHtml(baseProposal({ approval_epoch: 3 }));
+  assert.match(html, /castVote\(7, 'yes', 3\)/);
+  assert.match(html, /castVote\(7, 'no', 3\)/);
+
+  // Imported proposals carry an epoch too: an imported head moving is always
+  // an author push, so the epoch is exactly the right thing to compare.
   const importedHtml = AppView.voteButtonsHtml(baseProposal({
-    source: 'imported', reviewed_head_sha: head, imported_pr_head_sha: 'b'.repeat(40),
+    source: 'imported', approval_epoch: 5, imported_pr_head_sha: 'b'.repeat(40),
   }));
-  assert.doesNotMatch(importedHtml, new RegExp(head),
-    'imported proposals keep their established imported-head vote flow');
+  assert.match(importedHtml, /castVote\(7, 'yes', 5\)/);
 
   let request = null;
   AppView.__sandbox.fetch = async (url, options) => {
     request = { url, options };
     return { ok: true, status: 200, json: async () => ({ ok: true }) };
   };
-  await AppView.castVote(7, 'yes', head);
+  await AppView.castVote(7, 'yes', 3);
   assert.equal(request.url, '/api/sessions/7/vote');
   assert.deepEqual(JSON.parse(request.options.body), {
-    vote: 'yes', expectedHeadSha: head,
+    vote: 'yes', expectedEpoch: 3,
   });
 });
+
+test('a rejected vote re-arms from the epoch the server named', async () => {
+  // One head move used to produce TWO identical rejections: the refresh was
+  // fired without being awaited and the click lock was released first, so an
+  // impatient second click re-sent the same stale stamp (#2038 F8).
+  const AppView = makeAppView(ME);
+  const sent = [];
+  let call = 0;
+  AppView.__sandbox.fetch = async (url, options) => {
+    sent.push(JSON.parse(options.body));
+    call += 1;
+    if (call === 1) {
+      return {
+        ok: false, status: 409,
+        json: async () => ({ error: 'changed', approvalEpoch: 9 }),
+      };
+    }
+    return { ok: true, status: 200, json: async () => ({ ok: true }) };
+  };
+  await AppView.castVote(7, 'yes', 3);
+  await AppView.castVote(7, 'yes', 3);
+  assert.deepEqual(sent.map((b) => b.expectedEpoch), [3, 9],
+    'the second click must carry the epoch the rejection named, not the stale one');
+});
+

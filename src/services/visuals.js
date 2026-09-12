@@ -1429,7 +1429,10 @@ async function patchPrBody(pool, session, repoOwner, repoName, block) {
 // finally block. Depth is capped at one per session (a later request
 // overwrites the parked args — the freshest commit is the one worth
 // shooting), so a burst of rebuilds can never fan out into a queue.
-const _inFlight = new Set();
+// #2038: a Map, not a Set — the value carries the running operation's abort
+// handle and the commit it is testing, which is what lets a NEWER run for a
+// DIFFERENT commit supersede it instead of waiting it out.
+const _inFlight = new Map(); // key -> { operation, commitHash }
 const _queued = new Map();
 
 function captureKey(sessionId) {
@@ -1596,13 +1599,49 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   const { send, trigger = null, force = false } = opts || {};
   const key = captureKey(session.id);
   if (_inFlight.has(key)) {
-    // Re-queue instead of dropping: park the NEWER run's arguments (latest
-    // wins, depth 1) for the in-flight run's finally block to re-drive.
-    // `send` is deliberately NOT carried over — by the time the queued run
-    // fires, the requesting turn's SSE stream is long closed, so the queued
-    // run publishes via the session bus + global WS instead.
+    // Re-queue: park the NEWER run's arguments (latest wins, depth 1) for the
+    // in-flight run's finally block to re-drive. `send` is deliberately NOT
+    // carried over — by the time the queued run fires, the requesting turn's
+    // SSE stream is long closed, so the queued run publishes via the session
+    // bus + global WS instead.
     _queued.set(key, { config, session, app, commitHash, stagingResult, trigger, force });
-    log.info('visuals', 'Capture already in flight — re-queued for after it finishes', {
+
+    // #2038 — and if the head has MOVED, stop the run that is going.
+    //
+    // Waiting it out is not merely wasteful, it is worse than useless. The
+    // running suite is testing the OLD commit, and storeChecks only writes
+    // when checks_commit_sha still matches the commit its run started on —
+    // which setChecksPending has already moved. So that run finishes and
+    // writes its verdict NOWHERE: the row stays 'pending' with a checked_at
+    // that never advances, and nothing touches it until the stale-checks
+    // sweeper notices CHECKS_STALE_MS later. #1728 measured the cost at two
+    // abandoned runs (one of them 490 checks in), two ten-minute dead waits
+    // and three full runs for one proposal.
+    //
+    // Same commit is a different case and keeps today's behaviour: the two
+    // builds are of one tree, the queued request arrived late rather than
+    // because anything changed, and drainQueued's #1144 rule drops it once
+    // the running one produces a real verdict.
+    const running = _inFlight.get(key);
+    const movedOn = running && running.commitHash && commitHash
+      && running.commitHash !== commitHash;
+    if (movedOn && running.operation && typeof running.operation.abort === 'function') {
+      log.info('visuals', 'Superseding the in-flight capture — the head moved under it', {
+        sessionId: session.id, was: running.commitHash, now: commitHash, trigger,
+      });
+      try {
+        running.operation.abort(lifecycle.cancelled());
+      } catch (err) {
+        log.warn('visuals', 'Could not abort the superseded capture', {
+          sessionId: session.id, err: err.message,
+        });
+      }
+      // The aborted run's finally block drains the queue, so the new run
+      // starts as soon as it unwinds rather than after its full suite.
+      return;
+    }
+
+    log.info('visuals', 'Capture already in flight for this commit — re-queued', {
       sessionId: session.id, commitHash: commitHash || null, trigger,
     });
     // Say so on the card. This wait is the long version of the
@@ -1613,7 +1652,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     reportPrepareChecks(config, session, stagingResult, { queued: true });
     return;
   }
-  _inFlight.add(key);
+  _inFlight.set(key, { operation, commitHash: commitHash || null });
   const pool = getPool(config);
 
   // ── Skip a provably redundant run (#1144) ──
