@@ -1393,7 +1393,7 @@ const DevChat = {
   // renders it silently. tests/dev-flow-routes.test.js scrapes the route's own
   // `req.query.order === '…'` literals and fails when this list does not cover
   // them, so the next one cannot repeat it.
-  DEV_FLOW_ORDERS: ['plain', 'none'],
+  DEV_FLOW_ORDERS: ['connect', 'continue'],
 
   _devFlowDemoQS() {
     const base = DevChat._demoQS();
@@ -2811,9 +2811,17 @@ const DevChat = {
       // production and `?demo=…` in a staging preview — hence the separator
       // rather than a bare '?'.
       const fixtureQS = DevChat._devFlowDemoQS();
+      // `proposalId`/`targetKind` are the continuation this launchpad is
+      // offering (#1054/#1071). They reach the server only so the instructions
+      // can name the proposal the agent should update rather than open a
+      // second one beside it.
+      const target = DevChat._devFlow.targetId
+        ? `&proposalId=${encodeURIComponent(DevChat._devFlow.targetId)}`
+          + `&targetKind=${encodeURIComponent(DevChat._devFlow.targetKind || 'proposal')}`
+        : '';
       const res = await fetch(
         `/api/apps/${encodeURIComponent(slug)}/dev-flow/status`
-          + `${fixtureQS}${fixtureQS ? '&' : '?'}sessionId=${encodeURIComponent(session.id)}`,
+          + `${fixtureQS}${fixtureQS ? '&' : '?'}sessionId=${encodeURIComponent(session.id)}${target}`,
         { credentials: 'same-origin' }
       );
       // A failed read is not an error the user needs — the card simply
@@ -2856,7 +2864,7 @@ const DevChat = {
       DevChat.renderChatView();
       return;
     }
-    if (action === 'link-github') {
+    if (action === 'link-github' || action === 'link-connector') {
       window.location.hash = '#settings/connectors';
       return;
     }
@@ -2888,10 +2896,13 @@ const DevChat = {
       return;
     }
     if (action === 'copy') {
-      const task = flow.status && flow.status.task;
-      const text = task ? task.workOrder : '';
+      // The instructions, not a work order. Usernode no longer writes the work
+      // order — the agent asks what to build and mints its own through the
+      // connector, which is also what stopped a stale one being able to sit in
+      // this tab at all.
+      const text = (flow.status && flow.status.instructions) || '';
       if (!text) {
-        flow.error = 'No work order to copy yet.';
+        flow.error = 'No instructions to copy yet.';
         DevChat._repaintDevFlow();
         return;
       }
@@ -2900,8 +2911,8 @@ const DevChat = {
         await navigator.clipboard.writeText(text);
         copied = true;
       } catch { copied = false; }
-      if (copied) flow.notice = 'Work order copied. Paste it into your agent.';
-      else flow.error = 'Could not reach the clipboard. Open the work order below and copy it by hand.';
+      if (copied) flow.notice = 'Instructions copied. Paste them into your agent, which will ask what you want to build.';
+      else flow.error = 'Could not reach the clipboard. Open the instructions below and copy them by hand.';
       DevChat._repaintDevFlow();
       return;
     }

@@ -3408,22 +3408,10 @@
       "expectText": "Your Own Developer Tooling"
     },
     {
-      "name": "Choosing Claude Code opens a five-step walkthrough with one step live (#1049)",
-      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
-      "expectSelector": "[data-flow-wizard] [data-flow-step-state=\"current\"]",
-      "expectText": "Check again"
-    },
-    {
       "name": "The walkthrough's trips out are real links a mobile webview can follow (#1312)",
       "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
       "expectSelector": "[data-flow-wizard] a[data-flow-action=\"open-agent\"][target=\"_blank\"]",
       "expectText": "Open Claude Code"
-    },
-    {
-      "name": "The hand-off step says to connect Usernode first, and links the steps",
-      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
-      "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] [data-flow-note=\"connector\"] a[href=\"#settings/connectors\"]",
-      "expectText": "Settings → Connectors"
     },
     {
       "name": "Settings can answer the build-flow question for good (#1049)",
@@ -3491,12 +3479,6 @@
       "path": "/?demo=1&shot=session-options-instructions#app/usernode-2d5619/dev/sessions/990405",
       "expectSelector": "#dc-options-commands",
       "expectText": "agent run --session 990405"
-    },
-    {
-      "name": "Continuing a proposal ends in submitting an update, not a new proposal (#1071)",
-      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990406",
-      "expectSelector": "[data-flow-wizard] [data-flow-step=\"submit\"] .dc-flow-step-title",
-      "expectText": "Submit the update"
     },
     {
       "name": "Browse draws the image icon tile for a seeded app (#1120)",
@@ -3825,38 +3807,38 @@
       "expectText": "Visible to the group"
     },
     {
-      "name": "The hand-off step offers a way out of the work order it is showing (stale work orders)",
-      "path": "/?demo=1&order=plain&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
-      "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"][data-flow-step-state=\"current\"] .dc-flow-actions button[data-flow-action=\"discard\"]",
-      "expectText": "Start over"
-    },
-    {
-      "name": "Copying the work order is still the primary action beside it",
-      "path": "/?demo=1&order=plain&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
-      "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-actions > button[data-flow-action=\"copy\"].dc-flow-action-primary ~ button[data-flow-action=\"discard\"]:not(.dc-flow-action-primary)"
-    },
-    {
-      "name": "A continuation offers Start over too, and says what pressing it gives up",
+      "name": "Choosing Claude Code opens a three-step walkthrough, ending at the hand-off",
       "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
-      "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-actions button[data-flow-action=\"discard\"]",
-      "expectText": "Start over"
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"][data-flow-step-state=\"current\"]"
     },
     {
-      "name": "...and the continuation step spells out that the proposal itself survives",
+      "name": "The hand-off offers the instructions to copy, not a work order to fill in",
       "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-actions button[data-flow-action=\"copy\"]",
+      "expectText": "Copy instructions"
+    },
+    {
+      "name": "The walkthrough has no brief field: the agent asks what to build",
+      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"]:not(:has(textarea[data-flow-brief]))"
+    },
+    {
+      "name": "The instructions themselves are on the card, for a clipboard that refuses",
+      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] details.dc-flow-order pre[data-flow-order]",
+      "expectText": "Call prepare_work"
+    },
+    {
+      "name": "Without a connector the hand-off asks for one, because the agent needs it",
+      "path": "/?demo=1&order=connect&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-actions button[data-flow-action=\"link-connector\"]",
+      "expectText": "Connect Usernode"
+    },
+    {
+      "name": "A continuation says the work lands as an update, not a second copy",
+      "path": "/?demo=1&order=continue&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
       "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-step-detail",
-      "expectText": "the proposal itself is left alone"
-    },
-    {
-      "name": "A session with no work order of its own asks what to build (per-session launchpad)",
-      "path": "/?demo=1&order=none&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
-      "expectSelector": "[data-flow-wizard] [data-flow-step=\"prepare\"][data-flow-step-state=\"current\"] textarea[data-flow-brief]"
-    },
-    {
-      "name": "...and offers Prepare rather than another session's work order to copy",
-      "path": "/?demo=1&order=none&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
-      "expectSelector": "[data-flow-wizard] [data-flow-step=\"prepare\"] .dc-flow-actions button[data-flow-action=\"prepare\"]",
-      "expectText": "Prepare work order"
+      "expectText": "update to it rather than as a second copy"
     }
   ],
   "governance": {
