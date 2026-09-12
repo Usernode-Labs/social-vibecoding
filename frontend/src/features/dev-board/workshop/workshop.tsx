@@ -965,19 +965,25 @@ export function DevWorkshop(): ReactNode {
               here that is a record rather than a request. */}
           {v.since ? (
             <div className="dev-ws-lane" data-ws-lane="since">
-              <button
-                type="button"
-                className="dev-ws-since-btn"
-                data-ws-since-btn=""
-                aria-expanded={sinceOpen}
-                disabled={!v.since.rows.length}
-                onClick={() => setSinceOpen(!sinceOpen)}
-              >
-                {`Since your last visit, ${relTime(v.since.baseline)}: ${sinceWords(v.since)}`}
-                {v.since.rows.length
-                  ? <span className="dev-ws-since-n">{sinceOpen ? 'Hide' : `Show ${v.since.rows.length}`}</span>
-                  : null}
-              </button>
+              {/* The pane's THIRD lane, built like the two above it: the
+                  heading names it, the line under says what it holds, and
+                  the control sits below that. It was one full-width button
+                  carrying the whole sentence — which read as a different
+                  kind of object from its neighbours, and whose label could
+                  not wrap inside the pill it started life in. */}
+              <h4 className="dev-ws-lane-title">
+                <span className="dev-ws-dot" aria-hidden="true"></span>Since your last visit
+              </h4>
+              <p className="dev-ws-lane-note">{`${relTime(v.since.baseline)}: ${sinceWords(v.since)}`}</p>
+              {v.since.rows.length ? (
+                <button
+                  type="button"
+                  className="gc-vote-btn dev-ws-lane-btn"
+                  data-ws-since-btn=""
+                  aria-expanded={sinceOpen}
+                  onClick={() => setSinceOpen(!sinceOpen)}
+                >{sinceOpen ? 'Hide' : `Show ${v.since.rows.length}`}</button>
+              ) : null}
               {sinceOpen ? v.since.rows.map((row) => (row.t === 'card' ? (
                 <CardRowView
                   key={row.key}

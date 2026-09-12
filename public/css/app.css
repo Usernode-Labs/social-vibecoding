@@ -12019,29 +12019,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   text-transform: none; letter-spacing: 0; white-space: nowrap;
   padding: 0 2px;
 }
-/* The since-button, in the pane it moved to.
-   NOT `.gc-vote-btn`. That family is a 24px fixed-height pill sized for two
-   or three words, and this control is a SENTENCE — "Since your last visit,
-   5d ago: 1 change landed, 3 new issues, 2 new proposals". In the pill it
-   could not wrap, so it set a min-content width wider than a phone and took
-   the whole lander into horizontal overflow. This is a row that wraps. */
-.dev-ws-since-btn {
-  box-sizing: border-box;
-  display: flex; align-items: baseline; justify-content: space-between;
-  gap: 8px; flex-wrap: wrap;
-  width: 100%; padding: 6px 10px;
-  border: 1px solid var(--border); border-radius: 10px;
-  background: transparent;
-  text-align: left; font-size: 13px; line-height: 1.4;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.dev-ws-since-btn:hover { border-color: var(--accent-light); color: var(--accent); }
-/* Disabled here means "nothing moved", not "you may not": the sentence is
-   still the answer, so it does not dim. */
-.dev-ws-since-btn:disabled { opacity: 1; cursor: default; }
-.dev-ws-since-btn:disabled:hover { border-color: var(--border); color: var(--text-muted); }
-.dev-ws-since-n { flex: none; font-weight: 600; color: var(--accent); }
+/* The since lane needs no rule of its own: it is the same heading, note and
+   `.dev-ws-lane-btn` the two lanes above it use.
+   It briefly had one — `.dev-ws-since-btn`, a full-width bordered row that
+   carried the whole sentence as its label — written because that sentence
+   cannot live inside `.gc-vote-btn`, a 24px fixed-height pill that made it
+   set a min-content width wider than a phone. Splitting the sentence out
+   into the lane's note removes the problem rather than styling around it:
+   the label is "Show 8" now, which is exactly what that pill is for. */
 /* ── The Workshop's orientation pane ─────────────────────────
    "Since your last visit" was a line inside "Where the app is" (`.dev-ws-
    since-line`, retired): the description led and the personal line sat under

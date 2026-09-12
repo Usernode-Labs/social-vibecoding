@@ -796,17 +796,20 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   assert.match(html, /<section class="dev-ws-strip" data-ws-dashboard="">/, 'not on the dashboard any more');
   assert.match(html, /data-ws-votes="" data-ws-next="" data-ws-since=""/);
   assert.ok(!html.includes('dev-ws-since-line'), 'the old line is retired');
-  assert.match(html, /class="dev-ws-since-btn"/);
-  // A colon for a label and its value, never an em dash (#1389).
-  assert.match(html, /Since your last visit, 3d ago: 1 change landed/);
+  // The pane's THIRD lane, built like the two above it: heading, note,
+  // control. A colon for a label and its value, never an em dash (#1389).
+  assert.match(html, /data-ws-lane="since"[\s\S]*?class="dev-ws-lane-title">[\s\S]*?Since your last visit/);
+  assert.match(html, /class="dev-ws-lane-note">3d ago: 1 change landed/);
+  assert.match(html, /class="gc-vote-btn dev-ws-lane-btn" data-ws-since-btn=""[^>]*>Show 3</);
   // Under the offers, not above them.
   assert.ok(html.indexOf('data-ws-lane="next"') < html.indexOf('data-ws-lane="since"'));
-  // NOT `.gc-vote-btn`: that family is a 24px fixed-height pill sized for two
-  // or three words, and this control is a whole sentence. In the pill it
-  // could not wrap, so it set a min-content width wider than a phone and
-  // took the entire lander into horizontal overflow.
-  assert.ok(!/gc-vote-btn dev-ws-since-btn|dev-ws-since-btn gc-vote-btn/.test(html));
-  assert.match(CSS, /\.dev-ws-since-btn \{[^}]*flex-wrap: wrap;/);
+  // The sentence is NOT the button's label. `.gc-vote-btn` is a 24px
+  // fixed-height pill sized for two or three words; carrying the whole
+  // sentence in it set a min-content width wider than a phone and took the
+  // entire lander into horizontal overflow. "Show 3" is what that pill is
+  // for, and the sentence is the lane's note.
+  assert.ok(!CSS.includes('.dev-ws-since-btn {'), 'the bespoke row is retired');
+  assert.ok(!html.includes('1 change landed, 1 new issue, 1 new proposal</button>'));
 });
 
 test('needs-your-vote and the unclaimed suggestion are one pane', () => {
@@ -1029,9 +1032,9 @@ test('the strips are ordered for a returning member: state, then what to do, the
   // own state. The app first, then the three things addressed to the reader,
   // in the order they ask for a decision — vote, take, catch up.
   assert.ok(!/class="dev-ws-link"[^>]*aria-expanded/.test(html), 'no unsized text link toggles this pane');
-  assert.match(html, /class="dev-ws-since-btn"[^>]*aria-expanded="false"/,
-    'the since disclosure is one control carrying its own sentence');
-  assert.match(html, /class="dev-ws-since-n">Show 3</);
+  assert.match(html, /data-ws-since-btn=""[^>]*aria-expanded="false"/,
+    'the since disclosure wears the platform\u2019s small action pill');
+  assert.match(html, />Show 3</);
   assert.ok(!html.includes('waiting on votes ·'), 'and the bare number line is gone');
 });
 
