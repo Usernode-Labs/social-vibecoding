@@ -848,6 +848,27 @@ async function becomeLeader() {
     identity: leadership && leadership.identity,
   });
 
+  // #2045: reconcile the shared hosted-asset backend once per rollout.
+  //
+  // It is otherwise only reconciled from deployApplication, which means a
+  // fix to how it is BUILT does not reach a backend that already exists
+  // until some child app happens to deploy. An app whose Ingress already
+  // carries the asset paths then answers 503 on every one of them — it
+  // cannot detect that, cannot serve those paths itself because the Ingress
+  // rule wins, and cannot fix it from app code. That is the state #2042
+  // left the fleet in, and it is what this call ends.
+  //
+  // Leader-only and fire-and-forget: the backend is singleton
+  // infrastructure, so reconciling it from both colors during a rollout
+  // would race two read-then-replace writes at the same Deployment for no
+  // benefit. Failure is logged and nothing else — an app deploy retries it,
+  // and a platform that cannot reach its own cluster has louder problems.
+  if (require('./src/services/application-runtime').mode(config) === 'kubernetes') {
+    require('./src/services/kubernetes').ensurePlatformAssetBackend(config)
+      .then((name) => log.info('server', 'Hosted-asset backend reconciled', { name }))
+      .catch((err) => log.warn('server', 'Hosted-asset backend reconcile deferred', { err: err.message }));
+  }
+
   // Credential rows deliberately outlive their active period for settings
   // and audit correlation, then age out on the documented schedule.
   const { cleanupCliAuth } = require('./src/services/cli-auth');
