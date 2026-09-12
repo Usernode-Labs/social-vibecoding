@@ -286,17 +286,24 @@ function devFlowRoutes(config) {
       if (IS_STAGING) {
         // `?demo=1` is the promoted-proposal update order; `?demo=session`
         // (#1071) is the same walkthrough continuing a session nobody has
-        // voted on. Separate payloads because the difference a reviewer has to
+        // voted on. Two payloads because the difference a reviewer has to
         // check is entirely in the copy, and one of them cannot show both.
         //
-        // `?demo=plain` is the third: an ORDINARY work order, continuing
-        // nothing. Both of the others carry a targetProposal, so until this
-        // existed no route rendered the commonest case of all — and "Start
-        // over" is offered on exactly that one, since discarding a
-        // continuation would drop its target silently.
-        const demoKind = DEMO_KINDS[req.query.demo];
-        return res.json(demoKind !== undefined
-          ? demoStatus(app, parsed, demoKind)
+        // `?order=plain` is a SECOND discriminator, not a third `demo` value,
+        // and the distinction is load-bearing. `demo` is read by dozens of
+        // fixture routes that all test it for exactly '1' — including the
+        // /api/sessions ones that paint the very session this walkthrough is
+        // rendered inside — and the client forwards it through an allowlist.
+        // A new `demo` value therefore either fails that allowlist (no fixture
+        // at all) or passes it and reaches those routes as an unrecognised
+        // string (no session). Riding alongside, it narrows whichever fixture
+        // `demo` already selected to an ORDINARY work order — one that
+        // continues nothing, which both of the others do carry and which is
+        // the only shape "Start over" is offered on.
+        const demoKind = req.query.demo === 'session' ? 'session' : 'proposal';
+        const orderKind = req.query.order === 'plain' ? null : demoKind;
+        return res.json(req.query.demo === '1' || req.query.demo === 'session'
+          ? demoStatus(app, parsed, orderKind)
           : {
             // The venue sheet's own state: the web hand-offs are offerable,
             // nothing is linked, no work order exists. Fixture session
@@ -778,19 +785,6 @@ function devFlowRoutes(config) {
 // step 4 — GitHub linked, fork ready, work order in hand, branch not yet
 // pushed — because that is the step with the most to review.
 //
-// The three fixture payloads, by `?demo=` value. `null` is a real entry — an
-// ordinary work order with no target — so membership is tested with
-// `!== undefined`, never truthiness.
-//
-// Null-prototype because the lookup key is raw query input: on a plain object
-// `?demo=constructor` or `?demo=toString` would inherit a value from
-// Object.prototype and sail past that `!== undefined` into demoStatus.
-const DEMO_KINDS = Object.assign(Object.create(null), {
-  1: 'proposal',
-  session: 'session',
-  plain: null,
-});
-
 // The work order is an UPDATE one (#1054): the update branch is the harder of
 // the two to review, it renders every ordinary step as well, and a reviewer
 // who only ever sees the new-proposal copy cannot check the difference.
@@ -842,11 +836,11 @@ function demoStatus(app, parsed, targetKind) {
         'Paste the work order below in exactly as written.',
         'Come back here when it has pushed; Usernode submits the change itself.',
       ],
-      // Three bodies for three fixtures. `plain` opens NEW work, so it names
-      // no session and no proposal and ends at "Submit for review" rather than
-      // "Submit the update" — a fixture whose prose said it was updating
-      // something while its targetProposal was null would be reviewing a state
-      // the real route cannot produce.
+      // Three bodies now. A null targetKind (`?order=plain`) opens NEW work, so
+      // it names no session and no proposal and ends at "Submit for review"
+      // rather than "Submit the update" — a fixture whose prose said it was
+      // updating something while its targetProposal was null would be reviewing
+      // a state the real route cannot produce.
       workOrder: (targetKind === null
         ? [
           `You are making a change to the Usernode app "${app.name || app.slug}".`,
@@ -906,7 +900,7 @@ function demoStatus(app, parsed, targetKind) {
           'Usernode and press "Submit the update".',
         ]).join('\n'),
       // The proposal or session this order continues. `null` on an ordinary
-      // work order, which is what `?demo=plain` renders.
+      // work order, which is what `?order=plain` renders.
       targetProposal: targetKind === null ? null : (continuing
         ? {
           id: 990405,

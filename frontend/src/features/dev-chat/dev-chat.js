@@ -1373,6 +1373,28 @@ const DevChat = {
     } catch { return ''; }
   },
 
+  // The dev-flow status route takes a SECOND fixture discriminator,
+  // `?order=plain`, which narrows whichever payload `demo` selected to an
+  // ordinary work order that continues nothing.
+  //
+  // It is appended here rather than inside _demoQS, and that is deliberate.
+  // _demoQS feeds /api/sessions/:id/status and /spec as well, and those — like
+  // most fixture routes — test `demo` for exactly '1'. Widening its allowlist
+  // to carry this would send them a value they do not recognise and blank the
+  // very session the walkthrough is rendered inside; leaving the allowlist
+  // alone and inventing a new `demo` value instead fails the allowlist and
+  // sends no fixture at all. Both were real: the second one shipped, and the
+  // declared checks on the plain fixture caught it.
+  _devFlowDemoQS() {
+    const base = DevChat._demoQS();
+    if (!base) return '';
+    try {
+      return new URLSearchParams(location.search).get('order') === 'plain'
+        ? `${base}&order=plain`
+        : base;
+    } catch { return base; }
+  },
+
   // Fold a status payload into the runner state and repaint if it changed.
   // Called from every place that reads /status — opening a session, the
   // during-turn poll, and the idle poll — so all three agree.
@@ -2776,7 +2798,7 @@ const DevChat = {
     let status = null;
     try {
       const res = await fetch(
-        `/api/apps/${encodeURIComponent(slug)}/dev-flow/status${DevChat._demoQS()}`,
+        `/api/apps/${encodeURIComponent(slug)}/dev-flow/status${DevChat._devFlowDemoQS()}`,
         { credentials: 'same-origin' }
       );
       // A failed read is not an error the user needs — the card simply

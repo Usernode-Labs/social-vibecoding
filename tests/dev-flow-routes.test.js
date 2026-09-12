@@ -666,23 +666,15 @@ test('staging never reaches GitHub, and only shows fixtures when asked', () => {
   assert.match(src, /const IS_STAGING = process\.env\.USERNODE_ENV === 'staging'/);
   // Two fixtures now (#1071): ?demo=1 is the promoted-proposal update order,
   // ?demo=session the session continuation. Both are opt-in per request.
-  assert.match(src, /const demoKind = DEMO_KINDS\[req\.query\.demo\];\s*\n\s*return res\.json\(demoKind !== undefined\s*\n?\s*\? demoStatus/,
+  assert.match(src, /req\.query\.demo === '1' \|\| req\.query\.demo === 'session'\s*\n?\s*\? demoStatus/,
     'the fixture is opt-in per request');
-  // Three kinds now. `plain` maps to null — an ordinary work order continuing
-  // nothing — so membership is `!== undefined`; a truthiness test would drop
-  // it back to the venue sheet.
-  assert.match(src, /const DEMO_KINDS = Object\.assign\(Object\.create\(null\), \{/,
+  assert.match(src, /req\.query\.demo === 'session' \? 'session' : 'proposal'/,
     'the demo payload picks its target kind from the query, not from a guess');
-  // Null-prototype, because the key is raw query input. On a plain object
-  // `?demo=constructor` inherits a function from Object.prototype, clears the
-  // `!== undefined` gate and reaches demoStatus with a Function as targetKind.
-  const kinds = Object.assign(Object.create(null), { 1: 'proposal', session: 'session', plain: null });
-  for (const accepted of ['1', 'session', 'plain']) {
-    assert.notEqual(kinds[accepted], undefined, `?demo=${accepted} is a fixture`);
-  }
-  for (const inherited of ['constructor', 'toString', 'hasOwnProperty', '__proto__']) {
-    assert.equal(kinds[inherited], undefined, `?demo=${inherited} is not a fixture`);
-  }
+  // `?order=plain` narrows either payload to an ordinary work order. It is a
+  // SECOND parameter rather than a third `demo` value on purpose — see the
+  // round-trip test below, which is the one that would have caught shipping it
+  // the other way.
+  assert.match(src, /const orderKind = req\.query\.order === 'plain' \? null : demoKind;/);
   assert.match(src, /990501/, 'fixture ids stay in the obviously-fake 99xxxx range');
   // Every write is refused in staging: they would open a real pull request —
   // or, on the update path (#1054), force-push a real branch — against a real
@@ -800,18 +792,95 @@ test('the dev chat drives discard through that route and clears the brief', () =
 });
 
 
-test('?demo=plain renders an ordinary work order, which is the only kind you can start over from', () => {
+test('?order=plain renders an ordinary work order, which is the only kind you can start over from', () => {
   const src = read('src/routes/dev-flow.js');
   // Both older fixtures carry a target, so until this one existed no route
   // rendered the commonest case — and no screenshot could show "Start over",
   // which is withheld on a continuation.
   assert.match(src, /targetProposal: targetKind === null \? null :/);
-  // And the route reaches it through the null-prototype table, not a chain of
-  // string comparisons that would have to grow again for a fourth fixture.
-  assert.match(src, /const demoKind = DEMO_KINDS\[req\.query\.demo\];/);
   // Its prose has to agree with that: a body saying "UPDATING a proposal"
   // over a null target would be reviewing a state the real route cannot
   // produce.
   assert.match(src, /workOrder: \(targetKind === null/);
   assert.match(src, /press "Submit for review"/);
+});
+
+
+test('the plain fixture survives the round trip from page URL to status route', () => {
+  // THE REGRESSION THIS TEST EXISTS FOR. The fixture discriminator is chosen in
+  // the page URL and has to reach the status route through the client, which
+  // forwards `demo` through an ALLOWLIST. Shipping the discriminator as a third
+  // `demo` value passed every unit test in this file — the route was stubbed,
+  // the renderer was called directly — and still rendered nothing in staging,
+  // because _demoQS dropped the unrecognised value and the route fell through
+  // to the venue sheet. Nothing here crossed that seam, so cross it: lift the
+  // client's two query-string methods out of the real source and run them.
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+  const lift = (name) => {
+    const i = devChat.indexOf(`  ${name}() {`);
+    assert.ok(i >= 0, `${name} exists on DevChat`);
+    const end = devChat.indexOf('\n  },', i);
+    assert.ok(end > i, `${name} is a plain method`);
+    return devChat.slice(i, end + 5);
+  };
+  // eslint-disable-next-line no-eval
+  const client = eval(`({${lift('_demoQS')}\n${lift('_devFlowDemoQS')}})`
+    .replace(/DevChat\./g, 'this.'));
+
+  // The route's own dispatch, read from the source rather than restated, so a
+  // change on either side breaks this rather than drifting past it.
+  const src = read('src/routes/dev-flow.js');
+  assert.match(src, /const demoKind = req\.query\.demo === 'session' \? 'session' : 'proposal';/);
+  assert.match(src, /const orderKind = req\.query\.order === 'plain' \? null : demoKind;/);
+  assert.match(src, /req\.query\.demo === '1' \|\| req\.query\.demo === 'session'\s*\n?\s*\? demoStatus\(app, parsed, orderKind\)/);
+  const route = (q) => (q.demo === '1' || q.demo === 'session'
+    ? { fixture: true, targetKind: q.order === 'plain' ? null : (q.demo === 'session' ? 'session' : 'proposal') }
+    : { fixture: false });
+
+  const roundTrip = (search) => {
+    const prev = global.location;
+    global.location = { search };
+    try {
+      const qs = client._devFlowDemoQS();
+      return route(Object.fromEntries(new URLSearchParams(qs.replace(/^\?/, ''))));
+    } finally {
+      if (prev === undefined) delete global.location; else global.location = prev;
+    }
+  };
+
+  // The plain fixture: reaches the route, and continues nothing — which is the
+  // only shape "Start over" is offered on.
+  assert.deepEqual(roundTrip('?demo=1&order=plain&flow=claude-code'),
+    { fixture: true, targetKind: null });
+  // The two that existed before are untouched.
+  assert.deepEqual(roundTrip('?demo=1&flow=claude-code'),
+    { fixture: true, targetKind: 'proposal' });
+  assert.deepEqual(roundTrip('?demo=session&flow=claude-code'),
+    { fixture: true, targetKind: 'session' });
+  // `order` alone is not a fixture: it narrows one, it does not select one.
+  assert.deepEqual(roundTrip('?order=plain&flow=claude-code'), { fixture: false });
+  assert.deepEqual(roundTrip('?flow=claude-code'), { fixture: false });
+  // And production, where every one of these is inert.
+  assert.deepEqual(roundTrip(''), { fixture: false });
+
+  // _demoQS itself must keep forwarding ONLY the two values every other
+  // fixture route knows — /api/sessions/:id/status and /spec ride on it and
+  // test `demo` for exactly '1', so widening it would blank the very session
+  // this walkthrough renders inside.
+  const prev = global.location;
+  global.location = { search: '?demo=1&order=plain' };
+  try {
+    assert.equal(client._demoQS(), '?demo=1', '_demoQS never carries the order param');
+  } finally {
+    if (prev === undefined) delete global.location; else global.location = prev;
+  }
+
+  // Finally, the declared checks must satisfy BOTH gates.
+  const dapp = JSON.parse(read('dapp.json'));
+  const plain = dapp.tests.filter((t) => t.path.includes('order=plain'));
+  assert.ok(plain.length >= 2, 'the plain fixture is covered by declared checks');
+  for (const t of plain) {
+    assert.ok(/[?&]demo=1(&|#|$)/.test(t.path),
+      `${t.name} must carry ?demo=1 as well as order=plain, or no fixture renders`);
+  }
 });
