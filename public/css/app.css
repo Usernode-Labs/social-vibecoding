@@ -12080,6 +12080,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    with the deck otherwise filling its box exactly. */
 .dev-ws[data-ws-tab="needs"] > .dev-ws-tabbody { padding-bottom: 0; }
 .dev-ws-tabs {
+  /* LAST ON THE SCREEN, FIRST IN THE MARKUP. The nav leads the DOM so it is
+     announced before the content it navigates; `order` is what puts it at the
+     foot on a phone. */
+  order: 1;
   position: sticky; bottom: var(--ws-gap); z-index: 25;
   display: flex; gap: 4px;
   padding: 6px;
@@ -12228,6 +12232,47 @@ html.un-kb .dev-ws { --ws-gap: 8px; }
   .dev-ws-needs > .dev-ws-ask { align-self: end; }
   .dev-ws-needs-scroll { flex: 0 1 auto; }
   .dev-ws-ask-log { max-height: 40vh; }
+
+  /* ── A wide window reads the tabs at the TOP, as words ─────────────────
+     A pill pinned to the floor of a 900px window puts the switch as far from
+     the reading as the window allows, and the eye crosses the whole height to
+     use it — a phone convention wearing a desktop out. Above 700px the bar
+     loses its pill entirely and becomes three underlined words at the head of
+     the column: no fill, no sticky, no clearance beneath it.
+
+     `order: 0` is the whole move. The nav is already first in the DOM, so
+     dropping the phone's `order: 1` paints it where it is written — and on the
+     width where a keyboard is likeliest, focus order and reading order agree.
+
+     The choice of underline over a pill is not only taste: the three tabs are
+     "where the app is", "what needs you" and "everything there is", which are
+     sections of one subject rather than modes of one tool, and a rule under a
+     word says section where a filled pill says mode. It is also the shortest
+     of the treatments, which the deck needs — it is the tab fighting hardest
+     for height. */
+
+  .dev-ws-tabs {
+    order: 0;
+    position: static;
+    gap: 22px; padding: 0;
+    border: 0; border-bottom: 1px solid var(--app-sheet-line); border-radius: 0;
+    background: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+  .dev-ws-tab {
+    flex: 0 0 auto; flex-direction: row; gap: 7px;
+    height: auto; padding: 8px 0 9px;
+    border-radius: 0; font-size: 14px;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .dev-ws-tab[aria-selected="true"] {
+    background: none; box-shadow: none;
+    color: var(--brand-ink); border-bottom-color: var(--brand-ink);
+  }
+  .dev-ws-tab-glyph { width: 17px; height: 17px; }
+  /* Nothing overlays the content any more, so nothing needs reserving under
+     it — that clearance exists only for a bar that floats over what scrolls
+     beneath it. */
+  .dev-ws-tabbody { padding-bottom: 0; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .dev-ws-needs { transition: grid-template-rows .22s ease; }

@@ -2408,7 +2408,14 @@ test('the rail rests the same distance off the bottom on every tab', () => {
   assert.ok(area, 'the floor exists');
   assert.match(area[1], /var\(--ws-gap\)/, 'the floor subtracts the gap');
   assert.ok(!/- 24px/.test(area[1]), 'and not a bare number with no counterpart');
-  assert.match(CSS, /\.dev-ws-tabs \{\s*position: sticky; bottom: var\(--ws-gap\);/,
+  // The nav LEADS the markup — focus order follows the DOM, not `order`, and a
+  // nav announced before the content it navigates is the better half of that
+  // trade — so `order: 1` is what drops it to the foot of the column on a
+  // phone. Read the rule's body rather than the two declarations adjacent.
+  const rail = /\n\.dev-ws-tabs \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(rail, 'the rail rule exists');
+  assert.match(rail[1], /^\s*order: 1;$/m, 'the nav is last on the screen, not in the markup');
+  assert.match(rail[1], /position: sticky; bottom: var\(--ws-gap\);/,
     'the sticky offset is the same gap');
   // The clearance under the last card is the rail's box PLUS that gap, so it
   // tracks where the rail actually rests instead of being remembered.
@@ -2594,4 +2601,42 @@ test('a category card is raised off the pane it sits on', () => {
   // Opaque, so no frost: it blurs what is BEHIND, and what is behind is a
   // pane of one flat colour — a compositing layer per card for nothing.
   assert.ok(!/backdrop-filter/.test(card[1]), 'the frost went with it');
+});
+
+test('a wide window reads the tabs at the top, as underlined words', () => {
+  // THE PILL IS A PHONE CONVENTION. Pinned to the floor of a 900px window it
+  // puts the switch as far from the reading as the window allows, and the eye
+  // crosses the whole height to use it. Above 700px — the breakpoint the deck
+  // already uses, so the two stay in step — the bar loses the pill entirely.
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(wide, 'the wide-screen block exists');
+  // ONE block at this breakpoint, not two: a second would sit below the deck
+  // rules and the regex above would read only the first, so a rule could be
+  // added here and silently go unchecked.
+  assert.equal((CSS.match(/@media \(min-width: 700px\) \{/g) || []).length, 1,
+    'the breakpoint is written once');
+  const rail = /\.dev-ws-tabs \{([\s\S]*?)\n  \}/.exec(wide[1]);
+  assert.ok(rail, 'the rail is restyled for width');
+  // `order: 0` is the whole move — the nav is already first in the DOM, so
+  // dropping the phone's `order: 1` paints it where it is written.
+  assert.match(rail[1], /order: 0;/, 'it paints where it is written');
+  assert.match(rail[1], /position: static;/, 'nothing to stick to at the head of a column');
+  assert.match(rail[1], /border-bottom: 1px solid var\(--app-sheet-line\);/, 'a rule, not a pill');
+  assert.match(rail[1], /border-radius: 0;/);
+  assert.match(rail[1], /background: none; backdrop-filter: none;/,
+    'no fill and no frost, so nothing to composite');
+  const tab = /\.dev-ws-tab \{([\s\S]*?)\n  \}/.exec(wide[1]);
+  assert.ok(tab, 'the tab is restyled too');
+  // Word beside glyph, sized to its text, not a third of the width: three
+  // words at the head of a 1440px column, not three stretched thirds.
+  assert.match(tab[1], /flex: 0 0 auto; flex-direction: row;/);
+  assert.match(tab[1], /border-bottom: 2px solid transparent; margin-bottom: -1px;/,
+    'the underline reserves its space unselected and overlaps the rule');
+  const sel = /\.dev-ws-tab\[aria-selected="true"\] \{([\s\S]*?)\n  \}/.exec(wide[1]);
+  assert.ok(sel, 'the live tab is restyled');
+  assert.match(sel[1], /background: none; box-shadow: none;/, 'the phone pill is undone');
+  assert.match(sel[1], /border-bottom-color: var\(--brand-ink\);/, 'the rule carries the accent');
+  // Nothing overlays the content any more, so the clearance that existed for a
+  // bar floating over what scrolls beneath it is dead space here.
+  assert.match(wide[1], /\.dev-ws-tabbody \{ padding-bottom: 0; \}/);
 });

@@ -1202,13 +1202,64 @@ export function DevWorkshop(): ReactNode {
 
   return (
     <div ref={hostRef} className="dev-ws" data-ws-tab={tab}>
+      {/* ── The three destinations ──
+          FIRST IN THE DOM, and on a phone LAST on the screen: `order` moves
+          it, not the markup. Focus follows the DOM rather than the painting,
+          so whichever way round they disagree somebody gets a tab order that
+          does not match what they see — and a nav announced BEFORE the
+          content it navigates is the better half of that trade. The narrow
+          case is the one that reorders because a touch surface is where the
+          mismatch costs least.
+
+          On a phone it is a sticky bar at the bottom: navigation rather than
+          a control acting on what is above it, and the thumb is at the
+          bottom of the hand. ABOVE 700px it is a row of underlined words at
+          the top of the column instead — see app.css. A pill pinned to the
+          floor of a 900px window puts the switch as far from the reading as
+          the window allows, and the eye crosses the whole height to use it.
+
+          NO `.platform-safe-bar` HERE, deliberately. That rule is for a strip
+          pinned against the screen edge: it adds the home-indicator inset to
+          the element's own bottom padding, which on this pill landed 8px
+          under the tabs against 6px over them. This bar FLOATS — a rounded
+          pill with air beneath it — so the inset belongs in that air instead,
+          and `--ws-gap` in app.css carries it (keyboard suppression
+          included). */}
+      <nav
+        className="dev-ws-tabs"
+        data-ws-tabs=""
+        role="tablist"
+        aria-label="Workshop sections"
+      >
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            className="dev-ws-tab"
+            data-ws-tab-btn={t.key}
+            aria-selected={tab === t.key}
+            onClick={() => { setTab(t.key); callAppView('_setWorkshopTab', t.key); }}
+          >
+            {/* The glyph is decoration over a label that is already there, so
+                it is hidden from the accessibility tree rather than given a
+                name of its own — otherwise every tab announces twice. Its
+                size comes from the class, not a prop: icons.tsx has no size
+                variant on purpose, and every other `.dev-ws-*` measurement
+                lives in app.css beside its neighbours. */}
+            <t.Icon className="dev-ws-tab-glyph" aria-hidden="true" />
+            <span className="dev-ws-tab-label">{t.label}</span>
+          </button>
+        ))}
+      </nav>
       {/* Everything but the rail lives in here. It is what carries the
           clearance under the last card: a sticky bar overlays whatever is
           beneath it while you scroll, so the content needs a rail's worth of
           empty space at its end or the final card can never be read clear of
           it. Putting that padding on the LANDER instead would push the rail
           up off the bottom on a short tab, which is the thing that was just
-          fixed. */}
+          fixed. Above 700px the bar is not sticky and overlays nothing, so
+          app.css takes the clearance back off. */}
       <div className="dev-ws-tabbody">
       {tab === 'status' ? (
       <>
@@ -1516,45 +1567,6 @@ export function DevWorkshop(): ReactNode {
 
       </div>
 
-      {/* ── The three destinations ──
-          At the BOTTOM, and sticky: this is a phone screen first, the bar is
-          navigation rather than a control acting on what is above it, and the
-          thumb is at the bottom of the hand.
-
-          NO `.platform-safe-bar` HERE, deliberately. That rule is for a strip
-          pinned against the screen edge: it adds the home-indicator inset to
-          the element's own bottom padding, which on this pill landed 8px
-          under the tabs against 6px over them. This bar FLOATS — a rounded
-          pill with air beneath it — so the inset belongs in that air instead,
-          and `--ws-gap` in app.css carries it (keyboard suppression
-          included). */}
-      <nav
-        className="dev-ws-tabs"
-        data-ws-tabs=""
-        role="tablist"
-        aria-label="Workshop sections"
-      >
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            className="dev-ws-tab"
-            data-ws-tab-btn={t.key}
-            aria-selected={tab === t.key}
-            onClick={() => { setTab(t.key); callAppView('_setWorkshopTab', t.key); }}
-          >
-            {/* The glyph is decoration over a label that is already there, so
-                it is hidden from the accessibility tree rather than given a
-                name of its own — otherwise every tab announces twice. Its
-                size comes from the class, not a prop: icons.tsx has no size
-                variant on purpose, and every other `.dev-ws-*` measurement
-                lives in app.css beside its neighbours. */}
-            <t.Icon className="dev-ws-tab-glyph" aria-hidden="true" />
-            <span className="dev-ws-tab-label">{t.label}</span>
-          </button>
-        ))}
-      </nav>
     </div>
   );
 }
