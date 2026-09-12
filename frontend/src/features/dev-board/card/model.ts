@@ -132,8 +132,11 @@ export interface ActionSpec {
 
 /** Everything that can appear in the status band, as a tagged union. */
 export type BadgeSpec =
-  /** A plain tinted chip: work state, imported, paused, checks, console errors. */
-  | { t: 'chip'; key: string; cls: string; label: string; title?: string; spinner?: boolean; data?: Record<string, string> }
+  /** A plain tinted chip: work state, imported, paused, checks, console errors.
+   *  `meta` rides the META LINE with the priority/assignee/category tags
+   *  instead of the facts row — see metaLineNodes. The status tags set it, so
+   *  the status row is left to the vote and its button alone. */
+  | { t: 'chip'; key: string; cls: string; label: string; title?: string; spinner?: boolean; meta?: boolean; data?: Record<string, string> }
   /** The same chip with a click — the work-state chip that opens its target. */
   | { t: 'chipBtn'; key: string; cls: string; hover: string; label: string; title?: string; spinner?: boolean; data?: Record<string, string>; act: ActionRef }
   /** 💬 N. Always rendered, hidden at 0, so a live bump has a target. */
