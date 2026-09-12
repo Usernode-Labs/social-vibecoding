@@ -5354,6 +5354,29 @@ const AppView = {
   // they are placed here, by the issue they link.
 
   WORKSHOP_SEEN_KEY: 'workshopSeen',
+  // The lander's three tabs. A query param reaches one directly (`?ws=needs`)
+  // because the platform's own rule is that a screen only reachable by
+  // interacting needs a URL: the declared checks select against it and the
+  // proposal screenshots are shot from it.
+  WORKSHOP_TABS: ['status', 'needs', 'all'],
+  _workshopModels() {
+    const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
+    if (!src || typeof src !== 'object') return { list: [], selected: null };
+    const list = Object.keys(src).map((id) => ({
+      id,
+      label: (src[id] && src[id].label) || id,
+      note: (src[id] && src[id].changeSize && src[id].changeSize.short) || '',
+    }));
+    const def = (typeof DevChat !== 'undefined' && DevChat._defaultModel) || null;
+    return { list, selected: list.some((m) => m.id === def) ? def : (list[0] ? list[0].id : null) };
+  },
+
+  _workshopTabParam() {
+    try {
+      const v = new URLSearchParams(window.location.search).get('ws');
+      return AppView.WORKSHOP_TABS.indexOf(v) !== -1 ? v : null;
+    } catch { return null; }
+  },
   // Rows per lane per theme before "+N more · Open on Board".
   WORKSHOP_LANE_MAX: 8,
   // Cards in the "Needs your vote" strip; the rest are a count.
@@ -5535,17 +5558,36 @@ const AppView = {
    * written — and the component reveals them one at a time from the newest
    * end.
    *
-   * Order is OLDEST FIRST in the array, which is the order they are drawn
-   * top-to-bottom (it is also the order the three cards were drawn in
-   * before). `open` is last because it is the only entry that is not a
-   * window at all: it describes what is unfinished right now, which is the
-   * present, which is the bottom of any timeline.
+   * Order is NEWEST FIRST: `open` — the present, and the only entry that is
+   * not a window at all — then this week, last week, and back. The walk was
+   * built the other way round at first, growing upwards from the bottom of
+   * the stack, on the reasoning that a column of dates reads oldest-at-the-
+   * top like any timeline. It does, but this is not a timeline being read:
+   * it is one card with a way to ask for more, and growing UPWARDS moved
+   * the card you were looking at down the screen on every press. Now the
+   * present stays put and the history unrolls beneath it.
    */
   _workshopWeeks(cards, nowMs) {
     if (!cards) return [];
     const WEEK = AppView.WORKSHOP_WEEK_MS;
     const thisStart = AppView._weekStart(nowMs);
     const out = [];
+    // The present first: it is the default card and the only one always
+    // drawn, so it is index 0 and the reveal walks forward from there.
+    if (cards.open) out.push({ key: 'open', title: 'Open issues', line: cards.open, startMs: 0, endMs: 0 });
+    if (cards.thisWeek) {
+      out.push({
+        key: 'thisWeek', title: 'This week', line: cards.thisWeek,
+        startMs: thisStart, endMs: nowMs,
+      });
+    }
+    if (cards.lastWeek) {
+      out.push({
+        key: 'lastWeek', title: 'Last week', line: cards.lastWeek,
+        startMs: thisStart - WEEK, endMs: thisStart,
+      });
+    }
+    const older = [];
     // Not `cards.older` directly. A cards object reaches here from the
     // themes CACHE, and a cache written by a build before this field existed
     // — a tab open across a deploy, a warm localStorage-free page that kept
@@ -5558,32 +5600,14 @@ const AppView = {
       // with the two named windows below.
       const n = Math.round((thisStart - w.start) / WEEK);
       if (n < 2) continue;
-      out.push({
+      older.push({
         key: `week:${w.start}`, title: `${n} weeks ago`, line: w.line,
         startMs: w.start, endMs: w.start + WEEK,
       });
     }
-    out.sort((a, b) => a.startMs - b.startMs);
-    if (cards.lastWeek) {
-      out.push({
-        key: 'lastWeek', title: 'Last week', line: cards.lastWeek,
-        startMs: thisStart - WEEK, endMs: thisStart,
-      });
-    }
-    if (cards.thisWeek) {
-      out.push({
-        key: 'thisWeek', title: 'This week', line: cards.thisWeek,
-        startMs: thisStart, endMs: nowMs,
-      });
-    }
-    // The open card carries no window: "what the open work is about" is not
-    // a week, and dating it would invite the reader to read it as one.
-    //
-    // "Open issues" rather than "Open": beside "Last week" and "This week",
-    // a bare "Open" reads as a third TIME and the eye expects a date under
-    // it. The key stays `open` — it is the server's field name and
-    // dapp.json's declared check selects on it.
-    if (cards.open) out.push({ key: 'open', title: 'Open issues', line: cards.open, startMs: 0, endMs: 0 });
+    // Newest of the older windows first, continuing the walk backwards.
+    older.sort((a, b) => b.startMs - a.startMs);
+    out.push(...older);
     return out;
   },
 
@@ -5944,7 +5968,19 @@ const AppView = {
     for (const x of buckets.inReview) {
       if (notMine(x) && AppView._devCardMatches(x.kind, x.item, { needsVote: true })) owed.push(x);
     }
-    const voteRow = (card) => ({ t: 'card', key: `vote:${card.key}`, card });
+    // The plain-language summary a voter reads (`pr_summary_md`), carried on
+    // the row: the Needs-you deck leads with it, because the card's title is
+    // a pull-request title and says nothing about what a person using the app
+    // would notice. Null on a legacy proposal or one whose summary pass
+    // failed, and the deck says so rather than showing an empty space.
+    const voteRow = (card, item) => ({
+      t: 'card',
+      key: `vote:${card.key}`,
+      card,
+      summary: (item && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim())
+        ? item.pr_summary_md.trim()
+        : null,
+    });
     // EVERY owed row, not the first few. "N more waiting on you" used to send
     // the viewer to the Board with a filter set — it left the lander, it
     // changed the view mode, and Back was the only way home, all to read a
@@ -5963,7 +5999,8 @@ const AppView = {
       total: votable.length,
       shown: AppView.WORKSHOP_VOTES_MAX,
       rows: owed.map((x) => voteRow(
-        x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)
+        x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item),
+        x.item
       )),
     };
 
@@ -6116,6 +6153,48 @@ const AppView = {
       partial: !serverShipped && !!AppView._mergedHasMore,
     };
 
+    // ── The Needs-you queue ──
+    //
+    // One ordered list of QUESTIONS, which is what that tab answers: the
+    // proposals owed a vote first, then the issues nobody has claimed. The
+    // unclaimed used to be a lane on the status tab, alone under a heading
+    // that covered nothing else; they are the back of this queue now,
+    // because "will you take this?" is the same shape of ask as "should
+    // this go in?" — one card, one question, three answers.
+    //
+    // Each row carries the question and what Yes and No DO, so the deck
+    // renders buttons rather than deciding policy. A proposal's pair comes
+    // from `_cardVoteButtonSpecs`, which keeps the reviewed-head revision
+    // argument the server checks. An issue has no claim API, so Yes opens
+    // it — the same thing tapping the row has always done — and No records
+    // nothing beyond moving on, which is stated rather than implied.
+    const queue = [];
+    for (const x of owed) {
+      const card = x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item);
+      const pair = x.kind === 'proposal' ? AppView._cardVoteButtonSpecs(x.item) : [];
+      const yes = pair.find((b) => b.key === 'yes') || null;
+      const no = pair.find((b) => b.key === 'no') || null;
+      queue.push({
+        ...voteRow(card, x.item),
+        kind: 'vote',
+        ask: 'Should this change go in?',
+        yes: yes ? { label: yes.label, act: yes.act } : null,
+        no: no ? { label: no.label, act: no.act } : null,
+      });
+    }
+    for (const e of idle.slice(0, AppView.WORKSHOP_LANE_MAX)) {
+      const n = e.item && e.item.number;
+      queue.push({
+        ...e.row,
+        key: `need:${e.row.key}`,
+        kind: 'claim',
+        summary: null,
+        ask: 'Do you want to pick this up?',
+        yes: n ? { label: 'Yes', act: { fn: 'openTopic', args: ['issue', n] } } : null,
+        no: { label: 'No', act: null },
+      });
+    }
+
     // "Try taking this one next" — the most recently active open issue with
     // nobody on it. Recency rather than age on purpose: an issue the group is
     // still talking about has context to start from, where the oldest one on
@@ -6167,6 +6246,16 @@ const AppView = {
     return {
       loading: false,
       emptyNote,
+      // Which tab a URL asked for, or null for the viewer's own choice.
+      tab: AppView._workshopTabParam(),
+      // The models the Needs-you tab's ask box may talk to, read from the
+      // SAME map the dev session's picker uses (DevChat.MODELS, refreshed
+      // from GET /api/models at startup) rather than a second list here —
+      // tests/model-selector-ui.test.js already guards that map against the
+      // server's allowlist, and a third copy would drift out from under it.
+      // Empty where DevChat is not loaded, and the picker is then not drawn.
+      models: AppView._workshopModels(),
+      queue,
       votes,
       mine,
       since,

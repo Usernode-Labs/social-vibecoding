@@ -777,7 +777,7 @@
     },
     {
       "name": "A Workshop row unfolds into the Activity sheet: the card, its thread, the send disc",
-      "path": "/?demo=1&shot=feed-comments#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=all&shot=feed-comments#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws-rowwrap-open > .dev-feed-entry > .gc-vote-item.dev-card-dense[data-edge] ~ .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button.dev-feed-send[aria-label=\"Send reply\"]"
     },
     {
@@ -1134,12 +1134,12 @@
     },
     {
       "name": "Import Feature from a PR entry present in the Dev + menu (#687)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all#app/usernode-2d5619/dev",
       "expectSelector": "[data-plus=\"import-pr\"]"
     },
     {
       "name": "The Dev '+' menu separates importing work from managing the app (#1490)",
-      "path": "/?demo=1&shot=plus-menu#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu [data-plus-group=\"build\"] ~ [data-plus-group=\"settings\"]",
       "expectText": "Import a change"
     },
@@ -1157,7 +1157,7 @@
     },
     {
       "name": "The Dev '+' menu retains PR import without duplicating Improve actions (#1490)",
-      "path": "/?demo=1&shot=plus-menu#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu:not(.hidden):not(:has([data-plus=\"proposal\"], [data-plus=\"issue\"])) [data-plus=\"import-pr\"]"
     },
     {
@@ -1374,12 +1374,12 @@
     },
     {
       "name": "Dev \"+\" menu opens as an action sheet on touch (#929)",
-      "path": "/?shot=plus-menu&un-platform=ios#app/usernode-2d5619/dev",
+      "path": "/?ws=all&shot=plus-menu&un-platform=ios#app/usernode-2d5619/dev",
       "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
     },
     {
       "name": "Dev \"+\" menu still opens the anchored dropdown on desktop (#929)",
-      "path": "/?shot=plus-menu#app/usernode-2d5619/dev",
+      "path": "/?ws=all&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu:not(.hidden) button[data-plus=\"rename\"]"
     },
     {
@@ -1848,7 +1848,7 @@
     },
     {
       "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-btn"
     },
     {
@@ -1888,7 +1888,7 @@
     },
     {
       "name": "The + button shares the actions row with the filter host",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all#app/usernode-2d5619/dev",
       "expectSelector": "#dev-actions #dev-plus-btn"
     },
     {
@@ -1915,7 +1915,7 @@
     },
     {
       "name": "The Workshop renders its themes into #dev-workshop; the deep link opens one, with its items as folded rows under stage lanes",
-      "path": "/?demo=1&shot=themes&view=workshop#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all&shot=themes&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body #dev-workshop .dev-ws-themes [data-ws-theme] .dev-ws-theme-body [data-ws-lane] .dev-ws-row[role=\"button\"][aria-expanded]"
     },
     {
@@ -1926,47 +1926,47 @@
     {
       "name": "#app/<slug>/workshop is the card area grouped by theme, not the general chat, and it leads with the open summary card and the step back",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-cards] > [data-ws-week-more] + [data-ws-card=\"open\"] > .dev-ws-card-line",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-cards] > [data-ws-card=\"open\"] > .dev-ws-card-line",
       "expectText": "Staging demo: one line on what the open issues and waiting proposals are about."
     },
     {
       "name": "The Workshop's grouping tabs lead its own pane, with the search, filters and + under them",
-      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > .dev-ws-group + #dev-actions",
       "expectText": "By category"
     },
     {
-      "name": "The Workshop offers the two groupings as tabs under the summary, on category by default",
-      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "name": "The Workshop offers the two groupings as tabs at the head of All items, on category by default",
+      "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop .dev-ws-group[role=\"tablist\"] > .dev-ws-group-tab[data-ws-group=\"category\"][aria-selected=\"true\"] + .dev-ws-group-tab[data-ws-group=\"stage\"][aria-selected=\"false\"]",
       "expectText": "By stage"
     },
     {
-      "name": "?group=stage swaps that pane for the board's own columns, the summary strip still above them",
-      "path": "/?demo=1&group=stage#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] ~ [data-ws-pane] > .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-row"
+      "name": "?group=stage swaps All items' pane for the board's own columns",
+      "path": "/?demo=1&ws=all&group=stage#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-row"
     },
     {
       "name": "The Workshop carries the board's search and filter bar, not just the +",
-      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-actions #dev-kanban-filterbar #dev-kanban-search"
     },
     {
       "name": "An unfolded Workshop row has an auto-growing reply box and send arrow (#1584)",
-      "path": "/?demo=1&shot=feed-comments#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=all&shot=feed-comments#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button[aria-label=\"Send reply\"]:disabled"
     },
     {
       "name": "A demo theme names the mock rows, with its people count and its counts",
-      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop [data-ws-theme=\"demo-voting\"] .dev-ws-theme-people ~ .dev-ws-theme-counts .dev-ws-cnt",
       "expectText": "[Mock] Voting"
     },
     {
-      "name": "The Workshop pins the proposals waiting on the viewer's vote above the themes, the vote at each row's bottom-right",
-      "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-votes] [data-ws-lane=\"votes\"] .dev-ws-row[role=\"button\"] > .dev-ws-row-band > .dev-ws-row-trailing > button.dev-vote-btn",
-      "expectText": "Needs your vote"
+      "name": "The Workshop's Needs-you tab is one proposal at a time, with its vote button and the sentence a voter reads",
+      "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-subject > .dev-ws-needs-scroll > .gc-vote-item:has(+ .dev-ws-needs-summary) button.dev-vote-btn",
+      "expectText": "Vote"
     },
     {
       "name": "The view strip marks Workshop as the one you are on",
@@ -2752,22 +2752,22 @@
     },
     {
       "name": "Read-only demo app's Dev tab renders its seeded proposal (#621)",
-      "path": "/app/staging-demo-readonly/dev",
+      "path": "/app/staging-demo-readonly/dev?ws=all",
       "expectText": "Staging demo read-only proposal"
     },
     {
       "name": "Dev '+' menu holds rename and secrets directly, no App settings nesting (#645)",
-      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu [data-plus='rename']"
     },
     {
       "name": "Dev '+' menu shows Members & visibility on a managed app (#645)",
-      "path": "/app/staging-demo-readonly/dev",
+      "path": "/app/staging-demo-readonly/dev?ws=all",
       "expectSelector": "#dev-plus-menu [data-plus='members']"
     },
     {
       "name": "Dev '+' menu shows the approver roster on an invited-approvers app (#646)",
-      "path": "/?demo=1&shot=plus-menu#app/staging-demo-invited-approvers/dev",
+      "path": "/?demo=1&ws=all&shot=plus-menu#app/staging-demo-invited-approvers/dev",
       "expectSelector": "#dev-plus-menu [data-plus='members']",
       "expectText": "Members & visibility"
     },
@@ -3521,12 +3521,12 @@
     },
     {
       "name": "On the Workshop the + button stays right-aligned with its menu anchored on-screen",
-      "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-actions > div.ml-auto > #dev-plus-btn"
     },
     {
       "name": "The Workshop shows the filter bar beside the +, not the + alone",
-      "path": "/?demo=1&view=workshop#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-actions > #dev-kanban-filterbar:not(:empty) + div > #dev-plus-btn"
     },
     {
@@ -3541,12 +3541,12 @@
     },
     {
       "name": "An unfolded Workshop row is a card on a sheet",
-      "path": "/?demo=1&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-workshop .dev-feed-entry > .gc-vote-item"
     },
     {
       "name": "An unfolded issue row shows recent comments with relative ages (#1585)",
-      "path": "/?demo=1&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time"
     },
     {
@@ -3730,7 +3730,7 @@
     },
     {
       "name": "#1808: an unfolded card's comment preview stamps each reply and hovers the full instant",
-      "path": "/?demo=1&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
+      "path": "/?demo=1&ws=all&shot=feed-comments&view=workshop#app/usernode-2d5619/dev",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-comments[data-comments-for] .dev-feed-comment-time[title]"
     },
     {
