@@ -7,15 +7,30 @@
 const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
+const { platformOrigin } = require('./app-identity-env');
 
 const CONVENTIONS_PATH = path.join(__dirname, '..', 'prompts', 'app-conventions.md');
+
+// The doc names the platform's own origin in a handful of places — the three
+// centrally hosted assets, the conventions URL. It is injected verbatim into
+// every build agent's system prompt and published at /claude.md, so a literal
+// hostname in the file is a literal hostname in every agent's prompt: that is
+// how the last platform domain move left this document telling agents to
+// load three files from a host that no longer answers, and inviting them to
+// write that host into the apps they were building. The file carries a token
+// instead, resolved here from the same USERNODE_DOMAIN every other caller
+// reads. Unset (local dev, tests) it resolves to the empty string, leaving
+// the relative path — which Kubernetes deployments serve from the app's own
+// origin, and which is in any case the better failure than a dead host.
+const PLATFORM_ORIGIN_TOKEN = '{{PLATFORM_ORIGIN}}';
 
 let cached = null;
 
 function getAppConventions() {
   if (cached !== null) return cached;
   try {
-    cached = fs.readFileSync(CONVENTIONS_PATH, 'utf-8');
+    const raw = fs.readFileSync(CONVENTIONS_PATH, 'utf-8');
+    cached = raw.split(PLATFORM_ORIGIN_TOKEN).join(platformOrigin() || '');
   } catch (err) {
     log.error('prompts', 'Failed to read app-conventions.md', { err: err.message });
     cached = '';
