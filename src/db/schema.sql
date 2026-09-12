@@ -5734,6 +5734,36 @@ ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_client_id TE
 ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS target_session_id BIGINT
   REFERENCES chat_sessions(id) ON DELETE SET NULL;
 
+-- Which chat session a work order was PREPARED in — the launchpad the user was
+-- standing in when they pressed "Prepare work order".
+--
+-- THREE session columns now sit on this table and they mean three different
+-- things. Confusing them is not a style problem, it breaks the product:
+--   session_id        — the shared in-progress session this work BECAME. Set
+--                       only once work has been shared or submitted; an OPEN
+--                       task carrying one is a card already on the Dev board,
+--                       and submitWork REFUSES it with `already_shared`.
+--   target_session_id — the proposal or session this work order UPDATES.
+--   origin_session_id — this one. Pure provenance, written at mint time,
+--                       read by the walkthrough and by nothing else.
+--
+-- Before it existed the walkthrough resolved its task per (user, app), so one
+-- open work order spoke for every session in the app: "New change" opened a
+-- fresh session that immediately showed somebody else's half-finished order,
+-- with no relationship to the change the user had just asked to start.
+--
+-- NULL means "prepared before this column existed, or through the connector,
+-- which has no session". Those rows are adopted by the first launchpad that
+-- looks for one, so they are not stranded — see loadOpenTaskForSession.
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS origin_session_id INTEGER
+  REFERENCES chat_sessions(id) ON DELETE SET NULL;
+
+-- The walkthrough's lookup: the caller's open task for one app and one
+-- session, plus the NULL-origin scan that adopts a legacy row.
+CREATE INDEX IF NOT EXISTS external_agent_tasks_origin_session_idx
+  ON external_agent_tasks (user_id, app_id, origin_session_id)
+  WHERE status = 'open';
+
 DO $$
 BEGIN
   -- The update path adds two more values (#1054):

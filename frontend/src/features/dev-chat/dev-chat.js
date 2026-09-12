@@ -2797,8 +2797,14 @@ const DevChat = {
     started.loading = true;
     let status = null;
     try {
+      // `sessionId` is what scopes the walkthrough to THIS launchpad. Appended
+      // to whatever the fixture query string already is, which is '' in
+      // production and `?demo=…` in a staging preview — hence the separator
+      // rather than a bare '?'.
+      const fixtureQS = DevChat._devFlowDemoQS();
       const res = await fetch(
-        `/api/apps/${encodeURIComponent(slug)}/dev-flow/status${DevChat._devFlowDemoQS()}`,
+        `/api/apps/${encodeURIComponent(slug)}/dev-flow/status`
+          + `${fixtureQS}${fixtureQS ? '&' : '?'}sessionId=${encodeURIComponent(session.id)}`,
         { credentials: 'same-origin' }
       );
       // A failed read is not an error the user needs — the card simply
@@ -2935,11 +2941,13 @@ const DevChat = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify(
-          flow.targetId
-            ? { agent: flow.agent, brief, proposalId: Number(flow.targetId) }
-            : { agent: flow.agent, brief }
-        ),
+        // `sessionId` is what makes this work order THIS launchpad's: the
+        // status route reads it back and no other session sees the order.
+        body: JSON.stringify(Object.assign(
+          { agent: flow.agent, brief },
+          DevChat.currentSession ? { sessionId: Number(DevChat.currentSession.id) } : null,
+          flow.targetId ? { proposalId: Number(flow.targetId) } : null
+        )),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {

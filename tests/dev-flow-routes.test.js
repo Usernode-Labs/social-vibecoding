@@ -81,6 +81,8 @@ function resetStubs() {
     discard: 4242,
     discardArgs: null,
     discardThrows: false,
+    loadedVia: null,
+    loadedSessionId: null,
   };
 }
 
@@ -112,6 +114,13 @@ githubLink.linkStatus = async () => stub.link;
 svc.inspectFork = async () => stub.fork;
 svc.loadLatestOpenTaskForSlug = async (_pool, _userId, _slug, opts) => {
   stub.loadOpts = opts;
+  stub.loadedVia = 'app';
+  return stub.task;
+};
+svc.loadOpenTaskForSession = async (_pool, _userId, _slug, sessionId, opts) => {
+  stub.loadOpts = opts;
+  stub.loadedVia = 'session';
+  stub.loadedSessionId = sessionId;
   return stub.task;
 };
 svc.inspectPushedBranch = async () => {
@@ -710,9 +719,9 @@ test('the client polls this route and nothing else', () => {
 const discard = (id, body, headers) => post(`/api/apps/recipe-box/external-tasks/${id}/discard`, body || {}, headers);
 
 test('the walkthrough asks for an UNEXPIRED task, unlike submit recovery', async () => {
-  await status();
+  await status('?sessionId=990404');
   assert.deepEqual(stub.loadOpts, { unexpiredOnly: true },
-    'an expired reservation must stop answering for this app');
+    'an expired reservation must stop answering for this session');
 
   // The service keeps the default OFF, because submitWork's slug+branch
   // recovery reads the same function and needs the expired row: it carries the
@@ -725,9 +734,47 @@ test('the walkthrough asks for an UNEXPIRED task, unlike submit recovery', async
   // planner. A spliced-in predicate — or a constant passed by name — would
   // drop this query into the hand-reviewed dynamic baseline instead.
   assert.match(svcSrc, /opts\.unexpiredOnly\s*\n?\s*\? await pool\.query\(/);
+  // Scoped to THIS function. loadOpenTaskForSession writes its own four
+  // literals for the same reason, so counting across the file would drift
+  // every time another lookup is added and prove nothing about either.
+  const appWide = svcSrc.slice(
+    svcSrc.indexOf('async function loadLatestOpenTaskForSlug('),
+    svcSrc.indexOf('// Scoped to the caller\'s own OPEN rows FOR THIS APP')
+  );
+  assert.ok(appWide.length > 0, 'the app-wide lookup is where this test thinks it is');
   assert.equal(
-    (svcSrc.match(/AND t\.expires_at > NOW\(\)\n\s*ORDER BY t\.id DESC LIMIT 1/g) || []).length, 1,
-    'exactly one of the two literals filters expiry'
+    (appWide.match(/AND t\.expires_at > NOW\(\)/g) || []).length, 1,
+    'exactly one of its two literals filters expiry'
+  );
+  assert.equal((appWide.match(/await pool\.query\(/g) || []).length, 2,
+    'and it is two whole literals, not one assembled at runtime');
+});
+
+test('the per-session lookup is a separate function, not a widened one', () => {
+  // loadLatestOpenTaskForSlug must keep answering app-wide for submitWork's
+  // slug+branch recovery: an agent that lost its task id knows the app and the
+  // branch it pushed, and nothing about the browser session a human minted it
+  // in. Session-scoping THAT would break recovery rather than fix the
+  // launchpad, so the walkthrough gets its own lookup instead.
+  const svcSrc = read('src/services/external-agent-tasks.js');
+  assert.match(svcSrc, /async function loadOpenTaskForSession\(pool, userId, slug, sessionId, opts = \{\}\)/);
+  assert.ok(!/async function loadLatestOpenTaskForSlug\([^)]*sessionId/.test(svcSrc),
+    'the app-wide lookup never learns about sessions');
+
+  const perSession = svcSrc.slice(
+    svcSrc.indexOf('async function loadOpenTaskForSession('),
+    svcSrc.indexOf('// The attribution gate.')
+  );
+  // Four literals: this session's task and the orphan scan, each with and
+  // without the expiry filter — all static, none assembled.
+  assert.equal((perSession.match(/await pool\.query\(/g) || []).length, 4);
+  assert.equal((perSession.match(/AND t\.origin_session_id = \$3/g) || []).length, 2);
+  assert.equal((perSession.match(/AND t\.origin_session_id IS NULL/g) || []).length, 2);
+  // Own task first, orphan second — the other way round, a legacy row would
+  // be adopted over a task this session actually prepared.
+  assert.ok(
+    perSession.indexOf('origin_session_id = $3') < perSession.indexOf('origin_session_id IS NULL'),
+    "this session's own task is looked for first"
   );
 });
 
@@ -836,7 +883,7 @@ test('the plain fixture survives the round trip from page URL to status route', 
   const src = read('src/routes/dev-flow.js');
   assert.match(src, /const demoKind = req\.query\.demo === 'session' \? 'session' : 'proposal';/);
   assert.match(src, /const orderKind = req\.query\.order === 'plain' \? null : demoKind;/);
-  assert.match(src, /req\.query\.demo === '1' \|\| req\.query\.demo === 'session'\s*\n?\s*\? demoStatus\(app, parsed, orderKind\)/);
+  assert.match(src, /req\.query\.demo === '1' \|\| req\.query\.demo === 'session'\s*\n?\s*\? demoStatus\(app, parsed, orderKind, noTask\)/);
   const route = (q) => (q.demo === '1' || q.demo === 'session'
     ? { fixture: true, targetKind: q.order === 'plain' ? null : (q.demo === 'session' ? 'session' : 'proposal') }
     : { fixture: false });
@@ -919,10 +966,90 @@ test('the client posts to the discard route from the walkthrough it is showing',
   // demo-discriminator regression shipped through exactly that gap, so pin the
   // call sites themselves.
   const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
-  assert.match(devChat, /dev-flow\/status\$\{DevChat\._devFlowDemoQS\(\)\}/,
-    'the status fetch uses the dev-flow query string, not the bare _demoQS');
+  assert.match(devChat, /const fixtureQS = DevChat\._devFlowDemoQS\(\);/,
+    'the status fetch builds from the dev-flow query string, not the bare _demoQS');
+  assert.ok(!/dev-flow\/status\$\{DevChat\._demoQS\(\)\}/.test(devChat),
+    'and never from the bare one, which would drop the order discriminator');
   assert.match(devChat, /if \(action === 'discard'\) return DevChat\._devFlowDiscard\(\);/,
     'the discard action is dispatched');
   assert.match(devChat, /external-tasks\/\$\{encodeURIComponent\(task\.id\)\}\/discard/,
     'and posts to the discard route with the task it is showing');
+});
+
+
+// ── Per-session work orders ─────────────────────────────────────────────
+//
+// One open work order used to answer for every session in the app, so "New
+// change" opened a fresh session already showing an unrelated, often
+// long-finished order. The walkthrough is keyed on the session now.
+
+test('the walkthrough asks for THIS session\'s work order', async () => {
+  await status('?sessionId=990404');
+  assert.equal(stub.loadedVia, 'session', 'the session-scoped lookup is used');
+  assert.equal(stub.loadedSessionId, 990404, 'and it is given the session from the query');
+  assert.deepEqual(stub.loadOpts, { unexpiredOnly: true },
+    'still without the expired reservations the previous change filtered out');
+});
+
+test('a caller that names no session degrades to the old app-wide lookup', async () => {
+  // A browser running cached JS from before this change sends no sessionId.
+  // Falling back to what it used to get is the honest failure mode; answering
+  // "no work order" would make its launchpad look empty and invite a second
+  // one to be minted for work already in flight.
+  await status();
+  assert.equal(stub.loadedVia, 'app');
+  assert.deepEqual(stub.loadOpts, { unexpiredOnly: true });
+});
+
+test('a junk sessionId is not a session, and never reaches the lookup as one', async () => {
+  for (const bad of ['abc', '0', '-3', '1.5', '9e9', '']) {
+    await status(`?sessionId=${encodeURIComponent(bad)}`);
+    assert.equal(stub.loadedVia, 'app', `'${bad}' is not a session id`);
+  }
+});
+
+test('preparing a work order records the launchpad it was prepared in', async () => {
+  const ok = await prepare(
+    { agent: 'codex', brief: 'x', sessionId: 990404 },
+    { origin: ORIGIN, 'sec-fetch-site': 'same-origin' }
+  );
+  assert.equal(ok.status, 200);
+  assert.equal(stub.prepareArgs.originSessionId, 990404);
+
+  // Absent or malformed is null, not a throw and not a guess: the connector
+  // path has no session at all, and those rows are adopted rather than
+  // stranded (see loadOpenTaskForSession).
+  for (const bad of [undefined, null, 'abc', 0, -3, 1.5, { id: 4 }, ['4']]) {
+    resetStubs();
+    await prepare(
+      { agent: 'codex', brief: 'x', sessionId: bad },
+      { origin: ORIGIN, 'sec-fetch-site': 'same-origin' }
+    );
+    assert.equal(stub.prepareArgs.originSessionId, null, `${JSON.stringify(bad)} is not a session id`);
+  }
+});
+
+test('the dev chat sends its session on both calls', () => {
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+  assert.match(devChat, /sessionId=\$\{encodeURIComponent\(session\.id\)\}/,
+    'the status read names the session it is rendering');
+  assert.match(devChat, /\{ sessionId: Number\(DevChat\.currentSession\.id\) \}/,
+    'and so does the prepare');
+
+  // The separator matters: the fixture query string is '' in production and
+  // `?demo=…` in a staging preview, so a bare '?' would produce a second one
+  // and the route would see no demo at all.
+  const build = (fixtureQS) => `/x${fixtureQS}${fixtureQS ? '&' : '?'}sessionId=7`;
+  assert.equal(build(''), '/x?sessionId=7');
+  assert.equal(build('?demo=1'), '/x?demo=1&sessionId=7');
+  assert.match(devChat, /\$\{fixtureQS\}\$\{fixtureQS \? '&' : '\?'\}sessionId=/,
+    'the client builds it that way too');
+});
+
+test('?order=none renders a launchpad with no work order at all', () => {
+  const src = read('src/routes/dev-flow.js');
+  assert.match(src, /const noTask = req\.query\.order === 'none';/);
+  assert.match(src, /demoStatus\(app, parsed, orderKind, noTask\)/);
+  // Both, or step 4 would be `current` with nothing to hand over.
+  assert.match(src, /payload\.task = null;\s*\n\s*payload\.branch = null;/);
 });
