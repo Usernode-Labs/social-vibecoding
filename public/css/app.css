@@ -65,6 +65,14 @@
      they climb: (11,13,27) → (19,19,22) → (28,28,30) → (44,44,46). */
   --dc-strip: #f5f5f7;
   --dc-sheet: #ffffff;
+  /* A CARD SITTING ON A SHEET, which is a different job from the sheet. The
+     category cards took `--dc-sheet-fill` — the same value as the pane they
+     sit on — so in DARK MODE they were rgba(28,28,30,.72) on rgba(28,28,30,
+     .72) and the only thing separating them was a 12%-white hairline. Light
+     mode got away with it because its hairline is 10% BLACK on near-white,
+     which reads far harder than 12% white on near-black does. Opaque in both
+     themes, because a raised surface that is see-through is not raised. */
+  --dc-sheet-raise: #ffffff;
   --dc-raised: #f5f5f7;
 
   /* ── …and the two PLANES, which are not the same thing ───
@@ -1147,6 +1155,9 @@ html.un-kb .platform-safe-sheet {
      again, which is the step the old pairing had no room for. */
   --dc-strip: #131316;
   --dc-sheet: #1c1c1e;
+  /* One step up the same ramp as the sheet below it (`--bg-tertiary`), which
+     is the step the rest of the dark palette already uses for "on top of". */
+  --dc-sheet-raise: #2c2c2e;
   --dc-raised: #2c2c2e;
   /* The dark planes. The strip's tint is the dark wallpaper's own ground
      rather than the strip's opaque value: at 0.55 over that ground it is
@@ -11813,7 +11824,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   display: flex; flex-direction: column; gap: 8px;
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dev-ws-strip, .dev-ws-theme { background-color: var(--dc-sheet); }
+  .dev-ws-strip { background-color: var(--dc-sheet); }
 }
 /* CENTRE, not baseline. Baseline was right while the only thing beside the
    eyebrow was a 22px pill; with a 30px ring in the line the eyebrow's
@@ -12702,9 +12713,11 @@ html.un-kb .dev-ws { --ws-gap: 8px; }
 
 .dev-ws-themes { display: flex; flex-direction: column; gap: 8px; }
 .dev-ws-theme {
-  background-color: var(--dc-sheet-fill);
-  backdrop-filter: var(--dc-frost);
-  -webkit-backdrop-filter: var(--dc-frost);
+  /* Raised, not frosted: see `--dc-sheet-raise`. The frost was doing nothing
+     here anyway — it blurs what is BEHIND, and what is behind is a pane of
+     the same colour, so it cost a compositing layer per card to blur a flat
+     field. */
+  background-color: var(--dc-sheet-raise);
   border-radius: 22px;
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
   overflow: hidden;

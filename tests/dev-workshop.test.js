@@ -861,8 +861,17 @@ test('the vote deck is its own tab; the unclaimed suggestion stays with the stat
   // a vote first, the unclaimed issues behind them.
   const q = AppView._workshopView().queue;
   assert.deepEqual(plain(q.map((r) => r.kind)), ['vote', 'claim', 'claim']);
+  // The claim question INVITES rather than interrogates: "Do you want to pick
+  // this up?" reads as a duty being assigned, and the thing on offer is a
+  // try, not a commitment.
   assert.deepEqual(plain(q.map((r) => r.ask)),
-    ['Should this change go in?', 'Do you want to pick this up?', 'Do you want to pick this up?']);
+    ['Should this change go in?', 'Want to give this one a try?', 'Want to give this one a try?']);
+  // And a claim carries ONE positive answer, not a pair. "No" and "Skip" were
+  // the same press wearing two labels — neither recorded anything, both moved
+  // the deck on — so the row no longer offers a `no` at all.
+  assert.deepEqual(plain(q.filter((r) => r.kind === 'claim').map((r) => r.no)), [null, null]);
+  assert.deepEqual(plain(q.filter((r) => r.kind === 'claim').map((r) => r.yes && r.yes.label)),
+    ["Let's take it", "Let's take it"]);
   // The heading states the fact; the offer is the line under it. "Why not
   // give it a try?" did both at once and coaxed while it did.
   assert.ok(!html.includes('Free to take, if you want to try solving an issue.'),
@@ -2502,4 +2511,66 @@ test('the ask box sits just above the rail, on both widths', () => {
     'top-aligning the whole deck is what left the gap');
   // Both now measure 10px above the bar — `.dev-ws`'s own column gap, which is
   // the floor for anything sitting directly above the rail.
+});
+
+test('skip re-queues the card instead of stepping past it', () => {
+  // Skip used to step the index on and leave the card where it was, so every
+  // skipped item sat between the reader and the ones they had not seen, and
+  // reaching the end stranded them behind. Re-queueing makes the deck a
+  // QUEUE: "not now" comes round again after everything unseen.
+  assert.match(WORKSHOP, /const \[skipped, setSkipped\] = useState<string\[\]>\(\[\]\);/);
+  // Keys, not a reordered copy of the rows: the board republishes every few
+  // seconds, and fresh card data has to come through without undoing the
+  // order the reader has made.
+  assert.match(WORKSHOP, /const moved = skipped\.map\(\(k\) => all\.find\(\(r\) => r\.key === k\)\)/);
+  // It is not an answer, so it is not recorded — a skipped card wearing a
+  // tick would say the app had filed something it has not.
+  const fn = /const skip = \(\) => \{([\s\S]*?)\n  \};/.exec(WORKSHOP);
+  assert.ok(fn, 'skip is its own handler');
+  assert.ok(!/setAnswered/.test(fn[1]), 'skip records nothing');
+  // The index only moves at the END of the queue: a card already last stays
+  // last when sent to the back, so skipping it would show it again.
+  assert.match(fn[1], /const wasLast = i >= cards\.length - 1;[\s\S]*if \(wasLast\) setAt\(0\);/);
+  assert.ok(!/onClick=\{\(\) => answer\('skip', null\)\}/.test(WORKSHOP),
+    'the button no longer answers');
+});
+
+test('the lander opens on the tab you last used', () => {
+  // Three tabs are three different jobs, and the one you want is usually the
+  // one you wanted last time — somebody working the vote queue landed on the
+  // digest every single visit. Stored per browser: it is a reading position,
+  // not a setting, and it reuses the mechanism the grouping already has.
+  assert.match(APP_VIEW_SRC, /WORKSHOP_TAB_KEY: 'devWorkshopTab',/);
+  const read = /_workshopTab\(\) \{([\s\S]*?)\n  \},/.exec(APP_VIEW_SRC);
+  assert.ok(read, '_workshopTab resolves it');
+  // ORDER MATTERS: the deep link wins, then what you chose, then the default.
+  // A declared check runs against an empty localStorage, so `?ws=` losing to
+  // a stored value would make every one of them assert the wrong tab.
+  assert.match(read[1], /const url = AppView\._workshopTabParam\(\);\s*if \(url\) return url;/);
+  assert.match(read[1], /localStorage\.getItem\(AppView\.WORKSHOP_TAB_KEY\)/);
+  assert.match(read[1], /return 'status';/);
+  // And an explicit tap retires the URL override, exactly as the grouping
+  // does — otherwise `?ws=` would keep winning over every later press.
+  const write = /_setWorkshopTab\(key\) \{([\s\S]*?)\n  \},/.exec(APP_VIEW_SRC);
+  assert.ok(write, '_setWorkshopTab stores it');
+  assert.match(write[1], /AppView\._workshopTabUrlOverride = null;/);
+  assert.match(write[1], /localStorage\.setItem\(AppView\.WORKSHOP_TAB_KEY, next\)/);
+  // The view model publishes the RESOLVED tab, not the raw parameter.
+  assert.match(APP_VIEW_SRC, /tab: AppView\._workshopTab\(\),/);
+  assert.match(WORKSHOP, /onClick=\{\(\) => \{ setTab\(t\.key\); callAppView\('_setWorkshopTab', t\.key\); \}\}/);
+});
+
+test('a category card is raised off the pane it sits on', () => {
+  // It took `--dc-sheet-fill`, the SAME value as the pane beneath it, so in
+  // dark mode the card was rgba(28,28,30,.72) on rgba(28,28,30,.72) with only
+  // a 12%-white hairline between them. Light mode got away with it because
+  // its hairline is 10% BLACK on near-white, which reads far harder.
+  assert.match(CSS, /--dc-sheet-raise: #ffffff;/, 'light');
+  assert.match(CSS, /--dc-sheet-raise: #2c2c2e;/, 'dark, one step up the same ramp as the sheet');
+  const card = /\.dev-ws-theme \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(card, 'the card rule exists');
+  assert.match(card[1], /background-color: var\(--dc-sheet-raise\);/);
+  // Opaque, so no frost: it blurs what is BEHIND, and what is behind is a
+  // pane of one flat colour — a compositing layer per card for nothing.
+  assert.ok(!/backdrop-filter/.test(card[1]), 'the frost went with it');
 });

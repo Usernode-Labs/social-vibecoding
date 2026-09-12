@@ -818,7 +818,24 @@ function NeedsDeck({
   total: number;
   models: DevWorkshopView['models'];
 }): ReactNode {
-  const cards = rows.filter((r) => r.t === 'card');
+  // SKIPPED CARDS GO TO THE BACK, not out. Skip used to step the index on and
+  // leave the card where it was, so working through the deck meant every
+  // skipped item sat between you and the ones you had not seen, and reaching
+  // the end left them stranded behind you. Re-queueing makes the deck a queue:
+  // "not now" comes round again after everything you have not looked at.
+  //
+  // Held as a list of KEYS rather than a reordered copy of the rows, so a
+  // republish (the board reloads every few seconds) brings fresh card data
+  // through while the order you have made survives it.
+  const [skipped, setSkipped] = useState<string[]>([]);
+  const cards = useMemo(() => {
+    const all = rows.filter((r) => r.t === 'card');
+    if (!skipped.length) return all;
+    const back = new Set(skipped);
+    const kept = all.filter((r) => !back.has(r.key));
+    const moved = skipped.map((k) => all.find((r) => r.key === k)).filter(Boolean) as typeof all;
+    return [...kept, ...moved];
+  }, [rows, skipped]);
   const [at, setAt] = useState(0);
   // Keyed by row, so moving to the next proposal does not carry the last
   // one's conversation with it.
@@ -856,12 +873,36 @@ function NeedsDeck({
     // with nothing to say whether it had registered.
     if (i < cards.length - 1) window.setTimeout(() => setAt(i + 1), 550);
   };
+  /**
+   * Skip is NOT an answer, and it does not move the index.
+   *
+   * It moves the CARD: this one goes to the back and the next one slides into
+   * the position being looked at, so the deck stays where the eye is. It is
+   * also not recorded in `answered` — nothing was decided, and a skipped card
+   * showing a tick would say the app had filed something it has not.
+   *
+   * The one place the index does move is the end of the queue: a card already
+   * last stays last when it is sent to the back, so skipping it would show it
+   * again. Wrapping to the front is what "round again" means there.
+   */
+  const skip = () => {
+    const wasLast = i >= cards.length - 1;
+    window.setTimeout(() => {
+      setSkipped((cur) => [...cur.filter((k) => k !== row.key), row.key]);
+      if (wasLast) setAt(0);
+    }, 550);
+  };
   // The verbs, per kind. "Yes" over a card is only clear if you already
   // know what the card is asking; "Vote yes" and "I'll take it" say what
   // the press DOES, which is the thing a first-time reader is missing.
+  // A CLAIM HAS TWO ANSWERS. "Not me" and "Skip" were the same press wearing
+  // two labels — neither recorded anything, both moved the deck on — and
+  // offering them side by side asked the reader to tell apart a distinction
+  // the app does not make. A vote keeps three, because there yes and no are
+  // both real, recorded acts and skip is the third thing.
   const verbs = row.kind === 'vote'
     ? { yes: 'Vote yes', no: 'Vote no', skip: 'Skip' }
-    : { yes: "I'll take it", no: 'Not me', skip: 'Skip' };
+    : { yes: "Let's take it", no: null, skip: 'Skip' };
   const done = answered[row.key];
   const ask = () => {
     const q = draft.trim();
@@ -923,6 +964,7 @@ function NeedsDeck({
               aria-pressed={done === 'yes'}
               onClick={() => answer('yes', row.yes ? row.yes.act : null)}
             >{done === 'yes' ? `${verbs.yes} ✓` : verbs.yes}</button>
+            {verbs.no ? (
             <button
               type="button"
               className="dev-ws-answer-btn dev-ws-answer-no"
@@ -931,12 +973,12 @@ function NeedsDeck({
               aria-pressed={done === 'no'}
               onClick={() => answer('no', row.no ? row.no.act : null)}
             >{done === 'no' ? `${verbs.no} ✓` : verbs.no}</button>
+            ) : null}
             <button
               type="button"
               className="dev-ws-answer-btn dev-ws-answer-skip"
               data-ws-answer-btn="skip"
-              aria-pressed={done === 'skip'}
-              onClick={() => answer('skip', null)}
+              onClick={skip}
             >{verbs.skip}</button>
           </div>
         </div>
@@ -1491,7 +1533,7 @@ export function DevWorkshop(): ReactNode {
             className="dev-ws-tab"
             data-ws-tab-btn={t.key}
             aria-selected={tab === t.key}
-            onClick={() => setTab(t.key)}
+            onClick={() => { setTab(t.key); callAppView('_setWorkshopTab', t.key); }}
           >
             {/* The glyph is decoration over a label that is already there, so
                 it is hidden from the accessibility tree rather than given a
