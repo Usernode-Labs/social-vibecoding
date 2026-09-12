@@ -2474,3 +2474,32 @@ test('the lander fills its scroller without a percentage in the floor', () => {
   assert.match(CSS, /#dev-workshop:has\(> \.dev-ws\) \{[^}]*width: 100%/);
   assert.match(CSS, /#dev-workshop > \.dev-ws \{ flex: 1 1 auto; width: 100%; \}/);
 });
+
+test('the ask box sits just above the rail, on both widths', () => {
+  // It was floating well clear of the bar, for two different reasons.
+  //
+  // ON A PHONE the deck filled its box exactly and the box stopped 80px
+  // short: `.dev-ws-tabbody` reserves the rail's height so the last card of a
+  // SCROLLING tab can be read clear of a bar that overlays it. Needs you does
+  // not scroll under the rail — it is one fitted decision per screen — so
+  // that clearance was dead space pushing the composer up. Measured at
+  // 402x874: 90px between the ask box and the bar. The clearance now lifts on
+  // that tab alone.
+  assert.match(CSS, /\.dev-ws\[data-ws-tab="needs"\] > \.dev-ws-tabbody \{ padding-bottom: 0; \}/);
+  // ON A DESKTOP the deck was content-sized top-aligned (`flex: 0 0 auto` with
+  // `align-content: start`), which put the ask box directly under the answers
+  // and left the window empty beneath it — measured at 1440x900, 271px. The
+  // deck still sits at the top, which is what that rule is for; the SECOND row
+  // takes the free space and the pane aligns to its end.
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(wide, 'the wide-screen deck rule exists');
+  assert.match(wide[1], /grid-template-rows: auto 1fr;/, 'the deck is content-sized, the ask row takes the rest');
+  assert.match(wide[1], /\.dev-ws-needs > \.dev-ws-ask \{ align-self: end; \}/);
+  // Comments stripped first: the block above explains WHY `align-content:
+  // start` was wrong, and prose naming it is not the declaration this forbids
+  // — the same distinction the 100vw check in this file already makes.
+  assert.ok(!/align-content: start/.test(wide[1].replace(/\/\*[\s\S]*?\*\//g, '')),
+    'top-aligning the whole deck is what left the gap');
+  // Both now measure 10px above the bar — `.dev-ws`'s own column gap, which is
+  // the floor for anything sitting directly above the rail.
+});
