@@ -60,6 +60,19 @@ import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 
 type SortKey = 'people' | 'activity' | 'open';
+type TabKey = 'status' | 'needs' | 'all';
+
+/**
+ * The lander's three tabs, in the order a person needs them: where the app
+ * is, what it needs from you, everything there is. The bar sits at the
+ * BOTTOM — this is a phone screen first, and the three destinations are
+ * navigation, not a control acting on what is above them.
+ */
+const TABS: { key: TabKey; label: string }[] = [
+  { key: 'status', label: 'Current status' },
+  { key: 'needs', label: 'Needs you' },
+  { key: 'all', label: 'All items' },
+];
 
 /** The swatch a name gets everywhere (feed-thread's rule, kept in step). */
 function swatchFor(name: string): string {
@@ -295,20 +308,6 @@ function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
       ? `Categories were drafted ${relTime(drafted)} and are re-drafted daily, or sooner when a tenth of the board changes.`
       : 'Categories are drafted from the board and re-drafted daily, or sooner when a tenth of the board changes.',
   ];
-  // Which paragraph is at the top of the page. Without this the two states
-  // are indistinguishable on screen — a model that has never run and one
-  // whose call is failing both leave the derived sentence up there, and the
-  // only way to tell was to read the database.
-  if (written) {
-    parts.push('The summary at the top was written by the model on the same pass.');
-  } else if (meta.digestError) {
-    // The failure that used to be a log line and a day of silence. Naming
-    // it here is what turned "could something be up with the summarizer?"
-    // from a question about the database into one the page answers.
-    parts.push(`The model\u2019s summary could not be written (${meta.digestError}); it is retried within the hour, and the sentence at the top is worked out from the board meanwhile.`);
-  } else {
-    parts.push('The summary at the top is worked out from the board; the model writes one on the next pass.');
-  }
   const c = meta.coverage;
   if (c && c.pending) parts.push(`${c.pending} new ${c.pending === 1 ? 'card is' : 'cards are'} being placed.`);
   if (c && c.unplaced) {
@@ -316,6 +315,31 @@ function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
   }
   if (meta.lastError) parts.push(`The last attempt failed (${meta.lastError}); it is retried shortly.`);
   return parts.join(' ');
+}
+
+/**
+ * Which paragraph is at the top of the page, and why.
+ *
+ * This used to be two clauses of the category footnote under the themes,
+ * which worked while the summary and the themes were on one scroll. They are
+ * two TABS now, and an explanation of the summary sitting on the screen that
+ * does not contain the summary explains nothing — so it moved to the
+ * dashboard it is about.
+ *
+ * Without it the two failure states are indistinguishable on screen: a model
+ * that has never run and one whose call keeps failing both leave the derived
+ * sentence up there, and the only way to tell them apart was to read the
+ * database.
+ */
+function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
+  if (written) return 'Written by the model on its last pass over the board.';
+  if (meta.digestError) {
+    // The failure that used to be a log line and a day of silence. Naming it
+    // here is what turned "could something be up with the summarizer?" from a
+    // question about the database into one the page answers.
+    return `The model\u2019s summary could not be written (${meta.digestError}); it is retried within the hour, and this is worked out from the board meanwhile.`;
+  }
+  return 'Worked out from the board; the model writes one on the next pass.';
 }
 
 function sortThemes(themes: WorkshopTheme[], key: SortKey): WorkshopTheme[] {
@@ -456,12 +480,15 @@ function weekRange(startMs: number, endMs: number): string {
  * had nowhere to go, and a reader who wanted none of them still paid three
  * cards of vertical space before reaching the board.
  *
- * So the present is the default — `Open`, the one entry that is not a week
- * at all — and everything earlier is one step behind a button. Each press
- * reveals the next-oldest window ABOVE the stack, which keeps the column in
- * the order a timeline is read (oldest at the top, now at the bottom) and
- * keeps the thing you came for at the same place on the screen however far
- * back you have walked.
+ * So the present is the default — `Open issues`, the one entry that is not a
+ * week at all — and everything earlier is one step behind a button. Each
+ * press reveals the next-oldest window BELOW the stack, and the control
+ * moves down with it. It grew upwards first, on the reasoning that a column
+ * of dated cards reads oldest-at-the-top like any timeline. It does, but
+ * this is not a timeline being read: it is one card with a way to ask for
+ * more, and growing upwards pushed the card you were looking at further
+ * down the screen on every press. Downwards, the present stays where it is
+ * and the history unrolls under it.
  *
  * The walk ends where the server's lines end. When the server has also said
  * when the app's first week was (`firstWeek`) and the walk has reached it,
@@ -474,30 +501,12 @@ function WeekWalk({ weeks, firstWeek }: { weeks: Dash['weeks']; firstWeek: numbe
   // oldest-first, so one means `open` alone.
   const [shown, setShown] = useState(1);
   if (!weeks.length) return null;
-  const drawn = weeks.slice(Math.max(0, weeks.length - shown));
+  const drawn = weeks.slice(0, shown);
   const more = weeks.length - drawn.length;
-  const oldest = drawn[0];
+  const oldest = drawn[drawn.length - 1];
   const atStart = !more && !!firstWeek && !!oldest && oldest.startMs === firstWeek;
   return (
     <div className="dev-ws-cards" data-ws-cards="">
-      {more ? (
-        <button
-          type="button"
-          className="dev-ws-reveal dev-ws-week-more"
-          data-ws-week-more=""
-          onClick={() => setShown(shown + 1)}
-        >
-          {/* Pointing UP, because that is where the window it reveals
-              appears. It is `ChevronDownIcon` turned over in CSS — the same
-              trick `.dev-ws-lane-title > .dev-ws-chev` already uses — rather
-              than a 22nd icon for one caret. */}
-          <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-          Show past week
-        </button>
-      ) : null}
-      {atStart ? (
-        <p className="dev-ws-week-note" data-ws-week-start="">The first week this app had any activity.</p>
-      ) : null}
       {drawn.map((w) => (
         <article key={w.key} className="dev-ws-card" data-ws-card={w.key}>
           <h4 className="dev-ws-card-title">
@@ -513,6 +522,22 @@ function WeekWalk({ weeks, firstWeek }: { weeks: Dash['weeks']; firstWeek: numbe
           <p className="dev-ws-card-line">{w.line}</p>
         </article>
       ))}
+      {more ? (
+        <button
+          type="button"
+          className="dev-ws-reveal dev-ws-week-more"
+          data-ws-week-more=""
+          onClick={() => setShown(shown + 1)}
+        >
+          {/* Pointing DOWN, because that is where the window it reveals
+              appears — under the card you are reading, not above it. */}
+          <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+          Show past week
+        </button>
+      ) : null}
+      {atStart ? (
+        <p className="dev-ws-week-note" data-ws-week-start="">The first week this app had any activity.</p>
+      ) : null}
     </div>
   );
 }
@@ -586,12 +611,9 @@ function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
  *
  * A ring alone is a fraction with no subject: "0/5" does not say what the
  * five are, and a reader should not have to hover a donut to find out. So
- * the words are still there — as the LANE'S NOTE (`voteWords` below), in
- * the place "Free to take, if you want to try solving an issue." occupies
- * one lane down. Both lanes then have the same shape: a heading, a line
- * saying what the lane is offering, and the deck. The ring and the words
- * used to sit together up in the strip head, which put the subject of one
- * lane above a heading that belonged to both.
+ * the words are still there (`voteWords` below) — under the deck's own
+ * heading in the `Needs you` tab, which is where the ring went when voting
+ * became a screen of its own rather than one lane of three.
  *
  * There is no × any more. A count that can be closed is a count somebody
  * stops seeing while it is still true, and this one is the whole reason the
@@ -721,6 +743,158 @@ function RowPager({
   );
 }
 
+/**
+ * `Needs you` — one question, filling the screen.
+ *
+ * The lander's other two tabs are things you READ. This one is a thing you
+ * ANSWER, and it is built to make that the only thing on offer: one proposal
+ * at a time, the whole screen, no list to skim past it and nothing else
+ * competing for the tap. A deck of decisions rather than a page about them.
+ *
+ * ── Two panes, and why the bottom one grows ──────────────────────────
+ *
+ * The top pane is the thing being asked about; the bottom is where you can
+ * ask about it. It opens at a third of the height — enough to say it is
+ * there and to take a question — and grows to half once you have asked
+ * something, because from that point the conversation is what you are
+ * reading and the card is context for it. It stops at half: the card is the
+ * subject, and a chat that swallows its own subject is a chat about nothing.
+ *
+ * ── The card leads with the SUMMARY, not the title ───────────────────
+ *
+ * A card's title is a pull-request title. `pr_summary_md` is the sentence
+ * written for the person voting — what changes for somebody using the app —
+ * and on a screen whose whole job is a decision, that is the first thing
+ * that should be read. A proposal without one says so rather than leaving a
+ * gap, because "no summary was written" is a fact a voter should have.
+ *
+ * ── The chat is NOT wired up ─────────────────────────────────────────
+ *
+ * There is no endpoint that answers questions about a proposal: the app's
+ * LLM proxy exists, `dev-chat` is the agent's session transcript, and
+ * neither is this. The composer is real and its answers are a placeholder
+ * that says so on screen. Building it means a route with the change's diff,
+ * its discussion and the app's conventions in context, its own spend
+ * accounting and rate limit — a piece of work in its own right, and one that
+ * should not be started until this layout is the agreed one.
+ */
+function NeedsDeck({
+  rows, owed, total,
+}: {
+  rows: DevWorkshopView['votes']['rows'];
+  owed: number;
+  total: number;
+}): ReactNode {
+  const cards = rows.filter((r) => r.t === 'card');
+  const [at, setAt] = useState(0);
+  // Keyed by row, so moving to the next proposal does not carry the last
+  // one's conversation with it.
+  const [threads, setThreads] = useState<Record<string, { who: 'you' | 'ai'; text: string }[]>>({});
+  const [draft, setDraft] = useState('');
+
+  if (!cards.length) {
+    return (
+      <div className="dev-ws-needs dev-ws-needs-done" data-ws-needs="">
+        <p className="dev-ws-needs-done-line">Nothing is waiting on you.</p>
+        <p className="dev-ws-needs-done-sub">Every proposal you can vote on has your answer.</p>
+      </div>
+    );
+  }
+
+  const i = Math.min(at, cards.length - 1);
+  const row = cards[i];
+  const thread = threads[row.key] || [];
+  const engaged = thread.length > 0;
+  const ask = () => {
+    const q = draft.trim();
+    if (!q) return;
+    setThreads((cur) => ({
+      ...cur,
+      [row.key]: [
+        ...(cur[row.key] || []),
+        { who: 'you', text: q },
+        {
+          who: 'ai',
+          text: 'Not wired up yet. This pane will answer from the change itself — its diff, its discussion and this app’s conventions.',
+        },
+      ],
+    }));
+    setDraft('');
+  };
+
+  return (
+    <div
+      className={engaged ? 'dev-ws-needs dev-ws-needs-engaged' : 'dev-ws-needs'}
+      data-ws-needs=""
+      data-ws-engaged={engaged ? '' : undefined}
+    >
+      <section className="dev-ws-needs-subject">
+        <div className="dev-ws-needs-head">
+          <span className="dev-ws-eyebrow">{owed ? voteWords(owed) : 'Nothing owed'}</span>
+          {total ? <VoteRing owed={owed} total={total} /> : null}
+        </div>
+        <div className="dev-ws-needs-scroll">
+          {row.summary
+            ? <p className="dev-ws-needs-summary">{row.summary}</p>
+            : (
+              <p className="dev-ws-needs-summary dev-ws-needs-nosummary">
+                No plain-language summary was written for this change.
+              </p>
+            )}
+          <DevCard model={row.card} />
+        </div>
+        <div className="dev-ws-needs-nav" data-ws-needs-nav="">
+          <button
+            type="button"
+            className="dev-ws-pager-btn"
+            aria-label="Previous proposal"
+            disabled={i === 0}
+            onClick={() => setAt(i - 1)}
+          ><ChevronLeftIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
+          <span className="dev-ws-pager-n">{`${i + 1} of ${cards.length}`}</span>
+          <button
+            type="button"
+            className="dev-ws-pager-btn"
+            aria-label="Next proposal"
+            disabled={i >= cards.length - 1}
+            onClick={() => setAt(i + 1)}
+          ><ChevronRightIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
+        </div>
+      </section>
+
+      <section className="dev-ws-ask" data-ws-ask="">
+        <div className="dev-ws-ask-head">
+          <span className="dev-ws-eyebrow">Ask about this change</span>
+        </div>
+        <div className="dev-ws-ask-log">
+          {thread.length ? thread.map((m, n) => (
+            <p key={n} className={m.who === 'you' ? 'dev-ws-ask-msg dev-ws-ask-you' : 'dev-ws-ask-msg dev-ws-ask-ai'}>
+              {m.text}
+            </p>
+          )) : (
+            <p className="dev-ws-ask-hint">What does this change for someone using the app? Why this way?</p>
+          )}
+        </div>
+        <form
+          className="dev-ws-ask-composer"
+          onSubmit={(e) => { e.preventDefault(); ask(); }}
+        >
+          <label className="sr-only" htmlFor="dev-ws-ask-input">Ask about this change</label>
+          <input
+            id="dev-ws-ask-input"
+            className="dev-ws-ask-input"
+            type="text"
+            value={draft}
+            placeholder="Ask a question…"
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <button type="submit" className="dev-ws-ask-send" disabled={!draft.trim()}>Ask</button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -742,6 +916,11 @@ export function DevWorkshop(): ReactNode {
     () => (v.autoExpand && v.autoExpand.key ? { [v.autoExpand.theme]: v.autoExpand.key } : {}),
   );
   const [sinceOpen, setSinceOpen] = useState(false);
+  // Which of the three tabs is up. Seeded from the publish so a `?ws=` deep
+  // link paints the right one on the FIRST frame rather than showing Current
+  // status and then swapping — the same reason `openThemes` is seeded from
+  // `autoExpand` rather than from an effect.
+  const [tab, setTab] = useState<TabKey>(() => v.tab || 'status');
   // "N more of yours" reveals them HERE. It used to set a board filter and
   // navigate, which left the lander and changed the view mode to read a list
   // the strip was already showing the top of. The vote and free-to-take
@@ -820,7 +999,9 @@ export function DevWorkshop(): ReactNode {
   const canPost = !!v.canPost;
 
   return (
-    <div ref={hostRef} className="dev-ws">
+    <div ref={hostRef} className="dev-ws" data-ws-tab={tab}>
+      {tab === 'status' ? (
+      <>
       {v.emptyNote ? (
         <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           {v.emptyNote.filtered ? (
@@ -861,10 +1042,15 @@ export function DevWorkshop(): ReactNode {
             : summarise(v.dashboard)
               ? <p className="dev-ws-strip-text">{summarise(v.dashboard)}</p>
               : null}
-          {/* "Since your last visit" used to sit here, under the numbers.
-              It moved into "What needs you" (below): it is not a fact about
-              the app, it is a list of things addressed to THIS reader, which
-              is what that pane is for. */}
+          {/* Where the sentence above came from. It was two clauses of the
+              category footnote under the themes, which is a different TAB
+              now — an explanation of the summary that does not sit with the
+              summary explains nothing. */}
+          {v.meta.source === 'ai' || v.meta.digestError ? (
+            <p className="dev-ws-digest-note" data-ws-digest-note="">
+              {digestNote(v.meta, !!(v.dashboard && (v.dashboard.cards || v.dashboard.summary)))}
+            </p>
+          ) : null}
         </section>
       ) : null}
 
@@ -905,44 +1091,23 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
-      {/* ── One pane: what needs a person ──
-          Voting on somebody else's work and picking up nobody's are the same
-          offer — "here is what you could do with five minutes" — and they were
-          two containers saying it twice. */}
-      {v.votes.rows.length || nextUp || v.since ? (
+      {/* ── What is free to take, and what moved ──
+          The votes used to sit here too, as the first of three lanes. They
+          are a TAB now (`Needs you`): a decision deserves the whole screen
+          and nothing else competing for the tap, and a strip of three lanes
+          made voting look like one of several errands. What is left are the
+          two things that are not decisions — an issue nobody has claimed,
+          and what changed while you were away. */}
+      {nextUp || v.since ? (
         <section
           className="dev-ws-strip"
           data-ws-votes=""
           data-ws-next={nextUp ? '' : undefined}
           data-ws-since={v.since ? '' : undefined}
         >
-          {/* The eyebrow alone. The ring and its sentence used to sit here,
-              which put one lane's subject above a heading that covers two —
-              they are the vote lane's, and they live on it now. */}
           <div className="dev-ws-strip-head">
             <span className="dev-ws-eyebrow">What needs you</span>
           </div>
-          {v.votes.rows.length ? (
-            <div className="dev-ws-lane" data-ws-lane="votes">
-              {/* Paged, not listed — and paged over EVERY owed row, so the
-                  "N more waiting on you" toggle that used to sit under the
-                  first three is gone: the control beside the heading already
-                  says how many there are and is the way to reach them. */}
-              <RowPager
-                rows={v.votes.rows}
-                scope="votes"
-                title="Needs your vote"
-                titleExtra={v.votes.total
-                  ? <VoteRing owed={v.votes.count} total={v.votes.total} />
-                  : null}
-                note={v.votes.count ? voteWords(v.votes.count) : undefined}
-                slug={slug}
-                canPost={canPost}
-                openKey={openRows.votes || ''}
-                onToggle={(key) => toggleRow('votes', key)}
-              />
-            </div>
-          ) : null}
           {nextUp ? (
             <div className="dev-ws-lane" data-ws-lane="next">
               {/* The heading states the fact; the line under it makes the
@@ -1034,8 +1199,14 @@ export function DevWorkshop(): ReactNode {
           <div className="dev-ws-discussion"><DevCard model={v.discussion.card} /></div>
         </section>
       ) : null}
+      </>
+      ) : null}
 
-      {themes.length ? (
+      {tab === 'needs' ? (
+        <NeedsDeck rows={v.votes.rows} owed={v.votes.count} total={v.votes.total} />
+      ) : null}
+
+      {tab === 'all' && themes.length ? (
         <>
           {/* ── The two ways to read the same board ──────────────────────
               The eyebrow here used to say "12 categories" and nothing else:
@@ -1165,6 +1336,36 @@ export function DevWorkshop(): ReactNode {
           </section>
         </>
       ) : null}
+
+      {/* ── The three destinations ──
+          At the BOTTOM, and sticky: this is a phone screen first, the bar is
+          navigation rather than a control acting on what is above it, and the
+          thumb is at the bottom of the hand. `.platform-safe-bar` is the
+          shell's own rule for a pinned bottom row — it carries the device's
+          home-indicator inset, which is why the padding is not written here. */}
+      <nav
+        className="dev-ws-tabs platform-safe-bar"
+        data-ws-tabs=""
+        role="tablist"
+        aria-label="Workshop sections"
+      >
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            className="dev-ws-tab"
+            data-ws-tab-btn={t.key}
+            aria-selected={tab === t.key}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+            {t.key === 'needs' && v.votes.count
+              ? <span className="dev-ws-tab-n">{v.votes.count}</span>
+              : null}
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }

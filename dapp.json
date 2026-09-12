@@ -1926,7 +1926,7 @@
     {
       "name": "#app/<slug>/workshop is the card area grouped by theme, not the general chat, and it leads with the open summary card and the step back",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-cards] > [data-ws-week-more] + [data-ws-card=\"open\"] > .dev-ws-card-line",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-dashboard] > [data-ws-cards] > [data-ws-card=\"open\"] > .dev-ws-card-line",
       "expectText": "Staging demo: one line on what the open issues and waiting proposals are about."
     },
     {
@@ -1963,10 +1963,10 @@
       "expectText": "[Mock] Voting"
     },
     {
-      "name": "The Workshop pins the proposals waiting on the viewer's vote above the themes, the vote at each row's bottom-right",
-      "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-votes] [data-ws-lane=\"votes\"] .dev-ws-row[role=\"button\"] > .dev-ws-row-band > .dev-ws-row-trailing > button.dev-vote-btn",
-      "expectText": "Needs your vote"
+      "name": "The Workshop's Needs-you tab is one proposal at a time, with its vote button and the sentence a voter reads",
+      "path": "/?demo=1&ws=needs#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop [data-ws-needs] > .dev-ws-needs-subject > .dev-ws-needs-scroll > .dev-ws-needs-summary + .gc-vote-item button.dev-vote-btn",
+      "expectText": "Vote"
     },
     {
       "name": "The view strip marks Workshop as the one you are on",

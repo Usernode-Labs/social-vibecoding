@@ -11953,7 +11953,161 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    note's 16px so the two share a left edge. */
 .dev-ws-reveal-start { justify-content: flex-start; padding-left: 16px; }
 .dev-ws-reveal-chev { width: 14px; height: 14px; }
-.dev-ws-week-more .dev-ws-reveal-chev { transform: rotate(180deg); }
+
+/* ── Where the summary came from ─────────────────────────────
+   Two clauses of the category footnote, moved onto the tab that holds the
+   summary they are about. */
+.dev-ws-digest-note {
+  margin: 2px 0 0; font-size: 12px; line-height: 1.5; color: var(--text-muted);
+}
+
+/* ── The three destinations ──────────────────────────────────
+   A segmented rail pinned to the FOOT of the lander. Sticky rather than
+   fixed: it belongs to this surface, releases with it, and `bottom: 0`
+   works against #dev-forum-scroll for the same reason the pane head's
+   `top: 0` does — that scroller is the reading area.
+
+   `.platform-safe-bar` (app.css, top) adds the device's home-indicator
+   inset, which is why no bottom padding is written here. */
+.dev-ws-tabs {
+  position: sticky; bottom: 0; z-index: 25;
+  display: flex; gap: 4px;
+  margin-top: 2px;
+  padding: 5px;
+  border-radius: 999px;
+  border: 1px solid var(--app-sheet-line);
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dev-ws-tabs { background-color: var(--dc-sheet); }
+}
+.dev-ws-tab {
+  flex: 1 1 0; min-width: 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 34px; padding: 0 8px;
+  border: 0; border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit; font-size: 13px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: pointer;
+}
+.dev-ws-tab[aria-selected="true"] {
+  background: var(--text-primary); color: var(--dc-sheet);
+}
+.dev-ws-tab-n {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+  background: var(--state-attention-bg); color: var(--state-attention);
+  font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.dev-ws-tab[aria-selected="true"] .dev-ws-tab-n {
+  background: var(--dc-sheet); color: var(--text-primary);
+}
+
+/* ── Needs you: one question, the whole screen ───────────────
+   SIZED FROM THE VIEWPORT, not from its ancestors — and that is the second
+   attempt. The first was a `height: 100%` chain down from #dev-forum-scroll,
+   which has a definite height in the native layout and resolves perfectly
+   there. It resolves to nothing in the BROWSER layout: when the root carries
+   `data-browser-scroller="dev-forum-scroll"` the rule near the top of this
+   file forces `#app-view` to `height: auto !important` so the page itself
+   scrolls, and every 100% below it collapses to content height. Two shipped
+   layouts, and the chain only worked in one.
+
+   So the deck measures the viewport and subtracts the chrome it can name:
+   the platform header, the device insets, and this surface's own bottom tab
+   rail. `min-height` keeps it usable on a short window rather than letting
+   the subtraction win. */
+.dev-ws {
+  --ws-chrome: calc(
+    var(--platform-header-h, 56px) + var(--platform-safe-top, 0px)
+    + var(--platform-safe-bottom, 0px) + 92px
+  );
+}
+.dev-ws-needs {
+  height: calc(100dvh - var(--ws-chrome));
+  min-height: 360px;
+  display: grid;
+  /* Two thirds to the thing being decided, one to the place you can ask
+     about it — enough to say the pane is there and take a question. */
+  grid-template-rows: 2fr 1fr;
+  gap: 8px;
+}
+/* Once you have asked something, the conversation is what you are reading
+   and the card is context for it. It stops at half: the card is the
+   subject, and a chat that swallows its subject is a chat about nothing. */
+.dev-ws-needs-engaged { grid-template-rows: 1fr 1fr; }
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-needs { transition: grid-template-rows .22s ease; }
+}
+.dev-ws-needs-subject,
+.dev-ws-ask {
+  min-height: 0;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 14px;
+  border-radius: 22px;
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dev-ws-needs-subject, .dev-ws-ask { background-color: var(--dc-sheet); }
+}
+.dev-ws-needs-head,
+.dev-ws-ask-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dev-ws-needs-scroll {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 2px;
+}
+/* The voter-facing sentence, and the biggest type on the screen after the
+   card's own title: on a screen whose only job is a decision, what changes
+   for a person using the app is the thing to read first. */
+.dev-ws-needs-summary {
+  margin: 0; font-size: 16px; line-height: 1.5; color: var(--text-primary);
+  white-space: pre-wrap;
+}
+.dev-ws-needs-nosummary { color: var(--text-muted); font-size: 14px; font-style: italic; }
+.dev-ws-needs-nav { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.dev-ws-needs-done {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; text-align: center; padding: 48px 16px;
+}
+.dev-ws-needs-done-line { margin: 0; font-size: 17px; font-weight: 600; }
+.dev-ws-needs-done-sub { margin: 0; font-size: 14px; color: var(--text-muted); }
+
+/* ── Ask about this change ───────────────────────────────────
+   NOT WIRED UP. The composer is real; the answer is a placeholder that says
+   so on screen, because there is no endpoint that answers questions about a
+   proposal and inventing one before this layout is agreed is the wrong
+   order of work. */
+.dev-ws-ask-log {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.dev-ws-ask-hint { margin: 0; font-size: 13px; color: var(--text-muted); font-style: italic; }
+.dev-ws-ask-msg {
+  margin: 0; padding: 7px 11px; border-radius: 14px;
+  font-size: 14px; line-height: 1.45; max-width: 88%;
+}
+.dev-ws-ask-you { align-self: flex-end; background: var(--accent); color: #fff; }
+.dev-ws-ask-ai { align-self: flex-start; background: var(--dc-sheet); color: var(--text-primary); }
+.dev-ws-ask-composer { display: flex; gap: 6px; align-items: center; }
+.dev-ws-ask-input {
+  flex: 1 1 auto; min-width: 0; height: 34px; padding: 0 12px;
+  border: 1px solid var(--app-sheet-line); border-radius: 999px;
+  background: var(--dc-sheet); color: var(--text-primary);
+  font: inherit; font-size: 14px;
+}
+.dev-ws-ask-send {
+  flex: none; height: 34px; padding: 0 14px; border: 0; border-radius: 999px;
+  background: var(--accent); color: #fff; font: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer;
+}
+.dev-ws-ask-send:disabled { opacity: .45; cursor: default; }
 .dev-ws-reveal[aria-expanded="true"] .dev-ws-reveal-chev { transform: rotate(180deg); }
 .dev-ws-week-note {
   margin: 0; font-size: 12px; color: var(--text-muted); text-align: center;
