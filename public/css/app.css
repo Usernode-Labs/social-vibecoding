@@ -10717,7 +10717,14 @@ body.is-offline [data-offline-disabled] {
    empty. The strip's own padding closes to 4px at the sides so the sheets
    sit almost edge to edge on a phone, as the Messages list does. */
 #dev-workshop { max-width: 760px; margin: 0 auto; }
-#dev-body:has(> #dev-workshop) { padding: 8px 4px 12px; }
+/* The bottom padding is THE SAME GAP the rail sticks to, and that is what
+   makes the two resting cases agree. When the lander fills the scroller the
+   rail sits at its bottom edge, so the air below it is whatever `#dev-body`
+   leaves; when the lander overflows, the air is `bottom` on the sticky rail.
+   At 12 against 8 those differed by 4px depending on the tab — the same kind
+   of "it moves between tabs" the gap token was introduced to end, just
+   smaller. One value, both cases. */
+#dev-body:has(> #dev-workshop) { padding: 8px 4px var(--ws-gap, 8px); }
 
 /* ── Inline comments ───────────────────────────────────────────
    The tail of a thread, indented under the row it belongs to, with no box
@@ -11993,7 +12000,53 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    Subtracting it here as well was the bug — the lander came out one rail
    short of the space it had, and the bar stopped that far above the
    bottom. */
-.dev-ws { min-height: max(100%, var(--ws-area)); }
+/* ── The lander fills what is left of the scroller ─────────────────────
+   `min-height: max(100%, var(--ws-area))` is what this replaces, and it was
+   wrong in a way no amount of tuning the rail could reach: in FIREFOX the
+   floor is simply not applied. Measured on the real app (Gecko 155, the
+   native layout): `.dev-ws` computed `min-height: max(100%, 806.5px)` and
+   used a height of 649px, leaving 121px of unused scroller below it. A
+   sticky bar cannot sit below its own parent's bottom edge, so the rail
+   rested there and every `--ws-gap` adjustment moved a number that was never
+   the problem. Chromium applies the same declaration correctly, which is
+   exactly why a headless harness reported 8px while the app floated — the
+   percentage inside the `max()` is indefinite here, and the two engines
+   disagree about what that makes the whole expression.
+
+   So: NO PERCENTAGE, and two mechanisms, one per layout.
+
+   NATIVE — the scroller has a definite height, so the chain flexes and the
+   lander takes what is left of it. Nothing is computed from the viewport, so
+   nothing depends on `--platform-header-h` being accurate or on how much
+   chrome sits above `#dev-body`; measured, that offset is 47px, which a
+   viewport subtraction would have to know and does not. Scoped by `:has()`
+   so the other Dev views, which share this scroller, keep their block flow.
+
+   BROWSER-SCROLLER — the scroller is auto-height (app.css forces
+   `#app-view { height: auto }` so the page scrolls), so there is no
+   remaining space to take and flex gives content height. The viewport floor
+   is the right tool there, as a PLAIN LENGTH.
+
+   Both verified against the live app rather than a replica: the same two
+   mechanisms, applied by hand in the page, closed the gap from 121px to 9px. */
+#dev-forum-scroll:has(> #dev-body > #dev-workshop) { display: flex; flex-direction: column; }
+#dev-body:has(> #dev-workshop) {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+}
+/* `width: 100%` IS LOAD-BEARING, not belt and braces. `#dev-workshop` centres
+   itself with `margin: 0 auto`, and auto margins on the cross axis of a flex
+   column ABSORB the free space instead of stretching — so as a flex item it
+   shrank to its content. Measured: the pane went 760 to 640 on By category
+   and 1432 to 310 on By stage, which is the column collapsing, not widening.
+   With an explicit width the auto margins go back to centring a full-width
+   box inside its `max-width`, which is what they did as a block. */
+#dev-workshop:has(> .dev-ws) {
+  flex: 1 1 auto; min-height: 0; width: 100%;
+  display: flex; flex-direction: column;
+}
+#dev-workshop > .dev-ws { flex: 1 1 auto; width: 100%; }
+html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 /* The tab body takes the space and carries the clearance; the rail follows
    it. `margin-top: auto` on the rail is gone with it — the body's `flex: 1`
    is what puts the rail at the foot now, and an auto margin on top of that
