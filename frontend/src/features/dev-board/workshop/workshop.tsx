@@ -44,7 +44,15 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icons';
+import {
+  ArrowUpIcon,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  NewspaperIcon,
+  SpeechCheckIcon,
+  Squares2X2Icon,
+} from '@/components/ui/icons';
 
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -60,6 +68,34 @@ import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 
 type SortKey = 'people' | 'activity' | 'open';
+type TabKey = 'status' | 'needs' | 'all';
+
+/**
+ * The lander's three tabs, in the order a person needs them: where the app
+ * is, what it needs from you, everything there is. The bar sits at the
+ * BOTTOM — this is a phone screen first, and the three destinations are
+ * navigation, not a control acting on what is above them.
+ *
+ * EACH CARRIES A GLYPH, AND KEEPS ITS WORDS. A bottom rail is scanned, not
+ * read, and three same-weight phrases gave the eye nothing to aim at; the
+ * label stays under the glyph because none of the three is conventional
+ * enough to stand alone, and dropping it would cost the tab its accessible
+ * name as well.
+ *
+ * Why these three. The newspaper is the week as written, which is what the
+ * status tab is — a digest, not a dashboard. The grid is everything, in
+ * whichever grouping you pick. The bubble-with-a-tick is drawn for this bar
+ * (see icons.tsx): a plain bubble reads as "messages", which is the wrong
+ * destination, and a bare tick reads as the state after you have answered
+ * rather than the asking. `BoardIcon` was the other candidate for status and
+ * lost twice — it is the Kanban glyph, so it collides with All items' own
+ * By-stage pane, and its 4-unit-wide bars close up at this size.
+ */
+const TABS: { key: TabKey; label: string; Icon: typeof NewspaperIcon }[] = [
+  { key: 'status', label: 'Current status', Icon: NewspaperIcon },
+  { key: 'needs', label: 'Needs you', Icon: SpeechCheckIcon },
+  { key: 'all', label: 'All items', Icon: Squares2X2Icon },
+];
 
 /** The swatch a name gets everywhere (feed-thread's rule, kept in step). */
 function swatchFor(name: string): string {
@@ -295,20 +331,6 @@ function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
       ? `Categories were drafted ${relTime(drafted)} and are re-drafted daily, or sooner when a tenth of the board changes.`
       : 'Categories are drafted from the board and re-drafted daily, or sooner when a tenth of the board changes.',
   ];
-  // Which paragraph is at the top of the page. Without this the two states
-  // are indistinguishable on screen — a model that has never run and one
-  // whose call is failing both leave the derived sentence up there, and the
-  // only way to tell was to read the database.
-  if (written) {
-    parts.push('The summary at the top was written by the model on the same pass.');
-  } else if (meta.digestError) {
-    // The failure that used to be a log line and a day of silence. Naming
-    // it here is what turned "could something be up with the summarizer?"
-    // from a question about the database into one the page answers.
-    parts.push(`The model\u2019s summary could not be written (${meta.digestError}); it is retried within the hour, and the sentence at the top is worked out from the board meanwhile.`);
-  } else {
-    parts.push('The summary at the top is worked out from the board; the model writes one on the next pass.');
-  }
   const c = meta.coverage;
   if (c && c.pending) parts.push(`${c.pending} new ${c.pending === 1 ? 'card is' : 'cards are'} being placed.`);
   if (c && c.unplaced) {
@@ -316,6 +338,34 @@ function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
   }
   if (meta.lastError) parts.push(`The last attempt failed (${meta.lastError}); it is retried shortly.`);
   return parts.join(' ');
+}
+
+/**
+ * Which paragraph is at the top of the page, and why.
+ *
+ * This used to be two clauses of the category footnote under the themes,
+ * which worked while the summary and the themes were on one scroll. They are
+ * two TABS now, and an explanation of the summary sitting on the screen that
+ * does not contain the summary explains nothing — so it moved to the
+ * dashboard it is about.
+ *
+ * Without it the two failure states are indistinguishable on screen: a model
+ * that has never run and one whose call keeps failing both leave the derived
+ * sentence up there, and the only way to tell them apart was to read the
+ * database.
+ */
+function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
+  // The healthy case says NOTHING. It said "Written by the model on its last
+  // pass over the board" — provenance under every board that was working,
+  // answering a question nobody had asked and costing a line to do it.
+  if (written) return '';
+  if (meta.digestError) {
+    // The failure that used to be a log line and a day of silence. Naming it
+    // here is what turned "could something be up with the summarizer?" from a
+    // question about the database into one the page answers.
+    return `The model\u2019s summary could not be written (${meta.digestError}); it is retried within the hour, and this is worked out from the board meanwhile.`;
+  }
+  return 'Worked out from the board; the model writes one on the next pass.';
 }
 
 function sortThemes(themes: WorkshopTheme[], key: SortKey): WorkshopTheme[] {
@@ -456,12 +506,15 @@ function weekRange(startMs: number, endMs: number): string {
  * had nowhere to go, and a reader who wanted none of them still paid three
  * cards of vertical space before reaching the board.
  *
- * So the present is the default — `Open`, the one entry that is not a week
- * at all — and everything earlier is one step behind a button. Each press
- * reveals the next-oldest window ABOVE the stack, which keeps the column in
- * the order a timeline is read (oldest at the top, now at the bottom) and
- * keeps the thing you came for at the same place on the screen however far
- * back you have walked.
+ * So the present is the default — `Open issues`, the one entry that is not a
+ * week at all — and everything earlier is one step behind a button. Each
+ * press reveals the next-oldest window BELOW the stack, and the control
+ * moves down with it. It grew upwards first, on the reasoning that a column
+ * of dated cards reads oldest-at-the-top like any timeline. It does, but
+ * this is not a timeline being read: it is one card with a way to ask for
+ * more, and growing upwards pushed the card you were looking at further
+ * down the screen on every press. Downwards, the present stays where it is
+ * and the history unrolls under it.
  *
  * The walk ends where the server's lines end. When the server has also said
  * when the app's first week was (`firstWeek`) and the walk has reached it,
@@ -469,35 +522,22 @@ function weekRange(startMs: number, endMs: number): string {
  * more written yet" and "no more to write" are different facts and only one
  * of them is the app's beginning.
  */
-function WeekWalk({ weeks, firstWeek }: { weeks: Dash['weeks']; firstWeek: number | null }): ReactNode {
+function WeekWalk({ weeks, firstWeek, note }: {
+  weeks: Dash['weeks'];
+  firstWeek: number | null;
+  /** Why the summary is what it is, when something is wrong with it. */
+  note?: string;
+}): ReactNode {
   // How many entries from the END of the list are on screen. The list is
   // oldest-first, so one means `open` alone.
   const [shown, setShown] = useState(1);
   if (!weeks.length) return null;
-  const drawn = weeks.slice(Math.max(0, weeks.length - shown));
+  const drawn = weeks.slice(0, shown);
   const more = weeks.length - drawn.length;
-  const oldest = drawn[0];
+  const oldest = drawn[drawn.length - 1];
   const atStart = !more && !!firstWeek && !!oldest && oldest.startMs === firstWeek;
   return (
     <div className="dev-ws-cards" data-ws-cards="">
-      {more ? (
-        <button
-          type="button"
-          className="dev-ws-reveal dev-ws-week-more"
-          data-ws-week-more=""
-          onClick={() => setShown(shown + 1)}
-        >
-          {/* Pointing UP, because that is where the window it reveals
-              appears. It is `ChevronDownIcon` turned over in CSS — the same
-              trick `.dev-ws-lane-title > .dev-ws-chev` already uses — rather
-              than a 22nd icon for one caret. */}
-          <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-          Show past week
-        </button>
-      ) : null}
-      {atStart ? (
-        <p className="dev-ws-week-note" data-ws-week-start="">The first week this app had any activity.</p>
-      ) : null}
       {drawn.map((w) => (
         <article key={w.key} className="dev-ws-card" data-ws-card={w.key}>
           <h4 className="dev-ws-card-title">
@@ -513,6 +553,23 @@ function WeekWalk({ weeks, firstWeek }: { weeks: Dash['weeks']; firstWeek: numbe
           <p className="dev-ws-card-line">{w.line}</p>
         </article>
       ))}
+      {note ? <p className="dev-ws-digest-note" data-ws-digest-note="">{note}</p> : null}
+      {more ? (
+        <button
+          type="button"
+          className="dev-ws-reveal dev-ws-week-more"
+          data-ws-week-more=""
+          onClick={() => setShown(shown + 1)}
+        >
+          {/* Pointing DOWN, because that is where the window it reveals
+              appears — under the card you are reading, not above it. */}
+          <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+          Show past week
+        </button>
+      ) : null}
+      {atStart ? (
+        <p className="dev-ws-week-note" data-ws-week-start="">The first week this app had any activity.</p>
+      ) : null}
     </div>
   );
 }
@@ -586,12 +643,9 @@ function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
  *
  * A ring alone is a fraction with no subject: "0/5" does not say what the
  * five are, and a reader should not have to hover a donut to find out. So
- * the words are still there — as the LANE'S NOTE (`voteWords` below), in
- * the place "Free to take, if you want to try solving an issue." occupies
- * one lane down. Both lanes then have the same shape: a heading, a line
- * saying what the lane is offering, and the deck. The ring and the words
- * used to sit together up in the strip head, which put the subject of one
- * lane above a heading that belonged to both.
+ * the words are still there (`voteWords` below) — under the deck's own
+ * heading in the `Needs you` tab, which is where the ring went when voting
+ * became a screen of its own rather than one lane of three.
  *
  * There is no × any more. A count that can be closed is a count somebody
  * stops seeing while it is still true, and this one is the whole reason the
@@ -721,6 +775,251 @@ function RowPager({
   );
 }
 
+/**
+ * `Needs you` — one question, filling the screen.
+ *
+ * The lander's other two tabs are things you READ. This one is a thing you
+ * ANSWER, and it is built to make that the only thing on offer: one proposal
+ * at a time, the whole screen, no list to skim past it and nothing else
+ * competing for the tap. A deck of decisions rather than a page about them.
+ *
+ * ── Two panes, and why the bottom one grows ──────────────────────────
+ *
+ * The top pane is the thing being asked about; the bottom is where you can
+ * ask about it. It opens at a third of the height — enough to say it is
+ * there and to take a question — and grows to half once you have asked
+ * something, because from that point the conversation is what you are
+ * reading and the card is context for it. It stops at half: the card is the
+ * subject, and a chat that swallows its own subject is a chat about nothing.
+ *
+ * ── The card leads with the SUMMARY, not the title ───────────────────
+ *
+ * A card's title is a pull-request title. `pr_summary_md` is the sentence
+ * written for the person voting — what changes for somebody using the app —
+ * and on a screen whose whole job is a decision, that is the first thing
+ * that should be read. A proposal without one says so rather than leaving a
+ * gap, because "no summary was written" is a fact a voter should have.
+ *
+ * ── The chat is NOT wired up ─────────────────────────────────────────
+ *
+ * There is no endpoint that answers questions about a proposal: the app's
+ * LLM proxy exists, `dev-chat` is the agent's session transcript, and
+ * neither is this. The composer is real and its answers are a placeholder
+ * that says so on screen. Building it means a route with the change's diff,
+ * its discussion and the app's conventions in context, its own spend
+ * accounting and rate limit — a piece of work in its own right, and one that
+ * should not be started until this layout is the agreed one.
+ */
+function NeedsDeck({
+  rows, owed, total, models,
+}: {
+  rows: DevWorkshopView['queue'];
+  owed: number;
+  total: number;
+  models: DevWorkshopView['models'];
+}): ReactNode {
+  const cards = rows.filter((r) => r.t === 'card');
+  const [at, setAt] = useState(0);
+  // Keyed by row, so moving to the next proposal does not carry the last
+  // one's conversation with it.
+  const [threads, setThreads] = useState<Record<string, { who: 'you' | 'ai'; text: string }[]>>({});
+  const [draft, setDraft] = useState('');
+  // Which model answers. The dev session's own list and its own default —
+  // see `_workshopModels`. It appears when the box is in use, because a
+  // picker over an empty composer is a setting nobody has a use for yet.
+  const [model, setModel] = useState<string>(() => models.selected || '');
+  const [focused, setFocused] = useState(false);
+  // Answered here, this session: an answer moves the deck on, and the card
+  // stays in the list so a mis-tap can be walked back to.
+  const [answered, setAnswered] = useState<Record<string, string>>({});
+
+  if (!cards.length) {
+    return (
+      <div className="dev-ws-needs dev-ws-needs-done" data-ws-needs="">
+        <p className="dev-ws-needs-done-line">Nothing is waiting on you.</p>
+        <p className="dev-ws-needs-done-sub">
+          Every proposal you can vote on has your answer, and every open issue has somebody on it.
+        </p>
+      </div>
+    );
+  }
+
+  const i = Math.min(at, cards.length - 1);
+  const row = cards[i];
+  const thread = threads[row.key] || [];
+  const engaged = thread.length > 0;
+  const answer = (which: string, act: { fn: string; args: unknown[] } | null) => {
+    if (act) callAppView(act.fn, ...(act.args as unknown[]));
+    setAnswered((cur) => ({ ...cur, [row.key]: which }));
+    // A beat before the next question, so the press is SEEN. Advancing on
+    // the same frame made a vote feel like the card had simply vanished,
+    // with nothing to say whether it had registered.
+    if (i < cards.length - 1) window.setTimeout(() => setAt(i + 1), 550);
+  };
+  // The verbs, per kind. "Yes" over a card is only clear if you already
+  // know what the card is asking; "Vote yes" and "I'll take it" say what
+  // the press DOES, which is the thing a first-time reader is missing.
+  const verbs = row.kind === 'vote'
+    ? { yes: 'Vote yes', no: 'Vote no', skip: 'Skip' }
+    : { yes: "I'll take it", no: 'Not me', skip: 'Skip' };
+  const done = answered[row.key];
+  const ask = () => {
+    const q = draft.trim();
+    if (!q) return;
+    setThreads((cur) => ({
+      ...cur,
+      [row.key]: [
+        ...(cur[row.key] || []),
+        { who: 'you', text: q },
+        {
+          who: 'ai',
+          text: 'Not wired up yet. This pane will answer from the change itself: its diff, its discussion and this app’s conventions.',
+        },
+      ],
+    }));
+    setDraft('');
+  };
+
+  return (
+    <div
+      className={engaged ? 'dev-ws-needs dev-ws-needs-engaged' : 'dev-ws-needs'}
+      data-ws-needs=""
+      data-ws-engaged={engaged ? '' : undefined}
+    >
+      <section className="dev-ws-needs-subject">
+        <div className="dev-ws-needs-head">
+          <span className="dev-ws-eyebrow">{owed ? voteWords(owed) : 'Nothing owed'}</span>
+          <span className="dev-ws-needs-of">{`${i + 1} / ${cards.length}`}</span>
+          {total ? <VoteRing owed={owed} total={total} /> : null}
+        </div>
+        {/* The card, then the sentence explaining it. The summary led at
+            first, which put the explanation above the thing it explains and
+            made the card read as a footnote to its own description. */}
+        <div className="dev-ws-needs-scroll">
+          <DevCard model={row.card} />
+          {row.kind === 'vote' ? (
+            row.summary
+              ? <p className="dev-ws-needs-summary">{row.summary}</p>
+              : (
+                <p className="dev-ws-needs-summary dev-ws-needs-nosummary">
+                  No plain-language summary was written for this change.
+                </p>
+              )
+          ) : null}
+        </div>
+        {/* The question, and the three answers to it. Big, because this is
+            the one thing the screen is for and a decision should not be a
+            small target; and three rather than two, because "not now" is a
+            real answer and a queue that only accepts yes or no is answered
+            carelessly. */}
+        <div className="dev-ws-answer" data-ws-answer="">
+          <p className="dev-ws-ask-q">{row.ask}</p>
+          <div className="dev-ws-answer-row">
+            <button
+              type="button"
+              className="dev-ws-answer-btn dev-ws-answer-yes"
+              data-ws-answer-btn="yes"
+              disabled={!row.yes}
+              aria-pressed={done === 'yes'}
+              onClick={() => answer('yes', row.yes ? row.yes.act : null)}
+            >{done === 'yes' ? `${verbs.yes} ✓` : verbs.yes}</button>
+            <button
+              type="button"
+              className="dev-ws-answer-btn dev-ws-answer-no"
+              data-ws-answer-btn="no"
+              disabled={!row.no}
+              aria-pressed={done === 'no'}
+              onClick={() => answer('no', row.no ? row.no.act : null)}
+            >{done === 'no' ? `${verbs.no} ✓` : verbs.no}</button>
+            <button
+              type="button"
+              className="dev-ws-answer-btn dev-ws-answer-skip"
+              data-ws-answer-btn="skip"
+              aria-pressed={done === 'skip'}
+              onClick={() => answer('skip', null)}
+            >{verbs.skip}</button>
+          </div>
+        </div>
+      </section>
+
+      {/* Until you use it, this is ONE ROW — the box and nothing else. It
+          opened as a third of the screen with a heading and a hint in it,
+          which spent a third of a decision screen on an invitation nobody
+          had accepted. It earns its height when it is used. */}
+      <section className="dev-ws-ask" data-ws-ask="">
+        {engaged ? (
+          <div className="dev-ws-ask-log">
+            {thread.map((m, n) => (
+              <p key={n} className={m.who === 'you' ? 'dev-ws-ask-msg dev-ws-ask-you' : 'dev-ws-ask-msg dev-ws-ask-ai'}>
+                {m.text}
+              </p>
+            ))}
+          </div>
+        ) : null}
+        {/* THE DEV SESSION'S COMPOSER, as far as this pane needs it:
+            `.dc-card` is the white surface with the field and one row of
+            controls under it, `.dc-model-select` / `.dc-model-name` the
+            stripped model button, `.dc-send-btn .dc-circle-send` the pale
+            blue circle with its halo. Three shared classes rather than three
+            approximations of them — the alternative drifts away from the
+            composer the first time either is tuned.
+
+            The one thing not shared is the model MENU: the session opens the
+            native kit's sheet from a <button>, and this is a <select>, which
+            is why the caret is a sibling rather than a child. */}
+        <form
+          className="dev-ws-ask-composer dc-card"
+          onSubmit={(e) => { e.preventDefault(); ask(); }}
+        >
+          <label className="sr-only" htmlFor="dev-ws-ask-input">Ask about this change</label>
+          <input
+            id="dev-ws-ask-input"
+            className="dev-ws-ask-input"
+            type="text"
+            value={draft}
+            placeholder="Ask a question…"
+            onFocus={() => setFocused(true)}
+            onBlur={() => { if (!draft.trim()) setFocused(false); }}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          {/* ONE LINE until it is tapped. The controls row — the model and
+              the send circle — is what makes the card two lines tall, and
+              neither is any use before there is something to send. Tapping
+              the field brings the row with it. */}
+          {focused || engaged ? (
+          <div className="dev-ws-ask-row">
+            {models.list.length ? (
+              <span className="dev-ws-ask-model" data-ws-ask-model="">
+                <label className="sr-only" htmlFor="dev-ws-ask-model-select">Model</label>
+                <select
+                  id="dev-ws-ask-model-select"
+                  className="dc-model-select dc-model-name"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                >
+                  {/* The LABEL only, as the session shows it. The "what kind
+                      of work is this for" blurb belongs to the picker's own
+                      sheet, not to the row it collapses to. */}
+                  {models.list.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+                <ChevronDownIcon className="dev-ws-ask-model-chev" aria-hidden="true" />
+              </span>
+            ) : null}
+            <span className="dev-ws-ask-gap"></span>
+            <button
+              type="submit"
+              className="dc-send-btn dc-circle-send dev-ws-ask-send"
+              aria-label="Ask"
+              disabled={!draft.trim()}
+            ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>
+          </div>
+          ) : null}
+        </form>
+      </section>
+    </div>
+  );
+}
+
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -742,6 +1041,30 @@ export function DevWorkshop(): ReactNode {
     () => (v.autoExpand && v.autoExpand.key ? { [v.autoExpand.theme]: v.autoExpand.key } : {}),
   );
   const [sinceOpen, setSinceOpen] = useState(false);
+  // Which of the three tabs is up. Seeded from the publish so a `?ws=` deep
+  // link paints the right one on the FIRST frame rather than showing Current
+  // status and then swapping — the same reason `openThemes` is seeded from
+  // `autoExpand` rather than from an effect.
+  const [tab, setTab] = useState<TabKey>(() => v.tab || 'status');
+  // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
+  // not do. The seed runs against whatever the store holds AT MOUNT, and that
+  // is EMPTY_WORKSHOP_VIEW: the module publishes `_workshopView()` after its
+  // data load, so on a cold open `v.tab` is undefined in that first frame and
+  // the deep link was dropped on the floor. `autoExpand` has carried the same
+  // late-arrival effect since it shipped, for exactly this reason — which is
+  // why `?shot=themes` worked on staging while `?ws=all` silently did not,
+  // and why 25 declared checks failed on a route that reads correctly.
+  //
+  // ONCE, guarded by the ref. `v.tab` is read from the URL, so it never
+  // changes for the life of the page, while `_rerenderWorkshop()` republishes
+  // on every data change: without the guard each republish would yank a
+  // reader who had tapped another tab back to the deep-linked one.
+  const deepTabApplied = useRef<boolean>(!!v.tab);
+  useEffect(() => {
+    if (deepTabApplied.current || !v.tab) return;
+    deepTabApplied.current = true;
+    setTab(v.tab);
+  }, [v.tab]);
   // "N more of yours" reveals them HERE. It used to set a board filter and
   // navigate, which left the lander and changed the view mode to read a list
   // the strip was already showing the top of. The vote and free-to-take
@@ -820,7 +1143,17 @@ export function DevWorkshop(): ReactNode {
   const canPost = !!v.canPost;
 
   return (
-    <div ref={hostRef} className="dev-ws">
+    <div ref={hostRef} className="dev-ws" data-ws-tab={tab}>
+      {/* Everything but the rail lives in here. It is what carries the
+          clearance under the last card: a sticky bar overlays whatever is
+          beneath it while you scroll, so the content needs a rail's worth of
+          empty space at its end or the final card can never be read clear of
+          it. Putting that padding on the LANDER instead would push the rail
+          up off the bottom on a short tab, which is the thing that was just
+          fixed. */}
+      <div className="dev-ws-tabbody">
+      {tab === 'status' ? (
+      <>
       {v.emptyNote ? (
         <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2">
           {v.emptyNote.filtered ? (
@@ -857,14 +1190,32 @@ export function DevWorkshop(): ReactNode {
               derived sentence is still the fallback for a board that has
               never had a line written for it — see summarise(). */}
           {v.dashboard.weeks.length
-            ? <WeekWalk weeks={v.dashboard.weeks} firstWeek={v.dashboard.firstWeek} />
+            ? (
+              <WeekWalk
+                weeks={v.dashboard.weeks}
+                firstWeek={v.dashboard.firstWeek}
+                note={digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary))}
+              />
+            )
             : summarise(v.dashboard)
-              ? <p className="dev-ws-strip-text">{summarise(v.dashboard)}</p>
+              ? (
+                <>
+                  <p className="dev-ws-strip-text">{summarise(v.dashboard)}</p>
+                  {/* The note belongs to whichever sentence is on screen. With
+                      no cards there is no walk to hang it inside, and this is
+                      the very case it exists for: "no draft yet" and "the call
+                      keeps failing" both leave the derived sentence up there
+                      and are otherwise indistinguishable. */}
+                  {digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary)) ? (
+                    <p className="dev-ws-digest-note" data-ws-digest-note="">
+                      {digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary))}
+                    </p>
+                  ) : null}
+                </>
+              )
               : null}
-          {/* "Since your last visit" used to sit here, under the numbers.
-              It moved into "What needs you" (below): it is not a fact about
-              the app, it is a list of things addressed to THIS reader, which
-              is what that pane is for. */}
+          {/* The note about the summary rides INSIDE the walk (above "Show
+              past week"), with the card it is about — see WeekWalk. */}
         </section>
       ) : null}
 
@@ -905,120 +1256,6 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
-      {/* ── One pane: what needs a person ──
-          Voting on somebody else's work and picking up nobody's are the same
-          offer — "here is what you could do with five minutes" — and they were
-          two containers saying it twice. */}
-      {v.votes.rows.length || nextUp || v.since ? (
-        <section
-          className="dev-ws-strip"
-          data-ws-votes=""
-          data-ws-next={nextUp ? '' : undefined}
-          data-ws-since={v.since ? '' : undefined}
-        >
-          {/* The eyebrow alone. The ring and its sentence used to sit here,
-              which put one lane's subject above a heading that covers two —
-              they are the vote lane's, and they live on it now. */}
-          <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">What needs you</span>
-          </div>
-          {v.votes.rows.length ? (
-            <div className="dev-ws-lane" data-ws-lane="votes">
-              {/* Paged, not listed — and paged over EVERY owed row, so the
-                  "N more waiting on you" toggle that used to sit under the
-                  first three is gone: the control beside the heading already
-                  says how many there are and is the way to reach them. */}
-              <RowPager
-                rows={v.votes.rows}
-                scope="votes"
-                title="Needs your vote"
-                titleExtra={v.votes.total
-                  ? <VoteRing owed={v.votes.count} total={v.votes.total} />
-                  : null}
-                note={v.votes.count ? voteWords(v.votes.count) : undefined}
-                slug={slug}
-                canPost={canPost}
-                openKey={openRows.votes || ''}
-                onToggle={(key) => toggleRow('votes', key)}
-              />
-            </div>
-          ) : null}
-          {nextUp ? (
-            <div className="dev-ws-lane" data-ws-lane="next">
-              {/* The heading states the fact; the line under it makes the
-                  offer. "Why not give it a try?" did both at once and coaxed
-                  while it did — a lander does not need to wheedle. Both are
-                  the pager's to draw now, because the paging control sits on
-                  the heading row.
-
-                  The suggestion is the first card, then the rest of the
-                  free-to-take issues — one deck rather than a card plus a
-                  "Show N more" list under it (#1934's reveal, turned
-                  sideways). */}
-              <RowPager
-                rows={[nextUp, ...(v.nextMore || [])]}
-                scope="next"
-                title="Nobody has picked this up"
-                note="Free to take, if you want to try solving an issue."
-                slug={slug}
-                canPost={canPost}
-                openKey={openRows.next || ''}
-                onToggle={(key) => toggleRow('next', key)}
-              />
-            </div>
-          ) : null}
-          {/* ── What moved while you were away ──
-              This was a line under the tiles in the pane above, which is
-              where it was first written and the wrong place for it: the
-              dashboard answers "what is this app", and a list of things that
-              changed for YOU is the same kind of thing as a vote you owe.
-              It sits under the offers, folded, because it is the one item
-              here that is a record rather than a request. */}
-          {v.since ? (
-            <div className="dev-ws-lane" data-ws-lane="since">
-              {/* The pane's THIRD lane, built like the two above it: the
-                  heading names it, the line under says what it holds, and
-                  the control sits below that. It was one full-width button
-                  carrying the whole sentence — which read as a different
-                  kind of object from its neighbours, and whose label could
-                  not wrap inside the pill it started life in. */}
-              <h4 className="dev-ws-lane-title">
-                <span className="dev-ws-dot" aria-hidden="true"></span>Since your last visit
-              </h4>
-              <p className="dev-ws-lane-note">{`${relTime(v.since.baseline)}: ${sinceWords(v.since)}`}</p>
-              {/* The same control as "Show past week" above, because it is the
-                  same act: one quiet line that puts more of the pane on
-                  screen. It wore the platform's grey action pill, which made
-                  the most optional thing in the lane the most solid-looking.
-                  The caret points DOWN here — down is where these rows
-                  appear — and turns over once they are up. */}
-              {v.since.rows.length ? (
-                <button
-                  type="button"
-                  className="dev-ws-reveal dev-ws-reveal-start"
-                  data-ws-since-btn=""
-                  aria-expanded={sinceOpen}
-                  onClick={() => setSinceOpen(!sinceOpen)}
-                >
-                  <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-                  {sinceOpen ? 'Hide' : `Show ${v.since.rows.length}`}
-                </button>
-              ) : null}
-              {sinceOpen ? v.since.rows.map((row) => (row.t === 'card' ? (
-                <CardRowView
-                  key={row.key}
-                  row={row}
-                  slug={slug}
-                  canPost={canPost}
-                  open={openRows.since === row.key}
-                  onToggle={() => toggleRow('since', row.key)}
-                />
-              ) : null)) : null}
-            </div>
-          ) : null}
-        </section>
-      ) : null}
-
       {/* ── The door to the general chat ──
           The card used to sit bare between the strips: same width, no
           surface of its own, and therefore the one thing on the lander that
@@ -1034,8 +1271,61 @@ export function DevWorkshop(): ReactNode {
           <div className="dev-ws-discussion"><DevCard model={v.discussion.card} /></div>
         </section>
       ) : null}
+      {/* ── What moved while you were away ──
+          ONE LINE until you want it. It was a pane with a heading and a
+          summary line under it — a whole section of the status tab spent on
+          a fact most visits do not need, above the door to the app's chat.
+          Collapsed it is a row: the label, the count, and a caret. Opening
+          it makes it the pane it used to be, with the rows in it. */}
+      {v.since ? (
+        sinceOpen ? (
+          <section className="dev-ws-strip" data-ws-since="">
+            <button
+              type="button"
+              className="dev-ws-since-row"
+              data-ws-since-btn=""
+              aria-expanded={true}
+              onClick={() => setSinceOpen(false)}
+            >
+              <ChevronRightIcon className="dev-ws-since-chev" aria-hidden="true" />
+              <span className="dev-ws-since-label">Since your last visit</span>
+              <span className="dev-ws-since-n">{v.since.rows.length}</span>
+            </button>
+            {v.since.rows.map((row) => (row.t === 'card' ? (
+              <CardRowView
+                key={row.key}
+                row={row}
+                slug={slug}
+                canPost={canPost}
+                open={openRows.since === row.key}
+                onToggle={() => toggleRow('since', row.key)}
+              />
+            ) : null))}
+          </section>
+        ) : (
+          <button
+            type="button"
+            className="dev-ws-since-row dev-ws-since-shut"
+            data-ws-since-btn=""
+            aria-expanded={false}
+            disabled={!v.since.rows.length}
+            onClick={() => setSinceOpen(true)}
+          >
+            <ChevronRightIcon className="dev-ws-since-chev" aria-hidden="true" />
+            <span className="dev-ws-since-label">Since your last visit</span>
+            <span className="dev-ws-since-n">{v.since.rows.length}</span>
+          </button>
+        )
+      ) : null}
 
-      {themes.length ? (
+      </>
+      ) : null}
+
+      {tab === 'needs' ? (
+        <NeedsDeck rows={v.queue} owed={v.votes.count} total={v.votes.total} models={v.models} />
+      ) : null}
+
+      {tab === 'all' && themes.length ? (
         <>
           {/* ── The two ways to read the same board ──────────────────────
               The eyebrow here used to say "12 categories" and nothing else:
@@ -1165,6 +1455,42 @@ export function DevWorkshop(): ReactNode {
           </section>
         </>
       ) : null}
+
+      </div>
+
+      {/* ── The three destinations ──
+          At the BOTTOM, and sticky: this is a phone screen first, the bar is
+          navigation rather than a control acting on what is above it, and the
+          thumb is at the bottom of the hand. `.platform-safe-bar` is the
+          shell's own rule for a pinned bottom row — it carries the device's
+          home-indicator inset, which is why the padding is not written here. */}
+      <nav
+        className="dev-ws-tabs platform-safe-bar"
+        data-ws-tabs=""
+        role="tablist"
+        aria-label="Workshop sections"
+      >
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            className="dev-ws-tab"
+            data-ws-tab-btn={t.key}
+            aria-selected={tab === t.key}
+            onClick={() => setTab(t.key)}
+          >
+            {/* The glyph is decoration over a label that is already there, so
+                it is hidden from the accessibility tree rather than given a
+                name of its own — otherwise every tab announces twice. Its
+                size comes from the class, not a prop: icons.tsx has no size
+                variant on purpose, and every other `.dev-ws-*` measurement
+                lives in app.css beside its neighbours. */}
+            <t.Icon className="dev-ws-tab-glyph" aria-hidden="true" />
+            <span className="dev-ws-tab-label">{t.label}</span>
+          </button>
+        ))}
+      </nav>
     </div>
   );
 }
