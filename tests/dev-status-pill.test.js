@@ -586,7 +586,14 @@ function stagingRows() {
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
-  return ctx.__rows('me');
+  // What /promoted actually serves: every row passes through readIntegration
+  // on the way out (routes/votes.js), which is what turns the flat
+  // integration_* columns into the nested block the card reads. A fixture
+  // asserted WITHOUT that step is not the row the browser sees — #2038's
+  // `integrating` tag renders only from the nested shape, so leaving this out
+  // would have let a declared check pass here and fail on staging.
+  const readIntegration = require('../src/services/integration').readIntegration;
+  return ctx.__rows('me').map((r) => ({ ...r, integration: readIntegration(r) }));
 }
 
 test('the declared checks match what the real staging fixtures render', () => {
@@ -613,11 +620,39 @@ test('the declared checks match what the real staging fixtures render', () => {
   assert.equal(AppView.statusTagSpecs(multi, {}).map((t) => t.data['data-status-tag']).join(),
     'checks_failing');
 
+  // 9000082 — approved and being brought up to date. The tag the SERVER
+  // names: it comes from integration.blockReasons, not from any column the
+  // browser can read, which is the whole point of #2038's served reason.
+  // Note what is NOT here: the row is six commits behind, and no `behind`
+  // tag renders. "Behind main" describes a proposal sitting still; this one
+  // is being worked on, and saying both would be two tags for one fact.
+  const integrating = row(9000082);
+  assert.equal(AppView.statusTagSpecs(integrating, {}).map((t) => t.data['data-status-tag']).join(),
+    'integrating');
+  assert.equal(AppView.statusTagSpecs(integrating, {})[0].label, 'Bringing up to date…');
+
+  // 9000083 — the platform asked GitHub to merge and GitHub said no. Named
+  // for what happened rather than as a prediction about conflicting files,
+  // which is a different tag (`mergeability_conflict`, on 9000034 above).
+  const refused = row(9000083);
+  assert.equal(AppView.statusTagSpecs(refused, {}).map((t) => t.data['data-status-tag']).join(),
+    'merge_conflict');
+  assert.equal(AppView.statusTagSpecs(refused, {})[0].label, 'GitHub refused the merge');
+
+  // 9000003 — automatic resolution in flight. Toned `running`, because
+  // nobody has to act; the wording says so rather than reporting our state.
+  const resolving = row(9000003);
+  assert.equal(AppView.statusTagSpecs(resolving, {}).map((t) => t.data['data-status-tag']).join(),
+    'resolving');
+  assert.equal(AppView.statusTagSpecs(resolving, {})[0].label, 'Resolving conflicts automatically…');
+
   // ...and every declared selector naming one of these rows asks for a tag
   // those rows actually produce.
   const dapp = JSON.parse(require('node:fs').readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'));
   const produced = new Set([...AppView.statusTagSpecs(clean, {}), ...AppView.statusTagSpecs(conflict, {}),
-    ...AppView.statusTagSpecs(multi, {})].map((t) => t.data['data-status-tag']));
+    ...AppView.statusTagSpecs(multi, {}), ...AppView.statusTagSpecs(integrating, {}),
+    ...AppView.statusTagSpecs(refused, {}), ...AppView.statusTagSpecs(resolving, {})]
+    .map((t) => t.data['data-status-tag']));
   for (const t of dapp.tests) {
     const m = /\[data-status-tag="([a-z_-]+)"\]/.exec(t.expectSelector || '');
     if (m) assert.ok(produced.has(m[1]), `${t.name} asks for a tag the fixtures produce: ${m[1]}`);
