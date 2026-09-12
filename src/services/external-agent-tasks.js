@@ -1359,7 +1359,7 @@ function describeTargetProposal(session, user, app, origin) {
 async function prepareWork(deps, params) {
   const { pool, config, gh, githubLink, limits, prompts } = deps;
   const {
-    user, app, issueNumber, brief, clientId, clientName, origin, restart,
+    user, app, issueNumber, brief, clientId, clientName, origin, restart, originSessionId,
     agent, targetProposal,
   } = params;
 
@@ -1426,6 +1426,14 @@ async function prepareWork(deps, params) {
   if (!restart) {
     const existing = await findOpenTaskByRequest(pool, user.id, app.id, requestKey);
     if (existing) {
+      // One open task per request is the invariant, and it is NOT relaxed per
+      // session — asking twice for the same thing must not mint a second job.
+      // But the launchpad that just asked is the one that should show it, so
+      // the order MOVES to this session rather than staying visible in the one
+      // it was first prepared in. Typing the same brief in a new session and
+      // being told "you already have this" only helps if you can then see it.
+      const moved = await adoptTaskForSession(pool, existing.id, user.id, originSessionId);
+      if (moved) existing.origin_session_id = moved;
       return renderPreparedTask({
         task: existing, app, owner, repo, origin, clientId, clientName,
         prompts, agent, reused: true, targetProposal: update, openProposals,
@@ -1536,8 +1544,9 @@ async function prepareWork(deps, params) {
     const { rows } = await pool.query(
       `INSERT INTO external_agent_tasks
          (user_id, app_id, issue_number, fork_owner, fork_repo, branch_name,
-          base_sha, brief, client_id, request_key, target_session_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          base_sha, brief, client_id, request_key, target_session_id,
+          origin_session_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT DO NOTHING
        RETURNING *`,
       [
@@ -1549,6 +1558,10 @@ async function prepareWork(deps, params) {
         // submission can be checked against the job it came from rather than
         // trusting the proposal id the caller repeats back.
         update ? update.proposalId : null,
+        // Which launchpad it was prepared in. NULL from the connector, which
+        // has no session — see the column comment in schema.sql for how those
+        // rows are adopted rather than stranded.
+        sessionRef(originSessionId),
       ]
     );
     return rows[0] || null;
@@ -2073,6 +2086,108 @@ async function abandonExpiredRequest(pool, userId, appId, requestKey) {
     [userId, appId, requestKey]
   );
   return rows.length;
+}
+
+// A session id as the database wants it, or null for "no session".
+function sessionRef(value) {
+  const id = Number(value);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+// Point one task at a session. Returns the id written, or null when there was
+// no session to write (the connector path) or the row was not the caller's.
+async function adoptTaskForSession(pool, taskId, userId, sessionId) {
+  const session = sessionRef(sessionId);
+  if (!session) return null;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE external_agent_tasks
+          SET origin_session_id = $3
+        WHERE id = $1 AND user_id = $2 AND status = 'open'
+        RETURNING origin_session_id`,
+      [taskId, userId, session]
+    );
+    return rows[0] ? Number(rows[0].origin_session_id) : null;
+  } catch (err) {
+    // Adoption is an optimisation on a read path: failing it shows the
+    // walkthrough one fewer task, which is recoverable. Failing the REQUEST
+    // over it is not.
+    log.warn('external-agent-tasks', 'task adoption failed', { taskId, err: err.message });
+    return null;
+  }
+}
+
+// THE WALKTHROUGH'S LOOKUP: the caller's open work order for one app AND ONE
+// SESSION.
+//
+// loadLatestOpenTaskForSlug, which this replaces here, is keyed on the app
+// alone — so a single open work order answered for every session in it, and
+// "New change" opened a fresh session already showing somebody's half-finished
+// order for something else. That function stays exactly as it is for
+// submitWork's `slug` + `branch` recovery, which is deliberately NOT
+// session-scoped: an agent that lost its task id knows the app and the branch
+// it pushed, and nothing about the browser session a human minted it in.
+//
+// Two steps, in this order:
+//   1. This session's own task.
+//   2. Failing that, ADOPT the newest order that belongs to no session yet —
+//      rows minted before this column existed, or through the connector. Left
+//      unadopted they would be invisible to every launchpad while still
+//      counting against the caller's open-work-order cap, which is a worse
+//      trap than the one this change removes. The first launchpad to look
+//      claims it; every other session then starts clean.
+//
+// `unexpiredOnly` carries the same meaning it has on the app-wide lookup.
+async function loadOpenTaskForSession(pool, userId, slug, sessionId, opts = {}) {
+  const session = sessionRef(sessionId);
+  if (!session) return null;
+  try {
+    const mine = opts.unexpiredOnly
+      ? await pool.query(
+        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
+          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
+            AND t.origin_session_id = $3
+            AND t.expires_at > NOW()
+          ORDER BY t.id DESC LIMIT 1`,
+        [userId, slug, session]
+      )
+      : await pool.query(
+        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
+          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
+            AND t.origin_session_id = $3
+          ORDER BY t.id DESC LIMIT 1`,
+        [userId, slug, session]
+      );
+    if (mine.rows[0]) return mine.rows[0];
+
+    const orphan = opts.unexpiredOnly
+      ? await pool.query(
+        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
+          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
+            AND t.origin_session_id IS NULL
+            AND t.expires_at > NOW()
+          ORDER BY t.id DESC LIMIT 1`,
+        [userId, slug]
+      )
+      : await pool.query(
+        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
+          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
+            AND t.origin_session_id IS NULL
+          ORDER BY t.id DESC LIMIT 1`,
+        [userId, slug]
+      );
+    const row = orphan.rows[0];
+    if (!row) return null;
+    const adopted = await adoptTaskForSession(pool, row.id, userId, session);
+    if (adopted) row.origin_session_id = adopted;
+    return row;
+  } catch {
+    return null;
+  }
 }
 
 // The attribution gate. A proposal opened through this path carries the
@@ -3369,6 +3484,9 @@ module.exports = {
   // permanent.
   discardTask,
   abandonExpiredRequest,
+  // The walkthrough's own lookup (per session), and the adoption behind it.
+  loadOpenTaskForSession,
+  adoptTaskForSession,
   renderPreparedTask,
   prepareWork,
   submitWork,

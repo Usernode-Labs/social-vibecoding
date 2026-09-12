@@ -1385,13 +1385,22 @@ const DevChat = {
   // alone and inventing a new `demo` value instead fails the allowlist and
   // sends no fixture at all. Both were real: the second one shipped, and the
   // declared checks on the plain fixture caught it.
+  // Every `order` value the status route understands. This list is the whole
+  // mechanism and it has been wrong twice: `?order=plain` shipped read by the
+  // server and forwarded by nobody, and then `?order=none` did the same thing
+  // again, because the check here was a hardcoded === against one value. A
+  // fixture shape added on one side and not the other renders NOTHING, and
+  // renders it silently. tests/dev-flow-routes.test.js scrapes the route's own
+  // `req.query.order === '…'` literals and fails when this list does not cover
+  // them, so the next one cannot repeat it.
+  DEV_FLOW_ORDERS: ['plain', 'none'],
+
   _devFlowDemoQS() {
     const base = DevChat._demoQS();
     if (!base) return '';
     try {
-      return new URLSearchParams(location.search).get('order') === 'plain'
-        ? `${base}&order=plain`
-        : base;
+      const order = new URLSearchParams(location.search).get('order');
+      return DevChat.DEV_FLOW_ORDERS.includes(order) ? `${base}&order=${order}` : base;
     } catch { return base; }
   },
 
@@ -2797,8 +2806,14 @@ const DevChat = {
     started.loading = true;
     let status = null;
     try {
+      // `sessionId` is what scopes the walkthrough to THIS launchpad. Appended
+      // to whatever the fixture query string already is, which is '' in
+      // production and `?demo=…` in a staging preview — hence the separator
+      // rather than a bare '?'.
+      const fixtureQS = DevChat._devFlowDemoQS();
       const res = await fetch(
-        `/api/apps/${encodeURIComponent(slug)}/dev-flow/status${DevChat._devFlowDemoQS()}`,
+        `/api/apps/${encodeURIComponent(slug)}/dev-flow/status`
+          + `${fixtureQS}${fixtureQS ? '&' : '?'}sessionId=${encodeURIComponent(session.id)}`,
         { credentials: 'same-origin' }
       );
       // A failed read is not an error the user needs — the card simply
@@ -2935,11 +2950,13 @@ const DevChat = {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify(
-          flow.targetId
-            ? { agent: flow.agent, brief, proposalId: Number(flow.targetId) }
-            : { agent: flow.agent, brief }
-        ),
+        // `sessionId` is what makes this work order THIS launchpad's: the
+        // status route reads it back and no other session sees the order.
+        body: JSON.stringify(Object.assign(
+          { agent: flow.agent, brief },
+          DevChat.currentSession ? { sessionId: Number(DevChat.currentSession.id) } : null,
+          flow.targetId ? { proposalId: Number(flow.targetId) } : null
+        )),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {

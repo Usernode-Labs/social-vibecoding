@@ -4187,3 +4187,172 @@ test('an EXPIRED reservation stops blocking the same brief for ever', async () =
     'the live lookup comes first');
   assert.match(block, /row = await insertTask\(\);/, 'and the insert is retried once after clearing');
 });
+
+
+// ── Per-session work orders ─────────────────────────────────────────────
+//
+// The walkthrough used to resolve its task per (user, app), so one open work
+// order answered for every session: "New change" opened a fresh session
+// already showing an unrelated, often long-finished order.
+
+const SESSION_LOAD_SQL = 'FROM external_agent_tasks t JOIN apps a';
+
+test('loadOpenTaskForSession finds THIS session\'s task, not the app\'s newest', async () => {
+  const q = [];
+  const row = await svc.loadOpenTaskForSession(
+    fakePool([[SESSION_LOAD_SQL, [{ id: 7, origin_session_id: 990404 }]]], q),
+    3, 'recipe-box', 990404, { unexpiredOnly: true }
+  );
+  assert.equal(row.id, 7);
+  assert.equal(q.length, 1, 'one query: its own task was there, so no orphan scan');
+  assert.match(q[0].sql, /AND t\.origin_session_id = \$3/);
+  assert.match(q[0].sql, /AND t\.expires_at > NOW\(\)/);
+  assert.deepEqual(q[0].params, [3, 'recipe-box', 990404]);
+
+  // Without unexpiredOnly it is the same lookup minus that predicate.
+  const q2 = [];
+  await svc.loadOpenTaskForSession(
+    fakePool([[SESSION_LOAD_SQL, [{ id: 7 }]]], q2), 3, 'recipe-box', 990404
+  );
+  assert.doesNotMatch(q2[0].sql, /expires_at/);
+  assert.match(q2[0].sql, /AND t\.origin_session_id = \$3/);
+});
+
+test('...and no session means no task, rather than the app\'s newest', async () => {
+  // The failure that would reintroduce the bug: falling back to the app-wide
+  // row here would make every session show every other session's order again.
+  for (const bad of [undefined, null, 0, -3, 1.5, NaN, 'abc', {}]) {
+    const q = [];
+    assert.equal(
+      await svc.loadOpenTaskForSession(fakePool([[SESSION_LOAD_SQL, [{ id: 7 }]]], q), 3, 'r', bad),
+      null,
+      `${JSON.stringify(bad)} is not a session`
+    );
+    assert.equal(q.length, 0, 'and no query is issued for it');
+  }
+});
+
+test('a work order belonging to no session is adopted, not stranded', async () => {
+  // Rows minted before origin_session_id existed, or through the connector,
+  // which has no session. Invisible to every launchpad while still counting
+  // against the caller's open-work-order cap would be a worse trap than the
+  // one this change removes, so the first launchpad to look claims it.
+  const q = [];
+  const pool = {
+    calls: 0,
+    async query(sql, params) {
+      q.push({ sql, params });
+      if (/UPDATE external_agent_tasks/.test(sql)) return { rows: [{ origin_session_id: 990404 }] };
+      // First SELECT: this session has nothing. Second: an orphan exists.
+      this.calls += 1;
+      return { rows: this.calls === 1 ? [] : [{ id: 91, origin_session_id: null }] };
+    },
+  };
+  const row = await svc.loadOpenTaskForSession(pool, 3, 'recipe-box', 990404, { unexpiredOnly: true });
+  assert.equal(row.id, 91);
+  assert.equal(row.origin_session_id, 990404, 'the row comes back already adopted');
+
+  assert.match(q[0].sql, /AND t\.origin_session_id = \$3/, 'own task first');
+  assert.match(q[1].sql, /AND t\.origin_session_id IS NULL/, 'then the orphan scan');
+  assert.match(q[2].sql, /SET origin_session_id = \$3/, 'then the claim');
+  assert.match(q[2].sql, /WHERE id = \$1 AND user_id = \$2 AND status = 'open'/);
+  assert.deepEqual(q[2].params, [91, 3, 990404]);
+
+  // Nothing to adopt: null, and no write.
+  const q2 = [];
+  assert.equal(
+    await svc.loadOpenTaskForSession(fakePool([[SESSION_LOAD_SQL, []]], q2), 3, 'r', 990404),
+    null
+  );
+  assert.equal(q2.filter((x) => /UPDATE/.test(x.sql)).length, 0);
+});
+
+test('adoption that fails still yields the task', async () => {
+  // It is an optimisation on a read path. Losing it shows the walkthrough one
+  // fewer task next time; failing the whole status read over it would blank a
+  // launchpad the user is standing in.
+  const pool = {
+    calls: 0,
+    async query(sql) {
+      if (/UPDATE external_agent_tasks/.test(sql)) throw new Error('database is on fire');
+      this.calls += 1;
+      return { rows: this.calls === 1 ? [] : [{ id: 91, origin_session_id: null }] };
+    },
+  };
+  const row = await svc.loadOpenTaskForSession(pool, 3, 'recipe-box', 990404);
+  assert.equal(row.id, 91, 'the orphan is still returned');
+  assert.equal(row.origin_session_id, null, 'just not claimed');
+
+  // adoptTaskForSession itself: no session is a no-op, never a blind UPDATE.
+  const q = [];
+  assert.equal(await svc.adoptTaskForSession(fakePool([['UPDATE', [{}]]], q), 91, 3, null), null);
+  assert.equal(q.length, 0);
+});
+
+test('preparing records the launchpad it was prepared in', async () => {
+  const queries = [];
+  const calls = [];
+  const pool = fakePool([['INSERT INTO external_agent_tasks', [{ id: 61 }]]], queries);
+  const result = await withFetch(FORK_READY, calls, () => svc.prepareWork(
+    { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, app: APP, brief: 'Add a button.',
+      originSessionId: 990404, origin: 'https://usernode.example',
+    }
+  ));
+  assert.equal(result.ok, true);
+
+  const insert = queries.find((q) => /INSERT INTO external_agent_tasks/.test(q.sql));
+  assert.match(insert.sql, /origin_session_id\)/, 'the column is written');
+  assert.match(insert.sql, /VALUES \(\$1, \$2, \$3, \$4, \$5, \$6, \$7, \$8, \$9, \$10, \$11, \$12\)/,
+    'and the placeholder list grew with it');
+  assert.equal(insert.params[11], 990404, 'with the session that asked');
+
+  // The connector has no session at all, and that is a null rather than a
+  // refusal — those rows are adopted by the first launchpad that looks.
+  const q2 = [];
+  await withFetch(FORK_READY, [], () => svc.prepareWork(
+    {
+      pool: fakePool([['INSERT INTO external_agent_tasks', [{ id: 62 }]]], q2),
+      config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits,
+    },
+    { user: { id: 3 }, app: APP, brief: 'Add a button.', origin: 'https://usernode.example' }
+  ));
+  assert.equal(q2.find((q) => /INSERT INTO/.test(q.sql)).params[11], null);
+});
+
+test('reusing a work order moves it to the launchpad that asked', async () => {
+  // One open task per request stays the invariant — asking twice must not mint
+  // a second job. But being told "you already have this" only helps if you can
+  // then SEE it, so the order follows the session that asked rather than
+  // staying visible in the one it was first prepared in.
+  const queries = [];
+  const existing = {
+    id: 71, user_id: 3, app_id: 7, branch_name: 'usernode/x', base_sha: BASE_SHA,
+    fork_owner: 'someuser', fork_repo: 'recipe-box', brief: 'Add a button.',
+    issue_number: null, origin_session_id: 990001,
+  };
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (/UPDATE external_agent_tasks/.test(sql)) return { rows: [{ origin_session_id: 990404 }] };
+      if (/FROM external_agent_tasks/.test(sql)) return { rows: [existing] };
+      return { rows: [] };
+    },
+  };
+  const result = await withFetch(FORK_READY, [], () => svc.prepareWork(
+    { pool, config: {}, gh: baseGh(), githubLink: linkedAs('someuser'), limits: okLimits },
+    {
+      user: { id: 3 }, app: APP, brief: 'Add a button.',
+      originSessionId: 990404, origin: 'https://usernode.example',
+    }
+  ));
+  assert.equal(result.ok, true);
+  assert.equal(result.reused, true, 'still a reuse, not a second job');
+  assert.equal(queries.filter((q) => /INSERT INTO/.test(q.sql)).length, 0, 'nothing was minted');
+
+  const move = queries.find((q) => /UPDATE external_agent_tasks/.test(q.sql));
+  assert.ok(move, 'the existing order is re-pointed');
+  assert.match(move.sql, /SET origin_session_id = \$3/);
+  assert.deepEqual(move.params, [71, 3, 990404]);
+});
