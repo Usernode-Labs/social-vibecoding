@@ -11916,11 +11916,29 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   .dev-ws-card-title { flex-direction: row; align-items: baseline; gap: 6px; width: auto; }
   .dev-ws-card-range { margin-top: 0; }
 }
-/* The step backwards, above the stack. It reads as a control rather than as
-   a card, so it is not on `--dc-sheet` like the entries it reveals. */
-.dev-ws-week-more { align-self: flex-start; }
+/* The step backwards, above the stack.
+   NOT a pill, and not left-aligned. It wore `.gc-vote-btn` — a grey
+   bordered pill — pushed to the left edge, which made the most tentative
+   control in the pane the most solid-looking thing in it, and hung it off
+   one side of a stack of full-width cards. It is a quiet full-width row
+   now: centred over the cards it reveals, no border, no fill, and a caret
+   pointing the way the stack grows. */
+.dev-ws-week-more {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  width: 100%; padding: 3px 8px;
+  border: 0; background: transparent;
+  font-size: 12px; font-weight: 600; letter-spacing: .01em;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dev-ws-week-more:hover { color: var(--accent); }
+.dev-ws-week-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+/* UP. There is no ChevronUpIcon in the kit and one caret does not earn a
+   22nd module, so this is ChevronDownIcon turned over — the same trick the
+   lane headings already use on their own chevron. */
+.dev-ws-week-chev { width: 14px; height: 14px; transform: rotate(180deg); }
 .dev-ws-week-note {
-  margin: 0; font-size: 12px; color: var(--text-muted);
+  margin: 0; font-size: 12px; color: var(--text-muted); text-align: center;
 }
 /* ── One offer at a time, paged sideways ───────────────────────
    The track is the scroller and each item is exactly its width, so a swipe
@@ -11968,21 +11986,39 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   padding-right: 8px;
   box-sizing: border-box;
 }
+/* ON THE HEADING ROW, at its right end. Under the deck it was a row of
+   three small things floating between a card and the next heading, reading
+   as a caption for neither; beside the lane's own title it is unambiguously
+   that lane's control, and the deck sits directly under the heading it
+   belongs to. Smaller than it was, because the heading row is 12px type and
+   a 28px control beside it dominated the words. */
+.dev-ws-lane-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+/* The title keeps its own bottom margin; the row must not inherit it twice. */
+.dev-ws-lane-head > .dev-ws-lane-title { margin-bottom: 0; }
 .dev-ws-pager-ctl {
-  display: flex; align-items: center; justify-content: center; gap: 10px;
+  display: flex; align-items: center; gap: 4px; flex: none;
+  margin-bottom: 4px;
 }
 .dev-ws-pager-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px; border-radius: 999px;
+  width: 22px; height: 22px; border-radius: 999px;
   border: 1px solid var(--app-sheet-line);
   background-color: var(--dc-sheet);
   color: var(--text-primary);
-  font-size: 16px; line-height: 1;
+  line-height: 1;
   cursor: pointer;
 }
 .dev-ws-pager-btn:disabled { opacity: 0.35; cursor: default; }
-.dev-ws-pager-chev { width: 16px; height: 16px; }
-.dev-ws-pager-n { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.dev-ws-pager-chev { width: 13px; height: 13px; }
+.dev-ws-pager-n {
+  font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+  /* The heading above it is uppercase tracked-out small type; the counter is
+     a number and stays a number. */
+  text-transform: none; letter-spacing: 0; white-space: nowrap;
+  padding: 0 2px;
+}
 /* The since-button, in the pane it moved to.
    NOT `.gc-vote-btn`. That family is a 24px fixed-height pill sized for two
    or three words, and this control is a SENTENCE — "Since your last visit,

@@ -960,9 +960,15 @@ test('#1934: the rest of the unclaimed issues are the rest of the deck', () => {
   // reveal is the pager's control, so there is no second disclosure.
   assert.match(html, /data-ws-lane="next"[\s\S]*?data-ws-pager="next"/);
   assert.ok(!html.includes('data-ws-next-more'), 'the vertical reveal is retired');
-  const deck = html.slice(html.indexOf('data-ws-pager="next"'));
-  assert.equal((deck.match(/data-ws-row="/g) || []).length, 2, 'both are in the deck, not behind a toggle');
-  assert.match(deck, />1 of 2</, 'and the control says how many there are');
+  const lane = html.slice(html.indexOf('data-ws-lane="next"'));
+  assert.equal((lane.match(/data-ws-row="/g) || []).length, 2, 'both are in the deck, not behind a toggle');
+  assert.match(lane, />1 of 2</, 'and the control says how many there are');
+  // The control rides the HEADING, not the space under the deck: below the
+  // card it was a row of three small things between a card and the next
+  // heading, captioning neither.
+  assert.ok(lane.indexOf('data-ws-pager-ctl') < lane.indexOf('data-ws-pager="next"'),
+    'the control is on the heading row, above the deck');
+  assert.match(lane, /class="dev-ws-lane-head"[\s\S]*?Nobody has picked this up[\s\S]*?data-ws-pager-ctl/);
 
   // Capped like a theme lane.
   assert.match(require('fs').readFileSync(require('path').join(__dirname, '..', 'public/js/app-view.js'), 'utf8'),

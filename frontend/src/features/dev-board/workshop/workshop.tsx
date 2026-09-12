@@ -44,7 +44,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -483,10 +483,17 @@ function WeekWalk({ weeks, firstWeek }: { weeks: Dash['weeks']; firstWeek: numbe
       {more ? (
         <button
           type="button"
-          className="gc-vote-btn dev-ws-week-more"
+          className="dev-ws-week-more"
           data-ws-week-more=""
           onClick={() => setShown(shown + 1)}
-        >Show past week</button>
+        >
+          {/* Pointing UP, because that is where the window it reveals
+              appears. It is `ChevronDownIcon` turned over in CSS — the same
+              trick `.dev-ws-lane-title > .dev-ws-chev` already uses — rather
+              than a 22nd icon for one caret. */}
+          <ChevronDownIcon className="dev-ws-week-chev" aria-hidden="true" />
+          Show past week
+        </button>
       ) : null}
       {atStart ? (
         <p className="dev-ws-week-note" data-ws-week-start="">The first week this app had any activity.</p>
@@ -630,10 +637,14 @@ function VoteRing({ owed, total }: { owed: number; total: number }): ReactNode {
  * position, so a swipe and a press cannot disagree about which card is up.
  */
 function RowPager({
-  rows, scope, slug, canPost, openKey, onToggle,
+  rows, scope, title, note, slug, canPost, openKey, onToggle,
 }: {
   rows: DevWorkshopView['votes']['rows'];
   scope: string;
+  /** The lane's heading. The pager owns it, because the control rides it. */
+  title: string;
+  /** The line under the heading, where a lane has one. */
+  note?: string;
   slug: string;
   canPost: boolean;
   openKey: string;
@@ -656,40 +667,51 @@ function RowPager({
     if (at !== i) setI(Math.max(0, Math.min(cards.length - 1, at)));
   };
   return (
-    <div className="dev-ws-pager" data-ws-pager={scope}>
-      <div className="dev-ws-pager-track" ref={trackRef} onScroll={onScroll}>
-        {cards.map((row) => (
-          <div className="dev-ws-pager-item" key={row.key}>
-            <CardRowView
-              row={row}
-              slug={slug}
-              canPost={canPost}
-              open={openKey === row.key}
-              onToggle={() => onToggle(row.key)}
-            />
+    <>
+      {/* The control rides the HEADING, not the space under the deck. Below
+          the card it was a free-floating row of three small things with a
+          card above and a heading below, belonging to neither; on the
+          heading it is plainly the control FOR this lane, and the deck and
+          the lane under it stay one block. */}
+      <div className="dev-ws-lane-head">
+        <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>{title}</h4>
+        {cards.length > 1 ? (
+          <div className="dev-ws-pager-ctl" data-ws-pager-ctl="">
+            <button
+              type="button"
+              className="dev-ws-pager-btn"
+              aria-label="Previous"
+              disabled={i === 0}
+              onClick={() => go(i - 1)}
+            ><ChevronLeftIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
+            <span className="dev-ws-pager-n">{`${Math.min(i + 1, cards.length)} of ${cards.length}`}</span>
+            <button
+              type="button"
+              className="dev-ws-pager-btn"
+              aria-label="Next"
+              disabled={i >= cards.length - 1}
+              onClick={() => go(i + 1)}
+            ><ChevronRightIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
           </div>
-        ))}
+        ) : null}
       </div>
-      {cards.length > 1 ? (
-        <div className="dev-ws-pager-ctl" data-ws-pager-ctl="">
-          <button
-            type="button"
-            className="dev-ws-pager-btn"
-            aria-label="Previous"
-            disabled={i === 0}
-            onClick={() => go(i - 1)}
-          ><ChevronLeftIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
-          <span className="dev-ws-pager-n">{`${Math.min(i + 1, cards.length)} of ${cards.length}`}</span>
-          <button
-            type="button"
-            className="dev-ws-pager-btn"
-            aria-label="Next"
-            disabled={i >= cards.length - 1}
-            onClick={() => go(i + 1)}
-          ><ChevronRightIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
+      {note ? <p className="dev-ws-lane-note">{note}</p> : null}
+      <div className="dev-ws-pager" data-ws-pager={scope}>
+        <div className="dev-ws-pager-track" ref={trackRef} onScroll={onScroll}>
+          {cards.map((row) => (
+            <div className="dev-ws-pager-item" key={row.key}>
+              <CardRowView
+                row={row}
+                slug={slug}
+                canPost={canPost}
+                open={openKey === row.key}
+                onToggle={() => onToggle(row.key)}
+              />
+            </div>
+          ))}
         </div>
-      ) : null}
-    </div>
+      </div>
+    </>
   );
 }
 
@@ -883,14 +905,14 @@ export function DevWorkshop(): ReactNode {
           </div>
           {v.votes.rows.length ? (
             <div className="dev-ws-lane" data-ws-lane="votes">
-              <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>Needs your vote</h4>
               {/* Paged, not listed — and paged over EVERY owed row, so the
                   "N more waiting on you" toggle that used to sit under the
-                  first three is gone: the control below the card already
+                  first three is gone: the control beside the heading already
                   says how many there are and is the way to reach them. */}
               <RowPager
                 rows={v.votes.rows}
                 scope="votes"
+                title="Needs your vote"
                 slug={slug}
                 canPost={canPost}
                 openKey={openRows.votes || ''}
@@ -902,15 +924,19 @@ export function DevWorkshop(): ReactNode {
             <div className="dev-ws-lane" data-ws-lane="next">
               {/* The heading states the fact; the line under it makes the
                   offer. "Why not give it a try?" did both at once and coaxed
-                  while it did — a lander does not need to wheedle. */}
-              <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>Nobody has picked this up</h4>
-              <p className="dev-ws-lane-note">Free to take, if you want to try solving an issue.</p>
-              {/* The suggestion first, then the rest of the free-to-take
-                  issues — one deck rather than a card plus a "Show N more"
-                  list under it (#1934's reveal, turned sideways). */}
+                  while it did — a lander does not need to wheedle. Both are
+                  the pager's to draw now, because the paging control sits on
+                  the heading row.
+
+                  The suggestion is the first card, then the rest of the
+                  free-to-take issues — one deck rather than a card plus a
+                  "Show N more" list under it (#1934's reveal, turned
+                  sideways). */}
               <RowPager
                 rows={[nextUp, ...(v.nextMore || [])]}
                 scope="next"
+                title="Nobody has picked this up"
+                note="Free to take, if you want to try solving an issue."
                 slug={slug}
                 canPost={canPost}
                 openKey={openRows.next || ''}
