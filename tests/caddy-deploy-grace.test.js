@@ -52,8 +52,14 @@ test('apex site + gate import the blue-green active-color snippets', () => {
     'Caddyfile must import the rollout-managed active-color file');
   assert.match(apexSite, /^\timport platform_upstream$/m,
     'apex site must proxy via the active-color snippet');
-  assert.match(wildcardSite, /^\timport platform_gate$/m,
+  // Nested one level: the gate now sits inside `handle @not_platform_assets`
+  // so that the three centrally hosted asset prefixes bypass it (a gate
+  // redirect returns HTML where a <script> was expected). Still exactly one
+  // import, still the active-color snippet.
+  assert.match(wildcardSite, /^\t+import platform_gate$/m,
     'wildcard gate must forward_auth via the active-color snippet');
+  assert.equal((wildcardSite.match(/^\t+import platform_gate$/gm) || []).length, 1,
+    'and only once — a second, unmatched import would reinstate the gate for assets');
   assert.doesNotMatch(apexSite, /reverse_proxy usernode:3000/,
     'apex must not pin a single-container upstream any more');
   assert.doesNotMatch(wildcardSite, /forward_auth usernode:3000/,

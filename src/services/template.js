@@ -528,6 +528,46 @@ const PUBLIC_API_PATHS = new Set(['/health']);
 
 app.use(express.json());
 
+// The platform's three centrally hosted files — the bridge, the native UI
+// kit and the Tailwind runtime — are reachable at these paths on this app's
+// OWN origin, so index.html can load them with a RELATIVE path and never
+// name the platform's hostname. A hostname baked into an app is what breaks
+// every app at once when the platform's domain moves.
+//
+// In production and on a staging preview the platform's edge answers these
+// before the request ever reaches this process (a per-app Ingress rule on
+// Kubernetes, the wildcard site's matcher on the docker runtime). This
+// handler is what makes the same relative paths work under a plain
+// \`node server.js\`, where there is no edge in front of the app at all.
+//
+// Registered BEFORE the auth middleware because these three files are
+// public: the platform serves them anonymously from any app origin, and a
+// login redirect arriving where a <script> was expected is exactly the
+// failure a relative path is meant to avoid.
+// The platform's origin, at RUNTIME. The value baked in here is only a
+// fallback for a container that was not handed the env var (local
+// development, mainly) — the injected one wins, so this app keeps working
+// when the platform's domain moves instead of pointing at wherever it used
+// to be. That is the failure mode that broke the whole fleet once already.
+const PLATFORM_ORIGIN = (process.env.USERNODE_PLATFORM_ORIGIN || '${PLATFORM_BASE_URL}')
+  .replace(/\\/+$/, '');
+
+app.get(/^\\/usernode-(?:bridge|native|tailwind)\\//, async (req, res) => {
+  try {
+    const upstream = await fetch(PLATFORM_ORIGIN + req.path);
+    if (!upstream.ok) return res.sendStatus(upstream.status);
+    const type = upstream.headers.get('content-type');
+    if (type) res.type(type);
+    // max-age=0 with revalidation, never a long TTL: the whole point of
+    // central hosting is that a platform-side fix lands on the next load.
+    res.set('Cache-Control', 'public, max-age=0, must-revalidate');
+    return res.send(Buffer.from(await upstream.arrayBuffer()));
+  } catch (err) {
+    console.warn('hosted asset fetch failed: ' + err.message);
+    return res.sendStatus(502);
+  }
+});
+
 // Verify platform-issued JWT if one was passed, then enforce auth on
 // anything not explicitly marked public. The iframe adds \`?token=…\`
 // on load; the frontend script forwards the token via \`x-usernode-token\`
@@ -620,14 +660,14 @@ app.get('*', (req, res) => {
     const deepPath = /^\\/[A-Za-z0-9\\-._~!$&()*+,;=:@\\/%?]*$/.test(req.originalUrl)
       ? '?path=' + encodeURIComponent(req.originalUrl) : '';
     if (req.get('sec-fetch-dest') === 'document') {
-      return res.redirect(302, '${PLATFORM_BASE_URL}/app/${slug}/full' + deepPath);
+      return res.redirect(302, PLATFORM_ORIGIN + '/app/${slug}/full' + deepPath);
     }
     return res.status(401).send(\`<!doctype html><meta charset=utf-8><title>Open in Usernode</title>
 <body style="font-family:system-ui;background:#09090b;color:#e4e4e7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
   <div style="max-width:24rem;padding:2rem;text-align:center">
     <h1 style="font-size:1.25rem;margin:0 0 0.5rem">Open this app inside Usernode</h1>
     <p style="color:#a1a1aa;font-size:0.9rem;margin:0 0 1.25rem">This page is served via the platform; direct visits aren't authenticated.</p>
-    <a href="${PLATFORM_BASE_URL}/app/${slug}/full\${deepPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Usernode</a>
+    <a href="\${PLATFORM_ORIGIN}/app/${slug}/full\${deepPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Usernode</a>
   </div>
 </body>\`);
   }

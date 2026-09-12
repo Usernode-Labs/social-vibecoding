@@ -41,9 +41,13 @@ test('scaffold server.js redirects unauthenticated document navigations to the c
     server.includes("req.get('sec-fetch-dest') === 'document'"),
     'gates the redirect on Sec-Fetch-Dest: document'
   );
+  // Via PLATFORM_ORIGIN rather than an inlined literal: the origin is read
+  // from the injected USERNODE_PLATFORM_ORIGIN at runtime (falling back to
+  // the value baked in at scaffold time), so the link follows the platform
+  // when its domain moves instead of pointing at where it used to be.
   assert.match(
     server,
-    /res\.redirect\(302, 'https:\/\/[^']+\/app\/demo-app-abc123\/full' \+ deepPath\)/,
+    /res\.redirect\(302, PLATFORM_ORIGIN \+ '\/app\/demo-app-abc123\/full' \+ deepPath\)/,
     'redirects to the platform chromeless deep link for this slug, carrying the inner path'
   );
   // The redirect must live INSIDE the unauthenticated branch, before the
@@ -78,8 +82,8 @@ test('scaffold server.js encodes ?path= from req.originalUrl behind the characte
 test('scaffold landing page deep-links to the app, not the bare platform origin', () => {
   const files = getTemplateFiles('Demo App', 'demo-app-abc123', 'postgres://x', 's');
   const server = files.find((f) => f.path === 'server.js').content;
-  assert.match(server, /href="https:\/\/[^"]+\/app\/demo-app-abc123\/full\$\{deepPath\}"/,
-    'landing anchor carries the gated deep path too');
+  assert.match(server, /href="\$\{PLATFORM_ORIGIN\}\/app\/demo-app-abc123\/full\$\{deepPath\}"/,
+    'landing anchor carries the gated deep path too, on the runtime origin');
 });
 
 // ── 2. Auth-flow fragment preservation (stubs + in-SPA login) ───────────

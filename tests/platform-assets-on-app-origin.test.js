@@ -106,6 +106,7 @@ test('the asset backend runs the platform image and is not mistaken for an app',
       },
       createNamespacedDeployment: async ({ namespace, body }) => { created.push({ namespace, body }); return body; },
       replaceNamespacedDeployment: async ({ body }) => body,
+      listNamespacedPod: async () => ({ items: [] }),
     },
     core: {
       readNamespacedService: async () => { const e = new Error('nf'); e.code = 404; throw e; },
@@ -116,8 +117,15 @@ test('the asset backend runs the platform image and is not mistaken for an app',
   // The Deployment read must 404 on first reconcile too.
   fake.apps.readNamespacedDeployment = (() => {
     const platform = fake.apps.readNamespacedDeployment;
+    let seen = 0;
     return async (args) => {
-      if (args.namespace === 'social-apps') { const e = new Error('nf'); e.code = 404; throw e; }
+      if (args.namespace === 'social-apps') {
+        // First read is the upsert's existence check (404 -> create). Later
+        // reads are waitForDeployment polling for readiness.
+        if (seen++ === 0) { const e = new Error('nf'); e.code = 404; throw e; }
+        return { metadata: { name: args.name, generation: 1 }, spec: { replicas: 2 },
+          status: { observedGeneration: 1, replicas: 2, updatedReplicas: 2, readyReplicas: 2, availableReplicas: 2 } };
+      }
       return platform(args);
     };
   })();
@@ -139,7 +147,11 @@ test('the asset backend runs the platform image and is not mistaken for an app',
   const container = deployment.spec.template.spec.containers[0];
   assert.equal(container.image, 'registry.example/social-vibecoding@sha256:abc',
     'the image comes from the running platform Deployment, so the assets track the platform');
-  assert.deepEqual(container.command, ['node', 'scripts/serve-platform-assets.js']);
+  // Through the CNB launcher: the image is kpack/Paketo-built, and a bare
+  // `node` bypasses the buildpack launch environment, so the container never
+  // starts and the ingress answers 503 on every asset path.
+  assert.deepEqual(container.command, ['/cnb/lifecycle/launcher']);
+  assert.deepEqual(container.args, ['node scripts/serve-platform-assets.js']);
   assert.ok(deployment.spec.replicas >= 2, 'no single-replica restart gap on every app page load');
   assert.equal(deployment.spec.strategy.rollingUpdate.maxUnavailable, 0);
 
@@ -274,4 +286,62 @@ test('the hard-coded hostname fallbacks that remain have not grown', () => {
   walk(path.join(__dirname, '..', 'scripts'));
   assert.deepEqual([...found].sort(), KNOWN,
     'derive the origin from USERNODE_DOMAIN rather than naming a host a domain move invalidates');
+});
+
+test('the platform\'s own app keeps serving its own asset trees', async (t) => {
+  // The regression these two assertions exist for: the platform IS the
+  // source of /usernode-bridge/, /usernode-native/ and /usernode-tailwind/.
+  // Routing them to the shared backend on its own deployment served a
+  // preview the PRODUCTION image's copy of those files, so the preview's
+  // checks described bytes that were not in the preview. Fifteen native-kit
+  // demo checks went red on /usernode-native/v1/demo.html.
+  k8s._setClientsForTest({
+    apps: { readNamespacedDeployment: async () => { throw new Error('must not reconcile for the self app'); } },
+    core: {},
+  });
+  k8s._resetPlatformAssetBackendForTest();
+  t.after(() => { k8s._setClientsForTest(null); k8s._resetPlatformAssetBackendForTest(); });
+
+  // The manifest an unrouted app gets: its own catch-all and nothing else.
+  const paths = pathsOf(ingressFor('usernode-2d5619--s4137.onhomeroom.com', null));
+  assert.deepEqual(paths.map((p) => p.path), ['/'],
+    'the self app serves every path from itself, asset trees included');
+});
+
+test('a backend that never becomes ready is not routed to', async (t) => {
+  // Publishing the Ingress paths on an upsert that merely SUCCEEDED turned a
+  // broken backend into a 503 on every asset path — strictly worse than not
+  // routing at all, because then the app cannot serve them either. Readiness
+  // is the gate, so the failure mode is "no asset routing", the status quo.
+  const fake = {
+    apps: {
+      readNamespacedDeployment: async ({ namespace, name }) => {
+        if (namespace === 'social-platform') {
+          return { spec: { template: { spec: { containers: [{ name: 'platform', image: 'img@sha256:a' }] } } } };
+        }
+        // Never ready.
+        return { metadata: { name, generation: 1 }, spec: { replicas: 2 },
+          status: { observedGeneration: 1, replicas: 2, updatedReplicas: 0, readyReplicas: 0, availableReplicas: 0 } };
+      },
+      createNamespacedDeployment: async ({ body }) => body,
+      replaceNamespacedDeployment: async ({ body }) => body,
+      listNamespacedPod: async () => ({ items: [] }),
+    },
+    core: {
+      readNamespacedService: async () => { const e = new Error('nf'); e.code = 404; throw e; },
+      createNamespacedService: async ({ body }) => body,
+      replaceNamespacedService: async ({ body }) => body,
+      listNamespacedPod: async () => ({ items: [] }),
+    },
+  };
+  k8s._setClientsForTest(fake);
+  k8s._resetPlatformAssetBackendForTest();
+  t.after(() => { k8s._setClientsForTest(null); k8s._resetPlatformAssetBackendForTest(); });
+
+  const config = { kubernetes: { appNamespace: 'social-apps', platformNamespace: 'social-platform',
+    platformDeployment: 'social-vibecoding', generatedAppServiceAccount: 'social-generated-app' } };
+  await assert.rejects(
+    () => k8s._ensurePlatformAssetBackendForTest(config, { readyTimeoutMs: 150 }),
+    'reconcile fails rather than reporting a backend that cannot serve'
+  );
 });
