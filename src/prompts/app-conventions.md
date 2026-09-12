@@ -1774,19 +1774,17 @@ Rules:
   reachable for bridge-touching paths. App-logic iteration still
   works offline; only paths that actually exercise the bridge
   (`getNodeAddress`, `sendTransaction`, etc.) depend on SV being up.
-- **Prefer the RELATIVE path** on Kubernetes deployments. These three
-  prefixes are served from the app's own hostname too, so
-  `/usernode-bridge/v1/bridge.js` reaches the same file with no hostname
-  in the app at all. That is what makes a platform domain move
-  survivable: apps scaffolded before the move to the current domain
-  hard-coded the old host, and when it stopped answering they lost the
-  bridge, the kit and their styling all at once. An absolute URL still
-  works everywhere and remains correct; a relative one simply cannot go
-  stale. **Docker-runtime deployments do not serve these prefixes on the
-  app's hostname yet** — the routing above is added to each app's
-  Ingress, and the docker runtime routes through a static Caddyfile — so
-  use the absolute URL there. See
-  [SELF-HOSTING.md](../../SELF-HOSTING.md) for details.
+- **Prefer the RELATIVE path.** These three prefixes are served from the
+  app's own hostname too, so `/usernode-bridge/v1/bridge.js` reaches the
+  same file with no hostname in the app at all. That is what makes a
+  platform domain move survivable: apps scaffolded before the move to the
+  current domain hard-coded the old host, and when it stopped answering
+  they lost the bridge, the kit and their styling all at once. An absolute
+  URL still works and remains correct; a relative one simply cannot go
+  stale. Every runtime serves them: a per-app Ingress rule on Kubernetes,
+  the wildcard site's matcher on the docker runtime, and the scaffolded
+  app's own handler under a plain `node server.js`, where there is no edge
+  in front of the app. See [SELF-HOSTING.md](../../SELF-HOSTING.md).
 
 ## Offline — apps that open with no connection
 
@@ -2490,14 +2488,12 @@ Rules:
   be used in production" notice. It is a `warn`, not an error, so it does
   not affect proposal checks — it is kept because the file is verbatim
   upstream, which is what makes its digest verifiable. Nothing to chase.
-- **Prefer the RELATIVE path** on Kubernetes deployments,
-  `/usernode-tailwind/v1/tailwind.js`: it is served from the app's own
-  hostname too, so nothing in the app names a host a domain move can
-  invalidate. Docker-runtime deployments do not serve it there yet — use
-  the absolute URL. Older fleet apps still hard-code a platform hostname,
-  which is exactly the state this avoids; newly scaffolded apps derive the
-  origin from the deployment's own `USERNODE_DOMAIN`. See
-  [SELF-HOSTING.md](../../SELF-HOSTING.md).
+- **Prefer the RELATIVE path**, `/usernode-tailwind/v1/tailwind.js`: it is
+  served from the app's own hostname on every runtime, so nothing in the
+  app names a host a domain move can invalidate. Older fleet apps still
+  hard-code a platform hostname, which is exactly the state this avoids;
+  newly scaffolded apps derive the origin from the deployment's own
+  `USERNODE_DOMAIN`. See [SELF-HOSTING.md](../../SELF-HOSTING.md).
 
 ## Vendored shared files
 
