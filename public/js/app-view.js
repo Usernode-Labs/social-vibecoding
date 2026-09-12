@@ -5832,7 +5832,17 @@ const AppView = {
     for (const x of buckets.inReview) {
       if (notMine(x) && AppView._devCardMatches(x.kind, x.item, { needsVote: true })) owed.push(x);
     }
-    const voteRow = (card) => ({ t: 'card', key: `vote:${card.key}`, card });
+    // #1902: the row carries its item's THREAD, exactly as the "mine" lane
+    // above does. Without it `UnfoldedRow` renders no <FeedThread>, so a card
+    // opened from "Needs your vote" had no reply box — the one lane where a
+    // reader most wants to ask a question before voting.
+    const voteRow = (x, card) => {
+      if (!card) return null;
+      const row = { t: 'card', key: `vote:${card.key}`, card };
+      const th = AppView._feedThreadRef({ kind: x.kind, item: x.item });
+      if (th) row.thread = th;
+      return row;
+    };
     // EVERY owed row, not the first few. "N more waiting on you" used to send
     // the viewer to the Board with a filter set — it left the lander, it
     // changed the view mode, and Back was the only way home, all to read a
@@ -5851,8 +5861,9 @@ const AppView = {
       total: votable.length,
       shown: AppView.WORKSHOP_VOTES_MAX,
       rows: owed.map((x) => voteRow(
+        x,
         x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)
-      )),
+      )).filter(Boolean),
     };
 
     // ── Themes ──
