@@ -959,8 +959,13 @@ function NeedsDeck({
             onBlur={() => { if (!draft.trim()) setFocused(false); }}
             onChange={(e) => setDraft(e.target.value)}
           />
+          {/* ONE LINE until it is tapped. The controls row — the model and
+              the send circle — is what makes the card two lines tall, and
+              neither is any use before there is something to send. Tapping
+              the field brings the row with it. */}
+          {focused || engaged ? (
           <div className="dev-ws-ask-row">
-            {focused && models.list.length ? (
+            {models.list.length ? (
               <span className="dev-ws-ask-model" data-ws-ask-model="">
                 <label className="sr-only" htmlFor="dev-ws-ask-model-select">Model</label>
                 <select
@@ -985,6 +990,7 @@ function NeedsDeck({
               disabled={!draft.trim()}
             ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>
           </div>
+          ) : null}
         </form>
       </section>
     </div>
