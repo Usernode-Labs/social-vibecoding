@@ -49,10 +49,10 @@ test('promotion remains blocked while checks fail, run, or belong to an unready 
   const av = context();
   for (const patch of [{}, { check_state: 'pending' }, { check_state: 'passing' }, { status: 'paused' }, { check_state: 'passing', proposal_state: 'ready', busy: true }, { check_state: 'passing', proposal_state: 'ready', checks_base_verdict: 'superseded' }]) {
     const v = av._topicViewFor('session', { ...failing, ...patch });
-    assert.equal(row(v, 'review').actions[0].disabled, true);
+    assert.equal(v.card.actions.find((a) => a.key === 'propose-change').disabled, true);
   }
   const ready = av._topicViewFor('session', { ...failing, check_state: 'passing', proposal_state: 'ready' });
-  assert.equal(row(ready, 'review').actions[0].disabled, false);
+  assert.equal(ready.card.actions.find((a) => a.key === 'propose-change').disabled, false);
   const review = av._topicViewFor('proposal', { ...failing, status: 'promoted' });
   assert.equal(row(review, 'review'), undefined);
   assert.ok(review.card.actions.some((a) => a.key === 'yes'));
@@ -62,7 +62,7 @@ test('readers cannot promote, sync, or open the private workspace', () => {
   const av = context({ id: 99 });
   const v = av._topicViewFor('session', { ...failing, shared_at: '2026-09-11' });
   assert.equal(v.body.workspace, null);
-  assert.equal(row(v, 'review').actions.length, 0);
+  assert.ok(!v.card.actions.some((a) => a.key === 'propose-change'));
   assert.ok(!v.body.details.ledger.some((r) => r.actions?.some((a) => a.key === 'sync-main')));
   assert.equal(v.body.transcript, null);
 });
@@ -87,7 +87,7 @@ test('underway freshness does not claim an automatic sync or scheduled merge is 
 test('private changes retain sharing controls and do not pretend to have a public discussion', () => {
   const av = context();
   const v = av._topicViewFor('session', failing);
-  assert.ok(v.card.actions.some((a) => a.label === 'Make visible'));
+  assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Make visible'));
   assert.match(v.body.discussion, /workspace stays private/);
 });
 
@@ -101,8 +101,8 @@ test('actual shared component renders the entire card and escapes the issue titl
   assert.ok(html.includes('&lt;script&gt;issue&lt;/script&gt;'));
   assert.ok(!html.includes('<script>issue</script>'));
   assert.match(html, /role="tablist" aria-label="Conversation"/);
-  assert.match(html, /role="tab"[^>]+aria-selected="true"[^>]*>Discussion/);
-  assert.ok(html.includes('Agent workspace'));
+  assert.match(html, /role="tab"[^>]+aria-selected="true"[^>]*>Build/);
+  assert.ok(html.includes('Build'));
   assert.ok(!html.includes('Open discussion'));
   assert.equal((html.match(/>Activity</g) || []).length, 1, 'Activity is a tab, not a duplicate disclosure');
 });
@@ -205,8 +205,10 @@ test('workspace capabilities distinguish owners, published transcripts, private 
   assert.equal(workspaceKind(failing, other), 'private');
   assert.equal(workspaceKind(failing, { ...other, transcript: { id: failing.id } }), 'published');
   const privateHtml = renderToHtml(createElement(ChangeConversation, { item: failing, body: own }));
-  assert.match(privateHtml, /Make this change visible/);
-  assert.doesNotMatch(privateHtml, /data-change-discussion|id="dc-view"/, 'neither controller loads private messages just to display the card');
+  assert.match(privateHtml, /data-conversation-tab="workspace"/);
+  assert.match(privateHtml, /id="dc-view"/, 'the author opens directly into Build');
+  const readerHtml = renderToHtml(createElement(ChangeConversation, { item: failing, body: other }));
+  assert.doesNotMatch(readerHtml, /id="dc-view"/, 'a reader never mounts the private workspace');
 });
 
 test('Continue building selects the embedded workspace without navigating away from the card', () => {
@@ -231,4 +233,80 @@ test('Continue building selects the embedded workspace without navigating away f
 test('Workshop native underway inline details resolve the owner card key', () => {
   const av = context(); av._mySessions = [failing];
   assert.equal(av._workshopCardBody('my-session:4073').changeId, 4073);
+});
+
+
+test('full card has one submission, one preview, contextual recovery and an independent More menu', () => {
+  const av = context();
+  const item = { ...failing, pr_url: 'https://github.com/example/app/pull/12', check_state: 'passing', proposal_state: 'ready' };
+  const compact = av._mySessionCardModel(item);
+  const compactMenu = av._cardMenuItems(compact.rail.menuKey);
+  const v = av._topicViewFor('session', item);
+  assert.equal(v.card.actions.filter((a) => a.key === 'propose-change').length, 1);
+  assert.equal(v.card.actions.filter((a) => a.preview).length, 1);
+  assert.equal(v.card.rail.preview, null);
+  assert.equal(row(v, 'review').actions, undefined);
+  const menu = av._cardMenuItems(v.card.rail.menuKey);
+  assert.equal(menu.filter((a) => /GitHub/.test(a.label)).length, 1);
+  assert.ok(menu.some((a) => a.label === 'Make visible'));
+  assert.ok(!menu.some((a) => ['View checks', 'Re-run checks', 'Open session'].includes(a.label)));
+  assert.ok(compactMenu.some((a) => a.label === 'View checks'));
+  const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  const html = renderToHtml(createElement(ChangeDetail, { ...v, item, conversation: true }));
+  assert.equal((html.match(/>Submit for review</g) || []).length, 1);
+  assert.doesNotMatch(html, /Continue building|dev-topic-gh/);
+});
+
+test('merged card opens the live app instead of an expired preview', () => {
+  const av = context();
+  const v = av._topicViewFor('proposal', { ...failing, status: 'merged' });
+  assert.ok(v.card.actions.some((a) => a.label === 'Open app'));
+  assert.ok(!v.card.actions.some((a) => a.preview || a.key === 'propose-change'));
+});
+
+
+test('Build defaults only for underway authors and explicit tab links win', () => {
+  const { initialConversationTab } = loadTsx('frontend/src/features/dev-board/topic/conversation.tsx');
+  const own = context()._topicViewFor('session', failing).body;
+  for (const status of ['active', 'paused']) assert.equal(initialConversationTab({ ...failing, status }, own, null), 'workspace');
+  for (const status of ['promoted', 'merging', 'merged', 'archived']) assert.equal(initialConversationTab({ ...failing, status }, own, null), 'discussion');
+  assert.equal(initialConversationTab({ ...failing, source: 'imported' }, own, null), 'discussion');
+  assert.equal(initialConversationTab(failing, { ...own, workspace: null }, null), 'discussion');
+  for (const tab of ['discussion', 'activity', 'workspace']) assert.equal(initialConversationTab(failing, own, tab), tab);
+  assert.equal(initialConversationTab(failing, { ...own, workspace: null, transcript: { id: failing.id } }, null, true), 'workspace');
+});
+
+test('unlinked changes omit the empty issue message', () => {
+  const av = context();
+  const item = { ...failing, linked_issues: [] };
+  const v = av._topicViewFor('session', item);
+  const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
+  const html = renderToHtml(createElement(ChangeDetail, { ...v, item, conversation: true }));
+  assert.doesNotMatch(html, /No issue linked yet|Issues this change addresses/);
+});
+
+test('imported underway PR archive is owner-only and works from compact and full cards', async () => {
+  const item = { ...failing, source: 'imported', pr_number: 17, pr_title: 'Imported work' };
+  const av = context();
+  const calls = [];
+  av._archiveSession = async (...args) => { calls.push(args); return true; };
+  av._loadDevFeed = async () => calls.push('refresh');
+  av._renderTopicHead = () => calls.push('head');
+  for (const status of ['active', 'paused']) {
+    const current = { ...item, status };
+    for (const card of [av._mySessionCardModel(current), av._topicViewFor('session', current).card]) {
+      const actions = av._cardMenuItems(card.rail.menuKey).filter((a) => a.icon === 'archive');
+      assert.equal(actions.length, 1);
+      assert.equal(actions[0].label, 'Archive PR');
+      await actions[0].act();
+    }
+  }
+  assert.deepEqual(calls[0], [item.id, 'Imported work', true]);
+  assert.equal(calls.filter((x) => x === 'refresh').length, 4);
+  const other = context({ id: 99 });
+  const readOnly = context(); readOnly.appData.can_collaborate = false;
+  for (const viewer of [other, readOnly]) {
+    const v = viewer._topicViewFor('session', item);
+    assert.ok(!viewer._cardMenuItems(v.card.rail.menuKey).some((a) => a.icon === 'archive'));
+  }
 });
