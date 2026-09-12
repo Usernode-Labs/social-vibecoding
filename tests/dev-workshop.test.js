@@ -513,7 +513,9 @@ test('the model\'s paragraph is what the pane says, when there is one', () => {
   // And the footnote says which of the two is on screen, so "the summarizer
   // looks broken" and "no draft yet" are distinguishable without reading the
   // database.
-  assert.match(html, /Written by the model on its last pass over the board\./);
+  // The healthy case says NOTHING now: provenance under every working board
+  // answered a question nobody had asked and cost a line to do it.
+  assert.ok(!html.includes('data-ws-digest-note'), 'no caption on the ordinary case');
 
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12'] }]);
   const derived = workshopHtml(AppView);
@@ -559,7 +561,9 @@ test('the digest survives the fetch that loads it', async () => {
   const html = workshopHtml(AppView);
   assert.match(html, /alice finished the sign-in work/);
   assert.ok(!html.includes('open items across'), 'and the derived sentence stands down');
-  assert.match(html, /Written by the model on its last pass over the board\./);
+  // The healthy case says NOTHING now: provenance under every working board
+  // answered a question nobody had asked and cost a line to do it.
+  assert.ok(!html.includes('data-ws-digest-note'), 'no caption on the ordinary case');
 
   // A response with no paragraph still reads as one: null, not undefined,
   // so the footnote picks the neutral line rather than the failure one.
@@ -641,7 +645,9 @@ test('the pane opens on Open alone, and the older windows are a walk back', asyn
     'the declared check selects the cards as the tiles\u2019 next sibling');
   // And the derived sentence stands down, as it does for the paragraph.
   assert.ok(!html.includes('open items across'), 'no count sentence beside the cards');
-  assert.match(html, /Written by the model on its last pass over the board\./);
+  // The healthy case says NOTHING now: provenance under every working board
+  // answered a question nobody had asked and cost a line to do it.
+  assert.ok(!html.includes('data-ws-digest-note'), 'no caption on the ordinary case');
 });
 
 test('a card is one line: an aligned label column and its sentence, no separator', async () => {
@@ -747,7 +753,9 @@ test('a row written before the cards still says its paragraph', async () => {
   const html = workshopHtml(AppView);
   assert.ok(!html.includes('data-ws-cards'), 'no cards to draw');
   assert.match(html, /alice finished the sign-in work/);
-  assert.match(html, /Written by the model on its last pass over the board\./);
+  // The healthy case says NOTHING now: provenance under every working board
+  // answered a question nobody had asked and cost a line to do it.
+  assert.ok(!html.includes('data-ws-digest-note'), 'no caption on the ordinary case');
 
   // And when a row has both, the cards win — that is the direction of the
   // upgrade, and the paragraph is only ever the flattened same answer.
@@ -757,6 +765,7 @@ test('a row written before the cards still says its paragraph', async () => {
   }));
   const bothHtml = workshopHtml(both);
   assert.match(bothHtml, /The last-week line\./);
+  assert.ok(!bothHtml.includes('data-ws-digest-note'), 'and no provenance caption');
   assert.ok(!bothHtml.includes('The flattened paragraph.'), 'the prose form is not drawn beside them');
 });
 

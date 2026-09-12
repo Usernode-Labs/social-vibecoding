@@ -332,7 +332,10 @@ function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
  * database.
  */
 function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
-  if (written) return 'Written by the model on its last pass over the board.';
+  // The healthy case says NOTHING. It said "Written by the model on its last
+  // pass over the board" — provenance under every board that was working,
+  // answering a question nobody had asked and costing a line to do it.
+  if (written) return '';
   if (meta.digestError) {
     // The failure that used to be a log line and a day of silence. Naming it
     // here is what turned "could something be up with the summarizer?" from a
@@ -496,7 +499,12 @@ function weekRange(startMs: number, endMs: number): string {
  * more written yet" and "no more to write" are different facts and only one
  * of them is the app's beginning.
  */
-function WeekWalk({ weeks, firstWeek }: { weeks: Dash['weeks']; firstWeek: number | null }): ReactNode {
+function WeekWalk({ weeks, firstWeek, note }: {
+  weeks: Dash['weeks'];
+  firstWeek: number | null;
+  /** Why the summary is what it is, when something is wrong with it. */
+  note?: string;
+}): ReactNode {
   // How many entries from the END of the list are on screen. The list is
   // oldest-first, so one means `open` alone.
   const [shown, setShown] = useState(1);
@@ -522,6 +530,7 @@ function WeekWalk({ weeks, firstWeek }: { weeks: Dash['weeks']; firstWeek: numbe
           <p className="dev-ws-card-line">{w.line}</p>
         </article>
       ))}
+      {note ? <p className="dev-ws-digest-note" data-ws-digest-note="">{note}</p> : null}
       {more ? (
         <button
           type="button"
@@ -819,10 +828,18 @@ function NeedsDeck({
   const answer = (which: string, act: { fn: string; args: unknown[] } | null) => {
     if (act) callAppView(act.fn, ...(act.args as unknown[]));
     setAnswered((cur) => ({ ...cur, [row.key]: which }));
-    // Straight on to the next question. At the end of the queue it stays
-    // put: there is nowhere further to go, and the deck says so.
-    if (i < cards.length - 1) setAt(i + 1);
+    // A beat before the next question, so the press is SEEN. Advancing on
+    // the same frame made a vote feel like the card had simply vanished,
+    // with nothing to say whether it had registered.
+    if (i < cards.length - 1) window.setTimeout(() => setAt(i + 1), 550);
   };
+  // The verbs, per kind. "Yes" over a card is only clear if you already
+  // know what the card is asking; "Vote yes" and "I'll take it" say what
+  // the press DOES, which is the thing a first-time reader is missing.
+  const verbs = row.kind === 'vote'
+    ? { yes: 'Vote yes', no: 'Vote no', skip: 'Skip' }
+    : { yes: "I'll take it", no: 'Not me', skip: 'Skip' };
+  const done = answered[row.key];
   const ask = () => {
     const q = draft.trim();
     if (!q) return;
@@ -880,23 +897,24 @@ function NeedsDeck({
               className="dev-ws-answer-btn dev-ws-answer-yes"
               data-ws-answer-btn="yes"
               disabled={!row.yes}
-              aria-pressed={answered[row.key] === 'yes'}
+              aria-pressed={done === 'yes'}
               onClick={() => answer('yes', row.yes ? row.yes.act : null)}
-            >Yes</button>
+            >{done === 'yes' ? `${verbs.yes} ✓` : verbs.yes}</button>
             <button
               type="button"
               className="dev-ws-answer-btn dev-ws-answer-no"
               data-ws-answer-btn="no"
               disabled={!row.no}
-              aria-pressed={answered[row.key] === 'no'}
+              aria-pressed={done === 'no'}
               onClick={() => answer('no', row.no ? row.no.act : null)}
-            >No</button>
+            >{done === 'no' ? `${verbs.no} ✓` : verbs.no}</button>
             <button
               type="button"
               className="dev-ws-answer-btn dev-ws-answer-skip"
               data-ws-answer-btn="skip"
+              aria-pressed={done === 'skip'}
               onClick={() => answer('skip', null)}
-            >Skip</button>
+            >{verbs.skip}</button>
           </div>
         </div>
       </section>
@@ -927,16 +945,21 @@ function NeedsDeck({
             value={draft}
             placeholder="Ask a question…"
             onFocus={() => setFocused(true)}
+            onBlur={() => { if (!draft.trim()) setFocused(false); }}
             onChange={(e) => setDraft(e.target.value)}
           />
           <button type="submit" className="dev-ws-ask-send" disabled={!draft.trim()}>Ask</button>
         </form>
-        {(focused || engaged) && models.list.length ? (
+        {/* Only while the box is in use. `.dc-model-select` / `.dc-model-name`
+            are the dev session composer's own classes — stripped back to
+            plain text and a caret, no border, no fill — so the two pickers
+            look like the same control because they are the same choice. */}
+        {focused && models.list.length ? (
           <div className="dev-ws-ask-model" data-ws-ask-model="">
             <label className="sr-only" htmlFor="dev-ws-ask-model-select">Model</label>
             <select
               id="dev-ws-ask-model-select"
-              className="dev-ws-ask-model-select"
+              className="dc-model-select dc-model-name"
               value={model}
               onChange={(e) => setModel(e.target.value)}
             >
@@ -944,6 +967,7 @@ function NeedsDeck({
                 <option key={m.id} value={m.id}>{m.note ? `${m.label} — ${m.note}` : m.label}</option>
               ))}
             </select>
+            <ChevronDownIcon className="dev-ws-ask-model-chev" aria-hidden="true" />
           </div>
         ) : null}
       </section>
@@ -1094,19 +1118,32 @@ export function DevWorkshop(): ReactNode {
               derived sentence is still the fallback for a board that has
               never had a line written for it — see summarise(). */}
           {v.dashboard.weeks.length
-            ? <WeekWalk weeks={v.dashboard.weeks} firstWeek={v.dashboard.firstWeek} />
+            ? (
+              <WeekWalk
+                weeks={v.dashboard.weeks}
+                firstWeek={v.dashboard.firstWeek}
+                note={digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary))}
+              />
+            )
             : summarise(v.dashboard)
-              ? <p className="dev-ws-strip-text">{summarise(v.dashboard)}</p>
+              ? (
+                <>
+                  <p className="dev-ws-strip-text">{summarise(v.dashboard)}</p>
+                  {/* The note belongs to whichever sentence is on screen. With
+                      no cards there is no walk to hang it inside, and this is
+                      the very case it exists for: "no draft yet" and "the call
+                      keeps failing" both leave the derived sentence up there
+                      and are otherwise indistinguishable. */}
+                  {digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary)) ? (
+                    <p className="dev-ws-digest-note" data-ws-digest-note="">
+                      {digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary))}
+                    </p>
+                  ) : null}
+                </>
+              )
               : null}
-          {/* Where the sentence above came from. It was two clauses of the
-              category footnote under the themes, which is a different TAB
-              now — an explanation of the summary that does not sit with the
-              summary explains nothing. */}
-          {v.meta.source === 'ai' || v.meta.digestError ? (
-            <p className="dev-ws-digest-note" data-ws-digest-note="">
-              {digestNote(v.meta, !!(v.dashboard && (v.dashboard.cards || v.dashboard.summary)))}
-            </p>
-          ) : null}
+          {/* The note about the summary rides INSIDE the walk (above "Show
+              past week"), with the card it is about — see WeekWalk. */}
         </section>
       ) : null}
 
