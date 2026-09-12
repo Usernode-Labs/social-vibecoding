@@ -503,6 +503,13 @@ async function findRenamePrForName(pool, appId, newName) {
   return rows[0] || null;
 }
 
+// Carries the issue's votes onto the rename PR so people do not have to vote
+// the same thing twice.
+//
+// approval_epoch is not named here on purpose: schema.sql's
+// pr_votes_stamp_approval_epoch trigger fills it from the session. It was
+// named nowhere at all once (#2050), and since NULL never equals the
+// session's epoch, every vote this carried across arrived already dead.
 async function restoreIssueVotesToPr(pool, issueId, sessionId) {
   const { rowCount } = await pool.query(
     `INSERT INTO pr_votes (session_id, user_id, vote, created_at)

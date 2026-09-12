@@ -7274,11 +7274,31 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_error TEXT;
 --   pr_votes.approval_epoch       the epoch the vote was cast under. A vote
 --                                 counts while the two are equal.
 --
--- Backfill: existing rows start at epoch 0, and existing votes inherit
--- epoch 0 only when they already match the current commit pin. A vote that
--- is stale under the old rule keeps a NULL epoch, and NULL never equals 0,
--- so it stays uncounted — the migration changes no tally in either
--- direction.
+-- Backfill: existing rows start at epoch 0, and a vote inherits epoch 0 when
+-- it counted under the OLD rule. That rule is reproduced here exactly, and
+-- the reproduction is the point — #2050. The old predicate was
+--
+--     (<reviewed head> IS NULL OR LOWER(pv.head_sha) = LOWER(<reviewed head>))
+--
+-- and this backfill originally kept only its second half. The half it dropped
+-- is not an edge case: a session with no reviewed head counted EVERY vote on
+-- it, which is every rename PR (services/rename-pr.js opens one with no head
+-- and carries people's issue votes onto it) and every staging fixture. All of
+-- them silently fell to a zero tally the moment the migration ran. The
+-- original claim that it "changes no tally in either direction" was wrong
+-- about exactly this, so the condition now says what the claim always meant.
+--
+-- A vote genuinely stale under the old rule still keeps a NULL epoch, and
+-- NULL never equals 0, so it stays uncounted with nothing having to delete
+-- it. A vote made stale LATER is untouched here: clearApprovals bumps the
+-- session's epoch and leaves the vote's alone, so it is not NULL and this
+-- does not see it. Epoch 0 rather than the session's current epoch for the
+-- same reason — a session that has since cleared its approvals must not have
+-- votes reappear underneath it, and 0 is inert there.
+--
+-- It re-runs on every boot (the schema is applied at db/migrate.js:30) and is
+-- idempotent, which is what lets it also rescue the rows written dead after
+-- the first run, before the trigger below existed.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS approval_epoch INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE pr_votes      ADD COLUMN IF NOT EXISTS approval_epoch INTEGER;
 
@@ -7287,9 +7307,70 @@ UPDATE pr_votes pv
   FROM chat_sessions cs
  WHERE cs.id = pv.session_id
    AND pv.approval_epoch IS NULL
-   AND LOWER(pv.head_sha) = LOWER(
-         CASE WHEN cs.source = 'imported'
-              THEN cs.imported_pr_head_sha ELSE cs.reviewed_head_sha END);
+   AND ((CASE WHEN cs.source = 'imported'
+              THEN cs.imported_pr_head_sha ELSE cs.reviewed_head_sha END) IS NULL
+        OR LOWER(pv.head_sha) = LOWER(
+             CASE WHEN cs.source = 'imported'
+                  THEN cs.imported_pr_head_sha ELSE cs.reviewed_head_sha END));
+
+-- ── Every vote is born at an epoch ─────────────────────────────────────
+--
+-- The predicate above is an equality against a NULLABLE column, and NULL
+-- equals nothing. That is deliberate for the backfill — it is what carries a
+-- stale vote across uncounted without anything having to delete it — and it
+-- is exactly wrong for an INSERT: a statement that omits the column writes a
+-- vote that can NEVER count, however the group votes.
+--
+-- Only routes/votes.js's two recordVote statements named it. The other
+-- thirteen INSERT INTO pr_votes sites did not, and wrote dead rows (#2050):
+-- services/rename-pr.js carrying real people's issue votes onto a rename PR,
+-- and twelve staging seeds whose entire purpose is a non-zero tally. The
+-- schema is applied before any of them (db/migrate.js applies it at the top
+-- of boot and the seeds run after), so the backfill cannot rescue a row that
+-- does not exist yet.
+--
+-- Stamping it here rather than at fifteen call sites makes the invariant
+-- structural. services/pr-vote-revision.js is the one definition of which
+-- approvals count; this is that definition's write-side half, and it holds
+-- for a caller that has never heard of epochs — which twelve of them, sitting
+-- in seed code, reasonably have not.
+--
+-- The WHEN clause tests the VALUE, not whether the statement named the
+-- column, so an explicit NULL is stamped too: after this, NO insert can
+-- produce a vote that cannot count. An epoch the caller actually supplies is
+-- never touched — recordVote still decides what a real vote is cast under,
+-- and those inserts do not reach the function at all.
+--
+-- It does not resurrect the backfill's stale votes: those are an UPDATE and
+-- this fires on INSERT. Nor does it disturb a staging clone, which is
+-- pg_dump -Fc | pg_restore: triggers are restored in the post-data section,
+-- after the COPY, so a stale NULL arrives in staging still NULL.
+CREATE OR REPLACE FUNCTION stamp_pr_vote_approval_epoch() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  -- A vote whose session does not exist leaves this NULL and stays
+  -- uncounted, which is the right answer; the foreign key refuses it anyway.
+  SELECT cs.approval_epoch INTO NEW.approval_epoch
+    FROM chat_sessions cs
+   WHERE cs.id = NEW.session_id;
+  RETURN NEW;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'pr_votes_stamp_approval_epoch'
+       AND tgrelid = 'pr_votes'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER pr_votes_stamp_approval_epoch
+      BEFORE INSERT ON pr_votes
+      FOR EACH ROW WHEN (NEW.approval_epoch IS NULL)
+      EXECUTE FUNCTION stamp_pr_vote_approval_epoch();
+  END IF;
+END $$;
 
 -- The measurement sweep's candidate ordering: promoted rows, least recently
 -- measured first, never-measured ahead of everything. Mirrors the freshness
