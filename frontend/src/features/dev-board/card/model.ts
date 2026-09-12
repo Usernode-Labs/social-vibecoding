@@ -262,6 +262,12 @@ export type ListRow =
     thread?: FeedThreadRef | null;
     /** Arrived since the viewer's last Workshop visit — the "new" marker. */
     fresh?: boolean;
+    /**
+     * The voter-facing plain-language summary (`pr_summary_md`), on vote rows
+     * only. Null when the proposal has none — a legacy one, or a summary pass
+     * that failed — and the deck says so rather than leaving a gap.
+     */
+    summary?: string | null;
     /** The server has themes but has not placed this card into one yet. */
     placing?: boolean;
   }
@@ -327,6 +333,26 @@ export interface DevWorkshopView {
   viewerId?: number | null;
   /** The no-items note, with its load-failure prefix. */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
+  /** Which tab a `?ws=` deep link asked for; null for the viewer's own choice. */
+  tab: 'status' | 'needs' | 'all' | null;
+  /**
+   * The models the ask box may talk to — the dev session's own list
+   * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and
+   * the picker is then not drawn at all.
+   */
+  models: { list: { id: string; label: string; note: string }[]; selected: string | null };
+  /**
+   * The Needs-you tab's queue, in order: the proposals owed a vote, then the
+   * issues nobody has claimed. One card, one question, three answers — the
+   * row carries the question and what Yes and No DO, so the deck renders
+   * buttons rather than deciding policy.
+   */
+  queue: (ListRow & {
+    kind: 'vote' | 'claim';
+    ask: string;
+    yes: { label: string; act: { fn: string; args: unknown[] } | null } | null;
+    no: { label: string; act: { fn: string; args: unknown[] } | null } | null;
+  })[];
   /** Proposals awaiting THIS viewer's vote — pinned above the themes. */
   votes: {
     /** Still owed by this viewer. */
@@ -338,6 +364,7 @@ export interface DevWorkshopView {
     /** ALL of them: the rest are revealed in place, not on another screen. */
     rows: ListRow[];
   };
+
   /**
    * The viewer's OWN work in flight on this app: their dev sessions and the
    * proposals they opened. Unfiltered, like `votes` — your own work is yours
