@@ -303,8 +303,14 @@ function devFlowRoutes(config) {
         // the only shape "Start over" is offered on.
         const demoKind = req.query.demo === 'session' ? 'session' : 'proposal';
         const orderKind = req.query.order === 'plain' ? null : demoKind;
+        // `?order=none` is the third shape and the one this change is about: a
+        // launchpad with NO work order, which is what every session that did
+        // not prepare one now looks like. Before, no route could render it —
+        // the fixture always carried a task, because before this change a
+        // session that had not prepared anything still showed another's.
+        const noTask = req.query.order === 'none';
         return res.json(req.query.demo === '1' || req.query.demo === 'session'
-          ? demoStatus(app, parsed, orderKind)
+          ? demoStatus(app, parsed, orderKind, noTask)
           : {
             // The venue sheet's own state: the web hand-offs are offerable,
             // nothing is linked, no work order exists. Fixture session
@@ -379,9 +385,24 @@ function devFlowRoutes(config) {
       // keeps answering for this app after it has stopped counting against the
       // cap and stopped being reusable by prepareWork — leaving the launchpad
       // showing step 3 done, with no way to say what to build instead.
-      const task = await externalAgentTasks.loadLatestOpenTaskForSlug(
-        pool, req.user.id, app.slug, { unexpiredOnly: true }
-      );
+      //
+      // Per SESSION when the caller names one, which the dev chat always does.
+      // Keyed on the app alone, one open work order spoke for every session in
+      // it: "New change" opened a fresh session already showing an unrelated,
+      // often long-finished order, which is the bug this resolves. The
+      // app-wide lookup is kept for a caller that names no session, so a
+      // client running older JS degrades to the previous behaviour rather
+      // than to a blank walkthrough.
+      const sessionId = /^\d+$/.test(String(req.query.sessionId || ''))
+        ? parseInt(req.query.sessionId, 10)
+        : null;
+      const task = sessionId
+        ? await externalAgentTasks.loadOpenTaskForSession(
+          pool, req.user.id, app.slug, sessionId, { unexpiredOnly: true }
+        )
+        : await externalAgentTasks.loadLatestOpenTaskForSlug(
+          pool, req.user.id, app.slug, { unexpiredOnly: true }
+        );
       if (task) {
         const targetProposal = await reloadTargetProposal(
           pool, req.user, app, originOf(config), task
@@ -486,6 +507,13 @@ function devFlowRoutes(config) {
       return res.status(400).json({ error: 'proposalId must be a positive integer', code: 'invalid_request' });
     }
     const proposalId = hasProposal ? rawProposal : null;
+    // Which launchpad is asking. Recorded on the work order so the walkthrough
+    // in THIS session is the one that shows it, and no other. Optional and
+    // unvalidated beyond its shape: the lookups that read it are all scoped to
+    // the caller's own rows, so a session id that is not theirs matches
+    // nothing rather than reaching anything.
+    const rawSession = req.body?.sessionId;
+    const originSessionId = Number.isInteger(rawSession) && rawSession > 0 ? rawSession : null;
     if (!brief.trim() && !issueNumber) {
       return res.status(400).json({
         error: 'Describe the change you want first: the work order needs something to hand your agent.',
@@ -529,6 +557,7 @@ function devFlowRoutes(config) {
         clientName: 'Usernode',
         origin: originOf(config),
         restart: !!req.body?.restart,
+        originSessionId,
       });
       if (!result.ok) return sendFailure(res, result);
 
@@ -796,7 +825,7 @@ function devFlowRoutes(config) {
 // The work order is an UPDATE one (#1054): the update branch is the harder of
 // the two to review, it renders every ordinary step as well, and a reviewer
 // who only ever sees the new-proposal copy cannot check the difference.
-function demoStatus(app, parsed, targetKind) {
+function demoStatus(app, parsed, targetKind, noTask) {
   const owner = (parsed && parsed.owner) || 'usernode-apps';
   const repo = (parsed && parsed.repo) || app.slug;
   const login = 'octo-contributor';
@@ -805,7 +834,7 @@ function demoStatus(app, parsed, targetKind) {
     ? 'staging-fixture/session-options'
     : 'usernode/staging-fixture-1049';
   const baseSha = '0123456789abcdef0123456789abcdef01234567';
-  return {
+  const payload = {
     available: true,
     reason: null,
     demo: true,
@@ -927,6 +956,14 @@ function demoStatus(app, parsed, targetKind) {
     },
     branch: shapeBranch('missing'),
   };
+  if (noTask) {
+    // Step 3 becomes the live one, with its "What should it build?" field —
+    // the question the launchpad could not ask while another session's order
+    // was answering for this one.
+    payload.task = null;
+    payload.branch = null;
+  }
+  return payload;
 }
 
 module.exports = { devFlowRoutes, PICKABLE_AGENTS, STATUS_BY_CODE, shapeBranch };
