@@ -1373,6 +1373,28 @@ const DevChat = {
     } catch { return ''; }
   },
 
+  // The dev-flow status route takes a SECOND fixture discriminator,
+  // `?order=plain`, which narrows whichever payload `demo` selected to an
+  // ordinary work order that continues nothing.
+  //
+  // It is appended here rather than inside _demoQS, and that is deliberate.
+  // _demoQS feeds /api/sessions/:id/status and /spec as well, and those — like
+  // most fixture routes — test `demo` for exactly '1'. Widening its allowlist
+  // to carry this would send them a value they do not recognise and blank the
+  // very session the walkthrough is rendered inside; leaving the allowlist
+  // alone and inventing a new `demo` value instead fails the allowlist and
+  // sends no fixture at all. Both were real: the second one shipped, and the
+  // declared checks on the plain fixture caught it.
+  _devFlowDemoQS() {
+    const base = DevChat._demoQS();
+    if (!base) return '';
+    try {
+      return new URLSearchParams(location.search).get('order') === 'plain'
+        ? `${base}&order=plain`
+        : base;
+    } catch { return base; }
+  },
+
   // Fold a status payload into the runner state and repaint if it changed.
   // Called from every place that reads /status — opening a session, the
   // during-turn poll, and the idle poll — so all three agree.
@@ -2776,7 +2798,7 @@ const DevChat = {
     let status = null;
     try {
       const res = await fetch(
-        `/api/apps/${encodeURIComponent(slug)}/dev-flow/status${DevChat._demoQS()}`,
+        `/api/apps/${encodeURIComponent(slug)}/dev-flow/status${DevChat._devFlowDemoQS()}`,
         { credentials: 'same-origin' }
       );
       // A failed read is not an error the user needs — the card simply
@@ -2869,6 +2891,7 @@ const DevChat = {
       return;
     }
     if (action === 'prepare') return DevChat._devFlowPrepare();
+    if (action === 'discard') return DevChat._devFlowDiscard();
     if (action === 'submit') return DevChat._devFlowSubmit();
     // #1071. A separate action, not a flag on 'submit': the two hit different
     // routes with different bodies and different failure modes, and a single
@@ -2932,6 +2955,52 @@ const DevChat = {
       flow.notice = data.reused
         ? 'You already had a work order for this app, so this reuses it.'
         : 'Work order ready.';
+    } catch (err) {
+      flow.error = `Network error: ${err.message}`;
+    } finally {
+      flow.busy = false;
+      await DevChat._devFlowEnsureStatus(true);
+      DevChat._repaintDevFlow();
+    }
+  },
+
+  // The hand-off step's "Start over". Puts the open work order away and drops
+  // back to step 3's brief field, which is the whole point: the walkthrough shows
+  // whatever open task the account holds for this app, so a stale one is
+  // otherwise permanent.
+  //
+  // `flow.brief` is cleared rather than left alone. It is seeded from the
+  // session title, and re-rendering the old text under a fresh work order is
+  // how you get a second work order describing the same finished change — an
+  // empty box asking "What should it build?" is the question actually being
+  // put to the user here.
+  //
+  // A 404 is not surfaced as an error: it means the task was already closed,
+  // so the re-read below leaves the walkthrough in exactly the state the user
+  // was reaching for.
+  async _devFlowDiscard() {
+    const flow = DevChat._devFlow;
+    const slug = App.currentApp;
+    const task = flow.status && flow.status.task;
+    if (!task) {
+      flow.error = 'No work order to put away.';
+      DevChat._repaintDevFlow();
+      return;
+    }
+    flow.busy = true;
+    DevChat._repaintDevFlow();
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/external-tasks/${encodeURIComponent(task.id)}/discard`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin' }
+      );
+      if (res.ok || res.status === 404) {
+        flow.brief = '';
+        flow.notice = 'Work order put away. Say what you want to build instead.';
+      } else {
+        const data = await res.json().catch(() => ({}));
+        flow.error = data.error || 'Could not put that work order away.';
+      }
     } catch (err) {
       flow.error = `Network error: ${err.message}`;
     } finally {

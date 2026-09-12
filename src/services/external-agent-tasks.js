@@ -1527,12 +1527,12 @@ async function prepareWork(deps, params) {
       ? update.branchName
       : branchNameFor(app.slug, null, null, `update-${update.proposalId}`))
     : branchNameFor(app.slug, issueNumber);
-  let row;
-  try {
-    // ON CONFLICT DO NOTHING against the partial unique index, so two
-    // connectors racing on the same request cannot both reserve it. Zero
-    // rows back means the other call won — re-select and return theirs as a
-    // reuse rather than failing a caller who did nothing wrong.
+  // ON CONFLICT DO NOTHING against the partial unique index, so two
+  // connectors racing on the same request cannot both reserve it. Zero
+  // rows back means either the other call won — re-select and return theirs
+  // as a reuse rather than failing a caller who did nothing wrong — or an
+  // EXPIRED row is sitting on the key, which the block below deals with.
+  const insertTask = async () => {
     const { rows } = await pool.query(
       `INSERT INTO external_agent_tasks
          (user_id, app_id, issue_number, fork_owner, fork_repo, branch_name,
@@ -1551,7 +1551,12 @@ async function prepareWork(deps, params) {
         update ? update.proposalId : null,
       ]
     );
-    row = rows[0] || null;
+    return rows[0] || null;
+  };
+
+  let row;
+  try {
+    row = await insertTask();
   } catch (err) {
     log.error('external-agent-tasks', 'task insert failed', { app: app.slug, err: err.message });
     return fail('platform_unavailable', 'Usernode could not record this piece of work. Try again shortly.', { retryable: true });
@@ -1565,7 +1570,30 @@ async function prepareWork(deps, params) {
         prompts, agent, reused: true, targetProposal: update, openProposals,
       });
     }
-    return fail('platform_unavailable', 'Usernode could not record this piece of work. Try again shortly.', { retryable: true });
+
+    // Nothing LIVE holds the key, yet the insert still conflicted — so what
+    // blocks it is an expired row. external_agent_tasks_open_request_idx has
+    // no expiry predicate, while every reader that decides whether the caller
+    // still has a live work order does (findOpenTaskByRequest here, the
+    // open-work-order listing behind the cap, and now the walkthrough).
+    // Nothing sweeps the table, so left alone that is PERMANENT: this exact
+    // brief could never be prepared again, and the caller would be told to
+    // "try again shortly" forever. Close the dead row out and insert once more.
+    try {
+      const cleared = await abandonExpiredRequest(pool, user.id, app.id, requestKey);
+      if (cleared) {
+        log.info('external-agent-tasks', 'expired reservation cleared for reuse', {
+          app: app.slug, cleared,
+        });
+        row = await insertTask();
+      }
+    } catch (err) {
+      log.error('external-agent-tasks', 'expired-reservation clear failed', { app: app.slug, err: err.message });
+    }
+
+    if (!row) {
+      return fail('platform_unavailable', 'Usernode could not record this piece of work. Try again shortly.', { retryable: true });
+    }
   }
 
   return renderPreparedTask({
@@ -1948,19 +1976,103 @@ async function withTaskLock(pool, taskId, fn) {
 // The caller's most recent open task for one app, so `slug` + `branch` works
 // for an agent that has lost its task id. Falls back to task-less submission
 // (with the attribution gate fully applied) when there is none.
-async function loadLatestOpenTaskForSlug(pool, userId, slug) {
+//
+// `unexpiredOnly` is OFF by default and only routes/dev-flow.js's walkthrough
+// passes it, because the two readers want different things from an expired
+// row — the same split findOpenTaskBySession already documents:
+//
+//   submitWork's `slug` + `branch` recovery must keep seeing it. The row is
+//   the only record of the base commit that branch was cut from, and
+//   mirrorForkBranch runs its ancestry check `if (baseSha)` — so hiding an
+//   expired task there would quietly drop the base_mismatch protection from
+//   exactly the long-running job most likely to need it.
+//
+//   The WALKTHROUGH must not. Nothing sweeps expired rows, and every other
+//   reader that decides whether the user still has a live work order already
+//   filters them (findOpenTaskByRequest, and the open-work-order listing that
+//   feeds the cap). Left unfiltered here, one dangling reservation pins the
+//   launchpad to a dead task for good: step 3 renders `done`, its "what should
+//   it build?" field never appears, and "Copy work order" hands the agent a
+//   work order for something finished weeks ago.
+//
+// Two call sites, each with its SQL written out in full, rather than one query
+// with the predicate spliced in. scripts/check-sql.js Parse/Describes every
+// query it can read as a literal against a real PostgreSQL planner; anything
+// assembled at runtime — an interpolated fragment, or even a constant passed by
+// name — falls out of that inventory into the hand-reviewed dynamic baseline.
+// Both shapes of this one are worth keeping under the planner, and the repeated
+// SELECT list is the price of that.
+async function loadLatestOpenTaskForSlug(pool, userId, slug, opts = {}) {
   try {
-    const { rows } = await pool.query(
-      `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-         FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
-        WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
-        ORDER BY t.id DESC LIMIT 1`,
-      [userId, slug]
-    );
+    const { rows } = opts.unexpiredOnly
+      ? await pool.query(
+        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
+          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
+            AND t.expires_at > NOW()
+          ORDER BY t.id DESC LIMIT 1`,
+        [userId, slug]
+      )
+      : await pool.query(
+        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
+          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
+          ORDER BY t.id DESC LIMIT 1`,
+        [userId, slug]
+      );
     return rows[0] || null;
   } catch {
     return null;
   }
+}
+
+// "Start over" on the walkthrough (#1049): put ONE open task away by its id.
+//
+// Deliberately not prepareWork's `restart`, which abandons by `request_key`.
+// That is the right key for starting the SAME request over, and the wrong one
+// here: a user who wants to build something else types a different brief, which
+// hashes to a different request_key, so restart's UPDATE matches nothing — the
+// stale row stays open, still holding one of the caller's ten slots and still
+// the newest thing loadLatestOpenTaskForSlug can see.
+//
+// Scoped to the caller's own OPEN rows FOR THIS APP, so a replayed request can
+// reach neither somebody else's reservation nor one of the caller's own under a
+// different app whose slug happens to be in the URL.
+//
+// Returns the id it closed, or null when it matched nothing — which the route
+// turns into `unknown_task`. A database failure THROWS rather than returning
+// null: the two are not the same answer to the user, and collapsing them would
+// paint "Work order put away" over a write that never happened.
+async function discardTask(pool, userId, appId, taskId) {
+  const id = Number(taskId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  const { rows } = await pool.query(
+    `UPDATE external_agent_tasks
+        SET status = 'abandoned'
+      WHERE id = $1 AND user_id = $2 AND app_id = $3 AND status = 'open'
+      RETURNING id`,
+    [id, userId, appId]
+  );
+  return rows[0] ? Number(rows[0].id) : null;
+}
+
+// Close out the EXPIRED open rows sitting on one request key.
+//
+// Only ever called after an insert has already conflicted on that key and
+// findOpenTaskByRequest — which filters expiry — has found nothing, so the only
+// rows this can touch are ones no reader still counts as live. Scoped to the
+// caller's own rows for that one app and request, never a blanket sweep: this
+// unblocks a specific insert, it is not garbage collection.
+async function abandonExpiredRequest(pool, userId, appId, requestKey) {
+  const { rows } = await pool.query(
+    `UPDATE external_agent_tasks
+        SET status = 'abandoned'
+      WHERE user_id = $1 AND app_id = $2 AND request_key = $3
+        AND status = 'open' AND expires_at <= NOW()
+      RETURNING id`,
+    [userId, appId, requestKey]
+  );
+  return rows.length;
 }
 
 // The attribution gate. A proposal opened through this path carries the
@@ -3252,6 +3364,11 @@ module.exports = {
   // reopening the chat must show the same branch and base commit rather
   // than mint a second task.
   loadLatestOpenTaskForSlug,
+  // "Start over" on that same walkthrough: the only way to put a work order
+  // away without submitting it, and the reason a stale one stops being
+  // permanent.
+  discardTask,
+  abandonExpiredRequest,
   renderPreparedTask,
   prepareWork,
   submitWork,

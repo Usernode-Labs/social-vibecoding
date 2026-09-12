@@ -3823,6 +3823,29 @@
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
       "expectSelector": "[data-change-conversation] [role=\"tabpanel\"]:not([hidden]) [data-change-discussion] #gc-thread-input",
       "expectText": "Visible to the group"
+    },
+    {
+      "name": "The hand-off step offers a way out of the work order it is showing (stale work orders)",
+      "path": "/?demo=1&order=plain&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"][data-flow-step-state=\"current\"] .dc-flow-actions button[data-flow-action=\"discard\"]",
+      "expectText": "Start over"
+    },
+    {
+      "name": "Copying the work order is still the primary action beside it",
+      "path": "/?demo=1&order=plain&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-actions > button[data-flow-action=\"copy\"].dc-flow-action-primary ~ button[data-flow-action=\"discard\"]:not(.dc-flow-action-primary)"
+    },
+    {
+      "name": "A continuation offers Start over too, and says what pressing it gives up",
+      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-actions button[data-flow-action=\"discard\"]",
+      "expectText": "Start over"
+    },
+    {
+      "name": "...and the continuation step spells out that the proposal itself survives",
+      "path": "/?demo=1&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
+      "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-step-detail",
+      "expectText": "the proposal itself is left alone"
     }
   ],
   "governance": {
