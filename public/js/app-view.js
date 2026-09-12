@@ -5674,7 +5674,7 @@ const AppView = {
     const ctx = { slug, canPost: !!AppView.appData?.can_collaborate, viewerId: (App.user && App.user.id) || null };
     const empty = {
       votes: { count: 0, total: 0, shown: 0, rows: [] }, mine: { count: 0, shown: 0, rows: [] },
-      since: null, dashboard: null, nextUp: null, discussion: null, themes: [],
+      since: null, dashboard: null, nextUp: null, nextMore: [], discussion: null, themes: [],
       meta: {
         source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
         lastError: null, digestError: null, coverage: null, placing: 0, filtered: false,
@@ -6002,6 +6002,14 @@ const AppView = {
     const nextUp = (!filtering && idle.length)
       ? { ...idle[0].row, key: `next:${idle[0].row.key}` }
       : null;
+    // #1934: the rest of the unclaimed list, behind a "Show N more" under the
+    // suggestion. Same order (most recently active first) and the same
+    // WORKSHOP_LANE_MAX cap as a theme lane, so the pane can never grow a
+    // board-length list; `next:` keys keep an unfolded row distinct from the
+    // same issue's row in its theme.
+    const nextMore = nextUp
+      ? idle.slice(1, 1 + AppView.WORKSHOP_LANE_MAX).map((e) => ({ ...e.row, key: `next:${e.row.key}` }))
+      : [];
 
     // ── The discussion row ──
     // Drawn whether or not anything has been said: on a lander it is the
@@ -6043,6 +6051,7 @@ const AppView = {
       since,
       dashboard,
       nextUp,
+      nextMore,
       discussion,
       themes: drawn,
       meta: {

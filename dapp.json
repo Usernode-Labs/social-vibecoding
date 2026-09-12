@@ -3731,6 +3731,12 @@
       "expectText": "2024"
     },
     {
+      "name": "#1926: repeated conflict notices collapse in card discussions",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "#gc-thread-messages .gc-msg-system[data-msg-id='9902017'] .gc-msg-system-repeat",
+      "expectText": "×3"
+    },
+    {
       "name": "#1808: the Discussion thread under the same issue stamps every row, and hovers the unelided instant",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
       "expectSelector": "#dev-topic-thread .gc-msg-time[title]"
