@@ -806,23 +806,22 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   // holds those — under the free-to-take lane, as the one item there that is
   // a record rather than a request.
   assert.match(html, /<section class="dev-ws-strip" data-ws-dashboard="">/, 'not on the dashboard any more');
-  assert.match(html, /<section class="dev-ws-strip" data-ws-since="">/,
-    'its own pane now: the free-to-take issues became questions and moved to the Needs-you queue, which left this alone under a heading about things that need you');
+  // ONE LINE, not a pane — until it is opened. It was a whole section of
+  // the status tab (heading, summary line, control) spent on a fact most
+  // visits do not need, sitting above the door to the app's chat.
+  assert.ok(!/<section[^>]*data-ws-since/.test(html), 'no pane while it is shut');
+  assert.match(html, /class="dev-ws-since-row dev-ws-since-shut" data-ws-since-btn=""[^>]*aria-expanded="false"/);
+  assert.match(html, /class="dev-ws-since-label">Since your last visit<\/span><span class="dev-ws-since-n">3</);
+  assert.ok(!html.includes('3d ago: 1 change landed'), 'and the summary line is gone with the pane');
   assert.ok(!html.includes('dev-ws-since-line'), 'the old line is retired');
   // The pane's THIRD lane, built like the two above it: heading, note,
   // control. A colon for a label and its value, never an em dash (#1389).
-  assert.match(html, /data-ws-since=""[\s\S]*?class="dev-ws-eyebrow">Since your last visit/);
-  assert.match(html, /class="dev-ws-lane-note dev-ws-since-note">3d ago: 1 change landed/);
-  // The same control as the week walk's, because it is the same act: one
-  // quiet centred line that puts more of the pane on screen. Both wore the
-  // platform's grey action pill, which made the most optional thing in each
-  // block the most solid-looking thing in it.
-  assert.match(html, /class="dev-ws-reveal dev-ws-reveal-start" data-ws-since-btn=""[^>]*>.*?Show 3</);
-  // Left-aligned, unlike the week walk's: that one sits under a stack of
-  // full-width cards and belongs to all of them, this one sits in a lane of
-  // left-aligned type and shares its note's left edge.
+  // The caret turns over into the pane it becomes.
+  assert.match(html, /data-ws-since-btn=""[\s\S]{0,200}?dev-ws-since-chev/, 'and it carries the caret');
+  assert.match(CSS, /\.dev-ws-since-row\[aria-expanded="true"\] \.dev-ws-since-chev \{[^}]*rotate\(90deg\)/);
+  // The week walk's reveal keeps its own shape: centred under the stack of
+  // full-width cards it belongs to.
   assert.match(CSS, /\.dev-ws-reveal-start \{[^}]*justify-content: flex-start;/);
-  assert.match(html, /data-ws-since-btn=""[\s\S]{0,400}?dev-ws-reveal-chev/, 'and it carries the caret');
   assert.match(CSS, /\.dev-ws-reveal \{[^}]*justify-content: center;/);
   assert.match(CSS, /\.dev-ws-reveal\[aria-expanded="true"\] \.dev-ws-reveal-chev \{[^}]*rotate\(180deg\)/,
     'the caret turns over once the rows are up');
@@ -1057,19 +1056,19 @@ test('the strips are ordered for a returning member: state, then what to do, the
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
   const html = workshopHtml(AppView);
-  const order = ['data-ws-dashboard', 'data-ws-since', 'data-ws-discussion', 'data-discussion-row']
+  const order = ['data-ws-dashboard', 'data-ws-discussion', 'data-discussion-row', 'data-ws-since-btn']
     .map((k) => html.indexOf(k));
   assert.ok(order.every((i) => i >= 0), `every strip is drawn: ${JSON.stringify(order)}`);
   assert.deepEqual(order.slice().sort((a, b) => a - b), order,
-    'where the app is, what you are working on, what changed, where to talk');
+    'where the app is, where to talk, and then the one line about what changed');
   // The order changed with the "since" move: the pane used to lead with what
   // had moved for this reader, which put a personal footnote above the app's
-  // own state. The app first, then the three things addressed to the reader,
-  // in the order they ask for a decision — vote, take, catch up.
+  // own state. What is left on this tab is the app itself, the door to its
+  // chat, and one line about what changed — the questions are a tab away.
   assert.ok(!/class="dev-ws-link"[^>]*aria-expanded/.test(html), 'no unsized text link toggles this pane');
   assert.match(html, /data-ws-since-btn=""[^>]*aria-expanded="false"/,
-    'the since disclosure wears the platform\u2019s small action pill');
-  assert.match(html, />Show 3</);
+    'the since line is shut, and is a line rather than a pane');
+  assert.match(html, /class="dev-ws-since-n">3</, 'with the count on it');
   assert.ok(!html.includes('waiting on votes ·'), 'and the bare number line is gone');
 });
 
@@ -1589,7 +1588,10 @@ test('every owed vote is in the deck, not on a filtered board', () => {
   // decides anything that is drawn (it stays on the view model).
   // Seven: five proposals owed a vote, then the two unclaimed issues behind
   // them. The deck is one queue of questions, not two lists.
-  assert.match(html, /class="dev-ws-pager-n">1 of 7</, 'the deck counts the whole queue');
+  // Seven in the queue, and the count rides the head: the back/forward pair
+  // is gone, because Skip is the only way forward a decision screen needs.
+  assert.match(html, /class="dev-ws-needs-of">1 \/ 7</, 'the deck counts the whole queue');
+  assert.ok(!html.includes('data-ws-needs-nav'), 'and no pager under the answers');
   assert.equal((html.match(/dev-card-dense|dev-card-topic/g) || []).length, 1, 'one card on screen');
   assert.ok(!html.includes('data-ws-votes-more'), 'and there is no second disclosure');
   assert.match(html, /5 proposals need your vote/, 'with the count in words above it');

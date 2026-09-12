@@ -336,6 +336,12 @@ export interface DevWorkshopView {
   /** Which tab a `?ws=` deep link asked for; null for the viewer's own choice. */
   tab: 'status' | 'needs' | 'all' | null;
   /**
+   * The models the ask box may talk to — the dev session's own list
+   * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and
+   * the picker is then not drawn at all.
+   */
+  models: { list: { id: string; label: string; note: string }[]; selected: string | null };
+  /**
    * The Needs-you tab's queue, in order: the proposals owed a vote, then the
    * issues nobody has claimed. One card, one question, three answers — the
    * row carries the question and what Yes and No DO, so the deck renders

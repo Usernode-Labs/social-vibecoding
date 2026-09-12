@@ -779,11 +779,12 @@ function RowPager({
  * should not be started until this layout is the agreed one.
  */
 function NeedsDeck({
-  rows, owed, total,
+  rows, owed, total, models,
 }: {
   rows: DevWorkshopView['queue'];
   owed: number;
   total: number;
+  models: DevWorkshopView['models'];
 }): ReactNode {
   const cards = rows.filter((r) => r.t === 'card');
   const [at, setAt] = useState(0);
@@ -791,6 +792,11 @@ function NeedsDeck({
   // one's conversation with it.
   const [threads, setThreads] = useState<Record<string, { who: 'you' | 'ai'; text: string }[]>>({});
   const [draft, setDraft] = useState('');
+  // Which model answers. The dev session's own list and its own default —
+  // see `_workshopModels`. It appears when the box is in use, because a
+  // picker over an empty composer is a setting nobody has a use for yet.
+  const [model, setModel] = useState<string>(() => models.selected || '');
+  const [focused, setFocused] = useState(false);
   // Answered here, this session: an answer moves the deck on, and the card
   // stays in the list so a mis-tap can be walked back to.
   const [answered, setAnswered] = useState<Record<string, string>>({});
@@ -892,23 +898,6 @@ function NeedsDeck({
               onClick={() => answer('skip', null)}
             >Skip</button>
           </div>
-          <div className="dev-ws-needs-nav" data-ws-needs-nav="">
-            <button
-              type="button"
-              className="dev-ws-pager-btn"
-              aria-label="Back"
-              disabled={i === 0}
-              onClick={() => setAt(i - 1)}
-            ><ChevronLeftIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
-            <span className="dev-ws-pager-n">{`${i + 1} of ${cards.length}`}</span>
-            <button
-              type="button"
-              className="dev-ws-pager-btn"
-              aria-label="Forward"
-              disabled={i >= cards.length - 1}
-              onClick={() => setAt(i + 1)}
-            ><ChevronRightIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
-          </div>
         </div>
       </section>
 
@@ -937,10 +926,26 @@ function NeedsDeck({
             type="text"
             value={draft}
             placeholder="Ask a question…"
+            onFocus={() => setFocused(true)}
             onChange={(e) => setDraft(e.target.value)}
           />
           <button type="submit" className="dev-ws-ask-send" disabled={!draft.trim()}>Ask</button>
         </form>
+        {(focused || engaged) && models.list.length ? (
+          <div className="dev-ws-ask-model" data-ws-ask-model="">
+            <label className="sr-only" htmlFor="dev-ws-ask-model-select">Model</label>
+            <select
+              id="dev-ws-ask-model-select"
+              className="dev-ws-ask-model-select"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+            >
+              {models.list.map((m) => (
+                <option key={m.id} value={m.id}>{m.note ? `${m.label} — ${m.note}` : m.label}</option>
+              ))}
+            </select>
+          </div>
+        ) : null}
       </section>
     </div>
   );
@@ -1142,45 +1147,6 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
-      {/* ── What moved while you were away ──
-          Its own pane. It was a lane inside "What needs you", beside the
-          free-to-take issues — and those are questions, so they went to the
-          Needs-you queue, which left this alone under a heading about things
-          that need you. It is a RECORD, not a request; it is on the status
-          tab because that is what it is a fact about. */}
-      {v.since ? (
-        <section className="dev-ws-strip" data-ws-since="">
-          <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">Since your last visit</span>
-          </div>
-          <p className="dev-ws-lane-note dev-ws-since-note">
-            {`${relTime(v.since.baseline)}: ${sinceWords(v.since)}`}
-          </p>
-          {v.since.rows.length ? (
-            <button
-              type="button"
-              className="dev-ws-reveal dev-ws-reveal-start"
-              data-ws-since-btn=""
-              aria-expanded={sinceOpen}
-              onClick={() => setSinceOpen(!sinceOpen)}
-            >
-              <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-              {sinceOpen ? 'Hide' : `Show ${v.since.rows.length}`}
-            </button>
-          ) : null}
-          {sinceOpen ? v.since.rows.map((row) => (row.t === 'card' ? (
-            <CardRowView
-              key={row.key}
-              row={row}
-              slug={slug}
-              canPost={canPost}
-              open={openRows.since === row.key}
-              onToggle={() => toggleRow('since', row.key)}
-            />
-          ) : null)) : null}
-        </section>
-      ) : null}
-
       {/* ── The door to the general chat ──
           The card used to sit bare between the strips: same width, no
           surface of its own, and therefore the one thing on the lander that
@@ -1196,11 +1162,58 @@ export function DevWorkshop(): ReactNode {
           <div className="dev-ws-discussion"><DevCard model={v.discussion.card} /></div>
         </section>
       ) : null}
+      {/* ── What moved while you were away ──
+          ONE LINE until you want it. It was a pane with a heading and a
+          summary line under it — a whole section of the status tab spent on
+          a fact most visits do not need, above the door to the app's chat.
+          Collapsed it is a row: the label, the count, and a caret. Opening
+          it makes it the pane it used to be, with the rows in it. */}
+      {v.since ? (
+        sinceOpen ? (
+          <section className="dev-ws-strip" data-ws-since="">
+            <button
+              type="button"
+              className="dev-ws-since-row"
+              data-ws-since-btn=""
+              aria-expanded={true}
+              onClick={() => setSinceOpen(false)}
+            >
+              <ChevronRightIcon className="dev-ws-since-chev" aria-hidden="true" />
+              <span className="dev-ws-since-label">Since your last visit</span>
+              <span className="dev-ws-since-n">{v.since.rows.length}</span>
+            </button>
+            {v.since.rows.map((row) => (row.t === 'card' ? (
+              <CardRowView
+                key={row.key}
+                row={row}
+                slug={slug}
+                canPost={canPost}
+                open={openRows.since === row.key}
+                onToggle={() => toggleRow('since', row.key)}
+              />
+            ) : null))}
+          </section>
+        ) : (
+          <button
+            type="button"
+            className="dev-ws-since-row dev-ws-since-shut"
+            data-ws-since-btn=""
+            aria-expanded={false}
+            disabled={!v.since.rows.length}
+            onClick={() => setSinceOpen(true)}
+          >
+            <ChevronRightIcon className="dev-ws-since-chev" aria-hidden="true" />
+            <span className="dev-ws-since-label">Since your last visit</span>
+            <span className="dev-ws-since-n">{v.since.rows.length}</span>
+          </button>
+        )
+      ) : null}
+
       </>
       ) : null}
 
       {tab === 'needs' ? (
-        <NeedsDeck rows={v.queue} owed={v.votes.count} total={v.votes.total} />
+        <NeedsDeck rows={v.queue} owed={v.votes.count} total={v.votes.total} models={v.models} />
       ) : null}
 
       {tab === 'all' && themes.length ? (
@@ -1357,9 +1370,6 @@ export function DevWorkshop(): ReactNode {
             onClick={() => setTab(t.key)}
           >
             {t.label}
-            {t.key === 'needs' && v.votes.count
-              ? <span className="dev-ws-tab-n">{v.votes.count}</span>
-              : null}
           </button>
         ))}
       </nav>

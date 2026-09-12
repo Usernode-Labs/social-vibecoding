@@ -11997,17 +11997,16 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   cursor: pointer;
 }
+/* THE HEADER'S PERIWINKLE, not black. `--brand-ink` on `--brand-tint` with a
+   hairline of `--brand-line` is how the bar above draws its own controls —
+   the back glyph, the bell, the app chip — and these are the same kind of
+   thing: where you are, and where you could go. A black pill was the only
+   flat-black object on the screen and read as a different product.
+   The tokens carry their own dark values, so there is no dark variant. */
 .dev-ws-tab[aria-selected="true"] {
-  background: var(--text-primary); color: var(--dc-sheet);
-}
-.dev-ws-tab-n {
-  display: inline-flex; align-items: center; justify-content: center;
-  min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
-  background: var(--state-attention-bg); color: var(--state-attention);
-  font-size: 11px; font-variant-numeric: tabular-nums;
-}
-.dev-ws-tab[aria-selected="true"] .dev-ws-tab-n {
-  background: var(--dc-sheet); color: var(--text-primary);
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
 }
 
 /* ── Needs you: one question, the whole screen ───────────────
@@ -12108,6 +12107,42 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   border-color: var(--app-sheet-line); font-weight: 500;
 }
 .dev-ws-answer-btn[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 2px; }
+/* ── Since your last visit, as one line ──────────────────────
+   A row, not a pane, until it is opened. It was a whole section of the
+   status tab — heading, summary line, control — spent on a fact most visits
+   do not need, sitting above the door to the app's chat. */
+.dev-ws-since-row {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 8px 12px;
+  border: 0; border-radius: 999px; background: transparent;
+  font: inherit; font-size: 13px; font-weight: 600;
+  color: var(--text-muted); text-align: left; cursor: pointer;
+}
+.dev-ws-since-row:hover { color: var(--accent); }
+.dev-ws-since-row:disabled { cursor: default; opacity: .6; }
+.dev-ws-since-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Shut, it is the only thing on the status tab with no surface of its own —
+   which is the point: it is a line, and opening it makes it a pane. */
+.dev-ws-since-shut { margin-block: -2px; }
+.dev-ws-since-label { flex: 1 1 auto; min-width: 0; }
+.dev-ws-since-n {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+  background: var(--brand-tint); color: var(--brand-ink);
+  font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.dev-ws-since-chev { flex: none; width: 14px; height: 14px; }
+.dev-ws-since-row[aria-expanded="true"] .dev-ws-since-chev { transform: rotate(90deg); }
+/* ── The ask box's model ─────────────────────────────────────
+   The dev session's own list, and only once the box is in use: a picker over
+   an empty composer is a setting nobody has a use for yet. */
+.dev-ws-ask-model { display: flex; justify-content: flex-end; }
+.dev-ws-ask-model-select {
+  max-width: 100%; height: 26px; padding: 0 6px;
+  border: 1px solid var(--app-sheet-line); border-radius: 8px;
+  background: var(--dc-sheet); color: var(--text-muted);
+  font: inherit; font-size: 12px; cursor: pointer;
+}
 .dev-ws-needs-nav { display: flex; align-items: center; justify-content: center; gap: 10px; }
 .dev-ws-needs-of { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
 /* In its own pane the note needs no lane indent. */

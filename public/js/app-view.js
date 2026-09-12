@@ -5359,6 +5359,18 @@ const AppView = {
   // interacting needs a URL: the declared checks select against it and the
   // proposal screenshots are shot from it.
   WORKSHOP_TABS: ['status', 'needs', 'all'],
+  _workshopModels() {
+    const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
+    if (!src || typeof src !== 'object') return { list: [], selected: null };
+    const list = Object.keys(src).map((id) => ({
+      id,
+      label: (src[id] && src[id].label) || id,
+      note: (src[id] && src[id].changeSize && src[id].changeSize.short) || '',
+    }));
+    const def = (typeof DevChat !== 'undefined' && DevChat._defaultModel) || null;
+    return { list, selected: list.some((m) => m.id === def) ? def : (list[0] ? list[0].id : null) };
+  },
+
   _workshopTabParam() {
     try {
       const v = new URLSearchParams(window.location.search).get('ws');
@@ -6236,6 +6248,13 @@ const AppView = {
       emptyNote,
       // Which tab a URL asked for, or null for the viewer's own choice.
       tab: AppView._workshopTabParam(),
+      // The models the Needs-you tab's ask box may talk to, read from the
+      // SAME map the dev session's picker uses (DevChat.MODELS, refreshed
+      // from GET /api/models at startup) rather than a second list here —
+      // tests/model-selector-ui.test.js already guards that map against the
+      // server's allowlist, and a third copy would drift out from under it.
+      // Empty where DevChat is not loaded, and the picker is then not drawn.
+      models: AppView._workshopModels(),
       queue,
       votes,
       mine,
