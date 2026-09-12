@@ -553,17 +553,23 @@ test('Open card never answers a tap with nothing: the Board links out, and an in
 
 test('the declared checks follow the two rows and the row’s last line', () => {
   // Each re-pointed check names the seat that moved: the work-state chip in
-  // the facts row, the vote at the row's bottom-right, Closes #N on the meta
+  // the facts row, the vote on the Needs-you deck, Closes #N on the meta
   // line, the facts row under the status row, and the unclamped title.
+  //
+  // THE VOTE MOVED A SECOND TIME. It sat in the workshop row's trailing slot
+  // until the tab redraft, which retired the row band entirely and made a
+  // vote one full-screen question on Needs you. So the check walks the deck's
+  // subject pane to the card, not a row seat; the loop below now guards the
+  // retired band classes the same way it guards the older ones.
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
-  assert.match(byName(/the vote at each row.s bottom-right/).expectSelector, /\.dev-ws-row\[role="button"\] > \.dev-ws-row-band > \.dev-ws-row-trailing > button\.dev-vote-btn/);
+  assert.match(byName(/Needs-you tab is one proposal at a time/).expectSelector, /\.dev-ws-needs-subject > \.dev-ws-needs-scroll > \.dev-ws-needs-summary \+ \.gc-vote-item button\.dev-vote-btn/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);
   assert.match(byName(/the vote is one button beside the state bar/).expectSelector, /\.dev-card-status > \.dev-status-pill-block \+ \.dev-vote-btn/, 'the bar row keeps its check as it was');
   for (const t of DAPP.tests) {
-    assert.ok(!/dev-card-band-break|dev-card-status-end|dev-ws-row-chat/.test(t.expectSelector || ''),
+    assert.ok(!/dev-card-band-break|dev-card-status-end|dev-ws-row-chat|dev-ws-row-band|dev-ws-row-trailing/.test(t.expectSelector || ''),
       `${t.name}: no check names a seat that no longer exists`);
   }
 });

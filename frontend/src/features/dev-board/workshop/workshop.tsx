@@ -850,7 +850,7 @@ function NeedsDeck({
         { who: 'you', text: q },
         {
           who: 'ai',
-          text: 'Not wired up yet. This pane will answer from the change itself — its diff, its discussion and this app’s conventions.',
+          text: 'Not wired up yet. This pane will answer from the change itself: its diff, its discussion and this app’s conventions.',
         },
       ],
     }));
