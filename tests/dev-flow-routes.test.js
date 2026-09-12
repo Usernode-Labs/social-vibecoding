@@ -874,8 +874,12 @@ test('the plain fixture survives the round trip from page URL to status route', 
     assert.ok(end > i, `${name} is a plain method`);
     return devChat.slice(i, end + 5);
   };
+  // The allowlist the forwarder reads comes across too — lifting the methods
+  // without it is how this test first reported a false failure.
+  const orders = /(DEV_FLOW_ORDERS: \[[^\]]*\],)/.exec(devChat);
+  assert.ok(orders, 'the client declares the order values it forwards');
   // eslint-disable-next-line no-eval
-  const client = eval(`({${lift('_demoQS')}\n${lift('_devFlowDemoQS')}})`
+  const client = eval(`({${orders[1]}\n${lift('_demoQS')}\n${lift('_devFlowDemoQS')}})`
     .replace(/DevChat\./g, 'this.'));
 
   // The route's own dispatch, read from the source rather than restated, so a
@@ -885,7 +889,11 @@ test('the plain fixture survives the round trip from page URL to status route', 
   assert.match(src, /const orderKind = req\.query\.order === 'plain' \? null : demoKind;/);
   assert.match(src, /req\.query\.demo === '1' \|\| req\.query\.demo === 'session'\s*\n?\s*\? demoStatus\(app, parsed, orderKind, noTask\)/);
   const route = (q) => (q.demo === '1' || q.demo === 'session'
-    ? { fixture: true, targetKind: q.order === 'plain' ? null : (q.demo === 'session' ? 'session' : 'proposal') }
+    ? {
+      fixture: true,
+      targetKind: q.order === 'plain' ? null : (q.demo === 'session' ? 'session' : 'proposal'),
+      noTask: q.order === 'none',
+    }
     : { fixture: false });
 
   const roundTrip = (search) => {
@@ -902,12 +910,20 @@ test('the plain fixture survives the round trip from page URL to status route', 
   // The plain fixture: reaches the route, and continues nothing — which is the
   // only shape "Start over" is offered on.
   assert.deepEqual(roundTrip('?demo=1&order=plain&flow=claude-code'),
-    { fixture: true, targetKind: null });
+    { fixture: true, targetKind: null, noTask: false });
+  // And the no-work-order fixture, which shipped dropped on the floor exactly
+  // as ?order=plain had one change earlier, because the forwarder tested for
+  // one hardcoded value.
+  assert.deepEqual(roundTrip('?demo=1&order=none&flow=claude-code'),
+    { fixture: true, targetKind: 'proposal', noTask: true });
+  // A value neither side knows is not forwarded at all.
+  assert.deepEqual(roundTrip('?demo=1&order=bogus&flow=claude-code'),
+    { fixture: true, targetKind: 'proposal', noTask: false });
   // The two that existed before are untouched.
   assert.deepEqual(roundTrip('?demo=1&flow=claude-code'),
-    { fixture: true, targetKind: 'proposal' });
+    { fixture: true, targetKind: 'proposal', noTask: false });
   assert.deepEqual(roundTrip('?demo=session&flow=claude-code'),
-    { fixture: true, targetKind: 'session' });
+    { fixture: true, targetKind: 'session', noTask: false });
   // `order` alone is not a fixture: it narrows one, it does not select one.
   assert.deepEqual(roundTrip('?order=plain&flow=claude-code'), { fixture: false });
   assert.deepEqual(roundTrip('?flow=claude-code'), { fixture: false });
@@ -1052,4 +1068,46 @@ test('?order=none renders a launchpad with no work order at all', () => {
   assert.match(src, /demoStatus\(app, parsed, orderKind, noTask\)/);
   // Both, or step 4 would be `current` with nothing to hand over.
   assert.match(src, /payload\.task = null;\s*\n\s*payload\.branch = null;/);
+});
+
+
+test('the client forwards EVERY order value the route reads', () => {
+  // THE BUG THIS TEST EXISTS FOR, twice over. `?order=plain` shipped read by
+  // the route and forwarded by nobody; the fix hardcoded === 'plain', so
+  // `?order=none` shipped exactly the same way one change later. Both rendered
+  // a launchpad that silently ignored the fixture it was asked for.
+  //
+  // So do not restate the list — scrape the ROUTE's own literals and hold the
+  // client's allowlist to them. Adding a fixture shape to one side now fails
+  // here rather than in a staging capture.
+  const src = read('src/routes/dev-flow.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+
+  const readByRoute = [...src.matchAll(/req\.query\.order === '([a-z-]+)'/g)].map((m) => m[1]);
+  assert.ok(readByRoute.length >= 2, `the route reads order values (found ${readByRoute.length})`);
+
+  const declared = /DEV_FLOW_ORDERS: \[([^\]]*)\]/.exec(devChat);
+  assert.ok(declared, 'the client declares the list it forwards');
+  const forwarded = [...declared[1].matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
+
+  for (const value of readByRoute) {
+    assert.ok(forwarded.includes(value),
+      `the route reads ?order=${value} but the client never forwards it, so that fixture renders nothing`);
+  }
+  // And nothing forwarded that the route ignores — a value the client appends
+  // and the route drops is a URL that looks like it does something.
+  for (const value of forwarded) {
+    assert.ok(readByRoute.includes(value),
+      `the client forwards ?order=${value} but the route reads no such value`);
+  }
+
+  // Every declared check that names one must use a value both ends agree on,
+  // and carry the ?demo=1 that selects a fixture at all.
+  const dapp = JSON.parse(read('dapp.json'));
+  for (const t of dapp.tests) {
+    const m = /[?&]order=([a-z-]+)/.exec(t.path);
+    if (!m) continue;
+    assert.ok(forwarded.includes(m[1]), `${t.name} shoots ?order=${m[1]}, which is not forwarded`);
+    assert.ok(/[?&]demo=1(&|#|$)/.test(t.path), `${t.name} must carry ?demo=1 too, or no fixture renders`);
+  }
 });

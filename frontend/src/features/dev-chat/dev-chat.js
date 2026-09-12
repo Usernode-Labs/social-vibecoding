@@ -1385,13 +1385,22 @@ const DevChat = {
   // alone and inventing a new `demo` value instead fails the allowlist and
   // sends no fixture at all. Both were real: the second one shipped, and the
   // declared checks on the plain fixture caught it.
+  // Every `order` value the status route understands. This list is the whole
+  // mechanism and it has been wrong twice: `?order=plain` shipped read by the
+  // server and forwarded by nobody, and then `?order=none` did the same thing
+  // again, because the check here was a hardcoded === against one value. A
+  // fixture shape added on one side and not the other renders NOTHING, and
+  // renders it silently. tests/dev-flow-routes.test.js scrapes the route's own
+  // `req.query.order === '…'` literals and fails when this list does not cover
+  // them, so the next one cannot repeat it.
+  DEV_FLOW_ORDERS: ['plain', 'none'],
+
   _devFlowDemoQS() {
     const base = DevChat._demoQS();
     if (!base) return '';
     try {
-      return new URLSearchParams(location.search).get('order') === 'plain'
-        ? `${base}&order=plain`
-        : base;
+      const order = new URLSearchParams(location.search).get('order');
+      return DevChat.DEV_FLOW_ORDERS.includes(order) ? `${base}&order=${order}` : base;
     } catch { return base; }
   },
 
