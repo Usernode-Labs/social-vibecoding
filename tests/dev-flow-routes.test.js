@@ -76,6 +76,11 @@ function resetStubs() {
     submitArgs: null,
     target: null,
     targetThrows: false,
+    // The discard route's service call: the id it closed, or null for
+    // "not open any more".
+    discard: 4242,
+    discardArgs: null,
+    discardThrows: false,
   };
 }
 
@@ -105,10 +110,18 @@ gh.parseGithubUrl = (url) => {
 githubLink.isEnabled = () => stub.linkEnabled;
 githubLink.linkStatus = async () => stub.link;
 svc.inspectFork = async () => stub.fork;
-svc.loadLatestOpenTaskForSlug = async () => stub.task;
+svc.loadLatestOpenTaskForSlug = async (_pool, _userId, _slug, opts) => {
+  stub.loadOpts = opts;
+  return stub.task;
+};
 svc.inspectPushedBranch = async () => {
   if (stub.branchThrows) throw new Error('github said no');
   return stub.branchState;
+};
+svc.discardTask = async (_pool, userId, appId, taskId) => {
+  stub.discardArgs = { userId, appId, taskId };
+  if (stub.discardThrows) throw new Error('database is on fire');
+  return stub.discard;
 };
 svc.prepareWork = async (_deps, args) => { stub.prepareArgs = args; return stub.prepare; };
 svc.submitWork = async (_deps, args) => { stub.submitArgs = args; return stub.submit; };
@@ -659,13 +672,20 @@ test('staging never reaches GitHub, and only shows fixtures when asked', () => {
     'the fixture is opt-in per request');
   assert.match(src, /req\.query\.demo === 'session' \? 'session' : 'proposal'/,
     'the demo payload picks its target kind from the query, not from a guess');
+  // `?order=plain` narrows either payload to an ordinary work order. It is a
+  // SECOND parameter rather than a third `demo` value on purpose — see the
+  // round-trip test below, which is the one that would have caught shipping it
+  // the other way.
+  assert.match(src, /const orderKind = req\.query\.order === 'plain' \? null : demoKind;/);
   assert.match(src, /990501/, 'fixture ids stay in the obviously-fake 99xxxx range');
   // Every write is refused in staging: they would open a real pull request —
   // or, on the update path (#1054), force-push a real branch — against a real
   // repository from a preview clone.
   const prepareBlock = src.slice(src.indexOf("router.post('/api/apps/:slug/external-tasks'"));
-  assert.equal((prepareBlock.match(/if \(IS_STAGING\) \{\s*\n\s*return res\.status\(503\)/g) || []).length, 3,
-    'all three POSTs refuse in staging with a 503');
+  // Four since the discard route: it writes too — abandoning a work order in a
+  // preview would put away a reservation that belongs to production.
+  assert.equal((prepareBlock.match(/if \(IS_STAGING\) \{\s*\n\s*return res\.status\(503\)/g) || []).length, 4,
+    'all four POSTs refuse in staging with a 503');
 });
 
 test('the client polls this route and nothing else', () => {
@@ -675,4 +695,234 @@ test('the client polls this route and nothing else', () => {
   // The renderer stays pure — see tests/dev-flow-select.test.js.
   assert.ok(!/\bfetch\s*\(/.test(read('public/js/dev-flow-select.js')),
     'public/js/dev-flow-select.js must not fetch; the dev chat owns the I/O');
+});
+
+
+// ── 5. Start over: putting a work order away (the stale-work-order fix) ──
+//
+// The walkthrough is resumable because the status route re-renders whatever
+// open task the account holds for this app. Nothing sweeps that table, so
+// without the two changes below a work order minted for something else — or
+// finished outside this flow, which leaves the row `open` — answers for this
+// app permanently: step 3 reads `done`, its brief field never renders, and the
+// only button in reach copies the stale text.
+
+const discard = (id, body, headers) => post(`/api/apps/recipe-box/external-tasks/${id}/discard`, body || {}, headers);
+
+test('the walkthrough asks for an UNEXPIRED task, unlike submit recovery', async () => {
+  await status();
+  assert.deepEqual(stub.loadOpts, { unexpiredOnly: true },
+    'an expired reservation must stop answering for this app');
+
+  // The service keeps the default OFF, because submitWork's slug+branch
+  // recovery reads the same function and needs the expired row: it carries the
+  // base commit mirrorForkBranch checks the pushed branch against.
+  const svcSrc = read('src/services/external-agent-tasks.js');
+  assert.match(svcSrc, /async function loadLatestOpenTaskForSlug\(pool, userId, slug, opts = \{\}\)/,
+    'the filter is opt-in per caller, not a behaviour change for both');
+  // Two call sites, each with its SQL written out in full, so both stay in
+  // check-sql.js's static inventory and get Parse/Described against a real
+  // planner. A spliced-in predicate — or a constant passed by name — would
+  // drop this query into the hand-reviewed dynamic baseline instead.
+  assert.match(svcSrc, /opts\.unexpiredOnly\s*\n?\s*\? await pool\.query\(/);
+  assert.equal(
+    (svcSrc.match(/AND t\.expires_at > NOW\(\)\n\s*ORDER BY t\.id DESC LIMIT 1/g) || []).length, 1,
+    'exactly one of the two literals filters expiry'
+  );
+});
+
+test('discard is authenticated, same-origin and digits-only', async () => {
+  user = null;
+  assert.equal((await discard(4242)).status, 401);
+  assert.equal(stub.discardArgs, null, 'the service is never reached');
+
+  user = { id: 42, username: 'tester', isAdmin: false };
+  const crossSite = await discard(4242, {}, { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' });
+  assert.equal(crossSite.status, 403, 'a cross-site POST is refused before the service');
+  assert.equal(stub.discardArgs, null);
+
+  // parseInt('1.5.2') is 1, which would put away a task nobody named.
+  for (const bad of ['1.5.2', 'abc', '0', '-3']) {
+    const r = await discard(bad, {}, { origin: ORIGIN, 'sec-fetch-site': 'same-origin' });
+    assert.equal(r.status, 400, `'${bad}' is not a task id`);
+  }
+  assert.equal(stub.discardArgs, null);
+});
+
+test('discard closes the caller\'s task and reports the id it closed', async () => {
+  const r = await discard(4242, {}, { origin: ORIGIN, 'sec-fetch-site': 'same-origin' });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { ok: true, taskId: 4242 });
+  // Scoped to the caller: the user id comes from the session, never the body.
+  // Scoped to the app in the URL as well as the caller: the slug is not
+  // decorative, so a task under another app is not reachable through this one.
+  assert.deepEqual(stub.discardArgs, { userId: 42, appId: 7, taskId: 4242 });
+});
+
+test('a task that is not open any more is unknown_task, not a silent success', async () => {
+  stub.discard = null;
+  const r = await discard(4242, {}, { origin: ORIGIN, 'sec-fetch-site': 'same-origin' });
+  assert.equal(r.status, 404);
+  assert.equal((await r.json()).code, 'unknown_task');
+});
+
+test('discard opens no pull request and touches no branch', () => {
+  const src = read('src/routes/dev-flow.js');
+  // To the next route's banner, not to submit-update's handler: its comment
+  // block sits between the two and names submitWork, which would make this
+  // assertion pass or fail on prose rather than on the route's body.
+  const block = src.slice(
+    src.indexOf("router.post('/api/apps/:slug/external-tasks/:id/discard'"),
+    src.indexOf('// \u2500\u2500 Advance a proposal that is already up for a vote')
+  );
+  assert.ok(block.length > 0, 'the discard route is where this test thinks it is');
+  for (const forbidden of ['pr-import', 'submitWork', 'mirrorForkBranch', 'prepareWork']) {
+    assert.ok(!block.includes(forbidden),
+      `discard must not reach ${forbidden} — abandoning a row is its whole effect`);
+  }
+});
+
+test('the dev chat drives discard through that route and clears the brief', () => {
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+  assert.match(devChat, /_devFlowDiscard/, 'the action has a handler');
+  assert.match(devChat, /external-tasks\/\$\{encodeURIComponent\(task\.id\)\}\/discard/,
+    'and it posts to the discard route with the task it is showing');
+  // An empty box asking "what should it build?" is the point of the button; a
+  // seeded one invites a second work order describing the same finished change.
+  assert.match(devChat, /flow\.brief = '';/);
+  // 404 means somebody else already closed it, which is the state the user was
+  // reaching for — re-reading status is the right answer, not an error banner.
+  assert.match(devChat, /res\.ok \|\| res\.status === 404/);
+});
+
+
+test('?order=plain renders an ordinary work order, which is the only kind you can start over from', () => {
+  const src = read('src/routes/dev-flow.js');
+  // Both older fixtures carry a target, so until this one existed no route
+  // rendered the commonest case — and no screenshot could show "Start over",
+  // which is withheld on a continuation.
+  assert.match(src, /targetProposal: targetKind === null \? null :/);
+  // Its prose has to agree with that: a body saying "UPDATING a proposal"
+  // over a null target would be reviewing a state the real route cannot
+  // produce.
+  assert.match(src, /workOrder: \(targetKind === null/);
+  assert.match(src, /press "Submit for review"/);
+});
+
+
+test('the plain fixture survives the round trip from page URL to status route', () => {
+  // THE REGRESSION THIS TEST EXISTS FOR. The fixture discriminator is chosen in
+  // the page URL and has to reach the status route through the client, which
+  // forwards `demo` through an ALLOWLIST. Shipping the discriminator as a third
+  // `demo` value passed every unit test in this file — the route was stubbed,
+  // the renderer was called directly — and still rendered nothing in staging,
+  // because _demoQS dropped the unrecognised value and the route fell through
+  // to the venue sheet. Nothing here crossed that seam, so cross it: lift the
+  // client's two query-string methods out of the real source and run them.
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+  const lift = (name) => {
+    const i = devChat.indexOf(`  ${name}() {`);
+    assert.ok(i >= 0, `${name} exists on DevChat`);
+    const end = devChat.indexOf('\n  },', i);
+    assert.ok(end > i, `${name} is a plain method`);
+    return devChat.slice(i, end + 5);
+  };
+  // eslint-disable-next-line no-eval
+  const client = eval(`({${lift('_demoQS')}\n${lift('_devFlowDemoQS')}})`
+    .replace(/DevChat\./g, 'this.'));
+
+  // The route's own dispatch, read from the source rather than restated, so a
+  // change on either side breaks this rather than drifting past it.
+  const src = read('src/routes/dev-flow.js');
+  assert.match(src, /const demoKind = req\.query\.demo === 'session' \? 'session' : 'proposal';/);
+  assert.match(src, /const orderKind = req\.query\.order === 'plain' \? null : demoKind;/);
+  assert.match(src, /req\.query\.demo === '1' \|\| req\.query\.demo === 'session'\s*\n?\s*\? demoStatus\(app, parsed, orderKind\)/);
+  const route = (q) => (q.demo === '1' || q.demo === 'session'
+    ? { fixture: true, targetKind: q.order === 'plain' ? null : (q.demo === 'session' ? 'session' : 'proposal') }
+    : { fixture: false });
+
+  const roundTrip = (search) => {
+    const prev = global.location;
+    global.location = { search };
+    try {
+      const qs = client._devFlowDemoQS();
+      return route(Object.fromEntries(new URLSearchParams(qs.replace(/^\?/, ''))));
+    } finally {
+      if (prev === undefined) delete global.location; else global.location = prev;
+    }
+  };
+
+  // The plain fixture: reaches the route, and continues nothing — which is the
+  // only shape "Start over" is offered on.
+  assert.deepEqual(roundTrip('?demo=1&order=plain&flow=claude-code'),
+    { fixture: true, targetKind: null });
+  // The two that existed before are untouched.
+  assert.deepEqual(roundTrip('?demo=1&flow=claude-code'),
+    { fixture: true, targetKind: 'proposal' });
+  assert.deepEqual(roundTrip('?demo=session&flow=claude-code'),
+    { fixture: true, targetKind: 'session' });
+  // `order` alone is not a fixture: it narrows one, it does not select one.
+  assert.deepEqual(roundTrip('?order=plain&flow=claude-code'), { fixture: false });
+  assert.deepEqual(roundTrip('?flow=claude-code'), { fixture: false });
+  // And production, where every one of these is inert.
+  assert.deepEqual(roundTrip(''), { fixture: false });
+
+  // _demoQS itself must keep forwarding ONLY the two values every other
+  // fixture route knows — /api/sessions/:id/status and /spec ride on it and
+  // test `demo` for exactly '1', so widening it would blank the very session
+  // this walkthrough renders inside.
+  const prev = global.location;
+  global.location = { search: '?demo=1&order=plain' };
+  try {
+    assert.equal(client._demoQS(), '?demo=1', '_demoQS never carries the order param');
+  } finally {
+    if (prev === undefined) delete global.location; else global.location = prev;
+  }
+
+  // Finally, the declared checks must satisfy BOTH gates.
+  const dapp = JSON.parse(read('dapp.json'));
+  const plain = dapp.tests.filter((t) => t.path.includes('order=plain'));
+  assert.ok(plain.length >= 2, 'the plain fixture is covered by declared checks');
+  for (const t of plain) {
+    assert.ok(/[?&]demo=1(&|#|$)/.test(t.path),
+      `${t.name} must carry ?demo=1 as well as order=plain, or no fixture renders`);
+  }
+});
+
+
+test('a write that FAILS is a 500, not "Work order put away"', () => {
+  // discardTask used to swallow database errors and return null, which the
+  // route turned into 404 and the client treats as success — so a transient
+  // pool error painted "Work order put away" over a write that never happened.
+  // The service now throws, and nothing between here and the user flattens the
+  // two answers back together.
+  const svcSrc = read('src/services/external-agent-tasks.js');
+  const fn = svcSrc.slice(
+    svcSrc.indexOf('async function discardTask('),
+    svcSrc.indexOf('async function abandonExpiredRequest(')
+  );
+  assert.ok(fn.length > 0, 'discardTask is where this test thinks it is');
+  assert.ok(!/catch/.test(fn), 'discardTask does not swallow the failure');
+});
+
+test('...and the route turns that throw into a 500', async () => {
+  stub.discardThrows = true;
+  const r = await discard(4242, {}, { origin: ORIGIN, 'sec-fetch-site': 'same-origin' });
+  assert.equal(r.status, 500);
+  assert.notEqual((await r.json()).code, 'unknown_task',
+    'a failure must not arrive wearing the "already closed" code the client treats as success');
+});
+
+test('the client posts to the discard route from the walkthrough it is showing', () => {
+  // The assertion this file lost once already. A round-trip test that exercises
+  // a helper proves the helper works; it does not prove anything CALLS it. The
+  // demo-discriminator regression shipped through exactly that gap, so pin the
+  // call sites themselves.
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+  assert.match(devChat, /dev-flow\/status\$\{DevChat\._devFlowDemoQS\(\)\}/,
+    'the status fetch uses the dev-flow query string, not the bare _demoQS');
+  assert.match(devChat, /if \(action === 'discard'\) return DevChat\._devFlowDiscard\(\);/,
+    'the discard action is dispatched');
+  assert.match(devChat, /external-tasks\/\$\{encodeURIComponent\(task\.id\)\}\/discard/,
+    'and posts to the discard route with the task it is showing');
 });

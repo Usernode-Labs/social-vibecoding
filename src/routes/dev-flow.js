@@ -21,6 +21,7 @@
 //   GET  /api/apps/:slug/dev-flow/status         → the walkthrough's state
 //   POST /api/apps/:slug/external-tasks          → prepare a work order
 //   POST /api/apps/:slug/external-tasks/:id/submit → open the PR + import
+//   POST /api/apps/:slug/external-tasks/:id/discard → put a work order away
 //   POST /api/apps/:slug/external-tasks/:id/submit-update → advance a proposal
 //
 // The connector is now one way in, not the way in. Anyone who has linked
@@ -288,9 +289,22 @@ function devFlowRoutes(config) {
         // (#1071) is the same walkthrough continuing a session nobody has
         // voted on. Two payloads because the difference a reviewer has to
         // check is entirely in the copy, and one of them cannot show both.
+        //
+        // `?order=plain` is a SECOND discriminator, not a third `demo` value,
+        // and the distinction is load-bearing. `demo` is read by dozens of
+        // fixture routes that all test it for exactly '1' — including the
+        // /api/sessions ones that paint the very session this walkthrough is
+        // rendered inside — and the client forwards it through an allowlist.
+        // A new `demo` value therefore either fails that allowlist (no fixture
+        // at all) or passes it and reaches those routes as an unrecognised
+        // string (no session). Riding alongside, it narrows whichever fixture
+        // `demo` already selected to an ORDINARY work order — one that
+        // continues nothing, which both of the others do carry and which is
+        // the only shape "Start over" is offered on.
         const demoKind = req.query.demo === 'session' ? 'session' : 'proposal';
+        const orderKind = req.query.order === 'plain' ? null : demoKind;
         return res.json(req.query.demo === '1' || req.query.demo === 'session'
-          ? demoStatus(app, parsed, demoKind)
+          ? demoStatus(app, parsed, orderKind)
           : {
             // The venue sheet's own state: the web hand-offs are offerable,
             // nothing is linked, no work order exists. Fixture session
@@ -359,7 +373,15 @@ function devFlowRoutes(config) {
       // Steps 3-5. An open task is RE-RENDERED from its stored values —
       // same branch, same base commit — so reopening the chat resumes the
       // walkthrough instead of restarting it.
-      const task = await externalAgentTasks.loadLatestOpenTaskForSlug(pool, req.user.id, app.slug);
+      //
+      // `unexpiredOnly` because resumable is not the same as permanent. Nothing
+      // sweeps expired rows, so without it a reservation nobody ever submitted
+      // keeps answering for this app after it has stopped counting against the
+      // cap and stopped being reusable by prepareWork — leaving the launchpad
+      // showing step 3 done, with no way to say what to build instead.
+      const task = await externalAgentTasks.loadLatestOpenTaskForSlug(
+        pool, req.user.id, app.slug, { unexpiredOnly: true }
+      );
       if (task) {
         const targetProposal = await reloadTargetProposal(
           pool, req.user, app, originOf(config), task
@@ -610,6 +632,65 @@ function devFlowRoutes(config) {
     }
   });
 
+  // ── Put a work order away without submitting it ──────────────────────
+  //
+  // The hand-off step's "Start over". The walkthrough is resumable by design,
+  // which means an open task is the thing it shows — so until this route
+  // existed there was no way back to the brief field once one had been minted,
+  // however stale it was. Abandoning is the whole effect: no branch is touched
+  // and no proposal is opened, so the next prepare mints a fresh work order at
+  // the app's CURRENT head rather than the commit the old one froze.
+  //
+  // Same guards as its neighbours: it is a cookie-authenticated mutation, so it
+  // carries the same-origin check, and the id is digits-only because
+  // parseInt('1.5.2') is 1 and would put away a task the caller never named.
+  router.post('/api/apps/:slug/external-tasks/:id/discard', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    if (!sameOrigin(config, req, res)) return undefined;
+
+    const taskId = /^\d+$/.test(req.params.id) ? parseInt(req.params.id, 10) : NaN;
+    if (!Number.isInteger(taskId) || taskId <= 0) {
+      return res.status(400).json({ error: 'Bad task id', code: 'invalid_request' });
+    }
+
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      if (IS_STAGING) {
+        return res.status(503).json({
+          error: 'Putting a work order away is disabled in a staging preview.',
+          code: 'platform_unavailable',
+        });
+      }
+
+      // Finding 4: scoped to the app in the URL as well as the caller, so the
+      // slug is not decorative — a task under another app is not reachable
+      // through this one's route, and the log line below names the right app.
+      const discarded = await externalAgentTasks.discardTask(pool, req.user.id, app.id, taskId);
+      if (!discarded) {
+        // Already submitted, already abandoned, never the caller's, or not
+        // this app's. All four are the same answer to the browser, and all
+        // four are fine to land on twice: the walkthrough re-reads its status
+        // either way, and the client treats this as the state it was reaching
+        // for. A database FAILURE is deliberately not in that set — it throws
+        // out of discardTask into the catch below and answers 500, because
+        // "put away" and "could not write" must not paint the same notice.
+        return res.status(404).json({
+          error: 'That work order is not open any more.',
+          code: 'unknown_task',
+        });
+      }
+
+      log.info('dev-flow', 'work order discarded', {
+        userId: req.user.id, slug: app.slug, taskId: discarded,
+      });
+      return res.json({ ok: true, taskId: discarded });
+    } catch (err) {
+      log.error('dev-flow', 'discard failed', { slug: req.params.slug, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ── Advance a proposal that is already up for a vote (#1054) ──────────
   //
   // body { proposalId, branch?, forkRepo?, expectedHeadSha? }
@@ -763,7 +844,27 @@ function demoStatus(app, parsed, targetKind) {
         'Paste the work order below in exactly as written.',
         'Come back here when it has pushed; Usernode submits the change itself.',
       ],
-      workOrder: (continuing
+      // Three bodies now. A null targetKind (`?order=plain`) opens NEW work, so
+      // it names no session and no proposal and ends at "Submit for review"
+      // rather than "Submit the update" — a fixture whose prose said it was
+      // updating something while its targetProposal was null would be reviewing
+      // a state the real route cannot produce.
+      workOrder: (targetKind === null
+        ? [
+          `You are making a change to the Usernode app "${app.name || app.slug}".`,
+          '',
+          `Repository to fork from: https://github.com/${owner}/${repo}`,
+          `Your fork: https://github.com/${login}/${repo}`,
+          `Branch to create: ${branch}`,
+          `Base commit: ${baseSha}`,
+          '',
+          'TASK',
+          'Add a dark-mode toggle to the settings screen.',
+          '',
+          'When you are done, commit and push the branch, then come back to',
+          'Usernode and press "Submit for review".',
+        ]
+        : continuing
         ? [
           `You are CONTINUING work in progress on the Usernode app "${app.name || app.slug}".`,
           '',
@@ -807,8 +908,8 @@ function demoStatus(app, parsed, targetKind) {
           'Usernode and press "Submit the update".',
         ]).join('\n'),
       // The proposal or session this order continues. `null` on an ordinary
-      // work order.
-      targetProposal: continuing
+      // work order, which is what `?order=plain` renders.
+      targetProposal: targetKind === null ? null : (continuing
         ? {
           id: 990405,
           title: '[staging fixture] Session and billing options',
@@ -822,7 +923,7 @@ function demoStatus(app, parsed, targetKind) {
           targetKind: 'proposal',
           branchHome: 'user_fork',
           webPath: `/#app/${app.slug}/dev/sessions/990601`,
-        },
+        }),
     },
     branch: shapeBranch('missing'),
   };
