@@ -5758,11 +5758,39 @@ ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS target_session_id BIGI
 ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS origin_session_id INTEGER
   REFERENCES chat_sessions(id) ON DELETE SET NULL;
 
--- The walkthrough's lookup: the caller's open task for one app and one
--- session, plus the NULL-origin scan that adopts a legacy row.
+-- The walkthrough's lookup: the caller's open task for one app and one session.
 CREATE INDEX IF NOT EXISTS external_agent_tasks_origin_session_idx
   ON external_agent_tasks (user_id, app_id, origin_session_id)
   WHERE status = 'open';
+
+-- ── Close out the attempts that leaked before they had an ending ──────
+--
+-- A work order is one ATTEMPT at an issue. It had a beginning and two endings
+-- (submit, "Start over") but none for "the session it belonged to is over", so
+-- dead attempts accumulated: each holding one of ten open-work-order slots for
+-- its full 14-day expiry. The launchpad then tried to hand them back out — a
+-- new change claimed the newest orphan, so starting one change after another
+-- walked the user down the pile instead of opening clean.
+--
+-- BROWSER-MINTED ONLY. `usernode-web:%` is the client_id the dev-flow route
+-- writes; rows from the CONNECTOR (Claude, ChatGPT) have no session by nature,
+-- are genuinely in flight, and submit by task id without ever needing a
+-- launchpad. Closing those would break live work.
+--
+-- The `created_at` bound is what makes this ONE-TIME rather than a rule. The
+-- WHERE clause would otherwise keep matching on every boot, and would then
+-- close an order minted by a browser still running JS cached from before the
+-- client started sending its session — a user whose launchpad can still see
+-- it. A fixed instant, set when this shipped, cannot reach anything minted
+-- afterwards. Re-running is a no-op either way, which is the convention the
+-- request_key backfill above follows.
+UPDATE external_agent_tasks
+SET status = 'abandoned'
+WHERE status = 'open'
+  AND origin_session_id IS NULL
+  AND session_id IS NULL
+  AND client_id LIKE 'usernode-web:%'
+  AND created_at < TIMESTAMPTZ '2026-09-12 13:00:00+00';
 
 DO $$
 BEGIN

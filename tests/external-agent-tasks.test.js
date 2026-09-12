@@ -4232,61 +4232,96 @@ test('...and no session means no task, rather than the app\'s newest', async () 
   }
 });
 
-test('a work order belonging to no session is adopted, not stranded', async () => {
-  // Rows minted before origin_session_id existed, or through the connector,
-  // which has no session. Invisible to every launchpad while still counting
-  // against the caller's open-work-order cap would be a worse trap than the
-  // one this change removes, so the first launchpad to look claims it.
-  const q = [];
-  const pool = {
-    calls: 0,
-    async query(sql, params) {
-      q.push({ sql, params });
-      if (/UPDATE external_agent_tasks/.test(sql)) return { rows: [{ origin_session_id: 990404 }] };
-      // First SELECT: this session has nothing. Second: an orphan exists.
-      this.calls += 1;
-      return { rows: this.calls === 1 ? [] : [{ id: 91, origin_session_id: null }] };
-    },
-  };
-  const row = await svc.loadOpenTaskForSession(pool, 3, 'recipe-box', 990404, { unexpiredOnly: true });
-  assert.equal(row.id, 91);
-  assert.equal(row.origin_session_id, 990404, 'the row comes back already adopted');
-
-  assert.match(q[0].sql, /AND t\.origin_session_id = \$3/, 'own task first');
-  assert.match(q[1].sql, /AND t\.origin_session_id IS NULL/, 'then the orphan scan');
-  assert.match(q[2].sql, /SET origin_session_id = \$3/, 'then the claim');
-  assert.match(q[2].sql, /WHERE id = \$1 AND user_id = \$2 AND status = 'open'/);
-  assert.deepEqual(q[2].params, [91, 3, 990404]);
-
-  // Nothing to adopt: null, and no write.
-  const q2 = [];
-  assert.equal(
-    await svc.loadOpenTaskForSession(fakePool([[SESSION_LOAD_SQL, []]], q2), 3, 'r', 990404),
-    null
+test('a work order belonging to no session is NOT handed to a new one', () => {
+  // The inverse of what this used to do, and the whole point of the change.
+  // Adopting the newest orphan turned one permanently stale launchpad into a
+  // QUEUE of them: every new change claimed the next one off the pile.
+  //
+  // The reasoning behind adoption was wrong twice. Factually, orphans were
+  // never invisible — listOpenWorkOrders filters on `session_id` (the shared
+  // column) and expiry, never on origin_session_id, so the Improve panel
+  // listed them throughout. Conceptually, a work order is one ATTEMPT at an
+  // issue, so an attempt whose session is gone is not a backlog item to hand
+  // out; it is over.
+  const svcSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/external-agent-tasks.js'), 'utf8');
+  const fn = svcSrc.slice(
+    svcSrc.indexOf('async function loadOpenTaskForSession('),
+    svcSrc.indexOf('async function abandonTasksForSession(')
   );
-  assert.equal(q2.filter((x) => /UPDATE/.test(x.sql)).length, 0);
+  assert.ok(fn.length > 0, 'the lookup is where this test thinks it is');
+  assert.ok(!/origin_session_id IS NULL/.test(fn), 'no orphan scan remains');
+  assert.ok(!/adoptTaskForSession/.test(fn), 'and nothing is claimed on a read');
+  assert.equal((fn.match(/await pool\.query\(/g) || []).length, 2,
+    'two literals: this session with and without the expiry filter, and nothing else');
 });
 
-test('adoption that fails still yields the task', async () => {
-  // It is an optimisation on a read path. Losing it shows the walkthrough one
-  // fewer task next time; failing the whole status read over it would blank a
-  // launchpad the user is standing in.
-  const pool = {
-    calls: 0,
-    async query(sql) {
-      if (/UPDATE external_agent_tasks/.test(sql)) throw new Error('database is on fire');
-      this.calls += 1;
-      return { rows: this.calls === 1 ? [] : [{ id: 91, origin_session_id: null }] };
-    },
-  };
-  const row = await svc.loadOpenTaskForSession(pool, 3, 'recipe-box', 990404);
-  assert.equal(row.id, 91, 'the orphan is still returned');
-  assert.equal(row.origin_session_id, null, 'just not claimed');
-
-  // adoptTaskForSession itself: no session is a no-op, never a blind UPDATE.
+test('...so a session with no work order of its own gets none', async () => {
   const q = [];
-  assert.equal(await svc.adoptTaskForSession(fakePool([['UPDATE', [{}]]], q), 91, 3, null), null);
-  assert.equal(q.length, 0);
+  assert.equal(
+    await svc.loadOpenTaskForSession(
+      fakePool([['FROM external_agent_tasks t JOIN apps a', []]], q),
+      3, 'recipe-box', 990404, { unexpiredOnly: true }
+    ),
+    null
+  );
+  assert.equal(q.length, 1, 'one query, and no second look for somebody else\'s order');
+  assert.match(q[0].sql, /AND t\.origin_session_id = \$3/);
+});
+
+test('archiving a session ends the attempt it was making', async () => {
+  const q = [];
+  assert.equal(
+    await svc.abandonTasksForSession(fakePool([['UPDATE external_agent_tasks', [{ id: 5 }, { id: 6 }]]], q), 990404),
+    2
+  );
+  assert.match(q[0].sql, /SET status = 'abandoned'/);
+  assert.match(q[0].sql, /WHERE origin_session_id = \$1 AND status = 'open' AND session_id IS NULL/);
+  assert.deepEqual(q[0].params, [990404]);
+
+  // `session_id IS NULL` is the one exclusion and it is load-bearing: that
+  // column means the work has been SHARED as a card on the Dev board, which
+  // outlives the chat session it was started from. Closing its reservation
+  // would strand a submission the group can already see.
+  assert.match(q[0].sql, /session_id IS NULL/);
+
+  // No session is a no-op, never a blind UPDATE.
+  const q2 = [];
+  for (const bad of [null, undefined, 0, -3, 'abc', 1.5]) {
+    assert.equal(await svc.abandonTasksForSession(fakePool([['UPDATE', [{}]]], q2), bad), 0);
+  }
+  assert.equal(q2.length, 0);
+});
+
+test('the archive path calls it, and never fails over it', () => {
+  const life = fs.readFileSync(path.join(__dirname, '..', 'src/services/session-lifecycle.js'), 'utf8');
+  assert.match(life, /externalAgentTasks\.abandonTasksForSession\(pool, sessionId\)/,
+    'archiving ends the attempt');
+  // finalizeArchivedSession is the funnel every archive path runs through,
+  // including proposal_start's atomic archive-and-replace.
+  const fin = life.slice(life.indexOf('async function finalizeArchivedSession('));
+  assert.ok(fin.indexOf('abandonTasksForSession') >= 0, 'from inside the funnel, not one caller');
+  assert.match(fin.slice(fin.indexOf('abandonTasksForSession')), /\.catch\(/,
+    'best-effort: an archive must not fail because a reservation could not be closed');
+});
+
+test('the one-time backfill closes litter, not live work', () => {
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'src/db/schema.sql'), 'utf8');
+  const backfill = schema.slice(
+    schema.indexOf("UPDATE external_agent_tasks\nSET status = 'abandoned'\nWHERE status = 'open'\n  AND origin_session_id IS NULL")
+  ).split(';')[0];
+  assert.ok(backfill.length > 0, 'the backfill is in schema.sql');
+
+  // Browser-minted only. Connector rows (Claude, ChatGPT) have no session by
+  // nature, are genuinely in flight, and submit by task id — closing those
+  // would break live work.
+  assert.match(backfill, /client_id LIKE 'usernode-web:%'/);
+  // Never a shared card's reservation.
+  assert.match(backfill, /session_id IS NULL/);
+  // And bounded in time, which is what makes it one-time rather than a rule:
+  // without it the clause would keep matching on every boot and would close an
+  // order minted by a browser running JS cached from before the client began
+  // sending its session — one whose launchpad can still see it.
+  assert.match(backfill, /created_at < TIMESTAMPTZ '20\d\d-\d\d-\d\d \d\d:\d\d:\d\d\+00'/);
 });
 
 test('preparing records the launchpad it was prepared in', async () => {
