@@ -561,9 +561,15 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   // vote one full-screen question on Needs you. So the check walks the deck's
   // subject pane to the card, not a row seat; the loop below now guards the
   // retired band classes the same way it guards the older ones.
+  //
+  // THE PAIR IS CARD-THEN-SUMMARY, and the first spelling of this check had
+  // it backwards — a later round moved the description UNDER the card, and
+  // `.dev-ws-needs-summary + .gc-vote-item` kept describing the order before
+  // that. Staging caught it, this file did not, which is why the assertion
+  // now pins the `:has(+ …)` direction rather than just the class names.
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
-  assert.match(byName(/Needs-you tab is one proposal at a time/).expectSelector, /\.dev-ws-needs-subject > \.dev-ws-needs-scroll > \.dev-ws-needs-summary \+ \.gc-vote-item button\.dev-vote-btn/);
+  assert.match(byName(/Needs-you tab is one proposal at a time/).expectSelector, /\.dev-ws-needs-scroll > \.gc-vote-item:has\(\+ \.dev-ws-needs-summary\) button\.dev-vote-btn/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);
