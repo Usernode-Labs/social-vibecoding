@@ -1102,6 +1102,14 @@ export function DevWorkshop(): ReactNode {
 
   return (
     <div ref={hostRef} className="dev-ws" data-ws-tab={tab}>
+      {/* Everything but the rail lives in here. It is what carries the
+          clearance under the last card: a sticky bar overlays whatever is
+          beneath it while you scroll, so the content needs a rail's worth of
+          empty space at its end or the final card can never be read clear of
+          it. Putting that padding on the LANDER instead would push the rail
+          up off the bottom on a short tab, which is the thing that was just
+          fixed. */}
+      <div className="dev-ws-tabbody">
       {tab === 'status' ? (
       <>
       {v.emptyNote ? (
@@ -1405,6 +1413,8 @@ export function DevWorkshop(): ReactNode {
           </section>
         </>
       ) : null}
+
+      </div>
 
       {/* ── The three destinations ──
           At the BOTTOM, and sticky: this is a phone screen first, the bar is
