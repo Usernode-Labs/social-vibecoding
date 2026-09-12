@@ -192,8 +192,63 @@ function getSelfHostedRefuseList() {
   return SELF_HOSTED_REFUSE_LIST;
 }
 
+// ── What the launchpad hands to the agent (#1049 successor) ───────────
+//
+// The browser used to mint the work order: the user typed a brief into the
+// walkthrough, Usernode minted a task and rendered a ~300-line order, and two
+// more steps walked them through copying it and coming back to press Submit.
+// That is backwards — people expect to talk to Claude Code or Codex, not to
+// fill in a form on Usernode first — and it is also the reason the launchpad
+// had any state to get stuck on.
+//
+// So this is all it hands over now. The agent asks what to build, then calls
+// prepare_work ITSELF, which is what returns the task id, the branch and the
+// base commit. Two things fall out of that and are worth keeping in mind
+// before shortening this further:
+//
+//   The connector is REQUIRED, not advisory. Without it there is no
+//   prepare_work, so no base commit and no task id, and the last paragraph is
+//   the only thing standing between that agent and a branch cut from the
+//   wrong place. The walkthrough refuses to render this step at all until the
+//   account has one.
+//
+//   The base commit is fresher this way. A work order minted in the browser
+//   pinned whatever main was when the user pressed a button; pasted three
+//   days later it branched from stale code. prepare_work called at the moment
+//   work actually starts cannot.
+function getLaunchpadInstructions({ appName, slug, targetProposalId } = {}) {
+  const name = appName || slug || 'this app';
+  const continuing = Number.isInteger(Number(targetProposalId)) && Number(targetProposalId) > 0;
+  return [
+    `You are making a change to "${name}" on Usernode (app \`${slug}\`).`,
+    '',
+    'FIRST, IF THE USER HAS NOT ALREADY TOLD YOU WHAT TO BUILD, ASK THEM.',
+    'Do not guess, and do not start until they answer.',
+    '',
+    'Then, through your Usernode connector:',
+    continuing
+      ? `1. Call prepare_work with slug "${slug}" and proposalId ${Number(targetProposalId)}, `
+        + 'and their answer as `brief`. Naming the proposal is what makes this an '
+        + 'UPDATE to work that already exists rather than a second copy of it.'
+      : `1. Call prepare_work with slug "${slug}" and their answer as \`brief\`.`,
+    '   It returns the branch to push, the exact commit to start from, and the',
+    '   platform rules this app is held to. Read those rules rather than guessing.',
+    '2. Build it, starting from that commit.',
+    '3. Push the branch to your own fork of the app.',
+    '4. Call submit_work with the taskId prepare_work gave you and the branch you',
+    '   pushed. That opens the pull request and puts the change to the group vote.',
+    '   Then give the user the link it returns.',
+    '',
+    'If you have no Usernode tools at all, the connector was never added to the',
+    'account you are running in. Say so rather than improvising a base commit:',
+    'the user adds it at https://my.onhomeroom.com/#settings/connectors, and',
+    'without it nothing you push can be submitted as a proposal.',
+  ].join('\n');
+}
+
 module.exports = {
   getAppConventions,
+  getLaunchpadInstructions,
   getWorkOrderEssentials,
   getConventionSections,
   getConventionSection,

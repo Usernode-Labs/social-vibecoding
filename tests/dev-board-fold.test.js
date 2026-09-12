@@ -398,7 +398,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // offered — on the ?order=none fixture added with them. Before this, no
   // route could render it: a session with no order of its own still showed
   // another session's.
-  assert.equal(DAPP.tests.length, 604);
+  // 604 → 601: the launchpad hands over instructions now. Nine checks went with
+  // the surfaces they pinned (the brief field, the Prepare button, the Submit
+  // step, "Start over", the connector note) and six replaced them: the
+  // three-step shape, the instructions to copy and their text on the card, the
+  // absent brief field, the connect-first state, and a continuation saying the
+  // work lands as an update.
+  assert.equal(DAPP.tests.length, 601);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
