@@ -1018,7 +1018,7 @@ export function DevWorkshop(): ReactNode {
       {v.discussion && v.discussion.t === 'card' ? (
         <section className="dev-ws-strip" data-ws-discussion="">
           <div className="dev-ws-strip-head">
-            <span className="dev-ws-eyebrow">Talking about the app</span>
+            <span className="dev-ws-eyebrow">Talk about the app</span>
           </div>
           <div className="dev-ws-discussion"><DevCard model={v.discussion.card} /></div>
         </section>

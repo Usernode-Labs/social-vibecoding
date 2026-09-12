@@ -328,7 +328,7 @@ test('the discussion card has a pane of its own, and an eyebrow saying what it i
   // It used to sit bare between the strips — the one block on the lander
   // with no surface of its own, which read as a stray row of the pane above
   // it. Every block is an eyebrow and what is under it now.
-  assert.match(html, /<section class="dev-ws-strip" data-ws-discussion=""><div class="dev-ws-strip-head"><span class="dev-ws-eyebrow">Talking about the app<\/span><\/div>/);
+  assert.match(html, /<section class="dev-ws-strip" data-ws-discussion=""><div class="dev-ws-strip-head"><span class="dev-ws-eyebrow">Talk about the app<\/span><\/div>/);
   assert.match(html, /data-ws-discussion=""[\s\S]*?class="dev-ws-discussion"[\s\S]*?data-discussion-row/);
 });
 
