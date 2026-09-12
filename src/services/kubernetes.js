@@ -543,9 +543,18 @@ function appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, as
 // fleet-wide fix central hosting is for. Without the memo this would add
 // three API calls to every app deploy and every preview build.
 let platformAssetBackend = null;
+// After a failed reconcile, stop trying for a while. Clearing the memo alone
+// means the NEXT app deploy pays the readiness wait again, and the one after
+// that — so a backend that cannot come up (a bad launch command, an image
+// that will not start) would add that wait to every deploy on the platform
+// rather than costing it once. Routing is the thing being delayed here, and
+// no app needs it urgently enough to be worth that.
+let platformAssetBackendRetryAfter = 0;
 
-async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 120000 } = {}) {
+async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retryAfterMs = 300000 } = {}) {
   if (platformAssetBackend) return platformAssetBackend;
+  // Still cooling off from a failure: no backend, and crucially no wait.
+  if (Date.now() < platformAssetBackendRetryAfter) return null;
   platformAssetBackend = (async () => {
     const cfg = config.kubernetes;
     const namespace = cfg.appNamespace;
@@ -618,6 +627,7 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 120000 } = 
     // Clear the memo so the next deploy retries rather than this process
     // serving apps without asset routing until it restarts.
     platformAssetBackend = null;
+    platformAssetBackendRetryAfter = Date.now() + retryAfterMs;
     throw err;
   });
   return platformAssetBackend;
@@ -1732,5 +1742,5 @@ module.exports = {
   PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME,
   _appIngressManifestForTest: appIngressManifest,
   _ensurePlatformAssetBackendForTest: ensurePlatformAssetBackend,
-  _resetPlatformAssetBackendForTest: () => { platformAssetBackend = null; },
+  _resetPlatformAssetBackendForTest: () => { platformAssetBackend = null; platformAssetBackendRetryAfter = 0; },
 };

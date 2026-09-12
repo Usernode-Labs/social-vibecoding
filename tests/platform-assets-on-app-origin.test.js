@@ -172,9 +172,20 @@ test('a failed reconcile is retried rather than remembered', async (t) => {
   t.after(() => { k8s._setClientsForTest(null); k8s._resetPlatformAssetBackendForTest(); });
 
   const config = { kubernetes: { appNamespace: 'social-apps' } };
-  await assert.rejects(() => k8s._ensurePlatformAssetBackendForTest(config));
-  await assert.rejects(() => k8s._ensurePlatformAssetBackendForTest(config));
+
+  // A failure is never cached as a SUCCESS — the next attempt after the
+  // cooldown really does reconcile again, so a transient API error heals by
+  // itself rather than leaving the fleet unrouted until a platform restart.
+  await assert.rejects(() => k8s._ensurePlatformAssetBackendForTest(config, { retryAfterMs: 0 }));
+  await assert.rejects(() => k8s._ensurePlatformAssetBackendForTest(config, { retryAfterMs: 0 }));
   assert.equal(calls, 2, 'the memo does not cache a failure');
+
+  // But inside the cooldown it declines immediately rather than retrying:
+  // otherwise a backend that cannot come up adds its readiness wait to every
+  // app deploy on the platform instead of costing it once.
+  await assert.rejects(() => k8s._ensurePlatformAssetBackendForTest(config, { retryAfterMs: 300000 }));
+  assert.equal(await k8s._ensurePlatformAssetBackendForTest(config), null);
+  assert.equal(calls, 3, 'the cooled-off call touched no API at all');
 });
 
 test('apps are handed the platform origin for the links a relative path cannot express', () => {
@@ -344,4 +355,13 @@ test('a backend that never becomes ready is not routed to', async (t) => {
     () => k8s._ensurePlatformAssetBackendForTest(config, { readyTimeoutMs: 150 }),
     'reconcile fails rather than reporting a backend that cannot serve'
   );
+
+  // And it then backs off. Without this, a backend that cannot come up adds
+  // the readiness wait to EVERY app deploy on the platform rather than
+  // costing it once — the routing is what gets delayed, and nothing needs it
+  // urgently enough to pay that.
+  const startedAt = Date.now();
+  assert.equal(await k8s._ensurePlatformAssetBackendForTest(config, { readyTimeoutMs: 150 }), null,
+    'the next caller gets no backend rather than another wait');
+  assert.ok(Date.now() - startedAt < 100, 'and returns immediately');
 });
