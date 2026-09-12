@@ -398,6 +398,12 @@ export interface DevWorkshopView {
   } | null;
   /** One unclaimed open issue to suggest, as a row. Null while filtering. */
   nextUp: ListRow | null;
+  /**
+   * #1934: the next unclaimed issues after `nextUp`, capped at
+   * WORKSHOP_LANE_MAX — shown under it behind "Show N more". Empty while
+   * filtering or when there is nothing past the first.
+   */
+  nextMore: ListRow[];
   /** The app's general discussion, as a row — see AppView._discussionCardModel. */
   discussion: ListRow | null;
   themes: WorkshopTheme[];
