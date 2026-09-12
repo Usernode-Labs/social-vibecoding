@@ -270,6 +270,9 @@ test('the vote strip pins what is owed to the viewer, whatever the filters say',
   let v = AppView._workshopView();
   assert.equal(v.votes.count, 1);
   assert.deepEqual(plain(v.votes.rows.map((r) => r.key)), ['vote:proposal:34']);
+  // #1902: the row carries its thread, so the open card draws a reply box —
+  // the same shape the "mine" lane's rows have.
+  assert.deepEqual(plain(v.votes.rows[0].thread), { type: 'session', ref: 34 });
   // Voted → not owed.
   AppView._proposals[0].my_vote = 'yes';
   v = AppView._workshopView();
