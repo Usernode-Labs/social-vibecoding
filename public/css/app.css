@@ -11981,7 +11981,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    arithmetic the deck uses) and the bar is pushed to its foot with
    `margin-top: auto`. Sticky on top of that keeps it in view while a long
    tab scrolls under it. */
-.dev-ws { min-height: calc(100dvh - var(--ws-chrome)); }
+/* `max(100%, …)`, because neither half works alone. In the NATIVE layout
+   #dev-forum-scroll has a definite height, so 100% is exactly the reading
+   area. In the BROWSER layout it does not (app.css forces #app-view to
+   `height: auto` so the page scrolls), and a percentage min-height against
+   an indefinite parent resolves to 0 — which is what left the bar floating
+   halfway up a short tab. The viewport arithmetic is the floor under that.
+
+   It subtracts the header and the insets and NOT the tab rail: the rail is
+   inside this box, pushed to its foot by `margin-top: auto`. Subtracting it
+   here as well was the bug — the lander came out one rail short of the
+   space it had, and the bar stopped that far above the bottom. */
+.dev-ws { min-height: max(100%, var(--ws-area)); }
 .dev-ws-tabs {
   position: sticky; bottom: 0; z-index: 25;
   margin-top: auto;
@@ -12037,13 +12048,17 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    rail. `min-height` keeps it usable on a short window rather than letting
    the subtraction win. */
 .dev-ws {
-  --ws-chrome: calc(
-    var(--platform-header-h, 56px) + var(--platform-safe-top, 0px)
-    + var(--platform-safe-bottom, 0px) + 92px
+  --ws-area: calc(
+    100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
+    - var(--platform-safe-bottom, 0px) - 24px
   );
 }
 .dev-ws-needs {
-  height: calc(100dvh - var(--ws-chrome));
+  /* The lander is a flex column with a floor under its height, so the deck
+     simply takes what is left between the head of the tab and the rail —
+     no second copy of the viewport arithmetic to keep in step with the
+     first. */
+  flex: 1 1 auto;
   min-height: 360px;
   display: grid;
   /* Two thirds to the thing being decided, one to the place you can ask
@@ -12188,18 +12203,24 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 .dev-ws-ask-you { align-self: flex-end; background: var(--accent); color: #fff; }
 .dev-ws-ask-ai { align-self: flex-start; background: var(--dc-sheet); color: var(--text-primary); }
-.dev-ws-ask-composer { display: flex; gap: 6px; align-items: center; }
+/* The composer is `.dc-card`: one white surface holding the field and a row
+   of controls under it. Everything here is what that card does NOT carry —
+   the field's own reset, and the row's spacing. */
+.dev-ws-ask-composer { display: flex; flex-direction: column; gap: 6px; }
 .dev-ws-ask-input {
-  flex: 1 1 auto; min-width: 0; height: 34px; padding: 0 12px;
-  border: 1px solid var(--app-sheet-line); border-radius: 999px;
-  background: var(--dc-sheet); color: var(--text-primary);
-  font: inherit; font-size: 14px;
+  width: 100%; min-width: 0;
+  border: 0; padding: 0; background: transparent;
+  color: var(--text-primary); font: inherit; font-size: 15px; line-height: 1.4;
 }
-.dev-ws-ask-send {
-  flex: none; height: 34px; padding: 0 14px; border: 0; border-radius: 999px;
-  background: var(--accent); color: #fff; font: inherit; font-size: 13px; font-weight: 600;
-  cursor: pointer;
-}
+.dev-ws-ask-input:focus { outline: none; }
+.dev-ws-ask-input::placeholder { color: var(--text-muted); }
+.dev-ws-ask-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dev-ws-ask-gap { flex: 1 1 auto; }
+/* Smaller than the session's 44px circle: that one is the primary action of
+   a whole screen, this is the second control in a pane that is a third of
+   one. The fill, the ink and the halo are `.dc-circle-send`'s. */
+.dev-ws-ask-send { width: 34px; height: 34px; }
+.dev-ws-ask-send-icon { width: 17px; height: 17px; }
 .dev-ws-ask-send:disabled { opacity: .45; cursor: default; }
 .dev-ws-reveal[aria-expanded="true"] .dev-ws-reveal-chev { transform: rotate(180deg); }
 .dev-ws-week-note {

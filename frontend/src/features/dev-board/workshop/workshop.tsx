@@ -44,7 +44,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icons';
+import { ArrowUpIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -933,8 +933,19 @@ function NeedsDeck({
             ))}
           </div>
         ) : null}
+        {/* THE DEV SESSION'S COMPOSER, as far as this pane needs it:
+            `.dc-card` is the white surface with the field and one row of
+            controls under it, `.dc-model-select` / `.dc-model-name` the
+            stripped model button, `.dc-send-btn .dc-circle-send` the pale
+            blue circle with its halo. Three shared classes rather than three
+            approximations of them — the alternative drifts away from the
+            composer the first time either is tuned.
+
+            The one thing not shared is the model MENU: the session opens the
+            native kit's sheet from a <button>, and this is a <select>, which
+            is why the caret is a sibling rather than a child. */}
         <form
-          className="dev-ws-ask-composer"
+          className="dev-ws-ask-composer dc-card"
           onSubmit={(e) => { e.preventDefault(); ask(); }}
         >
           <label className="sr-only" htmlFor="dev-ws-ask-input">Ask about this change</label>
@@ -948,28 +959,33 @@ function NeedsDeck({
             onBlur={() => { if (!draft.trim()) setFocused(false); }}
             onChange={(e) => setDraft(e.target.value)}
           />
-          <button type="submit" className="dev-ws-ask-send" disabled={!draft.trim()}>Ask</button>
-        </form>
-        {/* Only while the box is in use. `.dc-model-select` / `.dc-model-name`
-            are the dev session composer's own classes — stripped back to
-            plain text and a caret, no border, no fill — so the two pickers
-            look like the same control because they are the same choice. */}
-        {focused && models.list.length ? (
-          <div className="dev-ws-ask-model" data-ws-ask-model="">
-            <label className="sr-only" htmlFor="dev-ws-ask-model-select">Model</label>
-            <select
-              id="dev-ws-ask-model-select"
-              className="dc-model-select dc-model-name"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-            >
-              {models.list.map((m) => (
-                <option key={m.id} value={m.id}>{m.note ? `${m.label} — ${m.note}` : m.label}</option>
-              ))}
-            </select>
-            <ChevronDownIcon className="dev-ws-ask-model-chev" aria-hidden="true" />
+          <div className="dev-ws-ask-row">
+            {focused && models.list.length ? (
+              <span className="dev-ws-ask-model" data-ws-ask-model="">
+                <label className="sr-only" htmlFor="dev-ws-ask-model-select">Model</label>
+                <select
+                  id="dev-ws-ask-model-select"
+                  className="dc-model-select dc-model-name"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                >
+                  {/* The LABEL only, as the session shows it. The "what kind
+                      of work is this for" blurb belongs to the picker's own
+                      sheet, not to the row it collapses to. */}
+                  {models.list.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                </select>
+                <ChevronDownIcon className="dev-ws-ask-model-chev" aria-hidden="true" />
+              </span>
+            ) : null}
+            <span className="dev-ws-ask-gap"></span>
+            <button
+              type="submit"
+              className="dc-send-btn dc-circle-send dev-ws-ask-send"
+              aria-label="Ask"
+              disabled={!draft.trim()}
+            ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>
           </div>
-        ) : null}
+        </form>
       </section>
     </div>
   );
