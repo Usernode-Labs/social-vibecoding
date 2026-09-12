@@ -384,11 +384,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 594 → 597: full-card tabs, embedded owner workspace and review discussion.
   // 597 → 598: #1926 repeated conflict notices in card discussions.
   // 598 → 601: the stale-work-order fix. Two checks shoot the hand-off step of
-  // an ORDINARY work order (?demo=plain, the fixture added with them) — that
-  // "Start over" is offered there at all, and that copying stays the primary
-  // action beside it — and one pins it withheld on a continuation, whose
-  // target discarding would silently drop.
-  assert.equal(DAPP.tests.length, 601);
+  // an ORDINARY work order (?demo=1&order=plain, the fixture added with them) —
+  // that "Start over" is offered there at all, and that copying stays the
+  // primary action beside it — and one covers a continuation;
+  // 601 → 602: review found that withholding the button on a continuation was
+  // a dead end rather than a safeguard, since the launchpad resolves its task
+  // per (user, app) and one continuation pinned every session in the app. The
+  // continuation check now asserts the button IS offered, and a second one
+  // pins the sentence saying what pressing it gives up.
+  assert.equal(DAPP.tests.length, 602);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

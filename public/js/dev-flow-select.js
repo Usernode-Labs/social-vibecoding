@@ -197,10 +197,8 @@
         done: !!(branch && branch.pushed),
         detail: handoffDetail(branch, task, label, targetKind),
         note: connectorNote(st.connectors, agent || (task && task.agent), branch),
-        // `!target`: see handoffActions. Step 3 cannot carry this button —
-        // it is `done` for as long as a task exists, and the mapper below
-        // gives buttons only to the step that is current.
-        actions: task ? handoffActions(agent || task.agent, !target) : [],
+        detailExtra: target ? startOverNote(targetKind) : '',
+        actions: task ? handoffActions(agent || task.agent) : [],
       },
       {
         key: 'submit',
@@ -209,11 +207,19 @@
         detail: branch && branch.pushed
           ? submitDetail(targetKind)
           : 'Available once your branch is pushed.',
-        actions: branch && branch.pushed
+        detailExtra: task && branch && branch.pushed ? startOverNote(targetKind) : '',
+        // "Start over" rides here too, because this is the step a stale work
+        // order strands you on: once the agent has pushed, the hand-off step is
+        // `done` and only the current step is given buttons, so a button that
+        // lived on hand-off alone would be unreachable in exactly the case the
+        // bug report described — work that was already finished. Discarding
+        // here abandons the RESERVATION, never the pushed branch.
+        actions: (branch && branch.pushed
           ? [target
             ? { action: 'submit-update', label: 'Submit the update', primary: true }
             : { action: 'submit', label: 'Submit for review', primary: true }]
-          : [],
+          : []
+        ).concat(task ? [{ action: 'discard', label: 'Start over' }] : []),
       },
     ];
 
@@ -230,7 +236,7 @@
         key: step.key,
         title: step.title,
         state: state,
-        detail: step.detail,
+        detail: step.detail + (step.detailExtra || ''),
         // Unlike actions and the brief box, the note is not gated on
         // 'current': it names a prerequisite for a step still ahead, and
         // connecting first is precisely the point.
@@ -312,28 +318,37 @@
     return base;
   }
 
-  // `canDiscard` adds "Start over", and this is the step it has to live on.
+  // What "Start over" costs on a CONTINUATION (#1054/#1071), said out loud.
   //
-  // The walkthrough re-renders whatever open task the account holds for this
-  // app, which is what makes it resumable — and, with nothing sweeping the
-  // table, also what made a stale work order permanent: step 3 reads `done`,
-  // so its "what should it build?" field is gone, and the only button in reach
-  // copies a work order for something that may have been finished weeks ago.
-  // This is the step the user is standing on while that happens, so this is
-  // where the way out belongs.
+  // It was withheld on those at first, on the grounds that discarding one drops
+  // the proposal or session it points at. But the walkthrough resolves its task
+  // per (user, app), so ONE continuation pins the launchpad of every session in
+  // that app — and the supposed escape, "Build here instead", only changes the
+  // venue: it leaves the reservation open and re-renders the same order on the
+  // way back. Withholding the button therefore bought a silent dead end rather
+  // than safety. Offer it, and name the consequence instead.
+  function startOverNote(targetKind) {
+    var what = targetKind === 'session' ? 'that session' : 'that proposal';
+    return ' "Start over" puts this work order away and stops it updating '
+      + what + '; ' + what.replace('that ', 'the ') + ' itself is left alone.';
+  }
+
+  // "Start over" is in here because the hand-off step is where a live work
+  // order is normally read — the walkthrough re-renders whatever open task the
+  // account holds for this app, which is what makes it resumable and also what
+  // made a stale one permanent: step 3 reads `done`, so its "what should it
+  // build?" field is gone, and the only other button in reach copies a work
+  // order for something that may have been finished weeks ago. The submit step
+  // carries the same action for the case where the branch is already pushed.
   //
-  // Withheld on a CONTINUATION (#1054/#1071). That task points at a specific
-  // proposal or session; discarding it would drop the target silently and the
-  // next prepare would open NEW work instead of updating what the user came
-  // here to update. Backing out of one of those is what "Build here instead"
-  // is for. Never primary either way — copying the work order is still the
-  // thing almost everybody arriving here wants.
-  function handoffActions(agent, canDiscard) {
+  // Never primary — copying the work order is still what almost everybody
+  // arriving here wants.
+  function handoffActions(agent) {
     var actions = [{ action: 'copy', label: 'Copy work order', primary: true }];
     var url = agentUrl(agent);
     if (url) actions.push({ action: 'open-agent', label: 'Open ' + agentLabel(agent), href: url });
     actions.push({ action: 'refresh', label: 'Check again' });
-    if (canDiscard) actions.push({ action: 'discard', label: 'Start over' });
+    actions.push({ action: 'discard', label: 'Start over' });
     return actions;
   }
 

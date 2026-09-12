@@ -275,16 +275,24 @@ test('a continuation ends in submitting an update, not a new proposal', () => {
   for (const kind of ['session', 'proposal']) {
     const submit = stepsOf(continuingStatus(kind)).submit;
     assert.equal(submit.title, 'Submit the update', `${kind}: the step is renamed`);
-    assert.deepEqual(submit.actions, [
+    // The SUBMITTING action, asserted exactly. The step also carries "Start
+    // over" now — see the pushed-branch test below — so this pins the one
+    // action whose id decides which body the client posts, rather than the
+    // whole row, which would break every time a neighbouring button moves.
+    const submitting = submit.actions.filter((a) => a.action !== 'discard');
+    assert.deepEqual(submitting, [
       { action: 'submit-update', label: 'Submit the update', primary: true },
     ], `${kind}: a distinct action id, so the client cannot post the new-proposal body`);
+    assert.ok(!submitting.some((a) => a.action === 'submit'),
+      `${kind}: the new-proposal action is never offered on a continuation`);
   }
   // Without a target it is still the ordinary new-proposal submission.
   const plain = stepsOf(fullStatus()).submit;
   assert.equal(plain.title, 'Submit for review');
-  assert.deepEqual(plain.actions, [
+  assert.deepEqual(plain.actions.filter((a) => a.action !== 'discard'), [
     { action: 'submit', label: 'Submit for review', primary: true },
   ]);
+  assert.ok(!plain.actions.some((a) => a.action === 'submit-update'));
 });
 
 test('the update step says what submitting costs, and only where it costs it', () => {
@@ -785,16 +793,27 @@ test('the hand-off step offers a way out of the work order it is showing', () =>
     '"Start over" is never the primary button');
 });
 
-test('"Start over" is withheld on a continuation', () => {
-  // The task points at a specific proposal or session. Discarding it would drop
-  // that target silently, and the next prepare would open NEW work instead of
-  // updating what the user came here to update.
+test('a continuation offers "Start over" too, and says what it costs', () => {
+  // It was withheld on continuations at first, because discarding one drops the
+  // proposal or session it points at. But the walkthrough resolves its task per
+  // (user, app), so ONE continuation pinned the launchpad of every session in
+  // that app, and the supposed escape ("Build here instead") only changes the
+  // venue — it leaves the reservation open. Withholding bought a dead end, not
+  // safety, so the button is offered and the consequence is stated.
   for (const kind of ['session', 'proposal']) {
     const steps = stepsOf(continuingStatus(kind, { branch: { state: 'missing', pushed: false, missing: true } }));
     const actions = steps.handoff.actions.map((a) => a.action);
-    assert.ok(!actions.includes('discard'), `a ${kind} continuation offers no "Start over"`);
-    assert.ok(actions.includes('copy'), 'but still hands the work order over');
+    assert.ok(actions.includes('discard'), `a ${kind} continuation offers "Start over"`);
+    assert.ok(actions.includes('copy'), 'and still hands the work order over');
+    const noun = kind === 'session' ? 'session' : 'proposal';
+    assert.match(steps.handoff.detail, new RegExp(`stops it updating that ${noun}`),
+      'the step says what pressing it gives up');
+    assert.match(steps.handoff.detail, new RegExp(`the ${noun} itself is left alone`),
+      'and that the target survives');
   }
+  // An ordinary work order has no target to lose, so it carries no such note.
+  const plain = stepsOf(fullStatus({ branch: { state: 'missing', pushed: false, missing: true } }));
+  assert.doesNotMatch(plain.handoff.detail, /stops it updating/);
 });
 
 test('"Start over" renders as a button the dev chat can wire', () => {
@@ -815,10 +834,30 @@ test('"Start over" renders as a button the dev chat can wire', () => {
   assert.match(busy, /data-flow-action="discard"[^>]*disabled/);
 });
 
-test('once the branch is pushed there is nothing to start over from', () => {
-  // Step 5 is current by then, and the work the button would throw away is
-  // already on the fork.
+test('once the branch is pushed, the way out moves to the step that is current', () => {
+  // THE CASE THE BUG REPORT ACTUALLY DESCRIBED: a stale work order whose agent
+  // already finished and pushed. Hand-off is `done` by then and only the
+  // current step is given buttons, so a way out that lived on hand-off alone
+  // would be unreachable exactly here.
   const steps = stepsOf(fullStatus({}));
   assert.equal(steps.submit.state, 'current');
   assert.deepEqual(steps.handoff.actions, [], 'a done step offers no buttons at all');
+  const actions = steps.submit.actions.map((a) => a.action);
+  assert.ok(actions.includes('discard'), `the submit step carries it (got ${actions.join(', ')})`);
+  // Submitting stays the primary act; discarding is never the filled-in button
+  // sitting next to it.
+  assert.equal(steps.submit.actions.find((a) => a.action === 'submit').primary, true);
+  assert.ok(!steps.submit.actions.find((a) => a.action === 'discard').primary);
+  // And it renders, rather than only existing in the step model.
+  const html = DevFlowSelect.wizardHtml({ agent: 'claude-code', status: fullStatus({}) });
+  assert.match(html, /data-flow-step="submit"[^>]*data-flow-step-state="current"/);
+  assert.match(html, /data-flow-action="discard"/);
+});
+
+test('no task, no way out — the button never appears before there is one', () => {
+  for (const over of [{ task: null, branch: null }, { fork: null, task: null, branch: null }]) {
+    const html = DevFlowSelect.wizardHtml({ agent: 'claude-code', status: fullStatus(over) });
+    assert.doesNotMatch(html, /data-flow-action="discard"/,
+      `nothing to start over from for ${JSON.stringify(over)}`);
+  }
 });

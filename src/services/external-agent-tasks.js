@@ -1527,12 +1527,12 @@ async function prepareWork(deps, params) {
       ? update.branchName
       : branchNameFor(app.slug, null, null, `update-${update.proposalId}`))
     : branchNameFor(app.slug, issueNumber);
-  let row;
-  try {
-    // ON CONFLICT DO NOTHING against the partial unique index, so two
-    // connectors racing on the same request cannot both reserve it. Zero
-    // rows back means the other call won — re-select and return theirs as a
-    // reuse rather than failing a caller who did nothing wrong.
+  // ON CONFLICT DO NOTHING against the partial unique index, so two
+  // connectors racing on the same request cannot both reserve it. Zero
+  // rows back means either the other call won — re-select and return theirs
+  // as a reuse rather than failing a caller who did nothing wrong — or an
+  // EXPIRED row is sitting on the key, which the block below deals with.
+  const insertTask = async () => {
     const { rows } = await pool.query(
       `INSERT INTO external_agent_tasks
          (user_id, app_id, issue_number, fork_owner, fork_repo, branch_name,
@@ -1551,7 +1551,12 @@ async function prepareWork(deps, params) {
         update ? update.proposalId : null,
       ]
     );
-    row = rows[0] || null;
+    return rows[0] || null;
+  };
+
+  let row;
+  try {
+    row = await insertTask();
   } catch (err) {
     log.error('external-agent-tasks', 'task insert failed', { app: app.slug, err: err.message });
     return fail('platform_unavailable', 'Usernode could not record this piece of work. Try again shortly.', { retryable: true });
@@ -1565,7 +1570,30 @@ async function prepareWork(deps, params) {
         prompts, agent, reused: true, targetProposal: update, openProposals,
       });
     }
-    return fail('platform_unavailable', 'Usernode could not record this piece of work. Try again shortly.', { retryable: true });
+
+    // Nothing LIVE holds the key, yet the insert still conflicted — so what
+    // blocks it is an expired row. external_agent_tasks_open_request_idx has
+    // no expiry predicate, while every reader that decides whether the caller
+    // still has a live work order does (findOpenTaskByRequest here, the
+    // open-work-order listing behind the cap, and now the walkthrough).
+    // Nothing sweeps the table, so left alone that is PERMANENT: this exact
+    // brief could never be prepared again, and the caller would be told to
+    // "try again shortly" forever. Close the dead row out and insert once more.
+    try {
+      const cleared = await abandonExpiredRequest(pool, user.id, app.id, requestKey);
+      if (cleared) {
+        log.info('external-agent-tasks', 'expired reservation cleared for reuse', {
+          app: app.slug, cleared,
+        });
+        row = await insertTask();
+      }
+    } catch (err) {
+      log.error('external-agent-tasks', 'expired-reservation clear failed', { app: app.slug, err: err.message });
+    }
+
+    if (!row) {
+      return fail('platform_unavailable', 'Usernode could not record this piece of work. Try again shortly.', { retryable: true });
+    }
   }
 
   return renderPreparedTask({
@@ -2007,26 +2035,44 @@ async function loadLatestOpenTaskForSlug(pool, userId, slug, opts = {}) {
 // stale row stays open, still holding one of the caller's ten slots and still
 // the newest thing loadLatestOpenTaskForSlug can see.
 //
-// Scoped to the caller's own OPEN rows, so a replayed request cannot reach
-// somebody else's reservation or reopen bookkeeping on a submitted one.
+// Scoped to the caller's own OPEN rows FOR THIS APP, so a replayed request can
+// reach neither somebody else's reservation nor one of the caller's own under a
+// different app whose slug happens to be in the URL.
+//
 // Returns the id it closed, or null when it matched nothing — which the route
-// turns into `unknown_task` rather than a silent success.
-async function discardTask(pool, userId, taskId) {
+// turns into `unknown_task`. A database failure THROWS rather than returning
+// null: the two are not the same answer to the user, and collapsing them would
+// paint "Work order put away" over a write that never happened.
+async function discardTask(pool, userId, appId, taskId) {
   const id = Number(taskId);
   if (!Number.isSafeInteger(id) || id <= 0) return null;
-  try {
-    const { rows } = await pool.query(
-      `UPDATE external_agent_tasks
-          SET status = 'abandoned'
-        WHERE id = $1 AND user_id = $2 AND status = 'open'
-        RETURNING id`,
-      [id, userId]
-    );
-    return rows[0] ? Number(rows[0].id) : null;
-  } catch (err) {
-    log.warn('external-agent-tasks', 'task discard failed', { taskId: id, err: err.message });
-    return null;
-  }
+  const { rows } = await pool.query(
+    `UPDATE external_agent_tasks
+        SET status = 'abandoned'
+      WHERE id = $1 AND user_id = $2 AND app_id = $3 AND status = 'open'
+      RETURNING id`,
+    [id, userId, appId]
+  );
+  return rows[0] ? Number(rows[0].id) : null;
+}
+
+// Close out the EXPIRED open rows sitting on one request key.
+//
+// Only ever called after an insert has already conflicted on that key and
+// findOpenTaskByRequest — which filters expiry — has found nothing, so the only
+// rows this can touch are ones no reader still counts as live. Scoped to the
+// caller's own rows for that one app and request, never a blanket sweep: this
+// unblocks a specific insert, it is not garbage collection.
+async function abandonExpiredRequest(pool, userId, appId, requestKey) {
+  const { rows } = await pool.query(
+    `UPDATE external_agent_tasks
+        SET status = 'abandoned'
+      WHERE user_id = $1 AND app_id = $2 AND request_key = $3
+        AND status = 'open' AND expires_at <= NOW()
+      RETURNING id`,
+    [userId, appId, requestKey]
+  );
+  return rows.length;
 }
 
 // The attribution gate. A proposal opened through this path carries the
@@ -3322,6 +3368,7 @@ module.exports = {
   // away without submitting it, and the reason a stale one stops being
   // permanent.
   discardTask,
+  abandonExpiredRequest,
   renderPreparedTask,
   prepareWork,
   submitWork,

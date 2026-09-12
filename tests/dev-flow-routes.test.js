@@ -80,6 +80,7 @@ function resetStubs() {
     // "not open any more".
     discard: 4242,
     discardArgs: null,
+    discardThrows: false,
   };
 }
 
@@ -117,8 +118,9 @@ svc.inspectPushedBranch = async () => {
   if (stub.branchThrows) throw new Error('github said no');
   return stub.branchState;
 };
-svc.discardTask = async (_pool, userId, taskId) => {
-  stub.discardArgs = { userId, taskId };
+svc.discardTask = async (_pool, userId, appId, taskId) => {
+  stub.discardArgs = { userId, appId, taskId };
+  if (stub.discardThrows) throw new Error('database is on fire');
   return stub.discard;
 };
 svc.prepareWork = async (_deps, args) => { stub.prepareArgs = args; return stub.prepare; };
@@ -752,7 +754,9 @@ test('discard closes the caller\'s task and reports the id it closed', async () 
   assert.equal(r.status, 200);
   assert.deepEqual(await r.json(), { ok: true, taskId: 4242 });
   // Scoped to the caller: the user id comes from the session, never the body.
-  assert.deepEqual(stub.discardArgs, { userId: 42, taskId: 4242 });
+  // Scoped to the app in the URL as well as the caller: the slug is not
+  // decorative, so a task under another app is not reachable through this one.
+  assert.deepEqual(stub.discardArgs, { userId: 42, appId: 7, taskId: 4242 });
 });
 
 test('a task that is not open any more is unknown_task, not a silent success', async () => {
@@ -883,4 +887,42 @@ test('the plain fixture survives the round trip from page URL to status route', 
     assert.ok(/[?&]demo=1(&|#|$)/.test(t.path),
       `${t.name} must carry ?demo=1 as well as order=plain, or no fixture renders`);
   }
+});
+
+
+test('a write that FAILS is a 500, not "Work order put away"', () => {
+  // discardTask used to swallow database errors and return null, which the
+  // route turned into 404 and the client treats as success — so a transient
+  // pool error painted "Work order put away" over a write that never happened.
+  // The service now throws, and nothing between here and the user flattens the
+  // two answers back together.
+  const svcSrc = read('src/services/external-agent-tasks.js');
+  const fn = svcSrc.slice(
+    svcSrc.indexOf('async function discardTask('),
+    svcSrc.indexOf('async function abandonExpiredRequest(')
+  );
+  assert.ok(fn.length > 0, 'discardTask is where this test thinks it is');
+  assert.ok(!/catch/.test(fn), 'discardTask does not swallow the failure');
+});
+
+test('...and the route turns that throw into a 500', async () => {
+  stub.discardThrows = true;
+  const r = await discard(4242, {}, { origin: ORIGIN, 'sec-fetch-site': 'same-origin' });
+  assert.equal(r.status, 500);
+  assert.notEqual((await r.json()).code, 'unknown_task',
+    'a failure must not arrive wearing the "already closed" code the client treats as success');
+});
+
+test('the client posts to the discard route from the walkthrough it is showing', () => {
+  // The assertion this file lost once already. A round-trip test that exercises
+  // a helper proves the helper works; it does not prove anything CALLS it. The
+  // demo-discriminator regression shipped through exactly that gap, so pin the
+  // call sites themselves.
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+  assert.match(devChat, /dev-flow\/status\$\{DevChat\._devFlowDemoQS\(\)\}/,
+    'the status fetch uses the dev-flow query string, not the bare _demoQS');
+  assert.match(devChat, /if \(action === 'discard'\) return DevChat\._devFlowDiscard\(\);/,
+    'the discard action is dispatched');
+  assert.match(devChat, /external-tasks\/\$\{encodeURIComponent\(task\.id\)\}\/discard/,
+    'and posts to the discard route with the task it is showing');
 });

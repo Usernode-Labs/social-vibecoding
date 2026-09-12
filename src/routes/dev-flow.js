@@ -21,6 +21,7 @@
 //   GET  /api/apps/:slug/dev-flow/status         → the walkthrough's state
 //   POST /api/apps/:slug/external-tasks          → prepare a work order
 //   POST /api/apps/:slug/external-tasks/:id/submit → open the PR + import
+//   POST /api/apps/:slug/external-tasks/:id/discard → put a work order away
 //   POST /api/apps/:slug/external-tasks/:id/submit-update → advance a proposal
 //
 // The connector is now one way in, not the way in. Anyone who has linked
@@ -657,16 +658,23 @@ function devFlowRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
       if (IS_STAGING) {
         return res.status(503).json({
-          error: 'Preparing work for an external agent is disabled in a staging preview.',
+          error: 'Putting a work order away is disabled in a staging preview.',
           code: 'platform_unavailable',
         });
       }
 
-      const discarded = await externalAgentTasks.discardTask(pool, req.user.id, taskId);
+      // Finding 4: scoped to the app in the URL as well as the caller, so the
+      // slug is not decorative — a task under another app is not reachable
+      // through this one's route, and the log line below names the right app.
+      const discarded = await externalAgentTasks.discardTask(pool, req.user.id, app.id, taskId);
       if (!discarded) {
-        // Already submitted, already abandoned, or never the caller's. All
-        // three are the same answer to the browser, and all three are fine to
-        // land on twice: the walkthrough re-reads its status either way.
+        // Already submitted, already abandoned, never the caller's, or not
+        // this app's. All four are the same answer to the browser, and all
+        // four are fine to land on twice: the walkthrough re-reads its status
+        // either way, and the client treats this as the state it was reaching
+        // for. A database FAILURE is deliberately not in that set — it throws
+        // out of discardTask into the catch below and answers 500, because
+        // "put away" and "could not write" must not paint the same notice.
         return res.status(404).json({
           error: 'That work order is not open any more.',
           code: 'unknown_task',

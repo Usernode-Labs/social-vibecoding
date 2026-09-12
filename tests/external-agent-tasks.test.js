@@ -4110,24 +4110,26 @@ test('loadLatestOpenTaskForSlug filters expiry only when the caller asks', async
   }
 });
 
-test('discardTask abandons one open row of the caller\'s, and nothing else', async () => {
+test('discardTask abandons one open row of the caller\'s, for one app, and nothing else', async () => {
   const queries = [];
   const pool = fakePool([['UPDATE external_agent_tasks', [{ id: 4242 }]]], queries);
-  assert.equal(await svc.discardTask(pool, 3, 4242), 4242);
+  assert.equal(await svc.discardTask(pool, 3, 7, 4242), 4242);
 
   const update = queries[0];
   assert.match(update.sql, /SET status = 'abandoned'/,
     "'abandoned' is the status the CHECK constraint already allows");
-  // Owner AND still-open, both: a replayed request must not reach somebody
-  // else's reservation, nor reopen bookkeeping on one already submitted.
-  assert.match(update.sql, /WHERE id = \$1 AND user_id = \$2 AND status = 'open'/);
-  assert.deepEqual(update.params, [4242, 3]);
+  // Owner AND app AND still-open, all three: a replayed request must reach
+  // neither somebody else's reservation, nor one of the caller's own filed
+  // under a different app whose slug happens to be in the URL, nor reopen
+  // bookkeeping on one already submitted.
+  assert.match(update.sql, /WHERE id = \$1 AND user_id = \$2 AND app_id = \$3 AND status = 'open'/);
+  assert.deepEqual(update.params, [4242, 3, 7]);
 
   // Matching nothing is null, not a cheerful success — the route turns that
   // into unknown_task rather than telling the user it put something away.
   const q2 = [];
   assert.equal(
-    await svc.discardTask(fakePool([['UPDATE external_agent_tasks', []]], q2), 3, 4242),
+    await svc.discardTask(fakePool([['UPDATE external_agent_tasks', []]], q2), 3, 7, 4242),
     null
   );
 
@@ -4135,12 +4137,53 @@ test('discardTask abandons one open row of the caller\'s, and nothing else', asy
   const q3 = [];
   const junkPool = fakePool([['UPDATE external_agent_tasks', [{ id: 1 }]]], q3);
   for (const bad of [0, -3, 1.5, NaN, null, undefined, '1; DROP TABLE apps']) {
-    assert.equal(await svc.discardTask(junkPool, 3, bad), null, `${bad} is not a task id`);
+    assert.equal(await svc.discardTask(junkPool, 3, 7, bad), null, `${bad} is not a task id`);
   }
   assert.equal(q3.length, 0, 'no query is issued for any of them');
 
-  // A database that throws is a null, not a rejection: the walkthrough re-reads
-  // its status either way and the user is not shown a stack trace.
+  // A database that THROWS propagates. It used to be flattened to null, which
+  // the route answers as 404 and the client treats as success — so a transient
+  // pool error painted "Work order put away" over a write that never happened.
   const throwing = { async query() { throw new Error('database is on fire'); } };
-  assert.equal(await svc.discardTask(throwing, 3, 4242), null);
+  await assert.rejects(() => svc.discardTask(throwing, 3, 7, 4242), /database is on fire/);
+});
+
+test('an EXPIRED reservation stops blocking the same brief for ever', async () => {
+  // The dead end the walkthrough change opened up. The partial unique index
+  // external_agent_tasks_open_request_idx is (user_id, app_id, request_key)
+  // WHERE status='open' with NO expiry predicate, so an expired row still
+  // holds the key — while findOpenTaskByRequest, which is what the conflict
+  // path re-selects through, filters expiry and cannot see it. Nothing sweeps
+  // the table, so before this the second prepare of the same brief returned
+  // `platform_unavailable` and would have done so for ever.
+  const queries = [];
+  assert.equal(
+    await svc.abandonExpiredRequest(
+      fakePool([['UPDATE external_agent_tasks', [{ id: 91 }, { id: 92 }]]], queries),
+      3, 7, 'brief:deadbeef'
+    ),
+    2
+  );
+  const q = queries[0];
+  assert.match(q.sql, /SET status = 'abandoned'/);
+  // EXPIRED ones only, and only this caller's, this app's, this request's. A
+  // blanket sweep here would abandon live reservations the caller is working
+  // in — this is unblocking one insert, not garbage collection.
+  assert.match(q.sql, /AND status = 'open' AND expires_at <= NOW\(\)/);
+  assert.match(q.sql, /WHERE user_id = \$1 AND app_id = \$2 AND request_key = \$3/);
+  assert.deepEqual(q.params, [3, 7, 'brief:deadbeef']);
+
+  // Nothing expired: zero, and the caller still fails rather than looping.
+  assert.equal(
+    await svc.abandonExpiredRequest(fakePool([['UPDATE external_agent_tasks', []]], []), 3, 7, 'k'),
+    0
+  );
+
+  // And prepareWork only reaches for it AFTER the unexpired re-select has come
+  // back empty — so it can never close a row somebody is still using.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/external-agent-tasks.js'), 'utf8');
+  const block = src.slice(src.indexOf('  if (!row) {'), src.indexOf('  const workOrder'));
+  assert.ok(block.indexOf('findOpenTaskByRequest') < block.indexOf('abandonExpiredRequest'),
+    'the live lookup comes first');
+  assert.match(block, /row = await insertTask\(\);/, 'and the insert is retried once after clearing');
 });
