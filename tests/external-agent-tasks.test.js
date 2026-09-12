@@ -2374,7 +2374,7 @@ test('the PLATFORM RULES appendix comes LAST, after everything load-bearing', as
     assert.ok(order.indexOf(essential) < rulesAt, `${essential} survives a truncation`);
   }
   // And the hosted-asset warning sits immediately above it.
-  for (const url of svc.HOSTED_ASSETS) assert.ok(order.includes(url), url);
+  for (const path of svc.HOSTED_ASSET_PATHS) assert.ok(order.includes(path), path);
   assert.match(order, /That\s+is your SANDBOX, not the change/i);
   assert.match(order, /Vendoring those files into the repository is forbidden/);
   // The rule holds by consequence, not by an enforcement claim: nothing the

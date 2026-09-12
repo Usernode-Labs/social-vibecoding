@@ -1187,20 +1187,38 @@ function buildWorkOrder({
 // change. Written out rather than pulled from the conventions doc because
 // the diagnosis ("this is your container, not your code") is specific to an
 // agent working offline and belongs nowhere else.
-const HOSTED_ASSETS = Object.freeze([
-  'https://social-vibecoding.usernodelabs.org/usernode-bridge/v1/bridge.js',
-  'https://social-vibecoding.usernodelabs.org/usernode-native/v1/native.css',
-  'https://social-vibecoding.usernodelabs.org/usernode-tailwind/v1/tailwind.js',
+// PATHS, not URLs. This list used to hold three ABSOLUTE URLs on whatever
+// the platform's hostname was when it was written — and once the platform
+// moved, that host stopped answering, so every work order was handing
+// coding agents three dead links and inviting them to write the same dead
+// host into the app they were building. The origin is resolved per
+// deployment instead, the way services/template.js already does it, so a
+// self-hosted fork and a domain move both carry through by themselves.
+const HOSTED_ASSET_PATHS = Object.freeze([
+  '/usernode-bridge/v1/bridge.js',
+  '/usernode-native/v1/native.css',
+  '/usernode-tailwind/v1/tailwind.js',
 ]);
 
+// `webPath` is the platform URL this task was created from, so its origin is
+// the most accurate answer available; USERNODE_DOMAIN is the deployment-wide
+// fallback. Returns null when neither is known rather than inventing a host.
+function platformOriginFrom(webPath) {
+  try { if (webPath) return new URL(webPath).origin; } catch { /* fall through */ }
+  const domain = String(process.env.USERNODE_DOMAIN || '').trim().replace(/\/+$/, '');
+  return domain ? `https://${domain}` : null;
+}
+
+function hostedAssetUrls(origin) {
+  return HOSTED_ASSET_PATHS.map((assetPath) => (origin ? `${origin}${assetPath}` : assetPath));
+}
+
 function hostedAssetWarning(webPath) {
-  const origin = (() => {
-    try { return webPath ? new URL(webPath).origin : null; } catch { return null; }
-  })();
+  const origin = platformOriginFrom(webPath);
   const lines = [
     'ABOUT THE APP\'S HOSTED ASSETS (read before you "fix" the styling)',
     'Every Usernode app loads three files from the platform, centrally hosted:',
-    ...HOSTED_ASSETS.map((u) => `${CMD}${u}`),
+    ...hostedAssetUrls(origin).map((u) => `${CMD}${u}`),
     'Your container may not be able to reach that host. When it cannot, the app',
     'renders unstyled in a local browser and any native-kit assertion fails. That',
     'is your SANDBOX, not the change — do not "fix" it.',
@@ -3450,7 +3468,9 @@ module.exports = {
   BASE_SHA_RE,
   SUBMIT_VIA,
   SUBMIT_SOURCES,
-  HOSTED_ASSETS,
+  HOSTED_ASSET_PATHS,
+  hostedAssetUrls,
+  platformOriginFrom,
   normalizeAgent,
   normalizeSource,
   agentLabel,

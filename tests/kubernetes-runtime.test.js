@@ -220,6 +220,10 @@ test('failed-build sweep removes only terminal failed managed Builds', async () 
 });
 
 test('application deploy reconciles Secret, Deployment, Service and Ingress with a digest', async () => {
+  // The asset backend is memoised per process, so clear it: otherwise
+  // whether this test sees it reconciled depends on which deploy test ran
+  // first in this file.
+  kubernetes._resetPlatformAssetBackendForTest();
   const written = [];
   const missingReads = {
     readNamespacedSecret: async () => { throw notFound(); },
@@ -245,7 +249,17 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     env: { DATABASE_URL: 'postgres://redacted', PORT: '3000' },
     labels: { 'usernode.env.fp': '0123456789abcdef', 'app.kubernetes.io/managed-by': 'cannot-override-owner' },
   });
-  assert.deepEqual(written.map((item) => item.kind).sort(), ['Deployment', 'Ingress', 'Secret', 'Service']);
+  // The app's own four resources — everything except the shared backend.
+  // (Its Secret is named <runtimeName>-env, so match by exclusion.)
+  const appResources = written.filter((item) => item.body.metadata.name !== kubernetes.PLATFORM_ASSET_NAME);
+  assert.deepEqual(appResources.map((item) => item.kind).sort(), ['Deployment', 'Ingress', 'Secret', 'Service']);
+  // A deploy ALSO reconciles the shared platform-asset backend — the
+  // Service every app's Ingress routes /usernode-bridge/, /usernode-native/
+  // and /usernode-tailwind/ to. It is idempotent and memoised per process,
+  // and it runs here rather than at boot so the Service is guaranteed to
+  // exist before the Ingress that names it.
+  assert.ok(written.some((item) => item.body.metadata.name === kubernetes.PLATFORM_ASSET_NAME),
+    'the shared asset backend is reconciled alongside the app');
   const deployment = written.find((item) => item.kind === 'Deployment').body;
   assert.equal(deployment.spec.template.metadata.labels['usernode.env.fp'], '0123456789abcdef');
   assert.equal(deployment.metadata.labels['app.kubernetes.io/managed-by'], 'social-vibecoding-runtime');
