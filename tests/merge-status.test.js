@@ -340,8 +340,12 @@ test('#695 — pillHtml appends the muted +N advisory suffix to the in-vote tall
 test('STATE_BADGE_KEYS covers the merge-pipeline / conflict / ready states only', () => {
   assert.deepEqual(
     MergeStatus.STATE_BADGE_KEYS.slice().sort(),
-    ['behind', 'conflict_failed', 'merge_conflict', 'merged', 'merging', 'ready', 'resolving'].sort()
+    ['behind', 'conflict_failed', 'integrating', 'merge_conflict', 'merged',
+      'merging', 'platform_env', 'ready', 'resolving'].sort()
   );
+  // #2038: 'integrating' earns a slot because a proposal being brought up to
+  // date is exactly the state the card used to be silent about — which is
+  // what left people watching something that looked idle for minutes.
   // in_vote / draft / checks states are deliberately excluded (pill + the
   // dedicated checks badge cover them on the feed card).
   for (const k of ['in_vote', 'draft', 'checks_failing', 'checks_running', 'none']) {

@@ -392,7 +392,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // per (user, app) and one continuation pinned every session in the app. The
   // continuation check now asserts the button IS offered, and a second one
   // pins the sentence saying what pressing it gives up.
-  // 602 → 604: the launchpad is keyed per session now, so a session that did
+  // 602 → 607: the launchpad is keyed per session now, so a session that did
   // not prepare a work order shows none. Two checks shoot that state — the
   // "What should it build?" field being live, and Prepare being the action
   // offered — on the ?order=none fixture added with them. Before this, no
@@ -404,7 +404,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // three-step shape, the instructions to copy and their text on the card, the
   // absent brief field, the connect-first state, and a continuation saying the
   // work lands as an update.
-  assert.equal(DAPP.tests.length, 601);
+  // 601 → 604: #2038 adds three checks for the card states it renames or
+  // introduces — a proposal being brought up to date, a refused merge named
+  // for what it was rather than as a conflict, and automatic resolution
+  // saying nobody has to act.
+  assert.equal(DAPP.tests.length, 604);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

@@ -372,6 +372,41 @@ function stagingMockProposals(viewer) {
       ],
       mergeability_files_complete: true,
     },
+    // (e) #2038: the three states the SERVER now names, rather than the
+    // browser guessing from a precedence table. Each carries its own
+    // measuredAt, because the card says how old the answer is — a number
+    // stated without its age is a claim about the present that a cache
+    // cannot support, and that was the whole shape of the "the UI is out of
+    // sync" reports.
+    {
+      ...mk(9000081, 900181,
+        '[Mock] #2038: the votes are in, the merge is waiting on checks',
+        4, 3, 0, 3, { required: 3 }),
+      integration_measured_at: new Date(Date.now() - 40 * 1000).toISOString(),
+      integration_behind_by: 0,
+      integration_merges_clean: true,
+      integration_block_reason: 'checks',
+      check_state: 'pending',
+    },
+    {
+      ...mk(9000082, 900182,
+        '[Mock] #2038: approved, and being brought up to date with main',
+        5, 3, 0, 3, { required: 3 }),
+      integration_measured_at: new Date(Date.now() - 5 * 1000).toISOString(),
+      integration_behind_by: 6,
+      integration_merges_clean: true,
+      integration_block_reason: 'integrating',
+    },
+    {
+      ...mk(9000083, 900183,
+        '[Mock] #2038: conflicts with main, named files, measured ten minutes ago',
+        7, 3, 0, 3, { required: 3 }),
+      integration_measured_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+      integration_behind_by: 12,
+      integration_merges_clean: false,
+      integration_block_reason: 'conflict',
+      integration_conflict_paths: ['src/routes/votes.js', 'public/js/merge-status.js'],
+    },
     // (c) Checks passed, against a base main has since moved past. The
     // verdict is real and the tests did pass; what they passed against is no
     // longer what this would merge into. Soft on purpose: it is a caveat on

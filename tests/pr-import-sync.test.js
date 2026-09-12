@@ -80,7 +80,7 @@ const prImportSync = require('../src/services/pr-import-sync');
 // optional `head_sha = $N` predicate Slice 3 threads into qualifiedCounts.
 // Votes carry an optional `headSha`; when the gate is head-scoped only
 // matching votes count.
-function mockPool({ policy, atLeast, members, admins, votes, activeCount }) {
+function mockPool({ policy, atLeast, members, admins, votes, activeCount, epoch = 0 }) {
   return {
     query: async (sql, params) => {
       if (/SELECT approver_policy, approvals_required FROM apps/.test(sql)) {
@@ -93,12 +93,13 @@ function mockPool({ policy, atLeast, members, admins, votes, activeCount }) {
         return { rows: (admins || []).map((id) => ({ id })) };
       }
       if (/FILTER \(WHERE vote = /.test(sql)) {
-        // Restricted electorate. params = [id, approverIds, headSha?].
+        // Restricted electorate. #2038: scoped by approval epoch, which is a
+        // scalar subquery rather than a bound parameter — so the mock keys on
+        // the vote's own epoch against the session's.
         const allowed = params[1];
-        const headSha = params.length > 2 ? params[2] : null;
-        const scoped = /AND head_sha = \$3/.test(sql);
+        const scoped = /approval_epoch = \(SELECT approval_epoch/.test(sql);
         const counted = (votes || []).filter((v) =>
-          allowed.includes(v.userId) && (!scoped || v.headSha === headSha));
+          allowed.includes(v.userId) && (!scoped || (v.epoch ?? 0) === (epoch ?? 0)));
         return {
           rows: [{
             yes: String(counted.filter((v) => v.vote === 'yes').length),
@@ -107,12 +108,11 @@ function mockPool({ policy, atLeast, members, admins, votes, activeCount }) {
         };
       }
       if (/SELECT COUNT\(\*\) as cnt FROM (pr_votes|issue_votes)/.test(sql)) {
-        // Unrestricted electorate. params = [id, headSha?].
+        // Unrestricted electorate, same epoch scoping as above.
         const side = /vote = 'yes'/.test(sql) ? 'yes' : 'no';
-        const headSha = params.length > 1 ? params[1] : null;
-        const scoped = /AND head_sha = \$2/.test(sql);
+        const scoped = /approval_epoch = \(SELECT approval_epoch/.test(sql);
         const counted = (votes || []).filter((v) =>
-          v.vote === side && (!scoped || v.headSha === headSha));
+          v.vote === side && (!scoped || (v.epoch ?? 0) === (epoch ?? 0)));
         return { rows: [{ cnt: String(counted.length) }] };
       }
       if (/SELECT self_hosted, collab_visibility FROM apps/.test(sql)) {
@@ -128,72 +128,92 @@ function mockPool({ policy, atLeast, members, admins, votes, activeCount }) {
 
 let nextAppId = 5000;
 
-test('governedGate: imported gate counts only approvals matching the current head', async () => {
+test('governedGate: an imported gate counts only approvals from the current epoch', async () => {
+  // An imported head moving is always an author push — the platform does not
+  // write to the author's fork — so services/pr-import-sync.js moves the
+  // epoch on, and the approvals cast before it stop counting.
   const appId = nextAppId++;
-  const OLD = 'a'.repeat(40);
-  const NEW = 'b'.repeat(40);
   const pool = mockPool({
     policy: 'invited', atLeast: 1, activeCount: 50,
-    members: [10, 11],
+    members: [10, 11], epoch: 1,
     votes: [
-      { userId: 10, vote: 'yes', headSha: OLD },
-      { userId: 11, vote: 'yes', headSha: NEW },
-    ],
-  });
-  const gateNew = await governance.governedGate(pool, appId, {
-    kind: 'pr', id: 42, openedAt: Date.now(), headSha: NEW,
-  });
-  assert.equal(gateNew.qualifiedYes, 1, 'only the current-head approval counts');
-  assert.equal(gateNew.mergeable, true);
-});
-
-test('governedGate: a superseded-head approval alone does NOT satisfy the gate', async () => {
-  const appId = nextAppId++;
-  const OLD = 'c'.repeat(40);
-  const NEW = 'd'.repeat(40);
-  const pool = mockPool({
-    policy: 'invited', atLeast: 1, activeCount: 50,
-    members: [10, 11],
-    votes: [{ userId: 10, vote: 'yes', headSha: OLD }],
-  });
-  const gate = await governance.governedGate(pool, appId, {
-    kind: 'pr', id: 43, openedAt: Date.now(), headSha: NEW,
-  });
-  assert.equal(gate.qualifiedYes, 0, 'the stale-revision approval is ignored');
-  assert.equal(gate.mergeable, false, 'the head change re-opened approval');
-});
-
-test('governedGate: no headSha (native proposal) counts every approver vote', async () => {
-  const appId = nextAppId++;
-  const pool = mockPool({
-    policy: 'invited', atLeast: 1, activeCount: 50,
-    members: [10, 11],
-    votes: [
-      { userId: 10, vote: 'yes', headSha: null },
-      { userId: 11, vote: 'yes', headSha: 'e'.repeat(40) },
+      { userId: 10, vote: 'yes', epoch: 0 },
+      { userId: 11, vote: 'yes', epoch: 1 },
     ],
   });
   const gate = await governance.governedGate(pool, appId, {
-    kind: 'pr', id: 44, openedAt: Date.now(), // no headSha → unfiltered
+    kind: 'pr', id: 42, openedAt: Date.now(),
   });
-  assert.equal(gate.qualifiedYes, 2, 'native counting is unchanged (no head filter)');
+  assert.equal(gate.qualifiedYes, 1, 'only the current-epoch approval counts');
+  assert.equal(gate.mergeable, true);
 });
 
-test('qualifiedCounts: anyone policy honours the head filter for imported rows', async () => {
-  const H = 'f'.repeat(40);
+test('governedGate: a superseded approval alone does NOT satisfy the gate', async () => {
+  const appId = nextAppId++;
   const pool = mockPool({
-    policy: 'anyone', atLeast: null, activeCount: 4,
+    policy: 'invited', atLeast: 1, activeCount: 50,
+    members: [10, 11], epoch: 1,
+    votes: [{ userId: 10, vote: 'yes', epoch: 0 }],
+  });
+  const gate = await governance.governedGate(pool, appId, {
+    kind: 'pr', id: 43, openedAt: Date.now(),
+  });
+  assert.equal(gate.qualifiedYes, 0, 'the superseded approval is ignored');
+  assert.equal(gate.mergeable, false, 'the change re-opened approval');
+});
+
+test('governedGate: approvals at the current epoch all count, whatever commit they saw', async () => {
+  // The point of the change. Two people approved the same proposal while it
+  // sat at two different commits — because the platform rebased it between
+  // their clicks. Both approvals describe the same work, and both count.
+  const appId = nextAppId++;
+  const pool = mockPool({
+    policy: 'invited', atLeast: 1, activeCount: 50,
+    members: [10, 11], epoch: 2,
     votes: [
-      { userId: 1, vote: 'yes', headSha: H },
-      { userId: 2, vote: 'yes', headSha: '0'.repeat(40) },
-      { userId: 3, vote: 'no', headSha: H },
+      { userId: 10, vote: 'yes', epoch: 2 },
+      { userId: 11, vote: 'yes', epoch: 2 },
     ],
   });
-  const scoped = await governance.qualifiedCounts(pool, 'pr', 7, null, H);
-  assert.deepEqual(scoped, { yes: 1, no: 1 }, 'only current-head votes count');
-  const unscoped = await governance.qualifiedCounts(pool, 'pr', 7, null, null);
-  assert.deepEqual(unscoped, { yes: 2, no: 1 }, 'no head filter → all votes count');
+  const gate = await governance.governedGate(pool, appId, {
+    kind: 'pr', id: 44, openedAt: Date.now(),
+  });
+  assert.equal(gate.qualifiedYes, 2);
 });
+
+test('qualifiedCounts: the anyone policy is epoch-scoped too', async () => {
+  const pool = mockPool({
+    policy: 'anyone', atLeast: null, activeCount: 4, epoch: 1,
+    votes: [
+      { userId: 1, vote: 'yes', epoch: 1 },
+      { userId: 2, vote: 'yes', epoch: 0 },
+      { userId: 3, vote: 'no', epoch: 1 },
+    ],
+  });
+  assert.deepEqual(await governance.qualifiedCounts(pool, 'pr', 7, null),
+    { yes: 1, no: 1 }, 'only current-epoch votes count, under either policy');
+});
+
+test('issue votes are never epoch-scoped: they have no revision to go stale', async () => {
+  // A governance proposal is not a branch. There is no commit for anybody to
+  // push over, so scoping its votes would only ever hide valid ones. Asserted
+  // on the SQL the counter builds rather than through the mock's vote shape,
+  // which uses the up/down vocabulary and would test the fixture instead.
+  const seen = [];
+  const pool = {
+    query: async (sql) => {
+      seen.push(String(sql));
+      if (/approver_policy/.test(sql)) return { rows: [{ approver_policy: 'anyone', approvals_required: null }] };
+      return { rows: [{ cnt: '0', yes: '0', no: '0' }] };
+    },
+  };
+  await governance.qualifiedCounts(pool, 'issue', 7, null);
+  const counts = seen.filter((q) => /issue_votes/.test(q));
+  assert.ok(counts.length > 0, 'it did count something');
+  assert.ok(counts.every((q) => !/approval_epoch/.test(q)),
+    'no epoch clause may reach an issue vote');
+});
+
 
 // ── syncImportedProposal ──────────────────────────────────────────────
 
@@ -379,7 +399,9 @@ test('syncImportedProposal: head change resets tally, posts re-review, re-runs p
     assert.ok(headUpdate, 'imported_pr_head_sha is advanced');
     assert.equal(headUpdate.params[0], NEW);
 
-    assert.ok(sqls.some((s) => /DELETE FROM pr_votes WHERE session_id = \$1/.test(s)), 'vote tally cleared');
+    assert.ok(sqls.some((s) => /approval_epoch = approval_epoch \+ 1/.test(s)),
+      'the tally is cleared by moving the epoch on, not by deleting the rows — '
+      + 'one statement, no half-cleared window, and the votes survive as a record');
 
     assert.equal(sysMessages.length, 1, 'exactly one re-review note');
     assert.match(sysMessages[0].content, /updated on GitHub/i);
