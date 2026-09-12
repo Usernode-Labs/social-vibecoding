@@ -765,3 +765,60 @@ test('the dev chat is the module\'s only consumer, and owns the fetching', () =>
   assert.match(DEV_CHAT_SRC, /dev-flow\/status/,
     'dev-chat.js reads the status the walkthrough is derived from');
 });
+
+
+// ── "Start over" (the stale-work-order fix) ─────────────────────────────
+//
+// It has to live on the HAND-OFF step. Step 3 is `done` for as long as a task
+// exists — and the mapper gives buttons only to the step that is current — so
+// a button placed there would never render. Step 4 is also where the user is
+// actually standing when a stale work order is in front of them.
+
+test('the hand-off step offers a way out of the work order it is showing', () => {
+  const steps = stepsOf(fullStatus({ branch: { state: 'missing', pushed: false, missing: true } }));
+  assert.equal(steps.handoff.state, 'current', 'the step the user is on while holding a work order');
+  const actions = steps.handoff.actions.map((a) => a.action);
+  assert.ok(actions.includes('discard'), `hand-off offers "Start over" (got ${actions.join(', ')})`);
+  // Copying is still what almost everybody arriving here wants.
+  assert.equal(steps.handoff.actions.find((a) => a.action === 'copy').primary, true);
+  assert.ok(!steps.handoff.actions.find((a) => a.action === 'discard').primary,
+    '"Start over" is never the primary button');
+});
+
+test('"Start over" is withheld on a continuation', () => {
+  // The task points at a specific proposal or session. Discarding it would drop
+  // that target silently, and the next prepare would open NEW work instead of
+  // updating what the user came here to update.
+  for (const kind of ['session', 'proposal']) {
+    const steps = stepsOf(continuingStatus(kind, { branch: { state: 'missing', pushed: false, missing: true } }));
+    const actions = steps.handoff.actions.map((a) => a.action);
+    assert.ok(!actions.includes('discard'), `a ${kind} continuation offers no "Start over"`);
+    assert.ok(actions.includes('copy'), 'but still hands the work order over');
+  }
+});
+
+test('"Start over" renders as a button the dev chat can wire', () => {
+  const html = DevFlowSelect.wizardHtml({
+    agent: 'claude-code',
+    status: fullStatus({ branch: { state: 'missing', pushed: false, missing: true } }),
+  });
+  assert.match(html, /data-flow-action="discard"/, 'the action reaches the DOM');
+  assert.match(html, /Start over/);
+  // Not an anchor: it is a mutation on this origin, not a trip out to GitHub.
+  assert.doesNotMatch(html, /<a[^>]*data-flow-action="discard"/);
+  // And it disables with everything else while a request is in flight.
+  const busy = DevFlowSelect.wizardHtml({
+    agent: 'claude-code',
+    busy: true,
+    status: fullStatus({ branch: { state: 'missing', pushed: false, missing: true } }),
+  });
+  assert.match(busy, /data-flow-action="discard"[^>]*disabled/);
+});
+
+test('once the branch is pushed there is nothing to start over from', () => {
+  // Step 5 is current by then, and the work the button would throw away is
+  // already on the fork.
+  const steps = stepsOf(fullStatus({}));
+  assert.equal(steps.submit.state, 'current');
+  assert.deepEqual(steps.handoff.actions, [], 'a done step offers no buttons at all');
+});

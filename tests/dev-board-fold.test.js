@@ -383,7 +383,12 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // in the frame's chrome two strips away;
   // 594 → 597: full-card tabs, embedded owner workspace and review discussion.
   // 597 → 598: #1926 repeated conflict notices in card discussions.
-  assert.equal(DAPP.tests.length, 598);
+  // 598 → 601: the stale-work-order fix. Two checks shoot the hand-off step of
+  // an ORDINARY work order (?demo=plain, the fixture added with them) — that
+  // "Start over" is offered there at all, and that copying stays the primary
+  // action beside it — and one pins it withheld on a continuation, whose
+  // target discarding would silently drop.
+  assert.equal(DAPP.tests.length, 601);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

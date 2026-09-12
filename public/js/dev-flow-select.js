@@ -197,7 +197,10 @@
         done: !!(branch && branch.pushed),
         detail: handoffDetail(branch, task, label, targetKind),
         note: connectorNote(st.connectors, agent || (task && task.agent), branch),
-        actions: task ? handoffActions(agent || task.agent) : [],
+        // `!target`: see handoffActions. Step 3 cannot carry this button —
+        // it is `done` for as long as a task exists, and the mapper below
+        // gives buttons only to the step that is current.
+        actions: task ? handoffActions(agent || task.agent, !target) : [],
       },
       {
         key: 'submit',
@@ -309,11 +312,28 @@
     return base;
   }
 
-  function handoffActions(agent) {
+  // `canDiscard` adds "Start over", and this is the step it has to live on.
+  //
+  // The walkthrough re-renders whatever open task the account holds for this
+  // app, which is what makes it resumable — and, with nothing sweeping the
+  // table, also what made a stale work order permanent: step 3 reads `done`,
+  // so its "what should it build?" field is gone, and the only button in reach
+  // copies a work order for something that may have been finished weeks ago.
+  // This is the step the user is standing on while that happens, so this is
+  // where the way out belongs.
+  //
+  // Withheld on a CONTINUATION (#1054/#1071). That task points at a specific
+  // proposal or session; discarding it would drop the target silently and the
+  // next prepare would open NEW work instead of updating what the user came
+  // here to update. Backing out of one of those is what "Build here instead"
+  // is for. Never primary either way — copying the work order is still the
+  // thing almost everybody arriving here wants.
+  function handoffActions(agent, canDiscard) {
     var actions = [{ action: 'copy', label: 'Copy work order', primary: true }];
     var url = agentUrl(agent);
     if (url) actions.push({ action: 'open-agent', label: 'Open ' + agentLabel(agent), href: url });
     actions.push({ action: 'refresh', label: 'Check again' });
+    if (canDiscard) actions.push({ action: 'discard', label: 'Start over' });
     return actions;
   }
 

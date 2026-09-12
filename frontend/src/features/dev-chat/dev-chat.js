@@ -2869,6 +2869,7 @@ const DevChat = {
       return;
     }
     if (action === 'prepare') return DevChat._devFlowPrepare();
+    if (action === 'discard') return DevChat._devFlowDiscard();
     if (action === 'submit') return DevChat._devFlowSubmit();
     // #1071. A separate action, not a flag on 'submit': the two hit different
     // routes with different bodies and different failure modes, and a single
@@ -2932,6 +2933,52 @@ const DevChat = {
       flow.notice = data.reused
         ? 'You already had a work order for this app, so this reuses it.'
         : 'Work order ready.';
+    } catch (err) {
+      flow.error = `Network error: ${err.message}`;
+    } finally {
+      flow.busy = false;
+      await DevChat._devFlowEnsureStatus(true);
+      DevChat._repaintDevFlow();
+    }
+  },
+
+  // The hand-off step's "Start over". Puts the open work order away and drops
+  // back to step 3's brief field, which is the whole point: the walkthrough shows
+  // whatever open task the account holds for this app, so a stale one is
+  // otherwise permanent.
+  //
+  // `flow.brief` is cleared rather than left alone. It is seeded from the
+  // session title, and re-rendering the old text under a fresh work order is
+  // how you get a second work order describing the same finished change — an
+  // empty box asking "What should it build?" is the question actually being
+  // put to the user here.
+  //
+  // A 404 is not surfaced as an error: it means the task was already closed,
+  // so the re-read below leaves the walkthrough in exactly the state the user
+  // was reaching for.
+  async _devFlowDiscard() {
+    const flow = DevChat._devFlow;
+    const slug = App.currentApp;
+    const task = flow.status && flow.status.task;
+    if (!task) {
+      flow.error = 'No work order to put away.';
+      DevChat._repaintDevFlow();
+      return;
+    }
+    flow.busy = true;
+    DevChat._repaintDevFlow();
+    try {
+      const res = await fetch(
+        `/api/apps/${encodeURIComponent(slug)}/external-tasks/${encodeURIComponent(task.id)}/discard`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin' }
+      );
+      if (res.ok || res.status === 404) {
+        flow.brief = '';
+        flow.notice = 'Work order put away. Say what you want to build instead.';
+      } else {
+        const data = await res.json().catch(() => ({}));
+        flow.error = data.error || 'Could not put that work order away.';
+      }
     } catch (err) {
       flow.error = `Network error: ${err.message}`;
     } finally {

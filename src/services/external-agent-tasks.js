@@ -1948,17 +1948,83 @@ async function withTaskLock(pool, taskId, fn) {
 // The caller's most recent open task for one app, so `slug` + `branch` works
 // for an agent that has lost its task id. Falls back to task-less submission
 // (with the attribution gate fully applied) when there is none.
-async function loadLatestOpenTaskForSlug(pool, userId, slug) {
+//
+// `unexpiredOnly` is OFF by default and only routes/dev-flow.js's walkthrough
+// passes it, because the two readers want different things from an expired
+// row — the same split findOpenTaskBySession already documents:
+//
+//   submitWork's `slug` + `branch` recovery must keep seeing it. The row is
+//   the only record of the base commit that branch was cut from, and
+//   mirrorForkBranch runs its ancestry check `if (baseSha)` — so hiding an
+//   expired task there would quietly drop the base_mismatch protection from
+//   exactly the long-running job most likely to need it.
+//
+//   The WALKTHROUGH must not. Nothing sweeps expired rows, and every other
+//   reader that decides whether the user still has a live work order already
+//   filters them (findOpenTaskByRequest, and the open-work-order listing that
+//   feeds the cap). Left unfiltered here, one dangling reservation pins the
+//   launchpad to a dead task for good: step 3 renders `done`, its "what should
+//   it build?" field never appears, and "Copy work order" hands the agent a
+//   work order for something finished weeks ago.
+//
+// Two call sites, each with its SQL written out in full, rather than one query
+// with the predicate spliced in. scripts/check-sql.js Parse/Describes every
+// query it can read as a literal against a real PostgreSQL planner; anything
+// assembled at runtime — an interpolated fragment, or even a constant passed by
+// name — falls out of that inventory into the hand-reviewed dynamic baseline.
+// Both shapes of this one are worth keeping under the planner, and the repeated
+// SELECT list is the price of that.
+async function loadLatestOpenTaskForSlug(pool, userId, slug, opts = {}) {
   try {
-    const { rows } = await pool.query(
-      `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-         FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
-        WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
-        ORDER BY t.id DESC LIMIT 1`,
-      [userId, slug]
-    );
+    const { rows } = opts.unexpiredOnly
+      ? await pool.query(
+        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
+          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
+            AND t.expires_at > NOW()
+          ORDER BY t.id DESC LIMIT 1`,
+        [userId, slug]
+      )
+      : await pool.query(
+        `SELECT t.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM external_agent_tasks t JOIN apps a ON t.app_id = a.id
+          WHERE t.user_id = $1 AND a.slug = $2 AND t.status = 'open'
+          ORDER BY t.id DESC LIMIT 1`,
+        [userId, slug]
+      );
     return rows[0] || null;
   } catch {
+    return null;
+  }
+}
+
+// "Start over" on the walkthrough (#1049): put ONE open task away by its id.
+//
+// Deliberately not prepareWork's `restart`, which abandons by `request_key`.
+// That is the right key for starting the SAME request over, and the wrong one
+// here: a user who wants to build something else types a different brief, which
+// hashes to a different request_key, so restart's UPDATE matches nothing — the
+// stale row stays open, still holding one of the caller's ten slots and still
+// the newest thing loadLatestOpenTaskForSlug can see.
+//
+// Scoped to the caller's own OPEN rows, so a replayed request cannot reach
+// somebody else's reservation or reopen bookkeeping on a submitted one.
+// Returns the id it closed, or null when it matched nothing — which the route
+// turns into `unknown_task` rather than a silent success.
+async function discardTask(pool, userId, taskId) {
+  const id = Number(taskId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE external_agent_tasks
+          SET status = 'abandoned'
+        WHERE id = $1 AND user_id = $2 AND status = 'open'
+        RETURNING id`,
+      [id, userId]
+    );
+    return rows[0] ? Number(rows[0].id) : null;
+  } catch (err) {
+    log.warn('external-agent-tasks', 'task discard failed', { taskId: id, err: err.message });
     return null;
   }
 }
@@ -3252,6 +3318,10 @@ module.exports = {
   // reopening the chat must show the same branch and base commit rather
   // than mint a second task.
   loadLatestOpenTaskForSlug,
+  // "Start over" on that same walkthrough: the only way to put a work order
+  // away without submitting it, and the reason a stale one stops being
+  // permanent.
+  discardTask,
   renderPreparedTask,
   prepareWork,
   submitWork,

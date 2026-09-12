@@ -4069,3 +4069,78 @@ test('the lease is a force-with-lease pinned to the commit the platform read', (
   assert.doesNotMatch(returns, /cleanup:/, 'there is no branch to clean up — only a head that moved');
   assert.match(returns, /return \{ ok: true, headSha: verified\.headSha/);
 });
+
+
+// ── The stale-work-order fix ────────────────────────────────────────────
+//
+// Two readers, one row, and they want opposite things from an expired
+// reservation — the same split findOpenTaskBySession already documents.
+
+test('loadLatestOpenTaskForSlug filters expiry only when the caller asks', async () => {
+  const LOAD_SQL = 'FROM external_agent_tasks t JOIN apps a';
+
+  // submitWork's `slug` + `branch` recovery: the default, and it must still
+  // see an expired row. That row is the only record of the base commit the
+  // pushed branch was cut from, and mirrorForkBranch runs its ancestry check
+  // `if (baseSha)` — so filtering it here would drop base_mismatch protection
+  // from exactly the long-running job most likely to need it.
+  const recovery = [];
+  await svc.loadLatestOpenTaskForSlug(
+    fakePool([[LOAD_SQL, [{ id: 7 }]]], recovery), 3, 'recipe-box'
+  );
+  assert.doesNotMatch(recovery[0].sql, /expires_at/,
+    'recovery keeps seeing an expired task');
+  assert.deepEqual(recovery[0].params, [3, 'recipe-box']);
+
+  // The walkthrough: opts in, because resumable is not the same as permanent.
+  const walkthrough = [];
+  await svc.loadLatestOpenTaskForSlug(
+    fakePool([[LOAD_SQL, [{ id: 7 }]]], walkthrough), 3, 'recipe-box', { unexpiredOnly: true }
+  );
+  assert.match(walkthrough[0].sql, /AND t\.expires_at > NOW\(\)/,
+    'an expired reservation stops pinning the launchpad');
+  // Same parameters either way: the filter is a literal, never interpolated
+  // user input.
+  assert.deepEqual(walkthrough[0].params, [3, 'recipe-box']);
+
+  // Still open to the caller's OWN rows for this app, both ways round.
+  for (const q of [recovery[0], walkthrough[0]]) {
+    assert.match(q.sql, /t\.user_id = \$1 AND a\.slug = \$2 AND t\.status = 'open'/);
+    assert.match(q.sql, /ORDER BY t\.id DESC LIMIT 1/);
+  }
+});
+
+test('discardTask abandons one open row of the caller\'s, and nothing else', async () => {
+  const queries = [];
+  const pool = fakePool([['UPDATE external_agent_tasks', [{ id: 4242 }]]], queries);
+  assert.equal(await svc.discardTask(pool, 3, 4242), 4242);
+
+  const update = queries[0];
+  assert.match(update.sql, /SET status = 'abandoned'/,
+    "'abandoned' is the status the CHECK constraint already allows");
+  // Owner AND still-open, both: a replayed request must not reach somebody
+  // else's reservation, nor reopen bookkeeping on one already submitted.
+  assert.match(update.sql, /WHERE id = \$1 AND user_id = \$2 AND status = 'open'/);
+  assert.deepEqual(update.params, [4242, 3]);
+
+  // Matching nothing is null, not a cheerful success — the route turns that
+  // into unknown_task rather than telling the user it put something away.
+  const q2 = [];
+  assert.equal(
+    await svc.discardTask(fakePool([['UPDATE external_agent_tasks', []]], q2), 3, 4242),
+    null
+  );
+
+  // A junk id never reaches the database at all.
+  const q3 = [];
+  const junkPool = fakePool([['UPDATE external_agent_tasks', [{ id: 1 }]]], q3);
+  for (const bad of [0, -3, 1.5, NaN, null, undefined, '1; DROP TABLE apps']) {
+    assert.equal(await svc.discardTask(junkPool, 3, bad), null, `${bad} is not a task id`);
+  }
+  assert.equal(q3.length, 0, 'no query is issued for any of them');
+
+  // A database that throws is a null, not a rejection: the walkthrough re-reads
+  // its status either way and the user is not shown a stack trace.
+  const throwing = { async query() { throw new Error('database is on fire'); } };
+  assert.equal(await svc.discardTask(throwing, 3, 4242), null);
+});
