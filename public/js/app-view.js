@@ -8672,12 +8672,15 @@ const AppView = {
   // silently disable that guard.
   _cardVoteButtonSpecs(pr) {
     if (!pr || pr.status !== 'promoted') return [];
-    const nativeHead = pr.source !== 'imported'
-      && typeof pr.reviewed_head_sha === 'string'
-      && /^[0-9a-f]{40}$/i.test(pr.reviewed_head_sha)
-      ? pr.reviewed_head_sha.toLowerCase()
-      : null;
-    const rev = nativeHead ? [nativeHead] : [];
+    // #2038: the vote carries the approval EPOCH the card was rendered with,
+    // not the commit. A commit changes whenever the platform brings the
+    // proposal up to date with main, and comparing commits made every one of
+    // those merges reject the next voter's click — for code the platform had
+    // just certified was unchanged. The epoch only moves when somebody writes
+    // bytes nobody approved.
+    const epoch = Number.isFinite(parseInt(pr.approval_epoch, 10))
+      ? parseInt(pr.approval_epoch, 10) : null;
+    const rev = epoch === null ? [] : [epoch];
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
     return [
@@ -13400,14 +13403,21 @@ const AppView = {
     if (p.merge_conflict_state === 'failed') {
       out.push({
         key: 'conflict_failed',
-        label: 'Conflict resolution failed',
+        // Says what to do, not what the platform did. A reader seeing a card
+        // needs the next action; "failed" reported our history at them.
+        label: 'Needs manual resolution',
         detail: `The last automatic conflict resolution failed. ${AppView._conflictRemedy(p, 'failed').text}`,
       });
     } else if (p.merge_conflict_state === 'conflict') {
       out.push({
         key: 'merge_conflict',
-        label: 'Merge conflict',
-        detail: `A merge was attempted but this proposal conflicts with main. ${AppView._conflictRemedy(p, 'conflict').text}`,
+        // Written in exactly ONE place: the merge-time 405 in routes/votes.js.
+        // So it does not mean "this conflicts with main" — mergeability_conflict
+        // is that, and says so. It means the proposal passed every gate, the
+        // platform called pulls.merge, and GitHub refused. The old label read
+        // as a duplicate of the prediction below it.
+        label: 'GitHub refused the merge',
+        detail: `This proposal passed every gate and the platform tried to merge it, but GitHub refused. ${AppView._conflictRemedy(p, 'conflict').text}`,
       });
     }
     // #1442 — GitHub's PREDICTION that this proposal no longer merges, made
@@ -13489,20 +13499,51 @@ const AppView = {
         soft: true,
       });
     }
-    // Console errors never block the vote, but they belong in the same
-    // "what's wrong with this" list the detail view enumerates.
-    if (p.console_check_state === 'errors') {
-      const n = Array.isArray(p.console_errors) ? p.console_errors.length : 0;
+    // #2038 — the two reasons the BROWSER cannot derive.
+    //
+    // Everything above is read off columns the card already has. These two
+    // are not in any column the browser can interpret: whether the app's
+    // merge queue is working on this proposal right now, and whether it
+    // needs a merge the shared token budget cannot pay for. The server knows
+    // both and now says so, rather than the card implying a sync is underway
+    // whenever a proposal is behind — which it was not, for anything below
+    // the vote threshold.
+    const served = (p.integration && Array.isArray(p.integration.blockReasons))
+      ? p.integration.blockReasons : [];
+    if (served.includes('integrating')) {
       out.push({
-        key: 'console_errors',
-        label: n ? `Console errors · ${n}` : 'Console errors',
-        detail: n
-          ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'}. This change may break the app. It does not block the merge.`
-          : 'The staging preview logged console errors. This change may break the app. It does not block the merge.',
-        soft: true,
-        advisory: true,
+        key: 'integrating',
+        label: 'Bringing up to date…',
+        detail: 'The platform is merging the latest main into this proposal and '
+          + 're-running its checks against the result. It merges on its own once '
+          + 'that passes. Nobody needs to do anything.',
+        running: true,
       });
     }
+    if (served.includes('budget')) {
+      out.push({
+        key: 'budget',
+        label: 'Waiting on shared budget',
+        detail: 'This proposal needs merging with main, but the platform’s shared '
+          + 'token budget is spent for today. It resumes after the midnight UTC reset.',
+        soft: true,
+      });
+    }
+
+    // #2038: the advisory console tag is gone.
+    //
+    // Console errors already BLOCK — services/visuals.js classifyTests puts
+    // "a blocking check had console errors" straight into check_state
+    // 'failing', which the gate refuses and which draws its own red tag. What
+    // console_check_state measures is the same class of problem on a
+    // DIFFERENT target set: the screenshot capture routes rather than the
+    // declared dapp.json checks. Drawing both meant one card carrying two
+    // tags about console errors, one red and blocking, one amber and not.
+    //
+    // The column and its error list are kept — the detail view enumerates
+    // them, and that is where an advisory reading belongs. It is only the
+    // TAG that goes.
+
     return out;
   },
 
@@ -13544,7 +13585,7 @@ const AppView = {
     if (p.merge_conflict_state === 'resolving' || p.resolving === true) {
       out.push({
         t: 'chip', key: 'tag-resolving', cls: AppView.STATUS_TAG_CLS.running,
-        label: 'Resolving conflicts…', spinner: true, meta: true,
+        label: 'Resolving conflicts automatically…', spinner: true, meta: true,
         data: { 'data-status-tag': 'resolving' },
         title: 'Reconciling conflicts with main automatically, then retrying the merge.',
       });
@@ -13555,8 +13596,14 @@ const AppView = {
       for (const r of AppView.blockReasons(p)) {
         out.push({
           t: 'chip', key: `tag-${r.key}`,
-          cls: r.soft ? AppView.STATUS_TAG_CLS.soft : AppView.STATUS_TAG_CLS.blocking,
+          // Three tones, three meanings: `running` is in flight and nobody
+          // need act (the only one that spins), `soft` is worth knowing and
+          // does not block, everything else stops the merge.
+          cls: r.running ? AppView.STATUS_TAG_CLS.running
+            : r.soft ? AppView.STATUS_TAG_CLS.soft
+              : AppView.STATUS_TAG_CLS.blocking,
           label: r.label, title: r.detail || undefined, meta: true,
+          spinner: !!r.running,
           data: { 'data-status-tag': r.key },
         });
       }
@@ -14640,16 +14687,13 @@ const AppView = {
     const adminMerge = canForceMerge
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${pr.requires_explicit_approval ? 'Admin: merge this admins-changing PR right now, bypassing the vote' : 'Admin: merge this PR right now, bypassing the vote majority'}" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
-    // Native votes carry the exact revision rendered with this card. If the
-    // PR moves before the click reaches the server, the server rejects the
-    // stale action and asks for a refresh instead of applying it to unseen
-    // code. Imported proposals retain their existing vote flow.
-    const nativeHead = pr.source !== 'imported'
-      && typeof pr.reviewed_head_sha === 'string'
-      && /^[0-9a-f]{40}$/i.test(pr.reviewed_head_sha)
-      ? pr.reviewed_head_sha.toLowerCase()
-      : null;
-    const revisionArg = nativeHead ? `, '${nativeHead}'` : '';
+    // The vote carries the approval epoch this card was rendered with, so a
+    // proposal that genuinely changed under the voter is still refused —
+    // while one the platform merely rebased is not.
+    // #2038: see _cardVoteButtonSpecs — the epoch, not the commit.
+    const voteEpoch = Number.isFinite(parseInt(pr.approval_epoch, 10))
+      ? parseInt(pr.approval_epoch, 10) : null;
+    const revisionArg = voteEpoch === null ? '' : `, ${voteEpoch}`;
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`;
@@ -14847,26 +14891,40 @@ const AppView = {
 
 
   _voteInFlight: new Set(),
-  async castVote(sessionId, vote, expectedHeadSha = null) {
+  // #2038: the epoch each proposal was last seen at, so a rejection can
+  // re-arm the next click without waiting on a refetch to land. The old
+  // code fired the refresh without awaiting it and released the click lock
+  // first, so an impatient second click re-sent the same stale stamp and
+  // took a second identical rejection — one head move, two toasts.
+  _seenEpoch: new Map(),
+  async castVote(sessionId, vote, expectedEpoch = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
-    // The server is now idempotent on an unchanged vote (won't re-post
-    // to chat or re-enter checkAndMerge), but blocking here still avoids
-    // pointless network round-trips and keeps the UI responsive.
+    // The server is idempotent on an unchanged vote, but blocking here
+    // avoids pointless round-trips and keeps the UI responsive.
     const key = `${sessionId}:${vote}`;
     if (AppView._voteInFlight.has(key)) return;
     AppView._voteInFlight.add(key);
     try {
+      const known = AppView._seenEpoch.get(sessionId);
+      const epoch = known === undefined ? expectedEpoch : known;
       const res = await fetch(`/api/sessions/${sessionId}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vote, expectedHeadSha }),
+        body: JSON.stringify({ vote, expectedEpoch: epoch }),
       });
       const data = await res.json().catch(() => ({}));
-      AppView.refreshDevData('vote');
       if (!res.ok) {
+        // A rejection that names the current epoch lets the very next click
+        // land, rather than needing a refetch to have finished first.
+        if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
+          AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
+        }
+        await AppView.refreshDevData('vote');
         PlatformUI.toast(data.error || `Vote failed (HTTP ${res.status}).`);
         return;
       }
+      AppView._seenEpoch.delete(sessionId);
+      AppView.refreshDevData('vote');
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
