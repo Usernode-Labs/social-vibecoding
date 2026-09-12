@@ -2155,8 +2155,20 @@ test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
   // ...and goes back on to every OTHER child, so only the working PANE widens
   // — the toolbar, the tabs and the board travel together now, so the pane is
   // the unit that grows rather than the board wrapper inside it.
+  //
+  // IT HAS TO REACH THROUGH THE TAB BODY, and that is the bug this pins. The
+  // rule once bound every direct child of `.dev-ws` except the pane; the tabs
+  // put the pane one level deeper, inside `.dev-ws-tabbody`, so the bound
+  // landed on the WRAPPER and the board was cramped to the reading column
+  // from outside it. Measured at 1440: the pane stayed 760 while `.dev-ws`
+  // itself had already widened to 1432, which is the shape of a bound applied
+  // one level too high. Both halves are asserted, because dropping either
+  // brings it back — the first for the rail and anything else that stays a
+  // direct child, the second for the pane inside the body.
   assert.match(CSS,
-    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > :not\(\.dev-ws-pane\) \{[^}]*max-width: 760px/);
+    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > :not\(\.dev-ws-tabbody\),/);
+  assert.match(CSS,
+    /#dev-workshop:has\(\.dev-ws-board\) > \.dev-ws > \.dev-ws-tabbody > :not\(\.dev-ws-pane\) \{[^}]*max-width: 760px/);
   // Widening it must not DISSOLVE it. An earlier cut stripped the pane's sheet,
   // radius and padding on By stage, on the argument that a card face is a
   // frame drawn around the whole window; what that produced was the pane
@@ -2361,4 +2373,53 @@ test('the ?ws= deep link survives arriving AFTER the first paint', () => {
   // another tab back to the deep-linked one on the next refresh.
   assert.ok(/deepTabApplied\.current \|\| !v\.tab/.test(WORKSHOP),
     'applied once, so a later republish cannot override the reader');
+});
+
+test('the rail rests the same distance off the bottom on every tab', () => {
+  // IT CAME TO REST TWO DIFFERENT WAYS and nobody had made the two agree. On
+  // a short tab `.dev-ws` ends above the fold, so the floor under its height
+  // sets the gap; on a long one the rail is stuck while the content scrolls,
+  // so `bottom` sets it. The floor subtracted a bare 24px and `bottom` was 0,
+  // which measured at 1440x900 as 23px of air on Current status and Needs you
+  // against 0 on All items — "floating part way up, and it moves between
+  // tabs". One token, spent in both places, is what makes them agree.
+  assert.match(CSS, /--ws-gap: calc\(8px \+ var\(--platform-safe-bottom, 0px\)\);/,
+    'the gap is named once');
+  const area = /--ws-area: calc\(([\s\S]*?)\);/.exec(CSS);
+  assert.ok(area, 'the floor exists');
+  assert.match(area[1], /var\(--ws-gap\)/, 'the floor subtracts the gap');
+  assert.ok(!/- 24px/.test(area[1]), 'and not a bare number with no counterpart');
+  assert.match(CSS, /\.dev-ws-tabs \{\s*position: sticky; bottom: var\(--ws-gap\);/,
+    'the sticky offset is the same gap');
+  // The clearance under the last card is the rail's box PLUS that gap, so it
+  // tracks where the rail actually rests instead of being remembered.
+  assert.match(CSS, /padding-bottom: calc\(72px \+ var\(--ws-gap\)\);/);
+  // Keyboard up, inset gone — it sits behind the keyboard, so reserving it is
+  // dead space. Same trade the shell makes for its own bars.
+  assert.match(CSS, /html\.un-kb \.dev-ws \{ --ws-gap: 8px; \}/);
+  // And the bar does NOT carry .platform-safe-bar: that rule adds the inset to
+  // the element's own padding, which on this floating pill landed 8px under
+  // the tabs against 6px over them.
+  assert.ok(!/dev-ws-tabs platform-safe-bar/.test(WORKSHOP),
+    'the floating pill carries the inset in the gap, not in its padding');
+});
+
+test('the ask composer shows its send button before it is touched', () => {
+  // The whole controls row used to sit behind focus, which took the send
+  // circle with it and left a card that looked like a text box and nothing
+  // else — no sign it would do anything. The MODEL is the part that earns its
+  // height on use; the send button is the affordance.
+  //
+  // The button also must not MOVE when the row appears, so it lives on the
+  // resting line rather than being hoisted out of the row on focus.
+  const line = /<div className="dev-ws-ask-line">([\s\S]*?)<\/div>/.exec(WORKSHOP);
+  assert.ok(line, 'the composer has a resting line');
+  assert.match(line[1], /id="dev-ws-ask-input"/, 'the field is on it');
+  assert.match(line[1], /className="dc-send-btn dc-circle-send dev-ws-ask-send"/,
+    'and so is the send circle, unconditionally');
+  // The focus-gated row holds the model and nothing else now.
+  const row = /\{focused \|\| engaged \? \(\s*<div className="dev-ws-ask-row">([\s\S]*?)\n          <\/div>/.exec(WORKSHOP);
+  assert.ok(row, 'the model row is still gated on focus');
+  assert.ok(!/dc-send-btn/.test(row[1]), 'the send circle is not in it');
+  assert.match(row[1], /data-ws-ask-model/, 'the model picker is');
 });
