@@ -60,6 +60,11 @@ function stagingMockGroupChat(appId, thread) {
       '[Mock] And one from this morning, which needs no date at all.'),
     row(3, 4, 'staging-tester',
       '[Mock] Same again a few minutes ago, so a run of today\'s rows stays easy to scan.'),
+    ...[4, 5, 6].map((offset) => ({
+      ...row(offset, 7 - offset, null,
+        '[Mock] PR #9000001 is now synced with main and conflict-free. It needs 1/2 yes votes needed to merge.'),
+      user_id: null, msg_type: 'conflict',
+    })),
   ];
 }
 

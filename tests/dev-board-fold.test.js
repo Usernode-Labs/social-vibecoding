@@ -382,7 +382,8 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // and "+" render in its sticky head directly above those tabs rather than
   // in the frame's chrome two strips away;
   // 594 → 597: full-card tabs, embedded owner workspace and review discussion.
-  assert.equal(DAPP.tests.length, 597);
+  // 597 → 598: #1926 repeated conflict notices in card discussions.
+  assert.equal(DAPP.tests.length, 598);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
