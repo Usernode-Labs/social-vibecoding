@@ -10,6 +10,12 @@
 // parent is the reviewed sha is trivial to forge. An epoch is not derived from
 // the branch at all, so it cannot be forged; it moves when, and only when, the
 // platform decides somebody wrote bytes nobody had approved.
+//
+// #2038 also claimed its migration changed no tally in either direction. That
+// was wrong, and #2050 corrects it: the old predicate counted every vote on a
+// session with NO reviewed head, this backfill kept only its other half, and
+// every rename PR and staging fixture silently fell to a zero tally. The
+// backfill in schema.sql now reproduces the old rule whole.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -38,11 +44,20 @@ test('a vote counts while its epoch matches the proposal it was cast on', () => 
   );
 });
 
-test('a NULL vote epoch never counts, which is what makes the migration a no-op', () => {
+test('a NULL vote epoch never counts — the property, and its cost', () => {
   // Votes that were stale under the old commit rule were backfilled to NULL
   // and votes that were counting were backfilled to 0. SQL's NULL semantics
   // then carry both cases across untouched: NULL = 0 is NULL, not true, so a
   // stale vote stays uncounted without anything having to delete it.
+  //
+  // The same property has a sharp edge this file once described as a free
+  // win, and #2050 is the bill: an equality against a nullable column also
+  // means an INSERT that OMITS the column writes a vote that can never count
+  // — which thirteen of the fifteen INSERT INTO pr_votes statements did. The
+  // read side is not the place to fix it, because weakening this predicate
+  // would resurrect genuinely stale votes. schema.sql's
+  // pr_votes_stamp_approval_epoch trigger fills the column on the way in, and
+  // tests/pr-vote-epoch-postgres.test.js owns that half.
   assert.match(currentVotePredicateSql(), /approval_epoch = /,
     'the predicate must be an equality, so NULL propagates rather than matching');
   assert.doesNotMatch(currentVotePredicateSql(), /IS NOT DISTINCT FROM/,
