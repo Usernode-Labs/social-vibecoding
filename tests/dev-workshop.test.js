@@ -579,28 +579,44 @@ async function loadWith(body) {
   return AppView;
 }
 
-test('the three cards are what the pane draws, titled and in window order', async () => {
+test('the pane opens on Open alone, and the older windows are a walk back', async () => {
   const cards = {
     lastWeek: 'Kubernetes deploys, staging previews and email recovery, plus a Workshop pass.',
     thisWeek: 'The Workshop summary became three cards and mail now sends from a no-reply address.',
     open: 'Mostly mobile layout, the voting flow and a long tail of preview reliability.',
   };
   const AppView = await loadWith(responseBody({ cards: undefined, digestCards: cards }));
-  assert.deepEqual(plain(AppView._workshopThemes.digestCards), cards, 'the normaliser keeps all three');
+  assert.deepEqual(plain(AppView._workshopThemes.digestCards),
+    { ...cards, older: [], firstWeek: null },
+    'the normaliser keeps all three, and says the walk has no earlier steps');
 
   const html = workshopHtml(AppView);
   assert.match(html, /data-ws-cards/);
-  for (const [key, line] of Object.entries(cards)) {
-    assert.ok(html.includes(`data-ws-card="${key}"`), `${key} is drawn`);
-    assert.ok(html.includes(line), `${key}'s line is its own`);
+  assert.ok(html.includes(cards.open), 'the present is what is drawn');
+  for (const key of ['lastWeek', 'thisWeek']) {
+    assert.ok(!html.includes(`data-ws-card="${key}"`), `${key} waits behind the control`);
+    assert.ok(!html.includes(cards[key]), `and so does ${key}'s line`);
   }
-  // Window order, and the titles that make the block scannable: the whole
-  // point of three cards over one paragraph is that a reader looking for one
-  // window does not have to parse the other two.
-  const order = [...html.matchAll(/data-ws-card="([a-zA-Z]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(order, ['lastWeek', 'thisWeek', 'open']);
+  // The pane opens on the PRESENT and nothing else. All three windows used
+  // to be drawn at once, which spent three cards of vertical space before
+  // the board on two questions most readers were not asking — and was also
+  // the whole history the lander could ever show. `open` is the default and
+  // every earlier window is one press behind "Show past week".
+  const order = [...html.matchAll(/data-ws-card="([a-zA-Z:0-9]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(order, ['open'], 'only the present is drawn');
   const titles = [...html.matchAll(/dev-ws-card-title[^>]*>([^<]+)</g)].map((m) => m[1]);
-  assert.deepEqual(titles, ['Last week', 'This week', 'Open']);
+  assert.deepEqual(titles, ['Open']);
+  assert.match(html, /data-ws-week-more=""/, 'and the step back is offered');
+  // Above the stack, not below it: each press reveals an OLDER window, and
+  // the column reads oldest-at-the-top like any other timeline.
+  assert.ok(html.indexOf('data-ws-week-more') < html.indexOf('data-ws-card="open"'));
+
+  // The walk itself is the view model's, so the order and the titles are
+  // pinned where the component cannot quietly re-sort them. Oldest first,
+  // which is the order they are drawn top to bottom.
+  const weeks = AppView._workshopView().dashboard.weeks;
+  assert.deepEqual(plain(weeks.map((w) => w.key)), ['lastWeek', 'thisWeek', 'open']);
+  assert.deepEqual(plain(weeks.map((w) => w.title)), ['Last week', 'This week', 'Open']);
 
   // The tiles stay: the cards answer "what", the tiles still answer "how
   // much", and neither is a restatement of the other.
@@ -629,20 +645,23 @@ test('a card is one line: an aligned label column and its sentence, no separator
   // The title and the line are ADJACENT siblings. dapp.json's declared check
   // selects `.dev-ws-card-title + .dev-ws-card-line`, so anything rendered
   // between them would pass locally and fail the gate.
-  assert.match(html, /<h4 class="dev-ws-card-title">Last week<\/h4><p class="dev-ws-card-line">/,
+  assert.match(html, /<h4 class="dev-ws-card-title">Open<\/h4><p class="dev-ws-card-line">/,
     'nothing rendered between the label and the sentence');
 
   // NO separator, in either form. It was a CSS middot; with the labels in a
   // fixed column it was a second separator doing the column's job, and on the
   // short "Open" label it left a dot floating away from its word.
   const block = html.slice(html.indexOf('data-ws-cards'), html.indexOf('</div>', html.indexOf('data-ws-cards')));
-  assert.ok(block.includes('data-ws-card="lastWeek"'), 'found the cards block');
+  assert.ok(block.includes('data-ws-card="open"'), 'found the cards block');
   assert.ok(!block.includes('\u00B7'), 'no separator in the markup');
   assert.ok(!/\.dev-ws-card-title::(after|before)/.test(CSS), 'and none in the stylesheet either');
 
-  // The fixed column is what makes the three sentences share a left edge —
-  // the whole reason the one-line layout is worth having.
-  assert.match(CSS, /\.dev-ws-card-title \{[^}]*width: 84px;/, 'a column, not shrink-to-fit');
+  // The fixed column is what makes the sentences share a left edge — the
+  // whole reason the one-line layout is worth having. 84px cleared the three
+  // original labels; the walk back adds "12 weeks ago" over a date range, so
+  // the column is wider and the label is a stack.
+  assert.match(CSS, /\.dev-ws-card-title \{[^}]*width: 104px;/, 'a column, not shrink-to-fit');
+  assert.match(CSS, /\.dev-ws-card-title \{[^}]*flex-direction: column;/, 'the range sits under the name');
   assert.match(CSS, /\.dev-ws-card-title \{[^}]*color: var\(--accent\);/);
   assert.match(CSS, /\.dev-ws-card-title \{[^}]*font-size: 13\.5px;/);
   // Centred, not baseline: the label holds a two-row sentence rather than
@@ -667,6 +686,21 @@ test('a card is one line: an aligned label column and its sentence, no separator
   // Still a white card on a theme-aware token, not a literal.
   assert.match(CSS, /\.dev-ws-card \{[^}]*background-color: var\(--dc-sheet\);/);
   assert.match(CSS, /--dc-sheet: #ffffff;/);
+
+  // AND THE ONE-LINE CARD IS A WIDE-VIEWPORT LAYOUT. It always was: a 104px
+  // label column against a 14px sentence leaves ~250px of text on a 402px
+  // phone, so every card wrapped to three rows and the "column of labels"
+  // was a column of labels each floating beside a paragraph. Below 420px the
+  // card stacks, which is the same information in two rows instead of four.
+  const stack = CSS.slice(CSS.indexOf('@media (max-width: 419px)'));
+  assert.match(stack.slice(0, 400), /\.dev-ws-card \{[^}]*flex-direction: column;/);
+  assert.match(stack.slice(0, 400), /\.dev-ws-card-title \{[^}]*width: auto;/);
+
+  // The dates only where the NAME stops being one: "This week" needs no
+  // caption, "5 weeks ago" is arithmetic the reader should not have to do.
+  const walk = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(walk, /w\.key\.startsWith\('week:'\)/, 'the range is drawn for the numbered windows only');
+  assert.match(walk, /endMs - 86400000/, 'and an exclusive end is captioned with the Sunday before it');
 });
 test('an empty window draws no card at all', async () => {
   // The "(if any)" of the design. An empty string is how the server says the
@@ -747,20 +781,32 @@ test('themes all start collapsed, and a deep link is what opens one', () => {
   assert.match(check.path, /shot=themes/);
 });
 
-test('where-the-app-is and since-your-last-visit are one pane', () => {
+test('since-your-last-visit sits with the other things addressed to you', () => {
   const store = {};
   store['workshopSeen:demo-app'] = String(Date.now() - 3 * 86400000);
   const AppView = makeAppView({ localStorage: store });
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
   const html = workshopHtml(AppView);
-  // Both hooks ride on ONE section — they were two strips asking one question.
-  assert.match(html, /<section class="dev-ws-strip" data-ws-since="" data-ws-dashboard="">/);
-  assert.match(html, /class="dev-ws-since-line"/);
+  // It was a line under the tiles, inside "Where the app is", and that pane
+  // answers a question about the APP. A list of what moved for this reader
+  // is the same kind of thing as a vote they owe, so it rides the pane that
+  // holds those — under the free-to-take lane, as the one item there that is
+  // a record rather than a request.
+  assert.match(html, /<section class="dev-ws-strip" data-ws-dashboard="">/, 'not on the dashboard any more');
+  assert.match(html, /data-ws-votes="" data-ws-next="" data-ws-since=""/);
+  assert.ok(!html.includes('dev-ws-since-line'), 'the old line is retired');
+  assert.match(html, /class="dev-ws-since-btn"/);
   // A colon for a label and its value, never an em dash (#1389).
   assert.match(html, /Since your last visit, 3d ago: 1 change landed/);
-  // The description leads; the personal line is a footnote to it.
-  assert.ok(html.indexOf('dev-ws-strip-text') < html.indexOf('dev-ws-since-line'));
+  // Under the offers, not above them.
+  assert.ok(html.indexOf('data-ws-lane="next"') < html.indexOf('data-ws-lane="since"'));
+  // NOT `.gc-vote-btn`: that family is a 24px fixed-height pill sized for two
+  // or three words, and this control is a whole sentence. In the pill it
+  // could not wrap, so it set a min-content width wider than a phone and
+  // took the entire lander into horizontal overflow.
+  assert.ok(!/gc-vote-btn dev-ws-since-btn|dev-ws-since-btn gc-vote-btn/.test(html));
+  assert.match(CSS, /\.dev-ws-since-btn \{[^}]*flex-wrap: wrap;/);
 });
 
 test('needs-your-vote and the unclaimed suggestion are one pane', () => {
@@ -899,7 +945,7 @@ test('"try taking this one next" names an open issue nobody is on', () => {
   assert.equal(AppView._workshopView().dashboard.unclaimed, 0);
 });
 
-test('#1934: the rest of the unclaimed issues sit behind a "Show more" under the suggestion', () => {
+test('#1934: the rest of the unclaimed issues are the rest of the deck', () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12', 'issue:13'] }]);
@@ -909,19 +955,24 @@ test('#1934: the rest of the unclaimed issues sit behind a "Show more" under the
   // Joined: the arrays come from the AppView sandbox's own realm.
   assert.equal(v.nextMore.map((r) => r.key).join(','), 'next:issue:13', 'same order, same next: keys');
   const html = workshopHtml(AppView);
-  assert.match(html, /data-ws-lane="next"[\s\S]*?data-ws-next-more=""[^>]*>Show 1 more</,
-    'the toggle sits in the suggestion lane, collapsed by default');
-  assert.match(html, /data-ws-next-more=""[^>]*aria-expanded="false"|aria-expanded="false"[^>]*data-ws-next-more=""/);
+  // #1934's "Show N more" list became one deck paged sideways: the
+  // suggestion first, then the rest, one card on screen at a time. The
+  // reveal is the pager's control, so there is no second disclosure.
+  assert.match(html, /data-ws-lane="next"[\s\S]*?data-ws-pager="next"/);
+  assert.ok(!html.includes('data-ws-next-more'), 'the vertical reveal is retired');
+  const deck = html.slice(html.indexOf('data-ws-pager="next"'));
+  assert.equal((deck.match(/data-ws-row="/g) || []).length, 2, 'both are in the deck, not behind a toggle');
+  assert.match(deck, />1 of 2</, 'and the control says how many there are');
 
   // Capped like a theme lane.
   assert.match(require('fs').readFileSync(require('path').join(__dirname, '..', 'public/js/app-view.js'), 'utf8'),
     /idle\.slice\(1, 1 \+ AppView\.WORKSHOP_LANE_MAX\)/);
 
-  // One unclaimed issue → no toggle at all.
+  // One unclaimed issue → one card and no control at all.
   AppView._ghIssues[1].assignee = { top: 'erin' };
   const one = AppView._workshopView();
   assert.equal(one.nextMore.length, 0);
-  assert.doesNotMatch(workshopHtml(AppView), /data-ws-next-more/);
+  assert.doesNotMatch(workshopHtml(AppView), /data-ws-pager-ctl/);
 });
 
 test('#1934: a filter drops the "more" along with the suggestion', () => {
@@ -953,7 +1004,7 @@ test('the suggestion stands down while a filter is active', () => {
   assert.equal(AppView._workshopView().nextUp, null);
 });
 
-test('the strips are ordered for a returning member: since, then state, then what to do', () => {
+test('the strips are ordered for a returning member: state, then what to do, then what changed', () => {
   const store = {};
   // Keep the three-day-old proposal strictly after the last visit instead
   // of relying on whether seed() happens in a later clock millisecond.
@@ -962,18 +1013,19 @@ test('the strips are ordered for a returning member: since, then state, then wha
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
   const html = workshopHtml(AppView);
-  const order = ['data-ws-since', 'data-ws-dashboard', 'data-ws-votes', 'data-ws-next', 'data-discussion-row']
+  const order = ['data-ws-dashboard', 'data-ws-votes', 'data-ws-next', 'data-ws-lane="since"', 'data-discussion-row']
     .map((k) => html.indexOf(k));
   assert.ok(order.every((i) => i >= 0), `every strip is drawn: ${JSON.stringify(order)}`);
   assert.deepEqual(order.slice().sort((a, b) => a - b), order,
-    'what changed, where the app is, what needs you, what you could take');
-  // The dashboard's own Show/Hide is gone: the numbers it revealed are in the
-  // description now, so there was nothing left behind the toggle. The one
-  // disclosure left in the pane is the "since" rows, and it wears the
-  // platform's small action pill rather than an unsized text link (#1787).
+    'where the app is, what needs you, what you could take, what changed');
+  // The order changed with the "since" move: the pane used to lead with what
+  // had moved for this reader, which put a personal footnote above the app's
+  // own state. The app first, then the three things addressed to the reader,
+  // in the order they ask for a decision — vote, take, catch up.
   assert.ok(!/class="dev-ws-link"[^>]*aria-expanded/.test(html), 'no unsized text link toggles this pane');
-  assert.match(html, /<button type="button" class="gc-vote-btn" aria-expanded="false">Show 3<\/button>/,
-    'the since disclosure is a standard control');
+  assert.match(html, /class="dev-ws-since-btn"[^>]*aria-expanded="false"/,
+    'the since disclosure is one control carrying its own sentence');
+  assert.match(html, /class="dev-ws-since-n">Show 3</);
   assert.ok(!html.includes('waiting on votes ·'), 'and the bare number line is gone');
 });
 
@@ -1453,7 +1505,7 @@ test('one hover for both sizes, and a facts line that is not clipped', () => {
   assert.ok(!/dev-card-band-break/.test(CSS), 'the break, and the line it cost, are gone');
 });
 
-test('"N more waiting on you" reveals them here, not on a filtered board', () => {
+test('every owed vote is in the deck, not on a filtered board', () => {
   const AppView = makeAppView();
   seed(AppView);
   // Five owed proposals against a cap of three.
@@ -1471,9 +1523,19 @@ test('"N more waiting on you" reveals them here, not on a filtered board', () =>
   const strip = html.slice(html.indexOf('data-ws-lane="votes"'), html.indexOf('data-ws-lane="next"'));
   // `data-ws-row`, not the class: `dev-ws-rowwrap` starts with the same
   // characters, so a class-prefix match counts every row twice.
-  assert.equal((strip.match(/data-ws-row="/g) || []).length, 3, 'three drawn to begin with');
-  assert.match(html, /data-ws-votes-more="" aria-expanded="false"|aria-expanded="false" data-ws-votes-more=""/);
-  assert.match(html, />2 more waiting on you</);
+  //
+  // ALL FIVE are in the deck, one on screen at a time. The cap that drew
+  // three and hid two behind "2 more waiting on you" is gone: a pager holds
+  // the whole list at a constant height, so there is nothing left to reveal
+  // and `votes.shown` no longer decides what is drawn (it stays on the view
+  // model — the ring and the strip head still read it).
+  assert.equal((strip.match(/data-ws-row="/g) || []).length, 5, 'the deck holds every owed row');
+  assert.ok(!html.includes('data-ws-votes-more'), 'and there is no second disclosure');
+  assert.match(strip, />1 of 5</);
+  // Every row in the DOM is also what keeps the two legacy fillers working:
+  // `_wireFeedComments` observes hosts it can only find if they are rendered,
+  // and the `?shot=` deep link can name a row that is not the visible one.
+  assert.match(WORKSHOP, /every row stays in the DOM/);
 
   // It used to set a board filter and navigate: it left the lander, changed
   // the view mode, and Back was the only way home — to read a list the strip
@@ -1729,19 +1791,25 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   // and was already at that working ceiling, so a new entry would have failed
   // the check-count guard. Same intent, one level deeper.
   assert.match(lands.expectSelector, /\[data-ws-dash-cell="open"\]/);
-  // The three summary cards ride the ROUTE check rather than a slot of their
-  // own: the manifest keeps 20 of its 580 clear and was already at that
-  // working ceiling, so a new entry would fail the check-count guard in
+  // The summary cards ride the ROUTE check rather than a slot of their own:
+  // the manifest keeps 20 of its 580 clear and was already at that working
+  // ceiling, so a new entry would fail the check-count guard in
   // tests/proposal-tests-manifest.test.js. Deepening the check that already
   // owns "this route lands on the lander" is the same claim, further in.
+  //
+  // What it pins moved with the feature. It used to be the three windows in
+  // order, all drawn at once; the pane opens on `open` alone now, with the
+  // step back above it, so THAT is the default state a gate can assert —
+  // asserting the older windows would mean scripting a click in a check that
+  // can only select.
   //
   // A PLAIN CHAIN, deliberately. The `:has()` note below is not about that
   // one selector — it is the standing rule for this manifest, learned from
   // six straight gate failures against a selector that resolved perfectly in
   // this repo's own Chromium.
   const route = byName(/is the card area grouped by theme/);
-  assert.ok(route && /\[data-ws-card="lastWeek"\] \+ \[data-ws-card="thisWeek"\] \+ \[data-ws-card="open"\]/
-    .test(route.expectSelector), 'the three cards, in window order');
+  assert.ok(route && /\[data-ws-week-more\] \+ \[data-ws-card="open"\]/
+    .test(route.expectSelector), 'the present, and the way back');
   assert.ok(!route.expectSelector.includes(':has('), 'no :has() on a gate that blocks merge');
 
   const themesCheck = byName(/renders its themes into #dev-workshop/);

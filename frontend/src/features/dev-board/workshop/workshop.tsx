@@ -44,7 +44,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { ChevronRightIcon } from '@/components/ui/icons';
+import { ChevronLeftIcon, ChevronRightIcon } from '@/components/ui/icons';
 
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -438,21 +438,72 @@ function DashTiles({ d }: { d: Dash }): ReactNode {
  * client's normaliser returns null), so the pane falls through to the
  * paragraph and then to the derived sentence, and never renders an empty box.
  */
-const DIGEST_CARDS: { key: keyof NonNullable<Dash['cards']>; title: string }[] = [
-  { key: 'lastWeek', title: 'Last week' },
-  { key: 'thisWeek', title: 'This week' },
-  { key: 'open', title: 'Open' },
-];
+/** "Aug 25 – Aug 31" for a window whose `endMs` is the Monday after it. */
+function weekRange(startMs: number, endMs: number): string {
+  const fmt = (ms: number) => new Date(ms)
+    .toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  // `endMs` is EXCLUSIVE — the next Monday — so the caption names the Sunday
+  // before it. Captioning a Monday–Sunday week with two Mondays is the kind
+  // of off-by-one a reader notices and cannot explain.
+  return `${fmt(startMs)} – ${fmt(endMs - 86400000)}`;
+}
 
-function DigestCards({ cards }: { cards: NonNullable<Dash['cards']> }): ReactNode {
-  const drawn = DIGEST_CARDS.filter((c) => cards[c.key]);
-  if (!drawn.length) return null;
+/**
+ * The weeks, as a walk backwards from now.
+ *
+ * All three windows used to be drawn at once, and three was the whole
+ * history the lander could hold: a reader who wanted the week before last
+ * had nowhere to go, and a reader who wanted none of them still paid three
+ * cards of vertical space before reaching the board.
+ *
+ * So the present is the default — `Open`, the one entry that is not a week
+ * at all — and everything earlier is one step behind a button. Each press
+ * reveals the next-oldest window ABOVE the stack, which keeps the column in
+ * the order a timeline is read (oldest at the top, now at the bottom) and
+ * keeps the thing you came for at the same place on the screen however far
+ * back you have walked.
+ *
+ * The walk ends where the server's lines end. When the server has also said
+ * when the app's first week was (`firstWeek`) and the walk has reached it,
+ * the pane says so — otherwise running out of lines is silent, because "no
+ * more written yet" and "no more to write" are different facts and only one
+ * of them is the app's beginning.
+ */
+function WeekWalk({ weeks, firstWeek }: { weeks: Dash['weeks']; firstWeek: number | null }): ReactNode {
+  // How many entries from the END of the list are on screen. The list is
+  // oldest-first, so one means `open` alone.
+  const [shown, setShown] = useState(1);
+  if (!weeks.length) return null;
+  const drawn = weeks.slice(Math.max(0, weeks.length - shown));
+  const more = weeks.length - drawn.length;
+  const oldest = drawn[0];
+  const atStart = !more && !!firstWeek && !!oldest && oldest.startMs === firstWeek;
   return (
     <div className="dev-ws-cards" data-ws-cards="">
-      {drawn.map((c) => (
-        <article key={c.key} className="dev-ws-card" data-ws-card={c.key}>
-          <h4 className="dev-ws-card-title">{c.title}</h4>
-          <p className="dev-ws-card-line">{cards[c.key]}</p>
+      {more ? (
+        <button
+          type="button"
+          className="gc-vote-btn dev-ws-week-more"
+          data-ws-week-more=""
+          onClick={() => setShown(shown + 1)}
+        >Show past week</button>
+      ) : null}
+      {atStart ? (
+        <p className="dev-ws-week-note" data-ws-week-start="">The first week this app had any activity.</p>
+      ) : null}
+      {drawn.map((w) => (
+        <article key={w.key} className="dev-ws-card" data-ws-card={w.key}>
+          <h4 className="dev-ws-card-title">
+            {w.title}
+            {/* The dates only where the NAME stops being one. "This week" and
+                "Last week" are unambiguous to anyone reading them on the day;
+                "4 weeks ago" is a count the reader would otherwise have to do
+                the arithmetic for. */}
+            {w.startMs && w.key.startsWith('week:')
+              ? <span className="dev-ws-card-range">{weekRange(w.startMs, w.endMs)}</span>
+              : null}
+          </h4>
+          <p className="dev-ws-card-line">{w.line}</p>
         </article>
       ))}
     </div>
@@ -556,6 +607,92 @@ function VoteRing({ owed, total }: { owed: number; total: number }): ReactNode {
   );
 }
 
+/**
+ * One offer at a time, paged sideways.
+ *
+ * "Needs your vote" and "Nobody has picked this up" were vertical lists with
+ * a "N more" button under each, so a viewer owing four votes read a column
+ * four cards tall before reaching anything else — and the pane's whole claim
+ * is that it holds what you could do in five minutes, which is ONE thing.
+ * Paged, the strip is a constant height whatever it holds, and the count is
+ * in the control rather than in the scroll.
+ *
+ * It is a real horizontal SCROLLER, not a swap of one rendered row:
+ *
+ *   - every row stays in the DOM, so the two legacy fillers keep finding
+ *     their hosts (`_wireFeedComments` observes `.dev-feed-comments` and
+ *     `_fillKudosHosts` fills `[data-kudos-host]`) and the `?shot=` deep
+ *     link can still name a row that is not the visible one;
+ *   - a touch drag pages it for free, with `scroll-snap`, which is the
+ *     gesture the surface already invites on a phone.
+ *
+ * The buttons drive `scrollTo` and the index is read back from the scroll
+ * position, so a swipe and a press cannot disagree about which card is up.
+ */
+function RowPager({
+  rows, scope, slug, canPost, openKey, onToggle,
+}: {
+  rows: DevWorkshopView['votes']['rows'];
+  scope: string;
+  slug: string;
+  canPost: boolean;
+  openKey: string;
+  onToggle: (key: string) => void;
+}): ReactNode {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [i, setI] = useState(0);
+  const cards = rows.filter((r) => r.t === 'card');
+  if (!cards.length) return null;
+  const go = (n: number) => {
+    const t = trackRef.current;
+    const at = Math.max(0, Math.min(cards.length - 1, n));
+    setI(at);
+    if (t) t.scrollTo({ left: at * t.clientWidth, behavior: 'smooth' });
+  };
+  const onScroll = () => {
+    const t = trackRef.current;
+    if (!t || !t.clientWidth) return;
+    const at = Math.round(t.scrollLeft / t.clientWidth);
+    if (at !== i) setI(Math.max(0, Math.min(cards.length - 1, at)));
+  };
+  return (
+    <div className="dev-ws-pager" data-ws-pager={scope}>
+      <div className="dev-ws-pager-track" ref={trackRef} onScroll={onScroll}>
+        {cards.map((row) => (
+          <div className="dev-ws-pager-item" key={row.key}>
+            <CardRowView
+              row={row}
+              slug={slug}
+              canPost={canPost}
+              open={openKey === row.key}
+              onToggle={() => onToggle(row.key)}
+            />
+          </div>
+        ))}
+      </div>
+      {cards.length > 1 ? (
+        <div className="dev-ws-pager-ctl" data-ws-pager-ctl="">
+          <button
+            type="button"
+            className="dev-ws-pager-btn"
+            aria-label="Previous"
+            disabled={i === 0}
+            onClick={() => go(i - 1)}
+          ><ChevronLeftIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
+          <span className="dev-ws-pager-n">{`${Math.min(i + 1, cards.length)} of ${cards.length}`}</span>
+          <button
+            type="button"
+            className="dev-ws-pager-btn"
+            aria-label="Next"
+            disabled={i >= cards.length - 1}
+            onClick={() => go(i + 1)}
+          ><ChevronRightIcon className="dev-ws-pager-chev" aria-hidden="true" /></button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
   const hostRef = useRef<HTMLDivElement>(null);
@@ -577,12 +714,12 @@ export function DevWorkshop(): ReactNode {
     () => (v.autoExpand && v.autoExpand.key ? { [v.autoExpand.theme]: v.autoExpand.key } : {}),
   );
   const [sinceOpen, setSinceOpen] = useState(false);
-  // "N more waiting on you" reveals them HERE. It used to set a board filter
-  // and navigate, which left the lander and changed the view mode to read a
-  // list the strip was already showing the top of.
-  const [allVotes, setAllVotes] = useState(false);
+  // "N more of yours" reveals them HERE. It used to set a board filter and
+  // navigate, which left the lander and changed the view mode to read a list
+  // the strip was already showing the top of. The vote and free-to-take
+  // lanes had the same toggle and no longer need one: they are paged decks
+  // now (RowPager), which hold every row without a reveal.
   const [allMine, setAllMine] = useState(false);
-  const [allNext, setAllNext] = useState(false);
   // Which pane is under the tabs. Lives in a module-global store rather than
   // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
   // the kanban view model only when the stage pane is up. See
@@ -668,7 +805,6 @@ export function DevWorkshop(): ReactNode {
       {v.dashboard ? (
         <section
           className="dev-ws-strip"
-          data-ws-since={v.since ? '' : undefined}
           data-ws-dashboard=""
         >
           <div className="dev-ws-strip-head">
@@ -678,38 +814,18 @@ export function DevWorkshop(): ReactNode {
               : null}
           </div>
           <DashTiles d={v.dashboard} />
-          {v.dashboard.cards
-            ? <DigestCards cards={v.dashboard.cards} />
+          {/* The weeks, newest on screen and the rest one press away. The
+              derived sentence is still the fallback for a board that has
+              never had a line written for it — see summarise(). */}
+          {v.dashboard.weeks.length
+            ? <WeekWalk weeks={v.dashboard.weeks} firstWeek={v.dashboard.firstWeek} />
             : summarise(v.dashboard)
               ? <p className="dev-ws-strip-text">{summarise(v.dashboard)}</p>
               : null}
-          {v.since ? (
-            <p className="dev-ws-since-line">
-              <span>{`Since your last visit, ${relTime(v.since.baseline)}: ${sinceWords(v.since)}`}</span>
-              {v.since.rows.length ? (
-                <button
-                  type="button"
-                  className="gc-vote-btn"
-                  aria-expanded={sinceOpen}
-                  onClick={() => setSinceOpen(!sinceOpen)}
-                >{sinceOpen ? 'Hide' : `Show ${v.since.rows.length}`}</button>
-              ) : null}
-            </p>
-          ) : null}
-          {v.since && sinceOpen ? (
-            <div className="dev-ws-lane" data-ws-lane="since">
-              {v.since.rows.map((row) => (row.t === 'card' ? (
-                <CardRowView
-                  key={row.key}
-                  row={row}
-                  slug={slug}
-                  canPost={canPost}
-                  open={openRows.since === row.key}
-                  onToggle={() => toggleRow('since', row.key)}
-                />
-              ) : null))}
-            </div>
-          ) : null}
+          {/* "Since your last visit" used to sit here, under the numbers.
+              It moved into "What needs you" (below): it is not a fact about
+              the app, it is a list of things addressed to THIS reader, which
+              is what that pane is for. */}
         </section>
       ) : null}
 
@@ -754,11 +870,12 @@ export function DevWorkshop(): ReactNode {
           Voting on somebody else's work and picking up nobody's are the same
           offer — "here is what you could do with five minutes" — and they were
           two containers saying it twice. */}
-      {v.votes.rows.length || nextUp ? (
+      {v.votes.rows.length || nextUp || v.since ? (
         <section
           className="dev-ws-strip"
           data-ws-votes=""
           data-ws-next={nextUp ? '' : undefined}
+          data-ws-since={v.since ? '' : undefined}
         >
           <div className="dev-ws-strip-head">
             <span className="dev-ws-eyebrow">What needs you</span>
@@ -767,29 +884,18 @@ export function DevWorkshop(): ReactNode {
           {v.votes.rows.length ? (
             <div className="dev-ws-lane" data-ws-lane="votes">
               <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>Needs your vote</h4>
-              {(allVotes ? v.votes.rows : v.votes.rows.slice(0, v.votes.shown)).map((row) => (row.t === 'card' ? (
-                <CardRowView
-                  key={row.key}
-                  row={row}
-                  slug={slug}
-                  canPost={canPost}
-                  open={openRows.votes === row.key}
-                  onToggle={() => toggleRow('votes', row.key)}
-                />
-              ) : null))}
-              {v.votes.rows.length > v.votes.shown ? (
-                <button
-                  type="button"
-                  className="gc-vote-btn dev-ws-lane-btn"
-                  aria-expanded={allVotes}
-                  data-ws-votes-more=""
-                  onClick={() => setAllVotes(!allVotes)}
-                >
-                  {allVotes
-                    ? 'Show fewer'
-                    : `${v.votes.count - v.votes.shown} more waiting on you`}
-                </button>
-              ) : null}
+              {/* Paged, not listed — and paged over EVERY owed row, so the
+                  "N more waiting on you" toggle that used to sit under the
+                  first three is gone: the control below the card already
+                  says how many there are and is the way to reach them. */}
+              <RowPager
+                rows={v.votes.rows}
+                scope="votes"
+                slug={slug}
+                canPost={canPost}
+                openKey={openRows.votes || ''}
+                onToggle={(key) => toggleRow('votes', key)}
+              />
             </div>
           ) : null}
           {nextUp ? (
@@ -799,37 +905,51 @@ export function DevWorkshop(): ReactNode {
                   while it did — a lander does not need to wheedle. */}
               <h4 className="dev-ws-lane-title"><span className="dev-ws-dot" aria-hidden="true"></span>Nobody has picked this up</h4>
               <p className="dev-ws-lane-note">Free to take, if you want to try solving an issue.</p>
-              <CardRowView
-                row={nextUp}
+              {/* The suggestion first, then the rest of the free-to-take
+                  issues — one deck rather than a card plus a "Show N more"
+                  list under it (#1934's reveal, turned sideways). */}
+              <RowPager
+                rows={[nextUp, ...(v.nextMore || [])]}
+                scope="next"
                 slug={slug}
                 canPost={canPost}
-                open={openRows.next === nextUp.key}
-                onToggle={() => toggleRow('next', nextUp.key)}
+                openKey={openRows.next || ''}
+                onToggle={(key) => toggleRow('next', key)}
               />
-              {/* #1934: the rest of the free-to-take issues, on request — the
-                  same toggle the two lanes above use. One suggestion stays the
-                  default; the list is there for someone who wants to choose. */}
-              {allNext ? (v.nextMore || []).map((row) => (row.t === 'card' ? (
+            </div>
+          ) : null}
+          {/* ── What moved while you were away ──
+              This was a line under the tiles in the pane above, which is
+              where it was first written and the wrong place for it: the
+              dashboard answers "what is this app", and a list of things that
+              changed for YOU is the same kind of thing as a vote you owe.
+              It sits under the offers, folded, because it is the one item
+              here that is a record rather than a request. */}
+          {v.since ? (
+            <div className="dev-ws-lane" data-ws-lane="since">
+              <button
+                type="button"
+                className="dev-ws-since-btn"
+                data-ws-since-btn=""
+                aria-expanded={sinceOpen}
+                disabled={!v.since.rows.length}
+                onClick={() => setSinceOpen(!sinceOpen)}
+              >
+                {`Since your last visit, ${relTime(v.since.baseline)}: ${sinceWords(v.since)}`}
+                {v.since.rows.length
+                  ? <span className="dev-ws-since-n">{sinceOpen ? 'Hide' : `Show ${v.since.rows.length}`}</span>
+                  : null}
+              </button>
+              {sinceOpen ? v.since.rows.map((row) => (row.t === 'card' ? (
                 <CardRowView
                   key={row.key}
                   row={row}
                   slug={slug}
                   canPost={canPost}
-                  open={openRows.next === row.key}
-                  onToggle={() => toggleRow('next', row.key)}
+                  open={openRows.since === row.key}
+                  onToggle={() => toggleRow('since', row.key)}
                 />
               ) : null)) : null}
-              {(v.nextMore || []).length ? (
-                <button
-                  type="button"
-                  className="gc-vote-btn dev-ws-lane-btn"
-                  aria-expanded={allNext}
-                  data-ws-next-more=""
-                  onClick={() => setAllNext(!allNext)}
-                >
-                  {allNext ? 'Show fewer' : `Show ${(v.nextMore || []).length} more`}
-                </button>
-              ) : null}
             </div>
           ) : null}
         </section>

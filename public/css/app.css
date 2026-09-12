@@ -11875,9 +11875,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
      "This week" and "Open" are different widths, so without it the text
      started at three different x-positions — which defeats the point of the
      one-line layout, where you read down the labels and across only where
-     you want the detail. 84px clears the longest of the three at 13.5px.
-     A fourth window with a longer name would need this revisited. */
-  width: 84px;
+     you want the detail. 84px cleared the longest of the ORIGINAL three at
+     13.5px, with a note that a fourth window with a longer name would need
+     it revisited. The walk backwards is that fourth window and then some —
+     "12 weeks ago" over a date range — so the column is 104px and the label
+     is a two-row stack. */
+  display: flex;
+  flex-direction: column;
+  width: 104px;
   font-size: 13.5px;
   font-weight: 700;
   letter-spacing: 0.01em;
@@ -11887,14 +11892,127 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   color: var(--accent);
 }
 .dev-ws-card-line { margin: 0; flex: 1 1 auto; font-size: 14px; color: var(--text-primary); }
-/* ── The Workshop's orientation pane ─────────────────────────
-   "Since your last visit" moved inside "Where the app is": the description
-   leads, and the personal line sits under it as a footnote to it rather than
-   as a strip of its own. */
-.dev-ws-since-line {
-  margin: 6px 0 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  font-size: 13px; color: var(--text-muted);
+/* The window's dates, under its name. Muted and lighter than the label it
+   sits beneath: the name is what you navigate by, the range is what you
+   check once you have arrived. */
+.dev-ws-card-range {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
+/* THE ONE-LINE CARD IS A WIDE-VIEWPORT LAYOUT, and it always was — the
+   design note above describes reading down a column of labels and across to
+   the sentences, which is what happens at 420px and up. Below that, a 104px
+   label column against a 14px sentence left the text ~250px wide and every
+   card wrapped to three rows, so the "column of labels" was a column of
+   labels each floating beside a paragraph. Stacked, the same card is two
+   rows and the sentence gets the full width. */
+@media (max-width: 419px) {
+  .dev-ws-card { flex-direction: column; align-items: stretch; gap: 2px; }
+  .dev-ws-card-title { flex-direction: row; align-items: baseline; gap: 6px; width: auto; }
+  .dev-ws-card-range { margin-top: 0; }
+}
+/* The step backwards, above the stack. It reads as a control rather than as
+   a card, so it is not on `--dc-sheet` like the entries it reveals. */
+.dev-ws-week-more { align-self: flex-start; }
+.dev-ws-week-note {
+  margin: 0; font-size: 12px; color: var(--text-muted);
+}
+/* ── One offer at a time, paged sideways ───────────────────────
+   The track is the scroller and each item is exactly its width, so a swipe
+   lands on a card rather than between two. `scroll-snap-type: x mandatory`
+   and not `proximity`: a half-scrolled pair is the state this layout exists
+   to prevent.
+
+   `align-items: flex-start` matters more than it looks: a row UNFOLDS into
+   the full card in place, so one item in the track can be several times the
+   height of its neighbours, and stretched items would make every card as
+   tall as the tallest. */
+.dev-ws-pager { display: flex; flex-direction: column; gap: 6px; }
+.dev-ws-pager-track {
+  display: flex;
+  align-items: flex-start;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  /* BOTH AXES. `.home-discover-rail` carries the post-mortem (#1762): a rail
+     that declares `touch-action: pan-x` DENIES vertical panning for every
+     touch that starts on it, so on a phone it becomes a band you cannot
+     scroll the page from. Failing to page the deck costs one retry; failing
+     to scroll the lander costs the screen. */
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+  /* `mandatory`, where the discover rail uses `proximity` — a deliberate
+     deviation. That rail is a strip of small tiles where resting between two
+     is a fine place to be; this one shows exactly one card at a time, and a
+     deck resting half-way between two cards is the state it exists to
+     prevent. */
+  scroll-snap-type: x mandatory;
+  /* The cards carry a real shadow; a track clipped to the content box would
+     shave it off both sides on every page. */
+  padding: 3px;
+  margin: -3px;
+  scrollbar-width: none;
+}
+.dev-ws-pager-track::-webkit-scrollbar { display: none; }
+.dev-ws-pager-item {
+  flex: 0 0 100%;
+  min-width: 0;
+  scroll-snap-align: start;
+  /* The gutter between cards has to come from INSIDE the item: a `gap` on
+     the track would offset every snap point by one gap and the last card
+     would never reach its own. */
+  padding-right: 8px;
+  box-sizing: border-box;
+}
+.dev-ws-pager-ctl {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+}
+.dev-ws-pager-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; border-radius: 999px;
+  border: 1px solid var(--app-sheet-line);
+  background-color: var(--dc-sheet);
+  color: var(--text-primary);
+  font-size: 16px; line-height: 1;
+  cursor: pointer;
+}
+.dev-ws-pager-btn:disabled { opacity: 0.35; cursor: default; }
+.dev-ws-pager-chev { width: 16px; height: 16px; }
+.dev-ws-pager-n { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* The since-button, in the pane it moved to.
+   NOT `.gc-vote-btn`. That family is a 24px fixed-height pill sized for two
+   or three words, and this control is a SENTENCE — "Since your last visit,
+   5d ago: 1 change landed, 3 new issues, 2 new proposals". In the pill it
+   could not wrap, so it set a min-content width wider than a phone and took
+   the whole lander into horizontal overflow. This is a row that wraps. */
+.dev-ws-since-btn {
+  box-sizing: border-box;
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; flex-wrap: wrap;
+  width: 100%; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: transparent;
+  text-align: left; font-size: 13px; line-height: 1.4;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dev-ws-since-btn:hover { border-color: var(--accent-light); color: var(--accent); }
+/* Disabled here means "nothing moved", not "you may not": the sentence is
+   still the answer, so it does not dim. */
+.dev-ws-since-btn:disabled { opacity: 1; cursor: default; }
+.dev-ws-since-btn:disabled:hover { border-color: var(--border); color: var(--text-muted); }
+.dev-ws-since-n { flex: none; font-weight: 600; color: var(--accent); }
+/* ── The Workshop's orientation pane ─────────────────────────
+   "Since your last visit" was a line inside "Where the app is" (`.dev-ws-
+   since-line`, retired): the description led and the personal line sat under
+   it as a footnote. It is a BUTTON in "What needs you" now — see
+   `.dev-ws-since-btn` above — because a list of things that moved for this
+   reader belongs with the other things addressed to them, not under the
+   app's own numbers. */
 /* A control at the end of a lane — "N more waiting on you". `.dev-ws-link`
    set `font: inherit` with no size of its own, so it took whatever its parent
    had: 16px in the two strip heads, larger than every other control on the
