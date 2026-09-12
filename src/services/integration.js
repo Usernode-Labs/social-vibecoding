@@ -354,6 +354,31 @@ function measureDeduped(deps, options = {}) {
   return p;
 }
 
+/**
+ * Record which gate is holding this proposal, without re-measuring.
+ *
+ * The merge gate is the only thing that knows why a merge did not happen, and
+ * it has always known and then discarded it — which is why the card had to
+ * guess with a precedence table, and why the group got told "needs 3/3 yes
+ * votes" about a proposal whose votes were in and whose checks were running.
+ *
+ * Cheap enough to call on every blocking return: one UPDATE, no git, no
+ * network. Never throws — a proposal whose reason could not be recorded is a
+ * worse card, not a failed merge.
+ */
+async function setBlockReason(pool, sessionId, reason) {
+  try {
+    await pool.query(
+      `UPDATE chat_sessions
+          SET integration_block_reason = $2
+        WHERE id = $1 AND integration_block_reason IS DISTINCT FROM $2`,
+      [sessionId, reason || null]
+    );
+  } catch (err) {
+    log.warn('integration', 'block reason write failed', { sessionId, err: err.message });
+  }
+}
+
 // ── The epoch ──────────────────────────────────────────────────────────
 
 /**
@@ -381,20 +406,18 @@ async function clearApprovals(pool, sessionId, reason) {
   return epoch;
 }
 
-/** The SQL predicate for "this vote still counts". One definition, one place. */
-function currentVotePredicateSql(voteAlias = 'pv', sessionAlias = 'cs') {
-  const ok = (a) => {
-    if (!/^[a-z_][a-z0-9_]*$/i.test(a || '')) throw new Error(`Invalid SQL alias: ${a}`);
-    return a;
-  };
-  return `(${ok(voteAlias)}.approval_epoch = ${ok(sessionAlias)}.approval_epoch)`;
-}
+// The SQL predicate for "this vote still counts" is owned by
+// services/pr-vote-revision.js — the module named for exactly that concern,
+// and the one all eighteen call sites already import. Re-exported here so a
+// caller holding this module does not need both.
+const { currentVotePredicateSql } = require('./pr-vote-revision');
 
 module.exports = {
   readIntegration,
   isFresh,
   measure,
   measureDeduped,
+  setBlockReason,
   classifyHeadMove,
   clearApprovals,
   currentVotePredicateSql,
