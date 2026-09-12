@@ -321,6 +321,17 @@ test('the dashboard is drawn every visit; "since" needs a baseline read once', (
   assert.equal(Later._workshopView().since.opened, 1);
 });
 
+test('the discussion card has a pane of its own, and an eyebrow saying what it is', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const html = workshopHtml(AppView);
+  // It used to sit bare between the strips — the one block on the lander
+  // with no surface of its own, which read as a stray row of the pane above
+  // it. Every block is an eyebrow and what is under it now.
+  assert.match(html, /<section class="dev-ws-strip" data-ws-discussion=""><div class="dev-ws-strip-head"><span class="dev-ws-eyebrow">Talking about the app<\/span><\/div>/);
+  assert.match(html, /data-ws-discussion=""[\s\S]*?class="dev-ws-discussion"[\s\S]*?data-discussion-row/);
+});
+
 test('the discussion row is drawn as a row of its own', () => {
   const AppView = makeAppView();
   seed(AppView);
@@ -1034,7 +1045,8 @@ test('the strips are ordered for a returning member: state, then what to do, the
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
   const html = workshopHtml(AppView);
-  const order = ['data-ws-dashboard', 'data-ws-votes', 'data-ws-next', 'data-ws-lane="since"', 'data-discussion-row']
+  const order = ['data-ws-dashboard', 'data-ws-votes', 'data-ws-next', 'data-ws-lane="since"',
+    'data-ws-discussion', 'data-discussion-row']
     .map((k) => html.indexOf(k));
   assert.ok(order.every((i) => i >= 0), `every strip is drawn: ${JSON.stringify(order)}`);
   assert.deepEqual(order.slice().sort((a, b) => a - b), order,

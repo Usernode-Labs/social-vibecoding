@@ -1008,8 +1008,20 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
+      {/* ── The door to the general chat ──
+          The card used to sit bare between the strips: same width, no
+          surface of its own, and therefore the one thing on the lander that
+          belonged to no pane. It reads as a stray row of the pane above it.
+          Its own strip, with its own eyebrow, says what it is before you
+          reach the card — and gives the lander one shape all the way down:
+          every block is an eyebrow and what is under it. */}
       {v.discussion && v.discussion.t === 'card' ? (
-        <div className="dev-ws-discussion"><DevCard model={v.discussion.card} /></div>
+        <section className="dev-ws-strip" data-ws-discussion="">
+          <div className="dev-ws-strip-head">
+            <span className="dev-ws-eyebrow">Talking about the app</span>
+          </div>
+          <div className="dev-ws-discussion"><DevCard model={v.discussion.card} /></div>
+        </section>
       ) : null}
 
       {themes.length ? (
