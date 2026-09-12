@@ -357,11 +357,15 @@
         + '</div>';
     }).join('');
 
-    // The instructions in full, so a clipboard that refuses can be worked
-    // around by hand. Collapsed, because the button is the path anyone
-    // sensible takes and the text is short enough not to need reading.
+    // The instructions in full, and OPEN. The work order this replaced ran to
+    // three hundred lines, so hiding it behind a disclosure was a kindness;
+    // fifteen lines is short enough to just read, and reading what you are
+    // about to paste into an agent is the point rather than an afterthought.
+    // It also keeps the text visible to the declared checks: the two other
+    // details-based checks in dapp.json both assert on the summary, because
+    // a collapsed body is not there to be seen.
     var order = s.status.instructions
-      ? '<details class="dc-flow-order"><summary>Instructions</summary>'
+      ? '<details class="dc-flow-order" open><summary>Instructions</summary>'
         + '<pre class="dc-flow-order-text" data-flow-order="1">' + escapeHtml(s.status.instructions) + '</pre>'
         + '</details>'
       : '';
