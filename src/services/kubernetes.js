@@ -544,7 +544,7 @@ function appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, as
 // three API calls to every app deploy and every preview build.
 let platformAssetBackend = null;
 
-async function ensurePlatformAssetBackend(config) {
+async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 120000 } = {}) {
   if (platformAssetBackend) return platformAssetBackend;
   platformAssetBackend = (async () => {
     const cfg = config.kubernetes;
@@ -585,7 +585,15 @@ async function ensurePlatformAssetBackend(config) {
             securityContext: podSecurityContext(),
             containers: [{
               name: 'assets', image, imagePullPolicy: 'IfNotPresent',
-              command: ['node', 'scripts/serve-platform-assets.js'],
+              // Through the CNB launcher, NOT a bare `node`. The image is
+              // built by kpack/Paketo, and a command that bypasses
+              // /cnb/lifecycle/launcher does not get the buildpack's launch
+              // environment (PATH to the node layer among it), so the
+              // container never starts and the Service has no ready
+              // endpoints — which the ingress answers as 503 on every asset
+              // path. See the buildEnv comment above on launcher env.
+              command: ['/cnb/lifecycle/launcher'],
+              args: ['node scripts/serve-platform-assets.js'],
               ports: [{ name: 'http', containerPort: 3000 }],
               startupProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 3, failureThreshold: 20 },
               readinessProbe: { httpGet: { path: '/health', port: 'http' }, periodSeconds: 5, failureThreshold: 3 },
@@ -598,6 +606,13 @@ async function ensurePlatformAssetBackend(config) {
       },
     });
 
+    // Only now is it safe to route to it. Publishing the Ingress paths on
+    // an upsert that merely SUCCEEDED is what turned a broken backend into a
+    // 503 on every asset path — strictly worse than not routing at all,
+    // because the app itself can no longer serve those paths either. If it
+    // never becomes ready this throws, the caller logs, and the app deploys
+    // with exactly its previous routing.
+    await waitForDeployment(namespace, PLATFORM_ASSET_NAME, { timeoutMs: readyTimeoutMs });
     return PLATFORM_ASSET_NAME;
   })().catch((err) => {
     // Clear the memo so the next deploy retries rather than this process
@@ -674,9 +689,15 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   // infrastructure, and a failure to reconcile it must not stop THIS app
   // from deploying. Without it the Ingress simply omits the asset paths and
   // the app routes exactly as it did before.
+  //
+  // Never for the platform's OWN app deployment: it is the SOURCE of these
+  // three trees, so routing them to the shared backend would serve a preview
+  // the production image's copy of its own files — the preview's checks would
+  // then describe bytes that are not in the preview. Its 15 native-kit demo
+  // checks caught exactly that.
   let assetBackend = null;
   try {
-    assetBackend = await ensurePlatformAssetBackend(config);
+    if (app.slug !== config.selfAppSlug) assetBackend = await ensurePlatformAssetBackend(config);
   } catch (err) {
     log.warn('kubernetes', 'platform asset backend unavailable — app deploys without asset routing', {
       namespace, app: app.slug, error: err?.message,
