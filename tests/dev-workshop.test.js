@@ -1950,6 +1950,42 @@ test('the grouping is a two-tab control, and category is what an untouched Works
   // ...and the category pane is unchanged: its own sort chips and its themes.
   assert.ok(html.includes('dev-ws-themes'), 'the theme list still renders');
   assert.ok(html.includes('dev-ws-sort-opts'), 'and its sort chips');
+
+  // The pane says what it holds, above the tabs. Everything above this point
+  // on the lander is a selection — your work, what needs you, what moved —
+  // and the tabs alone named the CHOICE without naming what the choice is
+  // being made about.
+  assert.match(html, /class="dev-ws-eyebrow dev-ws-pane-eyebrow">All items<\/span><div class="dev-ws-group"/);
+  // The declared check selects `.dev-ws-group + #dev-actions`, so the title
+  // goes BEFORE the tabs and the adjacency it gates on survives.
+  const gate = dapp.tests.find((t) => /\.dev-ws-group \+ #dev-actions/.test(t.expectSelector || ''));
+  assert.ok(gate, 'the declared check still names that adjacency');
+  assert.match(html, /class="dev-ws-group"[\s\S]*?<\/div><div id="dev-actions"/);
+
+  // And the count of categories is gone from the sort row: a number the
+  // reader can take from the list directly under it, attached to a grouping
+  // they had no say in.
+  const sort = html.slice(html.indexOf('class="dev-ws-sort"'), html.indexOf('dev-ws-themes'));
+  // A count, not the word: the sort control's own `aria-label` legitimately
+  // says "Order categories".
+  assert.ok(!/\d+\s+categor/i.test(sort), `no category count in the sort row: ${sort.slice(0, 200)}`);
+  assert.ok(!/dev-ws-sort"><span class="dev-ws-eyebrow"/.test(html),
+    'and no eyebrow at all when the grouping has nothing to report');
+});
+
+test('the sort row still reports the state of the grouping, when there is one', () => {
+  // What survived the count: the only part of that line the list under it
+  // cannot say for itself.
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = { ...themes([{ id: 't', name: 'T', items: ['issue:12'] }]), source: 'category' };
+  assert.match(workshopHtml(AppView), /class="dev-ws-eyebrow">grouped by category for now</);
+  AppView._workshopThemes = { ...themes([{ id: 't', name: 'T', items: ['issue:12'] }]), pending: true };
+  assert.match(workshopHtml(AppView), /class="dev-ws-eyebrow">re-drafting categories…</);
+  AppView._workshopThemes = {
+    ...themes([{ id: 't', name: 'T', items: ['issue:12'] }]), pending: true, pendingStage: 'placement',
+  };
+  assert.match(workshopHtml(AppView), /class="dev-ws-eyebrow">placing new cards…</);
 });
 
 test('"By stage" swaps the pane for the board\'s own columns, and keeps everything above it', () => {

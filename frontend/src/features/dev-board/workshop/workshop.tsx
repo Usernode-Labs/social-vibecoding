@@ -759,11 +759,21 @@ export function DevWorkshop(): ReactNode {
   const actions = useDevActions();
 
   const themes = useMemo(() => sortThemes(v.themes, sortKey), [v.themes, sortKey]);
-  // Named categories only — "Not yet grouped" is a holding pen, not one of
-  // them. Counted here so the label can agree with itself: it read
-  // "1 themes" before, which is the kind of thing a reader trusts a screen
-  // slightly less for.
-  const countOfThemes = themes.filter((t) => !t.ungrouped).length;
+  // The eyebrow over the theme list used to lead with a COUNT of the
+  // categories — a number the reader can see for themselves by looking at
+  // the list directly under it, attached to a grouping they did not choose.
+  // What is left is the only part of that line that said something the list
+  // cannot: what state the grouping itself is in. Empty on a healthy board,
+  // and then the eyebrow is not drawn at all.
+  const groupingNote = [
+    v.meta.source === 'category' ? 'grouped by category for now' : '',
+    v.meta.source === 'demo' ? 'staging demo grouping' : '',
+    v.meta.pending
+      ? (v.meta.pendingStage === 'placement'
+        ? 'placing new cards…'
+        : (v.meta.source === 'ai' ? 're-drafting categories…' : 'drafting categories…'))
+      : '',
+  ].filter(Boolean).join(' · ');
   // Every theme starts SHUT. The first one used to open itself, on the
   // reasoning that a lander whose every theme is closed is a list of
   // headings — but a list of headings is exactly what this screen is for,
@@ -1054,6 +1064,12 @@ export function DevWorkshop(): ReactNode {
               with the switch also gives the head a title bar — the two-state
               choice, then the tools for whichever state you picked. */}
           <div className="dev-ws-pane-head">
+          {/* The pane's own title. Everything above this point is a selection
+              — your work, what needs you, what moved — and this is the whole
+              board, however you choose to read it. Without the line the tabs
+              were the first thing in the pane and named only the CHOICE,
+              leaving what the choice was being made about unsaid. */}
+          <span className="dev-ws-eyebrow dev-ws-pane-eyebrow">All items</span>
           <div className="dev-ws-group" role="tablist" aria-label="Group the board by">
             <button
               type="button"
@@ -1098,16 +1114,7 @@ export function DevWorkshop(): ReactNode {
           ) : (
           <>
           <div className="dev-ws-sort">
-            <span className="dev-ws-eyebrow">
-              {`${countOfThemes} ${countOfThemes === 1 ? 'category' : 'categories'}`}
-              {v.meta.source === 'category' ? ' · grouped by category for now' : ''}
-              {v.meta.source === 'demo' ? ' · staging demo grouping' : ''}
-              {v.meta.pending
-                ? (v.meta.pendingStage === 'placement'
-                  ? ' · placing new cards…'
-                  : (v.meta.source === 'ai' ? ' · re-drafting categories…' : ' · drafting categories…'))
-                : ''}
-            </span>
+            {groupingNote ? <span className="dev-ws-eyebrow">{groupingNote}</span> : null}
             <div className="dev-ws-sort-opts" role="group" aria-label="Order categories">
               {SORTS.map((s) => (
                 <button

@@ -12261,6 +12261,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    sit on the same gutter. */
 .dev-ws-board { padding: 2px 8px 0; }
 
+/* The pane's title, above the tabs. Indented to the same 4px the sort row
+   and the tab strip sit at, so the head reads as one column. */
+.dev-ws-pane-eyebrow { padding: 2px 4px 0; }
+/* `space-between` with the eyebrow gone leaves the chips alone at the START
+   of the row, which is where they belong: on a healthy board there is no
+   grouping state to report and the row is just the sort control. */
 .dev-ws-sort { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 0; flex-wrap: wrap; }
 .dev-ws-sort-opts { display: flex; gap: 4px; }
 .dev-ws-chip {
