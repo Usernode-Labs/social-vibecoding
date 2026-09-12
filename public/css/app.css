@@ -11875,9 +11875,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
      "This week" and "Open" are different widths, so without it the text
      started at three different x-positions — which defeats the point of the
      one-line layout, where you read down the labels and across only where
-     you want the detail. 84px clears the longest of the three at 13.5px.
-     A fourth window with a longer name would need this revisited. */
-  width: 84px;
+     you want the detail. 84px cleared the longest of the ORIGINAL three at
+     13.5px, with a note that a fourth window with a longer name would need
+     it revisited. The walk backwards is that fourth window and then some —
+     "12 weeks ago" over a date range — so the column is 104px and the label
+     is a two-row stack. */
+  display: flex;
+  flex-direction: column;
+  width: 104px;
   font-size: 13.5px;
   font-weight: 700;
   letter-spacing: 0.01em;
@@ -11887,14 +11892,166 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   color: var(--accent);
 }
 .dev-ws-card-line { margin: 0; flex: 1 1 auto; font-size: 14px; color: var(--text-primary); }
-/* ── The Workshop's orientation pane ─────────────────────────
-   "Since your last visit" moved inside "Where the app is": the description
-   leads, and the personal line sits under it as a footnote to it rather than
-   as a strip of its own. */
-.dev-ws-since-line {
-  margin: 6px 0 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  font-size: 13px; color: var(--text-muted);
+/* The window's dates, under its name. Muted and lighter than the label it
+   sits beneath: the name is what you navigate by, the range is what you
+   check once you have arrived. */
+.dev-ws-card-range {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
+/* THE ONE-LINE CARD IS A WIDE-VIEWPORT LAYOUT, and it always was — the
+   design note above describes reading down a column of labels and across to
+   the sentences, which is what happens at 420px and up. Below that, a 104px
+   label column against a 14px sentence left the text ~250px wide and every
+   card wrapped to three rows, so the "column of labels" was a column of
+   labels each floating beside a paragraph. Stacked, the same card is two
+   rows and the sentence gets the full width. */
+@media (max-width: 419px) {
+  .dev-ws-card { flex-direction: column; align-items: stretch; gap: 2px; }
+  .dev-ws-card-title { flex-direction: row; align-items: baseline; gap: 6px; width: auto; }
+  .dev-ws-card-range { margin-top: 0; }
+}
+/* ── The pane's reveal control ──────────────────────────────────
+   ONE style for "put more of this pane on screen": the step backwards
+   through the weeks, and the since-list's "Show 8". They are the same act
+   and they were two different objects — the first a left-aligned grey pill,
+   the second a grey pill in a lane of left-aligned text — and in both cases
+   the pill made the most OPTIONAL thing in its block the most solid-looking
+   thing in it.
+
+   Quiet and centred instead: no border, no fill, muted 12px, the accent on
+   hover, and a caret pointing the way the content arrives. Centred over
+   full-width content rather than hung off one side of it. */
+.dev-ws-reveal {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  width: 100%; padding: 3px 8px;
+  border: 0; background: transparent;
+  font-size: 12px; font-weight: 600; letter-spacing: .01em;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dev-ws-reveal:hover { color: var(--accent); }
+.dev-ws-reveal:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+/* There is no ChevronUpIcon in the kit and one caret does not earn a 22nd
+   module, so UP is ChevronDownIcon turned over — the same trick the lane
+   headings already use on their own chevron.
+
+   Which way it points is which way the content arrives: the week walk grows
+   UPWARDS (each press puts an older window above the one you were reading),
+   so its caret is always up; the since-list opens DOWNWARDS, so its caret
+   points down and turns over once the rows are showing. */
+/* Left-aligned, in the lane's own text column.
+   Centring is right for the week walk: it sits under a stack of full-width
+   cards and belongs to all of them. The since-list's control sits in a lane
+   of left-aligned type — a bulleted heading and its note — and centred it
+   read as a third, unrelated thing floating mid-lane. Indented to the
+   note's 16px so the two share a left edge. */
+.dev-ws-reveal-start { justify-content: flex-start; padding-left: 16px; }
+.dev-ws-reveal-chev { width: 14px; height: 14px; }
+.dev-ws-week-more .dev-ws-reveal-chev { transform: rotate(180deg); }
+.dev-ws-reveal[aria-expanded="true"] .dev-ws-reveal-chev { transform: rotate(180deg); }
+.dev-ws-week-note {
+  margin: 0; font-size: 12px; color: var(--text-muted); text-align: center;
+}
+/* ── One offer at a time, paged sideways ───────────────────────
+   The track is the scroller and each item is exactly its width, so a swipe
+   lands on a card rather than between two. `scroll-snap-type: x mandatory`
+   and not `proximity`: a half-scrolled pair is the state this layout exists
+   to prevent.
+
+   `align-items: flex-start` matters more than it looks: a row UNFOLDS into
+   the full card in place, so one item in the track can be several times the
+   height of its neighbours, and stretched items would make every card as
+   tall as the tallest. */
+.dev-ws-pager { display: flex; flex-direction: column; gap: 6px; }
+.dev-ws-pager-track {
+  display: flex;
+  align-items: flex-start;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  /* BOTH AXES. `.home-discover-rail` carries the post-mortem (#1762): a rail
+     that declares `touch-action: pan-x` DENIES vertical panning for every
+     touch that starts on it, so on a phone it becomes a band you cannot
+     scroll the page from. Failing to page the deck costs one retry; failing
+     to scroll the lander costs the screen. */
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+  /* `mandatory`, where the discover rail uses `proximity` — a deliberate
+     deviation. That rail is a strip of small tiles where resting between two
+     is a fine place to be; this one shows exactly one card at a time, and a
+     deck resting half-way between two cards is the state it exists to
+     prevent. */
+  scroll-snap-type: x mandatory;
+  /* The cards carry a real shadow; a track clipped to the content box would
+     shave it off both sides on every page. */
+  padding: 3px;
+  margin: -3px;
+  scrollbar-width: none;
+}
+.dev-ws-pager-track::-webkit-scrollbar { display: none; }
+.dev-ws-pager-item {
+  flex: 0 0 100%;
+  min-width: 0;
+  scroll-snap-align: start;
+  /* The gutter between cards has to come from INSIDE the item: a `gap` on
+     the track would offset every snap point by one gap and the last card
+     would never reach its own. */
+  padding-right: 8px;
+  box-sizing: border-box;
+}
+/* ON THE HEADING ROW, at its right end. Under the deck it was a row of
+   three small things floating between a card and the next heading, reading
+   as a caption for neither; beside the lane's own title it is unambiguously
+   that lane's control, and the deck sits directly under the heading it
+   belongs to. Smaller than it was, because the heading row is 12px type and
+   a 28px control beside it dominated the words. */
+.dev-ws-lane-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+/* The title keeps its own bottom margin; the row must not inherit it twice. */
+.dev-ws-lane-head > .dev-ws-lane-title { margin-bottom: 0; }
+.dev-ws-pager-ctl {
+  display: flex; align-items: center; gap: 4px; flex: none;
+  margin-bottom: 4px;
+}
+.dev-ws-pager-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 999px;
+  border: 1px solid var(--app-sheet-line);
+  background-color: var(--dc-sheet);
+  color: var(--text-primary);
+  line-height: 1;
+  cursor: pointer;
+}
+.dev-ws-pager-btn:disabled { opacity: 0.35; cursor: default; }
+.dev-ws-pager-chev { width: 13px; height: 13px; }
+.dev-ws-pager-n {
+  font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+  /* The heading above it is uppercase tracked-out small type; the counter is
+     a number and stays a number. */
+  text-transform: none; letter-spacing: 0; white-space: nowrap;
+  padding: 0 2px;
+}
+/* The since lane needs no rule of its own: it is the same heading, note and
+   `.dev-ws-lane-btn` the two lanes above it use.
+   It briefly had one — `.dev-ws-since-btn`, a full-width bordered row that
+   carried the whole sentence as its label — written because that sentence
+   cannot live inside `.gc-vote-btn`, a 24px fixed-height pill that made it
+   set a min-content width wider than a phone. Splitting the sentence out
+   into the lane's note removes the problem rather than styling around it:
+   the label is "Show 8" now, which is exactly what that pill is for. */
+/* ── The Workshop's orientation pane ─────────────────────────
+   "Since your last visit" was a line inside "Where the app is" (`.dev-ws-
+   since-line`, retired): the description led and the personal line sat under
+   it as a footnote. It is a BUTTON in "What needs you" now — see
+   `.dev-ws-since-btn` above — because a list of things that moved for this
+   reader belongs with the other things addressed to them, not under the
+   app's own numbers. */
 /* A control at the end of a lane — "N more waiting on you". `.dev-ws-link`
    set `font: inherit` with no size of its own, so it took whatever its parent
    had: 16px in the two strip heads, larger than every other control on the
@@ -11903,16 +12060,20 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-lane-btn { margin: 2px 0 0 4px; }
 /* The offer under a lane's heading, where the heading states the fact. */
 .dev-ws-lane-note { margin: -2px 0 6px 16px; font-size: 12px; color: var(--text-muted); }
-/* ── "What needs you": the ring, and the way to put it down ──
+/* ── "What needs you": the ring ────────────────────────────────
    The pane stated a debt in the warning tint with no way to close it. The
    ring is the home screen's Challenges primitive saying the same thing as
-   progress, and the × stores the OWED COUNT so the pane comes back by itself
-   the moment that number changes. */
-.dev-ws-needs-end { display: inline-flex; align-items: center; gap: 6px; }
-.dev-ws-vote-ring { width: 30px; height: 30px; }
-/* The count in words beside the ring. Muted and small: the ring is the
-   figure, this is what the figure is about. */
-.dev-ws-needs-count { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+   progress.
+
+   It sits ON THE LANE HEADING now, not in the strip head — it counts the
+   vote lane, and the strip head covers two lanes. `.dev-ws-needs-end` (the
+   ring-and-words wrapper) and `.dev-ws-needs-count` (the words) are retired
+   with that move: the words are the lane's `.dev-ws-lane-note`, in the same
+   place the free-to-take lane keeps its own line.
+
+   22px, not 30px: the heading it now rides is 12px tracked-out caps, and
+   the old size set the height of the whole row. */
+.dev-ws-vote-ring { width: 22px; height: 22px; flex: none; margin-left: 2px; }
 .dev-ws-pill {
   display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px;
   font-size: 12px; font-weight: 600; white-space: nowrap;
@@ -12100,6 +12261,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    sit on the same gutter. */
 .dev-ws-board { padding: 2px 8px 0; }
 
+/* The pane's title, above the tabs. Indented to the same 4px the sort row
+   and the tab strip sit at, so the head reads as one column. */
+.dev-ws-pane-eyebrow { padding: 2px 4px 0; }
+/* `space-between` with the eyebrow gone leaves the chips alone at the START
+   of the row, which is where they belong: on a healthy board there is no
+   grouping state to report and the row is just the sort control. */
 .dev-ws-sort { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 0; flex-wrap: wrap; }
 .dev-ws-sort-opts { display: flex; gap: 4px; }
 .dev-ws-chip {
