@@ -759,13 +759,14 @@ export function DevWorkshop(): ReactNode {
   const actions = useDevActions();
 
   const themes = useMemo(() => sortThemes(v.themes, sortKey), [v.themes, sortKey]);
-  // The eyebrow over the theme list used to lead with a COUNT of the
-  // categories — a number the reader can see for themselves by looking at
-  // the list directly under it, attached to a grouping they did not choose.
-  // What is left is the only part of that line that said something the list
-  // cannot: what state the grouping itself is in. Empty on a healthy board,
-  // and then the eyebrow is not drawn at all.
+  // The eyebrow over the theme list: the count, then whatever the grouping
+  // itself has to report. Named categories only — "Not yet grouped" is a
+  // holding pen, not one of them — and counted here so the label can agree
+  // with itself: it read "1 themes" before, which is the kind of thing a
+  // reader trusts a screen slightly less for.
+  const countOfThemes = themes.filter((t) => !t.ungrouped).length;
   const groupingNote = [
+    `${countOfThemes} ${countOfThemes === 1 ? 'category' : 'categories'}`,
     v.meta.source === 'category' ? 'grouped by category for now' : '',
     v.meta.source === 'demo' ? 'staging demo grouping' : '',
     v.meta.pending

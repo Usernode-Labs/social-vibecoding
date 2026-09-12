@@ -1962,30 +1962,28 @@ test('the grouping is a two-tab control, and category is what an untouched Works
   assert.ok(gate, 'the declared check still names that adjacency');
   assert.match(html, /class="dev-ws-group"[\s\S]*?<\/div><div id="dev-actions"/);
 
-  // And the count of categories is gone from the sort row: a number the
-  // reader can take from the list directly under it, attached to a grouping
-  // they had no say in.
+  // The sort row's eyebrow leads with the count of NAMED categories —
+  // "Not yet grouped" is a holding pen, not one of them. (This fixture's
+  // themes are shaped for the tab assertions above and name no drawable
+  // card, so the count here is 0; the singular/plural agreement is pinned
+  // in the test below, against a board that has one.)
   const sort = html.slice(html.indexOf('class="dev-ws-sort"'), html.indexOf('dev-ws-themes'));
-  // A count, not the word: the sort control's own `aria-label` legitimately
-  // says "Order categories".
-  assert.ok(!/\d+\s+categor/i.test(sort), `no category count in the sort row: ${sort.slice(0, 200)}`);
-  assert.ok(!/dev-ws-sort"><span class="dev-ws-eyebrow"/.test(html),
-    'and no eyebrow at all when the grouping has nothing to report');
+  assert.match(sort, /class="dev-ws-eyebrow">\d+ categor/);
 });
 
-test('the sort row still reports the state of the grouping, when there is one', () => {
-  // What survived the count: the only part of that line the list under it
-  // cannot say for itself.
+test('the sort row reports the state of the grouping after the count', () => {
+  // The second half of that eyebrow: the part the list under it cannot say
+  // for itself. Appended to the count, one clause per thing to report.
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = { ...themes([{ id: 't', name: 'T', items: ['issue:12'] }]), source: 'category' };
-  assert.match(workshopHtml(AppView), /class="dev-ws-eyebrow">grouped by category for now</);
+  assert.match(workshopHtml(AppView), /class="dev-ws-eyebrow">1 category · grouped by category for now</);
   AppView._workshopThemes = { ...themes([{ id: 't', name: 'T', items: ['issue:12'] }]), pending: true };
-  assert.match(workshopHtml(AppView), /class="dev-ws-eyebrow">re-drafting categories…</);
+  assert.match(workshopHtml(AppView), /class="dev-ws-eyebrow">1 category · re-drafting categories…</);
   AppView._workshopThemes = {
     ...themes([{ id: 't', name: 'T', items: ['issue:12'] }]), pending: true, pendingStage: 'placement',
   };
-  assert.match(workshopHtml(AppView), /class="dev-ws-eyebrow">placing new cards…</);
+  assert.match(workshopHtml(AppView), /class="dev-ws-eyebrow">1 category · placing new cards…</);
 });
 
 test('"By stage" swaps the pane for the board\'s own columns, and keeps everything above it', () => {
