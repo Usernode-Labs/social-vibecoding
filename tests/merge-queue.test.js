@@ -105,6 +105,9 @@ function setup({
       return measurement;
     },
     readIntegration: () => ({}),
+    async setBlockReasons(pool_, id, reasons) {
+      events.measures.push({ id, blockReason: (reasons || [])[0] });
+    },
   });
   stub('src/services/governance.js', {
     async getGovernance() { return { approverPolicy: 'anyone', approvalsRequired: null }; },
@@ -181,8 +184,13 @@ test('an unresolvable conflict leaves the queue instead of holding it open', asy
     assert.deepEqual(events.syncs, [2, 1],
       'the blocked proposal must not stop its sibling being attempted');
     assert.deepEqual(events.merges, [], 'neither merges, but both were tried');
-    assert.ok(events.measures.some((m) => m.blockReason === 'conflict'),
-      'the block reason is recorded so the card can say what is wrong');
+    // The queue does NOT restate the conflict. It is derivable by the card
+    // from merge_conflict_state, which the sync turn just wrote — and the
+    // server only reports what the browser cannot work out for itself.
+    assert.ok(events.measures.some((m) => m.blockReason === 'integrating'),
+      'it announced it was working on it');
+    assert.ok(!events.measures.some((m) => m.blockReason === 'conflict'),
+      'and did not duplicate a reason the card derives itself');
   } finally { teardown(); }
 });
 

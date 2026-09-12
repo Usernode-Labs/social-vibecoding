@@ -90,7 +90,8 @@ function readIntegration(session) {
     mergedTree: normalizeSha(s.integration_merged_tree),
     checksBaseCurrent: s.integration_checks_base_current == null
       ? null : !!s.integration_checks_base_current,
-    blockReason: s.integration_block_reason || null,
+    blockReasons: Array.isArray(s.integration_block_reasons)
+      ? s.integration_block_reasons : [],
     error: s.integration_error || null,
     // Derived, so every surface agrees without re-deriving: is this answer
     // about the head the row currently claims? A measurement about a head
@@ -203,10 +204,11 @@ async function classifyHeadMove(dir, { approvedHead, newHead, mainSha }) {
  * previous numbers alone — the same stance services/proposal-freshness.js
  * took, for the same reasons.
  *
- * `blockReason` is supplied by the caller rather than computed here: the
- * merge gate is the only thing that knows which rung actually blocked, and it
- * has always known and then discarded it. Passing it through is what stops
- * the card from having to guess with a precedence table.
+ * `blockReasons` is supplied by the caller rather than computed here: only
+ * the merge gate knows the two things the browser cannot derive from columns
+ * — that the queue is working on this proposal right now, and that it needs a
+ * merge the shared token budget cannot pay for. Everything else the card
+ * shows it still derives itself from the columns it already reads.
  */
 async function measure({ pool, session }, options = {}) {
   const s = session || {};
@@ -274,9 +276,10 @@ async function measure({ pool, session }, options = {}) {
     return { ...answer, measuredAt: new Date().toISOString(), error: next.error };
   }
 
-  const blockReason = options.blockReason === undefined
-    ? (s.integration_block_reason || null)
-    : (options.blockReason || null);
+  const blockReasons = options.blockReasons === undefined
+    ? (Array.isArray(s.integration_block_reasons) ? s.integration_block_reasons : [])
+    : (Array.isArray(options.blockReasons) ? options.blockReasons
+      : [options.blockReasons].filter(Boolean));
 
   try {
     await pool.query(
@@ -291,14 +294,14 @@ async function measure({ pool, session }, options = {}) {
               integration_conflict_paths = $8::jsonb,
               integration_merged_tree = $9,
               integration_checks_base_current = $10,
-              integration_block_reason = $11,
+              integration_block_reasons = $11::jsonb,
               integration_error = NULL
         WHERE id = $1`,
       [
         s.id, next.headSha, next.mainSha, next.baseSha,
         next.behindBy, next.aheadBy, next.mergesClean,
         JSON.stringify(next.conflictPaths), next.mergedTree,
-        next.checksBaseCurrent, blockReason,
+        next.checksBaseCurrent, JSON.stringify(blockReasons),
       ]
     );
   } catch (err) {
@@ -318,7 +321,7 @@ async function measure({ pool, session }, options = {}) {
     integration_conflict_paths: next.conflictPaths,
     integration_merged_tree: next.mergedTree,
     integration_checks_base_current: next.checksBaseCurrent,
-    integration_block_reason: blockReason,
+    integration_block_reasons: blockReasons,
     integration_error: null,
   });
 
@@ -355,7 +358,7 @@ function measureDeduped(deps, options = {}) {
 }
 
 /**
- * Record which gate is holding this proposal, without re-measuring.
+ * Record what the SERVER knows is holding this proposal, without re-measuring.
  *
  * The merge gate is the only thing that knows why a merge did not happen, and
  * it has always known and then discarded it — which is why the card had to
@@ -366,16 +369,17 @@ function measureDeduped(deps, options = {}) {
  * network. Never throws — a proposal whose reason could not be recorded is a
  * worse card, not a failed merge.
  */
-async function setBlockReason(pool, sessionId, reason) {
+async function setBlockReasons(pool, sessionId, reasons) {
+  const list = (Array.isArray(reasons) ? reasons : [reasons]).filter(Boolean);
   try {
     await pool.query(
       `UPDATE chat_sessions
-          SET integration_block_reason = $2
-        WHERE id = $1 AND integration_block_reason IS DISTINCT FROM $2`,
-      [sessionId, reason || null]
+          SET integration_block_reasons = $2::jsonb
+        WHERE id = $1 AND integration_block_reasons IS DISTINCT FROM $2::jsonb`,
+      [sessionId, JSON.stringify(list)]
     );
   } catch (err) {
-    log.warn('integration', 'block reason write failed', { sessionId, err: err.message });
+    log.warn('integration', 'block reasons write failed', { sessionId, err: err.message });
   }
 }
 
@@ -417,7 +421,7 @@ module.exports = {
   isFresh,
   measure,
   measureDeduped,
-  setBlockReason,
+  setBlockReasons,
   classifyHeadMove,
   clearApprovals,
   currentVotePredicateSql,

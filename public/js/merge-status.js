@@ -148,56 +148,31 @@
       votes.advisory = Math.max(0, num(p.yes_count) - num(p.qualified_yes_count));
     }
 
-    // 0 — the server said why. Only for rows still in the merge lifecycle:
-    // a merged or archived row's stale block reason means nothing.
     var integ = integrationOf(p);
-    if (integ && integ.blockReason && status === 'promoted') {
-      var age = ageOf(integ.measuredAt);
-      var nConf = (integ.conflictPaths || []).length;
-      switch (integ.blockReason) {
-        case 'conflict':
-          return descriptor('merge_conflict',
-            nConf ? 'Conflicts with main · ' + nConf : 'Conflicts with main', 'red', false, {
-              glyph: '\u26a0', votes: votes,
-              title: 'This proposal no longer merges into main on its own'
-                + (nConf ? ' (' + (integ.conflictPaths || []).slice(0, 5).join(', ') + ')' : '')
-                + '. The platform will try to resolve it automatically; if it cannot, the '
-                + 'proposal\u2019s creator needs to resolve it from their dev session.'
-                + (age ? ' \u00b7 ' + age : ''),
-            });
-        case 'integrating':
-          return descriptor('integrating', 'Bringing up to date\u2026', 'amber', true, {
-            votes: votes,
-            title: 'This proposal is being merged with the latest main and re-checked '
-              + 'against the result. It merges on its own once that passes.'
-              + (age ? ' \u00b7 ' + age : ''),
-          });
-        case 'checks':
-          return descriptor('checks_running', 'Waiting on checks', 'neutral', true, {
-            votes: votes,
-            title: 'The votes are in. Automated tests are still running on the merged code, '
-              + 'and the merge happens by itself when they pass.' + (age ? ' \u00b7 ' + age : ''),
-          });
-        case 'locked':
-          return descriptor('awaiting_admin', 'Awaiting admin approval', 'amber', false, {
-            votes: votes,
-            title: 'App is locked, so it also needs at least one admin yes before it merges.',
-          });
-        case 'platform_env':
-          return descriptor('platform_env', 'Needs a platform value', 'amber', false, {
-            glyph: '\u26a0', votes: votes,
-            title: 'This proposal declares a platform variable that has no value set yet. '
-              + 'Set it and vote again \u2014 no rebuild is needed.',
-          });
-        case 'budget':
-          return descriptor('integrating', 'Waiting to be brought up to date', 'amber', false, {
-            votes: votes,
-            title: 'This proposal needs merging with main, but the platform\u2019s shared '
-              + 'token budget is spent for today. It resumes after the midnight UTC reset.',
-          });
-        default:
-          break; // an unknown reason falls through to the table below
-      }
+
+    // 0 — #2038: the two states only the SERVER can report.
+    //
+    // The board card derives every other reason itself, as a TAG, from the
+    // columns it already reads (AppView.blockReasons). This function feeds a
+    // different surface — the dev-chat header pill and the home strip, which
+    // have one slot and no tag line — so here the two server-known states do
+    // take the slot, because on those surfaces there is nowhere else for them
+    // to go. Both are in-flight or waiting: neither asks the reader to act.
+    var served = (integ && Array.isArray(integ.blockReasons)) ? integ.blockReasons : [];
+    if (status === 'promoted' && served.indexOf('integrating') !== -1) {
+      return descriptor('integrating', 'Bringing up to date\u2026', 'amber', true, {
+        votes: votes,
+        title: 'The platform is merging the latest main into this proposal and '
+          + 're-running its checks against the result. It merges on its own once '
+          + 'that passes.' + (ageOf(integ.measuredAt) ? ' \u00b7 ' + ageOf(integ.measuredAt) : ''),
+      });
+    }
+    if (status === 'promoted' && served.indexOf('budget') !== -1) {
+      return descriptor('integrating', 'Waiting on shared budget', 'amber', false, {
+        votes: votes,
+        title: 'This proposal needs merging with main, but the platform\u2019s shared '
+          + 'token budget is spent for today. It resumes after the midnight UTC reset.',
+      });
     }
 
     // 1 — terminal: merged.
@@ -214,7 +189,7 @@
     // 3 — auto-resolver reconciling conflicts (persisted snapshot, or the
     // feed's process-local `resolving` flag) then retrying the merge.
     if (mcs === 'resolving' || p.resolving === true) {
-      return descriptor('resolving', 'Resolving conflicts…', 'amber', true, {
+      return descriptor('resolving', 'Resolving conflicts automatically…', 'amber', true, {
         votes: votes,
         title: 'Reconciling conflicts with main automatically, then retrying the merge.',
       });
@@ -421,6 +396,10 @@
       + inner(life, true) + '</span>';
   }
 
+  // STATE_BADGE_KEYS used to live here — "keys whose canonical badge belongs
+  // in the feed card's state slot". No renderer ever read it; only two test
+  // files did. #2026 moved that decision into AppView.statusTagSpecs anyway,
+  // so it is deleted rather than kept in step with a card it does not drive.
   var MergeStatus = {
     lifecycle: lifecycle,
     badgeHtml: badgeHtml,
@@ -428,11 +407,6 @@
     // Keys whose canonical badge belongs in the feed card's "state" slot.
     // In-vote / draft are conveyed by the vote pill; checks states keep their
     // own detailed badge (with per-test counts), so they're excluded here.
-    // #2038: 'integrating' joins the list — a proposal being brought up to
-    // date is exactly the state the feed card was silent about, which is what
-    // left people watching a card that looked idle for minutes. 'checks_running'
-    // deliberately stays out: the checks badge already carries its own detail.
-    STATE_BADGE_KEYS: ['merged', 'merging', 'resolving', 'conflict_failed', 'merge_conflict', 'behind', 'ready', 'integrating', 'platform_env'],
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = MergeStatus;

@@ -66,23 +66,26 @@ const baseProposal = (over) => ({
   ...over,
 });
 
-test('console_check_state="errors" renders the amber warning badge with a count', () => {
+test('console_check_state="errors" draws NO tag on the card (#2038)', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({
     console_check_state: 'errors',
     console_errors: [{ kind: 'pageerror', message: 'boom' }, { kind: 'console', message: 'splat' }],
   }));
-  // The bar is the vote now; console errors are an AMBER TAG beside it. They
-  // are `soft` — worth knowing, they do not stop the change landing — which
-  // is the distinction the tag's colour carries.
-  assert.match(html, /Console errors · 2/, 'shows the error count');
-  assert.match(html, /may break the app/, 'tooltip explains the risk');
-  assert.match(html, /<span class="dev-badge [^"]*amber[^"]*"[^>]*>Console errors · 2<\/span>/,
-    'drawn as an amber tag');
-  // ...and NOT in the bar. `.dev-card-status` is the bar's own row.
-  const bar = html.slice(html.indexOf('dev-card-status'));
-  assert.ok(!/Console errors/.test(bar.slice(0, bar.indexOf('dev-card-facts') + 1 || 400)),
-    'the bar says nothing about console errors');
+  // Console errors already BLOCK. services/visuals.js classifyTests puts "a
+  // blocking check had console errors" straight into check_state 'failing',
+  // which draws its own red tag and which the merge gate refuses.
+  //
+  // console_check_state measures the same class of problem on a DIFFERENT
+  // target set — the screenshot capture routes rather than the declared
+  // dapp.json checks — so drawing it too meant one card carrying two tags
+  // about console errors, one red and blocking, one amber and not. The
+  // column and its messages are kept; the detail view is where an advisory
+  // reading belongs, and it still enumerates them.
+  assert.doesNotMatch(html, /Console errors/, 'no second tag about console errors');
+  assert.equal(AppView.blockReasons(baseProposal({
+    console_check_state: 'errors', console_errors: [{ message: 'x' }],
+  })).length, 0, 'and no reason either');
 });
 
 test('console_check_state="clean" renders NO warning badge', () => {
@@ -124,11 +127,10 @@ test('two reasons at once: both are tags, and neither is the bar', () => {
   });
   const html = proposalCardHtml(AppView, pr);
   assert.match(html, /<span class="dev-badge [^"]*amber[^"]*"[^>]*>Behind main · 3<\/span>/);
-  assert.match(html, /<span class="dev-badge [^"]*amber[^"]*"[^>]*>Console errors · 1<\/span>/);
   assert.doesNotMatch(html, /and 1 more reason, open for details/,
     'nothing is hidden behind a tooltip count any more');
-  // The detail view still enumerates them, unchanged.
-  assert.equal(AppView.blockReasons(pr).length, 2);
+  // #2038: the console errors are no longer one of the reasons.
+  assert.equal(AppView.blockReasons(pr).length, 1);
 });
 
 test('a HARD reason beside soft ones: red first, then amber, and the bar counts votes', () => {
@@ -141,17 +143,16 @@ test('a HARD reason beside soft ones: red first, then amber, and the bar counts 
     console_errors: [{ kind: 'console', message: 'oops' }],
   });
   const html = proposalCardHtml(AppView, pr);
-  // Three tags, severity-ordered: the blocking one is red and leads.
+  // Severity-ordered: the blocking one is red and leads.
   assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Checks failing · 1<\/span>/);
   assert.ok(html.indexOf('Checks failing · 1') < html.indexOf('Behind main · 2'),
     'the block leads the line');
-  assert.match(html, /<span class="dev-badge [^"]*amber[^"]*"[^>]*>Console errors · 1<\/span>/);
   // The bar is no longer blocked-toned — it is the vote.
   assert.doesNotMatch(html, /gc-vote-count-blocked/);
   // The detail view is untouched: same heading, same severity-first order.
   const reasonsView = AppView._detailActionsView('proposal', pr).reasons;
   assert.equal(reasonsView.heading, 'Why this can’t merge yet');
-  assert.equal(reasonsView.items.map((r) => r.label).join('|'), 'Checks failing · 1|Behind main · 2|Console errors · 1',
+  assert.equal(reasonsView.items.map((r) => r.label).join('|'), 'Checks failing · 1|Behind main · 2',
     'enumerated severity-first');
 });
 

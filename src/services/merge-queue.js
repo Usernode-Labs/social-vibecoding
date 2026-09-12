@@ -224,14 +224,12 @@ async function integrateOneInner(config, pool, sessionId) {
   // rather than to whoever voted last.
   const budget = await limits.checkSystemBudget(pool);
   if (budget.error) {
-    await integration.measureDeduped({ pool, session },
-      { force: true, blockReason: 'budget' }).catch(() => {});
+    await integration.setBlockReasons(pool, session.id, ['budget']);
     log.info('merge-queue', 'Skipped: system token budget exhausted', { sessionId });
     return { ok: false, reason: 'over_budget' };
   }
 
-  await integration.measureDeduped({ pool, session },
-    { force: true, blockReason: 'integrating' }).catch(() => {});
+  await integration.setBlockReasons(pool, session.id, ['integrating']);
   broadcast(session, { integrating: true });
 
   // #1728: supersede any check run in flight before moving the branch under
@@ -255,8 +253,7 @@ async function integrateOneInner(config, pool, sessionId) {
     });
   } catch (err) {
     log.error('merge-queue', 'sync turn threw', { sessionId, err: err.message });
-    await integration.measureDeduped({ pool, session },
-      { force: true, blockReason: 'conflict' }).catch(() => {});
+    await integration.setBlockReasons(pool, session.id, []);
     broadcast(session, { integrating: false });
     return { ok: false, reason: 'sync_threw' };
   }
@@ -269,8 +266,9 @@ async function integrateOneInner(config, pool, sessionId) {
     await postGroup(pool, session,
       `PR #${session.pr_number} could not be brought up to date with main automatically. `
       + `${owner}: open the session's dev-chat to resolve it.`);
-    await integration.measureDeduped({ pool, session },
-      { force: true, blockReason: 'conflict' }).catch(() => {});
+    // The queue is done with it; the card derives the conflict itself from
+    // merge_conflict_state, which the sync turn just wrote.
+    await integration.setBlockReasons(pool, session.id, []);
     broadcast(session, { integrating: false });
     return { ok: false, reason: 'unresolved_conflict' };
   }

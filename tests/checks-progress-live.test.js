@@ -551,8 +551,20 @@ test('the build opens prepare_checks when the container is up, and the capture c
     poolMod.getPool = savedGetPool;
   }
   const src = read('src/services/visuals.js');
-  // Queued: reported from the re-queue branch, before it returns.
-  assert.match(src, /_queued\.set\(key, \{ config, session, app, commitHash, stagingResult, trigger, force \}\);[\s\S]{0,900}reportPrepareChecks\(config, session, stagingResult, \{ queued: true \}\);\n\s+return;/);
+  // Queued: reported from the re-queue branch, before it returns. #2038 put
+  // the supersede check between the park and the report, so the window is
+  // wider — the ORDER is what this pins, not the distance.
+  assert.match(src, /_queued\.set\(key, \{ config, session, app, commitHash, stagingResult, trigger, force \}\);[\s\S]*?reportPrepareChecks\(config, session, stagingResult, \{ queued: true \}\);\n\s+return;/);
+  // #2038: and a run for a DIFFERENT commit does not wait at all. The suite
+  // that is going is testing the old head, and storeChecks only writes when
+  // checks_commit_sha still matches the commit its run started on — which
+  // setChecksPending has already moved — so letting it finish writes the
+  // verdict nowhere and leaves the row 'pending' until the stale sweeper
+  // notices. It is aborted instead, and its finally block drains the queue.
+  assert.match(src, /running\.commitHash !== commitHash/,
+    'the supersede is keyed on the commit having moved, not on any run existing');
+  assert.match(src, /running\.operation\.abort\(lifecycle\.cancelled\(\)\)/,
+    'and it actually aborts the in-flight operation');
   // Closed right after the phase flips, before anything slow (the compare, the capture image).
   assert.match(src, /notifyChecksPending\(session\.id, commitHash, 'testing', trigger\);[\s\S]{0,600}await finishPrepareChecks\(pool, session, commitHash, stagingResult, trigger\);/);
   assert.match(read('src/services/staging.js'), /timings\.deployedAt = deployedAt;\n\s+reportBuildStep\(config, session, 'prepare_checks', timings, deployedAt\);/);

@@ -380,12 +380,11 @@ function stagingMockProposals(viewer) {
     // sync" reports.
     {
       ...mk(9000081, 900181,
-        '[Mock] #2038: the votes are in, the merge is waiting on checks',
+        '[Mock] #2038: the votes are in, the checks are still running',
         4, 3, 0, 3, { required: 3 }),
       integration_measured_at: new Date(Date.now() - 40 * 1000).toISOString(),
       integration_behind_by: 0,
       integration_merges_clean: true,
-      integration_block_reason: 'checks',
       check_state: 'pending',
     },
     {
@@ -395,17 +394,18 @@ function stagingMockProposals(viewer) {
       integration_measured_at: new Date(Date.now() - 5 * 1000).toISOString(),
       integration_behind_by: 6,
       integration_merges_clean: true,
-      integration_block_reason: 'integrating',
+      integration_block_reasons: ['integrating'],
     },
     {
       ...mk(9000083, 900183,
-        '[Mock] #2038: conflicts with main, named files, measured ten minutes ago',
+        '[Mock] #2038: GitHub refused the merge, measured ten minutes ago',
         7, 3, 0, 3, { required: 3 }),
       integration_measured_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
       integration_behind_by: 12,
       integration_merges_clean: false,
-      integration_block_reason: 'conflict',
       integration_conflict_paths: ['src/routes/votes.js', 'public/js/merge-status.js'],
+      // Derived by the card from this column, not restated by the server.
+      merge_conflict_state: 'conflict',
     },
     // (c) Checks passed, against a base main has since moved past. The
     // verdict is real and the tests did pass; what they passed against is no
@@ -3139,7 +3139,7 @@ function voteRoutes(config) {
            cs.integration_base_sha, cs.integration_behind_by, cs.integration_ahead_by,
            cs.integration_merges_clean, cs.integration_conflict_paths,
            cs.integration_merged_tree, cs.integration_checks_base_current,
-           cs.integration_block_reason, cs.integration_error,
+           cs.integration_block_reasons, cs.integration_error,
            cs.approval_epoch,
            -- Which half of a 'pending' run is in flight ('building' |
            -- 'testing'), so the checks card names the stage instead of
@@ -4504,8 +4504,6 @@ async function checkAndMerge(config, pool, session, options = {}) {
         };
       }
       // No clock at all: not enough support (or contested / No leading).
-      await require('../services/integration')
-        .setBlockReason(pool, session.id, 'votes');
       return { merged: false, yesCount, needed: required, windowEndsAt: gate.windowEndsAt };
     }
 
@@ -4545,8 +4543,6 @@ async function checkAndMerge(config, pool, session, options = {}) {
         });
         dstep({ phase: 'gate:lock', level: 'warn', message: 'App is locked and has no admin yes vote yet, so the merge is blocked.', detail: { locked: true, adminYes: false } });
         dend('blocked', 'Blocked: locked app awaiting an admin yes vote.');
-        await require('../services/integration')
-          .setBlockReason(pool, session.id, 'locked');
         return { merged: false, yesCount, needed: required, awaitingAdmin: true };
       }
       dstep({ phase: 'gate:lock', message: 'App is locked, and an admin yes vote is present.', detail: { locked: true, adminYes: true } });
@@ -4617,8 +4613,9 @@ async function checkAndMerge(config, pool, session, options = {}) {
         detail: { conflictPaths: measured.conflictPaths, behindBy: measured.behindBy },
       });
       dend('conflict_resolving', 'Conflicts with main: queued for integration.');
-      await integrationSvc.measureDeduped({ pool, session },
-        { force: true, blockReason: 'conflict' }).catch(() => {});
+      // 'conflict' is derivable by the browser from the columns it already
+      // reads, so the server does not restate it — only 'integrating' is its
+      // to report, and the queue sets that when it actually starts.
       if (autoResolve) enqueueIntegration();
       return {
         merged: false, yesCount, needed: required,
@@ -4633,8 +4630,6 @@ async function checkAndMerge(config, pool, session, options = {}) {
         detail: { behindBy: measured.behindBy },
       });
       dend('conflict_resolving', 'Behind main: queued for integration.');
-      await integrationSvc.measureDeduped({ pool, session },
-        { force: true, blockReason: 'integrating' }).catch(() => {});
       if (autoResolve) enqueueIntegration();
       return {
         merged: false, yesCount, needed: required,
@@ -4745,8 +4740,6 @@ async function checkAndMerge(config, pool, session, options = {}) {
       });
       dstep({ phase: 'gate:checks', level: 'warn', message: `Merge blocked: checks not passing (state = ${checkState || 'pending'}${failingCount ? `, ${failingCount} failing` : ''}).`, detail: { checkState: checkState || 'pending', failingCount, checksRevisionMismatch } });
       dend('blocked', 'Blocked: votes reached, but checks must pass first.');
-      await require('../services/integration')
-        .setBlockReason(pool, session.id, 'checks');
       return {
         merged: false, yesCount, needed: required, blockReason: 'checks',
         checksBlocked: true, checkState: checkState || 'pending', failingCount,
@@ -4799,8 +4792,6 @@ async function checkAndMerge(config, pool, session, options = {}) {
           detail: envVerdict.detail,
         });
         dend('blocked', 'Blocked: a new platform variable has no value set.');
-        await require('../services/integration')
-          .setBlockReason(pool, session.id, 'platform_env');
         return {
           merged: false, yesCount, needed: required, blockReason: 'platform_env',
           platformEnvBlocked: true,
@@ -4849,7 +4840,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
   dstep({ phase: 'claim', message: 'Claimed merge (promoted → merging).' });
   // Nothing is blocking it any more; the card should stop saying so.
   await require('../services/integration')
-    .setBlockReason(pool, session.id, null);
+    .setBlockReasons(pool, session.id, []);
 
   // Broadcast the 'merging' transition so every client refreshes its
   // vote panel and re-renders the PR as "Merging…" — rather than having

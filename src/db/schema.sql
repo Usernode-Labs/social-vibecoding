@@ -7218,12 +7218,18 @@ CREATE INDEX IF NOT EXISTS chat_sessions_freshness_checked_idx
 --                               mechanical merge) or it does not.
 --   integration_checks_base_current  is the commit this proposal's checks
 --                               ran against still on main's history.
---   integration_block_reason    which gate is actually holding the merge:
---                               'votes' | 'checks' | 'conflict' | 'locked'
---                               | 'platform_env' | NULL when nothing is.
---                               The gate has always computed this and then
---                               discarded it, leaving the card to re-derive
---                               a guess from a precedence table.
+--   integration_block_reasons   what the SERVER knows is holding this
+--                               proposal that the browser cannot derive from
+--                               columns: 'integrating' (the queue is working
+--                               on it right now) and 'budget' (it needs a
+--                               merge with main but the shared token budget
+--                               is spent). A LIST, not one value, because
+--                               #2026 established that a card says every
+--                               reason that applies — ranking them into one
+--                               slot is how "Behind main" hid "Checks
+--                               failing". The browser keeps deriving the
+--                               rest from the columns it already reads;
+--                               these two are appended to that list.
 --   integration_error           why the last measurement could not answer.
 --                               A measurement never throws: it records this
 --                               and leaves the previous numbers in place.
@@ -7238,7 +7244,7 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_merges_clean BOOL
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_conflict_paths JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_merged_tree VARCHAR(40);
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_checks_base_current BOOLEAN;
-ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_block_reason TEXT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_block_reasons JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_error TEXT;
 
 -- ── The approval epoch ─────────────────────────────────────────────────
