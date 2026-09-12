@@ -4554,51 +4554,43 @@ function startSessionAutoPauseSweeper(config) {
       log.warn('server', 'Imported-PR head-sync sweep failed', { err: err.message });
     }
 
-    // Pass 9: proposal freshness (#1442). Re-measure each promoted proposal
-    // against main so the three numbers on its card — behind-by, whether it
-    // still merges cleanly, and whether its checks' base is still current —
-    // stop being frozen at submission time. Everything the service writes is
-    // advisory except behind_main, which it writes through so the merge gate
-    // reads a current number instead of a stale one.
+    // Pass 9: measure every promoted proposal (#2038).
     //
-    // Candidate order puts never-checked rows first, then the least recently
-    // checked. Rows whose recorded main sha no longer matches the app's are
-    // pulled to the front of that: main moving is exactly the event that
-    // invalidates all three answers, so a proposal that has demonstrably gone
-    // stale is measured before one that has merely aged.
+    // This replaced a freshness pass that was capped at ten rows a sweep with
+    // a five-minute per-row cooldown, because each row cost two to six GitHub
+    // reads against a rate limit. A proposal nobody had opened could therefore
+    // carry numbers that were hours old, and the merge gate read them.
+    //
+    // A measurement is local plumbing against the app's mirror now, so the cap
+    // and the cooldown are gone: every promoted proposal is measured every
+    // pass. That is the fix for the whole class of failures where a proposal
+    // was described confidently and wrongly — including the one that mattered
+    // most, a drifted proposal below the vote threshold that no drain would
+    // ever pick up and nothing else would ever re-measure.
+    //
+    // Grouped by app so one `git fetch` serves every open proposal on it.
     try {
-      const freshness = require('./src/services/proposal-freshness');
-      const gh = require('./src/services/github');
+      const integrationSvc = require('./src/services/integration');
       const { rows } = await pool.query(
-        `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.main_sha AS app_main_sha
+        `SELECT cs.*, a.slug AS app_slug, a.repo_url
            FROM chat_sessions cs
            JOIN apps a ON cs.app_id = a.id
           WHERE cs.status = 'promoted'
             AND a.repo_url IS NOT NULL
-            AND cs.pr_number IS NOT NULL
-          ORDER BY (a.main_sha IS NOT NULL AND a.main_sha IS DISTINCT FROM cs.freshness_main_sha) DESC,
-                   cs.freshness_checked_at ASC NULLS FIRST
-          LIMIT 50`
+            AND cs.branch_name IS NOT NULL
+          ORDER BY cs.app_id, cs.integration_measured_at NULLS FIRST`
       );
-      const MAX_FRESHNESS_REFRESH_PER_SWEEP = 10;
-      let refreshed = 0;
+      let measured = 0;
       for (const session of rows) {
-        if (refreshed >= MAX_FRESHNESS_REFRESH_PER_SWEEP) break;
         // A session mid-turn is about to move its own head; measuring it now
-        // would record an answer that is wrong by the time it is written.
+        // records an answer that is wrong before it is written.
         if (worker.isInFlight(session.id)) continue;
-        const last = freshnessRefreshAttempts.get(session.id) || 0;
-        if (Date.now() - last < FRESHNESS_REFRESH_COOLDOWN_MS) continue;
-        // Stamp before the work, exactly as Pass 6 does, so a tick landing
-        // during a slow GitHub round trip cannot start a duplicate.
-        freshnessRefreshAttempts.set(session.id, Date.now());
-        refreshed++;
-        // refreshFreshness never throws; the try is for the require/lookup.
-        await freshness.refreshFreshness({ gh, pool }, session, { force: true });
+        const written = await integrationSvc.measure({ pool, session }, { force: true });
+        if (written && !written.skipped) measured++;
       }
-      if (refreshed) log.info('server', 'Refreshed proposal freshness', { count: refreshed });
+      if (measured) log.info('server', 'Measured proposals against main', { count: measured });
     } catch (err) {
-      log.warn('server', 'Proposal-freshness sweep failed', { err: err.message });
+      log.warn('server', 'Proposal measurement sweep failed', { err: err.message });
     }
 
     // Pass 7: stale-env preview teardown (#851). The counterpart to Pass 3:
@@ -4839,9 +4831,7 @@ function startStalePrSweeper(config) {
             kind: 'pr', id: session.id,
             openedAt: session.promoted_at || session.created_at,
             explicitApproval: !!session.requires_explicit_approval,
-            // Count only votes on the current immutable revision for both
-            // imported and native GitHub-backed proposals.
-            headSha: sweepRevision.headSha,
+            // #2038: scoped by approval epoch inside the gate.
           });
           // Merge takes precedence: a row that just became mergeable should
           // merge, not reject. checkAndMerge re-confirms both gates atomically.

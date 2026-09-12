@@ -50,6 +50,40 @@
     };
   }
 
+  // #2038 — the server's own answer, when it has one.
+  //
+  // Everything below this point is a PRECEDENCE TABLE: thirteen states the
+  // browser derives by guessing which of six cached columns matters most.
+  // The merge gate has always known exactly which rung refused a merge and
+  // then thrown that away, so the guess was the only thing anybody saw — and
+  // it guessed wrong in both directions (a stale 'conflict' snapshot with no
+  // re-measuring writer outranked every checks and vote state indefinitely;
+  // a proposal blocked on checks read "In vote").
+  //
+  // `integration.blockReason` is that answer. The table below stays as the
+  // fallback for rows that carry no record: merged rows, drafts, and anything
+  // written before this shipped.
+  function integrationOf(p) {
+    var i = (p && p.integration && typeof p.integration === 'object') ? p.integration : null;
+    return i;
+  }
+
+  // "measured 30 seconds ago" — the honest half of a cached number. A card
+  // that states a figure without its age is making a claim about the present
+  // that it cannot support, which is what every "the UI is out of sync"
+  // report was actually about.
+  function ageOf(iso) {
+    if (!iso) return null;
+    var t = Date.parse(iso);
+    if (!Number.isFinite(t)) return null;
+    var secs = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (secs < 45) return 'measured just now';
+    if (secs < 90) return 'measured a minute ago';
+    if (secs < 3600) return 'measured ' + Math.round(secs / 60) + ' minutes ago';
+    if (secs < 7200) return 'measured an hour ago';
+    return 'measured ' + Math.round(secs / 3600) + ' hours ago';
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -112,6 +146,58 @@
     // shown beside the tally, never inside it.
     if (votes && p.approval_policy === 'invited' && p.qualified_yes_count != null) {
       votes.advisory = Math.max(0, num(p.yes_count) - num(p.qualified_yes_count));
+    }
+
+    // 0 — the server said why. Only for rows still in the merge lifecycle:
+    // a merged or archived row's stale block reason means nothing.
+    var integ = integrationOf(p);
+    if (integ && integ.blockReason && status === 'promoted') {
+      var age = ageOf(integ.measuredAt);
+      var nConf = (integ.conflictPaths || []).length;
+      switch (integ.blockReason) {
+        case 'conflict':
+          return descriptor('merge_conflict',
+            nConf ? 'Conflicts with main · ' + nConf : 'Conflicts with main', 'red', false, {
+              glyph: '\u26a0', votes: votes,
+              title: 'This proposal no longer merges into main on its own'
+                + (nConf ? ' (' + (integ.conflictPaths || []).slice(0, 5).join(', ') + ')' : '')
+                + '. The platform will try to resolve it automatically; if it cannot, the '
+                + 'proposal\u2019s creator needs to resolve it from their dev session.'
+                + (age ? ' \u00b7 ' + age : ''),
+            });
+        case 'integrating':
+          return descriptor('integrating', 'Bringing up to date\u2026', 'amber', true, {
+            votes: votes,
+            title: 'This proposal is being merged with the latest main and re-checked '
+              + 'against the result. It merges on its own once that passes.'
+              + (age ? ' \u00b7 ' + age : ''),
+          });
+        case 'checks':
+          return descriptor('checks_running', 'Waiting on checks', 'neutral', true, {
+            votes: votes,
+            title: 'The votes are in. Automated tests are still running on the merged code, '
+              + 'and the merge happens by itself when they pass.' + (age ? ' \u00b7 ' + age : ''),
+          });
+        case 'locked':
+          return descriptor('awaiting_admin', 'Awaiting admin approval', 'amber', false, {
+            votes: votes,
+            title: 'App is locked, so it also needs at least one admin yes before it merges.',
+          });
+        case 'platform_env':
+          return descriptor('platform_env', 'Needs a platform value', 'amber', false, {
+            glyph: '\u26a0', votes: votes,
+            title: 'This proposal declares a platform variable that has no value set yet. '
+              + 'Set it and vote again \u2014 no rebuild is needed.',
+          });
+        case 'budget':
+          return descriptor('integrating', 'Waiting to be brought up to date', 'amber', false, {
+            votes: votes,
+            title: 'This proposal needs merging with main, but the platform\u2019s shared '
+              + 'token budget is spent for today. It resumes after the midnight UTC reset.',
+          });
+        default:
+          break; // an unknown reason falls through to the table below
+      }
     }
 
     // 1 — terminal: merged.
@@ -234,9 +320,14 @@
     // own red state 4b above, since "syncing automatically" was a false
     // promise for proposals the gate-filtered auto-resolver never picks up.)
     if (behind > 0 || mcs === 'behind') {
+      // #2038: no longer a promise that something is syncing. Nothing syncs a
+      // proposal until it is eligible to merge, and saying otherwise is what
+      // left people watching a card that claimed to be working on itself.
+      var behindAge = integ ? ageOf(integ.measuredAt) : null;
       return descriptor('behind', behind ? 'Behind main · ' + behind : 'Behind main', 'amber', false, {
         votes: votes,
-        title: 'This proposal is behind main. Syncing automatically, then it will retry the merge.',
+        title: 'Main has moved on since this was proposed. It is brought up to date and '
+          + 're-checked automatically once the vote passes.' + (behindAge ? ' \u00b7 ' + behindAge : ''),
       });
     }
     // 8 — locked app: majority reached but still needs an admin yes. (Only

@@ -8583,12 +8583,15 @@ const AppView = {
   // silently disable that guard.
   _cardVoteButtonSpecs(pr) {
     if (!pr || pr.status !== 'promoted') return [];
-    const nativeHead = pr.source !== 'imported'
-      && typeof pr.reviewed_head_sha === 'string'
-      && /^[0-9a-f]{40}$/i.test(pr.reviewed_head_sha)
-      ? pr.reviewed_head_sha.toLowerCase()
-      : null;
-    const rev = nativeHead ? [nativeHead] : [];
+    // #2038: the vote carries the approval EPOCH the card was rendered with,
+    // not the commit. A commit changes whenever the platform brings the
+    // proposal up to date with main, and comparing commits made every one of
+    // those merges reject the next voter's click — for code the platform had
+    // just certified was unchanged. The epoch only moves when somebody writes
+    // bytes nobody approved.
+    const epoch = Number.isFinite(parseInt(pr.approval_epoch, 10))
+      ? parseInt(pr.approval_epoch, 10) : null;
+    const rev = epoch === null ? [] : [epoch];
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
     return [
@@ -14551,16 +14554,13 @@ const AppView = {
     const adminMerge = canForceMerge
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${pr.requires_explicit_approval ? 'Admin: merge this admins-changing PR right now, bypassing the vote' : 'Admin: merge this PR right now, bypassing the vote majority'}" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
-    // Native votes carry the exact revision rendered with this card. If the
-    // PR moves before the click reaches the server, the server rejects the
-    // stale action and asks for a refresh instead of applying it to unseen
-    // code. Imported proposals retain their existing vote flow.
-    const nativeHead = pr.source !== 'imported'
-      && typeof pr.reviewed_head_sha === 'string'
-      && /^[0-9a-f]{40}$/i.test(pr.reviewed_head_sha)
-      ? pr.reviewed_head_sha.toLowerCase()
-      : null;
-    const revisionArg = nativeHead ? `, '${nativeHead}'` : '';
+    // The vote carries the approval epoch this card was rendered with, so a
+    // proposal that genuinely changed under the voter is still refused —
+    // while one the platform merely rebased is not.
+    // #2038: see _cardVoteButtonSpecs — the epoch, not the commit.
+    const voteEpoch = Number.isFinite(parseInt(pr.approval_epoch, 10))
+      ? parseInt(pr.approval_epoch, 10) : null;
+    const revisionArg = voteEpoch === null ? '' : `, ${voteEpoch}`;
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`;
@@ -14758,26 +14758,40 @@ const AppView = {
 
 
   _voteInFlight: new Set(),
-  async castVote(sessionId, vote, expectedHeadSha = null) {
+  // #2038: the epoch each proposal was last seen at, so a rejection can
+  // re-arm the next click without waiting on a refetch to land. The old
+  // code fired the refresh without awaiting it and released the click lock
+  // first, so an impatient second click re-sent the same stale stamp and
+  // took a second identical rejection — one head move, two toasts.
+  _seenEpoch: new Map(),
+  async castVote(sessionId, vote, expectedEpoch = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
-    // The server is now idempotent on an unchanged vote (won't re-post
-    // to chat or re-enter checkAndMerge), but blocking here still avoids
-    // pointless network round-trips and keeps the UI responsive.
+    // The server is idempotent on an unchanged vote, but blocking here
+    // avoids pointless round-trips and keeps the UI responsive.
     const key = `${sessionId}:${vote}`;
     if (AppView._voteInFlight.has(key)) return;
     AppView._voteInFlight.add(key);
     try {
+      const known = AppView._seenEpoch.get(sessionId);
+      const epoch = known === undefined ? expectedEpoch : known;
       const res = await fetch(`/api/sessions/${sessionId}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vote, expectedHeadSha }),
+        body: JSON.stringify({ vote, expectedEpoch: epoch }),
       });
       const data = await res.json().catch(() => ({}));
-      AppView.refreshDevData('vote');
       if (!res.ok) {
+        // A rejection that names the current epoch lets the very next click
+        // land, rather than needing a refetch to have finished first.
+        if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
+          AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
+        }
+        await AppView.refreshDevData('vote');
         PlatformUI.toast(data.error || `Vote failed (HTTP ${res.status}).`);
         return;
       }
+      AppView._seenEpoch.delete(sessionId);
+      AppView.refreshDevData('vote');
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
