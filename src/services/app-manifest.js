@@ -278,6 +278,10 @@ const RESERVED_KEYS = new Set([
   'USERNODE_STORAGE_URL',
   'USERNODE_STORAGE_TOKEN',
   'USERNODE_PLATFORM_API_URL',
+  // The platform's public origin (services/app-identity-env.js). Reserved
+  // for the same reason as the rest: a manifest that shadowed it could
+  // point an app's "Open in Usernode" links at a host of its choosing.
+  'USERNODE_PLATFORM_ORIGIN',
 ]);
 
 // Reserved prefixes for the LLM-proxy (issue #34), app-storage (#752),
