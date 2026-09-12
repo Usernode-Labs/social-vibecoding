@@ -336,6 +336,39 @@ async function changedPaths(dir, from, to) {
   return text(stdout).split('\0').map((s) => s.trim()).filter(Boolean).sort();
 }
 
+// A branch name we are willing to hand to git. Deliberately stricter than
+// git's own rules: no leading dash (which would be read as an option), no
+// `..` (which would make a range), no `.lock` suffix, and nothing outside a
+// conservative character set. Branch names reach us from chat_sessions rows
+// that the platform wrote, but the validator is the cheap place to be sure.
+const REF_RE = /^(?!-)(?!.*\.\.)(?!.*\.lock$)[A-Za-z0-9._\/-]{1,255}$/;
+
+function safeRef(value) {
+  const s = String(value || '').trim();
+  if (!REF_RE.test(s)) {
+    throw new Error(`Not a usable branch name: ${JSON.stringify(String(value || ''))}`);
+  }
+  return s;
+}
+
+/**
+ * The commit a branch points at, or null when the mirror has no such branch.
+ *
+ * This is what makes the mirror a live view rather than a cache of one: the
+ * fetch in ensureMirror pulls every branch, so ONE network round trip per app
+ * answers "where is each open proposal's head right now?" for every proposal
+ * on it. The old path spent a `getPR` per proposal, which is why the freshness
+ * sweeper had to cap itself at ten rows a pass — and why a proposal nobody had
+ * opened could carry a head that had moved hours ago.
+ */
+async function resolveBranch(dir, branchName) {
+  const r = await git(dir, [
+    'rev-parse', '--verify', '--quiet', `refs/heads/${safeRef(branchName)}^{commit}`,
+  ], { allowFail: true });
+  if (r.code !== 0) return null;
+  return text(r.stdout).trim().toLowerCase() || null;
+}
+
 /** Does the mirror know this commit at all? */
 async function hasCommit(dir, committish) {
   const r = await git(dir, ['cat-file', '-e', `${safeSha(committish)}^{commit}`], { allowFail: true });
@@ -353,11 +386,13 @@ module.exports = {
   treeOf,
   mergeTree,
   changedPaths,
+  resolveBranch,
   hasCommit,
   // Exported for the unit tests, which drive the plumbing against a real
   // temporary repository rather than a mock — the whole point of this module
   // is that the answers are git's, so stubbing git would test nothing.
   _git: git,
   _safeSha: safeSha,
+  _safeRef: safeRef,
   _parseConflictPaths: parseConflictPaths,
 };
