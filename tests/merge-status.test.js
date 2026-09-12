@@ -337,17 +337,13 @@ test('#695 — pillHtml appends the muted +N advisory suffix to the in-vote tall
   assert.doesNotMatch(MergeStatus.badgeHtml(life), /ms-advisory/);
 });
 
-test('STATE_BADGE_KEYS covers the merge-pipeline / conflict / ready states only', () => {
-  assert.deepEqual(
-    MergeStatus.STATE_BADGE_KEYS.slice().sort(),
-    ['behind', 'conflict_failed', 'merge_conflict', 'merged', 'merging', 'ready', 'resolving'].sort()
-  );
-  // in_vote / draft / checks states are deliberately excluded (pill + the
-  // dedicated checks badge cover them on the feed card).
-  for (const k of ['in_vote', 'draft', 'checks_failing', 'checks_running', 'none']) {
-    assert.ok(MergeStatus.STATE_BADGE_KEYS.indexOf(k) === -1, `${k} excluded`);
-  }
-});
+// STATE_BADGE_KEYS and its test are deleted (#2038). The constant was
+// exported and documented as "keys whose badge belongs in the feed card's
+// state slot", but no renderer ever read it — only this test and
+// platform-update-nudge did. #2026 moved that decision into
+// AppView.statusTagSpecs, so the list was pinned in step with a card it did
+// not drive.
+
 
 // ── #1442: predicted conflict and the measured behind count ────────────
 //

@@ -738,7 +738,7 @@ const AppView = {
         const asked = /^(session|proposal|issue|gov|merged)(:\d+)?$/.exec(q.get('card') || '');
         const kind = asked ? asked[1] : null;
         const want = kind
-          ? (asked[2] ? `[data-card-menu="${asked[0]}"]` : `[data-card-menu^="${kind}:"]`)
+          ? (asked[2] ? `[data-card-menu="${asked[0]}"], [data-card-menu="detail:${asked[0]}"]` : `[data-card-menu^="${kind}:"], [data-card-menu^="detail:${kind}:"]`)
           : '[data-card-menu]';
         // Fixed grammar, same as `card=` — a named UI state, never a
         // query-string-injected selector.
@@ -3023,37 +3023,73 @@ const AppView = {
   //
   // Read-only viewers are NOT filtered here: that gate lives in
   // _exploreChatBtnHtml (#621), so it stays in exactly one place.
-  // Shape a card model for the topic head (round three): the GitHub link as
-  // the meta line's last word, the state as a bar rather than the capsule,
-  // and the detail actions merged onto the card's own band — the labelled
-  // Preview, Explore, kudos, and the issue's claim toggle. Anything the ⋯
-  // already carries (Open session, Withdraw, Generate proposal, Pledge
-  // kudos, Propose to close) is not repeated as a pill.
+  // Full cards own their action band. Secondary actions live in More;
+  // contextual recovery lives beside its status in the detail ledger.
   _topicCard(card, kind, item, body) {
     if (!card || !item) return card;
+    // The full card owns lifecycle actions; its menu is independent of the
+    // compact card so filtering shortcuts here cannot change the board.
     const gh = kind === 'issue' ? item.htmlUrl : item.pr_url;
-    if (gh) {
-      card.meta = [...(card.meta || []), {
-        t: 'link', href: gh, s: 'GitHub ↗', cls: 'dev-topic-gh',
-        title: kind === 'issue' ? 'Open this issue on GitHub' : 'Open this pull request on GitHub',
-      }];
+    const shortcuts = ['View checks', 'Re-run checks', 'Open public discussion',
+      'Continue building', 'Open session', 'Put up for vote', 'View PR on GitHub',
+      'Retry preview', 'Before/after screenshots'];
+    const menu = [...(AppView._cardMenus[card.rail.menuKey] || [])]
+      .filter((a) => !body.changeId || !shortcuts.some((label) =>
+        a.label === label || a.label.startsWith(`${label} (`)));
+    for (const action of card.actions || []) {
+      if (action.key === 'vis') menu.unshift(AppView._foldedMenuItem(action));
     }
+    card.actions = (card.actions || []).filter((a) => a.key !== 'vis');
+    if (body.changeId) {
+      const secondary = kind === 'proposal' ? AppView._proposalMenuItems(item, {
+        mine: !!(App.user && Number(item.user_id) === Number(App.user.id)),
+        imported: item.source === 'imported', noNav: true,
+      }).filter((a) => ['kudos', 'explore'].includes(a.icon)) : [];
+      for (const action of secondary) if (!menu.some((a) => a.icon === action.icon)) menu.push(action);
+      card.actions = card.actions.filter((a) => a.explore == null && a.kudos == null);
+    }
+    if (gh && !menu.some((a) => a.label === 'Open on GitHub')) {
+      menu.push({ label: 'Open on GitHub', icon: 'github', act: () => window.open(gh, '_blank', 'noopener') });
+    }
+    card.rail.menuKey = AppView._registerCardMenu(`detail:${kind}:${item.id || item.number}`, menu);
     if (card.pill) card.pill = { ...card.pill, inline: false };
     const pills = (body && body.actions && Array.isArray(body.actions.pills)) ? body.actions.pills : [];
-    const keep = pills.filter((p) => p.preview || p.explore != null || p.kudos != null
+    const keep = pills.filter((p) => p.preview || (!body.changeId && (p.explore != null || p.kudos != null))
       || p.key === 'claim' || (p.key === 'promote' && !body.changeId));
     const have = new Set((card.actions || []).map((a) => (a.act && a.act.fn) || (a.kudos != null ? 'kudos' : null)));
     card.actionPreview = null;
     card.actions = [
+      ...keep.filter((p) => p.preview),
       ...(card.actions || []),
-      ...keep.filter((p) => !(p.act && have.has(p.act.fn)) && !(p.kudos != null && have.has('kudos'))),
+      ...keep.filter((p) => !p.preview && !(p.act && have.has(p.act.fn)) && !(p.kudos != null && have.has('kudos'))),
     ];
+    card.rail.preview = null;
+    if (body.changeId && item.status === 'merged') {
+      card.actions = card.actions.filter((a) => !a.preview);
+      card.actions.unshift({ key: 'open-app', cls: 'gc-vote-btn', label: 'Open app',
+        act: { fn: 'openLiveApp', args: [AppView.appData?.slug || App.currentApp] } });
+    }
     return card;
   },
 
   // One detail model for a change before and after it enters review.
   // The source row is public metadata; private agent messages never enter it.
+  openLiveApp(slug) { return App.openAppTab(slug, 'app'); },
   _changeActions: new Map(),
+  _changeItems: new Map(),
+  changeSubmissionState(item) {
+    if (!item || !['active', 'paused'].includes(item.status)) return { kind: 'completed' };
+    if (AppView._changeActions.get(Number(item.id)) === 'promote') return { kind: 'pending' };
+    // Ordinary sessions can kick off their first build/check cycle on submit.
+    // Managed handoffs must already have a checked, uploaded revision.
+    const ready = item.status === 'active' && (item.check_state === 'passing'
+      || (!item.check_state && item.source !== 'cli_handoff')) && !item.busy
+      && !AppView._checksBaseNote(item)
+      && (item.source !== 'cli_handoff' || item.proposal_state === 'ready');
+    return ready ? { kind: 'ready' } : { kind: 'blocked', label: 'Submit for review',
+      reason: item.status === 'paused' ? 'Resume this change before submitting it.'
+        : 'Finish the build and pass checks for the current revision before submitting for review.' };
+  },
   _completeChangeView(item, card, body) {
     const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));
     const underway = ['active', 'paused'].includes(item.status);
@@ -3061,6 +3097,7 @@ const AppView = {
     const busy = AppView._changeActions.get(Number(item.id));
     const rows = body.details.ledger;
     body.changeId = item.id;
+    AppView._changeItems.set(Number(item.id), item);
     if (mine && underway && item.source !== 'imported') {
       const own = AppView._mySessionCardModel(item);
       card.rail.menuKey = own.rail.menuKey;
@@ -3084,6 +3121,11 @@ const AppView = {
     card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? 'Visible to the group' : 'Private change') : (item.status === 'promoted' ? 'In review' : item.status) }];
     if (!rows.some((r) => r.key === 'preview')) rows.unshift({ key: 'preview', label: 'Preview', tone: item.staging_url ? 'ok' : 'mute', text: [item.staging_url ? 'Available for the submitted build.' : 'No staging preview is available yet.'] });
     if (!rows.some((r) => r.key === 'checks')) rows.push({ key: 'checks', label: 'Checks', tone: 'mute', text: ['No check results have been recorded yet.'] });
+    if (!AppView.readOnly && !item.staging_url && item.staging_error && item.status !== 'merged') {
+      const preview = rows.find((r) => r.key === 'preview');
+      preview.actions = [{ key: 'retry-preview', cls: 'gc-vote-btn', label: 'Retry preview',
+        act: { fn: 'swapToStagingForSession', args: [item.id, ''] } }];
+    }
     // Keep the established conflict explanations, and put the manual action
     // next to them. Forks cannot be updated by the platform worker.
     let main = rows.find((r) => ['sync', 'behind', 'conflict', 'mergeability'].includes(r.key));
@@ -3112,36 +3154,55 @@ const AppView = {
       body.details.pathSteps = null;
       body.details.pathLeft = null;
       rows.forEach((r) => { delete r.step; delete r.stepDone; });
-      const ready = item.status === 'active' && item.check_state === 'passing' && !item.busy
-        && !AppView._checksBaseNote(item)
-        && (item.source !== 'cli_handoff' || item.proposal_state === 'ready');
+      const submission = AppView.changeSubmissionState(item);
+      const ready = submission.kind === 'ready';
       rows.push({ key: 'review', label: 'Review', tone: ready ? 'ok' : 'mute',
-        text: [ready ? 'Ready to propose to the group.' : 'This change is underway. Finish the build and pass its required checks before proposing it.'],
-        actions: mine && !AppView.readOnly ? [{ key: 'propose-change', cls: 'gc-vote-btn', label: busy === 'promote' ? 'Proposing…' : 'Propose to group', disabled: !ready || !!busy, act: { fn: 'runChangeAction', args: [item.id, 'promote'] } }] : [] });
+        text: [ready ? 'Ready to submit for review.' : submission.reason || 'Submitting for review…'] });
+      card.actions = (card.actions || []).filter((a) => a.key !== 'promote');
+      if (mine && !AppView.readOnly) card.actions.push({ key: 'propose-change', cls: 'gc-vote-btn',
+        label: submission.kind === 'pending' ? 'Submitting…' : 'Submit for review',
+        title: submission.reason, disabled: !ready || !!busy,
+        act: { fn: 'runChangeAction', args: [item.id, 'promote'] } });
     }
   },
 
   async runChangeAction(id, action) {
     if (!['sync-main', 'promote'].includes(action) || AppView._changeActions.has(Number(id))) return;
+    const session = typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)
+      ? DevChat.currentSession : AppView._changeItems.get(Number(id));
+    if (action === 'promote' && (!session || AppView.changeSubmissionState(session).kind !== 'ready')) return;
+    const slug = AppView.appData?.slug;
+    const fromWorkspace = typeof DevChat !== 'undefined' && DevChat.currentSession === session;
+    const stillVisible = () => !fromWorkspace || Number(DevChat.currentSession?.id) === Number(id);
     AppView._changeActions.set(Number(id), action);
     const repaint = () => {
       AppView._renderTopicHead();
-      if (typeof DevChat !== 'undefined') DevChat._publishDevView();
+      if (typeof DevChat !== 'undefined') { DevChat._publishDevView(); DevChat._publishTranscript(); }
       window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(id) }));
     };
     repaint();
     try {
       const response = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || data.ok === false) throw new Error(data.error || data.message || 'The action could not be completed.');
-      PlatformUI.toast(data.message || (action === 'promote' ? 'Proposed to the group.' : 'Synced with main.'));
+      if (!response.ok || data.ok === false) throw new Error(data.error === 'proposal_not_ready'
+        ? 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.'
+        : data.message || data.error || 'The action could not be completed.');
+      if (stillVisible() && action !== 'promote') PlatformUI.toast(data.message || 'Synced with main.');
+      if (action === 'promote') {
+        session.status = 'promoted';
+        if (data.prNumber) session.pr_number = data.prNumber;
+        if (data.prUrl) session.pr_url = data.prUrl;
+        if (data.prTitle) session.pr_title = session.session_title = data.prTitle;
+        const listed = typeof DevChat !== 'undefined' && DevChat.sessions?.find((s) => Number(s.id) === Number(id));
+        if (listed) Object.assign(listed, { status: session.status, pr_number: session.pr_number, pr_url: session.pr_url, pr_title: session.pr_title, session_title: session.session_title });
+      }
       if (typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)) {
-        await DevChat.openSession(id);
         DevChat.renderChatView();
       }
-      await AppView._loadDevData();
+      if (AppView.appData?.slug === slug) await AppView._loadDevData();
     } catch (error) {
-      PlatformUI.toast(error.message);
+      if (stillVisible()) PlatformUI.toast(error?.name === 'TypeError' ? 'Network error' : error.message);
+      else console.warn('Change action failed after leaving the session:', error.message);
     } finally {
       AppView._changeActions.delete(Number(id));
       repaint();
@@ -3226,17 +3287,6 @@ const AppView = {
         });
       }
     } else if (kind === 'issue' && !AppView.readOnly) {
-      // The issue card's demoted actions, spelled out where there is room.
-      const h = item.headless;
-      const generating = !!(h && h.status === 'generating');
-      const clonedReady = !!(h && h.status === 'ready' && h.mySessionId);
-      if (!generating && !clonedReady) {
-        pills.push({
-          key: 'generate', cls: 'gc-vote-btn', label: 'Generate proposal',
-          title: 'Spin up a headless AI session that starts solving this issue on its own. Uses your credits',
-          act: { fn: 'confirmAutoSession', args: [item.number] },
-        });
-      }
       const ipClaims = (item.in_progress && Array.isArray(item.in_progress.claims))
         ? item.in_progress.claims : [];
       pills.push(ipClaims.some((c) => c.mine)
@@ -5304,6 +5354,29 @@ const AppView = {
   // they are placed here, by the issue they link.
 
   WORKSHOP_SEEN_KEY: 'workshopSeen',
+  // The lander's three tabs. A query param reaches one directly (`?ws=needs`)
+  // because the platform's own rule is that a screen only reachable by
+  // interacting needs a URL: the declared checks select against it and the
+  // proposal screenshots are shot from it.
+  WORKSHOP_TABS: ['status', 'needs', 'all'],
+  _workshopModels() {
+    const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
+    if (!src || typeof src !== 'object') return { list: [], selected: null };
+    const list = Object.keys(src).map((id) => ({
+      id,
+      label: (src[id] && src[id].label) || id,
+      note: (src[id] && src[id].changeSize && src[id].changeSize.short) || '',
+    }));
+    const def = (typeof DevChat !== 'undefined' && DevChat._defaultModel) || null;
+    return { list, selected: list.some((m) => m.id === def) ? def : (list[0] ? list[0].id : null) };
+  },
+
+  _workshopTabParam() {
+    try {
+      const v = new URLSearchParams(window.location.search).get('ws');
+      return AppView.WORKSHOP_TABS.indexOf(v) !== -1 ? v : null;
+    } catch { return null; }
+  },
   // Rows per lane per theme before "+N more · Open on Board".
   WORKSHOP_LANE_MAX: 8,
   // Cards in the "Needs your vote" strip; the rest are a count.
@@ -5313,6 +5386,13 @@ const AppView = {
   WORKSHOP_MINE_MAX: 3,
   // Rows in the "since your last visit" list.
   WORKSHOP_SINCE_MAX: 30,
+  // One calendar week, in ms. The digest's windows are Monday-anchored in
+  // UTC — see services/workshop-themes.js `weekStart`, which this file's
+  // `_weekStart` mirrors. The two MUST agree: the server decides which
+  // merges a week's line was written from, and the client decides which
+  // dates that line is labelled with, so a client on a different anchor
+  // would caption the server's sentence with somebody else's week.
+  WORKSHOP_WEEK_MS: 7 * 86400000,
   // Per page session: slug → the baseline (epoch ms, 0 on a first visit)
   // the since-strip is computed against. See _workshopBaseline.
   _workshopSince: {},
@@ -5422,7 +5502,113 @@ const AppView = {
     if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
     const line = (x) => (typeof x === 'string' ? x.trim() : '');
     const cards = { lastWeek: line(v.lastWeek), thisWeek: line(v.thisWeek), open: line(v.open) };
-    return (cards.lastWeek || cards.thisWeek || cards.open) ? cards : null;
+    // Weeks BEFORE last week, oldest-first or newest-first as the server
+    // likes — sorted here, so the walk-back never depends on an ordering
+    // nobody promised. Each is one Monday-anchored week: `start` names it,
+    // `line` is that week's sentence. An entry with no usable line is
+    // dropped rather than rendered blank; a week that is genuinely empty is
+    // the server's to describe ("nothing landed"), because the client cannot
+    // tell an empty week from a week it was never told about.
+    const older = (Array.isArray(v.older) ? v.older : [])
+      .map((w) => ({ start: AppView._ms(w && w.start), line: line(w && w.line) }))
+      .filter((w) => w.start && w.line)
+      .sort((a, b) => b.start - a.start);
+    // The Monday of the first week this app had any activity: where the
+    // walk-back stops offering another step. Null when the server has not
+    // said, which reads as "there may be more" — the button then disappears
+    // when `older` runs out instead, which is the same stop one week late
+    // rather than a false floor.
+    const firstWeek = AppView._ms(v.firstWeek) || null;
+    return (cards.lastWeek || cards.thisWeek || cards.open || older.length)
+      ? { ...cards, older, firstWeek }
+      : null;
+  },
+
+  /** A timestamp field that may arrive as ms, as a numeric string, or as ISO. */
+  _ms(x) {
+    if (typeof x === 'number') return Number.isFinite(x) ? x : 0;
+    if (typeof x !== 'string' || !x) return 0;
+    const n = /^\d+$/.test(x) ? parseInt(x, 10) : Date.parse(x);
+    return Number.isFinite(n) ? n : 0;
+  },
+
+  /**
+   * Midnight UTC on the Monday of the week containing `ms`.
+   *
+   * The mirror of services/workshop-themes.js `weekStart`, and deliberately
+   * UTC rather than local: the digest is cached per APP and read by
+   * everyone, so a viewer's timezone cannot be allowed to decide where the
+   * week starts without the cached line disagreeing with half the people
+   * reading it.
+   */
+  _weekStart(ms) {
+    const d = new Date(ms);
+    const dow = (d.getUTCDay() + 6) % 7; // Monday 0 … Sunday 6
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - dow * 86400000;
+  },
+
+  /**
+   * The digest as a WALK BACKWARDS, newest last.
+   *
+   * The three fixed windows were drawn as three cards, all three at once,
+   * and that is the whole history the lander could ever show: a reader who
+   * wanted the week before last had nowhere to go. This builds the same
+   * three as the first three steps of an arbitrarily long walk — open, this
+   * week, last week, then "N weeks ago" for as many as the server has
+   * written — and the component reveals them one at a time from the newest
+   * end.
+   *
+   * Order is NEWEST FIRST: `open` — the present, and the only entry that is
+   * not a window at all — then this week, last week, and back. The walk was
+   * built the other way round at first, growing upwards from the bottom of
+   * the stack, on the reasoning that a column of dates reads oldest-at-the-
+   * top like any timeline. It does, but this is not a timeline being read:
+   * it is one card with a way to ask for more, and growing UPWARDS moved
+   * the card you were looking at down the screen on every press. Now the
+   * present stays put and the history unrolls beneath it.
+   */
+  _workshopWeeks(cards, nowMs) {
+    if (!cards) return [];
+    const WEEK = AppView.WORKSHOP_WEEK_MS;
+    const thisStart = AppView._weekStart(nowMs);
+    const out = [];
+    // The present first: it is the default card and the only one always
+    // drawn, so it is index 0 and the reveal walks forward from there.
+    if (cards.open) out.push({ key: 'open', title: 'Open issues', line: cards.open, startMs: 0, endMs: 0 });
+    if (cards.thisWeek) {
+      out.push({
+        key: 'thisWeek', title: 'This week', line: cards.thisWeek,
+        startMs: thisStart, endMs: nowMs,
+      });
+    }
+    if (cards.lastWeek) {
+      out.push({
+        key: 'lastWeek', title: 'Last week', line: cards.lastWeek,
+        startMs: thisStart - WEEK, endMs: thisStart,
+      });
+    }
+    const older = [];
+    // Not `cards.older` directly. A cards object reaches here from the
+    // themes CACHE, and a cache written by a build before this field existed
+    // — a tab open across a deploy, a warm localStorage-free page that kept
+    // its in-memory `_workshopThemes` — has no `older` at all. A view
+    // builder that throws takes the whole lander down to its skeleton, so
+    // the shape is asserted here rather than assumed.
+    for (const w of (Array.isArray(cards.older) ? cards.older : [])) {
+      // How many weeks back from the CURRENT week: `lastWeek` is 1, so the
+      // first entry this loop can hold is 2 and the labels never collide
+      // with the two named windows below.
+      const n = Math.round((thisStart - w.start) / WEEK);
+      if (n < 2) continue;
+      older.push({
+        key: `week:${w.start}`, title: `${n} weeks ago`, line: w.line,
+        startMs: w.start, endMs: w.start + WEEK,
+      });
+    }
+    // Newest of the older windows first, continuing the walk backwards.
+    older.sort((a, b) => b.startMs - a.startMs);
+    out.push(...older);
+    return out;
   },
 
   // Fetch the themes, and re-fetch on the schedule above while a
@@ -5624,7 +5810,7 @@ const AppView = {
     const ctx = { slug, canPost: !!AppView.appData?.can_collaborate, viewerId: (App.user && App.user.id) || null };
     const empty = {
       votes: { count: 0, total: 0, shown: 0, rows: [] }, mine: { count: 0, shown: 0, rows: [] },
-      since: null, dashboard: null, nextUp: null, discussion: null, themes: [],
+      since: null, dashboard: null, nextUp: null, nextMore: [], discussion: null, themes: [],
       meta: {
         source: null, generatedAt: null, discoveredAt: null, stale: false, pending: false, pendingStage: null,
         lastError: null, digestError: null, coverage: null, placing: 0, filtered: false,
@@ -5782,7 +5968,19 @@ const AppView = {
     for (const x of buckets.inReview) {
       if (notMine(x) && AppView._devCardMatches(x.kind, x.item, { needsVote: true })) owed.push(x);
     }
-    const voteRow = (card) => ({ t: 'card', key: `vote:${card.key}`, card });
+    // The plain-language summary a voter reads (`pr_summary_md`), carried on
+    // the row: the Needs-you deck leads with it, because the card's title is
+    // a pull-request title and says nothing about what a person using the app
+    // would notice. Null on a legacy proposal or one whose summary pass
+    // failed, and the deck says so rather than showing an empty space.
+    const voteRow = (card, item) => ({
+      t: 'card',
+      key: `vote:${card.key}`,
+      card,
+      summary: (item && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim())
+        ? item.pr_summary_md.trim()
+        : null,
+    });
     // EVERY owed row, not the first few. "N more waiting on you" used to send
     // the viewer to the Board with a filter set — it left the lander, it
     // changed the view mode, and Back was the only way home, all to read a
@@ -5801,7 +5999,8 @@ const AppView = {
       total: votable.length,
       shown: AppView.WORKSHOP_VOTES_MAX,
       rows: owed.map((x) => voteRow(
-        x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item)
+        x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item),
+        x.item
       )),
     };
 
@@ -5937,6 +6136,15 @@ const AppView = {
       // sentence the client can always build stays the last resort — the
       // same relationship the category grouping has to the drafted themes.
       cards: (tData && tData.digestCards) || null,
+      // The same lines as a walk backwards through the app's weeks, oldest
+      // first. The pane draws only the last of these (`open`) and reveals
+      // the rest one step at a time; see _workshopWeeks.
+      weeks: AppView._workshopWeeks((tData && tData.digestCards) || null, nowMs),
+      // The Monday of the app's first week of activity, when the server has
+      // said. The walk stops when `weeks` runs out either way; this is only
+      // how the pane can tell "that is the whole history" from "that is all
+      // that has been written so far".
+      firstWeek: (tData && tData.digestCards && tData.digestCards.firstWeek) || null,
       summary: (tData && tData.digest) || null,
       // The merged history is paged. With more behind it, page-counted week
       // numbers are floors, not totals, and the view has to say so rather
@@ -5945,6 +6153,48 @@ const AppView = {
       partial: !serverShipped && !!AppView._mergedHasMore,
     };
 
+    // ── The Needs-you queue ──
+    //
+    // One ordered list of QUESTIONS, which is what that tab answers: the
+    // proposals owed a vote first, then the issues nobody has claimed. The
+    // unclaimed used to be a lane on the status tab, alone under a heading
+    // that covered nothing else; they are the back of this queue now,
+    // because "will you take this?" is the same shape of ask as "should
+    // this go in?" — one card, one question, three answers.
+    //
+    // Each row carries the question and what Yes and No DO, so the deck
+    // renders buttons rather than deciding policy. A proposal's pair comes
+    // from `_cardVoteButtonSpecs`, which keeps the reviewed-head revision
+    // argument the server checks. An issue has no claim API, so Yes opens
+    // it — the same thing tapping the row has always done — and No records
+    // nothing beyond moving on, which is stated rather than implied.
+    const queue = [];
+    for (const x of owed) {
+      const card = x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item);
+      const pair = x.kind === 'proposal' ? AppView._cardVoteButtonSpecs(x.item) : [];
+      const yes = pair.find((b) => b.key === 'yes') || null;
+      const no = pair.find((b) => b.key === 'no') || null;
+      queue.push({
+        ...voteRow(card, x.item),
+        kind: 'vote',
+        ask: 'Should this change go in?',
+        yes: yes ? { label: yes.label, act: yes.act } : null,
+        no: no ? { label: no.label, act: no.act } : null,
+      });
+    }
+    for (const e of idle.slice(0, AppView.WORKSHOP_LANE_MAX)) {
+      const n = e.item && e.item.number;
+      queue.push({
+        ...e.row,
+        key: `need:${e.row.key}`,
+        kind: 'claim',
+        summary: null,
+        ask: 'Do you want to pick this up?',
+        yes: n ? { label: 'Yes', act: { fn: 'openTopic', args: ['issue', n] } } : null,
+        no: { label: 'No', act: null },
+      });
+    }
+
     // "Try taking this one next" — the most recently active open issue with
     // nobody on it. Recency rather than age on purpose: an issue the group is
     // still talking about has context to start from, where the oldest one on
@@ -5952,6 +6202,14 @@ const AppView = {
     const nextUp = (!filtering && idle.length)
       ? { ...idle[0].row, key: `next:${idle[0].row.key}` }
       : null;
+    // #1934: the rest of the unclaimed list, behind a "Show N more" under the
+    // suggestion. Same order (most recently active first) and the same
+    // WORKSHOP_LANE_MAX cap as a theme lane, so the pane can never grow a
+    // board-length list; `next:` keys keep an unfolded row distinct from the
+    // same issue's row in its theme.
+    const nextMore = nextUp
+      ? idle.slice(1, 1 + AppView.WORKSHOP_LANE_MAX).map((e) => ({ ...e.row, key: `next:${e.row.key}` }))
+      : [];
 
     // ── The discussion row ──
     // Drawn whether or not anything has been said: on a lander it is the
@@ -5988,11 +6246,22 @@ const AppView = {
     return {
       loading: false,
       emptyNote,
+      // Which tab a URL asked for, or null for the viewer's own choice.
+      tab: AppView._workshopTabParam(),
+      // The models the Needs-you tab's ask box may talk to, read from the
+      // SAME map the dev session's picker uses (DevChat.MODELS, refreshed
+      // from GET /api/models at startup) rather than a second list here —
+      // tests/model-selector-ui.test.js already guards that map against the
+      // server's allowlist, and a third copy would drift out from under it.
+      // Empty where DevChat is not loaded, and the picker is then not drawn.
+      models: AppView._workshopModels(),
+      queue,
       votes,
       mine,
       since,
       dashboard,
       nextUp,
+      nextMore,
       discussion,
       themes: drawn,
       meta: {
@@ -7309,6 +7578,16 @@ const AppView = {
   // lifecycle transition.
   _importedUnderwayMenuItems(s) {
     const items = AppView._attrMenuItems('proposal', s.id, s);
+    if (!AppView.readOnly && Number(s.user_id) === Number(App.user?.id)
+        && ['active', 'paused'].includes(s.status)) {
+      items.push({ label: 'Archive PR', icon: 'archive', danger: true,
+        title: 'Close this imported pull request and archive its card',
+        act: async () => {
+          if (!await AppView._archiveSession(s.id, s.pr_title || `PR #${s.pr_number}`, true)) return;
+          await AppView._loadDevFeed();
+          AppView._renderTopicHead();
+        } });
+    }
     if (s.pr_url) {
       items.push({
         label: 'View PR on GitHub',
@@ -7483,7 +7762,7 @@ const AppView = {
     const imported = s.source === 'imported';
     const author = s.imported_pr_author || 'unknown author';
     const preview = AppView._cardPreviewSpec(s, { kind: 'shared-session', sessionId: s.id });
-    const menu = imported && !noNav ? AppView._importedUnderwayMenuItems(s) : [];
+    const menu = imported ? AppView._importedUnderwayMenuItems(s).filter((a) => !noNav || a.icon === 'archive') : [];
     menu.push({ label: 'View checks', icon: 'checks', act: () => AppView.openSessionChecks(s.id) });
     const recheck = AppView._recheckAction(s);
     if (recheck && !recheck.disabled) {
@@ -7796,11 +8075,11 @@ const AppView = {
   // session block) then POST /api/sessions/:id/archive. Owner-scoped
   // server-side. Returns true on success so callers can re-render. Used
   // by the pinned session cards' Archive button (delegated handler).
-  async _archiveSession(sessionId, name) {
+  async _archiveSession(sessionId, name, imported = false) {
     if (!sessionId) return false;
     const ok = await ConfirmModal.show({
       title: `Archive "${name}"?`,
-      message: "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
+      message: imported ? "This closes the imported pull request on GitHub and archives its card. The source branch is kept." : "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
       confirmLabel: 'Archive',
       danger: true,
     });
@@ -8284,7 +8563,14 @@ const AppView = {
     // The pill absorbs the tally, the pulsing "Vote" badge, the merge-state
     // badge, the checks badge, the console-errors badge, the advisory chip
     // and the explicit-approval chip. Unset metadata chips don't render.
-    const badges = AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: !noNav });
+    // The status TAGS lead, then the metadata chips. Order matters twice
+    // over: the card caps its state chips at BADGE_MAX, and statusTagSpecs is
+    // severity-ordered, so what a cap drops is always the least serious thing
+    // wrong with the change rather than whichever chip happened to sort last.
+    const badges = [
+      ...AppView.statusTagSpecs(pr, {}),
+      ...AppView._attrChipSpecs('proposal', pr.id, pr, { omitUnset: !noNav }),
+    ];
     // The pill LEADS the status band as a flexible bar. The detail head
     // keeps the inline capsule — it already has a wide header, and a bar
     // that wide there would just read as a rule.
@@ -8386,12 +8672,15 @@ const AppView = {
   // silently disable that guard.
   _cardVoteButtonSpecs(pr) {
     if (!pr || pr.status !== 'promoted') return [];
-    const nativeHead = pr.source !== 'imported'
-      && typeof pr.reviewed_head_sha === 'string'
-      && /^[0-9a-f]{40}$/i.test(pr.reviewed_head_sha)
-      ? pr.reviewed_head_sha.toLowerCase()
-      : null;
-    const rev = nativeHead ? [nativeHead] : [];
+    // #2038: the vote carries the approval EPOCH the card was rendered with,
+    // not the commit. A commit changes whenever the platform brings the
+    // proposal up to date with main, and comparing commits made every one of
+    // those merges reject the next voter's click — for code the platform had
+    // just certified was unchanged. The epoch only moves when somebody writes
+    // bytes nobody approved.
+    const epoch = Number.isFinite(parseInt(pr.approval_epoch, 10))
+      ? parseInt(pr.approval_epoch, 10) : null;
+    const rev = epoch === null ? [] : [epoch];
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
     return [
@@ -11878,9 +12167,15 @@ const AppView = {
   //   run ready, other outcomes    → Review spec / Review solution /
   //                                  Changes ready — review & start session
   //
-  // "Generate proposal" for a never-run issue lives in the ⋯ menu: starting
-  // a headless run spends the viewer's credits, so it should be a chosen
-  // action rather than the card's most prominent button.
+  // Start work makes the choice explicit: interactive work or an AI build.
+  // The latter still goes through its existing credit confirmation.
+  chooseIssueWork(number) {
+    if (AppView.readOnly) return;
+    PlatformUI.actionSheet({ actions: [
+      { label: 'Work with an agent', handler: () => AppView.createPrForIssue(number) },
+      { label: 'Start AI build (uses credits)', handler: () => AppView.confirmAutoSession(number) },
+    ] });
+  },
   _issuePrimaryActionSpec(issue, opts) {
     const noNav = !!(opts && opts.noNav);
     const n = issue.number;
@@ -11928,10 +12223,10 @@ const AppView = {
         // discussion is the one place they can contribute — a real
         // navigation from the board, and nothing at all from the head,
         // which already IS that discussion.
-        if (noNav) return null;
+        if (noNav) return { key: 'primary', cls: 'gc-vote-btn', label: 'Start work', act: { fn: 'chooseIssueWork', args: [n] } };
         return {
           key: 'primary', cls: 'gc-vote-btn', label: 'Answer & regenerate',
-          title: 'This auto-solve run has a question. Answer it on this issue, then use ⋯ → Generate proposal to re-run',
+          title: 'This auto-solve run has a question. Answer it on this issue, then use Start work → Start AI build to re-run',
           act: { fn: 'openTopic', args: ['issue', n] },
         };
       }
@@ -11955,14 +12250,14 @@ const AppView = {
     // myPrSessionId).
     return issue.myPrSessionId
       ? {
-        key: 'primary', cls: 'gc-vote-btn', label: 'Create new proposal',
+        key: 'primary', cls: 'gc-vote-btn', label: 'Start more work',
         title: 'Start another dev chat for this issue',
-        act: { fn: 'createPrForIssue', args: [n] },
+        act: { fn: 'chooseIssueWork', args: [n] },
       }
       : {
-        key: 'primary', cls: 'gc-vote-btn', label: 'Create proposal',
+        key: 'primary', cls: 'gc-vote-btn', label: 'Start work',
         title: 'Start a dev chat to solve this issue',
-        act: { fn: 'createPrForIssue', args: [n] },
+        act: { fn: 'chooseIssueWork', args: [n] },
       };
   },
 
@@ -12002,25 +12297,11 @@ const AppView = {
     const items = [];
 
     if (!AppView.readOnly) {
-      // Generate proposal — the headless run. Not on the card face because
-      // it spends the viewer's credits. Absent while a run is in flight
-      // (the primary already says "Generating proposal…") and while the
-      // viewer has a clone of a finished run (the primary is "Go to
-      // session", and offering a re-run there produces two competing
-      // actions for a proposal that already exists — #150's rule, now
-      // enforced by having exactly one place the action can live).
-      const generating = !!(h && h.status === 'generating');
-      const clonedReady = !!(h && h.status === 'ready' && h.mySessionId);
-      if (!generating && !clonedReady) {
-        items.push({
-          label: 'Generate proposal',
-          icon: 'generate',
-          title: h && h.status === 'ready' && h.outcome === 'question'
-            ? 'Questions were posted on the issue. Answer them, then generate a proposal again'
-            : 'Spin up a headless AI session that starts solving this issue on its own. Uses your credits',
-          act: () => AppView.confirmAutoSession(n),
-        });
-      }
+      // A finished run keeps its Review/Continue primary. New work remains
+      // available through the same two-choice launcher, never a second AI CTA.
+      if (h?.status === 'ready' && !h.mySessionId) items.push({
+        label: 'Start more work', icon: 'generate', act: () => AppView.chooseIssueWork(n),
+      });
       // "Pledge kudos" disables once the viewer has an open bounty here or
       // has spent their shared weekly allowance.
       const budgetSpent = meta.myRemaining === 0;
@@ -13122,14 +13403,21 @@ const AppView = {
     if (p.merge_conflict_state === 'failed') {
       out.push({
         key: 'conflict_failed',
-        label: 'Conflict resolution failed',
+        // Says what to do, not what the platform did. A reader seeing a card
+        // needs the next action; "failed" reported our history at them.
+        label: 'Needs manual resolution',
         detail: `The last automatic conflict resolution failed. ${AppView._conflictRemedy(p, 'failed').text}`,
       });
     } else if (p.merge_conflict_state === 'conflict') {
       out.push({
         key: 'merge_conflict',
-        label: 'Merge conflict',
-        detail: `A merge was attempted but this proposal conflicts with main. ${AppView._conflictRemedy(p, 'conflict').text}`,
+        // Written in exactly ONE place: the merge-time 405 in routes/votes.js.
+        // So it does not mean "this conflicts with main" — mergeability_conflict
+        // is that, and says so. It means the proposal passed every gate, the
+        // platform called pulls.merge, and GitHub refused. The old label read
+        // as a duplicate of the prediction below it.
+        label: 'GitHub refused the merge',
+        detail: `This proposal passed every gate and the platform tried to merge it, but GitHub refused. ${AppView._conflictRemedy(p, 'conflict').text}`,
       });
     }
     // #1442 — GitHub's PREDICTION that this proposal no longer merges, made
@@ -13211,26 +13499,133 @@ const AppView = {
         soft: true,
       });
     }
-    // Console errors never block the vote, but they belong in the same
-    // "what's wrong with this" list the detail view enumerates.
-    if (p.console_check_state === 'errors') {
-      const n = Array.isArray(p.console_errors) ? p.console_errors.length : 0;
+    // #2038 — the two reasons the BROWSER cannot derive.
+    //
+    // Everything above is read off columns the card already has. These two
+    // are not in any column the browser can interpret: whether the app's
+    // merge queue is working on this proposal right now, and whether it
+    // needs a merge the shared token budget cannot pay for. The server knows
+    // both and now says so, rather than the card implying a sync is underway
+    // whenever a proposal is behind — which it was not, for anything below
+    // the vote threshold.
+    const served = (p.integration && Array.isArray(p.integration.blockReasons))
+      ? p.integration.blockReasons : [];
+    if (served.includes('integrating')) {
       out.push({
-        key: 'console_errors',
-        label: n ? `Console errors · ${n}` : 'Console errors',
-        detail: n
-          ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'}. This change may break the app. It does not block the merge.`
-          : 'The staging preview logged console errors. This change may break the app. It does not block the merge.',
-        soft: true,
-        advisory: true,
+        key: 'integrating',
+        label: 'Bringing up to date…',
+        detail: 'The platform is merging the latest main into this proposal and '
+          + 're-running its checks against the result. It merges on its own once '
+          + 'that passes. Nobody needs to do anything.',
+        running: true,
       });
     }
+    if (served.includes('budget')) {
+      out.push({
+        key: 'budget',
+        label: 'Waiting on shared budget',
+        detail: 'This proposal needs merging with main, but the platform’s shared '
+          + 'token budget is spent for today. It resumes after the midnight UTC reset.',
+        soft: true,
+      });
+    }
+
+    // #2038: the advisory console tag is gone.
+    //
+    // Console errors already BLOCK — services/visuals.js classifyTests puts
+    // "a blocking check had console errors" straight into check_state
+    // 'failing', which the gate refuses and which draws its own red tag. What
+    // console_check_state measures is the same class of problem on a
+    // DIFFERENT target set: the screenshot capture routes rather than the
+    // declared dapp.json checks. Drawing both meant one card carrying two
+    // tags about console errors, one red and blocking, one amber and not.
+    //
+    // The column and its error list are kept — the detail view enumerates
+    // them, and that is where an advisory reading belongs. It is only the
+    // TAG that goes.
+
     return out;
   },
 
   // The pill's derived state, separated from its markup so the precedence
   // itself is unit-testable: { tier, key, label, tone, spinner, dot, fill,
   // yes, no, majority, suffix, reasons, lock, advisory }.
+  // ── The status TAGS: everything the bar stopped saying ──────────────
+  //
+  // The bar is the vote (statusPillState below). Everything else a proposal
+  // can be — blocked, stale, mid-check, mid-merge-resolution — is a tag on
+  // the card's facts line, and EVERY tag that applies is drawn rather than
+  // only the most severe one. That is the point of the move: a change can be
+  // behind main AND failing checks, and a single-slot bar could only ever
+  // admit one of them.
+  //
+  // Three tones, and they mean different things to a reader:
+  //   red     stops it merging, and somebody has to do something
+  //   amber   worth knowing, does not stop it landing (`soft` in blockReasons)
+  //   neutral in flight, nobody has to act — the only one that spins
+  //
+  // Ordering is blockReasons' own severity order, then the in-flight states,
+  // so the first tag on the line is the most serious thing wrong with it.
+  STATUS_TAG_CLS: {
+    blocking: 'dev-badge bg-red-500/10 text-red-700 dark:text-red-400',
+    soft: 'dev-badge bg-amber-500/10 text-amber-800 dark:text-amber-400',
+    running: 'dev-badge bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
+  },
+  statusTagSpecs(item, opts) {
+    if (!item) return [];
+    const p = item;
+    const o = opts || {};
+    // A governance proposal has no branch, no staging build and no checks, so
+    // none of this applies to it — the same guard statusPillState carries.
+    if ((o.kind || 'proposal') === 'gov') return [];
+    const out = [];
+    const isOpenRow = p.status !== 'merged' && p.status !== 'merging';
+    // Merge-conflict resolution: in flight, nobody need act, so it reads like
+    // a running check rather than like a problem.
+    if (p.merge_conflict_state === 'resolving' || p.resolving === true) {
+      out.push({
+        t: 'chip', key: 'tag-resolving', cls: AppView.STATUS_TAG_CLS.running,
+        label: 'Resolving conflicts automatically…', spinner: true, meta: true,
+        data: { 'data-status-tag': 'resolving' },
+        title: 'Reconciling conflicts with main automatically, then retrying the merge.',
+      });
+    }
+    // Every reason, not just the top one. `soft` is blockReasons' own word for
+    // "worth knowing, does not stop it landing".
+    if (isOpenRow) {
+      for (const r of AppView.blockReasons(p)) {
+        out.push({
+          t: 'chip', key: `tag-${r.key}`,
+          // Three tones, three meanings: `running` is in flight and nobody
+          // need act (the only one that spins), `soft` is worth knowing and
+          // does not block, everything else stops the merge.
+          cls: r.running ? AppView.STATUS_TAG_CLS.running
+            : r.soft ? AppView.STATUS_TAG_CLS.soft
+              : AppView.STATUS_TAG_CLS.blocking,
+          label: r.label, title: r.detail || undefined, meta: true,
+          spinner: !!r.running,
+          data: { 'data-status-tag': r.key },
+        });
+      }
+    }
+    // Checks in flight. The live counts ride the label exactly as they did in
+    // the bar: a board of cards should say how far each run is, not just that
+    // it is running.
+    if (p.check_state === 'pending'
+      || (!p.check_state && p.status === 'promoted' && !p.console_check_state)) {
+      const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
+      const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
+      out.push({
+        t: 'chip', key: 'tag-checks-running', cls: AppView.STATUS_TAG_CLS.running,
+        label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
+        spinner: true, meta: true,
+        data: { 'data-status-tag': 'checks-running' },
+        title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
+      });
+    }
+    return out;
+  },
+
   statusPillState(item, opts) {
     // No row, no pill. The guard used to sit in `statusPillHtml`, which is
     // retired with the rest of the card markup — leaving it out here would
@@ -13264,56 +13659,32 @@ const AppView = {
       return { ...base, tier: 1, key: 'merging', label: 'Merging…', tone: 'progress', spinner: true, lock: false, advisory: 0,
         title: 'This change is being merged into the app and production is rebuilding.' };
     }
-    if (p.merge_conflict_state === 'resolving' || p.resolving === true) {
-      return { ...base, tier: 1, key: 'resolving', label: 'Resolving conflicts…', tone: 'progress', spinner: true,
-        title: 'Reconciling conflicts with main automatically, then retrying the merge.' };
-    }
-    // 2 — blocked. The single most severe reason is the label; the rest ride
-    // in the tooltip and are enumerated in full in the detail view.
-    // `soft` reasons (behind main / console errors) are `attention`.
-    // blockReasons is severity-ordered, so reasons[0] IS the label. `soft`
-    // reasons (behind main, console errors) render `attention` and keep the
-    // tally riding along in the label — they don't stop the thing landing, so
-    // the vote is still the other half of the story. A HARD reason drops the
-    // tally: the count isn't what matters when it can't merge either way.
     // opts.kind ∈ 'proposal' (default) | 'gov'. A governance proposal has no
-    // branch, no staging build and no checks, so every checks/conflict state
-    // below is inapplicable to it — including the #607 "no verdict recorded
-    // yet" branch, which would otherwise label every gov row "Checks
-    // starting…" purely because it has no check_state to record.
+    // branch, no staging build and no checks, so the block reasons below are
+    // inapplicable to it.
+    //
+    // ── The bar is the VOTE, and only the vote ─────────────────────────
+    //
+    // It used to lead with whatever was most wrong. A merge conflict, failing
+    // checks, a dead preview, "Behind main", "Checks running… 4/12" — each
+    // took the bar, and a HARD one dropped the tally outright, on the
+    // reasoning that a count does not matter when the thing cannot land
+    // either way.
+    //
+    // That reasoning is sound about MERGING and wrong about the bar. The bar
+    // is what a reader looks at to answer "where has this got to, and does it
+    // want me?", and the answer to that is the vote — which stays true while
+    // a check is red. Meanwhile the states that took the bar are not one
+    // thing at all: some block, some are advisory, one is merely in flight.
+    // Ranking them into a single slot meant a card could only ever say one of
+    // them, so "Behind main" hid "Checks failing", and either hid the vote.
+    //
+    // They are TAGS now — every one that applies, side by side, colour-coded
+    // by severity (statusTagSpecs below) — and the bar always carries the
+    // vote. `reasons` still rides along on the pill, because the detail view
+    // enumerates them and the tooltip is where "and N more" is spelled out.
     const isCode = (o.kind || 'proposal') !== 'gov';
     const reasons = isCode ? AppView.blockReasons(p) : [];
-    if (reasons.length && isOpenRow) {
-      const top = reasons[0];
-      const soft = !!top.soft;
-      return {
-        ...base,
-        tier: 2,
-        key: top.key,
-        label: soft ? `${top.label} · ${yes}/${maj}` : top.label,
-        tone: soft ? 'attention' : 'blocked',
-        fill: soft,
-        // A HARD block drops the tally, so the advisory surplus has no
-        // tally to be a surplus OF — appending it there reads as part of
-        // the reason ('Merge conflict+1'). Soft reasons keep it.
-        advisory: soft ? advisory : 0,
-        reasons,
-      };
-    }
-    // Checks still running / not yet started / skipped: not blocked in the
-    // "someone must fix this" sense, but merge is gated, so it outranks the
-    // vote states — neutral, with a spinner while genuinely in flight.
-    if (isCode && (p.check_state === 'pending'
-      || (!p.check_state && p.status === 'promoted' && !p.console_check_state))) {
-      // The live counts ride the label when the run has any: a board of
-      // cards should say how far each run is, not just that it is running.
-      const live = p.check_state === 'pending' ? AppView._checksProgressView(p) : null;
-      const count = live && live.bar.expected ? ` ${live.bar.ran}/${live.bar.expected}` : (live && live.bar.ran ? ` ${live.bar.ran}` : '');
-      return { ...base, tier: 2, key: 'checks_running',
-        label: p.check_state === 'pending' ? `Checks running…${count}` : 'Checks starting…',
-        tone: 'neutral', spinner: true, reasons, advisory: 0,
-        title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.' };
-    }
     // 3 — contested: the timed path is off, it needs a straight majority.
     if (isOpenRow && p.contested) {
       return { ...base, tier: 3, key: 'contested', label: `Needs a conversation · ${yes}/${maj}`, tone: 'attention', fill: true, reasons,
@@ -14316,16 +14687,13 @@ const AppView = {
     const adminMerge = canForceMerge
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${pr.requires_explicit_approval ? 'Admin: merge this admins-changing PR right now, bypassing the vote' : 'Admin: merge this PR right now, bypassing the vote majority'}" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
-    // Native votes carry the exact revision rendered with this card. If the
-    // PR moves before the click reaches the server, the server rejects the
-    // stale action and asks for a refresh instead of applying it to unseen
-    // code. Imported proposals retain their existing vote flow.
-    const nativeHead = pr.source !== 'imported'
-      && typeof pr.reviewed_head_sha === 'string'
-      && /^[0-9a-f]{40}$/i.test(pr.reviewed_head_sha)
-      ? pr.reviewed_head_sha.toLowerCase()
-      : null;
-    const revisionArg = nativeHead ? `, '${nativeHead}'` : '';
+    // The vote carries the approval epoch this card was rendered with, so a
+    // proposal that genuinely changed under the voter is still refused —
+    // while one the platform merely rebased is not.
+    // #2038: see _cardVoteButtonSpecs — the epoch, not the commit.
+    const voteEpoch = Number.isFinite(parseInt(pr.approval_epoch, 10))
+      ? parseInt(pr.approval_epoch, 10) : null;
+    const revisionArg = voteEpoch === null ? '' : `, ${voteEpoch}`;
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`;
@@ -14523,26 +14891,40 @@ const AppView = {
 
 
   _voteInFlight: new Set(),
-  async castVote(sessionId, vote, expectedHeadSha = null) {
+  // #2038: the epoch each proposal was last seen at, so a rejection can
+  // re-arm the next click without waiting on a refetch to land. The old
+  // code fired the refresh without awaiting it and released the click lock
+  // first, so an impatient second click re-sent the same stale stamp and
+  // took a second identical rejection — one head move, two toasts.
+  _seenEpoch: new Map(),
+  async castVote(sessionId, vote, expectedEpoch = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
-    // The server is now idempotent on an unchanged vote (won't re-post
-    // to chat or re-enter checkAndMerge), but blocking here still avoids
-    // pointless network round-trips and keeps the UI responsive.
+    // The server is idempotent on an unchanged vote, but blocking here
+    // avoids pointless round-trips and keeps the UI responsive.
     const key = `${sessionId}:${vote}`;
     if (AppView._voteInFlight.has(key)) return;
     AppView._voteInFlight.add(key);
     try {
+      const known = AppView._seenEpoch.get(sessionId);
+      const epoch = known === undefined ? expectedEpoch : known;
       const res = await fetch(`/api/sessions/${sessionId}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vote, expectedHeadSha }),
+        body: JSON.stringify({ vote, expectedEpoch: epoch }),
       });
       const data = await res.json().catch(() => ({}));
-      AppView.refreshDevData('vote');
       if (!res.ok) {
+        // A rejection that names the current epoch lets the very next click
+        // land, rather than needing a refetch to have finished first.
+        if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
+          AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
+        }
+        await AppView.refreshDevData('vote');
         PlatformUI.toast(data.error || `Vote failed (HTTP ${res.status}).`);
         return;
       }
+      AppView._seenEpoch.delete(sessionId);
+      AppView.refreshDevData('vote');
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.

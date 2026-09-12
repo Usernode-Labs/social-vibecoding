@@ -117,10 +117,11 @@ test('tier 0 — a merged row is settled and reads ✓ Merged', () => {
   assert.equal(s.tone, 'ok');
 });
 
-test('tier 1 — in flight outranks everything below it', () => {
+test('tier 1 — merging stays in the bar; resolving became a tag', () => {
   const AppView = makeAppView();
   // Merging, even with failing checks and a conflict recorded: the merge is
-  // happening, which is the highest-signal thing to say.
+  // happening, which is the highest-signal thing the BAR can say — and it is
+  // still about the vote, because merging is what a won vote turns into.
   const merging = AppView.statusPillState(PR({
     status: 'merging', check_state: 'failing', merge_conflict_state: 'failed',
   }));
@@ -129,17 +130,25 @@ test('tier 1 — in flight outranks everything below it', () => {
   assert.equal(merging.tone, 'progress');
   assert.ok(merging.spinner, 'in-flight stages carry the spinner');
 
-  const resolving = AppView.statusPillState(PR({ resolving: true, check_state: 'failing' }));
-  assert.equal(resolving.tier, 1);
-  assert.equal(resolving.label, 'Resolving conflicts…');
-  assert.equal(resolving.tone, 'progress');
+  // Resolving conflicts is mechanical plumbing, not a stage of the vote, so
+  // it left the bar. The bar falls through to the vote; the fact is a tag.
+  const row = PR({ resolving: true, check_state: 'failing' });
+  const resolving = AppView.statusPillState(row);
+  assert.ok(resolving.key !== 'resolving', 'the bar no longer says it');
+  assert.ok(['needs_vote', 'tally'].includes(resolving.key), 'the bar is the vote');
+  const tag = AppView.statusTagSpecs(row, {}).find((t) => t.key === 'tag-resolving');
+  assert.ok(tag, 'and the fact is a tag');
+  assert.equal(tag.label, 'Resolving conflicts automatically…');
+  assert.ok(tag.spinner, 'in flight, so it spins');
 });
 
-test('tier 2 — checks failing is BLOCKED and never a plain tally', () => {
+test('a hard block no longer takes the bar: the vote shows, the block is a tag', () => {
   const AppView = makeAppView();
-  // The vote is won and there is a merge window running; the pill must still
-  // say the tests are broken.
-  const s = AppView.statusPillState(PR({
+  // The vote is won and a merge window is running. The bar used to drop the
+  // tally and say "Checks failing · 2" instead, on the reasoning that a count
+  // does not matter when it cannot land. The bar is the VOTE now, so it keeps
+  // counting, and the block is said beside it.
+  const row = PR({
     check_state: 'failing',
     test_results: [
       { name: 'Home', status: 'pass' },
@@ -147,64 +156,78 @@ test('tier 2 — checks failing is BLOCKED and never a plain tally', () => {
       { name: 'Board', status: 'fail' },
     ],
     yes_count: 5, votes_required: 3, merge_window_ends_at: hoursAhead(4),
-  }));
-  assert.equal(s.tier, 2);
-  assert.equal(s.label, 'Checks failing · 2');
-  assert.equal(s.tone, 'blocked');
-  assert.ok(!s.fill, 'a hard block drops the tally — the count is not the story');
+  });
+  const s = AppView.statusPillState(row);
+  assert.ok(s.tier !== 2, 'the bar is not a block tier any more');
+  assert.ok(!/Checks failing/.test(s.label), 'and says nothing about checks');
+  assert.ok(s.fill, 'the tally rides again — that is the point of the move');
+
+  const tags = AppView.statusTagSpecs(row, {});
+  const failing = tags.find((t) => t.key === 'tag-checks_failing');
+  assert.ok(failing, 'the block is a tag');
+  assert.equal(failing.label, 'Checks failing · 2', 'counting the failures, as the bar did');
+  assert.match(failing.cls, /red/, 'blocking tags are red');
 });
 
-test('tier 2 — every hard blocking state, in severity order', () => {
+test('every hard blocking state is a red tag, in severity order', () => {
   const AppView = makeAppView();
   const cases = [
-    [{ merge_conflict_state: 'failed' }, 'Conflict resolution failed', 'blocked'],
-    [{ merge_conflict_state: 'conflict' }, 'Merge conflict', 'blocked'],
-    [{ check_state: 'error' }, 'Preview won’t boot', 'blocked'],
-    [{ check_state: 'failing', test_results: [] }, 'Checks failing', 'blocked'],
+    [{ merge_conflict_state: 'failed' }, 'Needs manual resolution'],
+    [{ merge_conflict_state: 'conflict' }, 'GitHub refused the merge'],
+    [{ check_state: 'error' }, 'Preview won’t boot'],
+    [{ check_state: 'failing', test_results: [] }, 'Checks failing'],
   ];
-  for (const [row, label, tone] of cases) {
-    const s = AppView.statusPillState(PR(row));
-    assert.equal(s.tier, 2, label);
-    assert.equal(s.label, label);
-    assert.equal(s.tone, tone, label);
+  for (const [row, label] of cases) {
+    const tags = AppView.statusTagSpecs(PR(row), {});
+    const tag = tags.find((t) => t.label === label);
+    assert.ok(tag, label);
+    assert.match(tag.cls, /red/, `${label} blocks, so it is red`);
+    // ...and the bar is untouched by any of them.
+    assert.ok(!/Conflict|conflict|Checks|boot/.test(AppView.statusPillState(PR(row)).label),
+      `the bar says nothing about ${label}`);
   }
-  // A conflict outranks a checks failure: both are hard, and the conflict is
-  // the one a human has to act on.
-  const both = AppView.statusPillState(PR({
-    merge_conflict_state: 'failed', check_state: 'failing', test_results: [],
-  }));
-  assert.equal(both.label, 'Conflict resolution failed');
-  assert.equal(both.reasons.length, 2);
+  // BOTH are drawn now. The bar could only ever admit one, which is why a
+  // conflict used to HIDE a checks failure; severity still decides the order.
+  const both = PR({ merge_conflict_state: 'failed', check_state: 'failing', test_results: [] });
+  // Joined rather than deep-compared: arrays built inside the vm realm carry
+  // that realm's prototypes, which trips deepStrictEqual on identity alone.
+  const labels = AppView.statusTagSpecs(both, {}).map((t) => t.label).join(' | ');
+  assert.equal(labels, 'Needs manual resolution | Checks failing',
+    'every reason, worst first');
 });
 
-test('tier 2 — soft reasons read ATTENTION and keep the tally riding along', () => {
+test('soft reasons are amber tags, and the bar just counts the vote', () => {
   const AppView = makeAppView();
-  // Behind main resolves itself, so it does not stop the thing landing — the
-  // vote is still the other half of the story.
-  const behind = AppView.statusPillState(PR({ behind_main: 3, yes_count: 1, votes_required: 3 }));
-  assert.equal(behind.tier, 2);
-  assert.equal(behind.label, 'Behind main · 3 · 1/3');
-  assert.equal(behind.tone, 'attention');
-  assert.ok(behind.fill, 'the proportional fill survives a soft reason');
+  // Behind main resolves itself, so it never stopped the thing landing. It
+  // used to ride the bar as "Behind main · 3 · 1/3" — the fact and the tally
+  // sharing one label. They are two things now, said in two places.
+  const row = PR({ behind_main: 3, yes_count: 1, votes_required: 3 });
+  const s = AppView.statusPillState(row);
+  assert.ok(!/Behind main/.test(s.label), 'the bar is the vote alone');
+  assert.match(s.label, /1\s*\/\s*3|1\/3/, 'and still carries the count');
 
-  const console_ = AppView.statusPillState(PR({
-    console_check_state: 'errors', console_errors: [{ message: 'a' }, { message: 'b' }],
-    yes_count: 2, votes_required: 3,
-  }));
-  assert.equal(console_.label, 'Console errors · 2 · 2/3');
-  assert.equal(console_.tone, 'attention');
+  const tag = AppView.statusTagSpecs(row, {}).find((t) => t.key === 'tag-behind');
+  assert.ok(tag, 'behind main is a tag');
+  assert.equal(tag.label, 'Behind main · 3');
+  assert.match(tag.cls, /amber/, 'soft, so amber rather than red');
 });
 
-test('tier 2 — checks running / starting gate the merge, so they outrank the vote', () => {
+test('checks in flight are a neutral, spinning tag — they outrank nothing now', () => {
   const AppView = makeAppView();
-  const pending = AppView.statusPillState(PR({ check_state: 'pending' }));
-  assert.equal(pending.label, 'Checks running…');
-  assert.equal(pending.tone, 'neutral');
-  assert.ok(pending.spinner);
+  const pending = PR({ check_state: 'pending' });
+  const running = AppView.statusTagSpecs(pending, {}).find((t) => t.key === 'tag-checks-running');
+  assert.ok(running);
+  assert.equal(running.label, 'Checks running…');
+  assert.match(running.cls, /zinc/, 'nobody has to act, so neutral');
+  assert.ok(running.spinner, 'in flight, so it spins');
+  assert.ok(!/Checks/.test(AppView.statusPillState(pending).label), 'the bar is the vote');
+
   // #607: nothing recorded at all — the first run hasn't stamped 'pending'.
-  const fresh = AppView.statusPillState(PR({}));
-  assert.equal(fresh.label, 'Checks starting…');
-  assert.ok(fresh.spinner);
+  const fresh = PR({});
+  const starting = AppView.statusTagSpecs(fresh, {}).find((t) => t.key === 'tag-checks-running');
+  assert.ok(starting);
+  assert.equal(starting.label, 'Checks starting…');
+  assert.ok(starting.spinner);
 });
 
 test('tier 3 — contested turns the timed path off and says so', () => {
@@ -324,16 +347,28 @@ test('explicit approval is a lock glyph inside the pill, not a chip', () => {
   assert.doesNotMatch(html, /gc-vote-explicit/, 'no separate chip any more');
 });
 
-test('multiple reasons: the pill names the worst and counts the rest', () => {
+test('multiple reasons: every one is its own tag, and none of them is the bar', () => {
   const AppView = makeAppView();
   const pr = PR({
     check_state: 'failing', test_results: [{ name: 'a', status: 'fail' }],
     behind_main: 2, console_check_state: 'errors', console_errors: [{ message: 'x' }],
   });
-  const html = pillHtml(AppView, pr);
-  assert.match(html, /Checks failing · 1/);
-  assert.match(html, /and 2 more reasons, open for details/);
-  assert.equal(AppView.blockReasons(pr).length, 3);
+  // The bar used to name the worst and count the rest in a tooltip — "and 2
+  // more reasons, open for details" — because it had one slot. Every reason
+  // is its own tag.
+  const tags = AppView.statusTagSpecs(pr, {});
+  assert.equal(tags.map((t) => t.label).join(' | '),
+    'Checks failing · 1 | Behind main · 2');
+  assert.match(tags[0].cls, /red/);
+  assert.match(tags[1].cls, /amber/);
+  // #2038: the console errors on this row are NOT a third tag. They already
+  // block through check_state when they land on a declared check — which is
+  // the red tag above — and a second amber tag over the capture routes said
+  // the same kind of thing in a different voice. The data stays, and the
+  // detail view still enumerates it.
+  assert.equal(tags.length, 2, 'no console tag');
+  assert.equal(AppView.blockReasons(pr).length, 2, 'and no console reason');
+  assert.equal(AppView.statusPillState(pr).reasons.length, 2);
 });
 
 // ── Markup contract ─────────────────────────────────────────────────────
@@ -446,9 +481,180 @@ test('blockReasons: severity order, labels, and the detail sentences', () => {
     console_check_state: 'errors',
     console_errors: [{ message: 'x' }],
   });
-  assert.equal(r.map((x) => x.key).join(','), 'merge_conflict,checks_failing,behind,console_errors');
+  assert.equal(r.map((x) => x.key).join(','), 'merge_conflict,checks_failing,behind');
   assert.match(r[1].detail, /Feed renders/, 'the detail names WHICH test failed');
+  assert.ok(r[2].soft, 'behind main is soft — it resolves itself');
   assert.match(r[2].detail, /4 commits behind main/);
-  assert.ok(r[2].soft && r[3].soft, 'behind main and console errors do not block');
-  assert.ok(!r[0].soft && !r[1].soft, 'a conflict and a failing check do');
+  assert.ok(!r[0].soft && !r[1].soft, 'a refused merge and a failing check do block');
+});
+
+// ── The invariant the whole change rests on ─────────────────────────────
+
+test('the bar can only ever be a vote state, whatever is wrong with the row', () => {
+  const AppView = makeAppView();
+  // Every non-vote thing a proposal can be, at once. The bar used to pick the
+  // worst of these; now none of them can reach it.
+  const worst = PR({
+    merge_conflict_state: 'failed', resolving: true,
+    check_state: 'failing', test_results: [{ name: 'a', status: 'fail' }],
+    behind_main: 4, console_check_state: 'errors', console_errors: [{ message: 'x' }],
+    yes_count: 1, votes_required: 3,
+  });
+  const s = AppView.statusPillState(worst);
+  const VOTE_KEYS = ['merged', 'merging', 'contested', 'approvals',
+    'merge_countdown', 'reject_countdown', 'needs_vote', 'tally'];
+  assert.ok(VOTE_KEYS.includes(s.key), `the bar is a vote state, got ${s.key}`);
+  // And the five facts are five tags, not one label and a tooltip count.
+  const labels = AppView.statusTagSpecs(worst, {}).map((t) => t.label).join(' | ');
+  for (const expected of ['Resolving conflicts automatically…', 'Needs manual resolution',
+    'Checks failing · 1', 'Behind main · 4']) {
+    assert.ok(labels.includes(expected), `${expected} is drawn — got: ${labels}`);
+  }
+});
+
+test('a governance proposal has no branch, so it has no tags', () => {
+  const AppView = makeAppView();
+  // The same guard statusPillState carries: gov rows have no staging build
+  // and no checks, so every one of these states is inapplicable rather than
+  // merely absent.
+  const gov = PR({ check_state: 'failing', behind_main: 2 });
+  assert.equal(AppView.statusTagSpecs(gov, { kind: 'gov' }).length, 0);
+  assert.ok(AppView.statusTagSpecs(gov, {}).length > 0, 'but a code proposal does');
+});
+
+test('the declared checks still describe the row the tags are actually on', () => {
+  // A declared selector is a STRING in dapp.json: nothing local resolves it,
+  // so only the staging gate notices when the markup moves out from under
+  // one. That has already cost a red gate once this week. The tags moved from
+  // the facts row to the meta line; these assert the checks moved with them.
+  const fs2 = require('node:fs');
+  const path2 = require('node:path');
+  const dapp = JSON.parse(fs2.readFileSync(path2.join(__dirname, '..', 'dapp.json'), 'utf8'));
+  const mine = dapp.tests.filter((t) => /9000050/.test(t.expectSelector || ''));
+  assert.equal(mine.length, 2, 'the blocked-proposal pair');
+  const bar = mine.find((t) => /dev-status-pill-block/.test(t.expectSelector));
+  const tags = mine.find((t) => /data-status-tag/.test(t.expectSelector));
+  assert.ok(bar && tags);
+  assert.match(bar.expectSelector, /\.dev-card-status > \.dev-status-pill-block/,
+    'the bar check reads the status row');
+  assert.match(tags.expectSelector, /\.dev-card-meta > \[data-status-tag="[a-z_-]+"\]/,
+    'the tags check reads the META line, and names the tag it wants');
+  assert.ok(!/dev-card-facts/.test(tags.expectSelector),
+    'and not the facts row they used to be on');
+  // NAMED, not positional. `.dev-card-meta > .dev-badge` matched — but its
+  // first hit on the detail head is an unset attr placeholder ("Set
+  // priority"), which renders before the status tags there and would have
+  // failed the expectText. Every status tag carries data-status-tag so a
+  // check can ask for the one it means.
+  for (const t of dapp.tests.filter((x) => /data-status-tag/.test(x.expectSelector || ''))) {
+    assert.match(t.expectSelector, /\[data-status-tag="[a-z_-]+"\]/, t.name);
+  }
+});
+
+test('every status tag is addressable by name', () => {
+  const AppView = makeAppView();
+  const row = PR({
+    merge_conflict_state: 'failed', resolving: true, check_state: 'failing',
+    test_results: [{ name: 'a', status: 'fail' }], behind_main: 4,
+    console_check_state: 'errors', console_errors: [{ message: 'x' }],
+  });
+  for (const tag of AppView.statusTagSpecs(row, {})) {
+    assert.ok(tag.data && tag.data['data-status-tag'],
+      `${tag.label} carries a data-status-tag`);
+  }
+});
+
+// ── Declared checks are pinned against the REAL staging fixtures ────────
+//
+// Every declared selector this change owns is asserted here against the rows
+// `stagingMockProposals` actually serves, not against a hand-made row. Three
+// gate failures came from guessing those values: a fixture with a merge
+// window reaches `merge_countdown` once the soft block stops intercepting it,
+// so the bar is `ok` and counts down — not the `progress` tally I predicted.
+
+function stagingRows() {
+  const fs2 = require('node:fs');
+  const vm2 = require('node:vm');
+  const src = fs2.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf8');
+  const start = src.indexOf('function stagingMockProposals(viewer)');
+  let depth = 0; let end = -1;
+  for (let j = src.indexOf('{', start); j < src.length; j++) {
+    if (src[j] === '{') depth += 1;
+    else if (src[j] === '}') { depth -= 1; if (depth === 0) { end = j + 1; break; } }
+  }
+  const ctx = { module: {}, console, connectionExhaustionMessage: () => '' };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
+  // What /promoted actually serves: every row passes through readIntegration
+  // on the way out (routes/votes.js), which is what turns the flat
+  // integration_* columns into the nested block the card reads. A fixture
+  // asserted WITHOUT that step is not the row the browser sees — #2038's
+  // `integrating` tag renders only from the nested shape, so leaving this out
+  // would have let a declared check pass here and fail on staging.
+  const readIntegration = require('../src/services/integration').readIntegration;
+  return ctx.__rows('me').map((r) => ({ ...r, integration: readIntegration(r) }));
+}
+
+test('the declared checks match what the real staging fixtures render', () => {
+  const AppView = makeAppView();
+  const rows = stagingRows();
+  const row = (id) => JSON.parse(JSON.stringify(rows.find((r) => r.id === id)));
+
+  // 9000033 — behind main, clean, inside its merge window.
+  const clean = row(9000033);
+  const cleanPill = AppView.statusPillState(clean);
+  assert.equal(cleanPill.key, 'merge_countdown',
+    'the soft block no longer intercepts, so the countdown is reached');
+  assert.equal(cleanPill.tone, 'ok');
+  assert.equal(AppView.statusTagSpecs(clean, {}).map((t) => t.data['data-status-tag']).join(), 'behind');
+
+  // 9000034 — behind AND predicted to conflict.
+  const conflict = row(9000034);
+  assert.equal(AppView.statusPillState(conflict).key, 'needs_vote');
+  assert.equal(AppView.statusTagSpecs(conflict, {}).map((t) => t.data['data-status-tag']).join(),
+    'mergeability_conflict,behind');
+
+  // 9000050 — the multi-reason card the board checks read.
+  const multi = row(9000050);
+  assert.equal(AppView.statusTagSpecs(multi, {}).map((t) => t.data['data-status-tag']).join(),
+    'checks_failing');
+
+  // 9000082 — approved and being brought up to date. The tag the SERVER
+  // names: it comes from integration.blockReasons, not from any column the
+  // browser can read, which is the whole point of #2038's served reason.
+  // Note what is NOT here: the row is six commits behind, and no `behind`
+  // tag renders. "Behind main" describes a proposal sitting still; this one
+  // is being worked on, and saying both would be two tags for one fact.
+  const integrating = row(9000082);
+  assert.equal(AppView.statusTagSpecs(integrating, {}).map((t) => t.data['data-status-tag']).join(),
+    'integrating');
+  assert.equal(AppView.statusTagSpecs(integrating, {})[0].label, 'Bringing up to date…');
+
+  // 9000083 — the platform asked GitHub to merge and GitHub said no. Named
+  // for what happened rather than as a prediction about conflicting files,
+  // which is a different tag (`mergeability_conflict`, on 9000034 above).
+  const refused = row(9000083);
+  assert.equal(AppView.statusTagSpecs(refused, {}).map((t) => t.data['data-status-tag']).join(),
+    'merge_conflict');
+  assert.equal(AppView.statusTagSpecs(refused, {})[0].label, 'GitHub refused the merge');
+
+  // 9000003 — automatic resolution in flight. Toned `running`, because
+  // nobody has to act; the wording says so rather than reporting our state.
+  const resolving = row(9000003);
+  assert.equal(AppView.statusTagSpecs(resolving, {}).map((t) => t.data['data-status-tag']).join(),
+    'resolving');
+  assert.equal(AppView.statusTagSpecs(resolving, {})[0].label, 'Resolving conflicts automatically…');
+
+  // ...and every declared selector naming one of these rows asks for a tag
+  // those rows actually produce.
+  const dapp = JSON.parse(require('node:fs').readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'));
+  const produced = new Set([...AppView.statusTagSpecs(clean, {}), ...AppView.statusTagSpecs(conflict, {}),
+    ...AppView.statusTagSpecs(multi, {}), ...AppView.statusTagSpecs(integrating, {}),
+    ...AppView.statusTagSpecs(refused, {}), ...AppView.statusTagSpecs(resolving, {})]
+    .map((t) => t.data['data-status-tag']));
+  for (const t of dapp.tests) {
+    const m = /\[data-status-tag="([a-z_-]+)"\]/.exec(t.expectSelector || '');
+    if (m) assert.ok(produced.has(m[1]), `${t.name} asks for a tag the fixtures produce: ${m[1]}`);
+  }
 });

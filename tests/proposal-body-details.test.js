@@ -314,14 +314,21 @@ test('#1442 — the ?demo=1 proposals cover the same four states', () => {
   assert.match(mocks, /checks_base_verdict: 'superseded'/);
 });
 
-test('#1442 — every promoted row is serialized with its freshness snapshot', () => {
+test('#1442/#2038 — every promoted row is serialized with its measurement blocks', () => {
   assert.match(
     VOTES_SRC,
-    /for \(const row of rows\) row\.freshness = freshnessSvc\.readFreshness\(row\);/,
+    /row\.freshness = freshnessSvc\.readFreshness\(row\);/,
     'the client reads one nested block, not twelve loose columns'
   );
-  // Both list routes select the columns that block reads.
-  for (const col of ['cs.mergeability', 'cs.freshness_behind_by', 'cs.checks_base_verdict']) {
+  assert.match(
+    VOTES_SRC,
+    /row\.integration = integrationSvc\.readIntegration\(row\);/,
+    '#2038: and one block for where the proposal stands against main, '
+    + 'carrying its own measuredAt so the card can say how old the answer is'
+  );
+  // Both list routes select the columns those blocks read.
+  for (const col of ['cs.mergeability', 'cs.freshness_behind_by', 'cs.checks_base_verdict',
+    'cs.integration_behind_by', 'cs.integration_block_reason', 'cs.approval_epoch']) {
     assert.ok(VOTES_SRC.includes(col), `${col} is selected`);
   }
 });

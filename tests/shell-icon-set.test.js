@@ -193,6 +193,15 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // until the bridge reports the capability, and it stayed on the Profile
     // screen because a balance readout is not a destination.
     'M21 12a2.25 2.25 0 00-2.25-2.25H15a3 3 0 11-6 0H5.25A2.25 2.25 0 003 12m18 0v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6m18 0V9M3 12V9m18 0a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 9m18 0V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v3',
+    // SpeechCheckIcon — the Workshop lander's "Needs you" tab. Two paths,
+    // both absent for the same reason NewspaperIcon is: the lander is mounted
+    // on the Dev route by lib/interim-root.ts, not by <Shell/>, so none of
+    // its glyphs reaches the cold document. The first is the bubble half of
+    // ChatIcon's outline and the second is the tick inside it; ChatIcon's own
+    // `d` runs the three dots and the bubble together in ONE string, so these
+    // are new entries here rather than duplicates of anything above.
+    'M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z',
+    'M8.6 11.8l2.4 2.4 4.4-4.9',
     // LockIcon — the landing screen's waitlist badge, rendered only once the
     // waitlist form is open.
     'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z',

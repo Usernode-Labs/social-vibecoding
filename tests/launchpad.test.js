@@ -304,40 +304,46 @@ test('the vendor toggle switches in place and stores the new venue', () => {
     'the status is re-read for the new vendor rather than reused');
 });
 
-test('the brief field lives in the card, because the composer is hidden', () => {
+test('the card carries the instructions, because the agent asks for the rest', () => {
+  // This replaces the brief field. The launchpad used to collect what to build
+  // and mint the work order itself, which is why it had a text box here and a
+  // task to get stuck on. It hands over instructions now: the agent asks what
+  // to build and mints its own order through the connector.
   const DevFlowSelect = require('../public/js/dev-flow-select.js');
-  const ready = { github: { linked: true }, fork: { state: 'ready', owner: 'a', repo: 'b' } };
+  const ready = {
+    github: { linked: true },
+    fork: { state: 'ready', owner: 'a', repo: 'b' },
+    connectors: { count: 1 },
+    instructions: 'Ask the user what to build, then call prepare_work.',
+  };
 
-  // On the step you are on, and only there.
-  const html = DevFlowSelect.wizardHtml({ agent: 'codex', status: ready, brief: 'Add dark mode' });
-  assert.match(html, /data-flow-brief="1"/, 'the prepare step carries a brief box');
-  assert.equal((html.match(/data-flow-brief/g) || []).length, 1, 'exactly one');
-  assert.match(html, />Add dark mode</, 'and it keeps what was typed');
-
-  // Once the task exists there is nothing left to describe.
-  const prepared = DevFlowSelect.wizardHtml({
-    agent: 'codex',
-    status: { ...ready, task: { branch: 'b', baseSha: 'abc1234', agent: 'codex' } },
-  });
-  assert.doesNotMatch(prepared, /data-flow-brief/, 'a prepared task needs no brief box');
+  const html = DevFlowSelect.wizardHtml({ agent: 'codex', status: ready });
+  assert.doesNotMatch(html, /data-flow-brief/, 'nothing to type here any more');
+  assert.match(html, /Copy instructions/);
+  assert.match(html, /Ask the user what to build, then call prepare_work\./,
+    'and the text is on the card, for a clipboard that refuses');
 
   // The step copy must not point at a control the launchpad hides.
   assert.doesNotMatch(html, /message box below/,
     'the composer is not on screen in a launchpad venue');
 
-  // It escapes like everything else — the brief is user text going back
-  // into a textarea.
+  // It escapes like everything else: the instructions carry an app name that
+  // came from a user.
   const nasty = DevFlowSelect.wizardHtml({
-    agent: 'codex', status: ready, brief: '</textarea><script>alert(1)</script>',
+    agent: 'codex',
+    status: { ...ready, instructions: '<img src=x onerror=alert(1)>' },
   });
-  assert.ok(!nasty.includes('<script>'), 'no script survives');
-  // The rendered card legitimately contains `</textarea>` — its own closing
-  // tag. What must not appear is the PAYLOAD verbatim, which is what would
-  // mean the brief closed the field and opened a script.
-  assert.ok(!nasty.includes('</textarea><script>'), 'and it cannot close its own field');
-  assert.match(nasty, /&lt;\/textarea&gt;/, 'it lands as escaped text instead');
-});
+  assert.doesNotMatch(nasty, /<img src=x/);
+  assert.match(nasty, /&lt;img src=x/);
 
+  // With no connector there is nothing to hand over yet, so no instructions
+  // block either.
+  const unconnected = DevFlowSelect.wizardHtml({
+    agent: 'codex', status: { ...ready, connectors: { count: 0 } },
+  });
+  assert.match(unconnected, /data-flow-action="link-connector"/);
+  assert.doesNotMatch(unconnected, /Copy instructions/);
+});
 test('preparing reads the card first and the composer only as a fallback', () => {
   // In a launchpad venue #dc-input is hidden, so reading it would make
   // "Prepare work order" permanently impossible — the button would report

@@ -2759,9 +2759,20 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
 }
 /* The empty state: no rail at all, one centred line in its place, so the
    block reads as a compact strip rather than a mostly-blank box. */
+/* #1913: a card now, in the rail's card language (the tint vars come from
+   the `.home-tint-*` class on the element) — so the empty lane still reads
+   as a lane with something in it, and the whole plate is the link on to
+   the directory. */
 .home-discover-empty {
-  padding: 0.5rem 0.625rem;
+  display: flex;
+  padding: 0.875rem 1rem;
+  border-radius: 0.875rem;
+  background: var(--tint-bg);
+  border: 1px solid var(--tint-line);
+  text-decoration: none;
 }
+.home-discover-empty:hover { filter: brightness(0.98); }
+.home-discover-empty:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ── THE CARD LANGUAGE: TINTS ───────────────────────────────
    Discover's app cards and Challenges' challenge cards are the same object
@@ -10706,7 +10717,14 @@ body.is-offline [data-offline-disabled] {
    empty. The strip's own padding closes to 4px at the sides so the sheets
    sit almost edge to edge on a phone, as the Messages list does. */
 #dev-workshop { max-width: 760px; margin: 0 auto; }
-#dev-body:has(> #dev-workshop) { padding: 8px 4px 12px; }
+/* The bottom padding is THE SAME GAP the rail sticks to, and that is what
+   makes the two resting cases agree. When the lander fills the scroller the
+   rail sits at its bottom edge, so the air below it is whatever `#dev-body`
+   leaves; when the lander overflows, the air is `bottom` on the sticky rail.
+   At 12 against 8 those differed by 4px depending on the tab — the same kind
+   of "it moves between tabs" the gap token was introduced to end, just
+   smaller. One value, both cases. */
+#dev-body:has(> #dev-workshop) { padding: 8px 4px var(--ws-gap, 8px); }
 
 /* ── Inline comments ───────────────────────────────────────────
    The tail of a thread, indented under the row it belongs to, with no box
@@ -11189,6 +11207,20 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 }
 #dev-topic-thread > .dev-thread > #gc-thread-scroll {
   padding: 0 4px;
+}
+/* #1901: the reply bar sits in the THREAD'S column, not the window's. The
+   topic card and the Discussion sheet are capped at 900px and centred
+   (`.dev-topic`, `#gc-thread-messages` below), but the typing line and the
+   composer bar under them spanned the whole pane — so on a wide desktop the
+   "Reply in thread" box stretched far past the thread it answers and read as
+   floating loose on the page. Same cap, same centring, so its edges line up
+   with the sheet above it. A no-op below 900px + gutters. */
+#dev-topic-thread > .dev-thread > #gc-thread-typing,
+#dev-topic-thread > .dev-thread > .platform-safe-bar {
+  width: 100%;
+  max-width: 900px;
+  margin-left: auto;
+  margin-right: auto;
 }
 .dev-topic {
   display: flex;
@@ -11850,9 +11882,14 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
      "This week" and "Open" are different widths, so without it the text
      started at three different x-positions — which defeats the point of the
      one-line layout, where you read down the labels and across only where
-     you want the detail. 84px clears the longest of the three at 13.5px.
-     A fourth window with a longer name would need this revisited. */
-  width: 84px;
+     you want the detail. 84px cleared the longest of the ORIGINAL three at
+     13.5px, with a note that a fourth window with a longer name would need
+     it revisited. The walk backwards is that fourth window and then some —
+     "12 weeks ago" over a date range — so the column is 104px and the label
+     is a two-row stack. */
+  display: flex;
+  flex-direction: column;
+  width: 104px;
   font-size: 13.5px;
   font-weight: 700;
   letter-spacing: 0.01em;
@@ -11862,14 +11899,559 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   color: var(--accent);
 }
 .dev-ws-card-line { margin: 0; flex: 1 1 auto; font-size: 14px; color: var(--text-primary); }
-/* ── The Workshop's orientation pane ─────────────────────────
-   "Since your last visit" moved inside "Where the app is": the description
-   leads, and the personal line sits under it as a footnote to it rather than
-   as a strip of its own. */
-.dev-ws-since-line {
-  margin: 6px 0 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  font-size: 13px; color: var(--text-muted);
+/* The window's dates, under its name. Muted and lighter than the label it
+   sits beneath: the name is what you navigate by, the range is what you
+   check once you have arrived. */
+.dev-ws-card-range {
+  display: block;
+  margin-top: 1px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--text-muted);
+  white-space: nowrap;
 }
+/* THE ONE-LINE CARD IS A WIDE-VIEWPORT LAYOUT, and it always was — the
+   design note above describes reading down a column of labels and across to
+   the sentences, which is what happens at 420px and up. Below that, a 104px
+   label column against a 14px sentence left the text ~250px wide and every
+   card wrapped to three rows, so the "column of labels" was a column of
+   labels each floating beside a paragraph. Stacked, the same card is two
+   rows and the sentence gets the full width. */
+@media (max-width: 419px) {
+  .dev-ws-card { flex-direction: column; align-items: stretch; gap: 2px; }
+  .dev-ws-card-title { flex-direction: row; align-items: baseline; gap: 6px; width: auto; }
+  .dev-ws-card-range { margin-top: 0; }
+}
+/* ── The pane's reveal control ──────────────────────────────────
+   ONE style for "put more of this pane on screen": the step backwards
+   through the weeks, and the since-list's "Show 8". They are the same act
+   and they were two different objects — the first a left-aligned grey pill,
+   the second a grey pill in a lane of left-aligned text — and in both cases
+   the pill made the most OPTIONAL thing in its block the most solid-looking
+   thing in it.
+
+   Quiet and centred instead: no border, no fill, muted 12px, the accent on
+   hover, and a caret pointing the way the content arrives. Centred over
+   full-width content rather than hung off one side of it. */
+.dev-ws-reveal {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  width: 100%; padding: 3px 8px;
+  border: 0; background: transparent;
+  font-size: 12px; font-weight: 600; letter-spacing: .01em;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.dev-ws-reveal:hover { color: var(--accent); }
+.dev-ws-reveal:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+/* There is no ChevronUpIcon in the kit and one caret does not earn a 22nd
+   module, so UP is ChevronDownIcon turned over — the same trick the lane
+   headings already use on their own chevron.
+
+   Which way it points is which way the content arrives: the week walk grows
+   UPWARDS (each press puts an older window above the one you were reading),
+   so its caret is always up; the since-list opens DOWNWARDS, so its caret
+   points down and turns over once the rows are showing. */
+/* Left-aligned, in the lane's own text column.
+   Centring is right for the week walk: it sits under a stack of full-width
+   cards and belongs to all of them. The since-list's control sits in a lane
+   of left-aligned type — a bulleted heading and its note — and centred it
+   read as a third, unrelated thing floating mid-lane. Indented to the
+   note's 16px so the two share a left edge. */
+.dev-ws-reveal-start { justify-content: flex-start; padding-left: 16px; }
+.dev-ws-reveal-chev { width: 14px; height: 14px; }
+
+/* ── Where the summary came from ─────────────────────────────
+   Two clauses of the category footnote, moved onto the tab that holds the
+   summary they are about. */
+.dev-ws-digest-note {
+  margin: 2px 0 0; font-size: 12px; line-height: 1.5; color: var(--text-muted);
+}
+
+/* ── The three destinations ──────────────────────────────────
+   A segmented rail pinned to the FOOT of the lander. Sticky rather than
+   fixed: it belongs to this surface, releases with it, and `bottom: 0`
+   works against #dev-forum-scroll for the same reason the pane head's
+   `top: 0` does — that scroller is the reading area.
+
+   `.platform-safe-bar` (app.css, top) adds the device's home-indicator
+   inset, which is why no bottom padding is written here. */
+/* AGAINST THE BOTTOM, always — and neither `sticky` nor `fixed` does that on
+   its own here. Sticky pins a bar only while its own container is taller
+   than the view, so on a short Current status it sat wherever the content
+   happened to end, halfway up the screen. Fixed was worse: an ancestor of
+   this surface carries `backdrop-filter`, which makes it the containing
+   block for fixed descendants, so "bottom: 0" meant the bottom of a frosted
+   panel rather than of the screen.
+
+   So the LANDER is given the reading area's height (the same viewport
+   arithmetic the deck uses) and the bar is pushed to its foot with
+   `margin-top: auto`. Sticky on top of that keeps it in view while a long
+   tab scrolls under it. */
+/* `max(100%, …)`, because neither half works alone. In the NATIVE layout
+   #dev-forum-scroll has a definite height, so 100% is exactly the reading
+   area. In the BROWSER layout it does not (app.css forces #app-view to
+   `height: auto` so the page scrolls), and a percentage min-height against
+   an indefinite parent resolves to 0 — which is what left the bar floating
+   halfway up a short tab. The viewport arithmetic is the floor under that.
+
+   It subtracts the header and the insets and NOT the tab rail: the rail is
+   inside this box, pushed to its foot by the tab body's `flex: 1`.
+   Subtracting it here as well was the bug — the lander came out one rail
+   short of the space it had, and the bar stopped that far above the
+   bottom. */
+/* ── The lander fills what is left of the scroller ─────────────────────
+   `min-height: max(100%, var(--ws-area))` is what this replaces, and it was
+   wrong in a way no amount of tuning the rail could reach: in FIREFOX the
+   floor is simply not applied. Measured on the real app (Gecko 155, the
+   native layout): `.dev-ws` computed `min-height: max(100%, 806.5px)` and
+   used a height of 649px, leaving 121px of unused scroller below it. A
+   sticky bar cannot sit below its own parent's bottom edge, so the rail
+   rested there and every `--ws-gap` adjustment moved a number that was never
+   the problem. Chromium applies the same declaration correctly, which is
+   exactly why a headless harness reported 8px while the app floated — the
+   percentage inside the `max()` is indefinite here, and the two engines
+   disagree about what that makes the whole expression.
+
+   So: NO PERCENTAGE, and two mechanisms, one per layout.
+
+   NATIVE — the scroller has a definite height, so the chain flexes and the
+   lander takes what is left of it. Nothing is computed from the viewport, so
+   nothing depends on `--platform-header-h` being accurate or on how much
+   chrome sits above `#dev-body`; measured, that offset is 47px, which a
+   viewport subtraction would have to know and does not. Scoped by `:has()`
+   so the other Dev views, which share this scroller, keep their block flow.
+
+   BROWSER-SCROLLER — the scroller is auto-height (app.css forces
+   `#app-view { height: auto }` so the page scrolls), so there is no
+   remaining space to take and flex gives content height. The viewport floor
+   is the right tool there, as a PLAIN LENGTH.
+
+   Both verified against the live app rather than a replica: the same two
+   mechanisms, applied by hand in the page, closed the gap from 121px to 9px. */
+#dev-forum-scroll:has(> #dev-body > #dev-workshop) { display: flex; flex-direction: column; }
+#dev-body:has(> #dev-workshop) {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+}
+/* `width: 100%` IS LOAD-BEARING, not belt and braces. `#dev-workshop` centres
+   itself with `margin: 0 auto`, and auto margins on the cross axis of a flex
+   column ABSORB the free space instead of stretching — so as a flex item it
+   shrank to its content. Measured: the pane went 760 to 640 on By category
+   and 1432 to 310 on By stage, which is the column collapsing, not widening.
+   With an explicit width the auto margins go back to centring a full-width
+   box inside its `max-width`, which is what they did as a block. */
+#dev-workshop:has(> .dev-ws) {
+  flex: 1 1 auto; min-height: 0; width: 100%;
+  display: flex; flex-direction: column;
+}
+#dev-workshop > .dev-ws { flex: 1 1 auto; width: 100%; }
+html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
+/* The tab body takes the space and carries the clearance; the rail follows
+   it. `margin-top: auto` on the rail is gone with it — the body's `flex: 1`
+   is what puts the rail at the foot now, and an auto margin on top of that
+   would fight the padding below. */
+.dev-ws-tabbody {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column; gap: 10px;
+  /* THE RAIL'S OWN BOX PLUS THE GAP IT RESTS ON. 72 is the box: 6 + 58 + 6 of
+     padding and tab, 2 of border — recompute it whenever the rail changes, or
+     the overlap comes back. The gap is the token above rather than a second
+     copy of the inset, so the clearance tracks the rail's resting place by
+     construction instead of by being remembered. */
+  padding-bottom: calc(72px + var(--ws-gap));
+}
+.dev-ws-tabs {
+  position: sticky; bottom: var(--ws-gap); z-index: 25;
+  display: flex; gap: 4px;
+  padding: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--app-sheet-line);
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dev-ws-tabs { background-color: var(--dc-sheet); }
+}
+/* A GLYPH OVER ITS LABEL, which is what took the row from 48 to 58: 26 of
+   glyph, 3 of gap, a 11px line, and the rest is the padding that keeps the
+   pair off the pill's edges. A thumb target, not a text button — the shell's
+   own minimum for something you tap on a phone is 44, and this bar is the
+   lander's primary navigation, so it clears that by a margin.
+
+   The label SHRINKS rather than disappearing. At 14px the three phrases were
+   one undifferentiated line of text; at 11px under a glyph the glyph carries
+   the scanning and the words settle the ambiguity none of the three glyphs
+   can settle alone. `text-overflow` still has to hold, because "Current
+   status" is the longest label on the narrowest phone. */
+.dev-ws-tab {
+  flex: 1 1 0; min-width: 0;
+  display: inline-flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 3px;
+  height: 58px; padding: 0 4px;
+  border: 0; border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .01em;
+  white-space: nowrap; overflow: hidden;
+  cursor: pointer;
+}
+/* Size lives here, not on the component: icons.tsx has no size variant by
+   design, so every call site passes its own class. `flex: none` because the
+   glyph is now a flex ITEM in a column and would otherwise be squeezed by a
+   label that is trying to fit. */
+.dev-ws-tab-glyph { width: 26px; height: 26px; flex: none; }
+.dev-ws-tab-label { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+/* THE HEADER'S PERIWINKLE, not black. `--brand-ink` on `--brand-tint` with a
+   hairline of `--brand-line` is how the bar above draws its own controls —
+   the back glyph, the bell, the app chip — and these are the same kind of
+   thing: where you are, and where you could go. A black pill was the only
+   flat-black object on the screen and read as a different product.
+   The tokens carry their own dark values, so there is no dark variant. */
+.dev-ws-tab[aria-selected="true"] {
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
+}
+
+/* ── Needs you: one question, the whole screen ───────────────
+   SIZED FROM THE VIEWPORT, not from its ancestors — and that is the second
+   attempt. The first was a `height: 100%` chain down from #dev-forum-scroll,
+   which has a definite height in the native layout and resolves perfectly
+   there. It resolves to nothing in the BROWSER layout: when the root carries
+   `data-browser-scroller="dev-forum-scroll"` the rule near the top of this
+   file forces `#app-view` to `height: auto !important` so the page itself
+   scrolls, and every 100% below it collapses to content height. Two shipped
+   layouts, and the chain only worked in one.
+
+   So the deck measures the viewport and subtracts the chrome it can name:
+   the platform header, the device insets, and this surface's own bottom tab
+   rail. `min-height` keeps it usable on a short window rather than letting
+   the subtraction win. */
+.dev-ws {
+  /* THE AIR UNDER THE RAIL, decided once and spent in two places. It has to
+     be one number, because the rail comes to rest two different ways: on a
+     short tab it sits at the foot of `.dev-ws` (so the floor below sets the
+     gap), and on a long one it is stuck while the content scrolls past (so
+     `bottom` sets it). Two numbers meant two gaps — measured at 1440x900,
+     23px of air on Current status and Needs you against 0 on All items,
+     which is exactly the "floating part way up, and it moves between tabs"
+     this replaces. The old floor subtracted a bare 24px with no counterpart
+     on the rail at all.
+
+     The device inset is IN the gap rather than inside the bar, because this
+     bar floats: it is a rounded pill with air under it, not a strip against
+     the screen edge, so the inset belongs below it and not in its padding.
+     That is also why the rail no longer carries `.platform-safe-bar`, whose
+     `calc(0.5rem + inset)` was landing 8px under the tabs against 6px over
+     them — the asymmetry you can see on a phone. */
+  --ws-gap: calc(8px + var(--platform-safe-bottom, 0px));
+  --ws-area: calc(
+    100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
+    - var(--ws-gap)
+  );
+}
+/* Keyboard up, inset gone — the home-indicator strip is behind the keyboard,
+   so reserving it there is dead space. The base 8px stays, which is the same
+   trade `html.un-kb .platform-safe-bar` makes for the shell's own bars. */
+html.un-kb .dev-ws { --ws-gap: 8px; }
+.dev-ws-needs {
+  /* The lander is a flex column with a floor under its height, so the deck
+     simply takes what is left between the head of the tab and the rail —
+     no second copy of the viewport arithmetic to keep in step with the
+     first. */
+  flex: 1 1 auto;
+  min-height: 360px;
+  display: grid;
+  /* Two thirds to the thing being decided, one to the place you can ask
+     about it — enough to say the pane is there and take a question. */
+  grid-template-rows: 1fr auto;
+  gap: 8px;
+}
+/* Until it is used the ask pane is ONE ROW — the box and nothing else, which
+   is `auto` above. It opened at a third of the screen with a heading and a
+   hint in it, and that spent a third of a decision screen on an invitation
+   nobody had accepted.
+
+   Once you have asked something the conversation is what you are reading and
+   the card is context for it, so it takes half. It stops there: the card is
+   the subject, and a chat that swallows its subject is a chat about nothing. */
+.dev-ws-needs-engaged { grid-template-rows: 1fr 1fr; }
+/* ── The deck at the top, on a wide screen ───────────────────
+   On a phone the deck fills the reading area and the answers sit at the
+   floor, which is where the thumb is. On a desktop that same rule spends
+   half a 900px window on the gap between a two-line summary and three
+   buttons, and empty space that large reads as something failing to render
+   rather than as breathing room.
+
+   So above 700px the deck is content-sized and sits at the top: the
+   question and its answers follow the card immediately. The tab rail is
+   unaffected — it is pushed to the foot of the lander by `margin-top:
+   auto`, not by the deck's height. The ask log takes a cap instead of a
+   fraction of the screen for the same reason. */
+@media (min-width: 700px) {
+  .dev-ws-needs,
+  .dev-ws-needs-engaged {
+    flex: 0 0 auto;
+    grid-template-rows: auto auto;
+    align-content: start;
+    min-height: 0;
+  }
+  .dev-ws-needs-scroll { flex: 0 1 auto; }
+  .dev-ws-ask-log { max-height: 40vh; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-needs { transition: grid-template-rows .22s ease; }
+}
+.dev-ws-needs-subject,
+.dev-ws-ask {
+  min-height: 0;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 14px;
+  border-radius: 22px;
+  background-color: var(--dc-sheet-fill);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .dev-ws-needs-subject, .dev-ws-ask { background-color: var(--dc-sheet); }
+}
+.dev-ws-needs-head,
+.dev-ws-ask-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dev-ws-needs-scroll {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 2px;
+}
+/* The voter-facing sentence, and the biggest type on the screen after the
+   card's own title: on a screen whose only job is a decision, what changes
+   for a person using the app is the thing to read first. */
+.dev-ws-needs-summary {
+  margin: 0; font-size: 16px; line-height: 1.5; color: var(--text-primary);
+  white-space: pre-wrap;
+}
+.dev-ws-needs-nosummary { color: var(--text-muted); font-size: 14px; font-style: italic; }
+/* ── The three answers ───────────────────────────────────────
+   Big, because this is the one thing the screen is for and a decision is a
+   poor place for a small target. Three rather than two: "not now" is a real
+   answer, and a queue that accepts only yes or no gets answered carelessly
+   by people who want it to end. */
+.dev-ws-answer { display: flex; flex-direction: column; gap: 8px; }
+.dev-ws-ask-q {
+  margin: 0; text-align: center;
+  font-size: 15px; font-weight: 600; color: var(--text-primary);
+}
+.dev-ws-answer-row { display: flex; gap: 8px; }
+.dev-ws-answer-btn {
+  flex: 1 1 0; min-width: 0; height: 52px;
+  border-radius: 16px; border: 1px solid transparent;
+  font: inherit; font-size: 16px; font-weight: 600;
+  cursor: pointer;
+}
+.dev-ws-answer-btn:disabled { opacity: .4; cursor: default; }
+.dev-ws-answer-yes { background: var(--state-ok-bg); color: var(--state-ok); border-color: currentColor; }
+/* `--state-blocked` is the platform's own red — the same token the blocked
+   pills use — rather than a literal. There is no `--state-bad`. */
+.dev-ws-answer-no { background: var(--state-blocked-bg); color: var(--state-blocked); border-color: currentColor; }
+/* Skip is deliberately the quiet one: it is always available and should
+   never be the easiest thing to hit by accident. */
+.dev-ws-answer-skip {
+  background: transparent; color: var(--text-muted);
+  border-color: var(--app-sheet-line); font-weight: 500;
+}
+.dev-ws-answer-btn[aria-pressed="true"] { outline: 2px solid currentColor; outline-offset: 2px; }
+/* ── Since your last visit, as one line ──────────────────────
+   A row, not a pane, until it is opened. It was a whole section of the
+   status tab — heading, summary line, control — spent on a fact most visits
+   do not need, sitting above the door to the app's chat. */
+.dev-ws-since-row {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 8px 12px;
+  border: 0; border-radius: 999px; background: transparent;
+  font: inherit; font-size: 13px; font-weight: 600;
+  color: var(--text-muted); text-align: left; cursor: pointer;
+}
+.dev-ws-since-row:hover { color: var(--accent); }
+.dev-ws-since-row:disabled { cursor: default; opacity: .6; }
+.dev-ws-since-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Shut, it is the only thing on the status tab with no surface of its own —
+   which is the point: it is a line, and opening it makes it a pane. */
+.dev-ws-since-shut { margin-block: -2px; }
+.dev-ws-since-label { flex: 1 1 auto; min-width: 0; }
+.dev-ws-since-n {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px;
+  background: var(--brand-tint); color: var(--brand-ink);
+  font-size: 11px; font-variant-numeric: tabular-nums;
+}
+.dev-ws-since-chev { flex: none; width: 14px; height: 14px; }
+.dev-ws-since-row[aria-expanded="true"] .dev-ws-since-chev { transform: rotate(90deg); }
+/* ── The ask box's model ─────────────────────────────────────
+   The dev session's own list, and only once the box is in use: a picker over
+   an empty composer is a setting nobody has a use for yet. */
+/* The dev session's own control: `.dc-model-select` strips it back to plain
+   text and `.dc-model-name` truncates it. The caret is a sibling here rather
+   than a child, because a <select> cannot contain one — the session uses a
+   button and a kit menu, which this pane has no use for yet. */
+/* `min-width: 0` and a cap, both: a <select>'s intrinsic width is its
+   LONGEST OPTION, so "Fable 5.1 — design, taste, and difficult coding"
+   silently widened the deck past the screen. The document did not scroll —
+   the overflow was inside the frame — which is exactly the kind that hides
+   from a page-level check. */
+.dev-ws-ask-model { display: flex; align-items: center; gap: 3px; min-width: 0; max-width: 100%; }
+.dev-ws-ask-model > select { min-width: 0; max-width: 100%; flex: 0 1 auto; }
+.dev-ws-ask-model-chev { flex: none; width: 14px; height: 14px; color: var(--text-muted); }
+.dev-ws-needs-nav { display: flex; align-items: center; justify-content: center; gap: 10px; }
+.dev-ws-needs-of { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+/* In its own pane the note needs no lane indent. */
+.dev-ws-since-note { margin-left: 0; }
+.dev-ws-needs-done {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; text-align: center; padding: 48px 16px;
+}
+.dev-ws-needs-done-line { margin: 0; font-size: 17px; font-weight: 600; }
+.dev-ws-needs-done-sub { margin: 0; font-size: 14px; color: var(--text-muted); }
+
+/* ── Ask about this change ───────────────────────────────────
+   NOT WIRED UP. The composer is real; the answer is a placeholder that says
+   so on screen, because there is no endpoint that answers questions about a
+   proposal and inventing one before this layout is agreed is the wrong
+   order of work. */
+.dev-ws-ask-log {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.dev-ws-ask-hint { margin: 0; font-size: 13px; color: var(--text-muted); font-style: italic; }
+.dev-ws-ask-msg {
+  margin: 0; padding: 7px 11px; border-radius: 14px;
+  font-size: 14px; line-height: 1.45; max-width: 88%;
+}
+.dev-ws-ask-you { align-self: flex-end; background: var(--accent); color: #fff; }
+.dev-ws-ask-ai { align-self: flex-start; background: var(--dc-sheet); color: var(--text-primary); }
+/* The composer is `.dc-card`: one white surface holding the field and a row
+   of controls under it. Everything here is what that card does NOT carry —
+   the field's own reset, and the row's spacing. */
+.dev-ws-ask-composer { display: flex; flex-direction: column; gap: 6px; }
+/* THE RESTING LINE: the field and the send circle, always both. The send used
+   to live in the controls row and so appeared only on focus, which left the
+   card with no visible way to send — a text box and nothing else. The model
+   row is the part that earns its height on use; the send button is the
+   affordance that says the box does something. */
+.dev-ws-ask-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dev-ws-ask-line > .dev-ws-ask-input { flex: 1 1 auto; }
+.dev-ws-ask-input {
+  width: 100%; min-width: 0;
+  border: 0; padding: 0; background: transparent;
+  color: var(--text-primary); font: inherit; font-size: 15px; line-height: 1.4;
+}
+.dev-ws-ask-input:focus { outline: none; }
+.dev-ws-ask-input::placeholder { color: var(--text-muted); }
+.dev-ws-ask-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* Smaller than the session's 44px circle: that one is the primary action of
+   a whole screen, this is the second control in a pane that is a third of
+   one. The fill, the ink and the halo are `.dc-circle-send`'s. */
+.dev-ws-ask-send { width: 34px; height: 34px; }
+.dev-ws-ask-send-icon { width: 17px; height: 17px; }
+.dev-ws-ask-send:disabled { opacity: .45; cursor: default; }
+.dev-ws-reveal[aria-expanded="true"] .dev-ws-reveal-chev { transform: rotate(180deg); }
+.dev-ws-week-note {
+  margin: 0; font-size: 12px; color: var(--text-muted); text-align: center;
+}
+/* ── One offer at a time, paged sideways ───────────────────────
+   The track is the scroller and each item is exactly its width, so a swipe
+   lands on a card rather than between two. `scroll-snap-type: x mandatory`
+   and not `proximity`: a half-scrolled pair is the state this layout exists
+   to prevent.
+
+   `align-items: flex-start` matters more than it looks: a row UNFOLDS into
+   the full card in place, so one item in the track can be several times the
+   height of its neighbours, and stretched items would make every card as
+   tall as the tallest. */
+.dev-ws-pager { display: flex; flex-direction: column; gap: 6px; }
+.dev-ws-pager-track {
+  display: flex;
+  align-items: flex-start;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  /* BOTH AXES. `.home-discover-rail` carries the post-mortem (#1762): a rail
+     that declares `touch-action: pan-x` DENIES vertical panning for every
+     touch that starts on it, so on a phone it becomes a band you cannot
+     scroll the page from. Failing to page the deck costs one retry; failing
+     to scroll the lander costs the screen. */
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
+  /* `mandatory`, where the discover rail uses `proximity` — a deliberate
+     deviation. That rail is a strip of small tiles where resting between two
+     is a fine place to be; this one shows exactly one card at a time, and a
+     deck resting half-way between two cards is the state it exists to
+     prevent. */
+  scroll-snap-type: x mandatory;
+  /* The cards carry a real shadow; a track clipped to the content box would
+     shave it off both sides on every page. */
+  padding: 3px;
+  margin: -3px;
+  scrollbar-width: none;
+}
+.dev-ws-pager-track::-webkit-scrollbar { display: none; }
+.dev-ws-pager-item {
+  flex: 0 0 100%;
+  min-width: 0;
+  scroll-snap-align: start;
+  /* The gutter between cards has to come from INSIDE the item: a `gap` on
+     the track would offset every snap point by one gap and the last card
+     would never reach its own. */
+  padding-right: 8px;
+  box-sizing: border-box;
+}
+/* ON THE HEADING ROW, at its right end. Under the deck it was a row of
+   three small things floating between a card and the next heading, reading
+   as a caption for neither; beside the lane's own title it is unambiguously
+   that lane's control, and the deck sits directly under the heading it
+   belongs to. Smaller than it was, because the heading row is 12px type and
+   a 28px control beside it dominated the words. */
+.dev-ws-lane-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+/* The title keeps its own bottom margin; the row must not inherit it twice. */
+.dev-ws-lane-head > .dev-ws-lane-title { margin-bottom: 0; }
+.dev-ws-pager-ctl {
+  display: flex; align-items: center; gap: 4px; flex: none;
+  margin-bottom: 4px;
+}
+.dev-ws-pager-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 999px;
+  border: 1px solid var(--app-sheet-line);
+  background-color: var(--dc-sheet);
+  color: var(--text-primary);
+  line-height: 1;
+  cursor: pointer;
+}
+.dev-ws-pager-btn:disabled { opacity: 0.35; cursor: default; }
+.dev-ws-pager-chev { width: 13px; height: 13px; }
+.dev-ws-pager-n {
+  font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums;
+  /* The heading above it is uppercase tracked-out small type; the counter is
+     a number and stays a number. */
+  text-transform: none; letter-spacing: 0; white-space: nowrap;
+  padding: 0 2px;
+}
+/* The since lane needs no rule of its own: it is the same heading, note and
+   `.dev-ws-lane-btn` the two lanes above it use.
+   It briefly had one — `.dev-ws-since-btn`, a full-width bordered row that
+   carried the whole sentence as its label — written because that sentence
+   cannot live inside `.gc-vote-btn`, a 24px fixed-height pill that made it
+   set a min-content width wider than a phone. Splitting the sentence out
+   into the lane's note removes the problem rather than styling around it:
+   the label is "Show 8" now, which is exactly what that pill is for. */
+/* ── The Workshop's orientation pane ─────────────────────────
+   "Since your last visit" was a line inside "Where the app is" (`.dev-ws-
+   since-line`, retired): the description led and the personal line sat under
+   it as a footnote. It is a BUTTON in "What needs you" now — see
+   `.dev-ws-since-btn` above — because a list of things that moved for this
+   reader belongs with the other things addressed to them, not under the
+   app's own numbers. */
 /* A control at the end of a lane — "N more waiting on you". `.dev-ws-link`
    set `font: inherit` with no size of its own, so it took whatever its parent
    had: 16px in the two strip heads, larger than every other control on the
@@ -11878,16 +12460,20 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-lane-btn { margin: 2px 0 0 4px; }
 /* The offer under a lane's heading, where the heading states the fact. */
 .dev-ws-lane-note { margin: -2px 0 6px 16px; font-size: 12px; color: var(--text-muted); }
-/* ── "What needs you": the ring, and the way to put it down ──
+/* ── "What needs you": the ring ────────────────────────────────
    The pane stated a debt in the warning tint with no way to close it. The
    ring is the home screen's Challenges primitive saying the same thing as
-   progress, and the × stores the OWED COUNT so the pane comes back by itself
-   the moment that number changes. */
-.dev-ws-needs-end { display: inline-flex; align-items: center; gap: 6px; }
-.dev-ws-vote-ring { width: 30px; height: 30px; }
-/* The count in words beside the ring. Muted and small: the ring is the
-   figure, this is what the figure is about. */
-.dev-ws-needs-count { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+   progress.
+
+   It sits ON THE LANE HEADING now, not in the strip head — it counts the
+   vote lane, and the strip head covers two lanes. `.dev-ws-needs-end` (the
+   ring-and-words wrapper) and `.dev-ws-needs-count` (the words) are retired
+   with that move: the words are the lane's `.dev-ws-lane-note`, in the same
+   place the free-to-take lane keeps its own line.
+
+   22px, not 30px: the heading it now rides is 12px tracked-out caps, and
+   the old size set the height of the whole row. */
+.dev-ws-vote-ring { width: 22px; height: 22px; flex: none; margin-left: 2px; }
 .dev-ws-pill {
   display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px;
   font-size: 12px; font-weight: 600; white-space: nowrap;
@@ -12039,7 +12625,15 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    overflows by its width and adds a horizontal scrollbar to the page.
    Re-parenting the bound has no such edge. */
 #dev-workshop:has(.dev-ws-board) { max-width: none; }
-#dev-workshop:has(.dev-ws-board) > .dev-ws > :not(.dev-ws-pane) {
+/* THE TAB BODY IS A LEVEL THIS RULE HAS TO REACH THROUGH. It used to bound
+   every direct child of `.dev-ws` except the pane; the tabs put the pane one
+   level deeper, inside `.dev-ws-tabbody`, so the bound landed on the WRAPPER
+   and the board was cramped to the reading column from outside. Bound the tab
+   body's children instead, and leave the body itself unbounded — the rail is
+   still a direct child of `.dev-ws`, so it keeps the column width, which is
+   what it wants: a pill spanning 1440px is not a tab bar. */
+#dev-workshop:has(.dev-ws-board) > .dev-ws > :not(.dev-ws-tabbody),
+#dev-workshop:has(.dev-ws-board) > .dev-ws > .dev-ws-tabbody > :not(.dev-ws-pane) {
   width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
 }
 /* On By stage the pane WIDENS AND STAYS A PANE. An earlier cut stripped its
@@ -12075,6 +12669,12 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    sit on the same gutter. */
 .dev-ws-board { padding: 2px 8px 0; }
 
+/* The pane's title, above the tabs. Indented to the same 4px the sort row
+   and the tab strip sit at, so the head reads as one column. */
+.dev-ws-pane-eyebrow { padding: 2px 4px 0; }
+/* `space-between` with the eyebrow gone leaves the chips alone at the START
+   of the row, which is where they belong: on a healthy board there is no
+   grouping state to report and the row is just the sort control. */
 .dev-ws-sort { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 2px 4px 0; flex-wrap: wrap; }
 .dev-ws-sort-opts { display: flex; gap: 4px; }
 .dev-ws-chip {

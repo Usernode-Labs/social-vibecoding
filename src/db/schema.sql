@@ -5734,6 +5734,64 @@ ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS submitted_client_id TE
 ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS target_session_id BIGINT
   REFERENCES chat_sessions(id) ON DELETE SET NULL;
 
+-- Which chat session a work order was PREPARED in — the launchpad the user was
+-- standing in when they pressed "Prepare work order".
+--
+-- THREE session columns now sit on this table and they mean three different
+-- things. Confusing them is not a style problem, it breaks the product:
+--   session_id        — the shared in-progress session this work BECAME. Set
+--                       only once work has been shared or submitted; an OPEN
+--                       task carrying one is a card already on the Dev board,
+--                       and submitWork REFUSES it with `already_shared`.
+--   target_session_id — the proposal or session this work order UPDATES.
+--   origin_session_id — this one. Pure provenance, written at mint time,
+--                       read by the walkthrough and by nothing else.
+--
+-- Before it existed the walkthrough resolved its task per (user, app), so one
+-- open work order spoke for every session in the app: "New change" opened a
+-- fresh session that immediately showed somebody else's half-finished order,
+-- with no relationship to the change the user had just asked to start.
+--
+-- NULL means "prepared before this column existed, or through the connector,
+-- which has no session". Those rows are adopted by the first launchpad that
+-- looks for one, so they are not stranded — see loadOpenTaskForSession.
+ALTER TABLE external_agent_tasks ADD COLUMN IF NOT EXISTS origin_session_id INTEGER
+  REFERENCES chat_sessions(id) ON DELETE SET NULL;
+
+-- The walkthrough's lookup: the caller's open task for one app and one session.
+CREATE INDEX IF NOT EXISTS external_agent_tasks_origin_session_idx
+  ON external_agent_tasks (user_id, app_id, origin_session_id)
+  WHERE status = 'open';
+
+-- ── Close out the attempts that leaked before they had an ending ──────
+--
+-- A work order is one ATTEMPT at an issue. It had a beginning and two endings
+-- (submit, "Start over") but none for "the session it belonged to is over", so
+-- dead attempts accumulated: each holding one of ten open-work-order slots for
+-- its full 14-day expiry. The launchpad then tried to hand them back out — a
+-- new change claimed the newest orphan, so starting one change after another
+-- walked the user down the pile instead of opening clean.
+--
+-- BROWSER-MINTED ONLY. `usernode-web:%` is the client_id the dev-flow route
+-- writes; rows from the CONNECTOR (Claude, ChatGPT) have no session by nature,
+-- are genuinely in flight, and submit by task id without ever needing a
+-- launchpad. Closing those would break live work.
+--
+-- The `created_at` bound is what makes this ONE-TIME rather than a rule. The
+-- WHERE clause would otherwise keep matching on every boot, and would then
+-- close an order minted by a browser still running JS cached from before the
+-- client started sending its session — a user whose launchpad can still see
+-- it. A fixed instant, set when this shipped, cannot reach anything minted
+-- afterwards. Re-running is a no-op either way, which is the convention the
+-- request_key backfill above follows.
+UPDATE external_agent_tasks
+SET status = 'abandoned'
+WHERE status = 'open'
+  AND origin_session_id IS NULL
+  AND session_id IS NULL
+  AND client_id LIKE 'usernode-web:%'
+  AND created_at < TIMESTAMPTZ '2026-09-12 13:00:00+00';
+
 DO $$
 BEGIN
   -- The update path adds two more values (#1054):
@@ -7105,6 +7163,220 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS freshness_error TEXT
 -- first, NULLs (never checked) ahead of everything.
 CREATE INDEX IF NOT EXISTS chat_sessions_freshness_checked_idx
   ON chat_sessions (freshness_checked_at NULLS FIRST)
+  WHERE status = 'promoted';
+
+-- #2038 — the integration record, and the approval epoch.
+--
+-- ── One fact, one writer ───────────────────────────────────────────────
+--
+-- The block above is the third set of columns describing "where does this
+-- proposal stand relative to main". behind_main was the first, the
+-- merge_conflict_state / conflict_files pair the second. Five writers touch
+-- those six groups on unrelated triggers and none of them owns the answer,
+-- so they disagree with each other in normal operation: the proposal card
+-- reads freshness_behind_by while the merge gate reads behind_main, and a
+-- successful sync writes only the second. merge_conflict_state has no
+-- re-measuring writer at all — once a merge attempt stamps 'conflict' there,
+-- nothing ever clears it except another resolve, which may never run.
+--
+-- These columns replace all six groups with ONE answer, written by ONE
+-- writer (services/integration.js), carrying ONE timestamp. Everything else
+-- reads it; nothing else writes it.
+--
+-- The answers come from a local bare mirror (services/repo-mirror.js), not
+-- from GitHub's REST API, so they are exact rather than estimated and cost
+-- no rate limit: behind_by is a rev-list count, merges_clean and
+-- conflict_paths come from a real `git merge-tree`, and checks_base_current
+-- is a merge-base ancestry test.
+--
+-- integration_measured_at is deliberately a FIRST-CLASS field rather than
+-- an implementation detail. The card renders it ("behind by 6, measured 30
+-- seconds ago") instead of stating a number with implied freshness it does
+-- not have. A cache that admits its age is not the same object as a cache
+-- that pretends to be live, and the second one is what every "the UI is out
+-- of sync" report was actually about.
+--
+--   integration_head_sha        the proposal head this answer describes. An
+--                               answer about a head that has since moved is
+--                               stale by construction, and this is how a
+--                               reader tells.
+--   integration_main_sha        the default branch's head at measure time.
+--   integration_base_sha        merge base of the two.
+--   integration_behind_by       exact count of commits main has that the
+--                               proposal does not.
+--   integration_ahead_by        the reverse.
+--   integration_merges_clean    from an actual merge, not a prediction.
+--                               NULL only when the measurement failed.
+--   integration_conflict_paths  the genuinely conflicted paths. Not the
+--                               upper bound mergeability_files had to be:
+--                               git reports exactly the files it could not
+--                               resolve.
+--   integration_merged_tree     the tree a merge WOULD produce. This is the
+--                               value that lets approval follow the patch:
+--                               when the head moves, the new tree either
+--                               equals this (nobody wrote anything — a
+--                               mechanical merge) or it does not.
+--   integration_checks_base_current  is the commit this proposal's checks
+--                               ran against still on main's history.
+--   integration_block_reasons   what the SERVER knows is holding this
+--                               proposal that the browser cannot derive from
+--                               columns: 'integrating' (the queue is working
+--                               on it right now) and 'budget' (it needs a
+--                               merge with main but the shared token budget
+--                               is spent). A LIST, not one value, because
+--                               #2026 established that a card says every
+--                               reason that applies — ranking them into one
+--                               slot is how "Behind main" hid "Checks
+--                               failing". The browser keeps deriving the
+--                               rest from the columns it already reads;
+--                               these two are appended to that list.
+--   integration_error           why the last measurement could not answer.
+--                               A measurement never throws: it records this
+--                               and leaves the previous numbers in place.
+--
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_measured_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_head_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_main_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_base_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_behind_by INTEGER;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_ahead_by INTEGER;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_merges_clean BOOLEAN;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_conflict_paths JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_merged_tree VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_checks_base_current BOOLEAN;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_block_reasons JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_error TEXT;
+
+-- ── The approval epoch ─────────────────────────────────────────────────
+--
+-- What a vote is pinned to, replacing the commit pin.
+--
+-- reviewed_head_sha pins an approval to a COMMIT, and a sync commit changes
+-- the commit without changing the code under review. Telling those apart
+-- needed a provenance ledger (session_platform_pushes), a five-hop
+-- first-parent walk and a three-way classifier, because a commit's SHAPE can
+-- be forged: anyone can craft a merge whose first parent is the reviewed SHA.
+--
+-- An epoch cannot be forged because it is not derived from the branch at all.
+-- It is a counter the PLATFORM bumps, and it bumps on exactly one event:
+-- somebody wrote bytes that were not already approved. A mechanical merge of
+-- main — proven mechanical by recomputing it, see integration_merged_tree —
+-- does not bump it, so the approvals simply keep counting and there is
+-- nothing to carry, advance or reconcile.
+--
+-- It is also what the browser sends back with a vote. The old guard compared
+-- the rendered commit to the live head and rejected any difference, which
+-- cost a voter their click on every platform sync — including the ones that
+-- had just certified the code had not changed. An epoch compares the right
+-- thing: "is this still the proposal you were shown?"
+--
+--   chat_sessions.approval_epoch  bumped when approvals are cleared.
+--   pr_votes.approval_epoch       the epoch the vote was cast under. A vote
+--                                 counts while the two are equal.
+--
+-- Backfill: existing rows start at epoch 0, and a vote inherits epoch 0 when
+-- it counted under the OLD rule. That rule is reproduced here exactly, and
+-- the reproduction is the point — #2050. The old predicate was
+--
+--     (<reviewed head> IS NULL OR LOWER(pv.head_sha) = LOWER(<reviewed head>))
+--
+-- and this backfill originally kept only its second half. The half it dropped
+-- is not an edge case: a session with no reviewed head counted EVERY vote on
+-- it, which is every rename PR (services/rename-pr.js opens one with no head
+-- and carries people's issue votes onto it) and every staging fixture. All of
+-- them silently fell to a zero tally the moment the migration ran. The
+-- original claim that it "changes no tally in either direction" was wrong
+-- about exactly this, so the condition now says what the claim always meant.
+--
+-- A vote genuinely stale under the old rule still keeps a NULL epoch, and
+-- NULL never equals 0, so it stays uncounted with nothing having to delete
+-- it. A vote made stale LATER is untouched here: clearApprovals bumps the
+-- session's epoch and leaves the vote's alone, so it is not NULL and this
+-- does not see it. Epoch 0 rather than the session's current epoch for the
+-- same reason — a session that has since cleared its approvals must not have
+-- votes reappear underneath it, and 0 is inert there.
+--
+-- It re-runs on every boot (the schema is applied at db/migrate.js:30) and is
+-- idempotent, which is what lets it also rescue the rows written dead after
+-- the first run, before the trigger below existed.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS approval_epoch INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pr_votes      ADD COLUMN IF NOT EXISTS approval_epoch INTEGER;
+
+UPDATE pr_votes pv
+   SET approval_epoch = 0
+  FROM chat_sessions cs
+ WHERE cs.id = pv.session_id
+   AND pv.approval_epoch IS NULL
+   AND ((CASE WHEN cs.source = 'imported'
+              THEN cs.imported_pr_head_sha ELSE cs.reviewed_head_sha END) IS NULL
+        OR LOWER(pv.head_sha) = LOWER(
+             CASE WHEN cs.source = 'imported'
+                  THEN cs.imported_pr_head_sha ELSE cs.reviewed_head_sha END));
+
+-- ── Every vote is born at an epoch ─────────────────────────────────────
+--
+-- The predicate above is an equality against a NULLABLE column, and NULL
+-- equals nothing. That is deliberate for the backfill — it is what carries a
+-- stale vote across uncounted without anything having to delete it — and it
+-- is exactly wrong for an INSERT: a statement that omits the column writes a
+-- vote that can NEVER count, however the group votes.
+--
+-- Only routes/votes.js's two recordVote statements named it. The other
+-- thirteen INSERT INTO pr_votes sites did not, and wrote dead rows (#2050):
+-- services/rename-pr.js carrying real people's issue votes onto a rename PR,
+-- and twelve staging seeds whose entire purpose is a non-zero tally. The
+-- schema is applied before any of them (db/migrate.js applies it at the top
+-- of boot and the seeds run after), so the backfill cannot rescue a row that
+-- does not exist yet.
+--
+-- Stamping it here rather than at fifteen call sites makes the invariant
+-- structural. services/pr-vote-revision.js is the one definition of which
+-- approvals count; this is that definition's write-side half, and it holds
+-- for a caller that has never heard of epochs — which twelve of them, sitting
+-- in seed code, reasonably have not.
+--
+-- The WHEN clause tests the VALUE, not whether the statement named the
+-- column, so an explicit NULL is stamped too: after this, NO insert can
+-- produce a vote that cannot count. An epoch the caller actually supplies is
+-- never touched — recordVote still decides what a real vote is cast under,
+-- and those inserts do not reach the function at all.
+--
+-- It does not resurrect the backfill's stale votes: those are an UPDATE and
+-- this fires on INSERT. Nor does it disturb a staging clone, which is
+-- pg_dump -Fc | pg_restore: triggers are restored in the post-data section,
+-- after the COPY, so a stale NULL arrives in staging still NULL.
+CREATE OR REPLACE FUNCTION stamp_pr_vote_approval_epoch() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  -- A vote whose session does not exist leaves this NULL and stays
+  -- uncounted, which is the right answer; the foreign key refuses it anyway.
+  SELECT cs.approval_epoch INTO NEW.approval_epoch
+    FROM chat_sessions cs
+   WHERE cs.id = NEW.session_id;
+  RETURN NEW;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_trigger
+     WHERE tgname = 'pr_votes_stamp_approval_epoch'
+       AND tgrelid = 'pr_votes'::regclass
+       AND NOT tgisinternal
+  ) THEN
+    CREATE TRIGGER pr_votes_stamp_approval_epoch
+      BEFORE INSERT ON pr_votes
+      FOR EACH ROW WHEN (NEW.approval_epoch IS NULL)
+      EXECUTE FUNCTION stamp_pr_vote_approval_epoch();
+  END IF;
+END $$;
+
+-- The measurement sweep's candidate ordering: promoted rows, least recently
+-- measured first, never-measured ahead of everything. Mirrors the freshness
+-- index above, which it replaces once that pass is retired.
+CREATE INDEX IF NOT EXISTS chat_sessions_integration_measured_idx
+  ON chat_sessions (integration_measured_at NULLS FIRST)
   WHERE status = 'promoted';
 
 -- #1841: private, user-bound mailbox proof, separate from sign-in OTPs.

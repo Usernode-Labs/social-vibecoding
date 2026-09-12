@@ -211,6 +211,10 @@ test('reconcile merges an eligible proposal and skips a below-threshold one (rea
   const wsId = require.resolve('../src/services/ws');
   const votesId = require.resolve('../src/routes/votes');
   const loggerId = require.resolve('../src/services/logger');
+  // #2038: the work moved from conflict-resolver (now a forwarding shim) to
+  // merge-queue, so the queue is what has to be rebound to the stubbed leaves.
+  const queueId = require.resolve('../src/services/merge-queue');
+  const integrationId = require.resolve('../src/services/integration');
 
   // App 1 has an eligible promoted session (id 10, 3 yes votes); app 2 has a
   // below-threshold one (id 20, 0 yes votes). majority = 2.
@@ -266,6 +270,13 @@ test('reconcile merges an eligible proposal and skips a below-threshold one (rea
     [syncMainId, { runSyncMain: async () => ({ ok: true, syncResult: 'clean', behind: 0 }), persistConflictState: async () => {} }],
     [limitsId, { checkSystemBudget: async () => ({ ok: true, remaining: 2500 }) }],
     [wsId, { pushVoteUpdate() {}, sendSystemMessage: async () => {} }],
+    // Already on main and clean, so the queue goes straight to the merge
+    // without spending a worker turn — the path this test is about.
+    [integrationId, {
+      measureDeduped: async () => ({ behindBy: 0, mergesClean: true, conflictPaths: [] }),
+      setBlockReason: async () => {},
+      readIntegration: () => ({}),
+    }],
     [votesId, {
       checkAndMerge: async (_cfg, _pool, fresh) => {
         mergeCalls.push(fresh.id);
@@ -276,9 +287,13 @@ test('reconcile merges an eligible proposal and skips a below-threshold one (rea
     [poolId, { getPool: () => realPool }],
   ]) prev[id] = stub(id, exports);
 
-  // Rebind the real conflict-resolver to the stubbed leaves.
+  // Rebind the real queue AND its shim to the stubbed leaves, in that order:
+  // the shim captures the queue's exports at require time.
+  const prevQueue = require.cache[queueId];
   const prevConflict = require.cache[conflictId];
+  delete require.cache[queueId];
   delete require.cache[conflictId];
+  require(queueId);
   require(conflictId);
 
   try {
@@ -287,6 +302,7 @@ test('reconcile merges an eligible proposal and skips a below-threshold one (rea
     assert.equal(sessions[10].status, 'merged', 'eligible proposal merged');
     assert.equal(sessions[20].status, 'promoted', 'below-threshold proposal left untouched');
   } finally {
+    restore(queueId, prevQueue);
     restore(conflictId, prevConflict);
     for (const id of [loggerId, githubId, activeUsersId, syncMainId, limitsId, wsId, votesId, poolId]) {
       restore(id, prev[id]);

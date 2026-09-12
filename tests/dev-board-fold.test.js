@@ -144,7 +144,7 @@ test('?cards=open draws every card at full size, hooks intact: the board as it w
     'and it sits inside the action band');
   assert.ok(!/dev-card-status-end"[^>]*>(?:(?!<\/span>)[\s\S])*?dev-ws-open-btn/.test(html), 'not on the facts line');
   assert.ok(!/dev-ws-open-btn"[^>]*aria-expanded/.test(html), 'and never the in-place toggle here');
-  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="createPrForIssue">Create proposal<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
+  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="chooseIssueWork">Start work<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
     'the card\u2019s own pills come first, each marked foldable, then the link, then the hamburger');
   // A card with nothing in its status band still drops the band (#1139):
   // the toggle is not in it.
@@ -371,14 +371,45 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // its step line, plus step 2's back link and resend;
   // 587 → 589: the Workshop's two grouping panes, one check each — the tab
   // strip in its default state, and `?group=stage` drawing the board's own
-  // columns under it with the summary strip still above them).
-  // Two additional checks cover the underway overview and workspace deep link.
-  // 591 → 592: the Workshop's working pane, pinning that the search, filters
+  // columns under it with the summary strip still above them;
+  // 589 → 591: the status bar becoming the vote alone — one check that a
+  // BLOCKED proposal still draws a vote bar, one that its reasons are tags on
+  // the facts line beside it. Two, because those two facts sit on sibling
+  // rows and no single selector can assert both;
+  // 591 → 593: two additional checks cover the underway overview and
+  // workspace deep link;
+  // 593 → 594: the Workshop's working pane, pinning that the search, filters
   // and "+" render in its sticky head directly above those tabs rather than
   // in the frame's chrome two strips away;
-  // 592 → 595: full-card tabs, embedded owner workspace and review discussion;
-  // 595 → 596: #1823's Challenges row in the app menu, under Discover.
-  assert.equal(DAPP.tests.length, 596);
+  // 594 → 597: full-card tabs, embedded owner workspace and review discussion.
+  // 597 → 598: #1926 repeated conflict notices in card discussions.
+  // 598 → 601: the stale-work-order fix. Two checks shoot the hand-off step of
+  // an ORDINARY work order (?demo=1&order=plain, the fixture added with them) —
+  // that "Start over" is offered there at all, and that copying stays the
+  // primary action beside it — and one covers a continuation;
+  // 601 → 602: review found that withholding the button on a continuation was
+  // a dead end rather than a safeguard, since the launchpad resolves its task
+  // per (user, app) and one continuation pinned every session in the app. The
+  // continuation check now asserts the button IS offered, and a second one
+  // pins the sentence saying what pressing it gives up.
+  // 602 → 607: the launchpad is keyed per session now, so a session that did
+  // not prepare a work order shows none. Two checks shoot that state — the
+  // "What should it build?" field being live, and Prepare being the action
+  // offered — on the ?order=none fixture added with them. Before this, no
+  // route could render it: a session with no order of its own still showed
+  // another session's.
+  // 604 → 601: the launchpad hands over instructions now. Nine checks went with
+  // the surfaces they pinned (the brief field, the Prepare button, the Submit
+  // step, "Start over", the connector note) and six replaced them: the
+  // three-step shape, the instructions to copy and their text on the card, the
+  // absent brief field, the connect-first state, and a continuation saying the
+  // work lands as an update.
+  // 601 → 604: #2038 adds three checks for the card states it renames or
+  // introduces — a proposal being brought up to date, a refused merge named
+  // for what it was rather than as a conflict, and automatic resolution
+  // saying nobody has to act.
+  // 604 → 605: #1823's Challenges row in the app menu, under Discover.
+  assert.equal(DAPP.tests.length, 605);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
@@ -439,7 +470,7 @@ test('every pill is foldable: the band shows as many as fit its line and the men
   assert.ok(!CARD.includes('ACTION_PRIMARY_MAX'), 'no count cap: the line is the cap');
   assert.ok(!/i > 0 && a\.kudos == null/.test(CARD));
   const html = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
-  assert.match(html, /data-fold="1"[^>]*data-act="createPrForIssue"/, 'the first pill carries a fold index');
+  assert.match(html, /data-fold="1"[^>]*data-act="chooseIssueWork"/, 'the first pill carries a fold index');
 });
 
 test('the tags ride the meta line beside the number, on the open card and the folded row alike', () => {
@@ -455,9 +486,17 @@ test('the tags ride the meta line beside the number, on the open card and the fo
   assert.match(CARD, /for \(const b of m\.linked \|\| \[\]\) nodes\.push/);
   assert.match(CARD, /filter\(\(b\) => b && b\.t === 'issueChip'\)\) nodes\.push/, 'a session\u2019s #N chips too');
   assert.match(CARD, /<div className="dev-card-meta">\{metaNodes\}<\/div>/);
-  assert.match(CARD, /const states = chips\.filter\(\(b\) => b\.t !== 'attr' && b\.t !== 'issueChip'\);/);
+  // The STATUS TAGS ride here too, marked `meta` on their spec: the status
+  // band is the vote and its button alone now, and of the two lines this is
+  // the one with room for a list that grows. Both sides of the split are
+  // asserted, because drawing them in both places is the failure mode.
+  assert.match(CARD, /filter\(\(b\) => b && b\.t === 'chip' && b\.meta\)\) nodes\.push/,
+    'the meta line draws them');
+  assert.match(CARD, /const states = chips\.filter\([\s\S]{0,160}!\(b\.t === 'chip' && b\.meta\)\);/,
+    'and the facts row does not draw them again');
   assert.match(FOLD_SRC, /<span className="dev-ws-row-meta">\{metaLineNodes\(c\)\}<\/span>/);
-  assert.match(FOLD_SRC, /filter\(\(b\) => b && b\.t !== 'attr' && b\.t !== 'issueChip'\)\.slice\(0, ROW_BADGE_MAX\)/, 'the row\u2019s last line keeps the states');
+  assert.match(FOLD_SRC, /!\(b\.t === 'chip' && b\.meta\)\)\s*\.slice\(0, ROW_BADGE_MAX\)/,
+    'the row\u2019s last line keeps the remaining states, not the status tags');
   // Rendered: the fixture issue has an assignee, so its chip sits on the
   // meta line at both sizes and its status band holds nothing.
   const open = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
@@ -519,17 +558,29 @@ test('Open card never answers a tap with nothing: the Board links out, and an in
 
 test('the declared checks follow the two rows and the row’s last line', () => {
   // Each re-pointed check names the seat that moved: the work-state chip in
-  // the facts row, the vote at the row's bottom-right, Closes #N on the meta
+  // the facts row, the vote on the Needs-you deck, Closes #N on the meta
   // line, the facts row under the status row, and the unclamped title.
+  //
+  // THE VOTE MOVED A SECOND TIME. It sat in the workshop row's trailing slot
+  // until the tab redraft, which retired the row band entirely and made a
+  // vote one full-screen question on Needs you. So the check walks the deck's
+  // subject pane to the card, not a row seat; the loop below now guards the
+  // retired band classes the same way it guards the older ones.
+  //
+  // THE PAIR IS CARD-THEN-SUMMARY, and the first spelling of this check had
+  // it backwards — a later round moved the description UNDER the card, and
+  // `.dev-ws-needs-summary + .gc-vote-item` kept describing the order before
+  // that. Staging caught it, this file did not, which is why the assertion
+  // now pins the `:has(+ …)` direction rather than just the class names.
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
-  assert.match(byName(/the vote at each row.s bottom-right/).expectSelector, /\.dev-ws-row\[role="button"\] > \.dev-ws-row-band > \.dev-ws-row-trailing > button\.dev-vote-btn/);
+  assert.match(byName(/Needs-you tab is one proposal at a time/).expectSelector, /\.dev-ws-needs-scroll > \.gc-vote-item:has\(\+ \.dev-ws-needs-summary\) button\.dev-vote-btn/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);
   assert.match(byName(/the vote is one button beside the state bar/).expectSelector, /\.dev-card-status > \.dev-status-pill-block \+ \.dev-vote-btn/, 'the bar row keeps its check as it was');
   for (const t of DAPP.tests) {
-    assert.ok(!/dev-card-band-break|dev-card-status-end|dev-ws-row-chat/.test(t.expectSelector || ''),
+    assert.ok(!/dev-card-band-break|dev-card-status-end|dev-ws-row-chat|dev-ws-row-band|dev-ws-row-trailing/.test(t.expectSelector || ''),
       `${t.name}: no check names a seat that no longer exists`);
   }
 });

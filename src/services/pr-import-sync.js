@@ -164,9 +164,13 @@ async function applyHeadChange({ config, pool, session, pr, repo, newHead, oldHe
 
   const label = prLabel(session);
   if (upForVote) {
-    // Every existing vote describes the superseded code. The gate is also
-    // head-scoped; this cleanup keeps the visible tally honest.
-    await pool.query(`DELETE FROM pr_votes WHERE session_id = $1`, [session.id]);
+    // Every existing vote describes the superseded code. #2038: move the
+    // approval epoch on rather than deleting the rows — one statement, no
+    // window in which the tally is half-cleared, and the votes survive as a
+    // record of what was approved and when. An imported head moving is
+    // always an author push by definition: the platform does not write to
+    // the author's fork, so there is no mechanical merge to recognise here.
+    await require('./integration').clearApprovals(pool, session.id, 'imported_head_changed');
     await require('./app-admins').refreshExplicitApproval(pool, session, session);
     await pool.query(
       `UPDATE chat_sessions SET stale_notified_at = NULL WHERE id = $1`,

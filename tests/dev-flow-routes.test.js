@@ -76,6 +76,13 @@ function resetStubs() {
     submitArgs: null,
     target: null,
     targetThrows: false,
+    // The discard route's service call: the id it closed, or null for
+    // "not open any more".
+    discard: 4242,
+    discardArgs: null,
+    discardThrows: false,
+    loadedVia: null,
+    loadedSessionId: null,
   };
 }
 
@@ -105,10 +112,25 @@ gh.parseGithubUrl = (url) => {
 githubLink.isEnabled = () => stub.linkEnabled;
 githubLink.linkStatus = async () => stub.link;
 svc.inspectFork = async () => stub.fork;
-svc.loadLatestOpenTaskForSlug = async () => stub.task;
+svc.loadLatestOpenTaskForSlug = async (_pool, _userId, _slug, opts) => {
+  stub.loadOpts = opts;
+  stub.loadedVia = 'app';
+  return stub.task;
+};
+svc.loadOpenTaskForSession = async (_pool, _userId, _slug, sessionId, opts) => {
+  stub.loadOpts = opts;
+  stub.loadedVia = 'session';
+  stub.loadedSessionId = sessionId;
+  return stub.task;
+};
 svc.inspectPushedBranch = async () => {
   if (stub.branchThrows) throw new Error('github said no');
   return stub.branchState;
+};
+svc.discardTask = async (_pool, userId, appId, taskId) => {
+  stub.discardArgs = { userId, appId, taskId };
+  if (stub.discardThrows) throw new Error('database is on fire');
+  return stub.discard;
 };
 svc.prepareWork = async (_deps, args) => { stub.prepareArgs = args; return stub.prepare; };
 svc.submitWork = async (_deps, args) => { stub.submitArgs = args; return stub.submit; };
@@ -657,15 +679,22 @@ test('staging never reaches GitHub, and only shows fixtures when asked', () => {
   // ?demo=session the session continuation. Both are opt-in per request.
   assert.match(src, /req\.query\.demo === '1' \|\| req\.query\.demo === 'session'\s*\n?\s*\? demoStatus/,
     'the fixture is opt-in per request');
-  assert.match(src, /req\.query\.demo === 'session' \? 'session' : 'proposal'/,
-    'the demo payload picks its target kind from the query, not from a guess');
-  assert.match(src, /990501/, 'fixture ids stay in the obviously-fake 99xxxx range');
+  // `order` picks the fixture's SHAPE: no connector, or a continuation. It is
+  // a second parameter rather than another `demo` value on purpose. See the
+  // round-trip test below, which is the one that would have caught shipping it
+  // the other way, twice.
+  assert.match(src, /req\.query\.order === 'connect' \? 'connect'/,
+    'the demo payload picks its shape from the query, not from a guess');
+  assert.match(src, /req\.query\.order === 'continue' \? 'continue' : null/);
+  assert.match(src, /990601/, 'fixture ids stay in the obviously-fake 99xxxx range');
   // Every write is refused in staging: they would open a real pull request —
   // or, on the update path (#1054), force-push a real branch — against a real
   // repository from a preview clone.
   const prepareBlock = src.slice(src.indexOf("router.post('/api/apps/:slug/external-tasks'"));
-  assert.equal((prepareBlock.match(/if \(IS_STAGING\) \{\s*\n\s*return res\.status\(503\)/g) || []).length, 3,
-    'all three POSTs refuse in staging with a 503');
+  // Four since the discard route: it writes too — abandoning a work order in a
+  // preview would put away a reservation that belongs to production.
+  assert.equal((prepareBlock.match(/if \(IS_STAGING\) \{\s*\n\s*return res\.status\(503\)/g) || []).length, 4,
+    'all four POSTs refuse in staging with a 503');
 });
 
 test('the client polls this route and nothing else', () => {
@@ -675,4 +704,377 @@ test('the client polls this route and nothing else', () => {
   // The renderer stays pure — see tests/dev-flow-select.test.js.
   assert.ok(!/\bfetch\s*\(/.test(read('public/js/dev-flow-select.js')),
     'public/js/dev-flow-select.js must not fetch; the dev chat owns the I/O');
+});
+
+
+// ── 5. Start over: putting a work order away (the stale-work-order fix) ──
+//
+// The walkthrough is resumable because the status route re-renders whatever
+// open task the account holds for this app. Nothing sweeps that table, so
+// without the two changes below a work order minted for something else — or
+// finished outside this flow, which leaves the row `open` — answers for this
+// app permanently: step 3 reads `done`, its brief field never renders, and the
+// only button in reach copies the stale text.
+
+const discard = (id, body, headers) => post(`/api/apps/recipe-box/external-tasks/${id}/discard`, body || {}, headers);
+
+test('the walkthrough asks for an UNEXPIRED task, unlike submit recovery', async () => {
+  await status('?sessionId=990404');
+  assert.deepEqual(stub.loadOpts, { unexpiredOnly: true },
+    'an expired reservation must stop answering for this session');
+
+  // The service keeps the default OFF, because submitWork's slug+branch
+  // recovery reads the same function and needs the expired row: it carries the
+  // base commit mirrorForkBranch checks the pushed branch against.
+  const svcSrc = read('src/services/external-agent-tasks.js');
+  assert.match(svcSrc, /async function loadLatestOpenTaskForSlug\(pool, userId, slug, opts = \{\}\)/,
+    'the filter is opt-in per caller, not a behaviour change for both');
+  // Two call sites, each with its SQL written out in full, so both stay in
+  // check-sql.js's static inventory and get Parse/Described against a real
+  // planner. A spliced-in predicate — or a constant passed by name — would
+  // drop this query into the hand-reviewed dynamic baseline instead.
+  assert.match(svcSrc, /opts\.unexpiredOnly\s*\n?\s*\? await pool\.query\(/);
+  // Scoped to THIS function. loadOpenTaskForSession writes its own four
+  // literals for the same reason, so counting across the file would drift
+  // every time another lookup is added and prove nothing about either.
+  const appWide = svcSrc.slice(
+    svcSrc.indexOf('async function loadLatestOpenTaskForSlug('),
+    svcSrc.indexOf('// Scoped to the caller\'s own OPEN rows FOR THIS APP')
+  );
+  assert.ok(appWide.length > 0, 'the app-wide lookup is where this test thinks it is');
+  assert.equal(
+    (appWide.match(/AND t\.expires_at > NOW\(\)/g) || []).length, 1,
+    'exactly one of its two literals filters expiry'
+  );
+  assert.equal((appWide.match(/await pool\.query\(/g) || []).length, 2,
+    'and it is two whole literals, not one assembled at runtime');
+});
+
+test('the per-session lookup is a separate function, not a widened one', () => {
+  // loadLatestOpenTaskForSlug must keep answering app-wide for submitWork's
+  // slug+branch recovery: an agent that lost its task id knows the app and the
+  // branch it pushed, and nothing about the browser session a human minted it
+  // in. Session-scoping THAT would break recovery rather than fix the
+  // launchpad, so the walkthrough gets its own lookup instead.
+  const svcSrc = read('src/services/external-agent-tasks.js');
+  assert.match(svcSrc, /async function loadOpenTaskForSession\(pool, userId, slug, sessionId, opts = \{\}\)/);
+  assert.ok(!/async function loadLatestOpenTaskForSlug\([^)]*sessionId/.test(svcSrc),
+    'the app-wide lookup never learns about sessions');
+
+  const perSession = svcSrc.slice(
+    svcSrc.indexOf('async function loadOpenTaskForSession('),
+    svcSrc.indexOf('async function abandonTasksForSession(')
+  );
+  // Two literals: this session's task, with and without the expiry filter.
+  // Both static, neither assembled. There is no third — the orphan scan that
+  // used to follow them handed a new change somebody else's work order.
+  assert.equal((perSession.match(/await pool\.query\(/g) || []).length, 2);
+  assert.equal((perSession.match(/AND t\.origin_session_id = \$3/g) || []).length, 2);
+  assert.ok(!/origin_session_id IS NULL/.test(perSession),
+    'a session shows its own work order or none');
+});
+
+test('discard is authenticated, same-origin and digits-only', async () => {
+  user = null;
+  assert.equal((await discard(4242)).status, 401);
+  assert.equal(stub.discardArgs, null, 'the service is never reached');
+
+  user = { id: 42, username: 'tester', isAdmin: false };
+  const crossSite = await discard(4242, {}, { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' });
+  assert.equal(crossSite.status, 403, 'a cross-site POST is refused before the service');
+  assert.equal(stub.discardArgs, null);
+
+  // parseInt('1.5.2') is 1, which would put away a task nobody named.
+  for (const bad of ['1.5.2', 'abc', '0', '-3']) {
+    const r = await discard(bad, {}, { origin: ORIGIN, 'sec-fetch-site': 'same-origin' });
+    assert.equal(r.status, 400, `'${bad}' is not a task id`);
+  }
+  assert.equal(stub.discardArgs, null);
+});
+
+test('discard closes the caller\'s task and reports the id it closed', async () => {
+  const r = await discard(4242, {}, { origin: ORIGIN, 'sec-fetch-site': 'same-origin' });
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { ok: true, taskId: 4242 });
+  // Scoped to the caller: the user id comes from the session, never the body.
+  // Scoped to the app in the URL as well as the caller: the slug is not
+  // decorative, so a task under another app is not reachable through this one.
+  assert.deepEqual(stub.discardArgs, { userId: 42, appId: 7, taskId: 4242 });
+});
+
+test('a task that is not open any more is unknown_task, not a silent success', async () => {
+  stub.discard = null;
+  const r = await discard(4242, {}, { origin: ORIGIN, 'sec-fetch-site': 'same-origin' });
+  assert.equal(r.status, 404);
+  assert.equal((await r.json()).code, 'unknown_task');
+});
+
+test('discard opens no pull request and touches no branch', () => {
+  const src = read('src/routes/dev-flow.js');
+  // To the next route's banner, not to submit-update's handler: its comment
+  // block sits between the two and names submitWork, which would make this
+  // assertion pass or fail on prose rather than on the route's body.
+  const block = src.slice(
+    src.indexOf("router.post('/api/apps/:slug/external-tasks/:id/discard'"),
+    src.indexOf('// \u2500\u2500 Advance a proposal that is already up for a vote')
+  );
+  assert.ok(block.length > 0, 'the discard route is where this test thinks it is');
+  for (const forbidden of ['pr-import', 'submitWork', 'mirrorForkBranch', 'prepareWork']) {
+    assert.ok(!block.includes(forbidden),
+      `discard must not reach ${forbidden} — abandoning a row is its whole effect`);
+  }
+});
+
+test('the dev chat drives discard through that route and clears the brief', () => {
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+  assert.match(devChat, /_devFlowDiscard/, 'the action has a handler');
+  assert.match(devChat, /external-tasks\/\$\{encodeURIComponent\(task\.id\)\}\/discard/,
+    'and it posts to the discard route with the task it is showing');
+  // An empty box asking "what should it build?" is the point of the button; a
+  // seeded one invites a second work order describing the same finished change.
+  assert.match(devChat, /flow\.brief = '';/);
+  // 404 means somebody else already closed it, which is the state the user was
+  // reaching for — re-reading status is the right answer, not an error banner.
+  assert.match(devChat, /res\.ok \|\| res\.status === 404/);
+});
+
+
+test('the fixture shape survives the round trip from page URL to status route', () => {
+  // THE REGRESSION THIS TEST EXISTS FOR. The fixture discriminator is chosen in
+  // the page URL and has to reach the status route through the client, which
+  // forwards `demo` through an ALLOWLIST. Shipping the discriminator as a third
+  // `demo` value passed every unit test in this file — the route was stubbed,
+  // the renderer was called directly — and still rendered nothing in staging,
+  // because _demoQS dropped the unrecognised value and the route fell through
+  // to the venue sheet. Nothing here crossed that seam, so cross it: lift the
+  // client's two query-string methods out of the real source and run them.
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+  const lift = (name) => {
+    const i = devChat.indexOf(`  ${name}() {`);
+    assert.ok(i >= 0, `${name} exists on DevChat`);
+    const end = devChat.indexOf('\n  },', i);
+    assert.ok(end > i, `${name} is a plain method`);
+    return devChat.slice(i, end + 5);
+  };
+  // The allowlist the forwarder reads comes across too — lifting the methods
+  // without it is how this test first reported a false failure.
+  const orders = /(DEV_FLOW_ORDERS: \[[^\]]*\],)/.exec(devChat);
+  assert.ok(orders, 'the client declares the order values it forwards');
+  // eslint-disable-next-line no-eval
+  const client = eval(`({${orders[1]}\n${lift('_demoQS')}\n${lift('_devFlowDemoQS')}})`
+    .replace(/DevChat\./g, 'this.'));
+
+  // The route's own dispatch, read from the source rather than restated, so a
+  // change on either side breaks this rather than drifting past it.
+  const src = read('src/routes/dev-flow.js');
+  assert.match(src, /const order = req\.query\.order === 'connect' \? 'connect'/);
+  assert.match(src, /req\.query\.order === 'continue' \? 'continue' : null/);
+  assert.match(src, /req\.query\.demo === '1' \|\| req\.query\.demo === 'session'\s*\n?\s*\? demoStatus\(app, parsed, order\)/);
+  const route = (q) => (q.demo === '1' || q.demo === 'session'
+    ? { fixture: true, order: q.order === 'connect' ? 'connect' : (q.order === 'continue' ? 'continue' : null) }
+    : { fixture: false });
+
+  const roundTrip = (search) => {
+    const prev = global.location;
+    global.location = { search };
+    try {
+      const qs = client._devFlowDemoQS();
+      return route(Object.fromEntries(new URLSearchParams(qs.replace(/^\?/, ''))));
+    } finally {
+      if (prev === undefined) delete global.location; else global.location = prev;
+    }
+  };
+
+  // Both fixture shapes reach the route. Its predecessors shipped twice as a
+  // value the route read and the client dropped, which is what this exists for.
+  assert.deepEqual(roundTrip('?demo=1&order=connect&flow=claude-code'),
+    { fixture: true, order: 'connect' });
+  assert.deepEqual(roundTrip('?demo=1&order=continue&flow=claude-code'),
+    { fixture: true, order: 'continue' });
+  assert.deepEqual(roundTrip('?demo=1&flow=claude-code'), { fixture: true, order: null });
+  assert.deepEqual(roundTrip('?demo=session&flow=claude-code'), { fixture: true, order: null });
+  // A value neither side knows is not forwarded at all.
+  assert.deepEqual(roundTrip('?demo=1&order=bogus&flow=claude-code'), { fixture: true, order: null });
+  // `order` alone is not a fixture: it shapes one, it does not select one.
+  assert.deepEqual(roundTrip('?order=connect&flow=claude-code'), { fixture: false });
+  assert.deepEqual(roundTrip('?flow=claude-code'), { fixture: false });
+  assert.deepEqual(roundTrip(''), { fixture: false });
+
+  // _demoQS itself must keep forwarding ONLY the two values every other
+  // fixture route knows — /api/sessions/:id/status and /spec ride on it and
+  // test `demo` for exactly '1', so widening it would blank the very session
+  // this walkthrough renders inside.
+  const prev = global.location;
+  global.location = { search: '?demo=1&order=connect' };
+  try {
+    assert.equal(client._demoQS(), '?demo=1', '_demoQS never carries the order param');
+  } finally {
+    if (prev === undefined) delete global.location; else global.location = prev;
+  }
+
+  // Finally, the declared checks must satisfy BOTH gates: every shape the
+  // route can render is actually shot, and each path carries the ?demo=1 that
+  // selects a fixture at all.
+  const dapp = JSON.parse(read('dapp.json'));
+  const shaped = dapp.tests.filter((t) => /[?&]order=/.test(t.path));
+  assert.ok(shaped.length >= 2, 'the fixture shapes are covered by declared checks');
+  const shot = new Set(shaped.map((t) => /[?&]order=([a-z-]+)/.exec(t.path)[1]));
+  for (const value of ['connect', 'continue']) {
+    assert.ok(shot.has(value), `no declared check shoots ?order=${value}`);
+  }
+  for (const t of shaped) {
+    assert.ok(/[?&]demo=1(&|#|$)/.test(t.path),
+      `${t.name} must carry ?demo=1 as well as the order, or no fixture renders`);
+  }
+});
+
+
+test('a write that FAILS is a 500, not "Work order put away"', () => {
+  // discardTask used to swallow database errors and return null, which the
+  // route turned into 404 and the client treats as success — so a transient
+  // pool error painted "Work order put away" over a write that never happened.
+  // The service now throws, and nothing between here and the user flattens the
+  // two answers back together.
+  const svcSrc = read('src/services/external-agent-tasks.js');
+  const fn = svcSrc.slice(
+    svcSrc.indexOf('async function discardTask('),
+    svcSrc.indexOf('async function abandonExpiredRequest(')
+  );
+  assert.ok(fn.length > 0, 'discardTask is where this test thinks it is');
+  assert.ok(!/catch/.test(fn), 'discardTask does not swallow the failure');
+});
+
+test('...and the route turns that throw into a 500', async () => {
+  stub.discardThrows = true;
+  const r = await discard(4242, {}, { origin: ORIGIN, 'sec-fetch-site': 'same-origin' });
+  assert.equal(r.status, 500);
+  assert.notEqual((await r.json()).code, 'unknown_task',
+    'a failure must not arrive wearing the "already closed" code the client treats as success');
+});
+
+test('the client posts to the discard route from the walkthrough it is showing', () => {
+  // The assertion this file lost once already. A round-trip test that exercises
+  // a helper proves the helper works; it does not prove anything CALLS it. The
+  // demo-discriminator regression shipped through exactly that gap, so pin the
+  // call sites themselves.
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+  assert.match(devChat, /const fixtureQS = DevChat\._devFlowDemoQS\(\);/,
+    'the status fetch builds from the dev-flow query string, not the bare _demoQS');
+  assert.ok(!/dev-flow\/status\$\{DevChat\._demoQS\(\)\}/.test(devChat),
+    'and never from the bare one, which would drop the order discriminator');
+  assert.match(devChat, /if \(action === 'discard'\) return DevChat\._devFlowDiscard\(\);/,
+    'the discard action is dispatched');
+  assert.match(devChat, /external-tasks\/\$\{encodeURIComponent\(task\.id\)\}\/discard/,
+    'and posts to the discard route with the task it is showing');
+});
+
+
+// ── Per-session work orders ─────────────────────────────────────────────
+//
+// One open work order used to answer for every session in the app, so "New
+// change" opened a fresh session already showing an unrelated, often
+// long-finished order. The walkthrough is keyed on the session now.
+
+test('the walkthrough asks for THIS session\'s work order', async () => {
+  await status('?sessionId=990404');
+  assert.equal(stub.loadedVia, 'session', 'the session-scoped lookup is used');
+  assert.equal(stub.loadedSessionId, 990404, 'and it is given the session from the query');
+  assert.deepEqual(stub.loadOpts, { unexpiredOnly: true },
+    'still without the expired reservations the previous change filtered out');
+});
+
+test('a caller that names no session degrades to the old app-wide lookup', async () => {
+  // A browser running cached JS from before this change sends no sessionId.
+  // Falling back to what it used to get is the honest failure mode; answering
+  // "no work order" would make its launchpad look empty and invite a second
+  // one to be minted for work already in flight.
+  await status();
+  assert.equal(stub.loadedVia, 'app');
+  assert.deepEqual(stub.loadOpts, { unexpiredOnly: true });
+});
+
+test('a junk sessionId is not a session, and never reaches the lookup as one', async () => {
+  for (const bad of ['abc', '0', '-3', '1.5', '9e9', '']) {
+    await status(`?sessionId=${encodeURIComponent(bad)}`);
+    assert.equal(stub.loadedVia, 'app', `'${bad}' is not a session id`);
+  }
+});
+
+test('preparing a work order records the launchpad it was prepared in', async () => {
+  const ok = await prepare(
+    { agent: 'codex', brief: 'x', sessionId: 990404 },
+    { origin: ORIGIN, 'sec-fetch-site': 'same-origin' }
+  );
+  assert.equal(ok.status, 200);
+  assert.equal(stub.prepareArgs.originSessionId, 990404);
+
+  // Absent or malformed is null, not a throw and not a guess: the connector
+  // path has no session at all, and those rows are adopted rather than
+  // stranded (see loadOpenTaskForSession).
+  for (const bad of [undefined, null, 'abc', 0, -3, 1.5, { id: 4 }, ['4']]) {
+    resetStubs();
+    await prepare(
+      { agent: 'codex', brief: 'x', sessionId: bad },
+      { origin: ORIGIN, 'sec-fetch-site': 'same-origin' }
+    );
+    assert.equal(stub.prepareArgs.originSessionId, null, `${JSON.stringify(bad)} is not a session id`);
+  }
+});
+
+test('the dev chat sends its session on both calls', () => {
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+  assert.match(devChat, /sessionId=\$\{encodeURIComponent\(session\.id\)\}/,
+    'the status read names the session it is rendering');
+  assert.match(devChat, /\{ sessionId: Number\(DevChat\.currentSession\.id\) \}/,
+    'and so does the prepare');
+
+  // The separator matters: the fixture query string is '' in production and
+  // `?demo=…` in a staging preview, so a bare '?' would produce a second one
+  // and the route would see no demo at all.
+  const build = (fixtureQS) => `/x${fixtureQS}${fixtureQS ? '&' : '?'}sessionId=7`;
+  assert.equal(build(''), '/x?sessionId=7');
+  assert.equal(build('?demo=1'), '/x?demo=1&sessionId=7');
+  assert.match(devChat, /\$\{fixtureQS\}\$\{fixtureQS \? '&' : '\?'\}sessionId=/,
+    'the client builds it that way too');
+});
+
+test('the client forwards EVERY order value the route reads', () => {
+  // THE BUG THIS TEST EXISTS FOR, twice over. `?order=plain` shipped read by
+  // the route and forwarded by nobody; the fix hardcoded === 'plain', so
+  // `?order=none` shipped exactly the same way one change later. Both rendered
+  // a launchpad that silently ignored the fixture it was asked for.
+  //
+  // So do not restate the list — scrape the ROUTE's own literals and hold the
+  // client's allowlist to them. Adding a fixture shape to one side now fails
+  // here rather than in a staging capture.
+  const src = read('src/routes/dev-flow.js');
+  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+
+  const readByRoute = [...src.matchAll(/req\.query\.order === '([a-z-]+)'/g)].map((m) => m[1]);
+  assert.ok(readByRoute.length >= 2, `the route reads order values (found ${readByRoute.length})`);
+
+  const declared = /DEV_FLOW_ORDERS: \[([^\]]*)\]/.exec(devChat);
+  assert.ok(declared, 'the client declares the list it forwards');
+  const forwarded = [...declared[1].matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
+
+  for (const value of readByRoute) {
+    assert.ok(forwarded.includes(value),
+      `the route reads ?order=${value} but the client never forwards it, so that fixture renders nothing`);
+  }
+  // And nothing forwarded that the route ignores — a value the client appends
+  // and the route drops is a URL that looks like it does something.
+  for (const value of forwarded) {
+    assert.ok(readByRoute.includes(value),
+      `the client forwards ?order=${value} but the route reads no such value`);
+  }
+
+  // Every declared check that names one must use a value both ends agree on,
+  // and carry the ?demo=1 that selects a fixture at all.
+  const dapp = JSON.parse(read('dapp.json'));
+  for (const t of dapp.tests) {
+    const m = /[?&]order=([a-z-]+)/.exec(t.path);
+    if (!m) continue;
+    assert.ok(forwarded.includes(m[1]), `${t.name} shoots ?order=${m[1]}, which is not forwarded`);
+    assert.ok(/[?&]demo=1(&|#|$)/.test(t.path), `${t.name} must carry ?demo=1 too, or no fixture renders`);
+  }
 });

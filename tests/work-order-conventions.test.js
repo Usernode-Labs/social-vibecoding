@@ -157,14 +157,21 @@ test('the work order names all three hosted assets and the full document URL', (
 
   // The three files whose absence made the app render unstyled in a
   // sandbox browser and one declared check fail.
-  assert.equal(svc.HOSTED_ASSETS.length, 3);
-  for (const url of svc.HOSTED_ASSETS) {
+  assert.equal(svc.HOSTED_ASSET_PATHS.length, 3);
+  // They are named on THIS DEPLOYMENT's origin, taken from the webPath the
+  // task was created from — not on a compiled-in hostname. The literal this
+  // used to assert, social-vibecoding.usernodelabs.org, stopped answering
+  // when the platform moved to my.onhomeroom.com, and every work order went
+  // on handing agents three dead links and inviting them to write that host
+  // into the app they were building.
+  for (const url of svc.hostedAssetUrls('https://usernode.example')) {
     assert.ok(order.includes(url), `the work order names ${url}`);
-    assert.match(url, /^https:\/\/social-vibecoding\.usernodelabs\.org\//);
+    assert.match(url, /^https:\/\/usernode\.example\//);
   }
-  assert.ok(svc.HOSTED_ASSETS.some((u) => u.includes('usernode-bridge')));
-  assert.ok(svc.HOSTED_ASSETS.some((u) => u.includes('usernode-native')));
-  assert.ok(svc.HOSTED_ASSETS.some((u) => u.includes('usernode-tailwind')));
+  assert.doesNotMatch(order, /social-vibecoding\.usernodelabs\.org/);
+  assert.ok(svc.HOSTED_ASSET_PATHS.some((u) => u.includes('usernode-bridge')));
+  assert.ok(svc.HOSTED_ASSET_PATHS.some((u) => u.includes('usernode-native')));
+  assert.ok(svc.HOSTED_ASSET_PATHS.some((u) => u.includes('usernode-tailwind')));
 
   // The diagnosis, so a less careful agent does not "fix" the sandbox.
   assert.match(order, /may not be able to reach that host/);
