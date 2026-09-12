@@ -3839,6 +3839,24 @@
       "path": "/?demo=1&order=continue&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
       "expectSelector": "[data-flow-wizard] [data-flow-step=\"handoff\"] .dc-flow-step-detail",
       "expectText": "update to it rather than as a second copy"
+    },
+    {
+      "name": "#2038: an approved proposal being brought up to date says so on the card",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item [data-status-tag=\"integrating\"]",
+      "expectText": "Bringing up to date"
+    },
+    {
+      "name": "#2038: a refused merge is named for what it was, not as a conflict",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item [data-status-tag=\"merge_conflict\"]",
+      "expectText": "GitHub refused the merge"
+    },
+    {
+      "name": "#2038: automatic conflict resolution says nobody has to act",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item [data-status-tag=\"resolving\"]",
+      "expectText": "Resolving conflicts automatically"
     }
   ],
   "governance": {

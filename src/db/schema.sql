@@ -7165,6 +7165,139 @@ CREATE INDEX IF NOT EXISTS chat_sessions_freshness_checked_idx
   ON chat_sessions (freshness_checked_at NULLS FIRST)
   WHERE status = 'promoted';
 
+-- #2038 — the integration record, and the approval epoch.
+--
+-- ── One fact, one writer ───────────────────────────────────────────────
+--
+-- The block above is the third set of columns describing "where does this
+-- proposal stand relative to main". behind_main was the first, the
+-- merge_conflict_state / conflict_files pair the second. Five writers touch
+-- those six groups on unrelated triggers and none of them owns the answer,
+-- so they disagree with each other in normal operation: the proposal card
+-- reads freshness_behind_by while the merge gate reads behind_main, and a
+-- successful sync writes only the second. merge_conflict_state has no
+-- re-measuring writer at all — once a merge attempt stamps 'conflict' there,
+-- nothing ever clears it except another resolve, which may never run.
+--
+-- These columns replace all six groups with ONE answer, written by ONE
+-- writer (services/integration.js), carrying ONE timestamp. Everything else
+-- reads it; nothing else writes it.
+--
+-- The answers come from a local bare mirror (services/repo-mirror.js), not
+-- from GitHub's REST API, so they are exact rather than estimated and cost
+-- no rate limit: behind_by is a rev-list count, merges_clean and
+-- conflict_paths come from a real `git merge-tree`, and checks_base_current
+-- is a merge-base ancestry test.
+--
+-- integration_measured_at is deliberately a FIRST-CLASS field rather than
+-- an implementation detail. The card renders it ("behind by 6, measured 30
+-- seconds ago") instead of stating a number with implied freshness it does
+-- not have. A cache that admits its age is not the same object as a cache
+-- that pretends to be live, and the second one is what every "the UI is out
+-- of sync" report was actually about.
+--
+--   integration_head_sha        the proposal head this answer describes. An
+--                               answer about a head that has since moved is
+--                               stale by construction, and this is how a
+--                               reader tells.
+--   integration_main_sha        the default branch's head at measure time.
+--   integration_base_sha        merge base of the two.
+--   integration_behind_by       exact count of commits main has that the
+--                               proposal does not.
+--   integration_ahead_by        the reverse.
+--   integration_merges_clean    from an actual merge, not a prediction.
+--                               NULL only when the measurement failed.
+--   integration_conflict_paths  the genuinely conflicted paths. Not the
+--                               upper bound mergeability_files had to be:
+--                               git reports exactly the files it could not
+--                               resolve.
+--   integration_merged_tree     the tree a merge WOULD produce. This is the
+--                               value that lets approval follow the patch:
+--                               when the head moves, the new tree either
+--                               equals this (nobody wrote anything — a
+--                               mechanical merge) or it does not.
+--   integration_checks_base_current  is the commit this proposal's checks
+--                               ran against still on main's history.
+--   integration_block_reasons   what the SERVER knows is holding this
+--                               proposal that the browser cannot derive from
+--                               columns: 'integrating' (the queue is working
+--                               on it right now) and 'budget' (it needs a
+--                               merge with main but the shared token budget
+--                               is spent). A LIST, not one value, because
+--                               #2026 established that a card says every
+--                               reason that applies — ranking them into one
+--                               slot is how "Behind main" hid "Checks
+--                               failing". The browser keeps deriving the
+--                               rest from the columns it already reads;
+--                               these two are appended to that list.
+--   integration_error           why the last measurement could not answer.
+--                               A measurement never throws: it records this
+--                               and leaves the previous numbers in place.
+--
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_measured_at TIMESTAMPTZ;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_head_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_main_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_base_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_behind_by INTEGER;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_ahead_by INTEGER;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_merges_clean BOOLEAN;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_conflict_paths JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_merged_tree VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_checks_base_current BOOLEAN;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_block_reasons JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS integration_error TEXT;
+
+-- ── The approval epoch ─────────────────────────────────────────────────
+--
+-- What a vote is pinned to, replacing the commit pin.
+--
+-- reviewed_head_sha pins an approval to a COMMIT, and a sync commit changes
+-- the commit without changing the code under review. Telling those apart
+-- needed a provenance ledger (session_platform_pushes), a five-hop
+-- first-parent walk and a three-way classifier, because a commit's SHAPE can
+-- be forged: anyone can craft a merge whose first parent is the reviewed SHA.
+--
+-- An epoch cannot be forged because it is not derived from the branch at all.
+-- It is a counter the PLATFORM bumps, and it bumps on exactly one event:
+-- somebody wrote bytes that were not already approved. A mechanical merge of
+-- main — proven mechanical by recomputing it, see integration_merged_tree —
+-- does not bump it, so the approvals simply keep counting and there is
+-- nothing to carry, advance or reconcile.
+--
+-- It is also what the browser sends back with a vote. The old guard compared
+-- the rendered commit to the live head and rejected any difference, which
+-- cost a voter their click on every platform sync — including the ones that
+-- had just certified the code had not changed. An epoch compares the right
+-- thing: "is this still the proposal you were shown?"
+--
+--   chat_sessions.approval_epoch  bumped when approvals are cleared.
+--   pr_votes.approval_epoch       the epoch the vote was cast under. A vote
+--                                 counts while the two are equal.
+--
+-- Backfill: existing rows start at epoch 0, and existing votes inherit
+-- epoch 0 only when they already match the current commit pin. A vote that
+-- is stale under the old rule keeps a NULL epoch, and NULL never equals 0,
+-- so it stays uncounted — the migration changes no tally in either
+-- direction.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS approval_epoch INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE pr_votes      ADD COLUMN IF NOT EXISTS approval_epoch INTEGER;
+
+UPDATE pr_votes pv
+   SET approval_epoch = 0
+  FROM chat_sessions cs
+ WHERE cs.id = pv.session_id
+   AND pv.approval_epoch IS NULL
+   AND LOWER(pv.head_sha) = LOWER(
+         CASE WHEN cs.source = 'imported'
+              THEN cs.imported_pr_head_sha ELSE cs.reviewed_head_sha END);
+
+-- The measurement sweep's candidate ordering: promoted rows, least recently
+-- measured first, never-measured ahead of everything. Mirrors the freshness
+-- index above, which it replaces once that pass is retired.
+CREATE INDEX IF NOT EXISTS chat_sessions_integration_measured_idx
+  ON chat_sessions (integration_measured_at NULLS FIRST)
+  WHERE status = 'promoted';
+
 -- #1841: private, user-bound mailbox proof, separate from sign-in OTPs.
 CREATE TABLE IF NOT EXISTS account_email_verifications (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

@@ -972,20 +972,34 @@ function NeedsDeck({
           onSubmit={(e) => { e.preventDefault(); ask(); }}
         >
           <label className="sr-only" htmlFor="dev-ws-ask-input">Ask about this change</label>
-          <input
-            id="dev-ws-ask-input"
-            className="dev-ws-ask-input"
-            type="text"
-            value={draft}
-            placeholder="Ask a question…"
-            onFocus={() => setFocused(true)}
-            onBlur={() => { if (!draft.trim()) setFocused(false); }}
-            onChange={(e) => setDraft(e.target.value)}
-          />
-          {/* ONE LINE until it is tapped. The controls row — the model and
-              the send circle — is what makes the card two lines tall, and
-              neither is any use before there is something to send. Tapping
-              the field brings the row with it. */}
+          {/* THE RESTING LINE, and it keeps the send circle. An earlier cut
+              put the whole controls row behind focus, which took the send
+              button with it and left a card that looked like a text box and
+              nothing else — no sign it would do anything. The button never
+              MOVES, either: it is on this line whether the row below is there
+              or not, so tapping the field adds a row rather than relocating
+              the thing you were about to press. */}
+          <div className="dev-ws-ask-line">
+            <input
+              id="dev-ws-ask-input"
+              className="dev-ws-ask-input"
+              type="text"
+              value={draft}
+              placeholder="Ask a question…"
+              onFocus={() => setFocused(true)}
+              onBlur={() => { if (!draft.trim()) setFocused(false); }}
+              onChange={(e) => setDraft(e.target.value)}
+            />
+            <button
+              type="submit"
+              className="dc-send-btn dc-circle-send dev-ws-ask-send"
+              aria-label="Ask"
+              disabled={!draft.trim()}
+            ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>
+          </div>
+          {/* ONE LINE until it is tapped. The MODEL is what makes the card two
+              lines tall, and it is no use before there is something to send —
+              the picker on the dev session screen is the same bargain. */}
           {focused || engaged ? (
           <div className="dev-ws-ask-row">
             {models.list.length ? (
@@ -1005,13 +1019,6 @@ function NeedsDeck({
                 <ChevronDownIcon className="dev-ws-ask-model-chev" aria-hidden="true" />
               </span>
             ) : null}
-            <span className="dev-ws-ask-gap"></span>
-            <button
-              type="submit"
-              className="dc-send-btn dc-circle-send dev-ws-ask-send"
-              aria-label="Ask"
-              disabled={!draft.trim()}
-            ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>
           </div>
           ) : null}
         </form>
@@ -1461,11 +1468,17 @@ export function DevWorkshop(): ReactNode {
       {/* ── The three destinations ──
           At the BOTTOM, and sticky: this is a phone screen first, the bar is
           navigation rather than a control acting on what is above it, and the
-          thumb is at the bottom of the hand. `.platform-safe-bar` is the
-          shell's own rule for a pinned bottom row — it carries the device's
-          home-indicator inset, which is why the padding is not written here. */}
+          thumb is at the bottom of the hand.
+
+          NO `.platform-safe-bar` HERE, deliberately. That rule is for a strip
+          pinned against the screen edge: it adds the home-indicator inset to
+          the element's own bottom padding, which on this pill landed 8px
+          under the tabs against 6px over them. This bar FLOATS — a rounded
+          pill with air beneath it — so the inset belongs in that air instead,
+          and `--ws-gap` in app.css carries it (keyboard suppression
+          included). */}
       <nav
-        className="dev-ws-tabs platform-safe-bar"
+        className="dev-ws-tabs"
         data-ws-tabs=""
         role="tablist"
         aria-label="Workshop sections"

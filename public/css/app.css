@@ -12001,14 +12001,15 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-tabbody {
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column; gap: 10px;
-  /* THE RAIL'S OWN HEIGHT PLUS AIR, and it has to be recomputed whenever the
-     rail changes: 6 + 58 + 6 of padding and tab, 2 of border, 4 of air. It
-     was 66 while the tabs were 48px of text; the glyphs took them to 58 and
-     a constant left behind is the overlap coming back. */
-  padding-bottom: calc(76px + var(--platform-safe-bottom, 0px));
+  /* THE RAIL'S OWN BOX PLUS THE GAP IT RESTS ON. 72 is the box: 6 + 58 + 6 of
+     padding and tab, 2 of border — recompute it whenever the rail changes, or
+     the overlap comes back. The gap is the token above rather than a second
+     copy of the inset, so the clearance tracks the rail's resting place by
+     construction instead of by being remembered. */
+  padding-bottom: calc(72px + var(--ws-gap));
 }
 .dev-ws-tabs {
-  position: sticky; bottom: 0; z-index: 25;
+  position: sticky; bottom: var(--ws-gap); z-index: 25;
   display: flex; gap: 4px;
   padding: 6px;
   border-radius: 999px;
@@ -12076,11 +12077,32 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    rail. `min-height` keeps it usable on a short window rather than letting
    the subtraction win. */
 .dev-ws {
+  /* THE AIR UNDER THE RAIL, decided once and spent in two places. It has to
+     be one number, because the rail comes to rest two different ways: on a
+     short tab it sits at the foot of `.dev-ws` (so the floor below sets the
+     gap), and on a long one it is stuck while the content scrolls past (so
+     `bottom` sets it). Two numbers meant two gaps — measured at 1440x900,
+     23px of air on Current status and Needs you against 0 on All items,
+     which is exactly the "floating part way up, and it moves between tabs"
+     this replaces. The old floor subtracted a bare 24px with no counterpart
+     on the rail at all.
+
+     The device inset is IN the gap rather than inside the bar, because this
+     bar floats: it is a rounded pill with air under it, not a strip against
+     the screen edge, so the inset belongs below it and not in its padding.
+     That is also why the rail no longer carries `.platform-safe-bar`, whose
+     `calc(0.5rem + inset)` was landing 8px under the tabs against 6px over
+     them — the asymmetry you can see on a phone. */
+  --ws-gap: calc(8px + var(--platform-safe-bottom, 0px));
   --ws-area: calc(
     100dvh - var(--platform-header-h, 56px) - var(--platform-safe-top, 0px)
-    - var(--platform-safe-bottom, 0px) - 24px
+    - var(--ws-gap)
   );
 }
+/* Keyboard up, inset gone — the home-indicator strip is behind the keyboard,
+   so reserving it there is dead space. The base 8px stays, which is the same
+   trade `html.un-kb .platform-safe-bar` makes for the shell's own bars. */
+html.un-kb .dev-ws { --ws-gap: 8px; }
 .dev-ws-needs {
   /* The lander is a flex column with a floor under its height, so the deck
      simply takes what is left between the head of the tab and the rail —
@@ -12258,6 +12280,13 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    of controls under it. Everything here is what that card does NOT carry —
    the field's own reset, and the row's spacing. */
 .dev-ws-ask-composer { display: flex; flex-direction: column; gap: 6px; }
+/* THE RESTING LINE: the field and the send circle, always both. The send used
+   to live in the controls row and so appeared only on focus, which left the
+   card with no visible way to send — a text box and nothing else. The model
+   row is the part that earns its height on use; the send button is the
+   affordance that says the box does something. */
+.dev-ws-ask-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dev-ws-ask-line > .dev-ws-ask-input { flex: 1 1 auto; }
 .dev-ws-ask-input {
   width: 100%; min-width: 0;
   border: 0; padding: 0; background: transparent;
@@ -12266,7 +12295,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-ask-input:focus { outline: none; }
 .dev-ws-ask-input::placeholder { color: var(--text-muted); }
 .dev-ws-ask-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.dev-ws-ask-gap { flex: 1 1 auto; }
 /* Smaller than the session's 44px circle: that one is the primary action of
    a whole screen, this is the second control in a pane that is a third of
    one. The fill, the ink and the halo are `.dc-circle-send`'s. */
@@ -12544,7 +12572,15 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    overflows by its width and adds a horizontal scrollbar to the page.
    Re-parenting the bound has no such edge. */
 #dev-workshop:has(.dev-ws-board) { max-width: none; }
-#dev-workshop:has(.dev-ws-board) > .dev-ws > :not(.dev-ws-pane) {
+/* THE TAB BODY IS A LEVEL THIS RULE HAS TO REACH THROUGH. It used to bound
+   every direct child of `.dev-ws` except the pane; the tabs put the pane one
+   level deeper, inside `.dev-ws-tabbody`, so the bound landed on the WRAPPER
+   and the board was cramped to the reading column from outside. Bound the tab
+   body's children instead, and leave the body itself unbounded — the rail is
+   still a direct child of `.dev-ws`, so it keeps the column width, which is
+   what it wants: a pill spanning 1440px is not a tab bar. */
+#dev-workshop:has(.dev-ws-board) > .dev-ws > :not(.dev-ws-tabbody),
+#dev-workshop:has(.dev-ws-board) > .dev-ws > .dev-ws-tabbody > :not(.dev-ws-pane) {
   width: 100%; max-width: 760px; margin-left: auto; margin-right: auto;
 }
 /* On By stage the pane WIDENS AND STAYS A PANE. An earlier cut stripped its
