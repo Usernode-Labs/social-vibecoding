@@ -3852,6 +3852,24 @@
       "path": "/?demo=1&order=none&flow=claude-code#app/usernode-2d5619/dev/sessions/990404",
       "expectSelector": "[data-flow-wizard] [data-flow-step=\"prepare\"] .dc-flow-actions button[data-flow-action=\"prepare\"]",
       "expectText": "Prepare work order"
+    },
+    {
+      "name": "#2038: an approved proposal being brought up to date says so on the card",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item .ms-badge",
+      "expectText": "Bringing up to date"
+    },
+    {
+      "name": "#2038: a proposal that no longer merges names the conflict on the card",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item .ms-badge-red",
+      "expectText": "Conflicts with main"
+    },
+    {
+      "name": "#2038: a proposal whose votes are in but whose checks are running says which",
+      "path": "/?demo=1&view=kanban&cards=open#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban .gc-vote-item",
+      "expectText": "Waiting on checks"
     }
   ],
   "governance": {

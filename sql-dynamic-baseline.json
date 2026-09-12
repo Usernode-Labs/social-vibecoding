@@ -711,13 +711,6 @@
     },
     {
       "source": "src/routes/votes.js",
-      "kind": "runtime-expression",
-      "fingerprint": "d5f9b922b9252457283f",
-      "count": 1,
-      "preview": "platformAdvance ? `WITH claimed AS ( UPDATE chat_sessions SET reviewed_head_sha = $1, stale_notified_at = NULL WHERE id = $2 AND reviewed_head_sha IS NOT DISTIN"
-    },
-    {
-      "source": "src/routes/votes.js",
       "kind": "structural-template",
       "fingerprint": "61a5b0d7edd56fa67c61",
       "count": 1,
@@ -729,6 +722,13 @@
       "fingerprint": "760e6c035395e025ef99",
       "count": 1,
       "preview": "`SELECT i.id, i.kind, i.title, i.description, i.payload, i.status, i.github_issue_number, i.created_by, i.created_at, u.username AS created_by_username, (SELECT"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "87ae4c29494fbdd4c789",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
     },
     {
       "source": "src/routes/votes.js",
@@ -750,13 +750,6 @@
       "fingerprint": "c0f8e5747ee725a64c53",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
-      "fingerprint": "e933979c578bc1fbc742",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user"
     },
     {
       "source": "src/services/agent-turn.js",
@@ -785,13 +778,6 @@
       "fingerprint": "73bb2c779f8c52b9b224",
       "count": 1,
       "preview": "`INSERT INTO app_check_history (app_id, check_key, check_name, check_path, first_passed_at, last_passed_at, last_seen_at, consecutive_passes) VALUES ${values.jo"
-    },
-    {
-      "source": "src/services/conflict-resolver.js",
-      "kind": "structural-template",
-      "fingerprint": "0f89fed77fbfc1bdb6fa",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.promoted_at, cs.created_at, cs.requires_explicit_approval, ((cs.behind_main IS NULL OR cs.behind_main = 0) AND COALESCE(cs.merge_conflict_stat"
     },
     {
       "source": "src/services/connector-limits.js",
@@ -880,23 +866,23 @@
     {
       "source": "src/services/governance.js",
       "kind": "structural-template",
-      "fingerprint": "472e205bce64cb9c5cfd",
+      "fingerprint": "4dec172022c4fb9d2f64",
       "count": 1,
-      "preview": "`SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${yesVal}'${shaClause}`"
+      "preview": "`SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${yesVal}'${epochClause}`"
     },
     {
       "source": "src/services/governance.js",
       "kind": "structural-template",
-      "fingerprint": "8e92e825851b037d21c0",
+      "fingerprint": "a1d7a7efda566f40685a",
       "count": 1,
       "preview": "`SELECT COUNT(*) FILTER (WHERE vote = '${yesVal}') AS yes, COUNT(*) FILTER (WHERE vote = '${noVal}') AS no FROM ${table} WHERE ${keyCol} = $1 AND user_id = ANY("
     },
     {
       "source": "src/services/governance.js",
       "kind": "structural-template",
-      "fingerprint": "a4a4c1ee57525417b52e",
+      "fingerprint": "ca502810f68a7b7521dd",
       "count": 1,
-      "preview": "`SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${noVal}'${shaClause}`"
+      "preview": "`SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${noVal}'${epochClause}`"
     },
     {
       "source": "src/services/issue-announce.js",
@@ -939,6 +925,13 @@
       "fingerprint": "d84356900ebc93c01a1a",
       "count": 1,
       "preview": "dailySql"
+    },
+    {
+      "source": "src/services/merge-queue.js",
+      "kind": "structural-template",
+      "fingerprint": "878c016b2ef18b345e82",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.promoted_at, cs.created_at, cs.requires_explicit_approval, cs.integration_behind_by, cs.integration_merges_clean, cs.check_state, (SELECT COUN"
     },
     {
       "source": "src/services/notifications.js",

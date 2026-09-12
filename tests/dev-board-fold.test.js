@@ -392,13 +392,13 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // per (user, app) and one continuation pinned every session in the app. The
   // continuation check now asserts the button IS offered, and a second one
   // pins the sentence saying what pressing it gives up.
-  // 602 → 604: the launchpad is keyed per session now, so a session that did
+  // 602 → 607: the launchpad is keyed per session now, so a session that did
   // not prepare a work order shows none. Two checks shoot that state — the
   // "What should it build?" field being live, and Prepare being the action
   // offered — on the ?order=none fixture added with them. Before this, no
   // route could render it: a session with no order of its own still showed
   // another session's.
-  assert.equal(DAPP.tests.length, 604);
+  assert.equal(DAPP.tests.length, 607);
 });
 
 test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {

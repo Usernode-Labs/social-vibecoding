@@ -428,7 +428,11 @@
     // Keys whose canonical badge belongs in the feed card's "state" slot.
     // In-vote / draft are conveyed by the vote pill; checks states keep their
     // own detailed badge (with per-test counts), so they're excluded here.
-    STATE_BADGE_KEYS: ['merged', 'merging', 'resolving', 'conflict_failed', 'merge_conflict', 'behind', 'ready'],
+    // #2038: 'integrating' joins the list — a proposal being brought up to
+    // date is exactly the state the feed card was silent about, which is what
+    // left people watching a card that looked idle for minutes. 'checks_running'
+    // deliberately stays out: the checks badge already carries its own detail.
+    STATE_BADGE_KEYS: ['merged', 'merging', 'resolving', 'conflict_failed', 'merge_conflict', 'behind', 'ready', 'integrating', 'platform_env'],
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = MergeStatus;

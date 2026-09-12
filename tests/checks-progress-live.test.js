@@ -679,12 +679,25 @@ test('a pending run says what a pending sync will do to it', () => {
   assert.ok(!JSON.stringify(done).includes('Main has moved'));
 });
 
-test('a clean sync does not carry the commit pin out from under a run in flight', () => {
-  const src = read('src/services/sync-main.js');
-  assert.match(src, /const runInFlight = session\.check_state === 'pending';/);
-  assert.match(src, /const carryChecks = result\.syncResult === 'clean' && !runInFlight;/);
-  // The re-kick is the existing non-carry path, so a pending row now takes it.
-  assert.match(src, /if \(!carryChecks\) \{\n\s+await kickChecksForSyncedHead\(config, pool, session, nextSha\);/);
+test('an integration supersedes a check run rather than queueing behind it', () => {
+  // #1728: a sync that left a run in flight cost two abandoned runs (one of
+  // them 490 checks in), two ten-minute dead waits and three full runs for a
+  // single proposal. The run that is going tested the PRE-merge commit and
+  // its verdict is keyed to the commit it started on, so letting it finish
+  // writes a verdict nowhere.
+  //
+  // sync-main used to work around that by deciding whether to carry the
+  // checks pin (`runInFlight` / `carryChecks`). The queue cancels the run
+  // instead, which is the thing that was actually wanted — the supersede
+  // primitive already existed in services/preview-lifecycle.js and simply was
+  // not called from here.
+  const queue = read('src/services/merge-queue.js');
+  assert.match(queue, /preview-lifecycle/,
+    'the queue must reach for the supersede primitive');
+  assert.match(queue, /cancelled\(session\.id/,
+    'and actually cancel the in-flight run before moving the branch under it');
+  assert.doesNotMatch(read('src/services/sync-main.js'), /carryChecks/,
+    'the carry-or-not workaround belongs to the deleted vote-carry path');
 });
 
 test('the board card and the running badge carry the live count', () => {
