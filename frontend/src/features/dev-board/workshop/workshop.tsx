@@ -1046,6 +1046,25 @@ export function DevWorkshop(): ReactNode {
   // status and then swapping — the same reason `openThemes` is seeded from
   // `autoExpand` rather than from an effect.
   const [tab, setTab] = useState<TabKey>(() => v.tab || 'status');
+  // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
+  // not do. The seed runs against whatever the store holds AT MOUNT, and that
+  // is EMPTY_WORKSHOP_VIEW: the module publishes `_workshopView()` after its
+  // data load, so on a cold open `v.tab` is undefined in that first frame and
+  // the deep link was dropped on the floor. `autoExpand` has carried the same
+  // late-arrival effect since it shipped, for exactly this reason — which is
+  // why `?shot=themes` worked on staging while `?ws=all` silently did not,
+  // and why 25 declared checks failed on a route that reads correctly.
+  //
+  // ONCE, guarded by the ref. `v.tab` is read from the URL, so it never
+  // changes for the life of the page, while `_rerenderWorkshop()` republishes
+  // on every data change: without the guard each republish would yank a
+  // reader who had tapped another tab back to the deep-linked one.
+  const deepTabApplied = useRef<boolean>(!!v.tab);
+  useEffect(() => {
+    if (deepTabApplied.current || !v.tab) return;
+    deepTabApplied.current = true;
+    setTab(v.tab);
+  }, [v.tab]);
   // "N more of yours" reveals them HERE. It used to set a board filter and
   // navigate, which left the lander and changed the view mode to read a list
   // the strip was already showing the top of. The vote and free-to-take

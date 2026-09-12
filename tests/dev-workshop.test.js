@@ -2333,3 +2333,32 @@ test('the declared stage check still describes the pane it has to walk', () => {
   // ...and the component really does nest them that way.
   assert.match(WORKSHOP, /className="dev-ws-pane-body"[\s\S]{0,400}className="dev-ws-board"/);
 });
+
+test('the ?ws= deep link survives arriving AFTER the first paint', () => {
+  // THE BUG THIS PINS COST A WHOLE CHECK CYCLE. The tab was seeded from the
+  // publish alone — `useState(() => v.tab || 'status')` — and that initialiser
+  // runs against whatever the store holds AT MOUNT, which is
+  // EMPTY_WORKSHOP_VIEW. The legacy module publishes `_workshopView()` after
+  // its data load, so on a cold open `v.tab` is undefined in that first frame
+  // and the deep link was dropped on the floor: every `?ws=all` route landed
+  // on Current status, and 25 declared checks failed on routes that read
+  // perfectly. `autoExpand` has carried a late-arrival effect since it
+  // shipped, which is precisely why `?shot=themes` worked where `?ws=` did
+  // not.
+  //
+  // Asserted as source text because nothing here runs effects: these tests
+  // render statically, so the only local witness to an effect is the code.
+  assert.match(WORKSHOP, /const \[tab, setTab\] = useState<TabKey>\(\(\) => v\.tab \|\| 'status'\);/,
+    'the seed still paints the right tab on the first frame when the view is already there');
+  assert.match(
+    WORKSHOP,
+    /const deepTabApplied = useRef<boolean>\(!!v\.tab\);\s*useEffect\(\(\) => \{\s*if \(deepTabApplied\.current \|\| !v\.tab\) return;\s*deepTabApplied\.current = true;\s*setTab\(v\.tab\);\s*\}, \[v\.tab\]\);/,
+    'and an effect applies it when the publish lands later',
+  );
+  // The ref is not decoration. `v.tab` reads the URL, so it never changes for
+  // the life of the page, while `_rerenderWorkshop()` republishes on every
+  // data change — an unguarded effect would yank a reader who had tapped
+  // another tab back to the deep-linked one on the next refresh.
+  assert.ok(/deepTabApplied\.current \|\| !v\.tab/.test(WORKSHOP),
+    'applied once, so a later republish cannot override the reader');
+});
