@@ -483,7 +483,7 @@ function WeekWalk({ weeks, firstWeek }: { weeks: Dash['weeks']; firstWeek: numbe
       {more ? (
         <button
           type="button"
-          className="dev-ws-week-more"
+          className="dev-ws-reveal dev-ws-week-more"
           data-ws-week-more=""
           onClick={() => setShown(shown + 1)}
         >
@@ -491,7 +491,7 @@ function WeekWalk({ weeks, firstWeek }: { weeks: Dash['weeks']; firstWeek: numbe
               appears. It is `ChevronDownIcon` turned over in CSS — the same
               trick `.dev-ws-lane-title > .dev-ws-chev` already uses — rather
               than a 22nd icon for one caret. */}
-          <ChevronDownIcon className="dev-ws-week-chev" aria-hidden="true" />
+          <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
           Show past week
         </button>
       ) : null}
@@ -975,14 +975,23 @@ export function DevWorkshop(): ReactNode {
                 <span className="dev-ws-dot" aria-hidden="true"></span>Since your last visit
               </h4>
               <p className="dev-ws-lane-note">{`${relTime(v.since.baseline)}: ${sinceWords(v.since)}`}</p>
+              {/* The same control as "Show past week" above, because it is the
+                  same act: one quiet line that puts more of the pane on
+                  screen. It wore the platform's grey action pill, which made
+                  the most optional thing in the lane the most solid-looking.
+                  The caret points DOWN here — down is where these rows
+                  appear — and turns over once they are up. */}
               {v.since.rows.length ? (
                 <button
                   type="button"
-                  className="gc-vote-btn dev-ws-lane-btn"
+                  className="dev-ws-reveal"
                   data-ws-since-btn=""
                   aria-expanded={sinceOpen}
                   onClick={() => setSinceOpen(!sinceOpen)}
-                >{sinceOpen ? 'Hide' : `Show ${v.since.rows.length}`}</button>
+                >
+                  <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+                  {sinceOpen ? 'Hide' : `Show ${v.since.rows.length}`}
+                </button>
               ) : null}
               {sinceOpen ? v.since.rows.map((row) => (row.t === 'card' ? (
                 <CardRowView

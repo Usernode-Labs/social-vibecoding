@@ -11916,14 +11916,18 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   .dev-ws-card-title { flex-direction: row; align-items: baseline; gap: 6px; width: auto; }
   .dev-ws-card-range { margin-top: 0; }
 }
-/* The step backwards, above the stack.
-   NOT a pill, and not left-aligned. It wore `.gc-vote-btn` — a grey
-   bordered pill — pushed to the left edge, which made the most tentative
-   control in the pane the most solid-looking thing in it, and hung it off
-   one side of a stack of full-width cards. It is a quiet full-width row
-   now: centred over the cards it reveals, no border, no fill, and a caret
-   pointing the way the stack grows. */
-.dev-ws-week-more {
+/* ── The pane's reveal control ──────────────────────────────────
+   ONE style for "put more of this pane on screen": the step backwards
+   through the weeks, and the since-list's "Show 8". They are the same act
+   and they were two different objects — the first a left-aligned grey pill,
+   the second a grey pill in a lane of left-aligned text — and in both cases
+   the pill made the most OPTIONAL thing in its block the most solid-looking
+   thing in it.
+
+   Quiet and centred instead: no border, no fill, muted 12px, the accent on
+   hover, and a caret pointing the way the content arrives. Centred over
+   full-width content rather than hung off one side of it. */
+.dev-ws-reveal {
   display: flex; align-items: center; justify-content: center; gap: 5px;
   width: 100%; padding: 3px 8px;
   border: 0; background: transparent;
@@ -11931,12 +11935,19 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   color: var(--text-muted);
   cursor: pointer;
 }
-.dev-ws-week-more:hover { color: var(--accent); }
-.dev-ws-week-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
-/* UP. There is no ChevronUpIcon in the kit and one caret does not earn a
-   22nd module, so this is ChevronDownIcon turned over — the same trick the
-   lane headings already use on their own chevron. */
-.dev-ws-week-chev { width: 14px; height: 14px; transform: rotate(180deg); }
+.dev-ws-reveal:hover { color: var(--accent); }
+.dev-ws-reveal:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+/* There is no ChevronUpIcon in the kit and one caret does not earn a 22nd
+   module, so UP is ChevronDownIcon turned over — the same trick the lane
+   headings already use on their own chevron.
+
+   Which way it points is which way the content arrives: the week walk grows
+   UPWARDS (each press puts an older window above the one you were reading),
+   so its caret is always up; the since-list opens DOWNWARDS, so its caret
+   points down and turns over once the rows are showing. */
+.dev-ws-reveal-chev { width: 14px; height: 14px; }
+.dev-ws-week-more .dev-ws-reveal-chev { transform: rotate(180deg); }
+.dev-ws-reveal[aria-expanded="true"] .dev-ws-reveal-chev { transform: rotate(180deg); }
 .dev-ws-week-note {
   margin: 0; font-size: 12px; color: var(--text-muted); text-align: center;
 }

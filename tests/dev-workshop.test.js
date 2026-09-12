@@ -800,7 +800,15 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   // control. A colon for a label and its value, never an em dash (#1389).
   assert.match(html, /data-ws-lane="since"[\s\S]*?class="dev-ws-lane-title">[\s\S]*?Since your last visit/);
   assert.match(html, /class="dev-ws-lane-note">3d ago: 1 change landed/);
-  assert.match(html, /class="gc-vote-btn dev-ws-lane-btn" data-ws-since-btn=""[^>]*>Show 3</);
+  // The same control as the week walk's, because it is the same act: one
+  // quiet centred line that puts more of the pane on screen. Both wore the
+  // platform's grey action pill, which made the most optional thing in each
+  // block the most solid-looking thing in it.
+  assert.match(html, /class="dev-ws-reveal" data-ws-since-btn=""[^>]*>.*?Show 3</);
+  assert.match(html, /data-ws-since-btn=""[\s\S]{0,400}?dev-ws-reveal-chev/, 'and it carries the caret');
+  assert.match(CSS, /\.dev-ws-reveal \{[^}]*justify-content: center;/);
+  assert.match(CSS, /\.dev-ws-reveal\[aria-expanded="true"\] \.dev-ws-reveal-chev \{[^}]*rotate\(180deg\)/,
+    'the caret turns over once the rows are up');
   // Under the offers, not above them.
   assert.ok(html.indexOf('data-ws-lane="next"') < html.indexOf('data-ws-lane="since"'));
   // The sentence is NOT the button's label. `.gc-vote-btn` is a 24px
