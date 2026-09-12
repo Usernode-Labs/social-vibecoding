@@ -2513,26 +2513,33 @@ test('the ask box sits just above the rail, on both widths', () => {
   // the floor for anything sitting directly above the rail.
 });
 
-test('skip re-queues the card instead of stepping past it', () => {
-  // Skip used to step the index on and leave the card where it was, so every
-  // skipped item sat between the reader and the ones they had not seen, and
-  // reaching the end stranded them behind. Re-queueing makes the deck a
-  // QUEUE: "not now" comes round again after everything unseen.
-  assert.match(WORKSHOP, /const \[skipped, setSkipped\] = useState<string\[\]>\(\[\]\);/);
-  // Keys, not a reordered copy of the rows: the board republishes every few
-  // seconds, and fresh card data has to come through without undoing the
-  // order the reader has made.
-  assert.match(WORKSHOP, /const moved = skipped\.map\(\(k\) => all\.find\(\(r\) => r\.key === k\)\)/);
-  // It is not an answer, so it is not recorded — a skipped card wearing a
-  // tick would say the app had filed something it has not.
-  const fn = /const skip = \(\) => \{([\s\S]*?)\n  \};/.exec(WORKSHOP);
-  assert.ok(fn, 'skip is its own handler');
-  assert.ok(!/setAnswered/.test(fn[1]), 'skip records nothing');
-  // The index only moves at the END of the queue: a card already last stays
-  // last when sent to the back, so skipping it would show it again.
-  assert.match(fn[1], /const wasLast = i >= cards\.length - 1;[\s\S]*if \(wasLast\) setAt\(0\);/);
-  assert.ok(!/onClick=\{\(\) => answer\('skip', null\)\}/.test(WORKSHOP),
-    'the button no longer answers');
+test('the deck answers in one row and moves in another', () => {
+  // TWO ROWS BECAUSE THEY ARE TWO QUESTIONS. The top one is what you can do
+  // about the card in front of you, and every press there records something.
+  // The bottom one only changes which card is in front of you, and records
+  // nothing.
+  //
+  // Skip belonged to neither and sat among the answers, where it read as a
+  // third verdict while doing nothing but advancing — and it could only go
+  // forwards, so a card passed by accident was gone. The arrows replace it.
+  assert.ok(!/data-ws-answer-btn="skip"/.test(WORKSHOP), 'skip is gone from the answers');
+  assert.ok(!/dev-ws-answer-skip/.test(WORKSHOP), 'and so is its button');
+  assert.match(WORKSHOP, /<div className="dev-ws-move-row" data-ws-move-row="">/);
+  for (const [dir, guard] of [['prev', /disabled=\{i <= 0\}/], ['next', /disabled=\{i >= cards\.length - 1\}/]]) {
+    const btn = new RegExp(`data-ws-move="${dir}"[\\s\\S]{0,220}?/>`).exec(WORKSHOP);
+    assert.ok(btn, `the ${dir} control exists`);
+    assert.match(btn[0], guard, `${dir} is disabled at its end rather than wrapping`);
+    assert.match(btn[0], /aria-label="/, `${dir} is an icon button and needs a name`);
+  }
+  // NO WRAP, and no reordering. Skip used to send a card to the back, which
+  // was the only way back to it without losing your place; you walk back now.
+  // A deck that reorders itself as you browse is one you never reach the end
+  // of, and an arrow that silently returns you to the first card is how you
+  // lose your place in a queue you are working through.
+  assert.match(WORKSHOP, /const go = \(delta: number\) => setAt\(Math\.min\(Math\.max\(i \+ delta, 0\), cards\.length - 1\)\);/);
+  assert.ok(!/setSkipped/.test(WORKSHOP), 'the re-queue went with the button it belonged to');
+  assert.match(WORKSHOP, /const cards = rows\.filter\(\(r\) => r\.t === 'card'\);/,
+    'the deck keeps the order it was published in');
 });
 
 test('the lander opens on the tab you last used', () => {

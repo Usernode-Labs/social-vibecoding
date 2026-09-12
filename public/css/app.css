@@ -12271,6 +12271,24 @@ html.un-kb .dev-ws { --ws-gap: 8px; }
   font-size: 15px; font-weight: 600; color: var(--text-primary);
 }
 .dev-ws-answer-row { display: flex; gap: 8px; }
+/* ── The move row: WHICH card, not what about it ───────────────────────
+   Quieter than the answers above it, on purpose. Those are decisions and
+   this is a page turn, so it takes the same width and half the weight: no
+   fill, a hairline, and the muted ink the lander already uses for things
+   that are navigation rather than acts. Shorter too — 44px is the shell's
+   tap minimum, and turning a page does not need the thumb-sized target a
+   vote does. */
+.dev-ws-move-row { display: flex; gap: 8px; margin-top: 8px; }
+.dev-ws-move-btn {
+  flex: 1 1 0; height: 44px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--app-sheet-line); border-radius: 14px;
+  background: transparent; color: var(--text-muted);
+  cursor: pointer;
+}
+.dev-ws-move-btn:hover:not(:disabled) { background: var(--state-neutral-bg); color: var(--text-primary); }
+.dev-ws-move-btn:disabled { opacity: .35; cursor: default; }
+.dev-ws-move-icon { width: 20px; height: 20px; }
 .dev-ws-answer-btn {
   flex: 1 1 0; min-width: 0; height: 52px;
   border-radius: 16px; border: 1px solid transparent;
