@@ -12075,6 +12075,29 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    the card is context for it, so it takes half. It stops there: the card is
    the subject, and a chat that swallows its subject is a chat about nothing. */
 .dev-ws-needs-engaged { grid-template-rows: 1fr 1fr; }
+/* ── The deck at the top, on a wide screen ───────────────────
+   On a phone the deck fills the reading area and the answers sit at the
+   floor, which is where the thumb is. On a desktop that same rule spends
+   half a 900px window on the gap between a two-line summary and three
+   buttons, and empty space that large reads as something failing to render
+   rather than as breathing room.
+
+   So above 700px the deck is content-sized and sits at the top: the
+   question and its answers follow the card immediately. The tab rail is
+   unaffected — it is pushed to the foot of the lander by `margin-top:
+   auto`, not by the deck's height. The ask log takes a cap instead of a
+   fraction of the screen for the same reason. */
+@media (min-width: 700px) {
+  .dev-ws-needs,
+  .dev-ws-needs-engaged {
+    flex: 0 0 auto;
+    grid-template-rows: auto auto;
+    align-content: start;
+    min-height: 0;
+  }
+  .dev-ws-needs-scroll { flex: 0 1 auto; }
+  .dev-ws-ask-log { max-height: 40vh; }
+}
 @media (prefers-reduced-motion: no-preference) {
   .dev-ws-needs { transition: grid-template-rows .22s ease; }
 }
