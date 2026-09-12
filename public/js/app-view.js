@@ -5578,7 +5578,12 @@ const AppView = {
     }
     // The open card carries no window: "what the open work is about" is not
     // a week, and dating it would invite the reader to read it as one.
-    if (cards.open) out.push({ key: 'open', title: 'Open', line: cards.open, startMs: 0, endMs: 0 });
+    //
+    // "Open issues" rather than "Open": beside "Last week" and "This week",
+    // a bare "Open" reads as a third TIME and the eye expects a date under
+    // it. The key stays `open` — it is the server's field name and
+    // dapp.json's declared check selects on it.
+    if (cards.open) out.push({ key: 'open', title: 'Open issues', line: cards.open, startMs: 0, endMs: 0 });
     return out;
   },
 

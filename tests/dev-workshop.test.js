@@ -605,7 +605,7 @@ test('the pane opens on Open alone, and the older windows are a walk back', asyn
   const order = [...html.matchAll(/data-ws-card="([a-zA-Z:0-9]+)"/g)].map((m) => m[1]);
   assert.deepEqual(order, ['open'], 'only the present is drawn');
   const titles = [...html.matchAll(/dev-ws-card-title[^>]*>([^<]+)</g)].map((m) => m[1]);
-  assert.deepEqual(titles, ['Open']);
+  assert.deepEqual(titles, ['Open issues']);
   assert.match(html, /data-ws-week-more=""/, 'and the step back is offered');
   // Above the stack, not below it: each press reveals an OLDER window, and
   // the column reads oldest-at-the-top like any other timeline.
@@ -616,7 +616,7 @@ test('the pane opens on Open alone, and the older windows are a walk back', asyn
   // which is the order they are drawn top to bottom.
   const weeks = AppView._workshopView().dashboard.weeks;
   assert.deepEqual(plain(weeks.map((w) => w.key)), ['lastWeek', 'thisWeek', 'open']);
-  assert.deepEqual(plain(weeks.map((w) => w.title)), ['Last week', 'This week', 'Open']);
+  assert.deepEqual(plain(weeks.map((w) => w.title)), ['Last week', 'This week', 'Open issues']);
 
   // The tiles stay: the cards answer "what", the tiles still answer "how
   // much", and neither is a restatement of the other.
@@ -645,7 +645,7 @@ test('a card is one line: an aligned label column and its sentence, no separator
   // The title and the line are ADJACENT siblings. dapp.json's declared check
   // selects `.dev-ws-card-title + .dev-ws-card-line`, so anything rendered
   // between them would pass locally and fail the gate.
-  assert.match(html, /<h4 class="dev-ws-card-title">Open<\/h4><p class="dev-ws-card-line">/,
+  assert.match(html, /<h4 class="dev-ws-card-title">Open issues<\/h4><p class="dev-ws-card-line">/,
     'nothing rendered between the label and the sentence');
 
   // NO separator, in either form. It was a CSS middot; with the labels in a
