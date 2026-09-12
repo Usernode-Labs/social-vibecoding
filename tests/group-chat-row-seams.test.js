@@ -47,6 +47,61 @@ const base = {
   attachments: [], voteRowClass: '', voteRef: null, specShare: null,
 };
 
+const syncNotice = 'PR #12 is now synced with main and conflict-free. It needs 1/2 yes votes needed to merge.';
+
+test('#1926: persisted and live conflict notices use the system row and fold together', () => {
+  const gc = loadGroupChat();
+  const { foldRepeats } = loadTsx(TRANSCRIPT);
+  const rows = [
+    { id: 1, msg_type: 'conflict', content: syncNotice },
+    { id: 2, msg_type: 'conflict', content: syncNotice },
+    { id: 3, msgType: 'conflict', content: syncNotice },
+  ].map((row) => gc._messageView(row));
+  assert.ok(rows.every((row) => row.kind === 'system' && !row.showEdit));
+  const folded = foldRepeats(rows);
+  assert.equal(folded.length, 1);
+  assert.equal(folded[0].id, 3, 'the latest notice owns the visible row');
+  assert.equal(folded[0].repeat, 3);
+  assert.equal(rows.length, 3, 'raw history stays intact for pagination');
+  assert.ok(rows.every((row) => row.repeat === undefined), 'folding does not mutate stored rows');
+  const html = renderComponent(TRANSCRIPT, 'SystemRow', { msg: folded[0] });
+  assert.match(html, /×3/);
+  assert.equal(html.split(syncNotice).length - 1, 1);
+});
+
+test('#1926: changed status, human replies and votes separate repeat runs', () => {
+  const gc = loadGroupChat();
+  const { foldRepeats } = loadTsx(TRANSCRIPT);
+  for (const middle of [
+    { msg_type: 'conflict', content: 'PR #12 still conflicts with main.' },
+    { msg_type: 'conflict', content: syncNotice.replace('1/2', '2/2') },
+    { msg_type: 'message', username: 'alice', content: syncNotice },
+    { msg_type: 'vote', content: syncNotice },
+  ]) {
+    const rows = [
+      { id: 1, msg_type: 'conflict', content: syncNotice },
+      { id: 2, ...middle },
+      { id: 3, msg_type: 'conflict', content: syncNotice },
+    ].map((row) => gc._messageView(row));
+    assert.equal(foldRepeats(rows).length, 3);
+  }
+  const human = [1, 2].map((id) => gc._messageView({ id, msg_type: 'message', content: syncNotice }));
+  assert.equal(foldRepeats(human).length, 2, 'identical human replies never fold');
+});
+
+test('#1926: folding updates after earlier history or a live notice joins the run', () => {
+  const gc = loadGroupChat();
+  const { foldRepeats } = loadTsx(TRANSCRIPT);
+  const row = (id) => gc._messageView({ id, msg_type: 'conflict', content: syncNotice });
+  const history = [row(2), row(3)];
+  assert.equal(foldRepeats(history)[0].repeat, 2);
+  history.unshift(row(1));
+  assert.equal(foldRepeats(history)[0].repeat, 3);
+  history.push(row(4));
+  assert.equal(foldRepeats(history)[0].repeat, 4);
+  assert.equal(foldRepeats(history)[0].id, 4);
+});
+
 // ── The vote-controls host ────────────────────────────────────────────
 
 test('the host carries exactly what refreshVoteControls selects and reads', () => {
