@@ -817,10 +817,24 @@ function RowPager({
  * limited per user and a failure is SHOWN rather than swallowed: a voter
  * who thinks they have an answer and does not is the one bad outcome here.
  *
- * The thread lives in this component's state and goes when you leave the
- * pane. That is deliberate for now — a voter's questions are a scratchpad
- * for their own decision, and making them durable is a question about
- * whose record they are, not a missing feature.
+ * ── The thread is the SERVER'S, and it is private ────────────────────
+ *
+ * Each exchange is stored per viewer per card (workshop_ask_messages,
+ * `staging:private`), so walking back to a card brings its conversation
+ * with it. Two consequences worth knowing here:
+ *
+ * It is loaded in an EFFECT and never in the initial render — the shell's
+ * rule for a stateful island, because a first paint that differs from the
+ * shipped markup is a hydration mismatch and a console error, which fails
+ * proposal checks.
+ *
+ * And this component no longer sends its transcript back as history. The
+ * server reads the thread it wrote, which is both why a reload keeps the
+ * conversation and why nobody can put words in their own mouth — or the
+ * model's — and have them replayed as established context.
+ *
+ * Nothing here is shared: a voter's questions about a change they have not
+ * voted on say what they are unsure about, and only they can read them.
  */
 /** One turn in the ask box. `pending` is the answer still being written. */
 type AskMsg = { who: 'you' | 'ai'; text: string; pending?: boolean; failed?: boolean };
@@ -861,6 +875,10 @@ function NeedsDeck({
   // answer that lands after you have walked to the next card belongs to the
   // card it was asked about.
   const [asking, setAsking] = useState<Record<string, boolean>>({});
+  // Which rows have had their stored thread fetched. Marked BEFORE the
+  // request goes out, so moving away and back does not fire a second one,
+  // and so a row whose fetch failed is not retried on every render.
+  const [loaded, setLoaded] = useState<Record<string, boolean>>({});
   // Which model answers. The dev session's own list and its own default —
   // see `_workshopModels`. It appears when the box is in use, because a
   // picker over an empty composer is a setting nobody has a use for yet.
@@ -920,6 +938,49 @@ function NeedsDeck({
   const done = answered[row.key];
   const target = row.askAbout || null;
   const inFlight = !!asking[row.key];
+
+  /**
+   * Bring back what this viewer already asked about this card.
+   *
+   * In an effect and never in render, which is the shell's rule for a
+   * stateful island: the first paint has to be the empty pane the
+   * hand-written markup shipped, or hydration mismatches and a console
+   * error fails the proposal checks.
+   *
+   * It never overwrites a thread that already has turns in it. The local
+   * copy is the live one — a question asked while this was in flight would
+   * otherwise vanish when the stored (older) version landed on top of it.
+   */
+  useEffect(() => {
+    if (!target || loaded[row.key]) return undefined;
+    const key = row.key;
+    const { kind, ref } = target;
+    let live = true;
+    setLoaded((cur) => ({ ...cur, [key]: true }));
+    const qs = `kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(String(ref))}`;
+    fetch(`/api/apps/${encodeURIComponent(slug)}/workshop/ask/thread?${qs}`, {
+      credentials: 'same-origin',
+      headers: { accept: 'application/json' },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!live || !data || !Array.isArray(data.messages) || !data.messages.length) return;
+        setThreads((cur) => {
+          if (cur[key] && cur[key].length) return cur;
+          return {
+            ...cur,
+            [key]: data.messages.map((m: { who?: string; text?: string }) => ({
+              who: m.who === 'ai' ? 'ai' as const : 'you' as const,
+              text: String(m.text || ''),
+            })),
+          };
+        });
+      })
+      // A thread that will not load is a pane with no history in it, which
+      // is the state it opens in anyway. Nothing to say to the reader.
+      .catch(() => {});
+    return () => { live = false; };
+  }, [slug, row.key, target, loaded]);
   /**
    * Send one question and write the answer in under it.
    *
@@ -947,13 +1008,6 @@ function NeedsDeck({
     setAsking((cur) => ({ ...cur, [key]: true }));
     setDraft('');
 
-    // Only the SETTLED turns are sent back as history — never the pending
-    // placeholder, which is this component's own copy and not something
-    // anybody said.
-    const history = prior
-      .filter((m) => !m.pending && !m.failed)
-      .map((m) => ({ who: m.who, text: m.text }));
-
     // Writes the trailing bubble in place. Every update goes through here
     // so there is one rule about which bubble is being written: the LAST
     // one on this row's thread, and only while it is still pending.
@@ -975,9 +1029,11 @@ function NeedsDeck({
         headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
         credentials: 'same-origin',
         body: JSON.stringify({
+          // No transcript rides along. The server keeps this viewer's own
+          // thread and reads it back itself, so the history cannot be
+          // rewritten by whoever is asking.
           target: sending.askAbout,
           question: q,
-          history,
           model: model || undefined,
         }),
       });

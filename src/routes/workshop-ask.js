@@ -35,6 +35,29 @@ function workshopAskRoutes(config) {
   const pool = getPool(config);
   const APP_COLS = `${appAccess.ACCESS_COLUMNS}, name, repo_url`;
 
+  // This viewer's own thread on one card, so the pane can bring a
+  // conversation back when the deck returns to it. Not rate limited beyond
+  // the app-wide protections: it is one indexed read of at most
+  // THREAD_READ short rows, costs nothing to the LLM budget, and the deck
+  // calls it every time you move between cards.
+  //
+  // It can only ever return the CALLER'S rows — the user id comes from the
+  // session and the query carries it — so there is no view of anybody
+  // else's questions to authorise separately.
+  router.get('/api/apps/:slug/workshop/ask/thread', async (req, res) => {
+    try {
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', APP_COLS);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const target = workshopAsk.parseTarget({ kind: req.query.kind, ref: req.query.ref });
+      if (!target) return res.status(400).json({ error: 'Which item is the thread about?' });
+      const messages = await workshopAsk.loadThread(pool, app, req.user.id, target);
+      res.json({ messages });
+    } catch (err) {
+      log.error('workshop-ask', 'thread read failed', { message: err.message });
+      res.status(500).json({ error: 'Could not load that conversation' });
+    }
+  });
+
   router.post('/api/apps/:slug/workshop/ask', workshopAskLimiter, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', APP_COLS);
@@ -86,7 +109,6 @@ function workshopAskRoutes(config) {
           userId: req.user.id,
           target,
           question: body.question,
-          history: Array.isArray(body.history) ? body.history : [],
           model: picked,
           signal: abort.signal,
           onToken: (chunk) => {

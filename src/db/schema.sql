@@ -7405,3 +7405,44 @@ CREATE TABLE IF NOT EXISTS preview_operations (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 COMMENT ON TABLE preview_operations IS 'staging:private';
+
+-- The Needs-you deck's ask box (services/workshop-ask.js): one person's
+-- own questions about one card, and the answers they got.
+--
+-- PRIVATE, and not a close call. A voter's questions about a change they
+-- have not voted on yet say what they are unsure about and which way they
+-- are leaning, on a platform where the vote itself is the product. That is
+-- personal information beyond a public username, so the table is
+-- `staging:private` and a staging clone arrives with the schema and none
+-- of the rows.
+--
+-- It is a thread PER USER per card, never a shared one. Nothing reads
+-- these rows but the person who wrote them: every query carries both
+-- app_id and user_id, and there is no route that lists another member's.
+--
+-- `target_kind` / `target_ref` are the deck's own address for a card
+-- ('proposal' + chat_sessions.id, 'gov' + issues.id, 'issue' + a GitHub
+-- number). Deliberately NOT a foreign key: the three kinds live in three
+-- places and one of them is not a table at all. The cost is that a
+-- deleted session leaves its rows behind; they are small, invisible to
+-- everyone but their author, and dropped with the app.
+CREATE TABLE IF NOT EXISTS workshop_ask_messages (
+  id          SERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_kind VARCHAR(16) NOT NULL,
+  target_ref  INTEGER NOT NULL,
+  -- 'you' or 'ai', matching the pane's own vocabulary rather than the
+  -- Anthropic role names: what is stored is a transcript of a UI, and the
+  -- mapping to user/assistant belongs at the call site.
+  role        VARCHAR(16) NOT NULL,
+  body        TEXT NOT NULL,
+  model       VARCHAR(64),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE workshop_ask_messages IS 'staging:private';
+-- The only access path there is: one thread, in order. id rather than
+-- created_at as the tiebreak, because two turns of one exchange land in
+-- the same transaction and can share a timestamp.
+CREATE INDEX IF NOT EXISTS idx_workshop_ask_thread
+  ON workshop_ask_messages (app_id, user_id, target_kind, target_ref, id);

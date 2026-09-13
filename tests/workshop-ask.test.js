@@ -348,8 +348,19 @@ test('ask sends the resolved snapshot, not anything the caller supplied', async 
   ));
 });
 
-test('ask carries prior turns as real roles, with the snapshot still last', async () => {
-  dispatch([[/FROM chat_sessions/i, [PROPOSAL_ROW]]]);
+// History comes from the STORED thread, never from the request. A caller
+// that could supply it could put words in their own mouth, or the model's,
+// and have them replayed as established context on the next turn.
+test('ask carries the STORED thread as real turns, with the snapshot still last', async () => {
+  dispatch([
+    [/FROM chat_sessions/i, [PROPOSAL_ROW]],
+    // loadThread reads newest-first and flips, so the stub answers in that
+    // order too.
+    [/FROM workshop_ask_messages/i, [
+      { role: 'ai', body: 'It adds the reply box.' },
+      { role: 'you', body: 'What does this change?' },
+    ]],
+  ]);
   await withBilling({ billing: { apiKey: null, byok: false } }, () => withStubClient(
     answerResp('Yes.'),
     async (calls) => {
@@ -360,14 +371,19 @@ test('ask carries prior turns as real roles, with the snapshot still last', asyn
         userId: 42,
         target: { kind: 'proposal', ref: 55 },
         question: 'And does it affect the board?',
-        history: [
-          { who: 'you', text: 'What does this change?' },
-          { who: 'ai', text: 'It adds the reply box.' },
-        ],
+        // Deliberately passed and deliberately ignored: `ask` takes no
+        // history parameter any more, and a caller that supplies one must
+        // not be able to reach the prompt with it.
+        history: [{ who: 'you', text: 'INJECTED BY THE CLIENT' }],
       });
       const sent = calls[0];
       assert.deepEqual(sent.messages.map((m) => m.role), ['user', 'assistant', 'user']);
+      assert.equal(sent.messages[0].content, 'What does this change?');
       assert.equal(sent.messages[1].content, 'It adds the reply box.');
+      assert.ok(
+        !JSON.stringify(sent.messages).includes('INJECTED BY THE CLIENT'),
+        'a client-supplied transcript must never reach the prompt'
+      );
       // Still the snapshot on the last turn — a follow-up must not be
       // answered with less context than the first question got.
       assert.match(sent.messages[2].content, /Render the reply input/);
@@ -503,6 +519,94 @@ test('ask rejects an empty question before resolving anything', async () => {
     (err) => err.code === 'empty_question'
   );
   assert.equal(queries.length, 0, 'an empty question must not hit the database');
+});
+
+// ── the stored thread ─────────────────────────────────────────────────
+
+test('loadThread scopes to the app AND the viewer, and returns oldest first', async () => {
+  dispatch([[/FROM workshop_ask_messages/i, [
+    { role: 'ai', body: 'newest' },
+    { role: 'you', body: 'oldest' },
+  ]]]);
+  queries.length = 0;
+  const out = await workshopAsk.loadThread(pool, APP, 42, { kind: 'proposal', ref: 55 });
+  const q = queries.find((x) => /workshop_ask_messages/.test(x.sql));
+  assert.match(q.sql, /app_id = \$1 AND user_id = \$2/, 'both scopes, always');
+  assert.deepEqual(q.params, [7, 42, 'proposal', 55, workshopAsk.THREAD_READ]);
+  // Newest-first in SQL so the LIMIT keeps the TAIL; flipped for the caller.
+  assert.match(q.sql, /ORDER BY id DESC/);
+  assert.deepEqual(out, [
+    { who: 'you', text: 'oldest' },
+    { who: 'ai', text: 'newest' },
+  ]);
+});
+
+test('loadThread maps an unrecognised role to the human side', async () => {
+  dispatch([[/FROM workshop_ask_messages/i, [{ role: 'weird', body: 'x' }]]]);
+  const out = await workshopAsk.loadThread(pool, APP, 42, { kind: 'issue', ref: 7 });
+  assert.equal(out[0].who, 'you');
+});
+
+test('recordExchange writes both turns and trims to the tail', async () => {
+  dispatch([]);
+  queries.length = 0;
+  await workshopAsk.recordExchange(
+    pool, APP, 42, { kind: 'proposal', ref: 55 }, 'Why?', 'Because.', 'claude-haiku-4-5'
+  );
+  const insert = queries.find((x) => /INSERT INTO workshop_ask_messages/.test(x.sql));
+  assert.ok(insert, 'the exchange must be written');
+  assert.deepEqual(insert.params, [7, 42, 'proposal', 55, 'Why?', 'Because.', 'claude-haiku-4-5']);
+  // One statement for both turns: a half-written exchange is a thread that
+  // reads as the model answering nothing.
+  assert.match(insert.sql, /'you'/);
+  assert.match(insert.sql, /'ai'/);
+  const trim = queries.find((x) => /DELETE FROM workshop_ask_messages/.test(x.sql));
+  assert.ok(trim, 'the thread must be bounded');
+  assert.equal(trim.params[4], workshopAsk.THREAD_KEEP);
+});
+
+// The answer has already been given — and on the streaming path already
+// delivered — so losing the transcript must not turn into a failed request.
+test('recordExchange never throws when the write fails', async () => {
+  queryHandler = async () => { throw new Error('pool is closed'); };
+  await workshopAsk.recordExchange(
+    pool, APP, 42, { kind: 'proposal', ref: 55 }, 'Why?', 'Because.', null
+  );
+  dispatch([]);
+});
+
+test('ask persists the exchange after answering', async () => {
+  dispatch([[/FROM chat_sessions/i, [PROPOSAL_ROW]]]);
+  queries.length = 0;
+  await withBilling({ billing: { apiKey: null, byok: false } }, () => withStubClient(
+    answerResp('It adds the reply box.'),
+    () => workshopAsk.ask({
+      pool, config: CONFIG, app: APP, userId: 42,
+      target: { kind: 'proposal', ref: 55 }, question: 'What does this change?',
+    })
+  ));
+  const insert = queries.find((x) => /INSERT INTO workshop_ask_messages/.test(x.sql));
+  assert.ok(insert);
+  assert.equal(insert.params[4], 'What does this change?');
+  assert.equal(insert.params[5], 'It adds the reply box.');
+});
+
+test('a refused ask writes nothing to the thread', async () => {
+  dispatch([[/FROM chat_sessions/i, [PROPOSAL_ROW]]]);
+  queries.length = 0;
+  await withBilling({ billing: { error: 'Daily limit reached.' } }, () => withStubClient(
+    answerResp('should not happen'),
+    async () => {
+      await assert.rejects(() => workshopAsk.ask({
+        pool, config: CONFIG, app: APP, userId: 42,
+        target: { kind: 'proposal', ref: 55 }, question: 'Why?',
+      }));
+    }
+  ));
+  assert.equal(
+    queries.filter((x) => /INSERT INTO workshop_ask_messages/.test(x.sql)).length, 0,
+    'a question that was never answered is not a conversation'
+  );
 });
 
 // ── the generator's own contract ──────────────────────────────────────

@@ -64,6 +64,14 @@ const COMMENTS_KEEP = 12;
 
 const KINDS = new Set(['proposal', 'gov', 'issue']);
 
+// The stored thread (workshop_ask_messages). READ is what comes back to the
+// pane and rides along as history; KEEP is what stays on disk. Both are
+// turns, not exchanges, so 30 is fifteen questions — well past a scratchpad
+// for one decision, and the trim keeps a thread from growing without end on
+// a card somebody keeps coming back to.
+const THREAD_READ = 30;
+const THREAD_KEEP = 60;
+
 const clip = (v, n) => {
   const s = String(v == null ? '' : v).trim();
   return s ? s.slice(0, n) : null;
@@ -262,6 +270,65 @@ function buildContext(app, subject, evidence) {
 }
 
 /**
+ * This viewer's own thread on this card, oldest turn first.
+ *
+ * Both app_id and user_id are in the predicate, always. There is no route
+ * that reads somebody else's thread and no shape of request that could ask
+ * for one — the user id comes from the session, never from the body.
+ */
+async function loadThread(pool, app, userId, target) {
+  const { rows } = await pool.query(
+    `SELECT role, body FROM workshop_ask_messages
+      WHERE app_id = $1 AND user_id = $2 AND target_kind = $3 AND target_ref = $4
+      ORDER BY id DESC
+      LIMIT $5`,
+    [app.id, userId, target.kind, target.ref, THREAD_READ]
+  );
+  // Newest-first in SQL so the LIMIT keeps the TAIL, then flipped: an
+  // ORDER BY id ASC with a LIMIT would keep the oldest turns and drop the
+  // conversation the reader is actually in.
+  return rows.reverse().map((r) => ({ who: r.role === 'ai' ? 'ai' : 'you', text: r.body }));
+}
+
+/**
+ * Record one exchange, and trim the thread behind it.
+ *
+ * NEVER THROWS. A stored transcript is a convenience; the answer has
+ * already been given and, on the streaming path, already delivered. Losing
+ * the write is a thread that does not come back, which is the same place
+ * the feature was one commit ago — failing the request over it would turn
+ * a cosmetic loss into a visible one. Same tolerance limits.recordSpend
+ * takes, for the same reason.
+ */
+async function recordExchange(pool, app, userId, target, question, answer, model) {
+  try {
+    await pool.query(
+      `INSERT INTO workshop_ask_messages
+         (app_id, user_id, target_kind, target_ref, role, body, model)
+       VALUES ($1, $2, $3, $4, 'you', $5, NULL),
+              ($1, $2, $3, $4, 'ai',  $6, $7)`,
+      [app.id, userId, target.kind, target.ref, question, answer, model || null]
+    );
+    // Trim to the tail. Done per write rather than by a sweeper because the
+    // bound is per thread and this is the only thing that ever grows one.
+    await pool.query(
+      `DELETE FROM workshop_ask_messages
+        WHERE app_id = $1 AND user_id = $2 AND target_kind = $3 AND target_ref = $4
+          AND id NOT IN (
+            SELECT id FROM workshop_ask_messages
+             WHERE app_id = $1 AND user_id = $2 AND target_kind = $3 AND target_ref = $4
+             ORDER BY id DESC LIMIT $5
+          )`,
+      [app.id, userId, target.kind, target.ref, THREAD_KEEP]
+    );
+  } catch (err) {
+    log.warn('workshop-ask', 'thread write failed', {
+      app: app.slug, kind: target.kind, ref: target.ref, message: err.message,
+    });
+  }
+}
+
+/**
  * Answer one question about one card.
  *
  * Throws with a `code` the route maps to a status:
@@ -269,7 +336,7 @@ function buildContext(app, subject, evidence) {
  *   budget_exceeded — the asker is out of allowance and has no key on file
  *   llm_unavailable — no model is configured on this server
  */
-async function ask({ pool, config, app, userId, target, question, history, model, onToken, signal }) {
+async function ask({ pool, config, app, userId, target, question, model, onToken, signal }) {
   const q = clip(question, QUESTION_MAX);
   if (!q) {
     const err = new Error('Ask a question first');
@@ -294,6 +361,14 @@ async function ask({ pool, config, app, userId, target, question, history, model
   // AFTER the budget check, never before: a user who cannot be billed for
   // the answer should not cost the platform two GitHub round trips first.
   const evidence = await gatherEvidence(app, subject);
+
+  // THE THREAD IS THE SERVER'S, not the client's. The pane used to send its
+  // own transcript back as history, which meant a caller could put any
+  // words in their own mouth — or the model's — and have them replayed as
+  // established context on the next turn. Reading it from the row the last
+  // exchange wrote removes that entirely, and it is also what makes the
+  // conversation survive a reload: one source, not two that can disagree.
+  const history = await loadThread(pool, app, userId, target);
 
   let result;
   try {
@@ -325,11 +400,14 @@ async function ask({ pool, config, app, userId, target, question, history, model
     );
   }
 
+  await recordExchange(pool, app, userId, target, q, result.text, result.model);
+
   return { text: result.text, model: result.model };
 }
 
 module.exports = {
   ask, parseTarget, resolveSubject, buildContext, gatherEvidence,
+  loadThread, recordExchange,
   TITLE_MAX, SUMMARY_MAX, BODY_MAX, QUESTION_MAX,
-  DIFF_CHAR_BUDGET, COMMENTS_KEEP,
+  DIFF_CHAR_BUDGET, COMMENTS_KEEP, THREAD_READ, THREAD_KEEP,
 };
