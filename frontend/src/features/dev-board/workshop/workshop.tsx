@@ -800,23 +800,50 @@ function RowPager({
  * that should be read. A proposal without one says so rather than leaving a
  * gap, because "no summary was written" is a fact a voter should have.
  *
- * ── The chat is NOT wired up ─────────────────────────────────────────
+ * ── What the chat answers, and what it is not ────────────────────────
  *
- * There is no endpoint that answers questions about a proposal: the app's
- * LLM proxy exists, `dev-chat` is the agent's session transcript, and
- * neither is this. The composer is real and its answers are a placeholder
- * that says so on screen. Building it means a route with the change's diff,
- * its discussion and the app's conventions in context, its own spend
- * accounting and rate limit — a piece of work in its own right, and one that
- * should not be started until this layout is the agreed one.
+ * `POST /api/apps/:slug/workshop/ask` — one question about the card in
+ * front of you, answered from what the SERVER knows about that card. It is
+ * not the app's LLM proxy (that is for apps, billed to their own budgets)
+ * and it is not `dev-chat` (that is the agent's session transcript).
+ *
+ * The request carries an ADDRESS and a question: `row.askAbout` is a kind
+ * and a reference, and the server looks the item up from that pair. Nothing
+ * this component says about the card reaches the model — see
+ * services/workshop-ask.js for why that boundary is where it is.
+ *
+ * Each press is an LLM call billed to the asker, so the route is rate
+ * limited per user and a failure is SHOWN rather than swallowed: a voter
+ * who thinks they have an answer and does not is the one bad outcome here.
+ *
+ * The thread lives in this component's state and goes when you leave the
+ * pane. That is deliberate for now — a voter's questions are a scratchpad
+ * for their own decision, and making them durable is a question about
+ * whose record they are, not a missing feature.
  */
+/** One turn in the ask box. `pending` is the answer still being written. */
+type AskMsg = { who: 'you' | 'ai'; text: string; pending?: boolean; failed?: boolean };
+
+/**
+ * The classes for one turn. Complete literals, never assembled from parts:
+ * Tailwind's extractor is a regex over source text, and `dev-ws-ask-*` is
+ * hand-written CSS whose rules an editor greps for the same way.
+ */
+function askMsgClass(m: AskMsg): string {
+  if (m.who === 'you') return 'dev-ws-ask-msg dev-ws-ask-you';
+  if (m.pending) return 'dev-ws-ask-msg dev-ws-ask-ai dev-ws-ask-pending';
+  if (m.failed) return 'dev-ws-ask-msg dev-ws-ask-ai dev-ws-ask-failed';
+  return 'dev-ws-ask-msg dev-ws-ask-ai';
+}
+
 function NeedsDeck({
-  rows, owed, total, models,
+  rows, owed, total, models, slug,
 }: {
   rows: DevWorkshopView['queue'];
   owed: number;
   total: number;
   models: DevWorkshopView['models'];
+  slug: string;
 }): ReactNode {
   // THE DECK KEEPS ITS ORDER. Skip used to send a card to the back, which was
   // the only way to come back to something without losing your place; with
@@ -826,8 +853,13 @@ function NeedsDeck({
   const [at, setAt] = useState(0);
   // Keyed by row, so moving to the next proposal does not carry the last
   // one's conversation with it.
-  const [threads, setThreads] = useState<Record<string, { who: 'you' | 'ai'; text: string }[]>>({});
+  const [threads, setThreads] = useState<Record<string, AskMsg[]>>({});
   const [draft, setDraft] = useState('');
+  // Which row has a question in flight. Keyed like the threads rather than a
+  // bare boolean: the arrows still work while an answer is coming, and an
+  // answer that lands after you have walked to the next card belongs to the
+  // card it was asked about.
+  const [asking, setAsking] = useState<Record<string, boolean>>({});
   // Which model answers. The dev session's own list and its own default —
   // see `_workshopModels`. It appears when the box is in use, because a
   // picker over an empty composer is a setting nobody has a use for yet.
@@ -885,21 +917,88 @@ function NeedsDeck({
     ? { yes: 'Vote yes', no: 'Vote no' }
     : { yes: "Let's take it", no: null };
   const done = answered[row.key];
-  const ask = () => {
+  const target = row.askAbout || null;
+  const inFlight = !!asking[row.key];
+  /**
+   * Send one question and write the answer in under it.
+   *
+   * THE ROW IS CAPTURED, not read back at resolve time. The arrows stay live
+   * while an answer is on its way, so by the time it lands the deck may be
+   * showing a different card — and an answer about proposal A appended to
+   * proposal B's thread is worse than no answer at all. `key` and `sending`
+   * are both closed over for that reason.
+   *
+   * The pending row is a real message rather than a spinner beside the box:
+   * it holds the place the answer will occupy, so the pane does not jump
+   * when it arrives, and it reads as "this is coming" rather than "the
+   * button did nothing".
+   */
+  const ask = async () => {
     const q = draft.trim();
-    if (!q) return;
+    if (!q || !target || inFlight) return;
+    const key = row.key;
+    const sending = row;
+    const prior = threads[key] || [];
     setThreads((cur) => ({
       ...cur,
-      [row.key]: [
-        ...(cur[row.key] || []),
-        { who: 'you', text: q },
-        {
-          who: 'ai',
-          text: 'Not wired up yet. This pane will answer from the change itself: its diff, its discussion and this app’s conventions.',
-        },
-      ],
+      [key]: [...prior, { who: 'you', text: q }, { who: 'ai', text: 'Reading the change…', pending: true }],
     }));
+    setAsking((cur) => ({ ...cur, [key]: true }));
     setDraft('');
+
+    // Only the SETTLED turns are sent back as history — never the pending
+    // placeholder, which is this component's own copy and not something
+    // anybody said.
+    const history = prior
+      .filter((m) => !m.pending && !m.failed)
+      .map((m) => ({ who: m.who, text: m.text }));
+
+    let text: string;
+    let failed = false;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/workshop/ask`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          target: sending.askAbout,
+          question: q,
+          history,
+          model: model || undefined,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && typeof data.text === 'string' && data.text.trim()) {
+        text = data.text.trim();
+      } else {
+        failed = true;
+        // The server's own sentence wherever it wrote one: it is the only
+        // thing that can say WHICH of "you are out of allowance", "too many
+        // at once" and "no model is configured" happened, and a generic
+        // "something went wrong" would hide the two the reader can act on.
+        text = (typeof data.error === 'string' && data.error.trim())
+          ? data.error.trim()
+          : 'That did not go through. Try asking again.';
+      }
+    } catch {
+      failed = true;
+      text = 'That did not go through. Check your connection and try again.';
+    }
+
+    setThreads((cur) => {
+      const t = cur[key];
+      if (!t || !t.length) return cur;
+      const last = t.length - 1;
+      if (!t[last].pending) return cur;
+      const next = t.slice();
+      next[last] = { who: 'ai', text, failed };
+      return { ...cur, [key]: next };
+    });
+    setAsking((cur) => {
+      const next = { ...cur };
+      delete next[key];
+      return next;
+    });
   };
 
   return (
@@ -1001,7 +1100,15 @@ function NeedsDeck({
         {engaged ? (
           <div className="dev-ws-ask-log">
             {thread.map((m, n) => (
-              <p key={n} className={m.who === 'you' ? 'dev-ws-ask-msg dev-ws-ask-you' : 'dev-ws-ask-msg dev-ws-ask-ai'}>
+              <p
+                key={n}
+                className={askMsgClass(m)}
+                /* The answer is the one thing here nobody in this app wrote,
+                   so it is announced: a reader on a screen reader otherwise
+                   has no way to know the reply has arrived. Polite, not
+                   assertive — it must not cut across the card's own text. */
+                aria-live={m.who === 'ai' ? 'polite' : undefined}
+              >
                 {m.text}
               </p>
             ))}
@@ -1036,7 +1143,15 @@ function NeedsDeck({
               className="dev-ws-ask-input"
               type="text"
               value={draft}
-              placeholder="Ask a question…"
+              /* Three states, three placeholders. A box that says "Ask a
+                 question…" while it cannot answer one is the version of
+                 this that wastes somebody's time. */
+              placeholder={
+                !target ? 'No details to ask about on this one'
+                  : inFlight ? 'Reading the change…'
+                    : 'Ask a question…'
+              }
+              disabled={!target || inFlight}
               onFocus={() => setFocused(true)}
               onBlur={() => { if (!draft.trim()) setFocused(false); }}
               onChange={(e) => setDraft(e.target.value)}
@@ -1045,7 +1160,7 @@ function NeedsDeck({
               type="submit"
               className="dc-send-btn dc-circle-send dev-ws-ask-send"
               aria-label="Ask"
-              disabled={!draft.trim()}
+              disabled={!draft.trim() || !target || inFlight}
             ><ArrowUpIcon className="dev-ws-ask-send-icon" aria-hidden="true" /></button>
           </div>
           {/* ONE LINE until it is tapped. The MODEL is what makes the card two
@@ -1445,7 +1560,7 @@ export function DevWorkshop(): ReactNode {
       ) : null}
 
       {tab === 'needs' ? (
-        <NeedsDeck rows={v.queue} owed={v.votes.count} total={v.votes.total} models={v.models} />
+        <NeedsDeck rows={v.queue} owed={v.votes.count} total={v.votes.total} models={v.models} slug={slug} />
       ) : null}
 
       {tab === 'all' && themes.length ? (
