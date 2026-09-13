@@ -1899,10 +1899,13 @@ test('workshop replaced feed as a mode, and the retired names resolve onto it', 
   assert.match(APP_VIEW_SRC, /_rerenderWorkshop\(\)/);
 });
 
-test('the strip is App | Workshop | Board, and the segments are anchors at their routes', () => {
-  assert.match(VIEW_TABS, /data-context-row="app"[\s\S]*data-context-row="workshop"[\s\S]*data-context-row="board"/);
+test('the strip is App | Workshop, and the Workshop is an anchor at its route', () => {
+  assert.match(VIEW_TABS, /data-context-row="app"[\s\S]*data-context-row="workshop"/);
   assert.match(VIEW_TABS, /href=\{slug \? `#app\/\$\{slug\}\/workshop` : '#'\}/);
   assert.ok(!VIEW_TABS.includes('data-context-row="activity"'), 'the Activity segment retired');
+  assert.ok(!VIEW_TABS.includes('data-context-row="board"'),
+    'and the Board segment after it — the Workshop and the kanban are one '
+    + 'screen in two layouts, so the layout is not a destination in the strip');
   assert.match(VIEW_TABS, />Workshop</);
 });
 
@@ -1969,8 +1972,25 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
     assert.ok(!/#dev-(kanban|body)[^,]*gc-explore-chat-btn/.test(t.expectSelector || ''),
       `${t.name}: nor for Explore on a card face`);
   }
-  const strip = byName(/three views in order: App, Workshop, Board/);
-  assert.ok(strip && /workshop.*board/.test(strip.expectSelector));
+  const strip = byName(/two views in order: App, then Workshop/);
+  assert.ok(strip && /workshop/.test(strip.expectSelector)
+    && !/board/.test(strip.expectSelector),
+    'the order check lost its Board segment along with the segment');
+  // The board route keeps a check of its own, because removing a segment can
+  // leave a segmented control with NOTHING selected — which reads as broken
+  // rather than as "you are somewhere else". It marks Workshop there instead.
+  //
+  // A PLAIN CHAIN, for the reason this file gives above: `:has()` resolved
+  // perfectly in this repo's own Chromium and failed 6 of 6 runs on the gate.
+  // The ABSENCE of the Board segment is pinned in the unit tests (this file,
+  // dev-board-island, improve-session-segment) rather than in a selector that
+  // blocks merge.
+  const onBoard = byName(/marks Workshop on the board route/);
+  assert.ok(onBoard && /\[data-context-row="workshop"\]\[aria-current="page"\]/
+    .test(onBoard.expectSelector), 'the strip is never blank on the board route');
+  assert.match(onBoard.path, /#app\/[\w-]+\/board$/, 'and the URL names that route');
+  assert.ok(!onBoard.expectSelector.includes(':has('),
+    'no :has() on a gate that blocks merge');
   for (const t of dapp.tests) {
     assert.ok(!/#dev-feed\b/.test(t.expectSelector || ''), `${t.name}: no check selects the retired #dev-feed`);
   }

@@ -1802,9 +1802,9 @@
       "expectSelector": "#platform-header #improve-btn:not(.hidden)"
     },
     {
-      "name": "The Improve panel offers the three views in order: App, Workshop, Board",
+      "name": "The Improve panel offers its two views in order: App, then Workshop",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-views [data-context-row=\"app\"] ~ [data-context-row=\"workshop\"] ~ [data-context-row=\"board\"]"
+      "expectSelector": "#improve-views [data-context-row=\"app\"] ~ [data-context-row=\"workshop\"]"
     },
     {
       "name": "The app-context sheet carries the + New change action (Streamlined Concept)",
@@ -1979,9 +1979,9 @@
       "expectSelector": "#improve-views [data-context-row=\"workshop\"][aria-current=\"page\"]"
     },
     {
-      "name": "The view strip marks Board as the one you are on",
+      "name": "The view strip marks Workshop on the board route too, so it is never blank",
       "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectSelector": "#improve-views [data-context-row=\"board\"][aria-current=\"page\"]"
+      "expectSelector": "#improve-views [data-context-row=\"workshop\"][aria-current=\"page\"]"
     },
     {
       "name": "The chip's menu is the app picker only — no view strip in it",
