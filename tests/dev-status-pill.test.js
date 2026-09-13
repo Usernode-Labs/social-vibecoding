@@ -138,7 +138,7 @@ test('tier 1 — merging stays in the bar; resolving became a tag', () => {
   assert.ok(['needs_vote', 'tally'].includes(resolving.key), 'the bar is the vote');
   const tag = AppView.statusTagSpecs(row, {}).find((t) => t.key === 'tag-resolving');
   assert.ok(tag, 'and the fact is a tag');
-  assert.equal(tag.label, 'Resolving conflicts…');
+  assert.equal(tag.label, 'Resolving conflicts automatically…');
   assert.ok(tag.spinner, 'in flight, so it spins');
 });
 
@@ -172,8 +172,8 @@ test('a hard block no longer takes the bar: the vote shows, the block is a tag',
 test('every hard blocking state is a red tag, in severity order', () => {
   const AppView = makeAppView();
   const cases = [
-    [{ merge_conflict_state: 'failed' }, 'Conflict resolution failed'],
-    [{ merge_conflict_state: 'conflict' }, 'Merge conflict'],
+    [{ merge_conflict_state: 'failed' }, 'Needs manual resolution'],
+    [{ merge_conflict_state: 'conflict' }, 'GitHub refused the merge'],
     [{ check_state: 'error' }, 'Preview won’t boot'],
     [{ check_state: 'failing', test_results: [] }, 'Checks failing'],
   ];
@@ -192,7 +192,7 @@ test('every hard blocking state is a red tag, in severity order', () => {
   // Joined rather than deep-compared: arrays built inside the vm realm carry
   // that realm's prototypes, which trips deepStrictEqual on identity alone.
   const labels = AppView.statusTagSpecs(both, {}).map((t) => t.label).join(' | ');
-  assert.equal(labels, 'Conflict resolution failed | Checks failing',
+  assert.equal(labels, 'Needs manual resolution | Checks failing',
     'every reason, worst first');
 });
 
@@ -354,17 +354,21 @@ test('multiple reasons: every one is its own tag, and none of them is the bar', 
     behind_main: 2, console_check_state: 'errors', console_errors: [{ message: 'x' }],
   });
   // The bar used to name the worst and count the rest in a tooltip — "and 2
-  // more reasons, open for details" — because it had one slot. Three reasons
-  // are three tags.
+  // more reasons, open for details" — because it had one slot. Every reason
+  // is its own tag.
   const tags = AppView.statusTagSpecs(pr, {});
   assert.equal(tags.map((t) => t.label).join(' | '),
-    'Checks failing · 1 | Behind main · 2 | Console errors · 1');
+    'Checks failing · 1 | Behind main · 2');
   assert.match(tags[0].cls, /red/);
   assert.match(tags[1].cls, /amber/);
-  assert.match(tags[2].cls, /amber/);
-  assert.equal(AppView.blockReasons(pr).length, 3, 'the reason list itself is unchanged');
-  // The pill still carries them for the detail view's enumeration.
-  assert.equal(AppView.statusPillState(pr).reasons.length, 3);
+  // #2038: the console errors on this row are NOT a third tag. They already
+  // block through check_state when they land on a declared check — which is
+  // the red tag above — and a second amber tag over the capture routes said
+  // the same kind of thing in a different voice. The data stays, and the
+  // detail view still enumerates it.
+  assert.equal(tags.length, 2, 'no console tag');
+  assert.equal(AppView.blockReasons(pr).length, 2, 'and no console reason');
+  assert.equal(AppView.statusPillState(pr).reasons.length, 2);
 });
 
 // ── Markup contract ─────────────────────────────────────────────────────
@@ -477,11 +481,11 @@ test('blockReasons: severity order, labels, and the detail sentences', () => {
     console_check_state: 'errors',
     console_errors: [{ message: 'x' }],
   });
-  assert.equal(r.map((x) => x.key).join(','), 'merge_conflict,checks_failing,behind,console_errors');
+  assert.equal(r.map((x) => x.key).join(','), 'merge_conflict,checks_failing,behind');
   assert.match(r[1].detail, /Feed renders/, 'the detail names WHICH test failed');
+  assert.ok(r[2].soft, 'behind main is soft — it resolves itself');
   assert.match(r[2].detail, /4 commits behind main/);
-  assert.ok(r[2].soft && r[3].soft, 'behind main and console errors do not block');
-  assert.ok(!r[0].soft && !r[1].soft, 'a conflict and a failing check do');
+  assert.ok(!r[0].soft && !r[1].soft, 'a refused merge and a failing check do block');
 });
 
 // ── The invariant the whole change rests on ─────────────────────────────
@@ -502,8 +506,8 @@ test('the bar can only ever be a vote state, whatever is wrong with the row', ()
   assert.ok(VOTE_KEYS.includes(s.key), `the bar is a vote state, got ${s.key}`);
   // And the five facts are five tags, not one label and a tooltip count.
   const labels = AppView.statusTagSpecs(worst, {}).map((t) => t.label).join(' | ');
-  for (const expected of ['Resolving conflicts…', 'Conflict resolution failed',
-    'Checks failing · 1', 'Behind main · 4', 'Console errors · 1']) {
+  for (const expected of ['Resolving conflicts automatically…', 'Needs manual resolution',
+    'Checks failing · 1', 'Behind main · 4']) {
     assert.ok(labels.includes(expected), `${expected} is drawn — got: ${labels}`);
   }
 });
@@ -582,7 +586,14 @@ function stagingRows() {
   ctx.globalThis = ctx;
   vm.createContext(ctx);
   vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
-  return ctx.__rows('me');
+  // What /promoted actually serves: every row passes through readIntegration
+  // on the way out (routes/votes.js), which is what turns the flat
+  // integration_* columns into the nested block the card reads. A fixture
+  // asserted WITHOUT that step is not the row the browser sees — #2038's
+  // `integrating` tag renders only from the nested shape, so leaving this out
+  // would have let a declared check pass here and fail on staging.
+  const readIntegration = require('../src/services/integration').readIntegration;
+  return ctx.__rows('me').map((r) => ({ ...r, integration: readIntegration(r) }));
 }
 
 test('the declared checks match what the real staging fixtures render', () => {
@@ -607,13 +618,41 @@ test('the declared checks match what the real staging fixtures render', () => {
   // 9000050 — the multi-reason card the board checks read.
   const multi = row(9000050);
   assert.equal(AppView.statusTagSpecs(multi, {}).map((t) => t.data['data-status-tag']).join(),
-    'checks_failing,console_errors');
+    'checks_failing');
+
+  // 9000082 — approved and being brought up to date. The tag the SERVER
+  // names: it comes from integration.blockReasons, not from any column the
+  // browser can read, which is the whole point of #2038's served reason.
+  // Note what is NOT here: the row is six commits behind, and no `behind`
+  // tag renders. "Behind main" describes a proposal sitting still; this one
+  // is being worked on, and saying both would be two tags for one fact.
+  const integrating = row(9000082);
+  assert.equal(AppView.statusTagSpecs(integrating, {}).map((t) => t.data['data-status-tag']).join(),
+    'integrating');
+  assert.equal(AppView.statusTagSpecs(integrating, {})[0].label, 'Bringing up to date…');
+
+  // 9000083 — the platform asked GitHub to merge and GitHub said no. Named
+  // for what happened rather than as a prediction about conflicting files,
+  // which is a different tag (`mergeability_conflict`, on 9000034 above).
+  const refused = row(9000083);
+  assert.equal(AppView.statusTagSpecs(refused, {}).map((t) => t.data['data-status-tag']).join(),
+    'merge_conflict');
+  assert.equal(AppView.statusTagSpecs(refused, {})[0].label, 'GitHub refused the merge');
+
+  // 9000003 — automatic resolution in flight. Toned `running`, because
+  // nobody has to act; the wording says so rather than reporting our state.
+  const resolving = row(9000003);
+  assert.equal(AppView.statusTagSpecs(resolving, {}).map((t) => t.data['data-status-tag']).join(),
+    'resolving');
+  assert.equal(AppView.statusTagSpecs(resolving, {})[0].label, 'Resolving conflicts automatically…');
 
   // ...and every declared selector naming one of these rows asks for a tag
   // those rows actually produce.
   const dapp = JSON.parse(require('node:fs').readFileSync(path.join(__dirname, '..', 'dapp.json'), 'utf8'));
   const produced = new Set([...AppView.statusTagSpecs(clean, {}), ...AppView.statusTagSpecs(conflict, {}),
-    ...AppView.statusTagSpecs(multi, {})].map((t) => t.data['data-status-tag']));
+    ...AppView.statusTagSpecs(multi, {}), ...AppView.statusTagSpecs(integrating, {}),
+    ...AppView.statusTagSpecs(refused, {}), ...AppView.statusTagSpecs(resolving, {})]
+    .map((t) => t.data['data-status-tag']));
   for (const t of dapp.tests) {
     const m = /\[data-status-tag="([a-z_-]+)"\]/.exec(t.expectSelector || '');
     if (m) assert.ok(produced.has(m[1]), `${t.name} asks for a tag the fixtures produce: ${m[1]}`);

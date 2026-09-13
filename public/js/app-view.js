@@ -5354,6 +5354,61 @@ const AppView = {
   // they are placed here, by the issue they link.
 
   WORKSHOP_SEEN_KEY: 'workshopSeen',
+  // The lander's three tabs. A query param reaches one directly (`?ws=needs`)
+  // because the platform's own rule is that a screen only reachable by
+  // interacting needs a URL: the declared checks select against it and the
+  // proposal screenshots are shot from it.
+  WORKSHOP_TABS: ['status', 'needs', 'all'],
+  _workshopModels() {
+    const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
+    if (!src || typeof src !== 'object') return { list: [], selected: null };
+    const list = Object.keys(src).map((id) => ({
+      id,
+      label: (src[id] && src[id].label) || id,
+      note: (src[id] && src[id].changeSize && src[id].changeSize.short) || '',
+    }));
+    const def = (typeof DevChat !== 'undefined' && DevChat._defaultModel) || null;
+    return { list, selected: list.some((m) => m.id === def) ? def : (list[0] ? list[0].id : null) };
+  },
+
+  WORKSHOP_TAB_KEY: 'devWorkshopTab',
+  // `?ws=` resolved once and cached, mirroring `?group=` above — and for the
+  // same reason: a declared check runs against an empty localStorage and
+  // would otherwise always land on the default tab and assert nothing.
+  _workshopTabUrlOverride: undefined,
+  _workshopTabParam() {
+    if (AppView._workshopTabUrlOverride !== undefined) return AppView._workshopTabUrlOverride;
+    try {
+      const v = new URLSearchParams(window.location.search).get('ws');
+      AppView._workshopTabUrlOverride = AppView.WORKSHOP_TABS.indexOf(v) !== -1 ? v : null;
+    } catch { AppView._workshopTabUrlOverride = null; }
+    return AppView._workshopTabUrlOverride;
+  },
+  /**
+   * Which tab the lander opens on: the deep link, then what you last chose,
+   * then Current status.
+   *
+   * REMEMBERED, because the three tabs are three different jobs and the one
+   * you want is usually the one you wanted last time — somebody working
+   * through the vote queue lands on the digest every time otherwise. Stored
+   * per browser rather than per account: it is a reading position, not a
+   * setting, and the same mechanism the grouping already uses.
+   */
+  _workshopTab() {
+    const url = AppView._workshopTabParam();
+    if (url) return url;
+    try {
+      const stored = window.localStorage.getItem(AppView.WORKSHOP_TAB_KEY);
+      return AppView.WORKSHOP_TABS.indexOf(stored) !== -1 ? stored : 'status';
+    } catch { return 'status'; }
+  },
+  _setWorkshopTab(key) {
+    const next = AppView.WORKSHOP_TABS.indexOf(key) !== -1 ? key : 'status';
+    // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
+    // does — otherwise `?ws=` would keep winning over every later press.
+    AppView._workshopTabUrlOverride = null;
+    try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
+  },
   // Rows per lane per theme before "+N more · Open on Board".
   WORKSHOP_LANE_MAX: 8,
   // Cards in the "Needs your vote" strip; the rest are a count.
@@ -5363,6 +5418,13 @@ const AppView = {
   WORKSHOP_MINE_MAX: 3,
   // Rows in the "since your last visit" list.
   WORKSHOP_SINCE_MAX: 30,
+  // One calendar week, in ms. The digest's windows are Monday-anchored in
+  // UTC — see services/workshop-themes.js `weekStart`, which this file's
+  // `_weekStart` mirrors. The two MUST agree: the server decides which
+  // merges a week's line was written from, and the client decides which
+  // dates that line is labelled with, so a client on a different anchor
+  // would caption the server's sentence with somebody else's week.
+  WORKSHOP_WEEK_MS: 7 * 86400000,
   // Per page session: slug → the baseline (epoch ms, 0 on a first visit)
   // the since-strip is computed against. See _workshopBaseline.
   _workshopSince: {},
@@ -5472,7 +5534,113 @@ const AppView = {
     if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
     const line = (x) => (typeof x === 'string' ? x.trim() : '');
     const cards = { lastWeek: line(v.lastWeek), thisWeek: line(v.thisWeek), open: line(v.open) };
-    return (cards.lastWeek || cards.thisWeek || cards.open) ? cards : null;
+    // Weeks BEFORE last week, oldest-first or newest-first as the server
+    // likes — sorted here, so the walk-back never depends on an ordering
+    // nobody promised. Each is one Monday-anchored week: `start` names it,
+    // `line` is that week's sentence. An entry with no usable line is
+    // dropped rather than rendered blank; a week that is genuinely empty is
+    // the server's to describe ("nothing landed"), because the client cannot
+    // tell an empty week from a week it was never told about.
+    const older = (Array.isArray(v.older) ? v.older : [])
+      .map((w) => ({ start: AppView._ms(w && w.start), line: line(w && w.line) }))
+      .filter((w) => w.start && w.line)
+      .sort((a, b) => b.start - a.start);
+    // The Monday of the first week this app had any activity: where the
+    // walk-back stops offering another step. Null when the server has not
+    // said, which reads as "there may be more" — the button then disappears
+    // when `older` runs out instead, which is the same stop one week late
+    // rather than a false floor.
+    const firstWeek = AppView._ms(v.firstWeek) || null;
+    return (cards.lastWeek || cards.thisWeek || cards.open || older.length)
+      ? { ...cards, older, firstWeek }
+      : null;
+  },
+
+  /** A timestamp field that may arrive as ms, as a numeric string, or as ISO. */
+  _ms(x) {
+    if (typeof x === 'number') return Number.isFinite(x) ? x : 0;
+    if (typeof x !== 'string' || !x) return 0;
+    const n = /^\d+$/.test(x) ? parseInt(x, 10) : Date.parse(x);
+    return Number.isFinite(n) ? n : 0;
+  },
+
+  /**
+   * Midnight UTC on the Monday of the week containing `ms`.
+   *
+   * The mirror of services/workshop-themes.js `weekStart`, and deliberately
+   * UTC rather than local: the digest is cached per APP and read by
+   * everyone, so a viewer's timezone cannot be allowed to decide where the
+   * week starts without the cached line disagreeing with half the people
+   * reading it.
+   */
+  _weekStart(ms) {
+    const d = new Date(ms);
+    const dow = (d.getUTCDay() + 6) % 7; // Monday 0 … Sunday 6
+    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - dow * 86400000;
+  },
+
+  /**
+   * The digest as a WALK BACKWARDS, newest last.
+   *
+   * The three fixed windows were drawn as three cards, all three at once,
+   * and that is the whole history the lander could ever show: a reader who
+   * wanted the week before last had nowhere to go. This builds the same
+   * three as the first three steps of an arbitrarily long walk — open, this
+   * week, last week, then "N weeks ago" for as many as the server has
+   * written — and the component reveals them one at a time from the newest
+   * end.
+   *
+   * Order is NEWEST FIRST: `open` — the present, and the only entry that is
+   * not a window at all — then this week, last week, and back. The walk was
+   * built the other way round at first, growing upwards from the bottom of
+   * the stack, on the reasoning that a column of dates reads oldest-at-the-
+   * top like any timeline. It does, but this is not a timeline being read:
+   * it is one card with a way to ask for more, and growing UPWARDS moved
+   * the card you were looking at down the screen on every press. Now the
+   * present stays put and the history unrolls beneath it.
+   */
+  _workshopWeeks(cards, nowMs) {
+    if (!cards) return [];
+    const WEEK = AppView.WORKSHOP_WEEK_MS;
+    const thisStart = AppView._weekStart(nowMs);
+    const out = [];
+    // The present first: it is the default card and the only one always
+    // drawn, so it is index 0 and the reveal walks forward from there.
+    if (cards.open) out.push({ key: 'open', title: 'Open issues', line: cards.open, startMs: 0, endMs: 0 });
+    if (cards.thisWeek) {
+      out.push({
+        key: 'thisWeek', title: 'This week', line: cards.thisWeek,
+        startMs: thisStart, endMs: nowMs,
+      });
+    }
+    if (cards.lastWeek) {
+      out.push({
+        key: 'lastWeek', title: 'Last week', line: cards.lastWeek,
+        startMs: thisStart - WEEK, endMs: thisStart,
+      });
+    }
+    const older = [];
+    // Not `cards.older` directly. A cards object reaches here from the
+    // themes CACHE, and a cache written by a build before this field existed
+    // — a tab open across a deploy, a warm localStorage-free page that kept
+    // its in-memory `_workshopThemes` — has no `older` at all. A view
+    // builder that throws takes the whole lander down to its skeleton, so
+    // the shape is asserted here rather than assumed.
+    for (const w of (Array.isArray(cards.older) ? cards.older : [])) {
+      // How many weeks back from the CURRENT week: `lastWeek` is 1, so the
+      // first entry this loop can hold is 2 and the labels never collide
+      // with the two named windows below.
+      const n = Math.round((thisStart - w.start) / WEEK);
+      if (n < 2) continue;
+      older.push({
+        key: `week:${w.start}`, title: `${n} weeks ago`, line: w.line,
+        startMs: w.start, endMs: w.start + WEEK,
+      });
+    }
+    // Newest of the older windows first, continuing the walk backwards.
+    older.sort((a, b) => b.startMs - a.startMs);
+    out.push(...older);
+    return out;
   },
 
   // Fetch the themes, and re-fetch on the schedule above while a
@@ -5836,9 +6004,24 @@ const AppView = {
     // above does. Without it `UnfoldedRow` renders no <FeedThread>, so a card
     // opened from "Needs your vote" had no reply box — the one lane where a
     // reader most wants to ask a question before voting.
+    //
+    // It also carries the plain-language summary a voter reads
+    // (`pr_summary_md`): the Needs-you deck leads with it, because the card's
+    // title is a pull-request title and says nothing about what a person
+    // using the app would notice. Null on a legacy proposal or one whose
+    // summary pass failed, and the deck says so rather than showing an empty
+    // space.
     const voteRow = (x, card) => {
       if (!card) return null;
-      const row = { t: 'card', key: `vote:${card.key}`, card };
+      const item = x.item;
+      const row = {
+        t: 'card',
+        key: `vote:${card.key}`,
+        card,
+        summary: (item && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim())
+          ? item.pr_summary_md.trim()
+          : null,
+      };
       const th = AppView._feedThreadRef({ kind: x.kind, item: x.item });
       if (th) row.thread = th;
       return row;
@@ -5998,6 +6181,15 @@ const AppView = {
       // sentence the client can always build stays the last resort — the
       // same relationship the category grouping has to the drafted themes.
       cards: (tData && tData.digestCards) || null,
+      // The same lines as a walk backwards through the app's weeks, oldest
+      // first. The pane draws only the last of these (`open`) and reveals
+      // the rest one step at a time; see _workshopWeeks.
+      weeks: AppView._workshopWeeks((tData && tData.digestCards) || null, nowMs),
+      // The Monday of the app's first week of activity, when the server has
+      // said. The walk stops when `weeks` runs out either way; this is only
+      // how the pane can tell "that is the whole history" from "that is all
+      // that has been written so far".
+      firstWeek: (tData && tData.digestCards && tData.digestCards.firstWeek) || null,
       summary: (tData && tData.digest) || null,
       // The merged history is paged. With more behind it, page-counted week
       // numbers are floors, not totals, and the view has to say so rather
@@ -6005,6 +6197,53 @@ const AppView = {
       // (#1922) are never partial.
       partial: !serverShipped && !!AppView._mergedHasMore,
     };
+
+    // ── The Needs-you queue ──
+    //
+    // One ordered list of QUESTIONS, which is what that tab answers: the
+    // proposals owed a vote first, then the issues nobody has claimed. The
+    // unclaimed used to be a lane on the status tab, alone under a heading
+    // that covered nothing else; they are the back of this queue now,
+    // because "will you take this?" is the same shape of ask as "should
+    // this go in?" — one card, one question, three answers.
+    //
+    // Each row carries the question and what Yes and No DO, so the deck
+    // renders buttons rather than deciding policy. A proposal's pair comes
+    // from `_cardVoteButtonSpecs`, which keeps the reviewed-head revision
+    // argument the server checks. An issue has no claim API, so Yes opens
+    // it — the same thing tapping the row has always done — and No records
+    // nothing beyond moving on, which is stated rather than implied.
+    const queue = [];
+    for (const x of owed) {
+      const card = x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item);
+      const pair = x.kind === 'proposal' ? AppView._cardVoteButtonSpecs(x.item) : [];
+      const yes = pair.find((b) => b.key === 'yes') || null;
+      const no = pair.find((b) => b.key === 'no') || null;
+      queue.push({
+        ...voteRow(card, x.item),
+        kind: 'vote',
+        ask: 'Should this change go in?',
+        yes: yes ? { label: yes.label, act: yes.act } : null,
+        no: no ? { label: no.label, act: no.act } : null,
+      });
+    }
+    for (const e of idle.slice(0, AppView.WORKSHOP_LANE_MAX)) {
+      const n = e.item && e.item.number;
+      queue.push({
+        ...e.row,
+        key: `need:${e.row.key}`,
+        kind: 'claim',
+        summary: null,
+        // TWO ANSWERS, NOT THREE. "No" and "Skip" were the same press wearing
+        // two labels: neither recorded anything, both moved the deck on, and
+        // offering them side by side asked the reader to tell apart a
+        // distinction the app does not make. Skip is the honest one — it says
+        // "not now" without implying the app filed a preference.
+        ask: 'Want to give this one a try?',
+        yes: n ? { label: "Let's take it", act: { fn: 'openTopic', args: ['issue', n] } } : null,
+        no: null,
+      });
+    }
 
     // "Try taking this one next" — the most recently active open issue with
     // nobody on it. Recency rather than age on purpose: an issue the group is
@@ -6057,6 +6296,16 @@ const AppView = {
     return {
       loading: false,
       emptyNote,
+      // Which tab a URL asked for, or null for the viewer's own choice.
+      tab: AppView._workshopTab(),
+      // The models the Needs-you tab's ask box may talk to, read from the
+      // SAME map the dev session's picker uses (DevChat.MODELS, refreshed
+      // from GET /api/models at startup) rather than a second list here —
+      // tests/model-selector-ui.test.js already guards that map against the
+      // server's allowlist, and a third copy would drift out from under it.
+      // Empty where DevChat is not loaded, and the picker is then not drawn.
+      models: AppView._workshopModels(),
+      queue,
       votes,
       mine,
       since,
@@ -8473,12 +8722,15 @@ const AppView = {
   // silently disable that guard.
   _cardVoteButtonSpecs(pr) {
     if (!pr || pr.status !== 'promoted') return [];
-    const nativeHead = pr.source !== 'imported'
-      && typeof pr.reviewed_head_sha === 'string'
-      && /^[0-9a-f]{40}$/i.test(pr.reviewed_head_sha)
-      ? pr.reviewed_head_sha.toLowerCase()
-      : null;
-    const rev = nativeHead ? [nativeHead] : [];
+    // #2038: the vote carries the approval EPOCH the card was rendered with,
+    // not the commit. A commit changes whenever the platform brings the
+    // proposal up to date with main, and comparing commits made every one of
+    // those merges reject the next voter's click — for code the platform had
+    // just certified was unchanged. The epoch only moves when somebody writes
+    // bytes nobody approved.
+    const epoch = Number.isFinite(parseInt(pr.approval_epoch, 10))
+      ? parseInt(pr.approval_epoch, 10) : null;
+    const rev = epoch === null ? [] : [epoch];
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
     return [
@@ -13201,14 +13453,21 @@ const AppView = {
     if (p.merge_conflict_state === 'failed') {
       out.push({
         key: 'conflict_failed',
-        label: 'Conflict resolution failed',
+        // Says what to do, not what the platform did. A reader seeing a card
+        // needs the next action; "failed" reported our history at them.
+        label: 'Needs manual resolution',
         detail: `The last automatic conflict resolution failed. ${AppView._conflictRemedy(p, 'failed').text}`,
       });
     } else if (p.merge_conflict_state === 'conflict') {
       out.push({
         key: 'merge_conflict',
-        label: 'Merge conflict',
-        detail: `A merge was attempted but this proposal conflicts with main. ${AppView._conflictRemedy(p, 'conflict').text}`,
+        // Written in exactly ONE place: the merge-time 405 in routes/votes.js.
+        // So it does not mean "this conflicts with main" — mergeability_conflict
+        // is that, and says so. It means the proposal passed every gate, the
+        // platform called pulls.merge, and GitHub refused. The old label read
+        // as a duplicate of the prediction below it.
+        label: 'GitHub refused the merge',
+        detail: `This proposal passed every gate and the platform tried to merge it, but GitHub refused. ${AppView._conflictRemedy(p, 'conflict').text}`,
       });
     }
     // #1442 — GitHub's PREDICTION that this proposal no longer merges, made
@@ -13290,20 +13549,51 @@ const AppView = {
         soft: true,
       });
     }
-    // Console errors never block the vote, but they belong in the same
-    // "what's wrong with this" list the detail view enumerates.
-    if (p.console_check_state === 'errors') {
-      const n = Array.isArray(p.console_errors) ? p.console_errors.length : 0;
+    // #2038 — the two reasons the BROWSER cannot derive.
+    //
+    // Everything above is read off columns the card already has. These two
+    // are not in any column the browser can interpret: whether the app's
+    // merge queue is working on this proposal right now, and whether it
+    // needs a merge the shared token budget cannot pay for. The server knows
+    // both and now says so, rather than the card implying a sync is underway
+    // whenever a proposal is behind — which it was not, for anything below
+    // the vote threshold.
+    const served = (p.integration && Array.isArray(p.integration.blockReasons))
+      ? p.integration.blockReasons : [];
+    if (served.includes('integrating')) {
       out.push({
-        key: 'console_errors',
-        label: n ? `Console errors · ${n}` : 'Console errors',
-        detail: n
-          ? `The staging preview logged ${n} console error${n === 1 ? '' : 's'}. This change may break the app. It does not block the merge.`
-          : 'The staging preview logged console errors. This change may break the app. It does not block the merge.',
-        soft: true,
-        advisory: true,
+        key: 'integrating',
+        label: 'Bringing up to date…',
+        detail: 'The platform is merging the latest main into this proposal and '
+          + 're-running its checks against the result. It merges on its own once '
+          + 'that passes. Nobody needs to do anything.',
+        running: true,
       });
     }
+    if (served.includes('budget')) {
+      out.push({
+        key: 'budget',
+        label: 'Waiting on shared budget',
+        detail: 'This proposal needs merging with main, but the platform’s shared '
+          + 'token budget is spent for today. It resumes after the midnight UTC reset.',
+        soft: true,
+      });
+    }
+
+    // #2038: the advisory console tag is gone.
+    //
+    // Console errors already BLOCK — services/visuals.js classifyTests puts
+    // "a blocking check had console errors" straight into check_state
+    // 'failing', which the gate refuses and which draws its own red tag. What
+    // console_check_state measures is the same class of problem on a
+    // DIFFERENT target set: the screenshot capture routes rather than the
+    // declared dapp.json checks. Drawing both meant one card carrying two
+    // tags about console errors, one red and blocking, one amber and not.
+    //
+    // The column and its error list are kept — the detail view enumerates
+    // them, and that is where an advisory reading belongs. It is only the
+    // TAG that goes.
+
     return out;
   },
 
@@ -13345,7 +13635,7 @@ const AppView = {
     if (p.merge_conflict_state === 'resolving' || p.resolving === true) {
       out.push({
         t: 'chip', key: 'tag-resolving', cls: AppView.STATUS_TAG_CLS.running,
-        label: 'Resolving conflicts…', spinner: true, meta: true,
+        label: 'Resolving conflicts automatically…', spinner: true, meta: true,
         data: { 'data-status-tag': 'resolving' },
         title: 'Reconciling conflicts with main automatically, then retrying the merge.',
       });
@@ -13356,8 +13646,14 @@ const AppView = {
       for (const r of AppView.blockReasons(p)) {
         out.push({
           t: 'chip', key: `tag-${r.key}`,
-          cls: r.soft ? AppView.STATUS_TAG_CLS.soft : AppView.STATUS_TAG_CLS.blocking,
+          // Three tones, three meanings: `running` is in flight and nobody
+          // need act (the only one that spins), `soft` is worth knowing and
+          // does not block, everything else stops the merge.
+          cls: r.running ? AppView.STATUS_TAG_CLS.running
+            : r.soft ? AppView.STATUS_TAG_CLS.soft
+              : AppView.STATUS_TAG_CLS.blocking,
           label: r.label, title: r.detail || undefined, meta: true,
+          spinner: !!r.running,
           data: { 'data-status-tag': r.key },
         });
       }
@@ -14441,16 +14737,13 @@ const AppView = {
     const adminMerge = canForceMerge
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${pr.requires_explicit_approval ? 'Admin: merge this admins-changing PR right now, bypassing the vote' : 'Admin: merge this PR right now, bypassing the vote majority'}" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
-    // Native votes carry the exact revision rendered with this card. If the
-    // PR moves before the click reaches the server, the server rejects the
-    // stale action and asks for a refresh instead of applying it to unseen
-    // code. Imported proposals retain their existing vote flow.
-    const nativeHead = pr.source !== 'imported'
-      && typeof pr.reviewed_head_sha === 'string'
-      && /^[0-9a-f]{40}$/i.test(pr.reviewed_head_sha)
-      ? pr.reviewed_head_sha.toLowerCase()
-      : null;
-    const revisionArg = nativeHead ? `, '${nativeHead}'` : '';
+    // The vote carries the approval epoch this card was rendered with, so a
+    // proposal that genuinely changed under the voter is still refused —
+    // while one the platform merely rebased is not.
+    // #2038: see _cardVoteButtonSpecs — the epoch, not the commit.
+    const voteEpoch = Number.isFinite(parseInt(pr.approval_epoch, 10))
+      ? parseInt(pr.approval_epoch, 10) : null;
+    const revisionArg = voteEpoch === null ? '' : `, ${voteEpoch}`;
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`;
@@ -14648,26 +14941,40 @@ const AppView = {
 
 
   _voteInFlight: new Set(),
-  async castVote(sessionId, vote, expectedHeadSha = null) {
+  // #2038: the epoch each proposal was last seen at, so a rejection can
+  // re-arm the next click without waiting on a refetch to land. The old
+  // code fired the refresh without awaiting it and released the click lock
+  // first, so an impatient second click re-sent the same stale stamp and
+  // took a second identical rejection — one head move, two toasts.
+  _seenEpoch: new Map(),
+  async castVote(sessionId, vote, expectedEpoch = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
-    // The server is now idempotent on an unchanged vote (won't re-post
-    // to chat or re-enter checkAndMerge), but blocking here still avoids
-    // pointless network round-trips and keeps the UI responsive.
+    // The server is idempotent on an unchanged vote, but blocking here
+    // avoids pointless round-trips and keeps the UI responsive.
     const key = `${sessionId}:${vote}`;
     if (AppView._voteInFlight.has(key)) return;
     AppView._voteInFlight.add(key);
     try {
+      const known = AppView._seenEpoch.get(sessionId);
+      const epoch = known === undefined ? expectedEpoch : known;
       const res = await fetch(`/api/sessions/${sessionId}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vote, expectedHeadSha }),
+        body: JSON.stringify({ vote, expectedEpoch: epoch }),
       });
       const data = await res.json().catch(() => ({}));
-      AppView.refreshDevData('vote');
       if (!res.ok) {
+        // A rejection that names the current epoch lets the very next click
+        // land, rather than needing a refetch to have finished first.
+        if (Number.isFinite(parseInt(data.approvalEpoch, 10))) {
+          AppView._seenEpoch.set(sessionId, parseInt(data.approvalEpoch, 10));
+        }
+        await AppView.refreshDevData('vote');
         PlatformUI.toast(data.error || `Vote failed (HTTP ${res.status}).`);
         return;
       }
+      AppView._seenEpoch.delete(sessionId);
+      AppView.refreshDevData('vote');
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.

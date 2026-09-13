@@ -135,7 +135,10 @@ test('a legacy row (no check_state) surfaces its console errors as an amber tag'
     console_errors: [{ kind: 'console', message: 'oops' }],
   }));
   // Advisory — it never blocks the merge — which is what amber means here.
-  assert.match(html, /<span class="dev-badge [^"]*amber[^"]*"[^>]*>Console errors · 1<\/span>/);
+  // #2038: console errors are no longer a TAG. They already block through
+  // check_state when they occur on a declared check, and the second amber tag
+  // over the capture routes said the same kind of thing in a different voice.
+  assert.doesNotMatch(html, /Console errors · 1<\/span>/);
   assert.doesNotMatch(html, /gc-vote-count-attention/, 'the bar is the vote, in the vote\u2019s tone');
 });
 
