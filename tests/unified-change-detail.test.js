@@ -45,17 +45,87 @@ test('underway and review share context, sections and check explanations', () =>
   }
 });
 
-test('promotion remains blocked while checks fail, run, or belong to an unready handoff', () => {
+test('promotion is blocked by a VERDICT, not by an answer that has not arrived (#2074)', () => {
   const av = context();
-  for (const patch of [{}, { check_state: 'pending' }, { check_state: 'passing' }, { status: 'paused' }, { check_state: 'passing', proposal_state: 'ready', busy: true }, { check_state: 'passing', proposal_state: 'ready', checks_base_verdict: 'superseded' }]) {
-    const v = av._topicViewFor('session', { ...failing, ...patch });
-    assert.equal(v.card.actions.find((a) => a.key === 'propose-change').disabled, true);
+  const disabled = (patch) => av._topicViewFor('session', { ...failing, ...patch })
+    .card.actions.find((a) => a.key === 'propose-change').disabled;
+
+  // `failing` is a cli_handoff whose proposal_state is 'failed', so the first
+  // three are the managed-handoff contract: it must have a tested, uploaded
+  // revision before it can be promoted. That contract is deliberate and
+  // untouched.
+  for (const patch of [{}, { check_state: 'pending' }, { check_state: 'passing' }]) {
+    assert.equal(disabled(patch), true, `handoff without a ready revision: ${JSON.stringify(patch)}`);
   }
+  assert.equal(disabled({ status: 'paused' }), true, 'a paused change has to be resumed first');
+
+  // And these two used to block, which is what #2074 is about. A build in
+  // flight and a checks-ran-on-older-main caveat are not verdicts: the first
+  // is an answer that has not arrived, and the second is one #2038 declares
+  // SOFT — "a caveat on a green result, not a failure, so it never blocks the
+  // vote". Waiting on either spent a build to start a vote that takes days,
+  // while the connector's submit_work put the identical state in front of the
+  // group with no wait at all.
+  assert.equal(disabled({ check_state: 'passing', proposal_state: 'ready', busy: true }), false,
+    'a build in flight no longer blocks submission');
+  assert.equal(disabled({ check_state: 'passing', proposal_state: 'ready', checks_base_verdict: 'superseded' }), false,
+    'nor does a soft stale-base caveat');
+
   const ready = av._topicViewFor('session', { ...failing, check_state: 'passing', proposal_state: 'ready' });
   assert.equal(ready.card.actions.find((a) => a.key === 'propose-change').disabled, false);
   const review = av._topicViewFor('proposal', { ...failing, status: 'promoted' });
   assert.equal(row(review, 'review'), undefined);
   assert.ok(review.card.actions.some((a) => a.key === 'yes'));
+});
+
+test('every blocked reason names its own condition (#2074)', () => {
+  // Five conditions shared one sentence — "Finish the build and pass checks
+  // for the current revision" — which is what turned a temporary state into a
+  // bug report: it named checks that were not running, and gave no way to tell
+  // whether waiting would help.
+  const av = context();
+  const reason = (patch) => av.changeSubmissionState({ ...failing, ...patch }).reason;
+
+  assert.match(reason({ status: 'paused' }), /Resume this change/);
+  assert.match(reason({ proposal_state: 'checking' }), /tested commit uploaded/,
+    'the managed-handoff contract says what it wants');
+  // `failing` is a cli_handoff, whose contract is checked first — so the
+  // generic verdicts need an ordinary session to be reachable at all.
+  const plain = { source: null, proposal_state: undefined };
+  assert.match(reason({ ...plain, check_state: 'failing' }), /checks on this revision are failing/);
+  assert.match(reason({ ...plain, check_state: 'error' }), /checks could not run/);
+
+  // No two of them are the same sentence — the whole point.
+  const reasons = [
+    reason({ status: 'paused' }),
+    reason({ proposal_state: 'checking' }),
+    reason({ ...plain, check_state: 'failing' }),
+    reason({ ...plain, check_state: 'error' }),
+  ];
+  assert.equal(new Set(reasons).size, reasons.length, 'four conditions, four reasons');
+
+  // And none of them promises a control that does not exist.
+  for (const r of reasons) assert.doesNotMatch(r, /submit anyway/i);
+});
+
+test('an ordinary session submits while its checks are still running (#2074)', () => {
+  // The case this change exists for. Checks gate MERGE — "Merge is blocked
+  // until checks pass" — and the connector's submit_work already puts exactly
+  // this state to the group with no wait, so the browser refusing it guarded
+  // one doorway while the other stood open.
+  const av = context();
+  const ordinary = { ...failing, source: null, proposal_state: undefined };
+  for (const check_state of ['pending', null, undefined]) {
+    assert.equal(av.changeSubmissionState({ ...ordinary, check_state }).kind, 'ready',
+      `check_state ${String(check_state)} is an answer that has not arrived, not a verdict`);
+  }
+  assert.equal(av.changeSubmissionState({ ...ordinary, check_state: 'passing', busy: true }).kind,
+    'ready', 'and a build in flight is the same kind of not-yet');
+
+  // A real verdict still blocks: putting a known-broken change in front of the
+  // group is the thing worth refusing.
+  assert.equal(av.changeSubmissionState({ ...ordinary, check_state: 'failing' }).kind, 'blocked');
+  assert.equal(av.changeSubmissionState({ ...ordinary, check_state: 'error' }).kind, 'blocked');
 });
 
 test('readers cannot promote, sync, or open the private workspace', () => {
