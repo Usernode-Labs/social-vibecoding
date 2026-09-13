@@ -2170,15 +2170,22 @@ test('the grouping strip is the lander\'s own tab control, not a second vocabula
   const track = /\.dev-ws-group \{([^}]*)\}/.exec(CSS);
   assert.ok(track, 'the rail rule exists');
   assert.ok(!/box-shadow/.test(track[1]), 'and no ring around it, as the bar has none');
-  // THE SELECTED HALF IS THE BAR'S OWN THREE TOKENS, spelled the same way, so
-  // the two controls cannot drift apart the next time either is tuned.
+  // THE SELECTED HALF IS THE BAR'S OWN THREE TOKENS, so the two controls
+  // cannot drift apart the next time either is tuned. The bar spends them
+  // across two rules since #2063 — the ink on the selected tab, the fill and
+  // the hairline on the marker that slides between them — and this strip
+  // paints all three on the selected half itself. That difference is
+  // deliberate and is the whole of it: a two-state switch has neither the
+  // measuring machinery the sliding marker needs nor a use for it.
   const on = /\.dev-ws-group-tab\[aria-selected="true"\] \{([^}]*)\}/.exec(CSS);
   const barOn = /\.dev-ws-tab\[aria-selected="true"\] \{([^}]*)\}/.exec(CSS);
-  assert.ok(on && barOn, 'both selected rules exist');
-  for (const decl of ['background: var(--brand-tint)', 'color: var(--brand-ink)',
-    'box-shadow: inset 0 0 0 1px var(--brand-line)']) {
+  const marker = /\.dev-ws-tab-marker \{([^}]*)\}/.exec(CSS);
+  assert.ok(on && barOn && marker, 'all three rules exist');
+  assert.ok(on[1].includes('color: var(--brand-ink)'));
+  assert.ok(barOn[1].includes('color: var(--brand-ink)'), 'which is the bar\'s own ink');
+  for (const decl of ['background: var(--brand-tint)', 'box-shadow: inset 0 0 0 1px var(--brand-line)']) {
     assert.ok(on[1].includes(decl), `the grouping tab carries \`${decl}\``);
-    assert.ok(barOn[1].includes(decl), `and so does the bar, which is where it comes from`);
+    assert.ok(marker[1].includes(decl), 'and so does the marker, which is where it comes from');
   }
   assert.ok(!/var\(--dc-sheet\)/.test(on[1]), 'the plain-sheet fill is gone');
   // WHAT STAYS DIFFERENT IS THE WIDTH, and that is the real distinction from
@@ -2470,21 +2477,29 @@ test('the phone rail is fixed to the real viewport, not to its container', () =>
   // third absence check in this file to need saying so.
   const railDecls = rail[1].replace(/\/\*[\s\S]*?\*\//g, '');
   assert.ok(!/position: sticky/.test(railDecls), 'not to its container');
-  // EDGE TO EDGE, FILL TO THE TRUE BOTTOM. The floating pill this replaces
-  // rested `8px + the inset` up — the safe rectangle's floor, correct by the
-  // letter of the inset and wrong to the eye, because the bar read as stopping
-  // short of the phone. The surface reaches the physical edge now and the
-  // CONTENT is padded off the home indicator instead, which is what iOS does
-  // with its own tab bars: nothing tappable where the system takes a gesture.
-  assert.match(rail[1], /left: 0; right: 0; bottom: 0;/, 'the surface reaches the edge');
-  // The inset is STILL spent exactly once — it just moved from the offset into
-  // the padding. A fixed element is out of flow, so `.platform-safe-scroll`'s
-  // reservation cannot double-count it the way it did in #4149.
-  assert.match(rail[1], /padding: 6px 6px calc\(6px \+ var\(--platform-safe-bottom, 0px\)\);/);
+  // A FLOATING PILL, RESTING LOW. It went edge-to-edge for one round, on the
+  // reasoning that a surface reaching the physical edge is what iOS does with
+  // its own tab bars. It is — but it is not what this app wants: the shape
+  // that reads right here is the oval, and the complaint was never the shape.
+  // It was that the oval sat too high, reserving the whole gesture inset.
+  assert.match(rail[1], /border-radius: 999px;/, 'a pill, not a strip');
+  assert.match(rail[1], /left: 10px; right: 10px;/, 'inset from the side edges');
+  assert.match(rail[1], /bottom: var\(--ws-lift\);/, 'and floating on the lift');
+  // THE LIFT IS NOT THE WHOLE INSET. 34px is Apple's GESTURE zone; the
+  // indicator GRAPHIC is a thin line about 8px off the bottom. Reserving all
+  // of it is what made the pill read as stopping short of the phone.
+  // Trimmed twice, the second time from a preview on a real phone rather than
+  // a guess. There is little further to go: the indicator LINE sits about 8px
+  // up and is roughly 5px tall, so its top edge is near 13px — 14px is the
+  // last value with visible air between the two.
+  assert.match(CSS, /--ws-lift: max\(8px, calc\(var\(--platform-safe-bottom, 0px\) - 20px\)\);/);
+  // `max()` because a device with no indicator reports 0, and `0 - 16px` would
+  // tuck the pill off the bottom of the screen.
+  const lift = /--ws-lift: ([^;]+);/.exec(CSS);
+  assert.match(lift[1], /^max\(/, 'the floor is a max, not a bare subtraction');
+  // The inset is spent ONCE in the bar rule — inside the lift, via the token.
   const insetSpends = (rail[1].replace(/\/\*[\s\S]*?\*\//g, '').match(/--platform-safe-bottom/g) || []).length;
-  assert.equal(insetSpends, 1, 'the inset appears once in the bar rule, not twice');
-  assert.match(rail[1], /border-radius: 0;/, 'a strip, not a pill');
-  assert.match(rail[1], /border-top: 1px solid var\(--app-sheet-line\);/);
+  assert.equal(insetSpends, 0, 'the bar reads the lift, not the inset directly');
   // `order` survives for the single render before the portal takes over.
   assert.match(rail[1], /^\s*order: 1;$/m);
 
@@ -2538,19 +2553,31 @@ test('the phone rail is fixed to the real viewport, not to its container', () =>
   assert.ok(!/--ws-bar: calc\(72px \+ var\(--platform-safe-bottom/.test(CSS),
     'the inset is reserved below the bar, not inside this token');
   // The fitted deck ends above the bar...
-  // TWO TOKENS NOW, one arithmetic. `--ws-fit` is the reading area with the
-  // bar NOT taken off — the box the native layout's flex chain arrives at on
-  // its own — and `--ws-area` is that minus the bar, which is what the
-  // page-scrolling tabs want as a floor. They were two spelled-out `calc()`s
-  // differing by one term.
-  assert.match(CSS, /--ws-fit: calc\(\s*100dvh - var\(--platform-header-h, 56px\) - var\(--platform-safe-top, 0px\)\s*- var\(--ws-gap\)\s*\);/);
+  const area = /\.dev-ws \{[\s\S]*?--ws-area: calc\(([\s\S]*?)\);/.exec(CSS);
+  assert.ok(area, 'the floor exists');
+  assert.match(area[1], /var\(--ws-bar\)/, 'the floor takes the bar off');
+  assert.match(area[1], /var\(--ws-lift\)/, 'and the air it floats on');
+  // AND `--ws-fit` IS A SECOND, DIFFERENT QUANTITY beside it, not the floor
+  // plus something: where `.dev-ws` ends when the chain above it has a
+  // definite height — the reading area less `.platform-safe-scroll`'s
+  // reservation and `#dev-body`'s bottom padding, which are the two things
+  // below it. The pill overlays the last `--ws-bar` of that, as it overlays
+  // every tab. The two coincide only at a zero inset: at 34px the pill lifts
+  // by 14 and the scroller gives back 34.
   const fit = /--ws-fit: calc\(([\s\S]*?)\);/.exec(CSS);
-  assert.ok(!/--ws-bar/.test(fit[1]), 'the fitted box does NOT take the bar off — the tab body reserves it');
-  assert.match(CSS, /--ws-area: calc\(var\(--ws-fit\) - var\(--ws-bar\)\);/,
-    'the floor takes the bar off');
+  assert.ok(fit, 'the fitted box exists');
+  assert.match(fit[1], /var\(--ws-gap\)/);
+  assert.match(fit[1], /var\(--platform-safe-bottom, 0px\)/);
+  assert.ok(!/--ws-bar|--ws-lift/.test(fit[1]),
+    'it is the box the pill sits ON, so it names neither the pill nor its air');
   // ...and a scrolling tab's last card clears one.
-  assert.match(CSS, /padding-bottom: var\(--ws-bar\);/,
-    'the air above it is #dev-body\'s own bottom padding, already --ws-gap');
+  // WHAT SITS BETWEEN `.dev-ws`'s FOOT AND THE PILL'S TOP. Subtracting the
+  // inset is what makes the remaining air independent of it — it works out to
+  // `--ws-gap` exactly, whatever the device reports. Measured, the version
+  // without it gave 0px of air at a 0 inset and 34px at a 34px one: the
+  // composer touching the pill on one phone and floating clear of it on
+  // another.
+  assert.match(CSS, /padding-bottom: calc\(var\(--ws-bar\) \+ var\(--ws-lift\) - var\(--platform-safe-bottom, 0px\)\);/);
   // AND NEEDS YOU IS NO LONGER EXEMPT. It was, while the rail sat in flow and
   // took its own space; a fixed bar overlays every tab equally. With the
   // exemption left in, the deck filled to the foot of `.dev-ws` and the
@@ -2562,8 +2589,8 @@ test('the phone rail is fixed to the real viewport, not to its container', () =>
   // it takes its own space and the floor must not subtract it again.
   const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
   assert.ok(wide, 'the wide block exists');
-  assert.match(wide[1], /\.dev-ws \{ --ws-area: var\(--ws-fit\); \}/,
-    'the wide floor is the fitted box itself — only the air off');
+  assert.match(wide[1], /--ws-area: calc\([\s\S]*?- var\(--ws-gap\)\n?\s*\);/,
+    'the wide floor takes only the air off');
   assert.ok(!/--ws-bar/.test(wide[1].replace(/\/\*[\s\S]*?\*\//g, '')),
     'and not the bar, which is in flow up there');
 
@@ -2646,10 +2673,11 @@ test('the filter host asks to be filled, because the repaint that fills it runs 
 
 test('Needs you is a fitted screen on a phone, in the page-scrolling layout too', () => {
   // MEASURED, in the harness that loads the real generated shell and the real
-  // app.css at 402x874, with a nine-paragraph summary on the card.
+  // app.css at 402x874, with a nine-paragraph summary on the card, at a 34px
+  // home-indicator inset and at none.
   //
   // NATIVE layout (bounded #dev-forum-scroll): the deck refused to shrink and
-  // the lander grew instead — `.dev-ws` 1795px tall, the composer 828px below
+  // the lander grew instead — `.dev-ws` 1803px tall, the composer 910px below
   // the fold — because `.dev-ws` is a flex ITEM whose automatic minimum size
   // is its content, and it was the one link in the chain without
   // `min-height: 0`.
@@ -2660,13 +2688,15 @@ test('Needs you is a fitted screen on a phone, in the page-scrolling layout too'
   assert.ok(!/#dev-workshop > \.dev-ws \{[^}]*min-height: 0/.test(CSS),
     'the rule is scoped to the fitted tab');
   // BROWSER layout (`html[data-browser-scroller]`, which is what a mobile
-  // browser gets): every height below the scroller is `auto` there, so a long
-  // card pushed the composer under the fold with nothing pinned — and a SHORT
-  // one stopped 80px above the rail, because `--ws-area` is a bar less than
-  // the box and `.dev-ws-tabbody` reserves the bar AGAIN as padding. The tab
-  // takes `--ws-fit` instead, which is the box the native chain arrives at on
-  // its own. Both layouts now land the composer 8-9px above the bar, tall
-  // card or short.
+  // browser gets): every height below the scroller is `auto` there, so
+  // `--ws-area` is only a floor and a long card pushed the composer under the
+  // fold with nothing pinned — while a SHORT one stopped EARLY, because the
+  // floor is not the same number as the clearance `.dev-ws-tabbody` reserves:
+  // 79px of dead air under the composer at a zero inset and 51px at 34,
+  // against the native layout's 8 at both. The tab takes `--ws-fit` as a
+  // definite height instead — the box the native chain arrives at on its own
+  // — and both layouts then land the composer 7-8px under the pill, tall card
+  // or short, at either inset.
   const fitted = /@media \(max-width: 699\.98px\) \{([\s\S]*?)\n\}/.exec(CSS);
   assert.ok(fitted, 'the phone-only block exists');
   assert.match(fitted[1], /html\[data-browser-scroller\] \.dev-ws\[data-ws-tab="needs"\] \{[\s\S]*?height: var\(--ws-fit\);[\s\S]*?min-height: var\(--ws-fit\);/);
@@ -2945,7 +2975,10 @@ test('a wide window reads the tabs at the top, as a segmented control', () => {
   // `order: 0` is the whole move — the nav is already first in the DOM, so
   // dropping the phone's `order: 1` paints it where it is written.
   assert.match(rail[1], /order: 0;/, 'it paints where it is written');
-  assert.match(rail[1], /position: static;/, 'nothing to stick to at the head of a column');
+  // RELATIVE, not static: nothing to stick to at the head of a column, but the
+  // bar must stay the containing block for the selection marker and the
+  // element its tabs' offsetLeft/offsetTop resolve against.
+  assert.match(rail[1], /position: relative;/, 'still the containing block for the marker');
   // A BLOCK, not the pill: it inherits the reading column and its centring, so
   // the strip keeps one left edge whether the pane beside it is the 760px
   // category list or the full-bleed board.
@@ -2979,8 +3012,14 @@ test('a wide window reads the tabs at the top, as a segmented control', () => {
   // override here would be the bug, not the fix.
   assert.ok(!/\.dev-ws-tab\[aria-selected="true"\]/.test(wide[1]),
     'the phone rule carries through');
-  assert.match(CSS, /\.dev-ws-tab\[aria-selected="true"\] \{\s*background: var\(--brand-tint\);/,
-    'and that rule is still the periwinkle one');
+  // THE PERIWINKLE MOVED TO THE MARKER, which is what lets the selection slide
+  // instead of snapping: a background drawn by the tab itself can only appear
+  // on one and vanish from another. The tab keeps the ink, which has nothing
+  // to animate between.
+  assert.match(CSS, /\.dev-ws-tab\[aria-selected="true"\] \{\s*color: var\(--brand-ink\);\s*\}/,
+    'the selected tab is ink only');
+  assert.match(CSS, /\.dev-ws-tab-marker \{[\s\S]*?background: var\(--brand-tint\);/,
+    'and the fill is the marker, at both widths — it carries no breakpoint');
 
   // Nothing overlays the content any more, so the clearance that existed for a
   // bar floating over what scrolls beneath it is dead space here.
@@ -3029,4 +3068,68 @@ test('the read-only demo check names the pane its proposal is actually on', () =
   // column fails locally rather than as a red check on somebody's proposal.
   assert.match(APP_VIEW_SRC, /key: 'inreview', title: 'In review'/);
   assert.match(APP_VIEW_SRC, /rows: cardRows\(kInReview, \(x\) => \(x\.kind === 'proposal'/);
+});
+
+test('the selection slides between tabs instead of snapping', () => {
+  // ONE ELEMENT THAT MOVES, not a fill redrawn per tab. A background painted by
+  // the selected tab can only appear on one and vanish from another; a single
+  // marker can travel, which is what every other app's tab bar does.
+  assert.match(WORKSHOP, /<span\s+className="dev-ws-tab-marker"/);
+  assert.match(WORKSHOP, /aria-hidden="true"/);
+  // It is decoration. `aria-selected` on the tab already announces the state,
+  // so a box that claimed it too would say the same thing twice.
+  const marker = /<span\s+className="dev-ws-tab-marker"[\s\S]*?\/>/.exec(WORKSHOP);
+  assert.ok(marker, 'the marker is rendered');
+  assert.ok(!/role=|tabIndex=/.test(marker[0]), 'decorative: no role, not focusable');
+
+  // EVERY NUMBER IS MEASURED, none written down. That is what lets one
+  // implementation serve the phone's equal-width 58px tabs and the desktop
+  // strip's content-width 32px ones without a breakpoint of its own.
+  assert.match(WORKSHOP, /function useTabMarker\(/);
+  assert.match(WORKSHOP, /x: el\.offsetLeft, y: el\.offsetTop, w: el\.offsetWidth, h: el\.offsetHeight/);
+  // useLayoutEffect, not useEffect: a paint between measuring and positioning
+  // is a visible flash of the marker in the wrong place.
+  assert.match(WORKSHOP, /useLayoutEffect\(\(\) => \{[\s\S]{0,900}?ResizeObserver/,
+    'measured in a layout effect, and re-measured on resize');
+  // The three things that move the tabs, each of which has: the tab changing,
+  // a resize (rotation, a drag across the breakpoint, a late webfont), and the
+  // portal remount, which tears the bar out of one parent into another.
+  assert.match(WORKSHOP, /\}, \[barRef, tab, railHost\]\);/);
+
+  // NULL UNTIL MEASURED, so the marker renders hidden rather than at the left
+  // edge — otherwise it slides in from nowhere on the first paint.
+  assert.match(WORKSHOP, /\{\.\.\.\(markerBox \? \{ 'data-ws-marker-at': '' \} : \{\}\)\}/);
+  assert.match(WORKSHOP, /style=\{markerBox \? \{/);
+  assert.match(CSS, /\.dev-ws-tab-marker \{[\s\S]*?opacity: 0;[\s\S]*?\n\}/, 'hidden by default');
+  assert.match(CSS, /\.dev-ws-tab-marker\[data-ws-marker-at\] \{ opacity: 1; \}/);
+
+  // THE TRANSITION IS ON THE PLACED STATE ONLY. On the base rule it would
+  // animate the first placement too — from the left edge at zero width, which
+  // is the slide-in the null-until-measured render exists to prevent.
+  const base = /\.dev-ws-tab-marker \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(base && !/transition/.test(base[1]), 'the base rule does not transition');
+  const motion = /@media \(prefers-reduced-motion: no-preference\) \{\s*\.dev-ws-tab-marker\[data-ws-marker-at\] \{([\s\S]*?)\n  \}/.exec(CSS);
+  assert.ok(motion, 'and the placed state animates only where motion is welcome');
+  assert.match(motion[1], /transform \.26s/);
+  // width and height are in the list because the desktop segments are
+  // content-width: "Current status" and "Needs you" differ, so a transform
+  // alone would slide a box of the wrong size. On the phone they never change.
+  assert.match(motion[1], /width \.26s/);
+  assert.match(motion[1], /height \.26s/);
+
+  // THE BAR IS THE CONTAINING BLOCK AT BOTH WIDTHS, which is what makes
+  // offsetLeft/offsetTop mean what the marker assumes. `fixed` gives it for
+  // free on a phone; the wide rule has to ask for it.
+  const rail = /\n\.dev-ws-tabs \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.match(rail[1], /position: fixed;/);
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.match(wide[1], /position: relative;/);
+  assert.ok(!/position: static;/.test(wide[1].replace(/\/\*[\s\S]*?\*\//g, '')),
+    'static would send the marker and the measurement to some other ancestor');
+
+  // The tabs sit above it. Without `position: relative` on them both are
+  // static, and the marker — later in paint order for positioned elements —
+  // would cover the labels.
+  assert.match(CSS, /\.dev-ws-tab \{ position: relative; z-index: 1; \}/);
+  assert.match(CSS, /\.dev-ws-tab-marker \{[\s\S]*?z-index: 0;/);
 });

@@ -136,7 +136,20 @@
 // prefer the same proposal is not that a later one cannot work — it is that
 // between the two, everyone who already had the app is looking at code nobody
 // can tell is stale, including the person who wrote it.
-const SW_VERSION = 'v15';
+//
+// v16: the Workshop's phone bar returns to a floating pill and sits lower.
+// Bumped IN THIS PROPOSAL, which is what the v10 entry asks for and what v15
+// had to be filed late for — app.css and the shell bundle are the whole
+// user-visible surface, so without the bump an installed client renders the
+// previous build for at least one load. That lag is exactly what made two
+// earlier rounds of this bar look unfixed: every report was of the deploy
+// before the one being discussed.
+//
+// v17: the Workshop's selection marker — the tab bar's selected fill becomes
+// one element that slides rather than a background redrawn per tab. app.css
+// and the shell bundle are the whole user-visible surface, so the bump belongs
+// in this proposal, per v10.
+const SW_VERSION = 'v17';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 

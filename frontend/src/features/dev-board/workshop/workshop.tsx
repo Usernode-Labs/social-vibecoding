@@ -1410,6 +1410,60 @@ function useWideLayout(): boolean {
  *    `@media (min-width: 700px)` are one decision in two places and have to
  *    move together.
  */
+/**
+ * THE SLIDING SELECTION MARKER.
+ *
+ * The selected tab used to draw its own fill, so the selection jumped between
+ * tabs. One element draws it now, and it MEASURES the selected tab rather than
+ * being told where to go — which is what lets a single implementation cover
+ * both bars: the phone's pill has three equal-width 58px tabs, the desktop
+ * strip has content-width 32px ones, and neither geometry is written down
+ * here. Every number comes off the live element.
+ *
+ * `useLayoutEffect`, not `useEffect`: the marker is positioned from a
+ * measurement, and a paint between the two is a visible flash of it in the
+ * wrong place.
+ *
+ * THREE THINGS RE-MEASURE IT, and each has actually moved the tabs:
+ *   - the tab changing, which is the point;
+ *   - a ResizeObserver on the bar, which covers a rotation, a window drag
+ *     across the 700px breakpoint, and a late webfont reflowing the labels;
+ *   - the portal remount, because crossing that breakpoint tears the bar out
+ *     of one parent and into another, and the old offsets belong to neither.
+ *
+ * It returns `null` until the first measurement lands so the marker can render
+ * hidden rather than at the left edge — otherwise it slides in from nowhere on
+ * the first paint, which reads as a bug rather than a flourish.
+ */
+function useTabMarker(
+  barRef: React.RefObject<HTMLElement | null>,
+  tab: TabKey,
+  railHost: HTMLElement | null,
+): { x: number; y: number; w: number; h: number } | null {
+  const [box, setBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  useLayoutEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const measure = () => {
+      const el = bar.querySelector<HTMLElement>('[data-ws-tab-btn][aria-selected="true"]');
+      if (!el) return;
+      // offsetLeft/Top resolve against the nearest positioned ancestor, which
+      // is the bar itself — see app.css, where it is the containing block at
+      // both widths precisely so these numbers mean what they look like.
+      setBox((prev) => {
+        const next = { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
+        return prev && prev.x === next.x && prev.y === next.y
+          && prev.w === next.w && prev.h === next.h ? prev : next;
+      });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(bar);
+    return () => ro.disconnect();
+  }, [barRef, tab, railHost]);
+  return box;
+}
+
 function useRailHost(): HTMLElement | null {
   const [host, setHost] = useState<HTMLElement | null>(null);
   useEffect(() => {
@@ -1456,7 +1510,9 @@ export function DevWorkshop(): ReactNode {
   // status and then swapping — the same reason `openThemes` is seeded from
   // `autoExpand` rather than from an effect.
   const railHost = useRailHost();
+  const barRef = useRef<HTMLElement | null>(null);
   const [tab, setTab] = useState<TabKey>(() => v.tab || 'status');
+  const markerBox = useTabMarker(barRef, tab, railHost);
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
   // not do. The seed runs against whatever the store holds AT MOUNT, and that
   // is EMPTY_WORKSHOP_VIEW: the module publishes `_workshopView()` after its
@@ -1572,11 +1628,37 @@ export function DevWorkshop(): ReactNode {
      that positions it, not inside it. */
   const railNode = (
         <nav
+          ref={barRef}
           className="dev-ws-tabs"
           data-ws-tabs=""
           role="tablist"
           aria-label="Workshop sections"
         >
+          {/* THE SELECTION, drawn once and moved, rather than redrawn per tab.
+              It is `aria-hidden` and not focusable: `aria-selected` on the tab
+              is what announces the state, and a decorative box claiming it too
+              would say the same thing twice.
+
+              Rendered BEFORE the buttons so it paints behind them without a
+              z-index race — the tabs raise themselves one step in app.css and
+              this stays at the floor of the stacking context.
+
+              No inline style until it has been measured. `markerBox` is null
+              on the first render, so the element renders hidden and only
+              becomes visible once it knows where to be; otherwise it slides in
+              from the left edge on first paint, which reads as a bug rather
+              than a flourish. */}
+          <span
+            className="dev-ws-tab-marker"
+            data-ws-tab-marker=""
+            aria-hidden="true"
+            {...(markerBox ? { 'data-ws-marker-at': '' } : {})}
+            style={markerBox ? {
+              transform: `translate(${markerBox.x}px, ${markerBox.y}px)`,
+              width: `${markerBox.w}px`,
+              height: `${markerBox.h}px`,
+            } : undefined}
+          />
           {/* The TRACK, separate from the nav, and `display: contents` on a
               phone so the bar there is byte-identical to what it was: the nav
               itself is the pill, edge to edge.
