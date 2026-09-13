@@ -2437,13 +2437,21 @@ test('the phone rail is fixed to the real viewport, not to its container', () =>
   // third absence check in this file to need saying so.
   const railDecls = rail[1].replace(/\/\*[\s\S]*?\*\//g, '');
   assert.ok(!/position: sticky/.test(railDecls), 'not to its container');
-  // The inset is spent ONCE, in the offset. A fixed element is out of flow, so
-  // `.platform-safe-scroll`'s reservation — which applies to the scroller's
-  // content — cannot double-count it the way it did in #4149.
-  assert.match(rail[1], /bottom: calc\(var\(--ws-gap\) \+ var\(--platform-safe-bottom, 0px\)\);/);
-  // Out of flow means no container supplies its width either.
-  assert.match(rail[1], /left: 4px; right: 4px;/, 'matching #dev-body\'s own side padding');
-  assert.match(rail[1], /margin-inline: auto;/);
+  // EDGE TO EDGE, FILL TO THE TRUE BOTTOM. The floating pill this replaces
+  // rested `8px + the inset` up — the safe rectangle's floor, correct by the
+  // letter of the inset and wrong to the eye, because the bar read as stopping
+  // short of the phone. The surface reaches the physical edge now and the
+  // CONTENT is padded off the home indicator instead, which is what iOS does
+  // with its own tab bars: nothing tappable where the system takes a gesture.
+  assert.match(rail[1], /left: 0; right: 0; bottom: 0;/, 'the surface reaches the edge');
+  // The inset is STILL spent exactly once — it just moved from the offset into
+  // the padding. A fixed element is out of flow, so `.platform-safe-scroll`'s
+  // reservation cannot double-count it the way it did in #4149.
+  assert.match(rail[1], /padding: 6px 6px calc\(6px \+ var\(--platform-safe-bottom, 0px\)\);/);
+  const insetSpends = (rail[1].replace(/\/\*[\s\S]*?\*\//g, '').match(/--platform-safe-bottom/g) || []).length;
+  assert.equal(insetSpends, 1, 'the inset appears once in the bar rule, not twice');
+  assert.match(rail[1], /border-radius: 0;/, 'a strip, not a pill');
+  assert.match(rail[1], /border-top: 1px solid var\(--app-sheet-line\);/);
   // `order` survives for the single render before the portal takes over.
   assert.match(rail[1], /^\s*order: 1;$/m);
 
@@ -2480,10 +2488,39 @@ test('the phone rail is fixed to the real viewport, not to its container', () =>
   assert.match(SHELL, /<Island name="LegacyPortals"><LegacyPortals \/><\/Island>[\s\S]*?<div id="dev-ws-rail-host" \/>/,
     'and sits with the other end-of-body anchors');
 
-  // The clearance under the last card: a fixed bar overlays what scrolls
-  // beneath it, so the content owes it a bar's height plus the offset it rests
-  // at — the inset included, now that the offset carries one.
-  assert.match(CSS, /padding-bottom: calc\(72px \+ var\(--ws-gap\) \+ var\(--platform-safe-bottom, 0px\)\);/);
+  // THE BAR IS OUT OF FLOW, so nothing reserves its space automatically and
+  // three rules have to agree about its footprint. It is one token, so they
+  // agree by construction rather than by being remembered.
+  // The token is the bar's BOX, not its footprint: its own lower padding
+  // covers the home-indicator strip, and below `.dev-ws` that strip is already
+  // held open by `.platform-safe-scroll`. Counting it here too reserved it
+  // twice — measured, 51px of slack above the bar at a 34px inset against 17px
+  // at zero. Box only gives 9px at both.
+  assert.match(CSS, /--ws-bar: 72px;/);
+  assert.ok(!/--ws-bar: calc\(72px \+ var\(--platform-safe-bottom/.test(CSS),
+    'the inset is reserved below the bar, not inside this token');
+  // The fitted deck ends above the bar...
+  const area = /\.dev-ws \{[\s\S]*?--ws-area: calc\(([\s\S]*?)\);/.exec(CSS);
+  assert.ok(area, 'the floor exists');
+  assert.match(area[1], /var\(--ws-bar\)/, 'the floor takes the bar off');
+  // ...and a scrolling tab's last card clears one.
+  assert.match(CSS, /padding-bottom: var\(--ws-bar\);/,
+    'the air above it is #dev-body\'s own bottom padding, already --ws-gap');
+  // AND NEEDS YOU IS NO LONGER EXEMPT. It was, while the rail sat in flow and
+  // took its own space; a fixed bar overlays every tab equally. With the
+  // exemption left in, the deck filled to the foot of `.dev-ws` and the
+  // composer ran 63px UNDER the bar — measured, not predicted.
+  assert.ok(!/\.dev-ws\[data-ws-tab="needs"\] > \.dev-ws-tabbody \{ padding-bottom: 0/.test(
+    CSS.replace(/\/\*[\s\S]*?\*\//g, '')),
+    'every tab owes the same clearance because every tab has the same thing on top');
+  // ABOVE THE BREAKPOINT the bar is back in flow at the head of the column, so
+  // it takes its own space and the floor must not subtract it again.
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(wide, 'the wide block exists');
+  assert.match(wide[1], /--ws-area: calc\([\s\S]*?- var\(--ws-gap\)\n?\s*\);/,
+    'the wide floor takes only the air off');
+  assert.ok(!/--ws-bar/.test(wide[1].replace(/\/\*[\s\S]*?\*\//g, '')),
+    'and not the bar, which is in flow up there');
 
   // Still NOT `.platform-safe-bar`: that rule puts the inset inside the
   // element's own padding, which on this pill landed 8px under the tabs
@@ -2563,7 +2600,18 @@ test('the ask box sits just above the rail, on both widths', () => {
   // that clearance was dead space pushing the composer up. Measured at
   // 402x874: 90px between the ask box and the bar. The clearance now lifts on
   // that tab alone.
-  assert.match(CSS, /\.dev-ws\[data-ws-tab="needs"\] > \.dev-ws-tabbody \{ padding-bottom: 0; \}/);
+  // THAT EXEMPTION IS GONE, and its reasoning with it. It read: the deck is
+  // fitted, nothing ever passes beneath the rail, so the clearance is dead
+  // space pushing the composer up — 90px of it at 402x874. True while the rail
+  // sat IN FLOW and took its own space at the foot of the column. The bar is
+  // fixed now and overlays every tab equally, fitted or not: with the
+  // exemption still in, the deck filled to the foot of `.dev-ws` and the
+  // composer ran 63px UNDER the bar. The deck instead ends above it because
+  // `--ws-area` subtracts `--ws-bar`, which is what keeps the composer clear
+  // without a per-tab special case — measured 9px above the bar at a 0px inset
+  // and at a 34px one, which is the point: one number, both devices.
+  assert.ok(!/\.dev-ws\[data-ws-tab="needs"\] > \.dev-ws-tabbody \{ padding-bottom: 0/.test(
+    CSS.replace(/\/\*[\s\S]*?\*\//g, '')));
   // ON A DESKTOP the deck was content-sized top-aligned (`flex: 0 0 auto` with
   // `align-content: start`), which put the ask box directly under the answers
   // and left the window empty beneath it — measured at 1440x900, 271px. The

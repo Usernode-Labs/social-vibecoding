@@ -352,6 +352,13 @@ test('the light and dark palettes declare the same variables', () => {
     // Nothing about the dark palette moves it; a `.dark` copy could only
     // restate this one.
     '--ws-gap',
+    // The Workshop bar's box above the home indicator — 72px, a length, and
+    // the one number `--ws-area`'s floor and the tab body's clearance both
+    // read. The bar is `position: fixed` and portalled out of the Workshop's
+    // subtree, so nothing reserves its space automatically and those two
+    // rules are all that keep content from running underneath it. Root-scoped
+    // for the same reason as the gap; a `.dark` copy could only restate it.
+    '--ws-bar',
   ]);
   const missing = [...light].filter((n) => !dark.has(n) && !THEME_INVARIANT.has(n)).sort();
   assert.deepEqual(missing, [],
