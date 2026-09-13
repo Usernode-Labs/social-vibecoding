@@ -6005,12 +6005,19 @@ const AppView = {
     // a pull-request title and says nothing about what a person using the app
     // would notice. Null on a legacy proposal or one whose summary pass
     // failed, and the deck says so rather than showing an empty space.
-    const voteRow = (card, item) => ({
+    // `askAbout` names the card for the Needs-you deck's ask box: a kind
+    // and a reference, and NOTHING else. The server looks the item up from
+    // that pair (services/workshop-ask.js) rather than trusting anything
+    // the client says about it, so this carries an address, never content.
+    const voteRow = (card, item, kind) => ({
       t: 'card',
       key: `vote:${card.key}`,
       card,
       summary: (item && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim())
         ? item.pr_summary_md.trim()
+        : null,
+      askAbout: (item && item.id != null)
+        ? { kind: kind === 'proposal' ? 'proposal' : 'gov', ref: item.id }
         : null,
     });
     // EVERY owed row, not the first few. "N more waiting on you" used to send
@@ -6032,7 +6039,8 @@ const AppView = {
       shown: AppView.WORKSHOP_VOTES_MAX,
       rows: owed.map((x) => voteRow(
         x.kind === 'proposal' ? AppView._proposalCardModel(x.item) : AppView._govCardModel(x.item),
-        x.item
+        x.item,
+        x.kind
       )),
     };
 
@@ -6207,7 +6215,7 @@ const AppView = {
       const yes = pair.find((b) => b.key === 'yes') || null;
       const no = pair.find((b) => b.key === 'no') || null;
       queue.push({
-        ...voteRow(card, x.item),
+        ...voteRow(card, x.item, x.kind),
         kind: 'vote',
         ask: 'Should this change go in?',
         yes: yes ? { label: yes.label, act: yes.act } : null,
@@ -6221,6 +6229,7 @@ const AppView = {
         key: `need:${e.row.key}`,
         kind: 'claim',
         summary: null,
+        askAbout: n != null ? { kind: 'issue', ref: n } : null,
         // TWO ANSWERS, NOT THREE. "No" and "Skip" were the same press wearing
         // two labels: neither recorded anything, both moved the deck on, and
         // offering them side by side asked the reader to tell apart a
