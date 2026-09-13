@@ -18,110 +18,19 @@ const assert = require('node:assert/strict');
 const {
   stripFakeCompletionMarker,
   buildMayorMessages,
-  advanceSharedReviewAfterSync,
   CODING_AGENT_COMPLETED_MARKER,
 } = require('../src/routes/sessions.js');
 
 const M = CODING_AGENT_COMPLETED_MARKER; // '[CODING AGENT COMPLETED]'
 
-test('a successful web sync advances a shared CLI proposal review without changing provenance', async () => {
-  const calls = [];
-  const pool = { query: async (sql, params) => {
-    calls.push({ sql, params });
-    return { rowCount: 1, rows: [{ reviewed_head_sha: params[0], votes_moved: 1 }] };
-  } };
-  const session = {
-    id: 7,
-    source: 'cli_handoff',
-    handoff_head_sha: 'a'.repeat(40),
-    checks_commit_sha: 'b'.repeat(40),
-    reviewed_head_sha: 'b'.repeat(40),
-  };
-  const synced = { syncResult: 'clean', pushOk: true, sha: 'c'.repeat(40) };
-  assert.equal(await advanceSharedReviewAfterSync(pool, session, synced), true);
-  assert.equal(session.source, 'cli_handoff');
-  assert.equal(session.checks_commit_sha, synced.sha);
-  assert.equal(session.reviewed_head_sha, synced.sha);
-
-  // #955: the provenance row is written BEFORE the advance, so a later
-  // reconciliation can still recognise this commit as the platform's own.
-  assert.match(calls[0].sql, /INSERT INTO session_platform_pushes/);
-  const advance = calls.find((c) => /UPDATE chat_sessions/.test(c.sql));
-  assert.match(advance.sql, /checks_commit_sha = CASE WHEN \$5::boolean/);
-  // Task 153: $6 is the imported-mirror licence. For a native row it is
-  // false, so the native pin is the one that moves and is compared against.
-  assert.match(advance.sql, /reviewed_head_sha = CASE WHEN \$6::boolean THEN reviewed_head_sha ELSE \$1 END/);
-  assert.match(advance.sql, /UPDATE pr_votes SET head_sha = \$1/);
-  assert.match(advance.sql,
-    /checks_commit_sha IS NOT DISTINCT FROM \$4::varchar/,
-    'the sync cannot overwrite a checked head advanced by another reconciler');
-  assert.match(advance.sql,
-    /CASE WHEN \$6::boolean THEN imported_pr_head_sha ELSE reviewed_head_sha END\)\s+IS NOT DISTINCT FROM \$3::varchar/,
-    'the sync cannot overwrite a review advanced by another reconciler');
-  assert.deepEqual(advance.params, [
-    synced.sha, 7, 'b'.repeat(40), 'b'.repeat(40), true, false,
-  ]);
-});
-
-test('a sync finishing after withdrawal cannot move the archived handoff review', async () => {
-  const session = {
-    id: 7,
-    source: 'cli_handoff',
-    handoff_head_sha: 'a'.repeat(40),
-    checks_commit_sha: 'b'.repeat(40),
-    reviewed_head_sha: 'b'.repeat(40),
-  };
-  const pool = { query: async (sql) => {
-    assert.match(sql, /status IN \('active', 'promoted', 'merging'\)/);
-    return { rowCount: 0, rows: [] };
-  } };
-  assert.equal(await advanceSharedReviewAfterSync(pool, session, {
-    syncResult: 'clean', pushOk: true, sha: 'c'.repeat(40),
-  }), false);
-  assert.equal(session.checks_commit_sha, 'b'.repeat(40));
-  assert.equal(session.reviewed_head_sha, 'b'.repeat(40));
-});
-
-test('a sync result cannot overwrite a concurrently advanced checked head', async () => {
-  const session = {
-    id: 7,
-    source: 'cli_handoff',
-    handoff_head_sha: 'a'.repeat(40),
-    checks_commit_sha: 'b'.repeat(40),
-    reviewed_head_sha: null,
-  };
-  const pool = { query: async (sql, params) => {
-    assert.match(sql, /checks_commit_sha IS NOT DISTINCT FROM \$4::varchar/);
-    assert.equal(params[3], session.checks_commit_sha);
-    return { rowCount: 0, rows: [] };
-  } };
-  assert.equal(await advanceSharedReviewAfterSync(pool, session, {
-    syncResult: 'resolved', pushOk: true, sha: 'c'.repeat(40),
-  }), false);
-  assert.equal(session.checks_commit_sha, 'b'.repeat(40));
-});
-
-test('a sync that pushed nothing never touches the reviewed head', async () => {
-  const pool = { query: async () => { throw new Error('must not query'); } };
-  assert.equal(await advanceSharedReviewAfterSync(
-    pool,
-    { id: 7, source: 'cli_handoff' },
-    { syncResult: 'conflict', pushOk: false, sha: null }
-  ), false);
-  assert.equal(await advanceSharedReviewAfterSync(
-    pool,
-    { id: 9, source: 'cli_handoff' },
-    { syncResult: 'clean', pushOk: true, sha: 'not-a-commit' }
-  ), false);
-  // #955: an imported PR's head in its author's fork is owned by that
-  // author, never by us. (A mirrored connector head is the exception —
-  // tests/platform-sync-vote-carry.test.js.)
-  assert.equal(await advanceSharedReviewAfterSync(
-    pool,
-    { id: 10, source: 'imported' },
-    { syncResult: 'clean', pushOk: true, sha: 'c'.repeat(40) }
-  ), false);
-});
+// #2038: four tests for advanceSharedReviewAfterSync lived here. That
+// function — and the provenance ledger it wrote to — is gone. A platform
+// sync no longer has to advance a pin or carry votes across, because the
+// approval epoch it would have been protecting does not move for a
+// mechanical merge in the first place. What those tests guarded (a sync
+// must not move an archived proposal's review, must not overwrite a
+// concurrently advanced head, and must do nothing when it pushed nothing)
+// is now covered against real git in tests/native-reviewed-sha.test.js.
 
 test('stripFakeCompletionMarker leaves marker-free text unchanged', () => {
   const text = 'I can build that — want me to dispatch the coding agent?';

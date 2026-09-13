@@ -212,6 +212,34 @@ import /etc/caddy/active/platform-upstream.caddy
 		default usernode ""
 	}
 
+	# Platform-hosted assets, on the app's OWN hostname.
+	#
+	# The bridge, the native kit and the Tailwind runtime are centrally
+	# hosted, and an app that names the platform's hostname to load them
+	# loses all three the moment that hostname changes. Serving the same
+	# three prefixes here lets an app reference them at a relative path and
+	# carry no hostname at all. The Kubernetes runtime does this with per-app
+	# Ingress rules (services/kubernetes.js); this is the docker runtime's
+	# half, so a self-hosted fork gets the same contract.
+	#
+	# They BYPASS the visibility gate below, deliberately. The gate answers a
+	# non-2xx with a 404 or an authorize redirect, and an HTML redirect body
+	# arriving where a <script> was expected is precisely the breakage this
+	# whole line of work exists to end — it is also why middleware/auth.js
+	# already serves these three prefixes anonymously, from any dapp origin.
+	# Wrapping the gate in the complementary matcher is what enforces the
+	# order: `handle` blocks are mutually exclusive and evaluated as written,
+	# so an asset request is answered here and never reaches the gate.
+	#
+	# import platform_upstream (not a bare reverse_proxy) so assets follow
+	# the same blue/green cutover as the apex, with the #711 hold-and-retry.
+	@platform_assets path /usernode-bridge/* /usernode-native/* /usernode-tailwind/*
+	@not_platform_assets not path /usernode-bridge/* /usernode-native/* /usernode-tailwind/*
+
+	handle @platform_assets {
+		import platform_upstream
+	}
+
 	# Per-app visibility gate. Every child-app / staging request is
 	# pre-flighted against the platform before being proxied: view-public
 	# apps get an instant 200 (one cached lookup, no session work);
@@ -238,7 +266,9 @@ import /etc/caddy/active/platform-upstream.caddy
 	# with the apex on a zero-downtime deploy. The snippet keeps the #711
 	# hold-and-retry so a color crash-restart doesn't 502 every app
 	# subdomain for the boot window.
-	import platform_gate
+	handle @not_platform_assets {
+		import platform_gate
+	}
 
 	# Chromeless-view rescue for direct/shared links (issue: bare
 	# "Not authenticated" on app subdomains). Child apps auth via the

@@ -15,12 +15,15 @@ const read = (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf8')
 const VIEW = read('public/js/app-view.js');
 const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
 const PANEL = read('frontend/src/features/improve/improve-panel.tsx');
-const { DevBoardFrame } = loadTsx('frontend/src/features/dev-board/board-frame.tsx');
+// The "+" menu moved out of the frame into its own row component, which the
+// Board and the Workshop render one-at-a-time — so the menu's rows are
+// rendered from there now. Same markup, same props, one level less chrome.
+const { DevActionsRow } = loadTsx('frontend/src/features/dev-board/actions-row.tsx');
 const BASE = {
   selfHosted: false, readOnly: false, canCollaborate: true, showsMembers: true,
   cardCls: '', cardHoverCls: '',
 };
-const board = (props = {}) => renderToHtml(createElement(DevBoardFrame, { ...BASE, ...props }));
+const board = (props = {}) => renderToHtml(createElement(DevActionsRow, { ...BASE, ...props }));
 const actions = (html) => [...html.matchAll(/<button data-plus="([^"]+)"/g)].map((m) => m[1]);
 
 test('the rendered + menu keeps only distinct actions, including app-management gates', () => {

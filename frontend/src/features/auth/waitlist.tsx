@@ -905,8 +905,11 @@ export function WaitlistScreen() {
         >
           <div>
             <label htmlFor="waitlist-email" className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
+              {/* #1877: the marker sits a hair off the word rather than
+                  touching it, and is hidden from screen readers — the input's
+                  own `required` is what announces the field as required. */}
               Your email address
-              <span className="text-red-700 dark:text-red-400">
+              <span className="ml-0.5 text-red-700 dark:text-red-400" aria-hidden="true">
                 *
               </span>
             </label>
@@ -925,9 +928,12 @@ export function WaitlistScreen() {
             />
           </div>
           <div>
+            {/* #1877: JSX drops the line break between a label's text and the
+                span after it, so without its own margin "Optional" rendered
+                glued to the word ("CountryOptional"). */}
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               Country
-              <span className="text-zinc-500 font-normal dark:text-zinc-400">
+              <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
                 Optional
               </span>
             </label>
@@ -968,7 +974,7 @@ export function WaitlistScreen() {
           <div>
             <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200">
               How did you find us?
-              <span className="text-zinc-500 font-normal dark:text-zinc-400">
+              <span className="ml-1.5 text-xs text-zinc-500 font-normal dark:text-zinc-400">
                 Optional
               </span>
             </label>

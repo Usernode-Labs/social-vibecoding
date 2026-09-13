@@ -375,7 +375,7 @@ function IssueDraftCard({ r }: { r: Extract<TranscriptRow, { t: 'issueDraft' }> 
 const MERGED_TITLE = 'This change is merged and now live in the app.';
 const PREVIEW_GONE = 'Preview removed after merge. This change is now live in the app';
 
-function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): ReactNode {
+function ChangesCard({ r, embedded = false, historical = false }: { r: Extract<TranscriptRow, { t: 'changes' }>; embedded?: boolean; historical?: boolean }): ReactNode {
   const preview = (testing: boolean, url: string) => controller()?.previewStaging?.(url, testing);
   return (
     <>
@@ -388,7 +388,7 @@ function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): Re
           the flash — the same rule the adopted dialog roots follow. */}
       <div className="dc-pr-card" id="dc-pr-card">
         <div className="dc-pr-card-header">
-          {r.prUrl
+          {r.prUrl && !embedded
             ? <a href={r.prUrl} target="_blank" rel="noreferrer" className="dc-pr-link">{`PR #${r.prNumber}`}</a>
             : <span style={{ color: 'var(--text-muted)' }}>Changes ready</span>}
           {r.title ? <span className="dc-pr-title">{r.title}</span> : null}
@@ -399,7 +399,7 @@ function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): Re
           <div className="dc-pr-card-visuals" style={{ margin: '6px 0 2px' }}
             dangerouslySetInnerHTML={{ __html: r.visualsHtml }} />
         ) : null}
-        <div className="dc-pr-card-actions">
+        {!embedded && !historical ? <div className="dc-pr-card-actions">
           <button
             className="dc-pr-btn dc-pr-btn-preview"
             disabled={!r.preview.enabled}
@@ -434,7 +434,7 @@ function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): Re
               {r.propose.kind === 'pending'
                 ? <><span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>{' Proposing…'}</>
                 : r.propose.kind === 'completed' ? 'Already proposed'
-                  : r.propose.kind === 'blocked' ? r.propose.label : 'Propose to group'}
+                  : r.propose.kind === 'blocked' ? r.propose.label : 'Submit for review'}
             </button>
           ) : null}
           {r.status2.kind === 'merged'
@@ -443,7 +443,7 @@ function ChangesCard({ r }: { r: Extract<TranscriptRow, { t: 'changes' }> }): Re
           {r.status2.kind === 'badge'
             ? <span className="contents" dangerouslySetInnerHTML={{ __html: r.status2.html }} />
             : null}
-        </div>
+        </div> : <p className="dev-topic-note">{r.status2.kind === 'merged' ? 'Merged, now live in the app' : historical ? 'Earlier build result' : 'Build result. Current actions are above.'}</p>}
       </div>
     </>
   );
@@ -612,7 +612,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
   );
 }
 
-function Row({ r }: { r: TranscriptRow }): ReactNode {
+function Row({ r, embedded = false, historical = false }: { r: TranscriptRow; embedded?: boolean; historical?: boolean }): ReactNode {
   switch (r.t) {
     case 'status': return <StatusLine r={r} />;
     case 'failure': return <Failure r={r} />;
@@ -620,7 +620,7 @@ function Row({ r }: { r: TranscriptRow }): ReactNode {
     case 'issueDraft': return <IssueDraftCard r={r} />;
     case 'ccLog': return <CcLog r={r} />;
     case 'attached': return <Attached r={r} />;
-    case 'changes': return <ChangesCard r={r} />;
+    case 'changes': return <ChangesCard r={r} embedded={embedded} historical={historical} />;
     // `CreditOptions.cardHtml`'s markup, whole: two declared checks select
     // into it (`.dc-credits-card > .dc-credits-options`, and its
     // `details[data-credits-dev]`), and the banner and the Generate-proposal
@@ -651,11 +651,12 @@ function Row({ r }: { r: TranscriptRow }): ReactNode {
  * walkthrough renders in the composer's place instead of here, and that path
  * wires the card but not the visibility re-check.
  */
-export function DevChatTranscript(): ReactNode {
+export function DevChatTranscript({ embedded = false }: { embedded?: boolean }): ReactNode {
   const s = useStoreState(transcriptStore);
+  const latest = s.rows.findLast((r) => r.t === 'changes')?.key;
   return (
     <>
-      {s.rows.map((r) => <Row key={r.key} r={r} />)}
+      {s.rows.map((r) => <Row key={r.key} r={r} embedded={embedded} historical={r.t === 'changes' && r.key !== latest} />)}
       {/* #1049: the walkthrough sits at the END of the transcript, so on an
           empty session it is the only thing in the pane and on a resumed one
           it stays next to the composer the brief is typed into. Another
