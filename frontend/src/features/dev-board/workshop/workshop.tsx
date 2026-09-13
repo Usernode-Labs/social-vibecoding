@@ -818,6 +818,10 @@ function NeedsDeck({
   total: number;
   models: DevWorkshopView['models'];
 }): ReactNode {
+  // THE DECK KEEPS ITS ORDER. Skip used to send a card to the back, which was
+  // the only way to come back to something without losing your place; with
+  // arrows you walk back to it yourself, and a deck that reorders itself as
+  // you browse is one you can never reach the end of.
   const cards = rows.filter((r) => r.t === 'card');
   const [at, setAt] = useState(0);
   // Keyed by row, so moving to the next proposal does not carry the last
@@ -856,12 +860,30 @@ function NeedsDeck({
     // with nothing to say whether it had registered.
     if (i < cards.length - 1) window.setTimeout(() => setAt(i + 1), 550);
   };
+  /**
+   * Moving through the deck, which is a separate act from answering it.
+   *
+   * The two rows say so: the top one is what you can DO about this card, the
+   * bottom one is which card you are looking at. Skip used to sit among the
+   * answers and was neither — it read as a third verdict while doing nothing
+   * but advancing, and it could only ever go forwards.
+   *
+   * No wrap. The ends are the ends, and the counter above says which one you
+   * are at; an arrow that silently returns you to the first card is how you
+   * lose track of a queue you are working through.
+   */
+  const go = (delta: number) => setAt(Math.min(Math.max(i + delta, 0), cards.length - 1));
   // The verbs, per kind. "Yes" over a card is only clear if you already
   // know what the card is asking; "Vote yes" and "I'll take it" say what
   // the press DOES, which is the thing a first-time reader is missing.
+  // A CLAIM HAS TWO ANSWERS. "Not me" and "Skip" were the same press wearing
+  // two labels — neither recorded anything, both moved the deck on — and
+  // offering them side by side asked the reader to tell apart a distinction
+  // the app does not make. A vote keeps three, because there yes and no are
+  // both real, recorded acts and skip is the third thing.
   const verbs = row.kind === 'vote'
-    ? { yes: 'Vote yes', no: 'Vote no', skip: 'Skip' }
-    : { yes: "I'll take it", no: 'Not me', skip: 'Skip' };
+    ? { yes: 'Vote yes', no: 'Vote no' }
+    : { yes: "Let's take it", no: null };
   const done = answered[row.key];
   const ask = () => {
     const q = draft.trim();
@@ -889,7 +911,6 @@ function NeedsDeck({
       <section className="dev-ws-needs-subject">
         <div className="dev-ws-needs-head">
           <span className="dev-ws-eyebrow">{owed ? voteWords(owed) : 'Nothing owed'}</span>
-          <span className="dev-ws-needs-of">{`${i + 1} / ${cards.length}`}</span>
           {total ? <VoteRing owed={owed} total={total} /> : null}
         </div>
         {/* The card, then the sentence explaining it. The summary led at
@@ -923,6 +944,7 @@ function NeedsDeck({
               aria-pressed={done === 'yes'}
               onClick={() => answer('yes', row.yes ? row.yes.act : null)}
             >{done === 'yes' ? `${verbs.yes} ✓` : verbs.yes}</button>
+            {verbs.no ? (
             <button
               type="button"
               className="dev-ws-answer-btn dev-ws-answer-no"
@@ -931,13 +953,42 @@ function NeedsDeck({
               aria-pressed={done === 'no'}
               onClick={() => answer('no', row.no ? row.no.act : null)}
             >{done === 'no' ? `${verbs.no} ✓` : verbs.no}</button>
+            ) : null}
+          </div>
+          {/* ── The second row: WHICH card, not what about it ──────────────
+              Two rows because they are two different questions. The top one
+              is what you can do about the thing in front of you and every
+              press there records something; this one only changes what is in
+              front of you, and records nothing. Skip used to sit among the
+              answers and belonged to neither: it read as a third verdict
+              while doing nothing but advancing, and it could only go
+              forwards, so a card passed by accident was gone.
+
+              Disabled at the ends rather than wrapping. The counter above
+              says which end you are at, and an arrow that silently returns
+              you to the first card is how you lose your place in a queue you
+              are working through. */}
+          <div className="dev-ws-move-row" data-ws-move-row="">
             <button
               type="button"
-              className="dev-ws-answer-btn dev-ws-answer-skip"
-              data-ws-answer-btn="skip"
-              aria-pressed={done === 'skip'}
-              onClick={() => answer('skip', null)}
-            >{verbs.skip}</button>
+              className="dev-ws-move-btn"
+              data-ws-move="prev"
+              disabled={i <= 0}
+              onClick={() => go(-1)}
+            ><ChevronLeftIcon className="dev-ws-move-icon" aria-hidden="true" />Previous</button>
+            {/* THE COUNT LIVES HERE NOW, not in the eyebrow. It is the answer
+                to "where am I", which is the question these two buttons
+                change — and up there it was a second small number competing
+                with the sentence that says how many need you. It also fills
+                the gap the edge-anchored boxes leave. */}
+            <span className="dev-ws-needs-of">{`${i + 1} / ${cards.length}`}</span>
+            <button
+              type="button"
+              className="dev-ws-move-btn"
+              data-ws-move="next"
+              disabled={i >= cards.length - 1}
+              onClick={() => go(1)}
+            >Next<ChevronRightIcon className="dev-ws-move-icon" aria-hidden="true" /></button>
           </div>
         </div>
       </section>
@@ -1151,13 +1202,64 @@ export function DevWorkshop(): ReactNode {
 
   return (
     <div ref={hostRef} className="dev-ws" data-ws-tab={tab}>
+      {/* ── The three destinations ──
+          FIRST IN THE DOM, and on a phone LAST on the screen: `order` moves
+          it, not the markup. Focus follows the DOM rather than the painting,
+          so whichever way round they disagree somebody gets a tab order that
+          does not match what they see — and a nav announced BEFORE the
+          content it navigates is the better half of that trade. The narrow
+          case is the one that reorders because a touch surface is where the
+          mismatch costs least.
+
+          On a phone it is a sticky bar at the bottom: navigation rather than
+          a control acting on what is above it, and the thumb is at the
+          bottom of the hand. ABOVE 700px it is a row of underlined words at
+          the top of the column instead — see app.css. A pill pinned to the
+          floor of a 900px window puts the switch as far from the reading as
+          the window allows, and the eye crosses the whole height to use it.
+
+          NO `.platform-safe-bar` HERE, deliberately. That rule is for a strip
+          pinned against the screen edge: it adds the home-indicator inset to
+          the element's own bottom padding, which on this pill landed 8px
+          under the tabs against 6px over them. This bar FLOATS — a rounded
+          pill with air beneath it — so the inset belongs in that air instead,
+          and `--ws-gap` in app.css carries it (keyboard suppression
+          included). */}
+      <nav
+        className="dev-ws-tabs"
+        data-ws-tabs=""
+        role="tablist"
+        aria-label="Workshop sections"
+      >
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            className="dev-ws-tab"
+            data-ws-tab-btn={t.key}
+            aria-selected={tab === t.key}
+            onClick={() => { setTab(t.key); callAppView('_setWorkshopTab', t.key); }}
+          >
+            {/* The glyph is decoration over a label that is already there, so
+                it is hidden from the accessibility tree rather than given a
+                name of its own — otherwise every tab announces twice. Its
+                size comes from the class, not a prop: icons.tsx has no size
+                variant on purpose, and every other `.dev-ws-*` measurement
+                lives in app.css beside its neighbours. */}
+            <t.Icon className="dev-ws-tab-glyph" aria-hidden="true" />
+            <span className="dev-ws-tab-label">{t.label}</span>
+          </button>
+        ))}
+      </nav>
       {/* Everything but the rail lives in here. It is what carries the
           clearance under the last card: a sticky bar overlays whatever is
           beneath it while you scroll, so the content needs a rail's worth of
           empty space at its end or the final card can never be read clear of
           it. Putting that padding on the LANDER instead would push the rail
           up off the bottom on a short tab, which is the thing that was just
-          fixed. */}
+          fixed. Above 700px the bar is not sticky and overlays nothing, so
+          app.css takes the clearance back off. */}
       <div className="dev-ws-tabbody">
       {tab === 'status' ? (
       <>
@@ -1465,45 +1567,6 @@ export function DevWorkshop(): ReactNode {
 
       </div>
 
-      {/* ── The three destinations ──
-          At the BOTTOM, and sticky: this is a phone screen first, the bar is
-          navigation rather than a control acting on what is above it, and the
-          thumb is at the bottom of the hand.
-
-          NO `.platform-safe-bar` HERE, deliberately. That rule is for a strip
-          pinned against the screen edge: it adds the home-indicator inset to
-          the element's own bottom padding, which on this pill landed 8px
-          under the tabs against 6px over them. This bar FLOATS — a rounded
-          pill with air beneath it — so the inset belongs in that air instead,
-          and `--ws-gap` in app.css carries it (keyboard suppression
-          included). */}
-      <nav
-        className="dev-ws-tabs"
-        data-ws-tabs=""
-        role="tablist"
-        aria-label="Workshop sections"
-      >
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            className="dev-ws-tab"
-            data-ws-tab-btn={t.key}
-            aria-selected={tab === t.key}
-            onClick={() => setTab(t.key)}
-          >
-            {/* The glyph is decoration over a label that is already there, so
-                it is hidden from the accessibility tree rather than given a
-                name of its own — otherwise every tab announces twice. Its
-                size comes from the class, not a prop: icons.tsx has no size
-                variant on purpose, and every other `.dev-ws-*` measurement
-                lives in app.css beside its neighbours. */}
-            <t.Icon className="dev-ws-tab-glyph" aria-hidden="true" />
-            <span className="dev-ws-tab-label">{t.label}</span>
-          </button>
-        ))}
-      </nav>
     </div>
   );
 }

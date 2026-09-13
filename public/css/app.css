@@ -65,6 +65,14 @@
      they climb: (11,13,27) → (19,19,22) → (28,28,30) → (44,44,46). */
   --dc-strip: #f5f5f7;
   --dc-sheet: #ffffff;
+  /* A CARD SITTING ON A SHEET, which is a different job from the sheet. The
+     category cards took `--dc-sheet-fill` — the same value as the pane they
+     sit on — so in DARK MODE they were rgba(28,28,30,.72) on rgba(28,28,30,
+     .72) and the only thing separating them was a 12%-white hairline. Light
+     mode got away with it because its hairline is 10% BLACK on near-white,
+     which reads far harder than 12% white on near-black does. Opaque in both
+     themes, because a raised surface that is see-through is not raised. */
+  --dc-sheet-raise: #ffffff;
   --dc-raised: #f5f5f7;
 
   /* ── …and the two PLANES, which are not the same thing ───
@@ -1147,6 +1155,9 @@ html.un-kb .platform-safe-sheet {
      again, which is the step the old pairing had no room for. */
   --dc-strip: #131316;
   --dc-sheet: #1c1c1e;
+  /* One step up the same ramp as the sheet below it (`--bg-tertiary`), which
+     is the step the rest of the dark palette already uses for "on top of". */
+  --dc-sheet-raise: #2c2c2e;
   --dc-raised: #2c2c2e;
   /* The dark planes. The strip's tint is the dark wallpaper's own ground
      rather than the strip's opaque value: at 0.55 over that ground it is
@@ -11813,7 +11824,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   display: flex; flex-direction: column; gap: 8px;
 }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .dev-ws-strip, .dev-ws-theme { background-color: var(--dc-sheet); }
+  .dev-ws-strip { background-color: var(--dc-sheet); }
 }
 /* CENTRE, not baseline. Baseline was right while the only thing beside the
    eyebrow was a 22px pill; with a 30px ring in the line the eyebrow's
@@ -12061,7 +12072,18 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
      construction instead of by being remembered. */
   padding-bottom: calc(72px + var(--ws-gap));
 }
+/* ...EXCEPT ON NEEDS YOU, which does not scroll under the rail. The clearance
+   exists so the last card of a SCROLLING tab can be read clear of a bar that
+   overlays it. The deck is a fitted, one-decision-per-screen surface: nothing
+   ever passes beneath the rail, so the same 80px is dead space that pushes
+   the ask box up. Measured at 402x874: the composer ended 90px above the bar
+   with the deck otherwise filling its box exactly. */
+.dev-ws[data-ws-tab="needs"] > .dev-ws-tabbody { padding-bottom: 0; }
 .dev-ws-tabs {
+  /* LAST ON THE SCREEN, FIRST IN THE MARKUP. The nav leads the DOM so it is
+     announced before the content it navigates; `order` is what puts it at the
+     foot on a phone. */
+  order: 1;
   position: sticky; bottom: var(--ws-gap); z-index: 25;
   display: flex; gap: 4px;
   padding: 6px;
@@ -12191,15 +12213,66 @@ html.un-kb .dev-ws { --ws-gap: 8px; }
    auto`, not by the deck's height. The ask log takes a cap instead of a
    fraction of the screen for the same reason. */
 @media (min-width: 700px) {
+  /* THE DECK AT THE TOP, THE ASK AT THE FLOOR. `flex: 0 0 auto` with
+     `align-content: start` used to content-size the whole deck, which put the
+     ask box directly under the answers and left the rest of the window empty
+     beneath it — measured at 1440x900, 271px of gap between the composer and
+     the rail. Filling the area and giving the SECOND row the free space keeps
+     the deck content-sized at the top (the reason the rule exists) while the
+     box you type in sits where the bar is, which is where the hand already
+     is. `align-self: end` on the pane rather than `align-items` so the
+     subject above it still stretches to its own row. */
   .dev-ws-needs,
   .dev-ws-needs-engaged {
-    flex: 0 0 auto;
-    grid-template-rows: auto auto;
-    align-content: start;
+    flex: 1 1 auto;
+    grid-template-rows: auto 1fr;
+    align-content: stretch;
     min-height: 0;
   }
+  .dev-ws-needs > .dev-ws-ask { align-self: end; }
   .dev-ws-needs-scroll { flex: 0 1 auto; }
   .dev-ws-ask-log { max-height: 40vh; }
+
+  /* ── A wide window reads the tabs at the TOP, as words ─────────────────
+     A pill pinned to the floor of a 900px window puts the switch as far from
+     the reading as the window allows, and the eye crosses the whole height to
+     use it — a phone convention wearing a desktop out. Above 700px the bar
+     loses its pill entirely and becomes three underlined words at the head of
+     the column: no fill, no sticky, no clearance beneath it.
+
+     `order: 0` is the whole move. The nav is already first in the DOM, so
+     dropping the phone's `order: 1` paints it where it is written — and on the
+     width where a keyboard is likeliest, focus order and reading order agree.
+
+     The choice of underline over a pill is not only taste: the three tabs are
+     "where the app is", "what needs you" and "everything there is", which are
+     sections of one subject rather than modes of one tool, and a rule under a
+     word says section where a filled pill says mode. It is also the shortest
+     of the treatments, which the deck needs — it is the tab fighting hardest
+     for height. */
+
+  .dev-ws-tabs {
+    order: 0;
+    position: static;
+    gap: 22px; padding: 0;
+    border: 0; border-bottom: 1px solid var(--app-sheet-line); border-radius: 0;
+    background: none; backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+  .dev-ws-tab {
+    flex: 0 0 auto; flex-direction: row; gap: 7px;
+    height: auto; padding: 8px 0 9px;
+    border-radius: 0; font-size: 14px;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+  }
+  .dev-ws-tab[aria-selected="true"] {
+    background: none; box-shadow: none;
+    color: var(--brand-ink); border-bottom-color: var(--brand-ink);
+  }
+  .dev-ws-tab-glyph { width: 17px; height: 17px; }
+  /* Nothing overlays the content any more, so nothing needs reserving under
+     it — that clearance exists only for a bar that floats over what scrolls
+     beneath it. */
+  .dev-ws-tabbody { padding-bottom: 0; }
 }
 @media (prefers-reduced-motion: no-preference) {
   .dev-ws-needs { transition: grid-template-rows .22s ease; }
@@ -12243,6 +12316,34 @@ html.un-kb .dev-ws { --ws-gap: 8px; }
   font-size: 15px; font-weight: 600; color: var(--text-primary);
 }
 .dev-ws-answer-row { display: flex; gap: 8px; }
+/* ── The move row: WHICH card, not what about it ───────────────────────
+   Quieter than the answers above it, on purpose. Those are decisions and
+   this is a page turn, so it takes the same width and half the weight: no
+   fill, a hairline, and the muted ink the lander already uses for things
+   that are navigation rather than acts. Shorter too — 44px is the shell's
+   tap minimum, and turning a page does not need the thumb-sized target a
+   vote does. */
+.dev-ws-move-row {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 10px;
+}
+/* CONTENT WIDTH, AT THE EDGES. Full-width boxes here were two equal boxes
+   under two equal boxes, and the row read as two more answers. Sized to their
+   own words they cannot line up with the pair above — "Previous" is a wider
+   word than "Next", so they are visibly not a matched set — and pushing them
+   apart leaves the centre for the count. Words rather than bare chevrons for
+   the same reason: a label says navigation where an arrow alone says button. */
+.dev-ws-move-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 40px; padding: 0 14px;
+  border: 1px solid var(--app-sheet-line); border-radius: 14px;
+  background: transparent; color: var(--text-muted);
+  font: inherit; font-size: 13.5px; font-weight: 600;
+  cursor: pointer;
+}
+.dev-ws-move-btn:hover:not(:disabled) { background: var(--state-neutral-bg); color: var(--text-primary); }
+.dev-ws-move-btn:disabled { opacity: .35; cursor: default; }
+.dev-ws-move-icon { width: 16px; height: 16px; }
 .dev-ws-answer-btn {
   flex: 1 1 0; min-width: 0; height: 52px;
   border-radius: 16px; border: 1px solid transparent;
@@ -12685,9 +12786,11 @@ html.un-kb .dev-ws { --ws-gap: 8px; }
 
 .dev-ws-themes { display: flex; flex-direction: column; gap: 8px; }
 .dev-ws-theme {
-  background-color: var(--dc-sheet-fill);
-  backdrop-filter: var(--dc-frost);
-  -webkit-backdrop-filter: var(--dc-frost);
+  /* Raised, not frosted: see `--dc-sheet-raise`. The frost was doing nothing
+     here anyway — it blurs what is BEHIND, and what is behind is a pane of
+     the same colour, so it cost a compositing layer per card to blur a flat
+     field. */
+  background-color: var(--dc-sheet-raise);
   border-radius: 22px;
   box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
   overflow: hidden;
